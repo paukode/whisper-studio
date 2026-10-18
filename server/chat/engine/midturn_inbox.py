@@ -27,11 +27,15 @@ Lifecycle, driven by the slot owner:
   entry is already in the history the client sent with this turn;
 - an approval continuation keeps the entries, since it is the same turn;
 - the runner closes the inbox at its final look (``close_if_empty``, then
-  ``close_and_take`` on every exit that reads no more), in the same
-  synchronous step that ends the turn, so a push that comes after it is
-  refused and the caller starts the next turn instead of queueing text that
-  nobody will read. What was accepted but never read is handed on: agent
-  reports get a wake turn, and a user message is announced as unanswered;
+  ``close_and_take`` on every exit that reads no more), with no await in
+  between, so a push that comes after it is refused and the caller starts
+  the next turn instead of queueing text that nobody will read. What was
+  accepted but never read is handed on: agent reports get a wake turn, and a
+  user message is announced as unanswered. The activity captions' end-of-turn
+  wait (activity_labels.LABEL_TIMEOUT_S) comes before the close, while the
+  inbox is still open: after an answer before the round cap, a push in that
+  window gets one more round of the turn; at any other end, it is handed on
+  with the rest;
 - a turn that is stopped or disconnected clears it, as does /reset.
 
 A turn that ends before its round loop runs (a failed or cancelled local
@@ -131,7 +135,9 @@ def close_and_announce(session_id: str) -> list[str]:
     announced as unanswered, on the stream and in the notifications, instead
     of going quiet on the composer's promise. Returns the SSE frames to send
     before the turn's [DONE]. Synchronous on purpose: nothing may reach the
-    inbox between this and the end of the turn."""
+    inbox between the close and the hand-on. A push after it is refused.
+    run_turn waits for the activity captions before this close, not after
+    it, so a push during that wait still reaches the turn."""
     import logging
 
     log = logging.getLogger("whisper-studio")

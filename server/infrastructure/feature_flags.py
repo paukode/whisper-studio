@@ -332,6 +332,19 @@ register_flag(
 )
 
 register_flag(
+    "activity_labels",
+    description=(
+        "Caption each round of tool calls with a short label written by a cloud model; "
+        "a failed round keeps its failure as the label and shows the caption after it. "
+        "The deterministic label stands in Local mode, in a chat on an on-device model, "
+        "or when the model is unavailable"
+    ),
+    default=True,
+    category="chat",
+    local_mode_off="Written labels need a cloud model; Local mode shows the deterministic label",
+)
+
+register_flag(
     "tool_loop_guard",
     description=(
         "Refuse a tool call that repeats the same arguments after two identical results, "

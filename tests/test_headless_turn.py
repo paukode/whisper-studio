@@ -101,6 +101,44 @@ def test_headless_turn_scripted_event_sequence(monkeypatch):
     assert done == {"type": "done", "status": "completed", "session_id": "sess-headless-events"}
 
 
+def test_headless_tool_result_status_follows_the_gate(monkeypatch):
+    # The gate decides what failed (tool_executor.tool_outcome) and the frame
+    # carries it as is_error; the headless event reads that, not the text.
+    fake_stream = FakeBedrockClient(
+        [
+            [
+                msg_start(),
+                *tool_use_block("t1", "ws_run_command", {"command": "make"}),
+                *msg_end(stop_reason="tool_use"),
+            ],
+            [msg_start(), *text_block("It failed."), *msg_end(stop_reason="end_turn")],
+        ]
+    )
+    _patch_common(
+        monkeypatch,
+        fake_stream,
+        tools=[{"name": "ws_run_command", "description": "d", "input_schema": {"type": "object"}}],
+    )
+
+    async def fake_route_tool(tool_name, tool_input, **kw):
+        return "make: *** [all] Error 2\n(exit code 2)", []
+
+    monkeypatch.setattr("server.tool_executor.route_tool", fake_route_tool)
+
+    events = asyncio.run(
+        _collect(
+            run_headless_turn(
+                "build it",
+                model_key="sonnet",
+                ephemeral=True,
+                session_id="sess-headless-error",
+            )
+        )
+    )
+    (tool_result,) = [e for e in events if e["type"] == "tool_result"]
+    assert tool_result["status"] == "error"
+
+
 # ── turn_scope_id isolation: a headless run must not perturb a real
 # session's goal-store / auto-mode-breaker state ────────────────────────────
 

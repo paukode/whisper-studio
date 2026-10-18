@@ -1,5 +1,6 @@
 /** Findings list for a CI autofix (WS-J), shown just above the fix preview. */
 import React from 'react';
+import { ICON } from '@/components/chat/activityIcons';
 
 interface Diagnosis {
   branch?: string;
@@ -15,7 +16,7 @@ export const CIDiagnosisCard: React.FC<{ data: Diagnosis }> = ({ data }) => {
   return (
     <div className="workflow-card ci-diagnosis">
       <div className="workflow-card-head">
-        <span className="workflow-card-icon" aria-hidden="true">🔍</span>
+        <span className="workflow-card-icon" aria-hidden="true">{ICON.search}</span>
         <span className="workflow-card-title">CI diagnosis · {s(data.branch) || 'branch'}</span>
         <span className="workflow-card-badge">{findings.length} finding{findings.length === 1 ? '' : 's'}</span>
       </div>
@@ -28,7 +29,12 @@ export const CIDiagnosisCard: React.FC<{ data: Diagnosis }> = ({ data }) => {
               <span className="ci-finding-cat">{s(f.category) || 'other'}</span>
               <strong>{s(f.check)}</strong>
               {s(f.summary) && <>: {s(f.summary)}</>}
-              {s(f.suggested_fix) && <div className="ci-finding-fix">→ {s(f.suggested_fix)}</div>}
+              {s(f.suggested_fix) && (
+                <div className="ci-finding-fix">
+                  <span className="ci-finding-fix-mark" aria-hidden="true">{ICON.arrowRight}</span>
+                  {s(f.suggested_fix)}
+                </div>
+              )}
             </li>
           ))}
         </ul>

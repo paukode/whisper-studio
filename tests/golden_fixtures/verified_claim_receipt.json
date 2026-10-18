@@ -7,7 +7,9 @@
   },
   {
     "skill": "memory_write",
-    "input": {}
+    "input": {},
+    "tool_use_id": "tu_m",
+    "round": 0
   },
   {
     "skill_input": "memory_write",
@@ -18,7 +20,8 @@
       "scope": "global",
       "description": "answer length",
       "content": "Prefers short answers."
-    }
+    },
+    "tool_use_id": "tu_m"
   },
   {
     "usage": {
@@ -39,7 +42,19 @@
   },
   {
     "skill_result": "memory_write",
-    "output": "Memory file saved: golden_note.md [scope: global]"
+    "output": "Memory file saved: golden_note.md [scope: global]",
+    "tool_use_id": "tu_m",
+    "is_error": false,
+    "exit_code": null,
+    "meta": {
+      "duration_ms": 0,
+      "output_chars": 49,
+      "truncated": false,
+      "lines": null,
+      "bytes": null,
+      "added": null,
+      "removed": null
+    }
   },
   {
     "text": "Saved that to your memory."

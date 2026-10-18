@@ -211,6 +211,36 @@ describe('killSessionStream — keeps the tool activity shown so far', () => {
     expect(assistant[0].toolUse?.[1].status).toBe('stopped');
   });
 
+  it("keeps a finished step's verdict and exit code; only the running one is stamped stopped", () => {
+    // Rows keyed by the provider's call ids, as tagged frames produce them.
+    const failedRun: ToolUseEvent = {
+      toolId: 'tu_run',
+      toolName: 'ws_run_command',
+      input: { command: 'npm test' },
+      result: '2 failed\n(exit code 1)',
+      status: 'error',
+      isError: true,
+      exitCode: 1,
+    };
+    const readingStill: ToolUseEvent = {
+      toolId: 'tu_read',
+      toolName: 'ws_read_file',
+      input: { path: '/repo/src/b.ts' },
+      status: 'running',
+    };
+    getChatStore(sid).setState({ currentStreamToolUse: [failedRun, readingStill] });
+
+    killSessionStream(sid);
+
+    const msg = getChatStore(sid).getState().messages.filter((m) => m.role === 'assistant')[0];
+    expect(msg.toolUse?.[0]).toEqual(failedRun);
+    expect(msg.toolUse?.[1]).toMatchObject({
+      toolId: 'tu_read',
+      status: 'stopped',
+      result: STOPPED_TOOL_RESULT,
+    });
+  });
+
   it('appends nothing when the turn had shown neither prose nor tools', () => {
     getChatStore(sid).setState({ currentStreamToolUse: [] });
 

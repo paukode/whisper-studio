@@ -9,6 +9,7 @@ import { launchRun } from '@/api/workflows';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useWorkflowStore } from '@/stores/workflowStore';
 import { WorkflowRunCard } from '@/components/chat/WorkflowRunCard';
+import { ICON } from '@/components/chat/activityIcons';
 
 interface Preview {
   script: string;
@@ -24,7 +25,7 @@ interface Preview {
   effort_label?: string;
   /** The resolved root every agent this run spawns will be pinned to, frozen
    *  at the moment the script was proposed. Shown so the user approves the
-   *  actual folder, and replayed on approval unchanged — a workspace switch
+   *  actual folder, and replayed on approval unchanged: a workspace switch
    *  during the approval delay must not silently redirect an already-shown
    *  run to a different repo. */
   workspace_path?: string;
@@ -37,7 +38,7 @@ function phaseTitle(p: unknown): string {
 }
 
 // A preview message persists in chat history, but the approve state is
-// component-local — so a page reload would reset it to 'idle' and let the SAME
+// component-local, so a page reload would reset it to 'idle' and let the SAME
 // script be launched twice. We remember launched (previewKey -> runId) in
 // localStorage so a reloaded preview restores its launched run instead of
 // offering Approve again.
@@ -54,8 +55,8 @@ function hashString(s: string): string {
  *  Hashing the script alone made two genuinely different launches collide:
  *  re-running the same saved script against another workspace, model, effort,
  *  budget, or args would show as "already launched" and refuse a legitimate
- *  second run — or, worse, surface an unrelated older run's card in its
- *  place. Session is included too, so the same script proposed in two chats
+ *  second run (or, worse, surface an unrelated older run's card in its
+ *  place). Session is included too, so the same script proposed in two chats
  *  tracks separately. */
 function previewKey(preview: Preview, sessionId: string | null): string {
   return hashString(
@@ -117,8 +118,8 @@ export const WorkflowPreviewCard: React.FC<{ preview: Preview }> = ({ preview })
         effort_label: preview.effort_label || undefined,
         // `??`, not `||`: an empty string here means the preview genuinely
         // had nothing to pin (shown with no "Workspace:" line) and that must
-        // reach the server AS an empty string, not collapse to a dropped key
-        // — a dropped key tells the server "no card was involved, snapshot
+        // reach the server AS an empty string, not collapse to a dropped key:
+        // a dropped key tells the server "no card was involved, snapshot
         // whatever is connected now", which would let a workspace connected
         // during the approval delay silently become this run's root even
         // though the card never showed the user a folder at all.
@@ -144,7 +145,7 @@ export const WorkflowPreviewCard: React.FC<{ preview: Preview }> = ({ preview })
   return (
     <div className="workflow-card workflow-preview">
       <div className="workflow-card-head">
-        <span className="workflow-card-icon" aria-hidden="true">⚙️</span>
+        <span className="workflow-card-icon" aria-hidden="true">{ICON.graph}</span>
         <span className="workflow-card-title">{preview.name || 'Workflow'}</span>
         <span className="workflow-card-badge">{phases.length} phase{phases.length === 1 ? '' : 's'}</span>
       </div>
@@ -161,8 +162,9 @@ export const WorkflowPreviewCard: React.FC<{ preview: Preview }> = ({ preview })
           ))}
         </ol>
       )}
-      <button type="button" className="workflow-script-toggle" onClick={() => setShowScript((v) => !v)}>
-        {showScript ? '▾ Hide script' : '▸ Show script'}
+      <button type="button" className="workflow-script-toggle" onClick={() => setShowScript((v) => !v)} aria-expanded={showScript}>
+        {showScript ? ICON.chevronDown : ICON.chevronRight}
+        {showScript ? 'Hide script' : 'Show script'}
       </button>
       {showScript && <pre className="workflow-script"><code>{preview.script}</code></pre>}
       {preview.budget_tokens != null && (
@@ -184,7 +186,7 @@ export const WorkflowPreviewCard: React.FC<{ preview: Preview }> = ({ preview })
           {trustedAs ? ` '${trustedAs}' is now trusted and runs without asking.` : ''}
         </div>
       )}
-      {state === 'denied' && <div className="workflow-card-meta">Denied — not run.</div>}
+      {state === 'denied' && <div className="workflow-card-meta">Denied, not run.</div>}
       {state === 'error' && <div className="workflow-card-meta workflow-err">Failed to launch.</div>}
       {state === 'launched' && runId && <WorkflowRunCard runId={runId} name={preview.name} />}
     </div>

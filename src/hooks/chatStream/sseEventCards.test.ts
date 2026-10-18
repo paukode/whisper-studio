@@ -47,6 +47,13 @@ describe('renderEventCards: completion-gate frames', () => {
     expect(useGoalStore.getState().byId[sid].active).toBe(false);
   });
 
+  it('a card row is keyed by its tool name: no provider call tagged it', () => {
+    render({ stop_hook_block: { reason: 'tests are red', attempt: 1 } });
+    const row = lastCard();
+    expect(row?.toolId).toBe('stop_hook_block');
+    expect(row?.toolId).toBe(row?.toolName);
+  });
+
   it.each([
     { goal_eval: { verdict: 'not_achieved', feedback: 'keep going' } },
     { stop_hook_block: { reason: 'tests are red', attempt: 1 } },

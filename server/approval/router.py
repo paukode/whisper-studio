@@ -29,6 +29,9 @@ router = APIRouter(prefix="/api/approval", tags=["approval"])
 class ExecuteRequest(BaseModel):
     action: str
     payload: dict = {}
+    # The provider's id of the call the card paused on. A write keeps the
+    # edit under it for the diff dialog (server/workspace/edits.py).
+    tool_use_id: str | None = None
 
 
 @router.post("/execute")
@@ -37,6 +40,9 @@ async def approval_execute(req: ExecuteRequest):
     if not spec:
         log.warning("approval/execute: unknown action %r", req.action)
         raise HTTPException(status_code=404, detail=f"Unknown approval action: {req.action}")
+    payload = dict(req.payload or {})
+    if req.tool_use_id:
+        payload["__tool_use_id__"] = req.tool_use_id
 
     # Snapshot the connected workspace so we can tell the frontend to switch
     # panels if this action changed it (e.g. git_clone with open=true). We
@@ -47,7 +53,7 @@ async def approval_execute(req: ExecuteRequest):
 
     ws_before = get_workspace_path()
     try:
-        outcome = await execute_approved_by_human(spec, req.payload or {})
+        outcome = await execute_approved_by_human(spec, payload)
     except Exception as e:  # noqa: BLE001 - executor is user-registered
         log.exception("approval/execute: %s failed", req.action)
         return {"ok": False, "error": f"Executor crashed: {e}"}
@@ -74,4 +80,10 @@ async def approval_execute(req: ExecuteRequest):
         "error": outcome.error,
         "stopped": bool(getattr(outcome, "stopped", False)),
         "ws_folder_opened": ws_folder_opened,
+        # A write's diff stats (ApprovalOutcome.stats), the same dict the
+        # inline path puts in its skill_result meta; null for other actions.
+        "stats": getattr(outcome, "stats", None),
+        # A finished command's exit status, the one the inline path's
+        # skill_result frame carries; null for every other action.
+        "exit_code": getattr(outcome, "exit_code", None),
     }

@@ -9,10 +9,11 @@ import { getRun, stopRun, subscribeRun } from '@/api/workflows';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useWorkflowStore } from '@/stores/workflowStore';
 import { AgentRow } from '@/components/chat/AgentRows';
+import { ICON } from '@/components/chat/activityIcons';
 
 const STATUS_COLOR: Record<string, string> = {
-  running: 'var(--accent-warn, #b8860b)',
-  done: 'var(--accent-ok, #2e7d32)',
+  running: 'var(--risk-warn)',
+  done: 'var(--success)',
   failed: 'var(--accent-record)',
   stopped: 'var(--text-secondary, gray)',
   stale: 'var(--text-secondary, gray)',
@@ -37,7 +38,7 @@ export const WorkflowRunCard: React.FC<{ runId: string; name?: string }> = ({ ru
     return () => off();
   }, [runId, terminal]);
 
-  // Ordered per-agent reports (built in render, not in a selector — the store
+  // Ordered per-agent reports (built in render, not in a selector: the store
   // exposes stable refs; assembling the list here keeps the zustand v5 rule).
   const orderedAgents = (act?.agentOrder ?? [])
     .map((k) => act?.agentReports[k])
@@ -60,7 +61,7 @@ export const WorkflowRunCard: React.FC<{ runId: string; name?: string }> = ({ ru
   return (
     <div className="workflow-card workflow-run">
       <div className="workflow-card-head">
-        <span className="workflow-card-icon" aria-hidden="true">⚙️</span>
+        <span className="workflow-card-icon" aria-hidden="true">{ICON.graph}</span>
         <span className="workflow-card-title">{run?.name || name || 'Workflow'}</span>
         <span className="workflow-card-badge" style={{ color: STATUS_COLOR[status] ?? 'inherit' }}>{status}</span>
       </div>

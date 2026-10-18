@@ -15,12 +15,17 @@
  * is auto-created per session id by the runtime registry.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { readSSEStream, sendApprovalContinuation } from './sseStream';
+import { NOT_RUN_RESULT, nextRoundBase, readSSEStream } from './sseStream';
+import { sendApprovalContinuation } from './approvalContinuation';
+import { killSessionStream } from './streamControl';
 import { useUIStore } from '@/stores/uiStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import type { PendingApproval } from '@/stores/chatStore';
-import type { TurnModelSettings } from '@/types/chat';
+import type { ChatMessage, TurnModelSettings } from '@/types/chat';
 import { dropRuntime, useRuntimeIndex, getChatStore } from '@/stores/sessionRuntimes';
+import { useSessionStore } from '@/stores/sessionStore';
+import { ACTIVITY_MIN_RUN, groupAgentTools, groupForActivity, isActivityEntry } from '@/components/chat/AgentCard';
+import { captionIn, traceRuns, turnEntries } from '@/components/chat/turnEntries';
 
 /** The settings the request that opened a test stream carried. */
 const SETTINGS: TurnModelSettings = {
@@ -302,6 +307,40 @@ describe('sendApprovalContinuation', () => {
   afterEach(() => {
     for (const id of useRuntimeIndex.getState().liveIds) dropRuntime(id);
     vi.restoreAllMocks();
+  });
+
+  it('a continuation that pauses on another card keeps nothing in the live tail, so a Stop adds no copy', async () => {
+    const sid = 'sess-pause-again';
+    vi.spyOn(useSessionStore.getState(), 'debouncedSave').mockImplementation(() => {});
+    getChatStore(sid).getState().setMessages([
+      { role: 'user', content: 'go', timestamp: 't0' },
+      { role: 'assistant', content: '', timestamp: 't1', toolUse: [{ toolId: 'tu_1', toolName: 'ws_write_file', input: { path: 'a.py' }, result: 'Wrote a.py', status: 'complete', round: 0 }] },
+    ]);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(sseResponse([
+      { text: 'Now b.py.' },
+      { skill: 'ws_write_file', input: {}, tool_use_id: 'tu_2', round: 0 },
+      { skill_input: 'ws_write_file', input: { path: 'b.py' }, tool_use_id: 'tu_2' },
+      {
+        approval_request: {
+          tool_use_id: 'tu_2', action: 'ws_write_file', category: 'write', preview: 'diff',
+          summary: 'Write b.py', payload: { path: 'b.py', content: 'y' },
+        },
+      },
+    ]));
+
+    await sendApprovalContinuation({ ...approval, sessionId: sid }, sid, true, undefined, { ok: true, output: 'Wrote a.py' });
+
+    const state = getChatStore(sid).getState();
+    // The second card waits, so the session is still streaming...
+    expect(state.isStreaming).toBe(true);
+    expect(state.currentApproval?.toolUseId).toBe('tu_2');
+    // ...with the leg's rows committed once and nothing left in the tail.
+    expect(state.currentStreamToolUse).toEqual([]);
+    expect(state.currentStreamContent).toBe('');
+    const ids = () => getChatStore(sid).getState().messages.flatMap((m) => (m.toolUse ?? []).map((t) => t.toolId));
+    expect(ids()).toEqual(['tu_1', 'tu_2']);
+    killSessionStream(sid);
+    expect(ids()).toEqual(['tu_1', 'tu_2']);
   });
 
   it('commits a visible message when the continuation returns no text', async () => {
@@ -631,5 +670,473 @@ describe('readSSEStream question grouping', () => {
     expect(msgs[0].userQuestions?.[0].answered).toBe(true);
     expect(msgs[1].userQuestions?.map((q) => q.toolUseId)).toEqual(['tu_2']);
     expect(msgs[1].userQuestions?.[0].answered).toBeUndefined();
+  });
+});
+
+/**
+ * The call id on the tool frames (tool_use_id) pairs a result with its call.
+ * Two same-named calls running in parallel used to be told apart by order
+ * alone, and the verdict on a result was guessed from its text; the server
+ * now says both (is_error, exit_code), and the client only reads them.
+ */
+describe('readSSEStream tool frames', () => {
+  const signal = () => new AbortController().signal;
+  const live = (sid: string) => getChatStore(sid).getState().currentStreamToolUse;
+  const committed = (sid: string) => getChatStore(sid).getState().messages;
+  // Any card commits the segment so far (flushSegment), which is where the
+  // live rows become transcript rows.
+  const card = { workflow_started: { run_id: 'wf_1', name: 'nightly' } };
+
+  afterEach(() => {
+    for (const id of useRuntimeIndex.getState().liveIds) dropRuntime(id);
+  });
+
+  it('two parallel same-named reads pair their inputs and results by id', async () => {
+    const sid = 'sess-pair-live';
+    // Both calls start before either returns, and the second returns first.
+    await readSSEStream(sseResponse([
+      { skill: 'ws_read_file', input: {}, tool_use_id: 'tu_1' },
+      { skill: 'ws_read_file', input: {}, tool_use_id: 'tu_2' },
+      { skill_input: 'ws_read_file', input: { path: 'b.ts' }, tool_use_id: 'tu_2' },
+      { skill_input: 'ws_read_file', input: { path: 'a.ts' }, tool_use_id: 'tu_1' },
+      { skill_result: 'ws_read_file', output: 'B', tool_use_id: 'tu_2', is_error: false, exit_code: null },
+      { skill_result: 'ws_read_file', output: 'A', tool_use_id: 'tu_1', is_error: false, exit_code: null },
+    ]), sid, signal(), SETTINGS);
+
+    expect(live(sid)).toMatchObject([
+      { toolId: 'tu_1', toolName: 'ws_read_file', input: { path: 'a.ts' }, result: 'A', status: 'complete' },
+      { toolId: 'tu_2', toolName: 'ws_read_file', input: { path: 'b.ts' }, result: 'B', status: 'complete' },
+    ]);
+  });
+
+  it('the committed rows keep that pairing, the ids and the verdicts', async () => {
+    const sid = 'sess-pair-commit';
+    await readSSEStream(sseResponse([
+      { skill: 'ws_read_file', tool_use_id: 'tu_1' },
+      { skill: 'ws_read_file', tool_use_id: 'tu_2' },
+      { skill_result: 'ws_read_file', output: 'B', tool_use_id: 'tu_2', is_error: false, exit_code: null },
+      { skill_result: 'ws_read_file', output: 'A', tool_use_id: 'tu_1', is_error: false, exit_code: null },
+      card,
+    ]), sid, signal(), SETTINGS);
+
+    expect(committed(sid)[0].toolUse).toMatchObject([
+      { toolId: 'tu_1', toolName: 'ws_read_file', result: 'A', status: 'complete', isError: false, exitCode: null },
+      { toolId: 'tu_2', toolName: 'ws_read_file', result: 'B', status: 'complete', isError: false, exitCode: null },
+    ]);
+  });
+
+  it('a result the server flagged is an error row with its exit code, live and once committed', async () => {
+    const frames = [
+      { skill: 'ws_run_command', tool_use_id: 'tu_run' },
+      {
+        skill_result: 'ws_run_command',
+        output: 'npm test\n2 failed\n(exit code 1)',
+        tool_use_id: 'tu_run',
+        is_error: true,
+        exit_code: 1,
+      },
+    ];
+    await readSSEStream(sseResponse(frames), 'sess-err-live', signal(), SETTINGS);
+    expect(live('sess-err-live')[0]).toMatchObject({ toolId: 'tu_run', status: 'error', isError: true, exitCode: 1 });
+    expect(getChatStore('sess-err-live').getState().lastToolError).toContain('2 failed');
+
+    // The flush keeps the verdict: a committed row never reads 'complete'
+    // for a call that failed.
+    await readSSEStream(sseResponse([...frames, card]), 'sess-err-commit', signal(), SETTINGS);
+    expect(committed('sess-err-commit')[0].toolUse?.[0]).toMatchObject({
+      toolId: 'tu_run',
+      status: 'error',
+      isError: true,
+      exitCode: 1,
+      result: 'npm test\n2 failed\n(exit code 1)',
+    });
+  });
+
+  it("the verdict is the server's, not a guess from the output text", async () => {
+    // An output that opens with the word "Error" (a search for it) used to be
+    // read as a failure by a regex on this side. The server's is_error decides.
+    const sid = 'sess-verdict';
+    await readSSEStream(sseResponse([
+      { skill: 'ws_grep', tool_use_id: 'tu_g' },
+      {
+        skill_result: 'ws_grep',
+        output: 'Error handling notes:\nsrc/a.ts:12: throw new Error(...)',
+        tool_use_id: 'tu_g',
+        is_error: false,
+        exit_code: null,
+      },
+    ]), sid, signal(), SETTINGS);
+
+    expect(live(sid)[0]).toMatchObject({ status: 'complete', isError: false, exitCode: null });
+    expect(getChatStore(sid).getState().lastToolError).toBeNull();
+  });
+
+  // The meta is what the server measured about the call (server/tool_meta.py):
+  // the row keeps it camelCased, live and once committed, so a chip never has
+  // to read a number out of a preview that may be cut short.
+  it('the meta of a result rides on the live row and on the committed row', async () => {
+    const frames = [
+      { skill: 'ws_write_file', tool_use_id: 'tu_m' },
+      {
+        skill_result: 'ws_write_file',
+        output: 'Wrote a.py (240 bytes).',
+        tool_use_id: 'tu_m',
+        is_error: false,
+        exit_code: null,
+        meta: {
+          duration_ms: 12,
+          output_chars: 23,
+          truncated: false,
+          lines: 12,
+          bytes: 240,
+          added: 3,
+          removed: 1,
+        },
+      },
+    ];
+    const meta = {
+      durationMs: 12,
+      outputChars: 23,
+      truncated: false,
+      lines: 12,
+      bytes: 240,
+      added: 3,
+      removed: 1,
+    };
+    await readSSEStream(sseResponse(frames), 'sess-meta-live', signal(), SETTINGS);
+    expect(live('sess-meta-live')[0].meta).toEqual(meta);
+
+    await readSSEStream(sseResponse([...frames, card]), 'sess-meta-commit', signal(), SETTINGS);
+    expect(committed('sess-meta-commit')[0].toolUse?.[0].meta).toEqual(meta);
+  });
+
+  it('the round a skill frame names rides on the live row and on the committed row', async () => {
+    const frames = [
+      { skill: 'ws_read_file', tool_use_id: 'tu_r0', round: 0 },
+      { skill_result: 'ws_read_file', output: 'A', tool_use_id: 'tu_r0', is_error: false, exit_code: null },
+      { skill: 'ws_grep', tool_use_id: 'tu_r1', round: 1 },
+      { skill_result: 'ws_grep', output: 'a.ts:1: x', tool_use_id: 'tu_r1', is_error: false, exit_code: null },
+      // An older server names no round: the row has none.
+      { skill: 'ws_read_file', tool_use_id: 'tu_old' },
+    ];
+    const result = await readSSEStream(sseResponse(frames), 'sess-round-live', signal(), SETTINGS);
+    expect(live('sess-round-live').map((t) => t.round)).toEqual([0, 1, undefined]);
+    expect(live('sess-round-live')[2]).not.toHaveProperty('round');
+    // What the approval continuation commits from.
+    expect(result.skillTraces.map((t) => t.round)).toEqual([0, 1, undefined]);
+
+    await readSSEStream(sseResponse([...frames, card]), 'sess-round-commit', signal(), SETTINGS);
+    const rows = committed('sess-round-commit')[0].toolUse ?? [];
+    expect(rows.map((t) => t.round)).toEqual([0, 1, undefined]);
+    expect(rows[2]).not.toHaveProperty('round');
+  });
+
+  it('a stream that resumes a turn counts its rounds on from the rows of that turn', async () => {
+    const sid = 'sess-round-base';
+    const at = (round?: number) => ({
+      toolId: `tu_${round ?? 'none'}`, toolName: 'ws_read_file', input: {}, status: 'complete' as const,
+      ...(round === undefined ? {} : { round }),
+    });
+    const earlier: ChatMessage = { role: 'assistant', content: 'done', timestamp: 't0', toolUse: [at(7)] };
+    const asked: ChatMessage = { role: 'user', content: 'go', timestamp: 't1' };
+    const paused: ChatMessage = { role: 'assistant', content: '', timestamp: 't2', toolUse: [at(0), at(2), at()] };
+    // Only the rows after the user's row are the turn on screen; the highest
+    // round there wins, and rows without rounds count for nothing.
+    expect(nextRoundBase([earlier, asked, paused])).toBe(3);
+    expect(nextRoundBase([earlier, asked])).toBe(0);
+    expect(nextRoundBase([asked, { ...paused, toolUse: [at()] }])).toBe(0);
+
+    getChatStore(sid).getState().setMessages([asked, paused]);
+    const result = await readSSEStream(sseResponse([
+      { skill: 'ws_grep', tool_use_id: 'tu_g', round: 0 },
+      { skill: 'ws_read_file', tool_use_id: 'tu_r', round: 1 },
+    ]), sid, signal(), SETTINGS);
+    expect(live(sid).map((t) => t.round)).toEqual([3, 4]);
+    expect(result.skillTraces.map((t) => t.round)).toEqual([3, 4]);
+  });
+
+  it('a result without a meta (an older server) leaves the row without one', async () => {
+    const sid = 'sess-meta-none';
+    await readSSEStream(sseResponse([
+      { skill: 'ws_grep', tool_use_id: 'tu_n' },
+      { skill_result: 'ws_grep', output: 'a.ts:1: x', tool_use_id: 'tu_n', is_error: false, exit_code: null },
+      card,
+    ]), sid, signal(), SETTINGS);
+    expect(committed(sid)[0].toolUse?.[0]).not.toHaveProperty('meta');
+  });
+
+  it('frames without a call id still pair by name order', async () => {
+    // What an adapter that cannot tag its frames sends (and what older
+    // transcripts replay): the input belongs to the call that started last,
+    // each result to the first call of that name still waiting for one.
+    const sid = 'sess-pair-name';
+    await readSSEStream(sseResponse([
+      { skill: 'task_create' },
+      { skill_input: 'task_create', input: { title: 'first' } },
+      { skill: 'task_create' },
+      { skill_input: 'task_create', input: { title: 'second' } },
+      { skill_result: 'task_create', output: 'created 1' },
+      { skill_result: 'task_create', output: 'created 2' },
+      card,
+    ]), sid, signal(), SETTINGS);
+
+    expect(committed(sid)[0].toolUse).toMatchObject([
+      { toolId: 'task_create', input: { title: 'first' }, result: 'created 1', status: 'complete' },
+      { toolId: 'task_create', input: { title: 'second' }, result: 'created 2', status: 'complete' },
+    ]);
+  });
+
+  it('skill_progress keys the live update by the call id when the frame carries one', async () => {
+    const sid = 'sess-progress-id';
+    const store = getChatStore(sid);
+    const keys: string[] = [];
+    const original = store.getState().updateStreamToolUse;
+    store.setState({
+      updateStreamToolUse: (key, updates) => {
+        if ('progressChars' in updates) keys.push(key);
+        original(key, updates);
+      },
+    });
+
+    await readSSEStream(sseResponse([
+      { skill: 'create_artifact', input: {}, tool_use_id: 'tu_art' },
+      { skill_progress: { name: 'create_artifact', chars: 8192, tool_use_id: 'tu_art' } },
+    ]), sid, signal(), SETTINGS);
+
+    expect(keys).toEqual(['tu_art']);
+    expect(live(sid)[0]).toMatchObject({ toolId: 'tu_art', progressChars: 8192 });
+  });
+
+  it('an approval pause marks the call the request names, not the last running row', async () => {
+    const sid = 'sess-pause-id';
+    await readSSEStream(sseResponse([
+      { skill: 'ws_write_file', tool_use_id: 'tu_a' },
+      { skill: 'ws_read_file', tool_use_id: 'tu_b' },
+      {
+        approval_request: {
+          tool_use_id: 'tu_a',
+          action: 'ws_write_file',
+          category: 'write',
+          preview: 'diff',
+          summary: 'Write a.ts',
+          payload: { path: 'a.ts' },
+        },
+      },
+    ]), sid, signal(), SETTINGS);
+
+    expect(live(sid)).toMatchObject([
+      { toolId: 'tu_a', status: 'complete', result: 'Awaiting approval: Write a.ts' },
+      { toolId: 'tu_b', status: 'running' },
+    ]);
+  });
+
+  it('an approval pause never overwrites the output of a finished same-named call', async () => {
+    // Untagged frames: the first write finished, the second one paused. The
+    // pause used to find the first trace by name and replace its output.
+    const sid = 'sess-pause-resolved';
+    await readSSEStream(sseResponse([
+      { skill: 'ws_write_file' },
+      { skill_result: 'ws_write_file', output: 'wrote a.ts' },
+      { skill: 'ws_write_file' },
+      {
+        approval_request: {
+          tool_use_id: 'tu_second',
+          action: 'ws_write_file',
+          category: 'write',
+          preview: 'diff',
+          summary: 'Write b.ts',
+          payload: { path: 'b.ts' },
+        },
+      },
+      card,
+    ]), sid, signal(), SETTINGS);
+
+    expect(committed(sid)[0].toolUse).toMatchObject([
+      { toolName: 'ws_write_file', result: 'wrote a.ts', status: 'complete' },
+      { toolName: 'ws_write_file', result: 'Awaiting approval: Write b.ts', status: 'complete' },
+    ]);
+  });
+
+  it('a call with no result commits as not run, never as done; the call a card waits on keeps its wait', async () => {
+    // Before, every unresolved trace committed 'complete', so the group read
+    // "Wrote a.py" with a check for a write that never ran.
+    const sid = 'sess-not-run';
+    await readSSEStream(sseResponse([
+      { skill: 'ws_write_file', tool_use_id: 'tu_a', round: 0 },
+      { skill: 'ws_write_file', tool_use_id: 'tu_b', round: 0 },
+      {
+        approval_request: {
+          tool_use_id: 'tu_a', action: 'ws_write_file', category: 'write', preview: 'diff',
+          summary: 'Write a.py', payload: { path: 'a.py' },
+        },
+      },
+      card,
+    ]), sid, signal(), SETTINGS);
+
+    const [paused, never] = committed(sid)[0].toolUse ?? [];
+    expect(paused).toMatchObject({ toolId: 'tu_a', status: 'complete', result: 'Awaiting approval: Write a.py' });
+    expect(never).toMatchObject({ toolId: 'tu_b', status: 'stopped', result: NOT_RUN_RESULT });
+  });
+
+  it("a result that lands after a card committed its row patches that row, and saves", async () => {
+    // A hook refuses the call: its card frame comes before the call's own
+    // result and commits the row above it, still without a result.
+    const sid = 'sess-late-result';
+    const save = vi.spyOn(useSessionStore.getState(), 'debouncedSave').mockImplementation(() => {});
+    await readSSEStream(sseResponse([
+      { skill: 'ws_run_command', tool_use_id: 'tu_rm', round: 0 },
+      { skill_input: 'ws_run_command', input: { command: 'rm -rf build' }, tool_use_id: 'tu_rm' },
+      { hook_blocked: { tool_name: 'ws_run_command', reason: 'no rm' } },
+      {
+        skill_result: 'ws_run_command', output: '[Hook denied] no rm', tool_use_id: 'tu_rm',
+        is_error: true, exit_code: null,
+      },
+    ]), sid, signal(), SETTINGS);
+
+    const rows = committed(sid);
+    expect(rows[0].toolUse).toMatchObject([
+      { toolId: 'tu_rm', status: 'error', result: '[Hook denied] no rm', isError: true, exitCode: null },
+    ]);
+    expect(rows[1].toolUse?.[0].toolName).toBe('hook_blocked');
+    expect(save).toHaveBeenCalledWith(sid);
+    save.mockRestore();
+  });
+});
+
+describe('readSSEStream activity_label', () => {
+  const signal = () => new AbortController().signal;
+  const committed = (sid: string) => getChatStore(sid).getState().messages;
+  const card = { workflow_started: { run_id: 'wf_1', name: 'nightly' } };
+  const hook = { hook_blocked: { tool_name: 'ws_run_command', reason: 'blocked' } };
+  /** One call's frames; `round` as the skill frame names it, none from an
+   *  older server. */
+  const call = (id: string, name = 'ws_read_file', round?: number) => [
+    { skill: name, tool_use_id: id, ...(round === undefined ? {} : { round }) },
+    { skill_input: name, input: { path: `${id}.ts` }, tool_use_id: id },
+    { skill_result: name, output: 'ok', tool_use_id: id, is_error: false, exit_code: null },
+  ];
+  const label = (ids: string[], text: string) => ({
+    activity_label: { tool_use_id: ids[0], tool_use_ids: ids, label: text },
+  });
+  /** The caption the committed view shows on each activity group: per run
+   *  of a turn's rows, the group's first toolId looked up across the run,
+   *  exactly as TurnSegment reads it. */
+  const shownCaptions = (sid: string) => turnEntries(committed(sid)).flatMap((entry) =>
+    entry.kind !== 'turn' ? [] : traceRuns(entry.rows).flatMap((run) => {
+      const rows = run.map((k) => entry.rows[k]);
+      return groupForActivity(groupAgentTools(rows.flatMap((r) => r.toolUse ?? [])), { minRun: ACTIVITY_MIN_RUN })
+        .filter(isActivityEntry)
+        .map((g) => captionIn(rows, g.tools[0].toolId) ?? null);
+    }));
+
+  afterEach(() => {
+    for (const id of useRuntimeIndex.getState().liveIds) dropRuntime(id);
+    vi.restoreAllMocks();
+  });
+
+  it('a caption for a live group lands on the message that commits it', async () => {
+    const sid = 'sess-label-live';
+    const result = await readSSEStream(sseResponse([
+      ...call('tu_1'),
+      ...call('tu_2', 'ws_grep'),
+      label(['tu_1', 'tu_2'], 'Found the config loader'),
+      card,
+    ]), sid, signal(), SETTINGS);
+
+    expect(committed(sid)[0].activityLabels).toEqual({ tu_1: 'Found the config loader' });
+    expect(shownCaptions(sid)).toEqual(['Found the config loader']);
+    // Taken by the commit: nothing is left for the caller to place again.
+    expect(result.activityLabels).toEqual([]);
+  });
+
+  it('a caption for calls still live when the stream ends is handed to the final commit', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(sseResponse([
+      ...call('tu_c1'),
+      label(['tu_c1'], 'Read the migration'),
+      { text: 'The migration adds one column.' },
+    ]));
+    const approval: PendingApproval = {
+      toolUseId: 'tu_w', action: 'ws_write_file', category: 'write', preview: 'diff',
+      summary: 'Write a.ts', payload: { path: 'a.ts' }, sessionId: 'sess-label-final',
+      alwaysAsks: false, turnSettings: SETTINGS,
+    };
+    await sendApprovalContinuation(approval, 'sess-label-final', true, undefined, { ok: true, output: 'wrote' });
+
+    const [message] = committed('sess-label-final');
+    expect(message.toolUse?.map((t) => t.toolId)).toEqual(['tu_c1']);
+    expect(message.activityLabels).toEqual({ tu_c1: 'Read the migration' });
+  });
+
+  it('a caption that lands after the flush patches the committed row and saves', async () => {
+    // What each save would write for the first row. The row count does not
+    // change on a patch, so only an explicit save can see the caption.
+    const saved: unknown[] = [];
+    vi.spyOn(useSessionStore.getState(), 'debouncedSave').mockImplementation((id) => {
+      saved.push(committed(id)[0]?.activityLabels);
+    });
+    const sid = 'sess-label-late';
+    await readSSEStream(sseResponse([
+      ...call('tu_1'),
+      card,
+      { text: 'Now the fix.' },
+      label(['tu_1'], 'Read the failing test'),
+    ]), sid, signal(), SETTINGS);
+
+    const rows = committed(sid);
+    expect(rows).toHaveLength(2);
+    expect(rows[0].activityLabels).toEqual({ tu_1: 'Read the failing test' });
+    expect(rows[1].activityLabels).toBeUndefined();
+    expect(saved[saved.length - 1]).toEqual({ tu_1: 'Read the failing test' });
+  });
+
+  it('each round is a group of its own, and its caption lands on that group alone', async () => {
+    const sid = 'sess-label-per-round';
+    await readSSEStream(sseResponse([
+      ...call('tu_1', 'ws_read_file', 0),
+      label(['tu_1'], 'Read the plan'),
+      ...call('tu_2', 'ws_grep', 1),
+      label(['tu_2'], 'Found every caller of the plan'),
+      card,
+    ]), sid, signal(), SETTINGS);
+
+    expect(committed(sid)[0].activityLabels).toEqual({ tu_1: 'Read the plan', tu_2: 'Found every caller of the plan' });
+    expect(shownCaptions(sid)).toEqual(['Read the plan', 'Found every caller of the plan']);
+  });
+
+  it('a group that spans rounds (frames that name none) keeps the last caption, under its first call', async () => {
+    const sid = 'sess-label-rounds';
+    await readSSEStream(sseResponse([
+      ...call('tu_1'),
+      label(['tu_1'], 'Read the plan'),
+      ...call('tu_2', 'ws_grep'),
+      label(['tu_2'], 'Found every caller of the plan'),
+      card,
+    ]), sid, signal(), SETTINGS);
+
+    expect(committed(sid)[0].activityLabels).toEqual({ tu_1: 'Found every caller of the plan' });
+  });
+
+  it('a group folded across tool-only rows takes the caption under the first call of the fold', async () => {
+    // A hook card commits the segment, so the group's calls end up on two
+    // tool-only rows that the transcript folds back into one group.
+    const sid = 'sess-label-fold';
+    await readSSEStream(sseResponse([
+      ...call('tu_1'),
+      hook,
+      ...call('tu_2', 'ws_grep'),
+      label(['tu_2'], 'Traced the blocked command'),
+      hook,
+    ]), sid, signal(), SETTINGS);
+
+    expect(committed(sid)[2].activityLabels).toEqual({ tu_1: 'Traced the blocked command' });
+    expect(shownCaptions(sid)).toEqual(['Traced the blocked command']);
+  });
+
+  it('a caption for calls nobody holds any more changes nothing', async () => {
+    const save = vi.spyOn(useSessionStore.getState(), 'debouncedSave');
+    const sid = 'sess-label-gone';
+    await readSSEStream(sseResponse([label(['tu_gone'], 'Read a file')]), sid, signal(), SETTINGS);
+    expect(committed(sid)).toEqual([]);
+    expect(save).not.toHaveBeenCalled();
   });
 });

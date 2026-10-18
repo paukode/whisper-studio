@@ -8,8 +8,8 @@ export interface DiffLine {
  * and memory. Past this the tab would stall or run out of heap, so callers
  * get a throw they can fall back from instead.
  *
- * Measured against the *changed span* only — the common head and tail are
- * stripped first — so this bites on files that genuinely differ throughout,
+ * Measured against the *changed span* only (the common head and tail are
+ * stripped first), so this bites on files that genuinely differ throughout,
  * not merely on long files. The server's FULL_MODE_MAX_CELLS applies the
  * same number to whole files, which is the stricter of the two and keeps
  * `full` payloads small; it is a bound on the wire, not on this table.
@@ -24,20 +24,11 @@ export class DiffTooLargeError extends Error {
 }
 
 /**
- * Compute a line-level diff between two strings.
+ * Compute a line-level diff between two files split into lines (callers trim
+ * artifacts such as a file's trailing newline first: see diffRows.toLines).
+ * A simple LCS over the changed span produces a minimal diff.
  *
- * Uses a simple LCS (longest common subsequence) approach on the
- * split lines to produce a minimal diff.
- *
- * Throws DiffTooLargeError when the inputs exceed MAX_DIFF_CELLS.
- */
-export function computeLineDiff(oldText: string, newText: string): DiffLine[] {
-  return computeLineDiffFromLines(oldText.split('\n'), newText.split('\n'));
-}
-
-/**
- * Line-array variant, for callers that have already split the sides (and
- * trimmed artifacts like a file's trailing newline). Same LCS, same bound.
+ * Throws DiffTooLargeError when the changed span exceeds MAX_DIFF_CELLS.
  */
 export function computeLineDiffFromLines(oldLines: string[], newLines: string[]): DiffLine[] {
   // Real edits touch a handful of lines in the middle of a file that is

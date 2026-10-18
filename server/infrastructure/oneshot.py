@@ -11,6 +11,7 @@ silently producing an empty completion.
 
 import json
 import logging
+from collections.abc import Callable
 
 log = logging.getLogger("whisper-studio")
 
@@ -104,6 +105,7 @@ def one_shot(
     feature: str = "This model call",
     source: str,
     session_id: str = "",
+    get_bedrock_client: Callable[[], object] | None = None,
 ) -> str:
     """Run one system+user prompt through a single completion and return the
     assistant text.
@@ -124,6 +126,10 @@ def one_shot(
     unset the resolver follows the resident/first-downloaded model (see
     :func:`resolve_local_key`) instead of a fixed key, so the map does not evict
     the active chat model.
+
+    ``get_bedrock_client`` gives the bedrock-runtime client of a Claude key
+    in place of the shared chat client (``_get_bedrock_client``); a GPT key
+    keeps its own mantle client.
 
     In Local mode the cloud branch raises
     :class:`~server.infrastructure.cloud_guard.CloudRefused` (its message,
@@ -197,8 +203,9 @@ def one_shot(
     )
     from server.costs.calls import invoke_claude
 
+    client = (get_bedrock_client or _get_bedrock_client)()
     payload = invoke_claude(
-        _get_bedrock_client(), model_id=model_id, body=body, source=source, session_id=session_id
+        client, model_id=model_id, body=body, source=source, session_id=session_id
     )
     text = "".join(b.get("text", "") for b in payload.get("content", []) if b.get("type") == "text")
     if not text:

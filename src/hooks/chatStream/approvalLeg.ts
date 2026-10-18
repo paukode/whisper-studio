@@ -24,7 +24,9 @@ import { useSessionStore } from '@/stores/sessionStore';
 import type { ChatMessage } from '@/types/chat';
 import { useUIStore } from '@/stores/uiStore';
 import { toError } from '@/utils/toError';
-import { approvalTarget, sendApprovalContinuation } from './sseStream';
+import { approvalTarget, sendApprovalContinuation } from './approvalContinuation';
+import { patchCommittedRows } from './committedRows';
+import { toolMetaWithStats } from './toolMeta';
 import {
   hasLiveStream,
   registerStreamController,
@@ -68,8 +70,10 @@ export async function answerApproval(
 
   if (!accepted) {
     // Nothing runs before the continuation, which claims the session itself
-    // synchronously, so there is no window to cover.
+    // synchronously, so there is no window to cover. The paused call's row
+    // says it was refused: the continuation carries no result for it.
     chat.getState().clearCurrentApproval();
+    patchDeniedRow(chat, sessionId, approval);
     await sendApprovalContinuation(approval, sessionId, false);
     return true;
   }
@@ -98,6 +102,8 @@ export async function answerApproval(
     const outcome = await runApprovedAction(approval);
     // From here an abort belongs to the continuation, which records its own stop.
     leg.signal.removeEventListener('abort', onAbort);
+    // The paused call's row says what the action did, whatever comes next.
+    patchApprovedRow(chat, sessionId, approval, outcome);
     if (stop.row) {
       recordOutcome(chat, sessionId, stop.row, approval, outcome);
       return true;
@@ -142,6 +148,56 @@ function recordOutcome(
   useSessionStore.getState().debouncedSave(sessionId);
 }
 
+/** The row keeps a preview of the result, cut where the server cuts the
+ *  skill_result preview a live turn persists (server/tool_executor.py). */
+const RESULT_PREVIEW_CHARS = 2000;
+
+/** Write the approved action's outcome onto the row the paused turn
+ *  committed for its call (committedRows.patchCommittedRows): the result
+ *  replaces "Awaiting approval: ...", the status says how it went, a
+ *  command's exit status becomes the row's exit code, and a write's diff
+ *  stats become the row's meta (the inline path gets the same numbers from
+ *  its skill_result frame). The text is the one the inline path gives the
+ *  model (server/tool_approvals.py inline_result_text). */
+export function patchApprovedRow(
+  chat: StoreApi<ChatState>,
+  sessionId: string,
+  approval: PendingApproval,
+  outcome: ApprovalOutcome,
+): void {
+  if (!approval.toolUseId) return;
+  let result: string;
+  if (outcome.ok) {
+    result = outcome.output || `[OK] ${approval.action}`;
+  } else {
+    // A command that ran and failed carries its output next to the exit code.
+    const error = `Error: ${outcome.error || 'unknown error'}`;
+    result = outcome.output ? `${error}\n\n${outcome.output}` : error;
+  }
+  if (result.length > RESULT_PREVIEW_CHARS) result = `${result.slice(0, RESULT_PREVIEW_CHARS)}...`;
+  const stats = outcome.stats;
+  patchCommittedRows(chat, sessionId, approval.toolUseId, {
+    result,
+    status: outcome.ok ? 'complete' : outcome.stopped ? 'stopped' : 'error',
+    isError: !outcome.ok,
+    exitCode: outcome.exit_code ?? null,
+    ...(stats ? { meta: (old) => toolMetaWithStats(old, stats) } : {}),
+  });
+}
+
+/** The row of a call the user refused on its card: an error that says so,
+ *  the way an inline session-rule denial reads ("Write a.py failed"), not
+ *  the "Awaiting approval" it was committed with. */
+function patchDeniedRow(chat: StoreApi<ChatState>, sessionId: string, approval: PendingApproval): void {
+  if (!approval.toolUseId) return;
+  patchCommittedRows(chat, sessionId, approval.toolUseId, {
+    result: `[Denied by user] ${approval.action}: ${approvalTarget(approval)}`,
+    status: 'error',
+    isError: true,
+    exitCode: null,
+  });
+}
+
 /** Run the approved action. Never throws: a failed request becomes a truthful
  *  FAILED outcome, so the model learns the action did not happen. */
 async function runApprovedAction(approval: PendingApproval): Promise<ApprovalOutcome> {
@@ -149,7 +205,12 @@ async function runApprovedAction(approval: PendingApproval): Promise<ApprovalOut
   try {
     // Single executor: the backend looks up the spec and runs its registered
     // function. No per-action switch on the frontend.
-    outcome = await executeApproval({ action: approval.action, payload: approval.payload });
+    // The call's id lets a write keep its edit for the diff dialog.
+    outcome = await executeApproval({
+      action: approval.action,
+      payload: approval.payload,
+      tool_use_id: approval.toolUseId,
+    });
   } catch (err) {
     console.error('Approval execution failed:', err);
     outcome = { ok: false, error: toError(err).message };

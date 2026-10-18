@@ -716,7 +716,7 @@
             language detection and the translation line all attach per utterance. Because the buffer
             flushes on silence and not on speaker change, a handover with no gap lands inside one
             utterance, which is what <b>speaker turn splitting</b> exists to fix. In <b>voice mode</b>
-            the same word means one spoken turn, and each gets its own chat bubble.</td>
+            the same word means one spoken turn, and the app writes each one to the chat as a message.</td>
         </tr>
         <tr>
           <td><code>VAD</code></td>
@@ -741,7 +741,7 @@
             composer. <b>Nova 2 Sonic</b> carries the voice while the session's own model does the work
             through the same tools as typed chat, so it can read files, run commands and delegate.
             Approvals are asked aloud and shown as the usual card. The composer is replaced by a voice
-            bar (Type instead, Mute, End); one bubble is written per <b>utterance</b>, so the
+            bar (Type instead, Mute, End); the app writes one message for each <b>utterance</b>, so the
             conversation is in your history afterwards. Long delegated work keeps running in the
             background and is reported back, and hanging up never cancels it. Distinct from dictation
             (speaking one message into the composer) and from meeting transcription. See

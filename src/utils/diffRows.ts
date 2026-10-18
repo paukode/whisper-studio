@@ -5,6 +5,10 @@ import type { DiffHunk, DiffHunkLine } from '@/api/git';
 export interface DiffSide {
   no: number;
   text: string;
+  /** On a replaced line whose ending is what changed: it has none (the end
+   *  of a file with no final newline) or it ends in CRLF where the line
+   *  opposite ends in LF. The grid draws a note in its place. */
+  eol?: 'none' | 'crlf';
 }
 
 /**
@@ -41,16 +45,40 @@ export function toLines(text: string): string[] {
   return lines;
 }
 
+/** Ends the last line of a text that has no final newline when the other
+ *  text has one, while the two are compared: "b" at the end of a file and
+ *  "b\n" are then different lines, the way git and the server's counts
+ *  (server/workspace/edits.py diff_stats) see them. Taken off again for the
+ *  rows (DiffSide.eol). */
+const NO_EOL = '\u0000';
+
+/** The lines of both texts for the diff: toLines, and NO_EOL on the last
+ *  line of the one that has no final newline when only one of them has it.
+ *  A created or deleted file (one text empty) has nothing to compare it
+ *  with. */
+function linesForDiff(oldText: string, newText: string): [string[], string[]] {
+  const oldLines = toLines(oldText);
+  const newLines = toLines(newText);
+  if (oldText !== '' && newText !== '' && oldText.endsWith('\n') !== newText.endsWith('\n')) {
+    const open = oldText.endsWith('\n') ? newLines : oldLines;
+    open[open.length - 1] += NO_EOL;
+  }
+  return [oldLines, newLines];
+}
+
 /**
  * Build rows for `full` mode: diff both sides, then pair each removal run
  * with the addition run that follows it so a replaced line sits opposite
- * its replacement.
+ * its replacement. A line whose ending alone changed (CRLF to LF, a final
+ * newline added or taken off) counts as changed, as git counts it, and its
+ * row says so (DiffSide.eol).
  *
- * May throw DiffTooLargeError — the server only sends `full` within the
- * same bound, so that means the caller bypassed it.
+ * Throws DiffTooLargeError when the changed span is over MAX_DIFF_CELLS.
+ * The Git panel gets `full` only within that bound. A stored edit and the
+ * approval card can go over it, and their callers show a fallback.
  */
 export function rowsFromTexts(oldText: string, newText: string): DiffRow[] {
-  const diff = computeLineDiffFromLines(toLines(oldText), toLines(newText));
+  const diff = computeLineDiffFromLines(...linesForDiff(oldText, newText));
 
   let oldNo = 0;
   let newNo = 0;
@@ -136,6 +164,38 @@ export function collapseUnchanged(rows: DiffRow[], context = DEFAULT_CONTEXT_LIN
   return out;
 }
 
+/** A line's text as the grid draws it, and how it ended: with no newline
+ *  (NO_EOL), with CRLF, or with LF. */
+interface BareLine {
+  text: string;
+  end: 'none' | 'crlf' | 'lf';
+}
+
+function bare(text: string): BareLine {
+  if (text.endsWith(NO_EOL)) return { text: text.slice(0, -1).replace(/\r$/, ''), end: 'none' };
+  if (text.endsWith('\r')) return { text: text.slice(0, -1), end: 'crlf' };
+  return { text, end: 'lf' };
+}
+
+/** One side of a changed row, marked where its ending is the difference:
+ *  against the line opposite it, or, standing alone, as a last line with
+ *  no newline. */
+function changeSide(no: number, own: BareLine, other: BareLine | null): DiffSide {
+  const { text, end } = own;
+  if (end === 'lf' || (other ? other.end === end : end !== 'none')) return { no, text };
+  return { no, text, eol: end };
+}
+
+/** The two sides of a changed row. */
+function changeSides(del: DiffHunkLine | undefined, add: DiffHunkLine | undefined): [DiffSide | null, DiffSide | null] {
+  const left = del ? bare(del.text) : null;
+  const right = add ? bare(add.text) : null;
+  return [
+    del && left ? changeSide(del.old ?? 0, left, right) : null,
+    add && right ? changeSide(add.new ?? 0, right, left) : null,
+  ];
+}
+
 /** Pair consecutive del/add runs into single rows. */
 function pairOps(ops: DiffHunkLine[]): DiffRow[] {
   const rows: DiffRow[] = [];
@@ -145,17 +205,18 @@ function pairOps(ops: DiffHunkLine[]): DiffRow[] {
     const op = ops[i];
 
     if (op.type === 'context') {
+      const { text } = bare(op.text);
       rows.push({
         kind: 'unchanged',
-        left: { no: op.old ?? 0, text: op.text },
-        right: { no: op.new ?? 0, text: op.text },
+        left: { no: op.old ?? 0, text },
+        right: { no: op.new ?? 0, text },
       });
       i += 1;
       continue;
     }
 
     // git emits removals before additions, but the LCS backtrack can
-    // yield either order — collect whichever leads, then its counterpart,
+    // yield either order: collect whichever leads, then its counterpart,
     // so a replaced line still lands opposite its replacement.
     const dels: DiffHunkLine[] = [];
     const adds: DiffHunkLine[] = [];
@@ -175,13 +236,8 @@ function pairOps(ops: DiffHunkLine[]): DiffRow[] {
 
     const pairs = Math.max(dels.length, adds.length);
     for (let k = 0; k < pairs; k++) {
-      const del = dels[k];
-      const add = adds[k];
-      rows.push({
-        kind: 'change',
-        left: del ? { no: del.old ?? 0, text: del.text } : null,
-        right: add ? { no: add.new ?? 0, text: add.text } : null,
-      });
+      const [left, right] = changeSides(dels[k], adds[k]);
+      rows.push({ kind: 'change', left, right });
     }
   }
 

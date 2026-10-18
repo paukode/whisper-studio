@@ -26,37 +26,59 @@ export function extractFlatCronPayload(m: ChatMessageType): CronEventPayload | n
   };
 }
 
-/**
- * Export a single assistant message as markdown with full metadata.
- */
-export function exportSingleMessage(message: ChatMessageType): void {
-  let md = `# Assistant Response\n\n`;
-  md += `**Time:** ${message.timestamp}\n\n`;
+/** The prose of an assistant turn: every row that has any, a blank line
+ *  between them. What Copy takes and what an export calls the response. */
+export function turnText(rows: readonly ChatMessageType[]): string {
+  return rows
+    .map((r) => r.content ?? '')
+    .filter((c) => c.trim())
+    .join('\n\n');
+}
 
-  if (message._thinkingText) {
-    md += `## Thinking (${((message._thinkingMs ?? 0) / 1000).toFixed(1)}s)\n\n`;
-    md += `${message._thinkingText}\n\n`;
+/**
+ * Export one assistant turn as markdown with full metadata: the thinking,
+ * the tools and the prose of every row the turn committed.
+ */
+export function exportTurn(rows: readonly ChatMessageType[]): void {
+  if (rows.length === 0) return;
+  let md = `# Assistant Response\n\n`;
+  md += `**Time:** ${rows[rows.length - 1].timestamp}\n\n`;
+
+  for (const message of rows) {
+    if (message._thinkingText) {
+      md += `## Thinking (${((message._thinkingMs ?? 0) / 1000).toFixed(1)}s)\n\n`;
+      md += `${message._thinkingText}\n\n`;
+    }
   }
 
-  if (message.toolUse?.length) {
+  const tools = rows.flatMap((m) => m.toolUse ?? []);
+  if (tools.length) {
     md += `## Tools Used\n\n`;
-    for (const tool of message.toolUse) {
+    for (const tool of tools) {
       md += `- **${tool.toolName}** (${tool.status})\n`;
       if (tool.result) md += `  \`\`\`\n  ${tool.result.slice(0, 500)}\n  \`\`\`\n`;
     }
     md += '\n';
   }
 
-  if (message.userQuestion) {
-    md += `## User Question\n\n`;
-    md += `**Q:** ${message.userQuestion.question}\n`;
-    md += `**Options:** ${message.userQuestion.options.join(', ')}\n\n`;
+  for (const message of rows) {
+    if (message.userQuestion) {
+      md += `## User Question\n\n`;
+      md += `**Q:** ${message.userQuestion.question}\n`;
+      md += `**Options:** ${message.userQuestion.options.join(', ')}\n\n`;
+    }
   }
 
-  md += `## Response\n\n${message.content}\n\n`;
+  md += `## Response\n\n${turnText(rows)}\n\n`;
 
-  if (message._usage) {
-    md += `---\n*Tokens: ${message._usage.input_tokens.toLocaleString()} in / ${message._usage.output_tokens.toLocaleString()} out*\n`;
+  const usage = rows.reduce(
+    (acc, m) => (m._usage
+      ? { input: acc.input + m._usage.input_tokens, output: acc.output + m._usage.output_tokens, seen: true }
+      : acc),
+    { input: 0, output: 0, seen: false },
+  );
+  if (usage.seen) {
+    md += `---\n*Tokens: ${usage.input.toLocaleString()} in / ${usage.output.toLocaleString()} out*\n`;
   }
 
   downloadFile(md, `message-${Date.now()}.md`, 'text/markdown');

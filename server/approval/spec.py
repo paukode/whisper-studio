@@ -41,6 +41,24 @@ class ApprovalOutcome:
     # The user's Stop ended the action before it finished (an approved
     # ws_run_command; see server/approval/executors.py).
     stopped: bool = False
+    # What a file write changed, computed once where the write happened
+    # (server/approval/executors.py _do_write): added and removed lines
+    # against the file before the write, and the lines and bytes of the file
+    # on disk after it (so a ruff reformat counts). ``approximate`` says the
+    # exact diff was over its bounds; ``stored`` says whether the texts were
+    # kept for the diff dialog (server/workspace/edits.py). None for every
+    # other action, and for a write whose file could not be read back. The
+    # inline path puts it in its skill_result meta and the card's POST
+    # returns it; a spoken yes stores the edit but carries no stats, since
+    # voice rows have no meta.
+    stats: dict | None = None
+    # A command's own exit status, for the exit chip of its row: set by the
+    # command executors when the command finished (ws_run_command's run, an
+    # aws CLI call); None for every other action and for a command that went
+    # to the background or was stopped before it finished. The card's POST
+    # returns it; the inline path reads the same status from the result text
+    # (server/tool_executor.py tool_outcome).
+    exit_code: int | None = None
 
 
 def refuse_if_agent(payload: dict, what: str = "This action") -> ApprovalOutcome | None:
@@ -221,7 +239,7 @@ def stale_workspace_refusal(
 def turn_workspace_refusal(spec: ApprovalSpec, payload: dict) -> str | None:
     """Why the running turn may not run this workspace-bound action now, or None.
 
-    The gate (server/tool_executor.py) asks before it raises a card and again
+    The gate (server/tool_approvals.py) asks before it raises a card and again
     right before it runs an action no card waits for (a session approval, the
     auto-mode classifier, an unattended agent), each time under the turn's
     workspace latch. Refused when the user let go of the turn's workspace

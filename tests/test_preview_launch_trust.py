@@ -22,6 +22,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from server import tool_approvals
 from server import tool_executor as te
 from server.approval import registry as approval_registry
 from server.approval.bootstrap import register_defaults
@@ -62,8 +63,10 @@ def _isolated(tmp_path, monkeypatch):
         "server.security.permissions.load_permissions",
         lambda: {"mode": MODE_DEFAULT, "rules": [], "category_modes": {}},
     )
-    monkeypatch.setattr(te, "classify_tool_call", AsyncMock(return_value={"decision": "confirm"}))
-    monkeypatch.setattr(te, "explain_permission", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        tool_approvals, "classify_tool_call", AsyncMock(return_value={"decision": "confirm"})
+    )
+    monkeypatch.setattr(tool_approvals, "explain_permission", AsyncMock(return_value=None))
 
 
 @pytest.fixture

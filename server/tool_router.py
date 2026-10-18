@@ -146,11 +146,11 @@ async def route_tool(
     # --- Sleep ---
     if tool_name == "sleep":
         secs = min(float(tool_input.get("seconds", 3)), 30)
-        side_effects.append({"skill": "sleep", "input": {"seconds": secs}})
         await asyncio.sleep(secs)
-        output = f"Slept for {secs} seconds."
-        side_effects.append({"skill_result": "sleep", "output": output})
-        return output, side_effects
+        # The runner emitted the call's skill frame and the gate emits its
+        # skill_result (with its meta), as for every other tool, so the
+        # router adds no frame of its own.
+        return f"Slept for {secs} seconds.", side_effects
 
     # --- Ask user question ---
     if tool_name == "ask_user_question":

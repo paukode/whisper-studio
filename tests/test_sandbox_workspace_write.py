@@ -190,7 +190,7 @@ def test_the_inline_path_stamps_every_payload_unreviewed(monkeypatch):
     from server.approval import registry
     from server.approval.bootstrap import register_defaults
     from server.approval.spec import UNREVIEWED_KEY, ApprovalOutcome
-    from server.tool_executor import _execute_ws_approval_inline
+    from server.tool_approvals import _execute_ws_approval_inline
 
     register_defaults()
     seen = {}
@@ -200,7 +200,10 @@ def test_the_inline_path_stamps_every_payload_unreviewed(monkeypatch):
         return ApprovalOutcome(ok=True, output="ran")
 
     monkeypatch.setattr(registry.get("command"), "executor", spy)
-    assert asyncio.run(_execute_ws_approval_inline({"action": "command", "command": "ls"})) == "ran"
+    assert (
+        asyncio.run(_execute_ws_approval_inline({"action": "command", "command": "ls"})).output
+        == "ran"
+    )
     assert seen[UNREVIEWED_KEY] is True and "__agent__" not in seen
     asyncio.run(_execute_ws_approval_inline({"action": "command", "command": "ls"}, agent=True))
     assert seen["__agent__"] is True

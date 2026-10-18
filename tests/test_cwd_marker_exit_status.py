@@ -38,7 +38,7 @@ def test_succeeding_command_still_reports_zero(tmp_path):
 def test_approved_command_failure_reaches_the_model_with_its_output(tmp_path, monkeypatch):
     from server import workspace
     from server.approval.bootstrap import _do_command, register_defaults
-    from server.tool_executor import _execute_ws_approval_inline
+    from server.tool_approvals import _execute_ws_approval_inline, inline_result_text
 
     register_defaults()  # idempotent; registers the "command" ApprovalSpec
     monkeypatch.setattr(workspace, "get_workspace_path", lambda: str(tmp_path))
@@ -49,6 +49,7 @@ def test_approved_command_failure_reaches_the_model_with_its_output(tmp_path, mo
     assert outcome.error.startswith("exit code ")
     assert "partial-output" in outcome.output
 
-    text = asyncio.run(_execute_ws_approval_inline({"action": "command", "command": command}))
+    inline = asyncio.run(_execute_ws_approval_inline({"action": "command", "command": command}))
+    text = inline_result_text("command", inline)
     assert text.startswith("Error: exit code ")
     assert "partial-output" in text

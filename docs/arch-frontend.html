@@ -231,7 +231,7 @@
       <tbody>
         <tr><td><code>text</code></td><td>Appended to the streaming buffer via <code>appendStreamToken</code>.</td></tr>
         <tr><td><code>thinking</code> / <code>thinking_start</code> / <code>thinking_stop</code></td><td>Drives the adaptive thinking block and its elapsed timer.</td></tr>
-        <tr><td><code>skill</code> / <code>skill_input</code> / <code>skill_result</code></td><td>Starts, fills, and completes a live tool trace; also refreshes the Git panel and file tree after mutating tools.</td></tr>
+        <tr><td><code>skill</code> / <code>skill_input</code> / <code>skill_result</code></td><td>Starts, fills, and completes a live tool trace; also refreshes the Git panel and file tree after mutating tools. The trace keeps the <code>round</code> of the <code>skill</code> frame.</td></tr>
         <tr><td><code>approval_request</code></td><td>Enqueues a <a href="arch-approval.html">pending approval</a>, or auto-accepts/denies it from session memory.</td></tr>
         <tr><td><code>ws_workspace_prompt</code></td><td>Enqueues the <code>WorkspacePromptCard</code>: a workspace-connect-only prompt, shown when a workspace-write tool pauses because no workspace is connected (or the target is outside it). Save-anywhere requests never reach it; see the callout below.</td></tr>
         <tr><td><code>ws_auto_applied</code></td><td>Refreshes the workspace tree and marks the affected file dirty in an open editor tab for a pre-approved action the server already executed.</td></tr>
@@ -253,6 +253,7 @@
         <tr><td><code>error</code></td><td>Logs the backend's error text and appends it inline to the response instead of losing the partial answer.</td></tr>
         <tr><td><code>hook_blocked</code> / <code>stop_hook_block</code></td><td>Surfaces a <a href="arch-tools.html">blocking hook</a>'s veto and the completion gate's reason for continuing the turn.</td></tr>
         <tr><td><code>skill_progress</code></td><td>A tool call's arguments are still streaming; the running step shows how much has arrived (<code>7.3 KB</code>, then <code>143 KB</code>) next to its spinner.</td></tr>
+        <tr><td><code>activity_label</code></td><td>Puts the caption on the activity group that holds the calls of the round, under the first call of the group (<code class="path">src/hooks/chatStream/activityLabels.ts</code>). The caption replaces the label, and the deterministic sentence becomes the tail. If the group failed, the failure stays the label, and the caption becomes the tail. A caption for a row that is in the transcript changes that row and saves the session. While the calls stream, the stream state keeps the caption, and the live row shows it immediately. When the stream commits the row, the committed row shows the same caption. This is also true when you stop the turn.</td></tr>
         <tr><td><code>budget_warning</code></td><td>The session or daily cost cap tripped. The first one announces the reserved final round; the second ends the turn.</td></tr>
         <tr><td><code>turn_downgrade</code></td><td>This turn is not running on what the composer shows, so the UI says so rather than letting the picker lie.</td></tr>
         <tr><td><code>viz_artifact</code></td><td>A rendered chart or diagram, attached to the settled message as its own card.</td></tr>
@@ -316,23 +317,49 @@
     <p>A long agentic turn can produce dozens of tool calls. Rendered one bubble per step, the
       answer disappears into the machinery, so three rules shape what you actually see.</p>
     <div class="spec">
-      <dt>Tool steps collapse into one activity row</dt><dd>Consecutive tool calls are folded by
-        <code>groupForActivity</code> into a single <code>ActivityRow</code>
-        (<code class="path">src/components/chat/ActivityRow.tsx</code>): a collapsed header reading
-        <b>Activity</b>, the step count, and a badge summarising the run (a tick and a count when
-        everything succeeded, or a count of running, errored or stopped steps). Expanding it lists
-        each step with its tool name, a one-line detail, and a toggle for the full output;
-        <b>Expand all</b> opens every output at once. A row that contains an error opens by default.
-        The same grouping constant is shared by the live streaming view and the committed
-        transcript, so the row you watched does not jump or vanish when the turn ends or when you
-        reload the session.</dd>
-      <dt>Prose before a tool call gets its own bubble</dt><dd>Text the model writes <em>before</em>
-        it acts is a finished thought, so the stream commits it as a standalone message and starts a
-        new one for whatever comes after the tool work. Concatenating both produced replies like
-        "No. ... Yes, it's saved now." in a single bubble. Tool-only stretches are left to
-        accumulate, and runs of bare tool-only rows are re-folded into one entry at the display layer
-        (<code class="path">src/components/chat/groupToolOnlyRuns.ts</code>) while keeping the real
-        store indices, so edit, delete and regenerate still address the right message.</dd>
+      <dt>Tool steps collapse into one activity row</dt><dd><code>groupForActivity</code> puts a
+        sequence of tool calls into one <code>ActivityRow</code>
+        (<code class="path">src/components/chat/ActivityRow.tsx</code>). Each model round gets its
+        own row. A new row starts when the <code>round</code> of the next call is different from the
+        <code>round</code> of the row. The server counts the rounds of each request from 0. A request
+        that continues a turn after an approval or an answer also starts at 0. Thus the browser adds
+        a base to each <code>round</code> of a request. The base is 1 more than the highest
+        <code>round</code> of the turn, or 0 if no call in the turn has a <code>round</code>
+        (<code>nextRoundBase</code> in <code class="path">src/hooks/chatStream/sseStream.ts</code>).
+        A call without a <code>round</code> does not start a new row. Examples are a refusal card,
+        which stays with the call that it blocked, and a row from an older transcript. A card comes
+        after the call that it blocked. Thus, when a row holds only cards, the next call with a
+        <code>round</code> starts a new row. The collapsed row is one
+        line with a label that shows what the group did, for example <b>Read 3 files</b> or
+        <b>ruff check failed</b>. A monospace tail shows the file names or the command, and chips
+        show the diff, line, match, and exit counts. An expanded row shows one line for each call
+        with a file link, a diff pill, and an output toggle. The diff pill opens the diff dialog of the
+        Git panel (<code class="path">src/components/git/DiffDialog.tsx</code>) through
+        <code class="path">src/components/chat/EditDiffViewer.tsx</code>. The dialog shows
+        the file before and after that call, from <code>GET /api/workspace/edits/{tool_use_id}</code>.
+        <b>Expand all</b> shows each output, and
+        a row with an error is open at the start. Because the streaming view and the saved
+        transcript use the same constant, <code>ACTIVITY_MIN_RUN</code>, the row does not move when
+        the turn ends. When the auxiliary model returns a caption for the group (the
+        <code>activity_label</code> frame), the caption replaces the label and the sentence becomes
+        the tail. If the group failed, the failure stays the label, for example <b>ruff check
+        failed</b>, and the caption becomes the tail. In Local mode, in a chat that uses an
+        on-device model, or when the caption call fails, the row keeps the sentence.</dd>
+      <dt>One bubble for each assistant turn</dt><dd>Text that the model writes <em>before</em> a
+        tool call is a complete thought, so the stream commits it as a row of its own. The store keeps
+        these rows separate, because their indices control edit, delete, regenerate, the task
+        checkpoints, and the deliveries. <code class="path">src/components/chat/turnEntries.ts</code>
+        puts each run of consecutive assistant rows into one turn, and <code>TurnBubble</code>
+        (<code class="path">src/components/chat/TurnBubble.tsx</code>) shows the turn in one bubble.
+        Each row shows as a <code>TurnSegment</code>. When a row has no text after its tool calls,
+        the rows of only tool calls that come directly after it show in the same segment
+        (<code>traceRuns</code>), and the tool calls of these rows show as one list. Thus a call and
+        the refusal card that comes after it show as one group. Then the "Verified" chips, the
+        timestamp, and the actions show one time. A workflow or CI card stays in the turn when the row
+        before it has the model call that made the card (<code>workflow_run</code>,
+        <code>ci_watch</code>, or <code>ci_autofix</code>). A card that a slash command or the
+        <b>Autofix</b> button adds starts a new turn. While the turn streams, the live reply shows at
+        the end of the same bubble.</dd>
       <dt>Agent work gets a row, not a transcript</dt><dd>Consecutive agent-orchestration calls
         become an <code>AgentCard</code>, or one agent row each (<code>AgentRows.tsx</code>) when
         matching team results arrived: name, state, and <b>Open</b>. Open puts the agent in the dock's
@@ -344,8 +371,8 @@
         without losing its loaded context. See <a href="arch-agent-recorder.html">the agent flight
         recorder</a>.</dd>
     </div>
-    <p>Beyond the two chat roles, <code class="path">src/components/chat/ChatMessage.tsx</code>
-      renders four card roles that short-circuit the normal bubble: <code>cron_event</code>,
+    <p><code class="path">src/components/chat/ChatMessage.tsx</code> shows the user bubble and
+      four card roles that do not use the normal bubble: <code>cron_event</code>,
       <code>session_message</code>, <code>agent_report</code>, and
       <code>agent_answer</code> (an assistant bubble labelled "Answered from the agents' reports",
       with the team name appended when there is one).</p>
@@ -366,8 +393,8 @@
         <a href="ref-security.html">security model</a>.</p></div>
     </div>
 
-    <h3 id="chat-links">Chat links: citations, created files, and localhost</h3>
-    <p>A rendered message can contain three kinds of link the app intercepts instead of letting the
+    <h3 id="chat-links">Chat links: citations, created files, path mentions, and localhost</h3>
+    <p>A rendered message can contain four kinds of link the app intercepts instead of letting the
       browser handle them, all wired through one delegated click handler,
       <code>attachWsFileHandlers</code> in <code class="path">src/utils/wsFileLinks.ts</code> (delegated
       so it survives the streaming <code>innerHTML</code> swaps that would otherwise detach a
@@ -385,6 +412,16 @@
         A plain click opens it with the OS default app - there is no in-app dock view to fall back to for
         a brand-new file - while a modifier-click still reveals it, for consistency with every other
         <code>#wsfile=</code> link.</li>
+      <li><b>Path mentions</b> are workspace paths that the assistant writes as plain text, for
+        example <code>server/goals/gate.py:40-44</code>. Before <code>marked</code> parses the text,
+        <code>linkifyPaths</code> in <code class="path">src/utils/pathLinks.ts</code> changes each
+        mention to a citation link with the same <code>#wsfile=</code> fragment. A <code>:line</code>
+        or <code>:start-end</code> suffix gives the <code>&amp;L=</code> range. The function does not
+        change code (fences, code spans, and the <code>pre</code>, <code>code</code>,
+        <code>kbd</code> and <code>samp</code> elements), links, or web addresses. When no workspace
+        is connected, the function does not change the text. The file preview and the notebook viewer
+        set <code>linkPaths={false}</code> on <code>MarkdownRenderer</code>, because a relative path
+        in a file can start at the folder of that file, not at the workspace root.</li>
       <li><b>Localhost links</b> (<code>http://localhost:*</code> / <code>127.0.0.1</code> /
         <code>[::1]</code>, any port) route into the <a href="arch-preview.html">Live preview</a> pane
         instead of opening a browser tab, since the assistant only ever names one when it started or is
@@ -422,13 +459,17 @@
       <dt><code class="path">src/components/layout/AppStatusBar.tsx</code></dt><dd>Persistent bottom status strip (WS-H): model, effort, permission mode, git, context meter, tokens/cost, background-task pill.</dd>
       <dt><code class="path">src/stores/sessionRuntimes.ts</code></dt><dd>The per-session runtime registry: stores, event streams, LRU eviction; also routes <code>task_event</code>/<code>ci_progress</code>/<code>ci_result</code>.</dd>
       <dt><code class="path">src/hooks/useChatStream.ts</code></dt><dd>The send path: bind the owning session, POST, commit atomically.</dd>
-      <dt><code class="path">src/hooks/chatStream/sseStream.ts</code></dt><dd>The SSE parser and the approval-continuation pump.</dd>
+      <dt><code class="path">src/hooks/chatStream/sseStream.ts</code></dt><dd>The SSE parser.</dd>
+      <dt><code class="path">src/hooks/chatStream/approvalContinuation.ts</code></dt><dd>The approval-continuation pump.</dd>
       <dt><code class="path">src/hooks/chatStream/sseEventCards.ts</code></dt><dd>Declarative one-card-per-frame SSE events split out of <code>sseStream.ts</code> (<code>plan_blocked</code>, <code>security_blocked</code>, <code>hook_blocked</code>, <code>goal_eval</code>, and more).</dd>
       <dt><code class="path">src/utils/sanitizeHtml.ts</code></dt><dd>Safe Markdown rendering (marked + DOMPurify).</dd>
       <dt><code class="path">src/utils/wsFileLinks.ts</code></dt><dd>Delegated click handling for citation, created-file, and localhost links in rendered messages.</dd>
       <dt><code class="path">src/components/chat/WorkspacePromptCard.tsx</code></dt><dd>The workspace-connect-only prompt card and its answers-array resume.</dd>
-      <dt><code class="path">src/components/chat/ChatMessage.tsx</code></dt><dd>The seven message roles and the two grouping passes that produce the readable transcript.</dd>
-      <dt><code class="path">src/components/chat/ActivityRow.tsx</code></dt><dd>The collapsed activity row: step list, per-step output, and the streaming size readout.</dd>
+      <dt><code class="path">src/components/chat/ChatMessage.tsx</code></dt><dd>The user bubble and the card roles.</dd>
+      <dt><code class="path">src/components/chat/turnEntries.ts</code></dt><dd>The display fold: each run of consecutive assistant rows becomes one turn, and <code>traceRuns</code> finds the rows whose tool calls show as one list.</dd>
+      <dt><code class="path">src/components/chat/TurnBubble.tsx</code></dt><dd>One bubble for each assistant turn: the rows of the turn, then the Verified chips, the timestamp, and the actions.</dd>
+      <dt><code class="path">src/components/chat/TurnSegment.tsx</code></dt><dd>One set of rows in the bubble of their turn: the thinking, the tool groups of all the rows as one list, the prose, and the cards.</dd>
+      <dt><code class="path">src/components/chat/ActivityRow.tsx</code></dt><dd>The activity row: the group label, the chips, one line for each call, and the output of each call.</dd>
       <dt><code class="path">src/components/chat/AgentRows.tsx</code></dt><dd>One row per agent in the chat, with Open for the dock's agent pane.</dd>
       <dt><code class="path">src/components/preview/AgentPanel.tsx</code></dt><dd>The agent pane: status line, Extend, Stop, and the live feed of everything the agent does.</dd>
       <dt><code class="path">src/components/tasks/BackgroundTasksPanel.tsx</code></dt><dd>The list under the header's tasks pill: every task across sessions, unfolding details, Open, Stop, and the 30 second linger of a finished row.</dd>

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useUIStore } from '@/stores/uiStore';
 import { settleWorkspaceOps, syncWorkspaceStatus } from '@/services/workspaceConnection';
+import { ICON } from '@/components/chat/activityIcons';
 
 export interface WorkspacePromptCardProps {
   suggested: string;
@@ -9,7 +10,7 @@ export interface WorkspacePromptCardProps {
   toolName?: string;
   /** Real tool_use_id of the paused tool call (server/tool_executor.py
    *  merges this into the SSE payload). Resuming MUST answer this exact id
-   *  via the answers-array continuation path — a bare answer string is
+   *  via the answers-array continuation path: a bare answer string is
    *  treated as a brand-new chat message, not a continuation, and never
    *  reaches the paused turn. */
   toolUseId: string;
@@ -18,7 +19,7 @@ export interface WorkspacePromptCardProps {
 /** Dispatch a resume for a paused tool_use block via the SAME mechanism
  *  UserQuestionCard already uses successfully: an `answers` array
  *  ({tool_use_id, content}), which useComposerChatEvents routes through
- *  chatStream.send('', {approvedToolResult: ...}) — the only path that
+ *  chatStream.send('', {approvedToolResult: ...}), the only path that
  *  reaches server/chat/routes.py's approved_tool_result branch and restores
  *  the stashed paused-turn state. A bare `answer` string is treated as a
  *  brand new chat message instead, which never resumes anything. */
@@ -56,7 +57,7 @@ export const WorkspacePromptCard: React.FC<WorkspacePromptCardProps> = ({
   // Re-read the authoritative workspace the moment this card appears. The
   // panel only reconciles on mount and on window focus, so a root that moved
   // mid-turn (another process writing the shared workspace_config.json) leaves
-  // the tree rendering a folder the server no longer has — which is exactly
+  // the tree rendering a folder the server no longer has, which is exactly
   // how this card ends up looking like it fired for no reason. The status
   // endpoint is authoritative in both directions, and an answer that a
   // connect or disconnect overtook is dropped, so this can never push a
@@ -101,7 +102,7 @@ export const WorkspacePromptCard: React.FC<WorkspacePromptCardProps> = ({
       setResolved(path);
       useUIStore.getState().setWsConnected(true, path);
       window.dispatchEvent(new CustomEvent('whisper-workspace-refresh'));
-      // Soft writability hint — see _check_writable on the backend. We
+      // Soft writability hint (see _check_writable on the backend). We
       // never refuse the connection on this signal because os.access is
       // unreliable for network mounts, root, and macOS ACLs; we just tell
       // the user up front that writes might fail.
@@ -115,7 +116,7 @@ export const WorkspacePromptCard: React.FC<WorkspacePromptCardProps> = ({
 
       // Resume the LLM. Be explicit about what did and did not happen so
       // the model doesn't conflate "workspace connected" with "the original
-      // tool already wrote the file" — soft wording ("Please proceed with
+      // tool already wrote the file": soft wording ("Please proceed with
       // creating the files") let some responses reply "Done!" without
       // re-issuing the write tool, and the file never landed on disk.
       dispatchResume(
@@ -167,7 +168,6 @@ export const WorkspacePromptCard: React.FC<WorkspacePromptCardProps> = ({
   return (
     <div className="ws-approval-card" style={{
       border: '1px solid var(--accent)',
-      borderRadius: 8,
       padding: '12px 16px',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
@@ -189,15 +189,17 @@ export const WorkspacePromptCard: React.FC<WorkspacePromptCardProps> = ({
 
       {resolved !== null ? (
         <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
           fontSize: '0.85em',
           color: 'var(--accent)',
           padding: '6px 10px',
           background: 'var(--bg-secondary)',
           borderRadius: 6,
         }}>
-          {resolved
-            ? `✓ Connected to ${resolved}`
-            : '✓ Workspace left unchanged'}
+          {ICON.check}
+          {resolved ? `Connected to ${resolved}` : 'Workspace left unchanged'}
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>

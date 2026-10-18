@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useRef } from 'react';
 import { openHtmlSandboxed } from '@/utils/openHtmlSandboxed';
 import { downloadFile } from '@/utils/downloadFile';
+import { ICON } from '@/components/chat/activityIcons';
 
 interface ProgramArtifactCardProps {
   title: string;
@@ -34,7 +35,7 @@ export const ProgramArtifactCard: React.FC<ProgramArtifactCardProps> = ({
   }, [html, title]);
 
   const handleOpenNewTab = useCallback(() => {
-    // Open in a sandboxed iframe, never as a same-origin blob: document —
+    // Open in a sandboxed iframe, never as a same-origin blob: document;
     // otherwise model-authored HTML could call the local backend API.
     openHtmlSandboxed(html);
   }, [html]);
@@ -42,7 +43,7 @@ export const ProgramArtifactCard: React.FC<ProgramArtifactCardProps> = ({
   return (
     <div className="program-artifact-card" style={{
       border: '1px solid var(--border)',
-      borderRadius: 8,
+      borderRadius: 'var(--radius-sm)',
       overflow: 'hidden',
       margin: '8px 0',
     }}>
@@ -54,7 +55,7 @@ export const ProgramArtifactCard: React.FC<ProgramArtifactCardProps> = ({
         alignItems: 'center',
         gap: 10,
       }}>
-        <span style={{ fontSize: '1.1em' }}>{'\uD83D\uDCBB'}</span>
+        <span style={{ display: 'inline-flex', color: 'var(--text-muted)' }}>{ICON.monitor}</span>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontWeight: 600, fontSize: '0.9em' }}>{title}</div>
           {description && (

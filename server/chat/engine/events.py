@@ -38,9 +38,15 @@ class ThinkingStop:
 @dataclass(frozen=True)
 class ToolCallStart:
     """A tool call has begun streaming (arguments not yet complete). The UI
-    shows the running tool immediately; the complete call follows."""
+    shows the running tool immediately; the complete call follows.
+
+    ``id`` is the provider's tool_use id, the same one the ToolCall and the
+    tool_result carry, so the UI can pair this start with its result even
+    when several same-named calls run in one round. Empty only when the
+    provider has not named the call yet."""
 
     name: str
+    id: str = ""
 
 
 @dataclass(frozen=True)
@@ -63,10 +69,15 @@ TOOL_ARGS_PROGRESS_STEP = 4096
 class ToolCallProgress:
     """Tool-call arguments are still streaming: ``chars`` received so far.
     Progress only, never the content; the UI shows a size next to the
-    running tool so a long generation does not read as a hang."""
+    running tool so a long generation does not read as a hang.
+
+    ``id`` is the provider's tool_use id of the call whose arguments are
+    streaming (see ToolCallStart); empty only when the provider has none
+    yet."""
 
     name: str
     chars: int
+    id: str = ""
 
 
 @dataclass(frozen=True)

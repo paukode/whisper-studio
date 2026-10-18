@@ -14,12 +14,12 @@ import { MarkdownRenderer } from './MarkdownRenderer';
 describe('MarkdownRenderer re-render', () => {
   it('keeps the same nodes when the parent re-renders with unchanged content', () => {
     const content = '## Title\n\nSome **bold** prose.\n\n```python\nprint(1)\n```';
-    const { container, rerender } = render(<MarkdownRenderer content={content} stepFormat />);
+    const { container, rerender } = render(<MarkdownRenderer content={content} />);
     const heading = container.querySelector('h2');
     const pre = container.querySelector('pre');
     expect(heading).toBeTruthy();
 
-    rerender(<MarkdownRenderer content={content} stepFormat />);
+    rerender(<MarkdownRenderer content={content} />);
 
     expect(container.querySelector('h2')).toBe(heading);
     expect(container.querySelector('pre')).toBe(pre);

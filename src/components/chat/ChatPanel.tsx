@@ -6,9 +6,11 @@ import { useUIStore } from '@/stores/uiStore';
 import { getActiveTranscriptionStore } from '@/stores/sessionRuntimes';
 import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 import { ChatMessage } from './ChatMessage';
-import { groupToolOnlyRuns } from './groupToolOnlyRuns';
+import { TurnBubble } from './TurnBubble';
+import { isLiveTurn, turnEntries, turnKey, spokenTurn } from './turnEntries';
 import { resolveTaskCheckpoints } from './TaskCard';
 import { StreamingMessage } from './StreamingMessage';
+import { ICON } from './activityIcons';
 import { VoiceLiveMessage } from './VoiceLiveMessage';
 import { ChatInput } from './ChatInput';
 import { GoalBanner } from './GoalBanner';
@@ -19,17 +21,24 @@ import { downloadFile } from '@/utils/downloadFile';
 import { useTaskStore } from '@/stores/taskStore';
 import { fetchSessionTasks } from '@/api/tasks';
 import { permissionModeLabel } from '@/utils/permissionModes';
+import type { Delivery } from '@/types/chat';
 
 /**
  * The streaming reply. The only subscriber to the streamed text, so a token
- * re-renders this bubble and not the panel with every message above it.
+ * re-renders this reply and not the panel with every message above it. A
+ * turn that has not committed a row yet gets a bubble of its own; once it
+ * has, the reply is the embedded tail of the turn's bubble.
  */
-const LiveReply: React.FC<{ onGrow: () => void }> = ({ onGrow }) => {
+const LiveReply: React.FC<{
+  onGrow: () => void;
+  embedded?: boolean;
+  priorDeliveries?: readonly Delivery[];
+}> = ({ onGrow, embedded, priorDeliveries }) => {
   const content = useActiveChatStore((s) => s.currentStreamContent);
   useEffect(() => {
     if (content) onGrow();
   }, [content, onGrow]);
-  return <StreamingMessage content={content} isStreaming />;
+  return <StreamingMessage content={content} isStreaming embedded={embedded} priorDeliveries={priorDeliveries} />;
 };
 
 /**
@@ -61,8 +70,8 @@ export const ChatPanel: React.FC = () => {
   // as a ref (not state) so the scroll handler can update it without
   // triggering re-renders on every wheel tick.
   const wasAtBottomRef = useRef(true);
-  // Count of new messages that arrived while the user was NOT at the
-  // bottom — surfaced as a "↓ N new" pill so live cron firings aren't
+  // Count of new bubbles that appeared while the user was NOT at the
+  // bottom, surfaced as a "N new" pill so live cron firings aren't
   // silently buried below the fold.
   const [unseenBelow, setUnseenBelow] = useState(0);
 
@@ -70,11 +79,16 @@ export const ChatPanel: React.FC = () => {
   // Session history is loaded into chatStore when switching sessions.
   const allMessages = messages;
   const hasMessages = messages.length > 0 || isStreaming;
-  // Consecutive tool-only assistant rows (every agent card commits the
-  // in-progress segment, leaving bare "ACTIVITY N steps" rows behind) render
-  // as ONE entry. Indices stay real so actions and checkpoints still address
-  // the right store rows.
-  const displayEntries = useMemo(() => groupToolOnlyRuns(allMessages), [allMessages]);
+  // One bubble per assistant turn: a turn streams as several store rows
+  // (prose before a tool call, every card), which render together. Indices
+  // stay real so actions and checkpoints still address the right store rows.
+  const displayEntries = useMemo(() => turnEntries(allMessages), [allMessages]);
+  const lastEntry = displayEntries[displayEntries.length - 1];
+  // The turn being written: a stream whose turn already committed a row
+  // draws its live tail inside that turn's bubble. A stream that starts a new
+  // turn (no assistant row after the last other row yet), or whose last row
+  // is a slash command's (standalone), has its own bubble.
+  const liveTurn = isStreaming && isLiveTurn(lastEntry) ? lastEntry : null;
 
   // Tasks rows are deduped at the conversation level: a row appears only at a
   // turn where the cumulative task state changed (computeTaskCheckpoints), so
@@ -82,8 +96,8 @@ export const ChatPanel: React.FC = () => {
   // says this session has no tasks (authoritatively hydrated empty), suppress
   // all rows so an inline count can never disagree with an empty drawer.
   const sessionTasks = useTaskStore((s) => (currentSessionId ? s.tasksBySession[currentSessionId] : undefined));
-  // Bind the most-recent (current) Tasks row to the authoritative task store —
-  // the same single source the Tasks panel reads — so the inline chip's count
+  // Bind the most-recent (current) Tasks row to the authoritative task store
+  // (the same single source the Tasks panel reads) so the inline chip's count
   // and "all done" always match the panel and can never freeze at a stale
   // "N/M in progress". Earlier checkpoints stay historical. `liveCheckpointIdx`
   // is the message whose row renders live (-1 while streaming, when the live
@@ -93,43 +107,49 @@ export const ChatPanel: React.FC = () => {
     [allMessages, sessionTasks, isStreaming],
   );
 
-  // Keys of messages whose committed bubble must NOT replay the msgIn entrance
-  // animation, because their content already animated in while streaming (the
-  // StreamingMessage bubble). finishStream() flips isStreaming false AND appends
-  // the final assistant message in one store update, so at the stream→idle
-  // transition (within the same session) the last message is exactly the one
-  // that was streaming — mark its key. The set only grows within the component's
-  // lifetime, so a suppressed message never un-suppresses (which would itself
-  // restart the CSS animation). A fresh mount (session reload) starts empty, so
-  // loaded history and the user's own messages keep their normal entrance.
+  // Keys of turns whose bubble must NOT replay the msgIn entrance animation,
+  // because the turn already animated in as the live reply. A turn streams as
+  // several store rows: its first commit (a segment flush, a card) swaps the
+  // live bubble for the turn's TurnBubble, and its last row lands at the
+  // stream-to-idle flip (finishStream appends it and flips isStreaming in one
+  // store update). A row committed while this session streams belongs to a
+  // turn at the end of the list, so every turn that holds a row added by such
+  // a commit is marked (one React batch can carry several commits). The set
+  // only grows within the component's lifetime, so a
+  // suppressed turn never un-suppresses (which would itself restart the CSS
+  // animation). A fresh mount (session reload) starts empty, so loaded
+  // history and the user's own messages keep their normal entrance.
   //
   // Derived during render via the sanctioned "store information from previous
   // renders" pattern (a guarded setState during render, which React resolves
-  // before commit) so the class lands on the committed bubble's very first
-  // paint — no one-frame blink.
+  // before commit) so the class lands on the bubble's very first paint: no
+  // one-frame blink.
   const [noEnterKeys, setNoEnterKeys] = useState<Set<string>>(() => new Set());
-  const [streamCtx, setStreamCtx] = useState<{ sessionId: string | null; streaming: boolean }>(
-    () => ({ sessionId: currentSessionId, streaming: isStreaming }),
+  const [streamCtx, setStreamCtx] = useState<{ sessionId: string | null; streaming: boolean; count: number }>(
+    () => ({ sessionId: currentSessionId, streaming: isStreaming, count: allMessages.length }),
   );
-  if (streamCtx.sessionId !== currentSessionId || streamCtx.streaming !== isStreaming) {
+  if (
+    streamCtx.sessionId !== currentSessionId ||
+    streamCtx.streaming !== isStreaming ||
+    streamCtx.count !== allMessages.length
+  ) {
     if (
       streamCtx.sessionId === currentSessionId &&
       streamCtx.streaming &&
-      !isStreaming &&
-      allMessages.length > 0
+      allMessages.length > streamCtx.count
     ) {
-      const lastIdx = allMessages.length - 1;
-      const last = allMessages[lastIdx];
-      const key = `${last.timestamp}-${lastIdx}`;
-      if (last.role === 'assistant' && !noEnterKeys.has(key)) {
-        setNoEnterKeys((prev) => {
-          const next = new Set(prev);
-          next.add(key);
-          return next;
-        });
+      const fresh: string[] = [];
+      for (let e = displayEntries.length - 1; e >= 0; e -= 1) {
+        const entry = displayEntries[e];
+        const lastIndex = entry.kind === 'turn' ? entry.indices[entry.indices.length - 1] : entry.index;
+        if (lastIndex < streamCtx.count) break;
+        if (entry.kind === 'turn' && !noEnterKeys.has(turnKey(entry))) fresh.push(turnKey(entry));
+      }
+      if (fresh.length > 0) {
+        setNoEnterKeys((prev) => new Set([...prev, ...fresh]));
       }
     }
-    setStreamCtx({ sessionId: currentSessionId, streaming: isStreaming });
+    setStreamCtx({ sessionId: currentSessionId, streaming: isStreaming, count: allMessages.length });
   }
 
   // Detect whether the scroll position is at (or near) the bottom.
@@ -178,12 +198,16 @@ export const ChatPanel: React.FC = () => {
   // already at the bottom. If they've scrolled up to read something,
   // increment the unseen counter instead of yanking the viewport.
   // Smooth scrolling for user-initiated turns, instant for background
-  // cron firings to avoid stacking animations under rapid arrivals.
+  // cron firings to avoid stacking animations under rapid arrivals. The
+  // counter counts bubbles: a row that only grows the last turn's bubble
+  // scrolls along but adds nothing to it.
   const prevMessageCountRef = useRef(allMessages.length);
+  const prevEntryCountRef = useRef(displayEntries.length);
   useEffect(() => {
     const grew = allMessages.length > prevMessageCountRef.current;
-    const delta = allMessages.length - prevMessageCountRef.current;
+    const delta = Math.max(0, displayEntries.length - prevEntryCountRef.current);
     prevMessageCountRef.current = allMessages.length;
+    prevEntryCountRef.current = displayEntries.length;
     if (!grew) return;
     if (wasAtBottomRef.current) {
       // Read, not subscribed: a subscription here re-rendered the panel and
@@ -191,10 +215,10 @@ export const ChatPanel: React.FC = () => {
       const behavior: ScrollBehavior =
         getActiveChatStore().getState().currentStreamContent.length > 0 ? 'smooth' : 'auto';
       messagesEndRef.current?.scrollIntoView({ behavior, block: 'end' });
-    } else {
+    } else if (delta > 0) {
       setUnseenBelow((n) => n + delta);
     }
-  }, [allMessages.length]);
+  }, [allMessages.length, displayEntries.length]);
 
   // Streamed text grows inside LiveReply, which calls this after each paint
   // of new text. When the user is following along (at bottom), keep the
@@ -203,6 +227,16 @@ export const ChatPanel: React.FC = () => {
     if (!wasAtBottomRef.current) return;
     messagesEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
   }, []);
+
+  // The live tail a streaming turn's bubble draws after its committed rows.
+  // Stable, so the bubble re-renders only when its rows change, never on a
+  // token: LiveReply alone follows the stream.
+  const renderLive = useCallback(
+    (priorDeliveries: readonly Delivery[]) => (
+      <LiveReply onGrow={followStream} embedded priorDeliveries={priorDeliveries} />
+    ),
+    [followStream],
+  );
 
   const jumpToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
@@ -272,7 +306,7 @@ export const ChatPanel: React.FC = () => {
 
   return (
     <div className={`panel${hasMessages ? ' chat-panel-active' : ''}`} id="chatPanelWrap">
-      {/* Panel header — hidden until chat is active */}
+      {/* Panel header, hidden until chat is active */}
       <div
         className="panel-header"
         id="chatPanelHeader"
@@ -284,7 +318,7 @@ export const ChatPanel: React.FC = () => {
           </svg>
           Assistant
         </h2>
-        {/* Workspace mode indicator — shown when workspace connected.
+        {/* Workspace mode indicator, shown when workspace connected.
          * Reads the actual permission mode (default / auto / plan /
          * acceptEdits / bypassPermissions / dontAsk). The old code hard-
          * coded a binary plan/auto split which made every non-plan mode
@@ -343,7 +377,7 @@ export const ChatPanel: React.FC = () => {
              *  product name. */}
             <h2 className="welcome-title">What can I help with?</h2>
             <p className="welcome-subtitle">Transcribe a meeting, chat with your code, or run a skill.</p>
-            {/* Teaching starter actions — each names one of the product's
+            {/* Teaching starter actions: each names one of the product's
              *  pillars and triggers the real surface, so a first-run user
              *  learns the app in three clicks. */}
             <div className="welcome-actions">
@@ -385,25 +419,30 @@ export const ChatPanel: React.FC = () => {
           </div>
         )}
 
-        {/* Rendered messages */}
+        {/* Rendered messages: one bubble per assistant turn */}
         {displayEntries.map((entry) => {
-          const { message: msg, index: idx, indices } = entry;
-          const key = `${msg.timestamp}-${idx}`;
-          // A merged run answers to its first store index; its Tasks
-          // checkpoint is the last one any folded row carried.
-          const checkpoint =
-            indices.map((i) => taskCheckpoints.get(i) ?? null).filter(Boolean).pop() ?? null;
+          if (entry.kind === 'message') {
+            return (
+              <ChatMessage
+                key={`${entry.message.timestamp}-${entry.index}`}
+                message={entry.message}
+                index={entry.index}
+              />
+            );
+          }
+          const key = turnKey(entry);
           return (
-            <ChatMessage
+            <TurnBubble
               key={key}
-              message={msg}
-              index={idx}
-              taskCheckpoint={checkpoint}
-              taskCheckpointLive={indices.includes(liveCheckpointIdx)}
-              // A spoken assistant bubble replaces the live voice bubble that
-              // already showed its words; replaying the entrance animation
-              // would read as the message vanishing and streaming back in.
-              noEnter={noEnterKeys.has(key) || (msg.role === 'assistant' && !!msg.spoken)}
+              rows={entry.rows}
+              indices={entry.indices}
+              taskCheckpoints={taskCheckpoints}
+              liveCheckpointIdx={liveCheckpointIdx}
+              // A spoken turn replaces the live voice bubble that already
+              // showed its words; replaying the entrance animation would read
+              // as the message vanishing and streaming back in.
+              noEnter={noEnterKeys.has(key) || spokenTurn(entry.rows)}
+              renderLive={entry === liveTurn ? renderLive : undefined}
             />
           );
         })}
@@ -411,22 +450,22 @@ export const ChatPanel: React.FC = () => {
         {/* Voice mode: the utterance being spoken right now */}
         <VoiceLiveMessage />
 
-        {/* Streaming response */}
-        {isStreaming && <LiveReply onGrow={followStream} />}
+        {/* Streaming response that starts a new turn */}
+        {isStreaming && !liveTurn && <LiveReply onGrow={followStream} />}
 
-        {/* Approval card — shown when a tool needs permission */}
+        {/* Approval card, shown when a tool needs permission */}
         <ErrorBoundary label="ApprovalBanner">
           <ApprovalBanner />
         </ErrorBoundary>
 
-        {/* Auto-mode circuit breaker — shown after repeated confirmations */}
+        {/* Auto-mode circuit breaker, shown after repeated confirmations */}
         <ErrorBoundary label="AutoModeBreakerBanner">
           <AutoModeBreakerBanner />
         </ErrorBoundary>
 
         <div ref={messagesEndRef} />
 
-        {/* Floating "new messages" pill — appears when live cron firings
+        {/* Floating "new messages" pill: appears when live cron firings
          * (or other background events) arrive while the user is scrolled
          * up reading older content. Click to snap to the bottom. */}
         {unseenBelow > 0 && (
@@ -436,7 +475,8 @@ export const ChatPanel: React.FC = () => {
             onClick={jumpToBottom}
             aria-label={`Jump to ${unseenBelow} new message${unseenBelow === 1 ? '' : 's'}`}
           >
-            ↓ {unseenBelow} new
+            {ICON.arrowDown}
+            {unseenBelow} new
           </button>
         )}
       </div>

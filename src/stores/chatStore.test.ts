@@ -6,7 +6,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createChatStore, type PendingApproval } from './chatStore';
-import type { ChatMessage, Delivery } from '@/types/chat';
+import type { ChatMessage, Delivery, ToolUseEvent } from '@/types/chat';
 
 let store: ReturnType<typeof createChatStore>;
 
@@ -46,6 +46,16 @@ describe('chatStore — messages', () => {
     expect(s.currentStreamContent).toBe('');
     expect(s.currentThinkingContent).toBe('');
   });
+
+  it('deleteMessages removes exactly the given rows, in any order, in one update', () => {
+    for (const text of ['q', 'a1', 'a2', 'a3', 'next']) store.getState().addMessage(userMessage(text));
+    let updates = 0;
+    const off = store.subscribe(() => { updates += 1; });
+    store.getState().deleteMessages([1, 3, 2, 3, 99]);
+    off();
+    expect(updates).toBe(1);
+    expect(store.getState().messages.map((m) => m.content)).toEqual(['q', 'next']);
+  });
 });
 
 describe('chatStore — finishStream atomicity', () => {
@@ -74,6 +84,41 @@ describe('chatStore — finishStream atomicity', () => {
     store.getState().finishStream();
     expect(store.getState().isStreaming).toBe(false);
     expect(store.getState().messages).toEqual([]);
+  });
+});
+
+describe('chatStore: updateStreamToolUse', () => {
+  const row = (
+    toolId: string,
+    toolName: string,
+    status: ToolUseEvent['status'] = 'running',
+  ): ToolUseEvent => ({ toolId, toolName, input: {}, status });
+  const rows = () => store.getState().currentStreamToolUse;
+
+  it('two parallel same-named calls each take their own result by id', () => {
+    store.setState({ currentStreamToolUse: [row('tu_1', 'ws_read_file'), row('tu_2', 'ws_read_file')] });
+    store.getState().updateStreamToolUse('tu_2', { status: 'complete', result: 'B' });
+    store.getState().updateStreamToolUse('tu_1', { status: 'error', result: 'A', isError: true, exitCode: null });
+    expect(rows()).toMatchObject([
+      { toolId: 'tu_1', status: 'error', result: 'A', isError: true, exitCode: null },
+      { toolId: 'tu_2', status: 'complete', result: 'B' },
+    ]);
+  });
+
+  it('rows from untagged frames are keyed by name: the first still running takes the update', () => {
+    store.setState({ currentStreamToolUse: [row('task_create', 'task_create'), row('task_create', 'task_create')] });
+    store.getState().updateStreamToolUse('task_create', { status: 'complete', result: 'created 1' });
+    store.getState().updateStreamToolUse('task_create', { status: 'complete', result: 'created 2' });
+    expect(rows().map((r) => r.result)).toEqual(['created 1', 'created 2']);
+  });
+
+  it('a key that matches no running row changes nothing', () => {
+    const done: ToolUseEvent = { ...row('tu_1', 'ws_read_file', 'complete'), result: 'A' };
+    store.setState({ currentStreamToolUse: [done] });
+    store.getState().updateStreamToolUse('tu_1', { result: 'late' });
+    // The name is not the key of a row from a tagged frame.
+    store.getState().updateStreamToolUse('ws_read_file', { result: 'by name' });
+    expect(rows()).toEqual([done]);
   });
 });
 

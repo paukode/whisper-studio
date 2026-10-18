@@ -152,6 +152,13 @@ export interface UIState {
   /* Command palette (Cmd/Ctrl+K) */
   commandPaletteOpen: boolean;
 
+  /** The edit whose diff the user asked to see from an activity row's diff
+   *  pill: the call's tool_use id and the edited path. null while no diff
+   *  viewer is open. */
+  editDiff: { toolUseId: string; path: string } | null;
+  openEditDiff: (target: { toolUseId: string; path: string }) => void;
+  closeEditDiff: () => void;
+
   // Actions
   toggleSidebar: () => void;
   openCommandPalette: () => void;
@@ -273,9 +280,13 @@ export const useUIStore = create<UIState>()((set) => ({
   modelLoading: null,
   dialogStack: [],
   commandPaletteOpen: false,
+  editDiff: null,
 
   openCommandPalette: () => set({ commandPaletteOpen: true }),
   closeCommandPalette: () => set({ commandPaletteOpen: false }),
+
+  openEditDiff: (target) => set({ editDiff: target }),
+  closeEditDiff: () => set({ editDiff: null }),
 
   toggleSidebar: () => {
     set((state) => {

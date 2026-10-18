@@ -556,7 +556,8 @@ async def run_headless_turn(
                             "type": "tool_result",
                             "name": tool_name,
                             "output": output,
-                            "status": "error" if output.startswith("[Tool Error]") else "ok",
+                            # The gate decided (tool_executor.tool_outcome).
+                            "status": "error" if frame.get("is_error") else "ok",
                         }
                     elif "team_progress" in frame:
                         # Untouched TeamProgressEvent from the agent runtime; the

@@ -11,13 +11,14 @@
  * Only the action executor and the network are faked: the card drives the
  * real approval leg and the real continuation.
  */
-import { render, fireEvent, waitFor } from '@testing-library/react';
+import { render, fireEvent, screen, waitFor } from '@testing-library/react';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { PendingApproval } from '@/stores/chatStore';
 import { dropRuntime, getChatStore, useRuntimeIndex } from '@/stores/sessionRuntimes';
 import { useSessionStore } from '@/stores/sessionStore';
 import { killSessionStream } from '@/hooks/chatStream/streamControl';
 import { ApprovalBanner } from './ApprovalBanner';
+import { MAX_DIFF_CELLS } from '@/utils/computeLineDiff';
 
 const executeApproval = vi.fn();
 
@@ -77,8 +78,8 @@ describe('ApprovalBanner', () => {
     executeApproval.mockRejectedValue(new Error('HTTP 500: executor unreachable'));
     getChatStore(SID).getState().enqueueApproval(approval('tu_1'));
 
-    const { getByText } = render(<ApprovalBanner />);
-    fireEvent.click(getByText('✓ Yes'));
+    render(<ApprovalBanner />);
+    fireEvent.click(screen.getByRole('button', { name: 'Yes' }));
 
     await waitFor(() => expect(bodies).toHaveLength(1));
     const result = bodies[0].approved_tool_result;
@@ -95,14 +96,14 @@ describe('ApprovalBanner', () => {
     chat.enqueueApproval(approval('tu_1'));
     chat.enqueueApproval(approval('tu_2')); // queued behind the first
 
-    const { getByText, findByText } = render(<ApprovalBanner />);
-    fireEvent.click(getByText('✓ Yes'));
+    render(<ApprovalBanner />);
+    fireEvent.click(screen.getByRole('button', { name: 'Yes' }));
 
     await waitFor(() =>
       expect(getChatStore(SID).getState().currentApproval?.toolUseId).toBe('tu_2'),
     );
-    // Buttons live again — not frozen at "Running…" until a page reload.
-    const yes = await findByText('✓ Yes');
+    // Buttons live again, not frozen at "Running…" until a page reload.
+    const yes = await screen.findByRole('button', { name: 'Yes' });
     expect((yes as HTMLButtonElement).disabled).toBe(false);
   });
 
@@ -111,8 +112,8 @@ describe('ApprovalBanner', () => {
     executeApproval.mockResolvedValue({ ok: true, output: 'Created branch docs/x' });
     getChatStore(SID).getState().enqueueApproval(approval('tu_ok'));
 
-    const { getByText } = render(<ApprovalBanner />);
-    fireEvent.click(getByText('✓ Yes'));
+    render(<ApprovalBanner />);
+    fireEvent.click(screen.getByRole('button', { name: 'Yes' }));
 
     await waitFor(() => expect(bodies).toHaveLength(1));
     expect(bodies[0].approved_tool_result.content).toContain('The action succeeded');
@@ -127,8 +128,8 @@ describe('ApprovalBanner', () => {
     executeApproval.mockImplementation(() => new Promise((r) => { finish = r; }));
     getChatStore(SID).getState().enqueueApproval(approval('tu_slow'));
 
-    const { getByText } = render(<ApprovalBanner />);
-    fireEvent.click(getByText('✓ Yes'));
+    render(<ApprovalBanner />);
+    fireEvent.click(screen.getByRole('button', { name: 'Yes' }));
 
     // The card went away, but the session reads as working: the composer
     // shows Stop and steers instead of starting a second turn.
@@ -149,8 +150,8 @@ describe('ApprovalBanner', () => {
     const bodies = continuationBodies();
     getChatStore(SID).getState().enqueueApproval(approval('tu_no'));
 
-    const { getByText } = render(<ApprovalBanner />);
-    fireEvent.click(getByText('✕ No'));
+    render(<ApprovalBanner />);
+    fireEvent.click(screen.getByRole('button', { name: 'No' }));
 
     await waitFor(() => expect(bodies).toHaveLength(1));
     expect(bodies[0].approved_tool_result.content).toContain('[User denied]');
@@ -165,8 +166,8 @@ describe('ApprovalBanner', () => {
 
     const { queryByText, getByText } = render(<ApprovalBanner />);
 
-    expect(getByText('✓ Yes')).toBeTruthy();
-    expect(getByText('✕ No')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Yes' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'No' })).toBeTruthy();
     expect(queryByText(/Yes, all/)).toBeNull();
     expect(queryByText(/Block/)).toBeNull();
     expect(getByText('This action always asks.')).toBeTruthy();
@@ -175,10 +176,87 @@ describe('ApprovalBanner', () => {
   it('an ordinary card still offers the session choice', () => {
     getChatStore(SID).getState().enqueueApproval(approval('tu_plain'));
 
-    const { getByText, queryByText } = render(<ApprovalBanner />);
+    const { queryByText } = render(<ApprovalBanner />);
 
-    expect(getByText('✓ Yes, all cli')).toBeTruthy();
-    expect(getByText('✕ Block cli')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Yes, all cli' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Block cli' })).toBeTruthy();
     expect(queryByText('This action always asks.')).toBeNull();
+  });
+});
+
+/** A write card: the diff preview draws the diff dialog's own grid. */
+function writeApproval(toolUseId: string, payload: Record<string, unknown>): PendingApproval {
+  return {
+    ...approval(toolUseId),
+    action: 'ws_write_file',
+    category: 'write',
+    preview: 'diff',
+    summary: `Write ${String(payload.path)}`,
+    payload,
+  };
+}
+
+const cells = (container: HTMLElement, kind: 'added' | 'removed') =>
+  Array.from(container.querySelectorAll(`.git-diff-code.${kind}`)).map((el) => el.textContent?.slice(1));
+
+describe('ApprovalBanner diff preview', () => {
+  beforeEach(() => {
+    for (const id of useRuntimeIndex.getState().liveIds) dropRuntime(id);
+    useSessionStore.setState({ currentSessionId: SID, liveSessions: {}, sessions: [] });
+  });
+
+  it('draws an edit in the shared unified grid under its path and counts', () => {
+    getChatStore(SID).getState().enqueueApproval(
+      writeApproval('tu_w', { path: 'a.txt', original: 'one\ntwo\nthree\n', content: 'one\nTWO\nthree\n' }),
+    );
+
+    const { container, getByText } = render(<ApprovalBanner />);
+
+    expect(container.querySelector('.git-diff-preview .git-diff-grid.unified')).toBeTruthy();
+    expect(cells(container, 'removed')).toEqual(['two']);
+    expect(cells(container, 'added')).toEqual(['TWO']);
+    expect(getByText('+1')).toBeTruthy();
+    expect(getByText('-1')).toBeTruthy();
+    // No dialog chrome inside the card.
+    expect(container.querySelector('.git-diff-header')).toBeNull();
+  });
+
+  it('draws a created file as all additions', () => {
+    getChatStore(SID).getState().enqueueApproval(
+      writeApproval('tu_new', { path: 'new.txt', content: 'a\nb\n' }),
+    );
+
+    const { container, getByText } = render(<ApprovalBanner />);
+
+    expect(cells(container, 'added')).toEqual(['a', 'b']);
+    expect(cells(container, 'removed')).toEqual([]);
+    expect(getByText('+2')).toBeTruthy();
+  });
+
+  it('says a write that changes nothing has no changes', () => {
+    const text = Array.from({ length: 20 }, (_, i) => `line ${i + 1}`).join('\n');
+    getChatStore(SID).getState().enqueueApproval(
+      writeApproval('tu_same', { path: 'same.txt', original: text, content: text }),
+    );
+
+    const { container, getByText } = render(<ApprovalBanner />);
+
+    expect(getByText('No changes')).toBeTruthy();
+    expect(cells(container, 'added')).toEqual([]);
+    expect(cells(container, 'removed')).toEqual([]);
+  });
+
+  it('keeps the card answerable when the diff is too large: the new text shows instead', () => {
+    const n = Math.ceil(Math.sqrt(MAX_DIFF_CELLS)) + 10;
+    const side = (p: string) => Array.from({ length: n }, (_, i) => `${p}${i}`).join('\n');
+    getChatStore(SID).getState().enqueueApproval(
+      writeApproval('tu_big', { path: 'big.txt', original: side('l'), content: side('r') }),
+    );
+
+    const { container } = render(<ApprovalBanner />);
+
+    expect(container.querySelector('.git-diff-grid')).toBeNull();
+    expect(container.querySelector('pre')?.textContent?.startsWith('r0\nr1\n')).toBe(true);
+    expect(screen.getByRole('button', { name: 'Yes' })).toBeTruthy();
   });
 });

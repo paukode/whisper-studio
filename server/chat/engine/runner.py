@@ -10,11 +10,16 @@ must behave identically across Claude/GPT/local and chat/subagents/cron:
     round (one final no-tools round on a hard-trimmed context, so a turn that
     did forty rounds of work never dies with a bare error)
   - tool execution through the shared safety gate (execute_tool_batch +
-    process_tool_results — every result flows the gate, the engine never reads
+    process_tool_results, run by tool_rounds.py for every round that ended
+    with tool calls: every result flows the gate, the engine never reads
     tool output directly)
   - approval / ask_user pauses via the unified pause store
   - completion gate (Stop hooks + goal evaluator), per-round cost accounting,
     and the post-turn memory hooks
+  - the activity captions of the chat turn (activity_labels.py): sent in
+    round order as they land while the next round streams, the rest as they
+    land in one bounded wait at the end of the turn, before the mid-turn
+    inbox closes (none at a pause)
 
 The SSE frame vocabulary is pinned by tests/golden_fixtures — change frames
 only with an intentional GOLDEN_RECORD refresh.
@@ -25,12 +30,13 @@ import functools
 import itertools
 import logging
 import time
-from collections.abc import Callable
+from contextlib import aclosing
 from dataclasses import dataclass, field
-from typing import Any
 
 from server.utils import BoundedUUIDSet, ndjson_dumps
 
+from .activity_labels import PendingLabels
+from .context import TurnContext
 from .continuation import CONTINUE_AFTER_MAX_TOKENS, continuable_assistant, strip_partial_tool_use
 from .events import (
     Frame,
@@ -46,8 +52,8 @@ from .events import (
     ToolCallProgress,
     ToolCallStart,
 )
-from .pause import paused_sessions
-from .policy import TurnPolicy, round_cap
+from .policy import round_cap
+from .tool_rounds import ToolRound, run_tool_round
 
 log = logging.getLogger("whisper-studio")
 
@@ -127,111 +133,6 @@ def _midturn_text(entry) -> str:
     )
 
 
-@dataclass
-class TurnContext:
-    """Everything a turn needs, pre-assembled by the route (or agent/cron
-    caller). The engine does no request parsing, grounding, or prompt
-    building — it runs the loop."""
-
-    session_id: str
-    model_key: str
-    model_id: str
-    messages: list
-    adapter: Any
-    policy: TurnPolicy
-    loop: Any
-    executor: Any
-    # Who is paying for this turn's rounds, recorded on every cost row
-    # (server.costs.sources): chat, agent, workflow, cron, voice, headless,
-    # memory, wake. Required, so no caller's spend lands unlabelled.
-    cost_source: str
-    plan_mode: bool = False
-    mode: str = "default"
-    ws_path: str | None = None
-    # server.workspace.state.WorkspaceLatch taken when ws_path was read. The
-    # tool batch and the gate that processes its results run under it, so
-    # once the user disconnects (or switches away from) that workspace
-    # mid-turn, the remaining workspace tool calls are refused with the
-    # reason instead of acting on whatever is connected now. None (callers
-    # that pin their own root) leaves tools unlatched.
-    ws_latch: Any = None
-    suppress_ws_search: bool = False
-    effort_label: str | None = None
-    transcript: str = ""
-    current_attachments: dict = field(default_factory=dict)
-    session_denials: dict = field(default_factory=dict)
-    session_approvals: dict = field(default_factory=dict)
-    session_config: dict = field(default_factory=dict)
-    is_new_turn: bool = True
-    # Model id handed to the tool executor / permission pipeline. None means
-    # ctx.model_id; the local path passes "" so the permission explainer and
-    # auto-mode classifier stay offline (they gate on a truthy model id).
-    tool_exec_model_id: str | None = None
-    # Post-turn memory hooks override; None uses the engine's generic hooks.
-    # The local path supplies its own (offline-aware model_mode gating).
-    memory_hooks: Callable[[list], None] | None = None
-    # Callbacks into route-owned state (None outside interactive chat).
-    heartbeat: Callable[[], None] | None = None
-    is_disconnected: Callable[[], Any] | None = None  # async
-    # True only for the user-facing chat turn (the cloud and local chat
-    # routes), the one the composer is talking to. That turn alone reads
-    # server.chat.engine.midturn_inbox. Subagents, cron, voice and wake turns
-    # run under the same session_id, and draining there took the user's
-    # message into a context nobody reads back.
-    midturn_inbox: bool = False
-    # Called at every round start with (round_num, messages): the agent
-    # runtime snapshots the message list to its on-disk journal here, so a
-    # killed run can be resumed from its last round. Errors are swallowed.
-    on_round: Callable[[int, list], None] | None = None
-    # Extra text appended to the reminder that forces the final round (turn
-    # cap, deadline or cost cap): the agent runtime passes its report
-    # template so the last message is a report, not the tail of a narration.
-    final_round_hint: str | None = None
-    # Live budget grant, mutated from outside the turn (server.agents.
-    # extensions): {"rounds": int, "seconds": float} added to the policy's
-    # round cap and deadline, read again at every round start.
-    budget_extension: dict | None = None
-    # True for a turn with no human attending it (subagents today; any future
-    # unattended caller). Threaded into execute_tool_batch/process_tool_results
-    # so approval-gated and pause-inducing tools resolve without a human:
-    # WS_APPROVAL executes inline, WS_WORKSPACE_PROMPT and ask_user_question
-    # refuse instead of pausing, and every dispatched call is stamped
-    # __agent__ (mirrors server.agents.runtime._with_session_id).
-    unattended: bool = False
-    # Alternate key for turn-scoped, session_id-keyed global state (goal
-    # store, the auto-mode circuit breaker, the paused-turn store, and the
-    # loop-hints context tracker). None (every existing caller today) means
-    # "key on session_id exactly as before" — byte-identical behavior. Set
-    # this when the real session_id is shared with a concurrently in-flight
-    # turn (e.g. a subagent's inner turn running while the parent chat turn
-    # that spawned it is still streaming): without it, the subagent's turn
-    # would reset the PARENT's in-flight goal tracking / auto-mode breaker
-    # and collide with its paused-approval slot.
-    turn_scope_id: str | None = None
-    # Channel the turn's agent progress is published on and drained from.
-    # None means the session id (typed chat). A run that must not mix its
-    # agent cards into a concurrent chat turn (voice) uses its own channel.
-    event_channel: str | None = None
-    # Per-round tool catalog override. When set, called instead of
-    # _assemble_round_tools(ctx) to get (tools, core_count) — lets a caller
-    # (e.g. the agent runtime) supply its own filtered/precomputed tool pool
-    # without the engine reaching into chat-specific tool_pool/tool_partition
-    # modules. None (every existing caller today) keeps current behavior.
-    tool_catalog: Callable[[], tuple[list[dict], int | None]] | None = None
-    # What an agent run may execute (server.agents.tool_access.ToolScope): the
-    # tool batch refuses every other name. None (every other turn): unscoped.
-    tool_scope: Any = None
-    # The turn's claim guard (server/chat/claim_guard.py); run_turn makes one.
-    claims: Any = None
-    # The deliveries earlier replies of the chat verified (their chips, sent
-    # with the history): what a recap of earlier work is checked against.
-    earlier_deliveries: list = field(default_factory=list)
-    # What the user typed (the chat routes), kept apart from the transcript,
-    # attachments and mentions inlined into the same message: the gate reads
-    # it as their ask. Kept across an approval pause; None reads the message.
-    asked: str | None = None
-
-
 def _assemble_round_tools(ctx: TurnContext) -> tuple[list, int | None]:
     """Per-round tool catalog with progressive disclosure — reassembled every
     round so a tool_search activation in round N is advertised in round N+1."""
@@ -275,12 +176,14 @@ class _TurnEnd:
     # The turn stopped for an approval or a question: its continuation is
     # the same turn and still reads what was queued for it.
     paused: bool = False
+    # The activity captions still on their way (activity_labels.py).
+    labels: PendingLabels = field(default_factory=PendingLabels)
 
 
 def _turn_end_frames(ctx: TurnContext, end: _TurnEnd) -> list[str]:
-    """The frames to send before [DONE]: the claim guard's last text and
-    notes, then, unless the turn paused, the chat turn's last look at its
-    mid-turn inbox (midturn_inbox.close_and_announce)."""
+    """The frames to send before [DONE], after the captions' wait: the claim
+    guard's last text and notes, then, unless the turn paused, the close of
+    the chat turn's mid-turn inbox (midturn_inbox.close_and_announce)."""
     frames = ctx.claims.finish(paused=end.paused)
     if not ctx.midturn_inbox or end.paused:
         return frames
@@ -293,10 +196,22 @@ async def run_turn(ctx: TurnContext):
     """Yield SSE strings for one full agentic turn.
 
     Every exit that ends the turn with [DONE] (an answer, the round cap, a
-    failed round, the cost cap) takes the chat turn's last look at the
-    mid-turn inbox here, in the same synchronous step as the [DONE] itself,
-    so nothing a turn accepted is left behind unread and unannounced. A pause
-    for approval does not: its continuation reads what was queued."""
+    failed round, the cost cap) closes the chat turn's mid-turn inbox here
+    and hands on what it accepted but never read, so nothing a turn accepted
+    is left behind unread and unannounced. A pause for approval does not:
+    its continuation reads what was queued.
+
+    The activity captions still running get one bounded wait (at most
+    activity_labels.LABEL_TIMEOUT_S), sent as they land, while the inbox is
+    still open. After an answer, the round loop waits right before its last
+    look: before the round cap, a composer message or an agent report that
+    arrives in the wait gets one more round of this turn, and one that is
+    already pending skips the wait and gets that round at once. Every other
+    exit waits here. Both waits come before the close, which hands on what
+    arrived and was not read. The claim guard's last frames come after the
+    wait. A turn with no caption running does not wait, and
+    a paused turn never waits: it sends the captions that landed and drops
+    the rest, so its card can be answered at once."""
     end = _TurnEnd()
     if ctx.claims is None:
         from server.chat.claim_guard import ClaimGuard
@@ -306,17 +221,28 @@ async def run_turn(ctx: TurnContext):
     try:
         async for chunk in rounds:
             if chunk == _DONE:
+                # The captions still running get one bounded wait before the
+                # inbox closes (see the docstring). After an answer the round
+                # loop already waited, so there is none left to wait for, and
+                # a pause never waits.
+                if end.paused:
+                    for frame in end.labels.flush():
+                        yield frame
+                else:
+                    async with aclosing(end.labels.drain()) as labels:
+                        async for frame in labels:
+                            yield frame
                 for frame in _turn_end_frames(ctx, end):
                     yield frame
             yield chunk
     finally:
+        end.labels.cancel()
         await rounds.aclose()
 
 
 async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
     """The round loop of run_turn."""
     from server.chat.attachment_context import ensure_attachments_present
-    from server.chat.budget import make_budget_tool_result
     from server.chat.compaction import (
         compact_messages_with_claude,
         ensure_valid_start,
@@ -324,11 +250,9 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
         sanitize_tool_pairs,
         thresholds_for,
     )
-    from server.chat.tool_pool import _is_tool_concurrent_safe
     from server.costs.tracker import call_cost, prompt_token_total
     from server.costs.tracker import record_turn as _record_cost_turn
     from server.infrastructure.errors import PromptTooLongError, WhisperAPIError
-    from server.tool_executor import execute_tool_batch, process_tool_results
 
     messages = ctx.messages
     session_id = ctx.session_id
@@ -564,7 +488,7 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
             )
         _snap_loop.run_in_executor(None, _snapshot)
 
-        _batch_task: asyncio.Task | None = None
+        _tool_round = None
         try:
             # ── One model round via the provider adapter ─────────────────────
             round_result: RoundResult | None = None
@@ -577,6 +501,10 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
                 retry_round = False
                 text_streamed = False
                 async for ev in round_events:
+                    # Captions of earlier rounds go out as they land, in
+                    # round order.
+                    for _label_frame in end.labels.ready():
+                        yield _label_frame
                     if isinstance(ev, TextDelta):
                         text_streamed = True
                         yield f"data: {ndjson_dumps({'text': ev.text})}\n\n"
@@ -587,11 +515,28 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
                     elif isinstance(ev, ThinkingStop):
                         yield f"data: {ndjson_dumps({'thinking_stop': True})}\n\n"
                     elif isinstance(ev, ToolCallStart):
-                        yield f"data: {ndjson_dumps({'skill': ev.name, 'input': {}})}\n\n"
+                        # tool_use_id pairs the frame with its skill_result;
+                        # it is the provider's id, the same one the tool_result
+                        # block carries (server/chat/engine/events.py). round
+                        # is the model round that issued the call, counted
+                        # from 0 as in the request snapshots (a continuation
+                        # counts from 0 again; the browser counts on across
+                        # legs, src/hooks/chatStream/sseStream.ts): it draws
+                        # each round's calls as an activity group of their
+                        # own (src/components/chat/AgentCard.tsx).
+                        _f = {
+                            "skill": ev.name,
+                            "input": {},
+                            "tool_use_id": ev.id,
+                            "round": round_num,
+                        }
+                        yield f"data: {ndjson_dumps(_f)}\n\n"
                     elif isinstance(ev, ToolCallProgress):
-                        yield f"data: {ndjson_dumps({'skill_progress': {'name': ev.name, 'chars': ev.chars}})}\n\n"
+                        _p = {"name": ev.name, "chars": ev.chars, "tool_use_id": ev.id}
+                        yield f"data: {ndjson_dumps({'skill_progress': _p})}\n\n"
                     elif isinstance(ev, ToolCall):
-                        yield f"data: {ndjson_dumps({'skill_input': ev.name, 'input': ev.input})}\n\n"
+                        _f = {"skill_input": ev.name, "input": ev.input, "tool_use_id": ev.id}
+                        yield f"data: {ndjson_dumps(_f)}\n\n"
                     elif isinstance(ev, Heartbeat):
                         yield ": hb\n\n"
                     elif isinstance(ev, Frame):
@@ -827,13 +772,13 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
                 # What reaches the inbox after this round's drain (a message
                 # the user sent, agent reports) was accepted by the route and
                 # would never be read. The last look happens below, after the
-                # completion gate and its awaits, in the same synchronous step
-                # that ends the turn: close_if_empty closes the inbox only when
-                # nothing is pending, so a push that comes later is refused and
-                # starts the next turn instead of waiting for this one. Anything
-                # pending gets one more round (the drain at the top folds it
-                # in), bounded by the round cap; the drain empties the inbox, so
-                # this cannot spin.
+                # completion gate, the captions' wait and their awaits, in the
+                # same synchronous step that ends the turn: close_if_empty
+                # closes the inbox only when nothing is pending, so a push that
+                # comes later is refused and starts the next turn instead of
+                # waiting for this one. Anything pending gets one more round
+                # (the drain at the top folds it in), bounded by the round cap;
+                # the drain empties the inbox, so this cannot spin.
                 from server.chat.engine import midturn_inbox as _inbox
 
                 _mid_pending = ctx.midturn_inbox and _inbox.has_pending(session_id)
@@ -914,9 +859,21 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
                     if _unchecked:
                         yield f"data: {ndjson_dumps(_unchecked)}\n\n"
 
-                # The last look. No await from here to [DONE], where run_turn
-                # closes the inbox for good and hands on whatever is still
-                # queued when no round is left to spend on it.
+                # The captions still running get their one bounded wait here,
+                # sent as they land, before the last look: the inbox is still
+                # open, so a message sent during the wait is read below and
+                # answered in this turn (a round is left). A message already
+                # pending skips the wait: its round starts at once, and that
+                # round's ready() sends the captions as they land (each one
+                # keeps its own LABEL_TIMEOUT_S cap).
+                if not (ctx.midturn_inbox and not is_last_round and _inbox.has_pending(session_id)):
+                    async with aclosing(end.labels.drain()) as _labels:
+                        async for _label_frame in _labels:
+                            yield _label_frame
+
+                # The last look. No await from here to run_turn's close of
+                # the inbox, which hands on whatever is still queued when no
+                # round is left to spend on it.
                 if (
                     ctx.midturn_inbox
                     and not is_last_round
@@ -973,152 +930,36 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
             messages.append({"role": "assistant", "content": result_content})
 
             # ── Tool execution through the shared safety gate ────────────────
-            from server.agents.event_bus import event_bus as _agent_event_bus
-
-            _agent_channel = ctx.event_channel or session_id
-            _event_queue = _agent_event_bus.subscribe(_agent_channel)
-            _batch_task = asyncio.create_task(
-                execute_tool_batch(
-                    tool_uses,
-                    is_concurrent_safe=_is_tool_concurrent_safe,
-                    loop=ctx.loop,
-                    executor=ctx.executor,
-                    transcript=ctx.transcript,
-                    attachments=ctx.current_attachments,
-                    session_id=session_id,
-                    session_denials=ctx.session_denials,
-                    model_id=ctx.model_id
-                    if ctx.tool_exec_model_id is None
-                    else ctx.tool_exec_model_id,
-                    plan_mode=ctx.plan_mode,
-                    mode=ctx.mode,
-                    # Subagents inherit the turn's clamped effort so an
-                    # ultracode parent no longer fans out to plain children.
-                    effort_label=ctx.effort_label,
-                    unattended=ctx.unattended,
-                    guard_scope=_scope_id,
-                    event_channel=ctx.event_channel,
-                    workspace_latch=ctx.ws_latch,
-                    tool_scope=ctx.tool_scope,
-                )
+            # The phase lives in tool_rounds.py: the batch, the event relay
+            # while it runs, the gate, the paused-turn stash, the claim
+            # guard's settlement and the proactive compaction. The loop keeps
+            # the exits.
+            _outcome = ToolRound()
+            _tool_round = run_tool_round(
+                ctx, messages, tool_uses, _outcome, scope_id=_scope_id, round_num=round_num
             )
+            async for _frame in _tool_round:
+                yield _frame
+            end.labels.add(_outcome.label)
 
-            def _route_event(ev: dict) -> dict | None:
-                """Agent-runtime events → team_progress frames; typed events
-                delivered by the long-lived session stream are skipped to
-                prevent double delivery."""
-                if ev.get("type") in (
-                    "cron_event",
-                    "memory_event",
-                    "task_event",
-                    "cron_progress",
-                    "ci_progress",
-                    "ci_result",
-                    "session_message",
-                    # A workflow's own events reach the UI two other ways: the
-                    # run card's per-run EventSource for live progress, and a
-                    # task_event (above) for the terminal outcome. Without this
-                    # they were relabelled as team_progress mid-batch, which
-                    # renders a detached workflow as if it were this turn's
-                    # subagent team.
-                    "workflow_event",
-                ):
-                    return None
-                return {"team_progress": ev}
-
-            try:
-                while not _batch_task.done():
-                    try:
-                        _ev = await asyncio.wait_for(_event_queue.get(), timeout=0.05)
-                        _payload = _route_event(_ev)
-                        if _payload is not None:
-                            yield f"data: {ndjson_dumps(_payload)}\n\n"
-                    except asyncio.TimeoutError:
-                        pass
-                while not _event_queue.empty():
-                    _ev = _event_queue.get_nowait()
-                    _payload = _route_event(_ev)
-                    if _payload is not None:
-                        yield f"data: {ndjson_dumps(_payload)}\n\n"
-                states = _batch_task.result()
-            finally:
-                _agent_event_bus.unsubscribe(_agent_channel, _event_queue)
-
-            truncation_events: list[dict] = []
-            (
-                tool_results,
-                sse_events,
-                has_pending_approval,
-                has_user_question,
-            ) = await process_tool_results(
-                states,
-                budget_fn=make_budget_tool_result(truncation_events),
-                session_approvals=ctx.session_approvals,
-                config=ctx.session_config,
-                model_id=ctx.model_id if ctx.tool_exec_model_id is None else ctx.tool_exec_model_id,
-                recent_messages=[m for m in messages if m.get("role") == "assistant"][-3:],
-                mode=ctx.mode,
-                # The auto-mode breaker keys on the turn scope (like the goal
-                # store); the classifier and explainer bill to the chat session.
-                session_id=_scope_id,
-                cost_session_id=session_id,
-                unattended=ctx.unattended,
-                # Pre-approved actions run in there, under the batch's latch.
-                workspace_latch=ctx.ws_latch,
-            )
-
-            for evt in sse_events:
-                yield f"data: {evt}\n\n"
-            for trunc_evt in truncation_events:
-                yield f"data: {ndjson_dumps(trunc_evt)}\n\n"
-
-            if has_user_question or has_pending_approval:
-                # Stash the paused conversation so the continuation turn can
-                # rebuild a well-formed request with placeholders replaced.
-                paused_sessions[_scope_id] = {
-                    "messages": list(messages),
-                    "pending_tool_results": list(tool_results),
-                    "provider": ctx.adapter.provider,
-                    "asked": ctx.asked,
-                }
+            if _outcome.paused:
                 end.paused = True
                 yield "data: [DONE]\n\n"
                 return
 
-            log.info("Round %d: %d tool results, continuing loop", round_num, len(tool_results))
-
-            if not tool_results:
+            if not _outcome.tool_results:
                 log.warning("No tool results to send back — ending stream")
                 yield "data: [DONE]\n\n"
                 return
 
-            messages.append({"role": "user", "content": tool_results})
-            for _frame in ctx.claims.after_tools(messages):
-                yield _frame
-
-            # Proactive compaction — char estimate, supplemented by TOKEN
-            # truth (the per-round usage crossed 80% of the window).
-            from server.chat.loop_hints import should_nudge_compaction
-
-            if estimate_message_size(messages) > thresholds_for(ctx.model_key)[
-                0
-            ] or should_nudge_compaction(_scope_id):
-                # An LLM summarization call sits between rounds here; without a
-                # frame the wait reads as a mid-turn hang.
-                yield f"data: {ndjson_dumps({'status': 'Compacting conversation context...'})}\n\n"
-                messages = await compact_messages_with_claude(
-                    messages, ctx.model_id, session_id=session_id, model_key=ctx.model_key
-                )
-                # Restore any attachment the summary swallowed. The REACTIVE
-                # path above deliberately does not re-inject (it must shrink;
-                # analyze_document has session-wide access as the fallback).
-                messages = ensure_attachments_present(messages, session_id)
+            messages = _outcome.messages
         finally:
-            # Torn down mid-round (Stop / tab-close) or round finished — cancel
-            # a still-running tool batch. The adapter's own finally releases
-            # the provider stream.
-            if _batch_task is not None and not _batch_task.done():
-                _batch_task.cancel()
+            # Torn down mid-round (Stop / tab-close): close the tool phase,
+            # whose own finally cancels a still-running tool batch. A phase
+            # that ran to its end closes as a no-op. The adapter's own finally
+            # releases the provider stream.
+            if _tool_round is not None:
+                await _tool_round.aclose()
 
     yield f"data: {ndjson_dumps({'text': '(Reached maximum tool rounds)'})}\n\n"
     yield "data: [DONE]\n\n"

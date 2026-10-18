@@ -3,6 +3,7 @@ import type { SessionMessagePayload } from '@/types/chat';
 import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer';
 import { formatMessageTimestamp } from '@/utils/formatTimestamp';
 import { useSessionStore } from '@/stores/sessionStore';
+import { ICON } from '@/components/chat/activityIcons';
 
 interface SessionMessageCardProps {
   message: SessionMessagePayload;
@@ -12,7 +13,7 @@ interface SessionMessageCardProps {
  * Inline rendering for a `role: 'session_message'` ChatMessage: a text
  * message another chat session sent this one via send_session_message.
  *
- * Same contract as CronEventCard — the live SSE event and
+ * Same contract as CronEventCard: the live SSE event and
  * the persisted chat_history row carry the same payload, so live-render and
  * replay-on-resume converge here. UI-only in storage; the backend relabels
  * it as a user turn before it reaches the model (see
@@ -28,7 +29,7 @@ export const SessionMessageCard: React.FC<SessionMessageCardProps> = ({ message 
   return (
     <div className="session-message">
       <div className="session-message-summary">
-        <span className="session-message-icon">&#9993;</span>
+        <span className="session-message-icon">{ICON.mail}</span>
         <span className="session-message-title">
           Message from <strong>{message.from_title}</strong>
         </span>

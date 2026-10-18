@@ -2,6 +2,7 @@ import React from 'react';
 import type { CronEventPayload } from '@/types/chat';
 import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer';
 import { formatMessageTimestamp } from '@/utils/formatTimestamp';
+import { ICON } from './activityIcons';
 
 interface CronEventCardProps {
   event: CronEventPayload;
@@ -12,15 +13,15 @@ interface CronEventCardProps {
  *
  * Variants by `event_type`:
  *
- *   - `cron_created` / `cron_updated` — small pill: "⏱ Cron 'X' scheduled · <label>"
- *   - `cron_fired`    — full inline message; header strip + markdown body
- *   - `cron_deleted`  — small pill: "🗑 Cron 'X' removed"
+ *   - `cron_created` / `cron_updated`: small pill, a clock and "Cron 'X' scheduled · <label>"
+ *   - `cron_fired`: full inline message; header strip + markdown body
+ *   - `cron_deleted`: small pill, a bin and "Cron 'X' removed"
  *
  * The shape comes from server/cron_scheduler.py:_emit_cron_event. Both the live
  * SSE event (`type: 'cron_event'`) and the persisted chat_history row carry the
  * same payload, so the live-render and the replay-on-resume paths converge here.
  *
- * Cron event rows are UI-only — they never enter Claude's prompt (the backend's
+ * Cron event rows are UI-only: they never enter Claude's prompt (the backend's
  * visible_chat_history() filter drops them), so this card can be rich without
  * inflating token costs.
  */
@@ -38,7 +39,7 @@ export const CronEventCard: React.FC<CronEventCardProps> = ({ event }) => {
     const verb = event.event_type === 'cron_updated' ? 'updated' : 'scheduled';
     return (
       <div className="cron-event cron-event-pill cron-event-created">
-        <span className="cron-event-icon">⏱</span>
+        <span className="cron-event-icon">{ICON.clock}</span>
         <span className="cron-event-pill-text">
           Cron <strong>{event.cron_name}</strong> {verb}
           {scheduleText && <> · {scheduleText}</>}
@@ -51,7 +52,7 @@ export const CronEventCard: React.FC<CronEventCardProps> = ({ event }) => {
   if (event.event_type === 'cron_deleted') {
     return (
       <div className="cron-event cron-event-pill cron-event-deleted">
-        <span className="cron-event-icon">🗑</span>
+        <span className="cron-event-icon">{ICON.trash}</span>
         <span className="cron-event-pill-text">
           Cron <strong>{event.cron_name}</strong> removed
         </span>
@@ -60,7 +61,7 @@ export const CronEventCard: React.FC<CronEventCardProps> = ({ event }) => {
     );
   }
 
-  // cron_fired — full inline message. The body is always rendered so the user
+  // cron_fired: full inline message. The body is always rendered so the user
   // can read every run's output without clicking. The header strip signals
   // "this is a cron event, not a regular assistant turn."
   const failed = event.status === 'failed';
@@ -71,7 +72,7 @@ export const CronEventCard: React.FC<CronEventCardProps> = ({ event }) => {
   return (
     <div className={`cron-event cron-event-fired ${stateClass}`}>
       <div className="cron-event-summary">
-        <span className="cron-event-icon">{failed ? '⚠' : '⏱'}</span>
+        <span className="cron-event-icon">{failed ? ICON.alert : ICON.clock}</span>
         <span className="cron-event-title">
           Cron <strong>{event.cron_name || '(unnamed)'}</strong>{' '}
           {failed ? 'failed' : 'fired'}
@@ -80,7 +81,7 @@ export const CronEventCard: React.FC<CronEventCardProps> = ({ event }) => {
           <span className="cron-event-interval">· {scheduleText}</span>
         )}
         <span className="cron-event-status">
-          {failed ? '⚠ failed' : '✓ ok'}
+          {failed ? <>{ICON.alertCircle}failed</> : <>{ICON.check}ok</>}
           {typeof event.duration_ms === 'number' && ` · ${formatDuration(event.duration_ms)}`}
         </span>
         <span className="cron-event-meta">{when}</span>

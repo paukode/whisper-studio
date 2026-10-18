@@ -6,7 +6,7 @@ import {
   collapseUnchanged,
   type DiffRow,
 } from './diffRows';
-import { computeLineDiff, DiffTooLargeError, MAX_DIFF_CELLS } from './computeLineDiff';
+import { computeLineDiffFromLines, DiffTooLargeError, MAX_DIFF_CELLS } from './computeLineDiff';
 import type { DiffHunk } from '@/api/git';
 
 /** Compact row shape for readable assertions: kind + both line numbers. */
@@ -213,7 +213,7 @@ describe('collapseUnchanged', () => {
   });
 });
 
-describe('computeLineDiff guard', () => {
+describe('computeLineDiffFromLines guard', () => {
   it('throws rather than allocating an unbounded LCS table', () => {
     // Both sides must differ throughout: the guard measures the changed
     // span, and a shared head or tail is stripped before it is consulted.
@@ -221,7 +221,7 @@ describe('computeLineDiff guard', () => {
     const left = Array.from({ length: n }, (_, i) => `l${i}`).join('\n');
     const right = Array.from({ length: n }, (_, i) => `r${i}`).join('\n');
 
-    expect(() => computeLineDiff(left, right)).toThrow(DiffTooLargeError);
+    expect(() => computeLineDiffFromLines(left.split('\n'), right.split('\n'))).toThrow(DiffTooLargeError);
   });
 
   it('strips the common head and tail so a small edit stays cheap', () => {
@@ -234,7 +234,7 @@ describe('computeLineDiff guard', () => {
     const before = lines.join('\n');
     const after = edited.join('\n');
 
-    const diff = computeLineDiff(before, after);
+    const diff = computeLineDiffFromLines(before.split('\n'), after.split('\n'));
 
     expect(diff.filter((l) => l.type === 'removed')).toEqual([
       { type: 'removed', text: `line ${Math.floor(n / 2)}` },
@@ -246,9 +246,59 @@ describe('computeLineDiff guard', () => {
   });
 
   it('still diffs inputs inside the bound', () => {
-    expect(computeLineDiff('a', 'b')).toEqual([
+    expect(computeLineDiffFromLines(['a'], ['b'])).toEqual([
       { type: 'removed', text: 'a' },
       { type: 'added', text: 'b' },
+    ]);
+  });
+});
+
+describe('line endings', () => {
+  const counts = (rows: DiffRow[]) => rows.reduce(
+    (acc, r) => (r.kind === 'change' ? { added: acc.added + (r.right ? 1 : 0), removed: acc.removed + (r.left ? 1 : 0) } : acc),
+    { added: 0, removed: 0 },
+  );
+
+  it('counts the last line as changed when it gained a final newline, as git and the server do', () => {
+    // The model wrote notes.md with no final newline; an edit appended a line.
+    const rows = rowsFromTexts('line1\nline2', 'line1\nline2\nline3\n');
+    expect(counts(rows)).toEqual({ added: 2, removed: 1 });
+    expect(rows[1]).toEqual({
+      kind: 'change',
+      left: { no: 2, text: 'line2', eol: 'none' },
+      right: { no: 2, text: 'line2' },
+    });
+    expect(rows[2]).toEqual({ kind: 'change', left: null, right: { no: 3, text: 'line3' } });
+  });
+
+  it('counts a final newline taken off as a change of that line', () => {
+    expect(counts(rowsFromTexts('a\nb\n', 'a\nb'))).toEqual({ added: 1, removed: 1 });
+  });
+
+  it('marks a CRLF line rewritten with LF, and draws every line without its CR', () => {
+    const rows = rowsFromTexts('one\r\ntwo\r\n', 'one\nTWO\n');
+    expect(counts(rows)).toEqual({ added: 2, removed: 2 });
+    expect(rows[0]).toEqual({
+      kind: 'change',
+      left: { no: 1, text: 'one', eol: 'crlf' },
+      right: { no: 1, text: 'one' },
+    });
+  });
+
+  it('marks nothing where both sides end alike', () => {
+    expect(rowsFromTexts('a\nb', 'a\nc')).toEqual([
+      { kind: 'unchanged', left: { no: 1, text: 'a' }, right: { no: 1, text: 'a' } },
+      { kind: 'change', left: { no: 2, text: 'b' }, right: { no: 2, text: 'c' } },
+    ]);
+    const crlf = rowsFromTexts('a\r\nb\r\n', 'a\r\nc\r\n');
+    expect(crlf[0]).toEqual({ kind: 'unchanged', left: { no: 1, text: 'a' }, right: { no: 1, text: 'a' } });
+    expect(crlf[1]).toEqual({ kind: 'change', left: { no: 2, text: 'b' }, right: { no: 2, text: 'c' } });
+  });
+
+  it('marks nothing on a created file with no final newline: there is nothing to compare', () => {
+    expect(rowsFromTexts('', 'a\nb')).toEqual([
+      { kind: 'change', left: null, right: { no: 1, text: 'a' } },
+      { kind: 'change', left: null, right: { no: 2, text: 'b' } },
     ]);
   });
 });

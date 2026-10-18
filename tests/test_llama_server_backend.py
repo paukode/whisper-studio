@@ -269,6 +269,20 @@ def test_call_accumulator_survives_bad_json():
     assert acc.finish() == [{"id": "a", "name": "t", "input": {}}]
 
 
+def test_call_accumulator_gives_a_call_with_no_id_a_unique_one():
+    """Ids key the stored edits (server/workspace/edits.py), so the fallback
+    for a server that sends none must not repeat across turns the way a
+    per-round index would."""
+    ids = []
+    for _ in range(2):
+        acc = SS._CallAccumulator()
+        acc.feed([{"index": 0, "function": {"name": "t", "arguments": "{}"}}])
+        (call,) = acc.finish()
+        ids.append(call["id"])
+    assert ids[0] != ids[1]
+    assert all(i.startswith("call_") for i in ids)
+
+
 # ── SSE normalization ────────────────────────────────────────────────────────
 
 

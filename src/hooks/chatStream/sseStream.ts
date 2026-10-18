@@ -1,15 +1,14 @@
 /**
  * SSE stream engine for /api/chat.
  *
- * Owns the two stream functions extracted from useChatStream.ts:
- *   - readSSEStream: parse one /api/chat SSE response, dispatch every event
- *     type to the stores, and surface pending approvals / user questions.
- *   - sendApprovalContinuation: POST an approval accept/deny, then feed the
- *     continuation response straight back through readSSEStream.
- * The click-to-resume leg of an approval card (running the approved action
- * first) lives in ./approvalLeg.
+ * Owns readSSEStream, extracted from useChatStream.ts: parse one /api/chat
+ * SSE response, dispatch every event type to the stores, and surface pending
+ * approvals / user questions.
+ * The approval continuation (sendApprovalContinuation: POST an approval
+ * accept/deny, then feed the continuation response straight back through
+ * readSSEStream) lives in ./approvalContinuation. The click-to-resume leg of
+ * an approval card (running the approved action first) lives in ./approvalLeg.
  */
-import type { ApprovalOutcome } from '@/api/approval';
 import { getChatStore } from '@/stores/sessionRuntimes';
 import type { PendingApproval } from '@/stores/chatStore';
 import type { VizArtifact } from '@/types/chat';
@@ -17,6 +16,7 @@ import { TOAST_PRIORITY, useUIStore } from '@/stores/uiStore';
 import { useTaskStore, normalizeTasks } from '@/stores/taskStore';
 import { useDockStore } from '@/stores/dockStore';
 import type {
+  ChatMessage,
   SkillTrace,
   SSEEventData,
   TeamProgressEvent,
@@ -25,18 +25,13 @@ import type {
 } from '@/types/chat';
 import { SSEEventDataSchema } from '@/types/schemas';
 import { toError } from '@/utils/toError';
-import {
-  buildStoppedMessage,
-  registerPendingTextFlusher,
-  registerStreamController,
-  releaseStreamController,
-  wasKillFinalized,
-} from './streamControl';
+import { registerPendingTextFlusher } from './streamControl';
 import { createStreamPacer } from './streamPacer';
 import { renderEventCards } from './sseEventCards';
-import { emptyResponseFallback } from './emptyResponse';
-import { buildHistoryPayload } from './history';
 import { syncAutoAppliedTab } from './autoApplied';
+import { toolMetaFromFrame } from './toolMeta';
+import { labelCommit, patchCommittedLabel, writtenLabelFromFrame, type WrittenLabel } from './activityLabels';
+import { patchCommittedRows } from './committedRows';
 
 // Augment Window for SSE diagnostics access
 declare global {
@@ -50,6 +45,64 @@ declare global {
 // that grabbed a reference earlier would be reading a stale array.
 export const _sseEventLog: SSEEventData[] = [];
 
+/** The key a trace's live row is updated under (see
+ *  chatStore.updateStreamToolUse): the provider's id, else the name. */
+const rowKey = (t: SkillTrace): string => t.id || t.name;
+
+/** What the committed row of a call with no result says. */
+export const NOT_RUN_RESULT = 'Not run';
+
+/**
+ * The transcript row a trace commits as, shared by every commit site (the
+ * mid-turn segment, the question card, the approval continuation and the
+ * final message of useChatStream). The status is terminal: 'error' when the
+ * server flagged the result, 'complete' for any other result, and
+ * 'stopped' with NOT_RUN_RESULT for a trace with none: the server answers
+ * every call it ran, so one with no result never ran, or its result comes
+ * after a card frame committed its row and patches it there (the
+ * skill_result handler). The call an approval card waits on keeps the
+ * "Awaiting approval" it was given until the card's answer patches it
+ * (approvalLeg). The kill switch stamps 'stopped' on its own rows in
+ * streamControl. A resolved trace also carries the verdict and exit code
+ * its result brought, and the meta when it had one. Every trace keeps its
+ * round, when its skill frame named one.
+ */
+export function committedToolUse(t: SkillTrace): ToolUseEvent {
+  const notRun = !t.resolved && !t.paused;
+  return {
+    toolId: rowKey(t),
+    toolName: t.name,
+    input: t.input ?? {},
+    result: t.output || (notRun ? NOT_RUN_RESULT : undefined),
+    status: t.status === 'error' ? 'error' : notRun ? 'stopped' : 'complete',
+    previewImage: t.previewImage,
+    ...(t.resolved ? { isError: t.status === 'error', exitCode: t.exitCode ?? null } : {}),
+    ...(t.meta ? { meta: t.meta } : {}),
+    ...(t.round !== undefined ? { round: t.round } : {}),
+  };
+}
+
+/**
+ * The round a stream's first round is stored as: one past the highest round
+ * on the trailing assistant rows (the turn on screen), else 0. A stream
+ * that starts a turn follows the user's row and gets 0. A leg that resumes
+ * a turn (an approval continuation, an answer to a question or folder card)
+ * counts on from the leg that paused. The server counts each leg's rounds
+ * from 0 again, so without the base the leg's first round would take the
+ * paused leg's number, and a tool-only row it commits, drawn in one list
+ * with the paused row (turnEntries.traceRuns), would join that round's
+ * activity group and take its caption.
+ */
+export function nextRoundBase(messages: readonly ChatMessage[]): number {
+  let top = -1;
+  for (let k = messages.length - 1; k >= 0 && messages[k].role === 'assistant'; k -= 1) {
+    for (const t of messages[k].toolUse ?? []) {
+      if (typeof t.round === 'number' && t.round > top) top = t.round;
+    }
+  }
+  return top + 1;
+}
+
 /**
  * Parse an SSE stream from /api/chat and dispatch events to stores.
  *
@@ -57,6 +110,9 @@ export const _sseEventLog: SSEEventData[] = [];
  * carried. An approval the stream pauses on keeps them, so its continuation
  * resumes the turn on the settings it ran on, not on whatever the picker
  * shows when the user answers.
+ *
+ * Each skill frame's round is stored plus nextRoundBase, so the rounds stay
+ * unique across the legs of one turn.
  */
 export async function readSSEStream(
   response: Response,
@@ -96,6 +152,10 @@ export async function readSSEStream(
    *  resolution, a failed setup or model load: an error frame that carries
    *  an `error_code`): its reason. Null when the turn ran. */
   refusal: string | null;
+  /** Captions (activity_label frames) for calls this stream had not
+   *  committed when it ended: the caller's commit takes them with
+   *  labelCommit. */
+  activityLabels: WrittenLabel[];
 }> {
   // Parallel sessions: bind the OWNING session's store from the sessionId
   // this stream was started with. Never resolve the active session here —
@@ -103,6 +163,8 @@ export async function readSSEStream(
   // matter what the user is viewing.
   const store = () => getChatStore(sessionId).getState();
   if (!response.body) throw new Error('Response body is null');
+  // Read before the stream commits anything of its own.
+  const roundBase = nextRoundBase(store().messages);
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
@@ -125,6 +187,10 @@ export async function readSSEStream(
   // The ask_user_question calls of this round, one card once the stream has
   // paused on them (see commitQuestions).
   const roundQuestions: Array<{ question: string; options: string[]; toolUseId: string }> = [];
+  // Captions for calls still streaming: each rides on the message that
+  // commits its calls (labelCommit at every commit site). The store's
+  // currentStreamLabels holds them too, for the live rows.
+  const pendingLabels: WrittenLabel[] = [];
   // Not const: each flushed segment restarts the thinking clock, so a "Thinking
   // 42s" after a card measures the wait since that card rather than replaying
   // the whole turn's elapsed time under every segment.
@@ -153,29 +219,22 @@ export async function readSSEStream(
    * Everything folded in here is drained: leaving it would re-commit the same
    * prose below the card at stream end and render every tool chip twice.
    * A no-op when there is nothing to commit (a card that arrives before any
-   * text or tool call), so it never adds an empty bubble.
+   * text or tool call), so it never adds an empty row.
    */
   const flushSegment = (): void => {
-    const toolUse: ToolUseEvent[] = skillTraces.map((t) => ({
-      toolId: t.name,
-      toolName: t.name,
-      input: t.input ?? {},
-      result: t.output || undefined,
-      status: 'complete' as const,
-      previewImage: t.previewImage,
-    }));
+    const toolUse: ToolUseEvent[] = skillTraces.map(committedToolUse);
     if (!fullResponse && !thinkingText && toolUse.length === 0) return;
     // The segment commits the full text below; drop what is still unpainted.
     textPacer.reset();
     thinkingPacer.reset();
-    store().flushStreamSegment({
+    store().flushStreamSegment(labelCommit({
       role: 'assistant',
       content: fullResponse,
       timestamp: new Date().toISOString(),
       toolUse: toolUse.length > 0 ? toolUse : undefined,
       _thinkingMs: thinkingMs > 0 ? Math.round(thinkingMs) : undefined,
       _thinkingText: thinkingText || undefined,
-    });
+    }, store().messages, pendingLabels));
     fullResponse = '';
     thinkingText = '';
     thinkingMs = 0;
@@ -198,15 +257,8 @@ export async function readSSEStream(
     // so their own traces would only be duplicate chips.
     const toolUseEntries: ToolUseEvent[] = skillTraces
       .filter((t) => t.name !== 'ask_user_question')
-      .map((t) => ({
-        toolId: t.name,
-        toolName: t.name,
-        input: t.input ?? {},
-        result: t.output || undefined,
-        status: 'complete' as const,
-        previewImage: t.previewImage,
-      }));
-    st.addMessage({
+      .map(committedToolUse);
+    st.addMessage(labelCommit({
       role: 'assistant',
       content: fullResponse,
       timestamp: new Date().toISOString(),
@@ -220,7 +272,7 @@ export async function readSSEStream(
       _thinkingText: thinkingText || undefined,
       // The answer resumes this turn on the settings it ran on.
       turnSettings,
-    });
+    }, st.messages, pendingLabels));
     roundQuestions.length = 0;
     fullResponse = '';
     skillTraces.length = 0;
@@ -274,8 +326,9 @@ export async function readSSEStream(
               store().setStreamStatus(null);
             }
             // Prose that was streamed BEFORE this tool call is a finished
-            // thought; commit it as its own bubble so the text the model
-            // writes after the tool work lands as a separate, later bubble.
+            // thought; commit it as its own row so the text the model writes
+            // after the tool work lands as a separate, later row (the turn's
+            // bubble, TurnBubble, still shows the rows together, in order).
             // Concatenating both into one reply produced "No. ... Yes, it's
             // saved now." in a single message. Tool-only segments are left
             // to accumulate (no text = nothing to separate).
@@ -285,24 +338,41 @@ export async function readSSEStream(
               store().appendThinkingToken(''); // signal no thinking
             }
             skillsUsed.push(parsed.skill);
-            const trace: SkillTrace = { name: parsed.skill, input: {}, output: '' };
+            // The provider's tool_use id pairs the call's later frames with
+            // this trace; '' when the provider could not tag the frame, in
+            // which case those frames pair by name order instead.
+            const id = parsed.tool_use_id || '';
+            // The model round that issued the call: each round's calls draw
+            // as an activity group of their own, live and once committed.
+            // Rounds count from 0, so the check is on the type. The base keeps
+            // a resumed leg's rounds after the paused leg's.
+            const round = typeof parsed.round === 'number' ? { round: roundBase + parsed.round } : {};
+            const trace: SkillTrace = { id, name: parsed.skill, input: {}, output: '', status: 'running', ...round };
             skillTraces.push(trace);
-            // Show trace in real-time during streaming
+            // Show trace in real-time during streaming. The arrival time
+            // is the running group's clock, kept on the live row so a
+            // remount of the row does not restart it.
             store().addStreamToolUse({
-              toolId: parsed.skill,
+              toolId: rowKey(trace),
               toolName: parsed.skill,
               input: {},
               status: 'running',
+              startedAt: Date.now(),
+              ...round,
             });
           }
 
           // ── skill_input ──
+          // By id when the frame carries one; an untagged frame belongs to
+          // the call that started last.
           if (parsed.skill_input && parsed.input) {
-            const lastTrace = skillTraces[skillTraces.length - 1];
-            if (lastTrace) {
-              lastTrace.input = parsed.input;
+            const trace = parsed.tool_use_id
+              ? skillTraces.find((t) => t.id === parsed.tool_use_id)
+              : skillTraces[skillTraces.length - 1];
+            if (trace) {
+              trace.input = parsed.input;
               store().updateStreamToolUse(
-                lastTrace.name,
+                rowKey(trace),
                 { input: parsed.input as Record<string, unknown> },
               );
             }
@@ -311,37 +381,68 @@ export async function readSSEStream(
           // ── skill_progress (arguments still streaming) ──
           // A whole HTML app arrives as one tool call's arguments and can take
           // minutes; without this the running card looked hung the entire time.
+          // By id when the frame carries one, else the first running call of
+          // that name.
           if (parsed.skill_progress) {
-            store().updateStreamToolUse(parsed.skill_progress.name, {
-              progressChars: parsed.skill_progress.chars,
+            const sp = parsed.skill_progress;
+            const trace = sp.tool_use_id
+              ? skillTraces.find((t) => t.id === sp.tool_use_id)
+              : skillTraces.find((t) => t.name === sp.name && t.status === 'running');
+            store().updateStreamToolUse(trace ? rowKey(trace) : sp.name, {
+              progressChars: sp.chars,
             });
           }
 
           // ── skill_result (tool complete) ──
           if (parsed.skill_result) {
             const toolName = parsed.skill_result;
-            const toolOutput = (parsed.output as string) ?? '';
-            const isError = typeof toolOutput === 'string' && /^(Error|error)\b/.test(toolOutput);
+            const toolOutput = parsed.output ?? '';
+            // The server's verdict on the full output (one rule, shared with
+            // its loop guard); the client never guesses from the text.
+            const isError = parsed.is_error === true;
+            const exitCode = parsed.exit_code ?? null;
+            // What the server measured (duration, size, a write's diff).
+            const meta = toolMetaFromFrame(parsed.meta);
             store().setLastTool(toolName, toolOutput, isError);
 
-            // Match the FIRST not-yet-resolved trace with this name — tools
-            // complete in order, so this assigns each skill_result to its own
-            // call. Matching purely by name overwrote the first trace's output
-            // for every repeated same-named call (e.g. three task_create),
-            // leaving the rest empty.
             const previewImage = parsed.preview_image;
 
-            const trace = skillTraces.find(t => t.name === parsed.skill_result && !t.resolved);
+            // By id when the frame carries one. An untagged frame matches the
+            // FIRST not-yet-resolved trace with its name: such tools complete
+            // in order, so this assigns each skill_result to its own call
+            // (matching purely by name overwrote the first trace's output for
+            // every repeated same-named call, leaving the rest empty).
+            const trace = parsed.tool_use_id
+              ? skillTraces.find((t) => t.id === parsed.tool_use_id)
+              : skillTraces.find((t) => t.name === toolName && !t.resolved);
             if (trace) {
               trace.output = toolOutput;
               trace.resolved = true;
+              trace.status = isError ? 'error' : 'complete';
+              trace.exitCode = exitCode;
+              if (meta) trace.meta = meta;
               if (previewImage) trace.previewImage = previewImage;
+            } else if (parsed.tool_use_id) {
+              // A card frame the call raised (a hook's refusal, a cron row,
+              // a workflow preview) arrives before its result and commits
+              // the rows above it: the result lands on the committed row.
+              patchCommittedRows(getChatStore(sessionId), sessionId, parsed.tool_use_id, {
+                result: toolOutput,
+                status: isError ? 'error' : 'complete',
+                isError,
+                exitCode,
+                ...(meta ? { meta: () => meta } : {}),
+                ...(previewImage ? { previewImage } : {}),
+              });
             }
 
             // Update real-time trace to complete
-            store().updateStreamToolUse(toolName, {
+            store().updateStreamToolUse(trace ? rowKey(trace) : parsed.tool_use_id || toolName, {
               status: isError ? 'error' : 'complete',
               result: toolOutput,
+              isError,
+              exitCode,
+              ...(meta ? { meta } : {}),
               ...(previewImage ? { previewImage } : {}),
             });
 
@@ -360,6 +461,20 @@ export async function readSSEStream(
             // a no-op for read-only tools because the listener is debounced.
             if (!isError && (toolName === 'ws_create_file' || toolName === 'ws_write_file')) {
               window.dispatchEvent(new CustomEvent('whisper-workspace-refresh'));
+            }
+          }
+
+          // ── activity_label (a model-written caption for a group of calls) ──
+          // Calls still streaming show it on their live row now and keep it
+          // for the message that commits them; calls already committed get
+          // it on their row now, saved.
+          if (parsed.activity_label) {
+            const written = writtenLabelFromFrame(parsed.activity_label);
+            if (written && skillTraces.some((t) => t.id && written.ids.includes(t.id))) {
+              pendingLabels.push(written);
+              store().addStreamLabel(written);
+            } else if (written) {
+              patchCommittedLabel(sessionId, written);
             }
           }
 
@@ -417,17 +532,29 @@ export async function readSSEStream(
             const req = parsed.approval_request;
 
             // Backend doesn't emit skill_result for tools that pause for
-            // approval; mark the last running trace complete so the UI
-            // doesn't show a spinning skill forever.
-            const runningTraces = store().currentStreamToolUse;
-            const lastRunning = [...runningTraces].reverse().find(t => t.status === 'running');
-            if (lastRunning) {
-              store().updateStreamToolUse(lastRunning.toolName, {
+            // approval; mark the paused call complete so the UI doesn't show
+            // a spinning skill forever. The request names the call by its
+            // tool_use_id; the last running row is the fallback for a row
+            // from an untagged frame. Only an unresolved trace can be the
+            // paused one: matching by name alone used to overwrite the
+            // output of an earlier, finished call of the same tool.
+            const reqId = req.tool_use_id;
+            const liveRows = store().currentStreamToolUse;
+            const paused =
+              (reqId ? liveRows.find((t) => t.toolId === reqId && t.status === 'running') : undefined)
+              ?? [...liveRows].reverse().find((t) => t.status === 'running');
+            if (paused) {
+              store().updateStreamToolUse(paused.toolId, {
                 status: 'complete',
                 result: `Awaiting approval: ${req.summary}`,
               });
-              const localTrace = skillTraces.find(t => t.name === lastRunning.toolName);
-              if (localTrace) localTrace.output = `Awaiting approval: ${req.summary}`;
+              const localTrace =
+                (reqId ? skillTraces.find((t) => t.id === reqId && !t.resolved) : undefined)
+                ?? skillTraces.find((t) => t.name === paused.toolName && !t.resolved);
+              if (localTrace) {
+                localTrace.output = `Awaiting approval: ${req.summary}`;
+                localTrace.paused = true;
+              }
             }
 
             const approval: PendingApproval = {
@@ -884,245 +1011,6 @@ export async function readSSEStream(
     pendingVisuals,
     pendingPlan,
     refusal,
+    activityLabels: pendingLabels,
   };
-}
-
-/** What an approval acts on, for the text the model (and the transcript)
- *  reads: the path, else the command, else the card's summary. */
-export function approvalTarget(approval: PendingApproval): string {
-  return (approval.payload?.path as string | undefined)
-    ?? (approval.payload?.command as string | undefined)
-    ?? approval.summary
-    ?? 'N/A';
-}
-
-/** Whether the paused turn picked the approval's result up. `resumed` is
- *  false when the continuation never reached the model (refused at model
- *  resolution, a failed setup or model load, an HTTP or network failure):
- *  an action that ran must then be recorded by the caller, since no turn
- *  will ever say so. A Stop of the continuation counts as resumed; its own
- *  stop path records what the leg did. */
-export interface ContinuationResult {
-  resumed: boolean;
-  reason?: string;
-}
-
-/**
- * Send an approval continuation (accept or deny) through the full SSE pipeline.
- *
- * `outcome` is what actually happened when the action ran (see ApprovalOutcome
- * in @/api/approval — ONE definition, shared with the endpoint that produces
- * it). Passing it is what keeps the tool_result truthful: the string used to be
- * a hard-coded "succeeded" that lied to the model whenever the write failed, or
- * was never attempted at all.
- */
-export async function sendApprovalContinuation(
-  approval: PendingApproval,
-  sessionId: string,
-  accepted: boolean,
-  signal?: AbortSignal,
-  outcome?: ApprovalOutcome,
-): Promise<ContinuationResult> {
-  // Parallel sessions: bind the OWNING session's store from the sessionId
-  // this stream was started with. Never resolve the active session here —
-  // every store() call below must keep landing in the same session no
-  // matter what the user is viewing.
-  const store = () => getChatStore(sessionId).getState();
-  store().setStreaming(true);
-
-  const target = approvalTarget(approval);
-  // Nouns stay action-neutral: this text is what the MODEL reasons from, and
-  // the approval registry covers far more than writes — git_push, terminal_run,
-  // GitHub API writes, workspace connects. Calling every one of them a
-  // "filesystem operation" (or a "change") misdescribed the tool it is
-  // answering. The action name is already in the string; the verb carries the
-  // outcome.
-  let content: string;
-  if (!accepted) {
-    content = `[User denied] ${approval.action}: ${target}. The user rejected this action; it did not run.`;
-  } else if (outcome) {
-    if (outcome.ok) {
-      const detail = outcome.output ? `\n\n${outcome.output}` : '';
-      content = `[User approved] ${approval.action}: ${target}. The action succeeded.${detail}`;
-    } else {
-      // A command that ran and failed carries its output next to the exit code.
-      const detail = [outcome.error, outcome.output].filter(Boolean).join('\n\n') || 'unknown error';
-      content = `[User approved but the operation FAILED] ${approval.action}: ${target}. Error: ${detail}`;
-    }
-  } else {
-    // Every accept call site executes the action first and passes its
-    // outcome (executeApproval's result, or a synthesized {ok:false} on
-    // throw). Reaching here is a caller bug — fail safe rather than tell
-    // the model a write happened that nobody performed.
-    console.error('sendApprovalContinuation: accepted without an execution outcome');
-    content = `[User approved but the operation was NOT executed] ${approval.action}: ${target}. Treat this action as not performed.`;
-  }
-
-  // ws_edit_file sets this flag when the old_string matched only after quote
-  // normalization. Tell the model its match was inexact so it doesn't assume
-  // byte-for-byte file state on the next edit. The flag rides only on edit
-  // payloads, so this appends nothing for writes/commands/etc.
-  if (accepted && approval.payload?.matched_via_normalization === true) {
-    content +=
-      ' Note: old_string did not match exactly; it matched only after quote'
-      + ' normalization (the file uses typographic quotes that differ from the'
-      + ' text sent), and the original quote characters were preserved.';
-  }
-
-  const body: Record<string, unknown> = {
-    question: '',
-    session_id: sessionId,
-    // Carry the model AND the per-turn effort/response-length the paused turn
-    // ran on, so the continuation resumes on the SAME backend at the SAME
-    // settings. Without the model the endpoint falls back to the default
-    // cloud model, which would strand a paused local (Gemma) tool turn;
-    // without effort and verbosity the post-approval half of the turn
-    // silently dropped to the config defaults. Read off the approval, not the
-    // picker: the picker is window-wide, so a model chosen in another session
-    // while this card waited must not take over this turn.
-    ...approval.turnSettings,
-    // The conversation so far. Normally unused — the backend restores the
-    // stashed paused messages and ignores this — but it is the ONLY context the
-    // server has left when that paused state is gone (a backend restart while
-    // the card sat on screen). Sending nothing is what made that path answer
-    // from an empty conversation.
-    history: buildHistoryPayload(store().messages, true),
-    approved_tool_result: {
-      tool_use_id: approval.toolUseId,
-      content,
-      accepted,
-    },
-    session_approvals: store().sessionApprovals,
-    session_denials: store().sessionDenials,
-  };
-
-  // MCP servers are resolved by the backend from each server's persisted
-  // `enabled` flag, so the continuation needs no per-request override.
-
-  // ALWAYS register a controller for this continuation leg so Stop/ESC can
-  // reach it: the stream that paused on the card has long since released its
-  // own. When the caller passes the signal of the leg that ran the approved
-  // action (./approvalLeg), chain it so the session stays claimed without a
-  // gap and a cancel there still aborts this leg.
-  const ownController = new AbortController();
-  registerStreamController(sessionId, ownController);
-  if (signal) {
-    if (signal.aborted) ownController.abort();
-    else signal.addEventListener('abort', () => ownController.abort(), { once: true });
-  }
-  const continuationSignal = ownController.signal;
-
-  try {
-    const response = await fetch('/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: continuationSignal,
-    });
-
-    if (!response.ok || !response.body) {
-      // Surface the server's own words (e.g. the 409 SESSION_BUSY guidance:
-      // "reset it from the chat ⋯ menu") instead of a bare "Continuation
-      // failed" the user can't act on.
-      const detail = await response.json()
-        .then((d: { error?: string }) => d?.error)
-        .catch(() => null);
-      throw new Error(detail || `Continuation failed (HTTP ${response.status})`);
-    }
-
-    const result = await readSSEStream(response, sessionId, continuationSignal, approval.turnSettings);
-    // The kill switch may have finalized this leg while the read loop was
-    // draining (an aborted signal exits the loop normally). It already
-    // committed the traces shown so far; appending them again here would
-    // duplicate the activity.
-    if (wasKillFinalized(ownController)) return { resumed: true };
-
-    const contTeamReports = store().takeTeamReports();
-    const contToolUse: ToolUseEvent[] = result.skillTraces.map(t => ({
-      toolId: t.name,
-      toolName: t.name,
-      input: t.input ?? {},
-      result: t.output || undefined,
-      status: 'complete' as const,
-      previewImage: t.previewImage,
-    }));
-
-    // Same empty-answer fallback the fresh-turn path applies (useChatStream's
-    // send). Without it a continuation that ended with no text committed
-    // NOTHING: the transcript kept only the "Awaiting approval" trace, so an
-    // approved turn looked like it had died and the user had to nudge the model
-    // by hand. Skipped when the continuation paused again — the new card (or
-    // question) IS the visible outcome.
-    let contText = result.fullResponse;
-    if (
-      !contText &&
-      !result.hasPendingApprovals &&
-      !result.hasUserQuestion &&
-      result.flushedSegments === 0
-    ) {
-      contText = emptyResponseFallback(store());
-    }
-
-    // Tool traces are committed even with no text (mirroring the fresh path's
-    // approval-pause commit) so the work the continuation did survives the
-    // streaming state being cleared.
-    if (contText || result.pendingArtifact || result.pendingVisuals.length > 0 || result.pendingPlan || contTeamReports || contToolUse.length > 0) {
-      store().addMessage({
-        role: 'assistant',
-        content: contText,
-        timestamp: new Date().toISOString(),
-        skills: result.skillsUsed.length > 0 ? result.skillsUsed : undefined,
-        traces: result.skillTraces.length > 0 ? result.skillTraces : undefined,
-        toolUse: contToolUse.length > 0 ? contToolUse : undefined,
-        teamReports: contTeamReports,
-        // The continuation can also yield a create_artifact artifact; pin it
-        // to this message so the artifact card and the model's text live
-        // together in one card and tool chips render only once.
-        programArtifact: result.pendingArtifact ?? undefined,
-        visuals: result.pendingVisuals.length > 0 ? result.pendingVisuals : undefined,
-        plan: result.pendingPlan ?? undefined,
-        _thinkingMs: result.thinkingMs > 0 ? Math.round(result.thinkingMs) : undefined,
-        _thinkingText: result.thinkingText || undefined,
-        _usage: (result.inputTokens > 0 || result.outputTokens > 0)
-          ? { input_tokens: result.inputTokens, output_tokens: result.outputTokens }
-          : undefined,
-        grounding: result.grounding,
-        // Taken here, not left for setStreaming(false): that waits while
-        // another approval is pending.
-        deliveries: store().takeDeliveries(),
-      });
-    }
-
-    // Refresh workspace tree after approval
-    window.dispatchEvent(new CustomEvent('whisper-workspace-refresh'));
-    window.dispatchEvent(new CustomEvent('whisper-git-refresh'));
-    return result.refusal === null ? { resumed: true } : { resumed: false, reason: result.refusal };
-  } catch (err) {
-    if (toError(err).name === 'AbortError') {
-      // User stop: the kill switch already finalized the UI (traces included)
-      // and a fabricated "failed to continue" bubble would misreport a
-      // deliberate stop. A plain re-send abort of this leg gets the same
-      // "(Stopped)" commit the fresh-turn path makes, so the prose and tool
-      // activity of the leg are not lost; the finally below clears the live
-      // trace, mirroring how the success path above commits.
-      if (!wasKillFinalized(ownController)) {
-        const stoppedMsg = buildStoppedMessage(store());
-        if (stoppedMsg) store().addMessage(stoppedMsg);
-      }
-      return { resumed: true };
-    }
-    console.error('Approval continuation failed:', err);
-    store().addMessage({
-      role: 'assistant',
-      content: `*Error: Failed to continue after approval — ${toError(err).message}*`,
-      timestamp: new Date().toISOString(),
-    });
-    return { resumed: false, reason: toError(err).message };
-  } finally {
-    if (ownController) releaseStreamController(sessionId, ownController);
-    // Only clear streaming if no more approvals pending
-    if (!store().currentApproval && store().approvalQueue.length === 0) {
-      store().setStreaming(false);
-    }
-  }
 }

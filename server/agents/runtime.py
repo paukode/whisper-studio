@@ -1010,11 +1010,8 @@ async def _run_agent_loop(
                         tool_name=tool_name,
                         output_preview=_preview(output_preview, 240),
                         output_full=_preview(output_preview, 4000),
-                        status=(
-                            "error"
-                            if output_preview.startswith(("[Tool Error]", "[Refused]"))
-                            else "ok"
-                        ),
+                        # The gate decided (tool_executor.tool_outcome).
+                        status="error" if frame.get("is_error") else "ok",
                     )
                 elif "notify_user" in frame:
                     msg = (frame["notify_user"] or {}).get("message", "")

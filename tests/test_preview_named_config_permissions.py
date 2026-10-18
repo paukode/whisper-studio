@@ -24,6 +24,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from server import tool_approvals
 from server import tool_executor as te
 from server.approval.bootstrap import register_defaults
 from server.hooks.schema import HookOutcome
@@ -137,8 +138,8 @@ def spawn(monkeypatch):
 @pytest.fixture
 def classifier(monkeypatch):
     verdict = AsyncMock(return_value={"decision": "confirm"})
-    monkeypatch.setattr(te, "classify_tool_call", verdict)
-    monkeypatch.setattr(te, "explain_permission", AsyncMock(return_value=None))
+    monkeypatch.setattr(tool_approvals, "classify_tool_call", verdict)
+    monkeypatch.setattr(tool_approvals, "explain_permission", AsyncMock(return_value=None))
     return verdict
 
 

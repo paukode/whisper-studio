@@ -2,12 +2,13 @@ import { useCallback, useState } from 'react';
 import { getChatStore, useActiveChatStore } from '@/stores/sessionRuntimes';
 import { useUIStore } from '@/stores/uiStore';
 import { resumeAutoMode } from '@/api/settings';
+import { ICON } from './activityIcons';
 
 /**
  * Notice shown when the auto-mode classifier's rolling denial counter
  * (server.security.permissions) trips: auto mode stops consulting the
  * classifier and falls back to asking for every remaining approval-gated
- * tool call this turn. "Resume auto mode" is the one-click override —
+ * tool call this turn. "Resume auto mode" is the one-click override: it
  * mirrors ApprovalBanner's "allow all this session" affordance, scoped to
  * "for the rest of this turn" instead.
  */
@@ -49,10 +50,13 @@ export function AutoModeBreakerBanner() {
     <div className="chat-msg-wrap assistant-wrap">
       <div
         className="ws-approval-card"
-        style={{ border: '1px solid var(--accent-warn, #b8860b)', borderRadius: 8, padding: '12px 16px' }}
+        style={{ border: '1px solid var(--risk-warn)', padding: '12px 16px' }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-          <span style={{ fontSize: '0.85em', color: 'var(--text-muted)' }}>⚠ Auto mode paused</span>
+          <span style={{ fontSize: '0.85em', color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ display: 'inline-flex', color: 'var(--risk-warn)' }}>{ICON.alert}</span>
+            Auto mode paused
+          </span>
         </div>
         <div style={{ marginBottom: 12, fontSize: '0.85em', lineHeight: 1.4 }}>{breaker.reason}</div>
         <button
@@ -60,18 +64,21 @@ export function AutoModeBreakerBanner() {
           onClick={() => void handleResume()}
           disabled={isResuming}
           style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
             padding: '6px 14px',
             borderRadius: 6,
-            border: '1px solid var(--accent-warn, #b8860b)',
+            border: '1px solid var(--risk-warn)',
             background: 'transparent',
-            color: 'var(--accent-warn, #b8860b)',
+            color: 'var(--risk-warn)',
             fontSize: '0.82em',
             fontWeight: 500,
             cursor: isResuming ? 'wait' : 'pointer',
             opacity: isResuming ? 0.7 : 1,
           }}
         >
-          {isResuming ? 'Resuming…' : '↻ Resume auto mode'}
+          {isResuming ? 'Resuming…' : <>{ICON.refresh}Resume auto mode</>}
         </button>
       </div>
     </div>

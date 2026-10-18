@@ -24,6 +24,8 @@ import {
 import { useSessionStore } from '@/stores/sessionStore';
 import { useUIStore } from '@/stores/uiStore';
 import { useChatStream } from '@/hooks/useChatStream';
+import { ACTIVITY_MIN_RUN, groupAgentTools, groupForActivity, isActivityEntry } from '@/components/chat/AgentCard';
+import { captionIn, traceRuns, turnEntries } from '@/components/chat/turnEntries';
 import { APPROVED_ACTION_STATUS, answerApproval } from './approvalLeg';
 import { hasLiveStream, killSessionStream, registerStreamController } from './streamControl';
 
@@ -369,6 +371,253 @@ describe('approval leg', () => {
     expect(getChatStore(SID).getState().messages.some((m) => m.content === 'continue')).toBe(false);
     expect(useUIStore.getState().toasts.some((t) => /approved action is still running/.test(t.message))).toBe(true);
     await act(async () => { finishAction!({ ok: true }); await tick(); await tick(); });
+  });
+
+  // The paused turn committed its call's row as "Awaiting approval: ...". The
+  // card's Yes runs the action outside any stream, so no skill_result ever
+  // reaches that row: the leg writes the outcome onto it by tool_use_id.
+  describe("the paused call's row", () => {
+    const writeApproval = (): PendingApproval => ({
+      ...approval(),
+      action: 'ws_write_file',
+      category: 'write',
+      preview: 'diff',
+      summary: 'Write a.py',
+      payload: { path: 'a.py', content: 'x = 1\n' },
+    });
+    const pausedRow = {
+      toolId: 'tu_dev',
+      toolName: 'ws_write_file',
+      input: { path: 'a.py' },
+      result: 'Awaiting approval: Write a.py',
+      status: 'complete' as const,
+    };
+    const otherRow = {
+      toolId: 'tu_read',
+      toolName: 'ws_read_file',
+      input: { path: 'b.py' },
+      result: '    1\tb',
+      status: 'complete' as const,
+    };
+    const seed = () => getChatStore(SID).getState().setMessages([
+      { role: 'user', content: 'write a.py', timestamp: 't0' },
+      {
+        role: 'assistant',
+        content: '',
+        timestamp: 't1',
+        toolUse: [otherRow, pausedRow],
+        traces: [{ id: 'tu_dev', name: 'ws_write_file', input: {}, output: pausedRow.result, status: 'complete' }],
+      },
+    ]);
+    const rows = () => getChatStore(SID).getState().messages[1].toolUse ?? [];
+
+    it('sends the call id and writes the outcome and the stats onto the row, then saves', async () => {
+      seed();
+      // What the row said, and whether the turn had resumed, at each save.
+      const saves: Array<{ result?: string; resumed: number }> = [];
+      useSessionStore.setState({
+        debouncedSave: vi.fn(() => saves.push({ result: rows()[1]?.result, resumed: chatCalls().length })),
+      } as never);
+      let answered: Promise<boolean> = Promise.resolve(true);
+      await act(async () => {
+        answered = answerApproval(writeApproval(), true, false);
+        await tick();
+      });
+      expect(executeApproval).toHaveBeenCalledWith({
+        action: 'ws_write_file',
+        payload: { path: 'a.py', content: 'x = 1\n' },
+        tool_use_id: 'tu_dev',
+      });
+
+      await act(async () => {
+        finishAction!({
+          ok: true,
+          output: 'Wrote a.py (6 bytes).',
+          stats: { added: 3, removed: 1, lines: 12, bytes: 240, stored: true },
+        });
+        await answered;
+      });
+      const meta = {
+        durationMs: null,
+        outputChars: null,
+        truncated: null,
+        lines: null,
+        bytes: 240,
+        added: 3,
+        removed: 1,
+      };
+      expect(rows()[1]).toEqual({
+        ...pausedRow,
+        result: 'Wrote a.py (6 bytes).',
+        status: 'complete',
+        isError: false,
+        exitCode: null,
+        meta,
+      });
+      expect(rows()[0]).toEqual(otherRow);
+      expect(getChatStore(SID).getState().messages[1].traces?.[0]).toMatchObject({
+        output: 'Wrote a.py (6 bytes).',
+        status: 'complete',
+        meta,
+      });
+      // Saved with the outcome on the row, before the turn resumed.
+      expect(saves[0]).toEqual({ result: 'Wrote a.py (6 bytes).', resumed: 0 });
+      expect(chatCalls()).toHaveLength(1);
+    });
+
+    it('a failed action is an error row with the error the model reads, and no meta', async () => {
+      seed();
+      let answered: Promise<boolean> = Promise.resolve(true);
+      await act(async () => {
+        answered = answerApproval(writeApproval(), true, false);
+        await tick();
+      });
+      await act(async () => {
+        finishAction!({ ok: false, error: 'Write failed: disk full', output: '', stats: null });
+        await answered;
+      });
+      expect(rows()[1]).toEqual({
+        ...pausedRow,
+        result: 'Error: Write failed: disk full',
+        status: 'error',
+        isError: true,
+        exitCode: null,
+      });
+    });
+
+    it("a refused card's row says the user refused it, and saves before the turn resumes", async () => {
+      seed();
+      const saves: Array<{ result?: string; resumed: number }> = [];
+      useSessionStore.setState({
+        debouncedSave: vi.fn(() => saves.push({ result: rows()[1]?.result, resumed: chatCalls().length })),
+      } as never);
+      await act(async () => {
+        await answerApproval(writeApproval(), false, false);
+      });
+      expect(executeApproval).not.toHaveBeenCalled();
+      expect(rows()[1]).toEqual({
+        ...pausedRow,
+        result: '[Denied by user] ws_write_file: a.py',
+        status: 'error',
+        isError: true,
+        exitCode: null,
+      });
+      expect(getChatStore(SID).getState().messages[1].traces?.[0]).toMatchObject({
+        output: '[Denied by user] ws_write_file: a.py',
+        status: 'error',
+      });
+      expect(saves[0]).toEqual({ result: '[Denied by user] ws_write_file: a.py', resumed: 0 });
+      expect(chatCalls()).toHaveLength(1);
+    });
+
+    it("an approved command's row carries the exit code it finished with", async () => {
+      getChatStore(SID).getState().setMessages([
+        { role: 'user', content: 'build it', timestamp: 't0' },
+        {
+          role: 'assistant', content: '', timestamp: 't1',
+          toolUse: [{ toolId: 'tu_dev', toolName: 'ws_run_command', input: { command: 'grep x a.txt' }, result: 'Awaiting approval: grep', status: 'complete' }],
+        },
+      ]);
+      let answered: Promise<boolean> = Promise.resolve(true);
+      await act(async () => {
+        answered = answerApproval(approval(), true, false);
+        await tick();
+      });
+      await act(async () => {
+        finishAction!({ ok: false, error: 'exit code 1', output: '(no output)\n(exit code 1: no matches found)', exit_code: 1 });
+        await answered;
+      });
+      expect(rows()[0]).toMatchObject({ status: 'error', isError: true, exitCode: 1 });
+    });
+
+    it("keeps a preview of a long result, cut where the server cuts a live row's", async () => {
+      seed();
+      let answered: Promise<boolean> = Promise.resolve(true);
+      await act(async () => {
+        answered = answerApproval(writeApproval(), true, false);
+        await tick();
+      });
+      await act(async () => {
+        finishAction!({ ok: true, output: 'y'.repeat(5000) });
+        await answered;
+      });
+      expect(rows()[1].result).toBe(`${'y'.repeat(2000)}...`);
+      expect(rows()[1]).not.toHaveProperty('meta');
+    });
+
+    it("counts the continuation's rounds on from the paused leg's, so each round keeps its own group and caption", async () => {
+      // The paused leg paused in its round 0. The server counts the
+      // continuation's rounds from 0 again, and the continuation pauses
+      // again with no prose, so its row is tool-only and draws in one list
+      // with the paused row (traceRuns).
+      getChatStore(SID).getState().setMessages([
+        { role: 'user', content: 'write a.py', timestamp: 't0' },
+        { role: 'assistant', content: '', timestamp: 't1', toolUse: [{ ...otherRow, round: 0 }, { ...pausedRow, round: 0 }] },
+      ]);
+      const frames = [
+        { skill: 'ws_read_file', tool_use_id: 'tu_c', round: 0 },
+        { skill_input: 'ws_read_file', input: { path: 'c.py' }, tool_use_id: 'tu_c' },
+        { skill_result: 'ws_read_file', output: 'c', tool_use_id: 'tu_c', is_error: false, exit_code: null },
+        { activity_label: { tool_use_id: 'tu_c', tool_use_ids: ['tu_c'], label: 'Read the caller of a.py' } },
+        { skill: 'ws_write_file', tool_use_id: 'tu_w2', round: 1 },
+        { skill_input: 'ws_write_file', input: { path: 'c.py' }, tool_use_id: 'tu_w2' },
+        {
+          approval_request: {
+            tool_use_id: 'tu_w2', action: 'ws_write_file', category: 'write', preview: 'diff',
+            summary: 'Write c.py', payload: { path: 'c.py', content: 'y = 2\n' },
+          },
+        },
+      ];
+      vi.mocked(globalThis.fetch).mockImplementation(async (input) => {
+        if (!String(input).includes('/api/chat')) return new Response('{}', { status: 200 });
+        const body = [...frames.map((f) => `data: ${JSON.stringify(f)}\n\n`), 'data: [DONE]\n\n'].join('');
+        return new Response(new ReadableStream<Uint8Array>({
+          start(c) { c.enqueue(new TextEncoder().encode(body)); c.close(); },
+        }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      });
+
+      let answered: Promise<boolean> = Promise.resolve(true);
+      await act(async () => {
+        answered = answerApproval(writeApproval(), true, false);
+        await tick();
+      });
+      await act(async () => {
+        finishAction!({ ok: true, output: 'Wrote a.py (6 bytes).' });
+        await answered;
+      });
+
+      const messages = getChatStore(SID).getState().messages;
+      const leg = messages[2];
+      expect(leg.toolUse?.map((t) => [t.toolId, t.round])).toEqual([['tu_c', 1], ['tu_w2', 2]]);
+      const turn = turnEntries(messages).find((e) => e.kind === 'turn');
+      if (turn?.kind !== 'turn') throw new Error('no turn');
+      const runs = traceRuns(turn.rows);
+      expect(runs).toEqual([[0, 1]]);
+      const drawn = runs[0].flatMap((k) => turn.rows[k].toolUse ?? []);
+      const groups = groupForActivity(groupAgentTools(drawn), { minRun: ACTIVITY_MIN_RUN })
+        .map((e) => (isActivityEntry(e) ? e.tools.map((t) => t.toolId) : []));
+      expect(groups).toEqual([['tu_read', 'tu_dev'], ['tu_c'], ['tu_w2']]);
+      // The caption names the continuation's round alone, under its own
+      // first call, and the paused round keeps its deterministic label.
+      expect(leg.activityLabels).toEqual({ tu_c: 'Read the caller of a.py' });
+      expect(captionIn(turn.rows, 'tu_read')).toBeUndefined();
+    });
+
+    it('a Stop during the action still fills the row', async () => {
+      seed();
+      let answered: Promise<boolean> = Promise.resolve(true);
+      await act(async () => {
+        answered = answerApproval(writeApproval(), true, false);
+        await tick();
+      });
+      act(() => killSessionStream(SID));
+      await act(async () => {
+        finishAction!({ ok: true, output: 'Wrote a.py (6 bytes).', stats: { added: 1, removed: 0, lines: 1, bytes: 6 } });
+        await answered;
+      });
+      expect(rows()[1]).toMatchObject({ result: 'Wrote a.py (6 bytes).', status: 'complete', meta: { added: 1 } });
+      expect(chatCalls()).toHaveLength(0);
+    });
   });
 
   it('refuses to resume into a session another stream owns, and keeps the card', async () => {

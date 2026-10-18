@@ -46,6 +46,8 @@ def test_flags_registry_holds_only_live_flags():
         "session_search",
         "tool_loop_guard",
         "verify_on_stop",
+        # Read by is_enabled in server/chat/engine/activity_labels.py.
+        "activity_labels",
     }
     assert names & removed == set(), f"no-op flags back in the registry: {names & removed}"
     assert names == live, f"registry drift: extra={names - live} missing={live - names}"

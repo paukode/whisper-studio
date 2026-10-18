@@ -242,7 +242,7 @@ def test_an_artifact_card_holds_with_a_card_this_turn_or_the_sessions():
         ("ws_merge_worktree", "Failed to merge worktree: conflict", False),
         ("github_api_write", '{"error": "Not Found"}', False),
         ("aws_cli", "[WS_APPROVAL]{}", False),
-        # What an approval card sends back (src/hooks/chatStream/sseStream.ts).
+        # What an approval card sends back (src/hooks/chatStream/approvalContinuation.ts).
         ("save_file", "[User approved] save_to_path: a.md. The action succeeded.", True),
         (
             "save_file",

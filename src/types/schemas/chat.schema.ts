@@ -79,8 +79,45 @@ export const SSEEventDataSchema = z.object({
   input: z.record(z.string(), z.unknown()).optional(),
   skill_result: z.string().optional(),
   output: z.string().optional(),
-  /** Tool-call arguments still streaming (a large artifact): size so far. */
-  skill_progress: z.object({ name: z.string(), chars: z.number() }).optional(),
+  /** The provider's tool_use id on skill, skill_input and skill_result
+   *  frames (empty when the provider could not tag the frame): what pairs a
+   *  result with its call when two same-named calls run in parallel. */
+  tool_use_id: z.string().optional(),
+  /** skill: the model round that issued the call, counted from 0. The
+   *  activity groups split where it changes. */
+  round: z.number().optional(),
+  /** skill_result: the server's verdict on the output, and the command's
+   *  exit code (null for a tool that has none). */
+  is_error: z.boolean().optional(),
+  exit_code: z.number().nullable().optional(),
+  /** skill_result: what the server measured about the call
+   *  (server/tool_meta.py). The server sends every key, null when unknown;
+   *  a nested z.object drops the keys it does not name, so each is named. */
+  meta: z.object({
+    duration_ms: z.number().nullable().optional(),
+    output_chars: z.number().nullable().optional(),
+    truncated: z.boolean().nullable().optional(),
+    lines: z.number().nullable().optional(),
+    bytes: z.number().nullable().optional(),
+    added: z.number().nullable().optional(),
+    removed: z.number().nullable().optional(),
+  }).optional(),
+  /** A model-written caption for the activity group that holds the calls
+   *  of one round (server/chat/engine/activity_labels.py), keyed by the
+   *  round's first labelled call. A nested z.object drops undeclared keys,
+   *  so each is named. */
+  activity_label: z.object({
+    tool_use_id: z.string(),
+    tool_use_ids: z.array(z.string()).optional(),
+    label: z.string(),
+  }).optional(),
+  /** Tool-call arguments still streaming (a large artifact): size so far.
+   *  A nested z.object drops undeclared keys, so the id is named here too. */
+  skill_progress: z.object({
+    name: z.string(),
+    chars: z.number(),
+    tool_use_id: z.string().optional(),
+  }).optional(),
 
   // Approvals — generic shape; `preview` selects the renderer.
   approval_request: z.object({
@@ -103,7 +140,7 @@ export const SSEEventDataSchema = z.object({
     path: z.string().optional(),
     original: z.string().optional(),
     content: z.string().optional(),
-    // The root the call was bound to (server/tool_executor.py stamps it), so
+    // The root the call was bound to (server/tool_approvals.py stamps it), so
     // the client syncs only a tab of that root. Null when none was connected.
     workspace_root: z.string().nullable().optional(),
   }).optional(),

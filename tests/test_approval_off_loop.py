@@ -52,13 +52,13 @@ def test_inline_auto_approved_command_does_not_block_the_loop(workspace_dir):
     """The in-turn path ("Yes, all cli", auto mode, subagents) awaits the same
     executor through _execute_ws_approval_inline."""
     from server.approval.bootstrap import register_defaults
-    from server.tool_executor import _execute_ws_approval_inline
+    from server.tool_approvals import _execute_ws_approval_inline
 
     register_defaults()
     result, ticks = asyncio.run(
         _ticks_while(_execute_ws_approval_inline({"action": "command", "command": "sleep 0.6"}))
     )
-    assert not str(result).startswith("Error"), result
+    assert result.ok, result.error
     assert ticks >= 5, f"the loop was frozen by the inline approval ({ticks} ticks)"
 
 

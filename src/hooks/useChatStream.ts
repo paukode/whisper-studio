@@ -7,10 +7,11 @@
  * in-flight stream per session (a re-send aborts only that session's
  * stream), up to MAX_ACTIVE_SESSIONS sessions active at once.
  *
- * The SSE parsing engine (readSSEStream) and the approval-continuation
- * pump (sendApprovalContinuation) live in ./chatStream/sseStream; the
- * team-report folding helpers live in ./chatStream/teamProgress. This file
- * keeps the React hook that wires them to component state.
+ * The SSE parsing engine (readSSEStream) lives in ./chatStream/sseStream,
+ * the approval-continuation pump (sendApprovalContinuation) in
+ * ./chatStream/approvalContinuation, and the team-report folding helpers in
+ * ./chatStream/teamProgress. This file keeps the React hook that wires them
+ * to component state.
  */
 import { useCallback, useEffect } from 'react';
 import {
@@ -26,7 +27,8 @@ import { useIndexSearchStore } from '@/stores/indexSearchStore';
 import type { ChatMessage, ToolUseEvent } from '@/types/chat';
 import { toError } from '@/utils/toError';
 import { ensureRetentionEnabled } from '@/components/chat/dataRetentionConsent';
-import { _sseEventLog, readSSEStream } from './chatStream/sseStream';
+import { _sseEventLog, committedToolUse, readSSEStream } from './chatStream/sseStream';
+import { labelCommit } from './chatStream/activityLabels';
 import { emptyResponseFallback } from './chatStream/emptyResponse';
 import { pausedTurnSettings, turnModelSettings } from './chatStream/turnSettings';
 import { buildHistoryPayload } from './chatStream/history';
@@ -385,14 +387,7 @@ export function useChatStream(): UseChatStreamReturn {
       }
 
       // Build tool trace entries from accumulated skill data.
-      const finalToolUse: ToolUseEvent[] = result.skillTraces.map(t => ({
-        toolId: t.name,
-        toolName: t.name,
-        input: t.input ?? {},
-        result: t.output || undefined,
-        status: 'complete' as const,
-        previewImage: t.previewImage,
-      }));
+      const finalToolUse: ToolUseEvent[] = result.skillTraces.map(committedToolUse);
 
       // When the turn has no text of its own but did work, add a message with
       // the accumulated tool traces so they don't vanish when finishStream
@@ -400,12 +395,13 @@ export function useChatStream(): UseChatStreamReturn {
       // paused the turn, or a card flushed the text above it and the model
       // called more tools before ending. Team reports folded so far ride along
       // — neither case may orphan a live team card.
+      let toolRowAdded = false;
       if (
         !fullResponse &&
         (result.hasPendingApprovals || result.flushedSegments > 0) &&
         finalToolUse.length > 0
       ) {
-        store().addMessage({
+        store().addMessage(labelCommit({
           role: 'assistant',
           content: '',
           timestamp: new Date().toISOString(),
@@ -413,8 +409,13 @@ export function useChatStream(): UseChatStreamReturn {
           teamReports: store().takeTeamReports(),
           _thinkingMs: result.thinkingMs > 0 ? Math.round(result.thinkingMs) : undefined,
           _thinkingText: result.thinkingText || undefined,
-        });
+        }, store().messages, result.activityLabels));
+        toolRowAdded = true;
       }
+      // That row holds the turn's traces now. A final message still built
+      // below (an artifact, a visual or a plan with no closing text) must not
+      // show the same chips a second time.
+      const toolUseForFinal = toolRowAdded ? [] : finalToolUse;
 
       // Atomically stop streaming AND add the final message in a single
       // store update so there's no render frame where neither the streaming
@@ -441,8 +442,8 @@ export function useChatStream(): UseChatStreamReturn {
             content: finalContent,
             timestamp: new Date().toISOString(),
             skills: result.skillsUsed.length > 0 ? result.skillsUsed : undefined,
-            traces: result.skillTraces.length > 0 ? result.skillTraces : undefined,
-            toolUse: finalToolUse.length > 0 ? finalToolUse : undefined,
+            traces: toolUseForFinal.length > 0 ? result.skillTraces : undefined,
+            toolUse: toolUseForFinal.length > 0 ? toolUseForFinal : undefined,
             teamReports: turnTeamReports,
             programArtifact: result.pendingArtifact ?? undefined,
             visuals: result.pendingVisuals.length > 0 ? result.pendingVisuals : undefined,
@@ -455,7 +456,10 @@ export function useChatStream(): UseChatStreamReturn {
             grounding: result.grounding,
           }
         : undefined;
-      store().finishStream(assistantMsg);
+      // The captions that landed for the traces it commits ride along.
+      store().finishStream(
+        assistantMsg && labelCommit(assistantMsg, store().messages, result.activityLabels),
+      );
 
       // Auto-generate the title ONCE, after the first exchange (fire-and-forget,
       // don't block UI). Reads the OWNING session's metadata, not the viewed one.
@@ -578,10 +582,14 @@ export function useChatStream(): UseChatStreamReturn {
     try {
       // Deliberately a minimal body: the backend only needs `question` +
       // `session_id` to queue it into the turn that's actually running.
-      // `midturn` tells it this body may ONLY be queued: if the turn already
-      // finished in the tiny window before the request arrived, the backend
+      // `midturn` tells it this body may ONLY be queued: if the turn took its
+      // last look at the inbox before the request arrived, the backend
       // answers 409 instead of starting a fresh turn from an incomplete
-      // body, and that outcome is reported as NOT delivered.
+      // body, and that outcome is reported as NOT delivered. That window
+      // opens at the last look and lasts until [DONE], a moment: the turn
+      // waits for its activity captions before the last look, not after it
+      // (server/chat/engine/runner.py), so a message sent in that wait is
+      // still delivered.
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

@@ -283,8 +283,9 @@
       <tbody>
         <tr><td><code>text</code></td><td>A streamed text chunk.</td></tr>
         <tr><td><code>thinking</code> / <code>thinking_start</code> / <code>thinking_stop</code></td><td>An adaptive thinking block and its boundaries (all providers; the local path routes its reasoning here too).</td></tr>
-        <tr><td><code>skill</code> / <code>skill_input</code> / <code>skill_result</code></td><td>A tool call started, its parsed input, and a truncated preview of its output.</td></tr>
+        <tr><td><code>skill</code> / <code>skill_input</code> / <code>skill_result</code></td><td>A tool call started, its parsed input, and a truncated preview of its output. The <code>skill</code> frame also gives <code>round</code>, the number of the model round that made the call. The first round of each request is 0. A request that continues a turn after an approval or an answer also starts at 0.</td></tr>
         <tr><td><code>skill_progress</code></td><td>How many characters of a still-streaming tool call's arguments have arrived. A whole HTML app can take minutes to stream, so the running step shows the size so far next to its spinner.</td></tr>
+        <tr><td><code>activity_label</code></td><td>A short caption that the auxiliary model returned for the tool calls of one round, with the IDs of these calls. Only a chat turn gets captions, and only a cloud model writes them. A chat that uses an on-device model gets no captions. The server sends the frames in round order, while the next round streams or before <code>[DONE]</code>. At the end of the turn, the server waits maximum 3 s for the captions that are not complete, and sends each caption when it is complete. This wait occurs before the server closes the mid-turn inbox. Thus, when the turn ends with an answer, the turn can also answer a message that you send during the wait. If the turn has a round left, it answers that message. If no round is left, the server tells you that the message is not answered. When a message waits in the inbox before the end of the answer, the server does not wait for the captions. The next round starts immediately, and the server sends the captions during that round. A turn that stops for an approval or a question does not wait. If the call is refused, fails, or does not return in 3 s, the server sends no frame (<code class="path">server/chat/engine/activity_labels.py</code>).</td></tr>
         <tr><td><code>usage</code></td><td>Token counters, cost estimate, and remaining context (<code>context_used</code>/<code>context_max</code>).</td></tr>
         <tr><td><code>team_progress</code> / <code>team_results</code></td><td>Sub-agent and team events (spawn, progress, completion) and the final per-agent reports.</td></tr>
         <tr><td><code>grounding</code></td><td>Index-search metadata (folders searched, passages retrieved, and the id of the persisted sources behind the expandable chip).</td></tr>
@@ -370,7 +371,8 @@
       <dt><code class="path">server/prompts/__init__.py</code></dt><dd><code>PromptLayer</code> and the static/dynamic split that keeps the cached prefix stable.</dd>
       <dt><code class="path">server/chat/compaction.py</code></dt><dd>History compaction when the prompt is too long, with <code class="path">compaction_anchors.py</code> for the verbatim user messages and the anchor index.</dd>
       <dt><code class="path">server/tool_router.py</code></dt><dd>Pure tool dispatch.</dd>
-      <dt><code class="path">server/tool_executor.py</code></dt><dd>Batching, permissions, approvals, hooks, result shaping.</dd>
+      <dt><code class="path">server/tool_executor.py</code></dt><dd>Batching, permissions, hooks, result shaping.</dd>
+      <dt><code class="path">server/tool_approvals.py</code></dt><dd>The approval gate: inline runs, session rules, and the approval card.</dd>
     </div>
 
     <div class="callout callout--tip">

@@ -149,6 +149,12 @@ export interface ChatMessage {
    *  content ends in "(Stopped)" and any toolUse entry that was still
    *  running carries status 'stopped'. */
   stopped?: true;
+  /** An assistant row appended outside the chat stream, while a turn may be
+   *  streaming: a slash command's card or intro (/workflow, /ci, /subagent)
+   *  and the CI card's Autofix rows. It draws as a bubble of its own and no
+   *  later row joins it (turnEntries), so a running turn's rows and live
+   *  reply never land in it. */
+  standalone?: true;
   /** Interactive user question from ask_user tool.
    *
    * Single-question rounds populate `userQuestion`. When the assistant emits
@@ -189,6 +195,10 @@ export interface ChatMessage {
    *  for a visual and `shot-<tool index>` for a preview screenshot. A missing
    *  key is the natural size. UI-only: the prompt never reads it. */
   mediaSizes?: Record<string, MediaSize>;
+  /** Model-written captions for the activity groups of this message, keyed
+   *  by the first toolId of the group; the deterministic label is the
+   *  fallback and the tail. */
+  activityLabels?: Record<string, string>;
   /** Inline artifact from the create_artifact tool */
   programArtifact?: {
     title: string;
@@ -204,7 +214,24 @@ export interface ChatMessage {
   };
 }
 
+/** What the server measured about one tool call's result. Every key may be
+ *  null: a tool that has no such number says so, and the row renders a
+ *  number-based chip only when the field is a number. */
+export interface ToolMeta {
+  durationMs: number | null;
+  outputChars: number | null;
+  truncated: boolean | null;
+  lines: number | null;
+  bytes: number | null;
+  added: number | null;
+  removed: number | null;
+}
+
 export interface ToolUseEvent {
+  /** The provider's tool_use id when the frame carried one, else the tool
+   *  name: a row from an older transcript, a slash command's synthetic card,
+   *  or a frame a provider could not tag. Two parallel same-named calls
+   *  therefore have distinct ids and each takes its own input and result. */
   toolId: string;
   toolName: string;
   input: Record<string, unknown>;
@@ -220,18 +247,55 @@ export interface ToolUseEvent {
    *  also received as an image content block, so the human sees exactly
    *  what the model saw. */
   previewImage?: { media_type: string; data: string };
+  /** The server's verdict on the result (skill_result.is_error): what made
+   *  `status` 'error'. Absent until the result lands. */
+  isError?: boolean;
+  /** The command's exit code (skill_result.exit_code); null for a tool that
+   *  has none. Absent until the result lands. */
+  exitCode?: number | null;
+  /** Set by the server's skill_result frame; absent on rows from older
+   *  transcripts, slash commands and the voice path. */
+  meta?: ToolMeta;
+  /** The model round that issued the call, from its skill frame, counted
+   *  across the legs of one turn: a leg that resumes the turn counts on from
+   *  the leg that paused (sseStream.nextRoundBase). Absent on older rows,
+   *  slash-command rows and the voice path. The activity groups split where
+   *  it changes (AgentCard.groupForActivity). */
+  round?: number;
+  /** When the call's skill frame arrived (Date.now()), on a live row only:
+   *  the running group's elapsed chip counts from it, so the count survives
+   *  a remount of the row. Never committed (sseStream.committedToolUse,
+   *  streamControl.stoppedToolUse). */
+  startedAt?: number;
 }
 
 export interface SkillTrace {
+  /** The provider's tool_use id, '' when the skill frame carried none. */
+  id: string;
   name: string;
   input: Record<string, unknown>;
   output: string;
+  /** 'running' until the skill_result lands, then the server's verdict
+   *  (is_error). A commit maps a trace with no result to 'stopped' (it never
+   *  ran, or its result is still to come and patches the row), except the
+   *  call an approval card waits on. */
+  status: 'running' | 'complete' | 'error';
+  /** See ToolUseEvent.exitCode. */
+  exitCode?: number | null;
+  /** See ToolUseEvent.meta. */
+  meta?: ToolMeta;
   /** Set once this trace has received its skill_result. Lets repeated
    *  same-named tool calls (e.g. three task_create) each claim their own
    *  result instead of all matching the first trace by name. */
   resolved?: boolean;
   /** See ToolUseEvent.previewImage. */
   previewImage?: { media_type: string; data: string };
+  /** See ToolUseEvent.round. */
+  round?: number;
+  /** The call the stream paused on for an approval card: the server sends
+   *  no result for it, and the card's answer patches its committed row
+   *  (approvalLeg). */
+  paused?: boolean;
 }
 
 /** One progress event emitted by an agent runtime turn. Shaped to mirror
@@ -420,8 +484,35 @@ export interface SSEEventData {
   input?: Record<string, unknown>;
   skill_result?: string;
   output?: string;
+  /** On skill, skill_input and skill_result frames: the provider's tool_use
+   *  id of the call, empty for a frame a provider could not tag. */
+  tool_use_id?: string;
+  /** On skill frames: the model round that issued the call, counted from 0
+   *  in each request, a continuation's too (server/chat/engine/runner.py). */
+  round?: number;
+  /** On skill_result frames: the server judged the output an error. */
+  is_error?: boolean;
+  /** On skill_result frames: the command's exit code, null for a tool that
+   *  has none. */
+  exit_code?: number | null;
+  /** On skill_result frames: what the server measured about the call
+   *  (server/tool_meta.py). The server sends every key, null when unknown;
+   *  the client reads it as a ToolMeta (chatStream/toolMeta.ts). */
+  meta?: {
+    duration_ms?: number | null;
+    output_chars?: number | null;
+    truncated?: boolean | null;
+    lines?: number | null;
+    bytes?: number | null;
+    added?: number | null;
+    removed?: number | null;
+  };
   /** Present only alongside a preview_screenshot skill_result. */
   preview_image?: { media_type: string; data: string };
+  /** A model-written caption for the activity group that holds the calls of
+   *  one round, keyed by the round's first labelled call; `tool_use_ids`
+   *  names every call of the round (chatStream/activityLabels.ts). */
+  activity_label?: { tool_use_id: string; tool_use_ids?: string[]; label: string };
 
   // Approvals (new generic shape)
   approval_request?: ApprovalRequest;
@@ -460,7 +551,7 @@ export interface SSEEventData {
   ci_diagnosis?: { branch?: string; run_id?: number | null; url?: string | null; findings?: Array<Record<string, unknown>> };
   user_question?: Record<string, unknown>;
   program_artifact?: Record<string, unknown>;
-  skill_progress?: { name: string; chars: number };
+  skill_progress?: { name: string; chars: number; tool_use_id?: string };
   viz_artifact?: Record<string, unknown>;
   plan_generated?: Record<string, unknown>;
   notify_user?: Record<string, unknown>;
