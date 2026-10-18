@@ -515,10 +515,16 @@ def _run_bwrap_sandboxed(
 
 
 def _bwrap_argv(
-    command: str, cwd: str, allow_paths: list[str] | None, write_mode: str
+    command: str,
+    cwd: str,
+    allow_paths: list[str] | None,
+    write_mode: str,
+    write_root: str | None = None,
 ) -> list[str]:
     """The bwrap argv that runs ``command`` in ``cwd``. Only "readonly" changes
-    the filesystem shape: no rw workspace bind, and /tmp a throwaway tmpfs."""
+    the filesystem shape: no rw workspace bind, and /tmp a throwaway tmpfs.
+    ``write_root`` is the tree bound read-write (the workspace a confined
+    command may write in); it defaults to ``cwd``."""
     if write_mode == "readonly":
         fs_args = [
             "--ro-bind",
@@ -533,8 +539,8 @@ def _bwrap_argv(
             "/",
             "/",  # read-only root
             "--bind",
-            cwd,
-            cwd,  # read-write workspace
+            write_root or cwd,
+            write_root or cwd,  # read-write workspace
             "--bind",
             "/tmp",
             "/tmp",  # read-write tmp
@@ -562,6 +568,7 @@ def popen_sandboxed(
     cwd: str,
     stdout_file,
     write_mode: str = "open",
+    write_root: str | None = None,
 ) -> tuple[subprocess.Popen, str | None]:
     """Start a sandbox-wrapped process streaming combined stdout/stderr to a file.
 
@@ -586,20 +593,24 @@ def popen_sandboxed(
 
     ``write_mode`` is the ``run_sandboxed`` one: a read-only ws_run_command
     passes "readonly", so a write its classifier missed is refused by the OS.
+    ``write_root`` is the tree a "workspace" run may write in; it defaults to
+    ``cwd``. A ws_run_command passes the connected workspace, so a session
+    that cd'd out of it (the cwd tracker follows a ``cd``) is still confined
+    to the workspace, not to wherever it went.
     The output file is opened here, outside the sandbox, so output still flows.
     """
     from server.process_utils import new_process_group
 
     profile_path: str | None = None
     if _is_sandbox_exec_available():
-        profile = _generate_macos_profile(cwd, write_mode=write_mode)
+        profile = _generate_macos_profile(write_root or cwd, write_mode=write_mode)
         fd, profile_path = tempfile.mkstemp(suffix=".sb", prefix="whisper_bg_sandbox_")
         with os.fdopen(fd, "w") as f:
             f.write(profile)
         argv: list | str = ["sandbox-exec", "-f", profile_path, "/bin/sh", "-c", command]
         shell = False
     elif _is_bwrap_available():
-        argv = _bwrap_argv(command, cwd, None, write_mode)
+        argv = _bwrap_argv(command, cwd, None, write_mode, write_root=write_root)
         shell = False
     else:
         argv = command
@@ -704,7 +715,7 @@ def classify_sandbox_denial(output: str, write_mode: str) -> str | None:
     return (
         f"[sandbox] This command ran under the {mode_label} OS sandbox, and the "
         "failure above looks like a sandbox write denial. If the blocked write is "
-        "genuinely needed, retry the same command with "
+        "genuinely needed, retry the same command through terminal_run with "
         "sandbox_permissions='danger-full-access' and a one-line justification; "
         "the user will be asked to approve that exact command before it runs "
         "unconfined."

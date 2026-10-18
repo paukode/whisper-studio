@@ -1,10 +1,14 @@
 """``rules_write``: the assistant records the user's rules and instructions.
 
 The files live under ``~/.whisper`` (see server/prompts/rules.py for the
-layout), so a write here needs no approval in any permission mode: this is
-the app's own folder, the place the user asked these to go. The tool is in
-the catalog on every turn and core in chat, because "remember this" is said
-in chat and a deferred tool could miss it.
+layout), so a write here needs no approval in any permission mode but plan:
+this is the app's own folder, the place the user asked these to go. In a
+plan-mode turn the tool raises an approval card instead (the user's rule:
+memory may still update in plan mode, a rule needs their yes), showing the
+file as it would be after the write; the card's Yes runs ``_do_rules_write``
+with exactly that content. The tool is in the catalog on every turn and core
+in chat, because "remember this" is said in chat and a deferred tool could
+miss it.
 
 Routing the model is told to follow: a behaviour the user wants kept
 ("remember this", "my rule is", "from now on") is a rule, one imperative line.
@@ -17,6 +21,7 @@ its own belongs to memory, never here.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 
@@ -39,7 +44,7 @@ RULES_TOOLS: list[dict] = [
         "name": "rules_write",
         "description": (
             "Record a rule or instruction the user gave you, in their own files under "
-            "~/.whisper (never needs approval). Use it when the user says 'remember this', "
+            "~/.whisper (asks for approval in plan mode only). Use it when the user says 'remember this', "
             "'my rule is', 'from now on', 'do not do that again' or asks you to update "
             "their rules or instructions. Targets: project_rules (rules for the connected "
             "workspace only, the default), global_rules (when the user says always, "
@@ -128,29 +133,34 @@ def _as_rule_lines(content: str) -> list[str]:
     return out
 
 
-@register_executor("rules_write", read_only=False, concurrent_safe=False)
-def execute_rules_write(tool_input: dict, transcript: str = "", attachments=None) -> str:
+def _prepare(tool_input: dict) -> tuple[dict | None, str]:
+    """Work out the write: ``({path, target, mode, original, content, added},
+    "")`` or ``(None, message)`` when there is nothing to write (an input
+    error, a secret, a line already present)."""
     target = str(tool_input.get("target", "")).strip()
     content = tool_input.get("content", "")
     mode = str(tool_input.get("mode", "") or "append").strip()
 
     if target not in TARGETS:
-        return f"Error: target must be one of {', '.join(TARGETS)}."
+        return None, f"Error: target must be one of {', '.join(TARGETS)}."
     if mode not in MODES:
-        return f"Error: mode must be one of {', '.join(MODES)}."
+        return None, f"Error: mode must be one of {', '.join(MODES)}."
     if not isinstance(content, str) or not content.strip():
-        return "Error: content is required."
+        return None, "Error: content is required."
 
     from server.memory.secret_scanner import check_and_block
 
     clean, _redacted, findings = check_and_block(content)
     if not clean:
         labels = ", ".join(f["label"] for f in findings)
-        return f"BLOCKED: the content contains potential secrets ({labels}). Remove them first."
+        return (
+            None,
+            f"BLOCKED: the content contains potential secrets ({labels}). Remove them first.",
+        )
 
     path, err = _target_path(target)
     if err:
-        return f"Error: {err}"
+        return None, f"Error: {err}"
 
     existing = ""
     try:
@@ -159,28 +169,37 @@ def execute_rules_write(tool_input: dict, transcript: str = "", attachments=None
     except FileNotFoundError:
         pass
     except OSError as e:
-        return f"Error reading {_display(path)}: {e}"
+        return None, f"Error reading {_display(path)}: {e}"
 
     is_rules = target.endswith("_rules")
+    added = None
     if mode == "replace":
         new_text = content.strip() + "\n"
-        added = None
     elif is_rules:
         present = {line.strip() for line in existing.splitlines()}
         lines = [line for line in _as_rule_lines(content) if line not in present]
         if not lines:
-            return f"Nothing to add: every line is already in {_display(path)}."
+            return None, f"Nothing to add: every line is already in {_display(path)}."
         body = existing.rstrip("\n")
         new_text = (body + "\n" if body else "") + "\n".join(lines) + "\n"
         added = len(lines)
     else:
         block = content.strip()
         if block in existing:
-            return f"Nothing to add: that text is already in {_display(path)}."
+            return None, f"Nothing to add: that text is already in {_display(path)}."
         body = existing.rstrip("\n")
         new_text = (body + "\n\n" if body else "") + block + "\n"
-        added = None
+    return {
+        "path": path,
+        "target": target,
+        "mode": mode,
+        "original": existing,
+        "content": new_text,
+        "added": added,
+    }, ""
 
+
+def _write(path: str, new_text: str, target: str, mode: str, added: int | None) -> str:
     from server.workspace.paths import _atomic_write_text
 
     try:
@@ -196,3 +215,79 @@ def execute_rules_write(tool_input: dict, transcript: str = "", attachments=None
         noun = "rule" if added == 1 else "rules"
         return f"Added {added} {noun} to {_display(path)}. They apply from the next turn."
     return f"Added to {_display(path)}. It applies from the next turn."
+
+
+@register_executor("rules_write", read_only=False, concurrent_safe=False)
+def execute_rules_write(tool_input: dict, transcript: str = "", attachments=None) -> str:
+    plan, message = _prepare(tool_input)
+    if plan is None:
+        return message
+
+    from server.agents.tool_access import started_read_only
+
+    if started_read_only():
+        # A plan-mode turn: the user sees the file as it would be and decides.
+        payload = {
+            "action": "rules_write",
+            "target": plan["target"],
+            "mode": plan["mode"],
+            "original": plan["original"],
+            "content": plan["content"],
+            "added": plan["added"],
+        }
+        return f"[WS_APPROVAL]{json.dumps(payload)}"
+    return _write(plan["path"], plan["content"], plan["target"], plan["mode"], plan["added"])
+
+
+def _summary(payload: dict) -> str:
+    target = str(payload.get("target", ""))
+    path, err = _target_path(target) if target in TARGETS else ("", "unknown target")
+    name = _display(path) if not err else target or "?"
+    if payload.get("mode") == "replace":
+        return f"Rewrite {name}"
+    added = payload.get("added")
+    if isinstance(added, int):
+        return f"Add {added} {'rule' if added == 1 else 'rules'} to {name}"
+    return f"Add to {name}"
+
+
+async def _do_rules_write(payload: dict):
+    """The card's Yes: write the content the card showed. The path comes from
+    the target, never from the payload, so a forged payload cannot aim this
+    at another file."""
+    from server.approval.spec import ApprovalOutcome
+
+    target = str(payload.get("target", ""))
+    mode = str(payload.get("mode", "") or "append")
+    content = payload.get("content")
+    if target not in TARGETS or mode not in MODES or not isinstance(content, str):
+        return ApprovalOutcome(ok=False, error="malformed rules_write approval")
+    path, err = _target_path(target)
+    if err:
+        return ApprovalOutcome(ok=False, error=err)
+    added = payload.get("added")
+    output = _write(path, content, target, mode, added if isinstance(added, int) else None)
+    if output.startswith("Error"):
+        return ApprovalOutcome(ok=False, error=output)
+    return ApprovalOutcome(ok=True, output=output)
+
+
+def register_rules_approval() -> None:
+    """The ApprovalSpec behind a plan-mode rules_write card (called from
+    server.approval.bootstrap.register_defaults). Category ``write``: the
+    card shows the rules file as a diff, and the resolver asks in plan mode
+    because the payload carries no path for the app-storage exemption."""
+    from server.approval import register
+    from server.approval.spec import ApprovalSpec
+
+    register(
+        "rules_write",
+        ApprovalSpec(
+            category="write",
+            preview="diff",
+            summary=_summary,
+            executor=_do_rules_write,
+            risk_hint="low",
+            payload_fields=["target", "mode", "original", "content", "added"],
+        ),
+    )

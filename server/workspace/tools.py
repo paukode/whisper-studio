@@ -71,13 +71,13 @@ def get_workspace_tools() -> list[dict]:
     read_tools = [
         {
             "name": "ws_read_file",
-            "description": "[Workspace] Read a file from the connected codebase. Returns the COMPLETE file content with line numbers. Always reads the entire file in one call — do NOT use offset/limit unless the file is very large (2000+ lines).",
+            "description": "[Workspace] Read a file from the connected codebase, or any other readable file on this Mac by absolute path. Returns the COMPLETE file content with line numbers. Always reads the entire file in one call — do NOT use offset/limit unless the file is very large (2000+ lines).",
             "input_schema": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Relative path within the workspace (e.g. 'src/main.py'), or the absolute path of a file in the scratch folder",
+                        "description": "Relative path within the workspace (e.g. 'src/main.py'), or an absolute path anywhere (the scratch folder, a file elsewhere on this Mac; ~ is expanded). Reading never asks; credential stores such as ~/.ssh and ~/.aws are refused.",
                     },
                     "offset": {
                         "type": "integer",
@@ -93,13 +93,13 @@ def get_workspace_tools() -> list[dict]:
         },
         {
             "name": "ws_list_directory",
-            "description": "[Workspace] List files and directories in a workspace directory.",
+            "description": "[Workspace] List files and directories in a workspace directory, or in any other readable folder on this Mac by absolute path.",
             "input_schema": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Relative directory path. Use '' or '.' for workspace root.",
+                        "description": "Relative directory path ('' or '.' for the workspace root), or an absolute path anywhere (~ is expanded). Reading never asks; credential stores are refused.",
                     }
                 },
                 "required": ["path"],

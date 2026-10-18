@@ -72,8 +72,22 @@ LAUNCH_CONFIGS = [
         "runtimeExecutable": "sh",
         "runtimeArgs": ["-c", "npm run build && npm run dev | tee dev.log"],
     },
+    # Deletes that reach outside the workspace: the user's home, a parent
+    # folder, and a path the command line cannot resolve.
+    {"name": "wipehome", "runtimeExecutable": "rm", "runtimeArgs": ["-rf", "~/Downloads/build"]},
+    {
+        "name": "chainedhome",
+        "runtimeExecutable": "sh",
+        "runtimeArgs": ["-c", "npm run build && rm -rf ~/Downloads/dist"],
+    },
+    {"name": "nohupup", "runtimeExecutable": "nohup", "runtimeArgs": ["rm", "-rf", "../build"]},
+    {"name": "bashvar", "runtimeExecutable": "bash", "runtimeArgs": ["-lc", "rm -rf $BUILD_DIR"]},
 ]
-RM_CLASS = ["wipe", "chained", "shwipe", "bashwipe", "nohupwipe"]
+# A delete that stays inside the workspace is an ordinary command (the user's
+# rule: inside the workspace, bypass means bypass); one that reaches outside
+# is a hard floor.
+RM_INSIDE = ["wipe", "chained", "shwipe", "bashwipe", "nohupwipe"]
+RM_OUTSIDE = ["wipehome", "chainedhome", "nohupup", "bashvar"]
 
 
 def _argv(name: str) -> list[str]:
@@ -287,13 +301,29 @@ def test_bypass_treats_a_named_config_like_any_other_call(trusted, perms):
 # ── Hard floors are checked against the resolved command ─────────────────────
 
 
-@pytest.mark.parametrize("name", RM_CLASS)
+@pytest.mark.parametrize("name", RM_OUTSIDE)
 @pytest.mark.parametrize("mode", ALL_MODES)
-def test_an_rm_class_launch_config_still_asks(name, mode, trusted, perms):
+def test_a_launch_config_that_deletes_outside_the_workspace_still_asks(name, mode, trusted, perms):
     # Trusted or not: a floor is a floor.
     parsed = _parsed(session_name=name)
     assert approval_floor("preview_start", parsed, "preview") == "rm"
     assert _decide(mode, session_name=name) == "ask"
+
+
+@pytest.mark.parametrize("name", RM_INSIDE)
+def test_a_launch_config_that_deletes_inside_the_workspace_is_an_ordinary_command(
+    name, trusted, perms
+):
+    parsed = _parsed(session_name=name)
+    assert approval_floor("preview_start", parsed, "preview") is None
+    for mode in ALL_MODES:
+        assert _decide(mode, session_name=name) == "allow"
+
+
+@pytest.mark.parametrize("name", RM_INSIDE)
+def test_an_inside_delete_not_yet_approved_follows_the_mode(name, workspace, perms):
+    assert _decide(MODE_DEFAULT, session_name=name) == "ask"
+    assert _decide(MODE_BYPASS, session_name=name) == "allow"
 
 
 def test_a_shell_script_that_does_not_delete_hits_no_floor(trusted, perms):
@@ -302,15 +332,24 @@ def test_a_shell_script_that_does_not_delete_hits_no_floor(trusted, perms):
 
 
 def test_the_floor_reads_the_config_even_when_the_input_carries_a_command(workspace, perms):
-    parsed = _parsed(session_name="wipe", command="npm run dev")
+    parsed = _parsed(session_name="wipehome", command="npm run dev")
     assert approval_floor("preview_start", parsed, "preview") == "rm"
 
 
+def test_a_cwd_outside_the_workspace_puts_a_relative_delete_outside(workspace, perms, tmp_path):
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    parsed = _parsed(session_name="wipe", cwd=str(elsewhere))
+    assert approval_floor("preview_start", parsed, "preview") == "rm"
+    parsed = _parsed(session_name="wipe", cwd="web")
+    assert approval_floor("preview_start", parsed, "preview") is None
+
+
 def test_the_card_for_an_rm_class_config_shows_what_would_run(workspace, perms, spawn, classifier):
-    _content, request = _process(MODE_BYPASS, {"preview": "allow"}, session_name="wipe")
+    _content, request = _process(MODE_BYPASS, {"preview": "allow"}, session_name="wipehome")
     assert request is not None
     assert request["always_asks"] is True
-    assert request["payload"]["command"] == "rm -rf build"
+    assert request["payload"]["command"] == "rm -rf '~/Downloads/build'"
     assert spawn.await_count == 0
 
 
@@ -407,11 +446,12 @@ def test_earlier_denials_do_not_block_an_approved_named_config(trusted, perms, m
     assert adhoc.output.startswith("[Denied]")
 
 
-@pytest.mark.parametrize("name", ["wipe", "shwipe"])
+@pytest.mark.parametrize("name", ["wipehome", "chainedhome"])
 def test_earlier_denials_still_hold_back_a_named_config_that_asks(
     name, trusted, perms, monkeypatch
 ):
-    # The rm floor shows a card every time, so refused cards keep counting.
+    # The floor for a delete outside the workspace shows a card every time,
+    # so refused cards keep counting.
     state = _after_denials(monkeypatch, {"session_name": name})
     assert state.status == "skipped"
     assert state.output.startswith("[Denied]")

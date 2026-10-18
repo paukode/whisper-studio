@@ -50,7 +50,10 @@ log = logging.getLogger("whisper-studio")
 # Tools whose errors cascade to subsequent writes
 _COMMAND_TOOLS = {"ws_run_command", "run_python"}
 
-# Write tools blocked in plan mode
+# Write tools blocked in plan mode. The app's own folder is not the
+# workspace: memory_write and memory_delete keep running in plan mode with no
+# card (the user's rule), and rules_write runs there behind an approval card
+# it raises itself (server/rules_tools.py), so neither is listed.
 _PLAN_MODE_BLOCKED = {
     "ws_write_file",
     "ws_create_file",

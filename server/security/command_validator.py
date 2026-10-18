@@ -11,6 +11,7 @@ splitting compound commands on ;, &&, ||.
 import os
 import re
 import shlex
+from dataclasses import dataclass
 
 from server.security.sensitive_paths import validator_path_patterns
 
@@ -106,7 +107,7 @@ _DELETE_VERBS = frozenset({"rm", "rmdir", "unlink", "shred", "srm"})
 # `env` can take several before the real command. A wrapper option that takes
 # a value (`sudo -u root rm`, `timeout 10 rm`, `xargs -I {} rm {}`) would hide
 # the real command from that skip, so once a wrapper is seen every later word
-# is checked too (see _segment_deletes).
+# is checked too (see _segment_delete_sites).
 _INVOKE_WRAPPERS = frozenset(
     {
         "sudo",
@@ -191,30 +192,103 @@ def _base(token: str) -> str:
     return token.lstrip("(").rsplit("/", 1)[-1]
 
 
-def _runs_deleting_script(tokens: list[str], i: int, depth: int) -> bool:
-    """True when ``tokens[i]`` is a shell whose -c script, or ``eval`` whose
-    arguments, delete files."""
-    base = _base(tokens[i])
+@dataclass(frozen=True)
+class DeleteSite:
+    """One deleting statement in a command: its verb and the operands it would
+    delete. ``operands`` is None when the command line alone cannot say what
+    gets deleted (paths fed by xargs or parallel, a segment that does not
+    tokenize, a script nested too deep); a caller deciding where the delete
+    reaches must treat that as anywhere."""
+
+    verb: str
+    operands: list[str] | None
+
+
+_UNKNOWN_SITE = DeleteSite("?", None)
+# Wrappers that feed the command its operands on stdin, so the operands are
+# not on the command line.
+_STDIN_FEEDERS = frozenset({"xargs", "parallel"})
+# find's own options that precede its starting points (BSD and GNU); -f and
+# -D take the next word.
+_FIND_LEADING_OPTS = re.compile(r"^-[HLPEXdsx]+$")
+_FIND_OPTS_WITH_VALUE = frozenset({"-f", "-D"})
+_FIND_EXEC_ACTIONS = frozenset({"-exec", "-execdir", "-ok", "-okdir"})
+
+
+def _delete_operands(tokens: list[str], j: int) -> list[str]:
+    """What the delete verb at ``tokens[j]`` deletes: every later word that is
+    not an option. ``--`` ends the options, as it does for rm."""
+    operands: list[str] = []
+    options_done = False
+    for tok in tokens[j + 1 :]:
+        if not options_done and tok == "--":
+            options_done = True
+            continue
+        if not options_done and len(tok) > 1 and tok.startswith("-"):
+            continue
+        operands.append(tok)
+    return operands
+
+
+def _find_site(tokens: list[str], j: int) -> DeleteSite | None:
+    """The delete a ``find`` at ``tokens[j]`` performs through ``-delete`` or
+    ``-exec rm``, with the starting points it walks as the operands (the
+    working directory when it names none), or None when it deletes nothing."""
+    rest = tokens[j + 1 :]
+    deletes = "-delete" in rest or any(
+        a in _FIND_EXEC_ACTIONS and _base(b) in _DELETE_VERBS
+        for a, b in zip(rest, rest[1:], strict=False)
+    )
+    if not deletes:
+        return None
+    paths: list[str] = []
+    k = 0
+    while k < len(rest):
+        tok = rest[k]
+        if tok in _FIND_OPTS_WITH_VALUE:
+            if tok == "-f" and k + 1 < len(rest):
+                paths.append(rest[k + 1])
+            k += 2
+            continue
+        if _FIND_LEADING_OPTS.match(tok):
+            k += 1
+            continue
+        if tok.startswith(("-", "(", "!", ",")):
+            break
+        paths.append(tok)
+        k += 1
+    return DeleteSite("find", paths or ["."])
+
+
+def _script_delete_sites(tokens: list[str], j: int, depth: int) -> list[DeleteSite]:
+    """The deletes inside the script a shell at ``tokens[j]`` runs with -c, or
+    the arguments an ``eval`` there runs."""
+    base = _base(tokens[j])
     if base == "eval":
-        return _is_rm(" ".join(tokens[i + 1 :]), depth + 1)
+        return _delete_sites(" ".join(tokens[j + 1 :]), depth + 1)
     if base in _SHELLS:
-        script = _shell_script(tokens, i)
-        return script is not None and _is_rm(script, depth + 1)
-    return False
+        script = _shell_script(tokens, j)
+        return _delete_sites(script, depth + 1) if script is not None else []
+    return []
 
 
-def _segment_deletes(segment: str, depth: int) -> bool:
-    """One pipeline stage: its leading command (past environment-variable
-    assignments such as ``FOO=bar rm`` and any invocation wrapper) is a delete
-    verb, or a shell/eval running a deleting script. Behind a wrapper (or a
-    reserved word such as ``then``) every later word is checked as well, since
-    a wrapper option's value can sit where the command's name would be. A segment that cannot be tokenized
-    (unbalanced quotes) or names no command at all counts as deleting: a parse
-    failure is exactly the kind of thing an obfuscated command produces."""
+def _segment_delete_sites(segment: str, depth: int) -> list[DeleteSite]:
+    """The deletes one pipeline stage performs. Its leading command (past
+    environment-variable assignments such as ``FOO=bar rm`` and any
+    invocation wrapper) is a delete verb, a ``find`` that deletes, or a
+    shell/eval running a deleting script. Behind a wrapper (or a reserved
+    word such as ``then``) every later word is checked as well, since a
+    wrapper option's value can sit where the command's name would be.
+
+    A segment that cannot be tokenized (unbalanced quotes) is a delete whose
+    reach is unknown: a parse failure is exactly the kind of thing an
+    obfuscated command produces. A segment that runs nothing at all (a bare
+    ``x=1``, an option cluster, a reserved word on its own line) deletes
+    nothing: every shell script is full of those."""
     try:
         tokens = shlex.split(segment, posix=True)
     except ValueError:
-        return True
+        return [_UNKNOWN_SITE]
 
     def _skip_assignments_and_flags(i: int) -> int:
         while i < len(tokens) and (
@@ -231,22 +305,29 @@ def _segment_deletes(segment: str, depth: int) -> bool:
         wrapped = True
         i = _skip_assignments_and_flags(i + 1)  # the wrapper's own flags/env args
     if i >= len(tokens):
-        return True
+        return []
     last = len(tokens) if wrapped else i + 1
+    sites: list[DeleteSite] = []
     for j in range(i, last):
-        if _base(tokens[j]) in _DELETE_VERBS:
-            return True
-        if _runs_deleting_script(tokens, j, depth):
-            return True
-    return False
+        base = _base(tokens[j])
+        if base in _DELETE_VERBS:
+            fed = any(_base(t) in _STDIN_FEEDERS for t in tokens[:j])
+            sites.append(DeleteSite(base, None if fed else _delete_operands(tokens, j)))
+            break
+        if base == "find":
+            site = _find_site(tokens, j)
+            if site is not None:
+                sites.append(site)
+                break
+        sites.extend(_script_delete_sites(tokens, j, depth))
+    return sites
 
 
-def _is_rm(command: str, depth: int) -> bool:
+def _delete_sites(command: str, depth: int) -> list[DeleteSite]:
     if depth > _MAX_SCRIPT_DEPTH:
-        return True
+        return [_UNKNOWN_SITE]
     command = strip_heredoc_bodies(command)
-    if _FIND_DELETE_RE.search(command):
-        return True
+    sites: list[DeleteSite] = []
     # split_subcommands only splits on ;/&&/||, not bare newlines — a
     # multi-line script has no separator between lines at all, so without
     # this a line merely following an rm-free first line would never be
@@ -255,26 +336,36 @@ def _is_rm(command: str, depth: int) -> bool:
         for sub in split_subcommands(line):
             for segment in sub.split("|"):
                 segment = segment.strip()
-                if segment and _segment_deletes(segment, depth):
-                    return True
-    return False
+                if segment:
+                    sites.extend(_segment_delete_sites(segment, depth))
+    # A find that deletes in a shape the token walk did not read (fail
+    # toward asking): the delete is real, its reach unknown.
+    if _FIND_DELETE_RE.search(command) and not any(s.verb == "find" for s in sites):
+        sites.append(_UNKNOWN_SITE)
+    return sites
 
 
-def is_rm_command(command: str) -> bool:
-    """True if any statement in this shell command deletes files: rm and its
-    close cousins directly, `sudo`/`env`/`nohup`/`time`/etc.-wrapped, piped,
-    chained with ;/&&/||, on its own line with no separator (a multi-line
-    terminal_run/workflow script), inside a shell's -c script (`sh -c
-    "rm -rf build"`, `bash -lc '...'`) or an `eval`, or find's own -delete /
-    -exec rm. A parse failure on any segment (unbalanced quotes, the kind of
-    thing a disguised command produces) is treated as rm-like: fail toward
-    requiring approval, not away from it.
+def delete_sites(command: str) -> list[DeleteSite]:
+    """Every statement in this shell command that deletes files, with what it
+    deletes: rm and its close cousins directly, `sudo`/`env`/`nohup`/`time`/
+    etc.-wrapped, piped, chained with ;/&&/||, on its own line with no
+    separator (a multi-line terminal_run/workflow script), inside a shell's
+    -c script (`sh -c "rm -rf build"`, `bash -lc '...'`) or an `eval`, or
+    find's own -delete / -exec rm. A parse failure on any segment (unbalanced
+    quotes, the kind of thing a disguised command produces) is a delete of
+    unknown reach: fail toward requiring approval, not away from it.
 
     Heredoc bodies are stripped first: they are literal data (e.g. a file
     being written), not commands, so text that merely CONTAINS the word "rm"
     must not trip this.
     """
-    return _is_rm(command, 0)
+    return _delete_sites(command, 0)
+
+
+def is_rm_command(command: str) -> bool:
+    """True if any statement in this shell command deletes files (see
+    delete_sites)."""
+    return bool(delete_sites(command))
 
 
 # ---------------------------------------------------------------------------

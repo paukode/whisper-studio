@@ -25,7 +25,7 @@ import re
 import shlex
 import shutil
 
-from .spec import ApprovalOutcome, refuse_if_agent, refuse_if_agent_rm
+from .spec import ApprovalOutcome, refuse_if_agent, refuse_if_agent_rm, reviewed_by_human
 
 log = logging.getLogger("whisper-studio")
 
@@ -595,7 +595,16 @@ async def _do_command(payload: dict) -> ApprovalOutcome:
     starts a session-owned background task, and a command still running at the
     foreground budget (a dev server, a long build) is handed off as one instead
     of being killed at a hard timeout. Runs off the event loop so a long command
-    never freezes other sessions."""
+    never freezes other sessions.
+
+    Consent and confinement are separate knobs. A command a person approved on
+    its card runs with open writes (the card was the control, so a save to
+    ~/Documents keeps working); one a mode, a session answer, a rule, the
+    classifier or an unattended agent let through runs workspace-write
+    confined, so nothing changes outside the workspace without a person
+    seeing it (the user's rule). The OS refuses the write and the model is
+    told to retry through terminal_run's danger-full-access escalation, which
+    always asks."""
     refusal = refuse_if_agent_rm(payload)
     if refusal:
         return refusal
@@ -621,6 +630,7 @@ async def _do_command(payload: dict) -> ApprovalOutcome:
             ws,
             session_id=str(payload.get("session_id") or ""),
             run_in_background=bool(payload.get("run_in_background")),
+            write_mode="open" if reviewed_by_human(payload) else "workspace",
         )
     except Exception as e:
         return ApprovalOutcome(ok=False, error=str(e))

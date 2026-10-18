@@ -494,9 +494,12 @@
     <p>Three things always ask, no matter what the global mode, a category override, a bypass mode, or
       a blanket session approval says: <b><code>github-destructive</code></b> (repo or ref deletion,
       PR merge, archive or rename, a raw API DELETE), any command that is <b><code>rm</code></b> or a
-      close cousin of it, and any tool call asking for
+      close cousin of it and deletes outside the connected workspace (a delete inside it follows the
+      mode), and any tool call asking for
       <b><code>sandbox_permissions: "danger-full-access"</code></b>. An MCP server configured with
-      <code>approval_mode: "approve"</code> is a fourth floor of the same kind.</p>
+      <code>approval_mode: "approve"</code> is a fourth floor of the same kind. Bypass itself stops
+      at the workspace boundary: a file saved to a path outside the workspace and the first reach
+      into a new folder still ask in <code>bypassPermissions</code>.</p>
     <p><code>workflow</code> is the one entry that is not an approval-card category. It is read by
       <code class="path">server/workflows/launch_policy.py</code> when the model launches a new
       <a href="arch-ultracode.html">ultracode workflow</a> script: <code>bypassPermissions</code>

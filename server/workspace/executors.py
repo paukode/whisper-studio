@@ -36,6 +36,7 @@ from .filesystem import _ws_list_dir
 from .paths import (
     _WS_BINARY_EXTS,
     WORKSPACE_BACKUPS,
+    _is_system_path,
     _normalize_lf,
     _ws_path_allowed,
     scratch_root,
@@ -57,17 +58,53 @@ log = logging.getLogger("whisper-studio")
 
 
 def outside_roots_error(path: str, ws: str) -> str:
-    """The refusal for a ws_* file tool aimed outside both places it can reach.
+    """The refusal for a ws_* file tool aimed at changing a file outside both
+    places it may change.
 
     A plain tool result, never the folder picker: the workspace the user
     connected is not in question, only the path is, and the model can act on
-    this on its own (a path inside the workspace, the scratch folder, or
-    ws_run_command for anything else) without pausing the turn."""
+    this on its own (a path inside the workspace or the scratch folder, a
+    save the user approves, or terminal_run's escalation) without pausing the
+    turn. Reading is a different matter: ws_read_file and ws_list_directory
+    read anywhere (see resolve_read_path)."""
     return (
         f"Error: {path} is outside the connected workspace ({ws}) and outside the "
-        f"scratch folder ({scratch_root()}). The ws_* file tools reach only those two "
-        "places. Use a path inside one of them, or ws_run_command for other locations."
+        f"scratch folder ({scratch_root()}). The ws_* file tools change files only in "
+        "those two places (reading works anywhere). To write elsewhere, pass the "
+        "absolute path to ws_create_file or save_file, which asks the user to approve "
+        "the save, or use terminal_run with sandbox_permissions='danger-full-access'."
     )
+
+
+def resolve_read_path(path: str, ws: str | None) -> tuple[str | None, str | None]:
+    """Where a ws_* read tool reads from: ``(full path, refusal)``.
+
+    Reading never asks and is allowed anywhere on this machine (the user's
+    rule), so an absolute path may point outside the connected workspace and
+    the scratch folder, with or without a workspace connected; a relative
+    path needs the workspace to resolve against. The two exceptions are the
+    credential stores the OS sandbox denies to every command
+    (server/security/sensitive_paths.py) and the kernel pseudo-filesystems,
+    refused with a plain error."""
+    raw = os.path.expanduser((path or "").strip())
+    if os.path.isabs(raw):
+        full = raw
+    elif ws:
+        full = os.path.join(ws, raw) if raw and raw != "." else ws
+    else:
+        return None, "No workspace connected."
+    if ws and _ws_path_allowed(full, ws):
+        return full, None
+    if _is_system_path(full):
+        return None, f"Error: {path} is not a readable location."
+    from server.security.sensitive_paths import is_sensitive_path
+
+    if is_sensitive_path(full):
+        return None, (
+            f"Error: {path} is a protected location (credentials, keychains or browser "
+            "data) and is never read."
+        )
+    return full, None
 
 
 def open_folder_now(path: str) -> str:
@@ -220,13 +257,11 @@ def _flag(value) -> bool:
 @register_executor("ws_read_file", read_only=True, concurrent_safe=True)
 def _exec_ws_read_file(tool_input, transcript, current_attachments):
     ws = get_workspace_path()
-    if not ws:
-        return "No workspace connected."
     session_id = tool_input.pop("__session_id__", "")
     path = tool_input.get("path", "")
-    full = os.path.join(ws, path)
-    if not _ws_path_allowed(full, ws):
-        return outside_roots_error(path, ws)
+    full, refusal = resolve_read_path(path, ws)
+    if refusal:
+        return refusal
     if not os.path.isfile(full):
         return f"File not found: {path}"
     ext = os.path.splitext(path)[1].lower()
@@ -295,12 +330,10 @@ def _exec_ws_read_file(tool_input, transcript, current_attachments):
 @register_executor("ws_list_directory", read_only=True, concurrent_safe=True)
 def _exec_ws_list_dir(tool_input, transcript, current_attachments):
     ws = get_workspace_path()
-    if not ws:
-        return "No workspace connected."
     path = tool_input.get("path", "").strip() or "."
-    full = os.path.join(ws, path) if path != "." else ws
-    if not _ws_path_allowed(full, ws):
-        return outside_roots_error(path, ws)
+    full, refusal = resolve_read_path(path, ws)
+    if refusal:
+        return refusal
     if not os.path.isdir(full):
         return f"Not a directory: {path}"
     entries = []
@@ -687,7 +720,11 @@ def run_workspace_command(
     process to a background task (no restart, no kill) and returns its handle
     so the model polls instead of blocking. Blocking: call it off the event
     loop. ``write_mode`` is the sandbox's: "readonly" for a command that skipped
-    approval, "open" for an approved one.
+    approval, "workspace" for one a mode, a session answer, a rule, the
+    classifier or an agent let through, "open" for one a person approved on
+    its card (server.approval.executors._do_command). A confined run is
+    confined to the workspace itself, not to the tracked cwd, so a session
+    that cd'd out of the workspace still cannot write there.
     """
     from server.cwd_tracker import (
         extract_cwd_from_output,
@@ -707,7 +744,7 @@ def run_workspace_command(
 
     if run_in_background:
         text = _start_background_command(
-            command, exec_command, effective_cwd, session_id, write_mode
+            command, exec_command, effective_cwd, session_id, write_mode, write_root=ws
         )
         return CommandRun(text=text, background=True)
 
@@ -718,6 +755,7 @@ def run_workspace_command(
         session_id=session_id,
         timeout=_AUTO_BACKGROUND_SECONDS,
         write_mode=write_mode,
+        write_root=ws,
     )
     if result.background:
         text = _background_started_message(command, result.task_id, result.output_path)
@@ -739,6 +777,14 @@ def run_workspace_command(
         # Said for every failure, so neither the model nor the claim check
         # (server/goals/evidence.py) reads a failed command as done.
         output += f"\n(exit code {result.returncode})"
+    if write_mode != "open" and result.returncode not in (0, None):
+        # A confined run that failed on a write the OS refused: say which
+        # sandbox it was and how to ask for more, the way terminal_run does.
+        from server.sandbox import classify_sandbox_denial
+
+        hint = classify_sandbox_denial(output, write_mode)
+        if hint:
+            output += "\n" + hint
     if result.task_id:
         output += "\n" + _left_running_message(result.task_id, result.output_path)
     return CommandRun(text=output, returncode=result.returncode, stopped=result.stopped)
@@ -754,7 +800,13 @@ def _left_running_message(task_id: str, output_path: str | None) -> str:
 
 
 def _start_background_command(
-    command: str, exec_command: str, cwd: str, session_id: str = "", write_mode: str = "open"
+    command: str,
+    exec_command: str,
+    cwd: str,
+    session_id: str = "",
+    write_mode: str = "open",
+    *,
+    write_root: str | None = None,
 ) -> str:
     """Start a command in the background and return a status message."""
     from server.tasks.shell import start_shell_task

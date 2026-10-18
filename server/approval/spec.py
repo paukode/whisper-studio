@@ -15,6 +15,20 @@ RiskHint = Literal["low", "medium", "high"]
 
 # Payload key holding the workspace root a workspace-bound card was raised in.
 WORKSPACE_ROOT_KEY = "workspace_root"
+# Payload stamp for an action no person reviewed on a card: a mode, a session
+# answer, a rule or the auto-mode classifier let it through
+# (server.tool_executor._execute_ws_approval_inline). `__agent__` is its
+# unattended cousin. Executors that confine what they run read both through
+# reviewed_by_human; execute_approved_by_human strips them, since a card's
+# Yes is exactly the review they say did not happen.
+UNREVIEWED_KEY = "__unreviewed__"
+
+
+def reviewed_by_human(payload: dict) -> bool:
+    """A person saw this exact action on its card (or heard it in voice mode)
+    and said yes. False for a mode, a session answer, a rule, the classifier
+    or an unattended agent letting it through."""
+    return not (payload.get("__agent__") or payload.get(UNREVIEWED_KEY))
 
 
 @dataclass
@@ -78,9 +92,11 @@ def refuse_if_agent_rm(payload: dict, command_field: str = "command") -> Approva
     before it happens; the unattended auto-approve path (agent=True) skips
     every other gate (category, session rules, the classifier) by design, so
     this is the only check standing between an agent's own `rm` and actually
-    running it. Belt-and-suspenders with the interactive-mode guardrail in
-    server/tool_approvals.py, which forces a real approval prompt for rm even
-    when a human WOULD normally have pre-approved the whole "cli" category.
+    running it. Belt-and-suspenders with the interactive-mode floor in
+    server/security/permissions.py, which forces a real approval prompt for a
+    delete outside the workspace even when a human WOULD normally have
+    pre-approved the whole "cli" category (inside the workspace that floor
+    does not apply; this refusal still does, since no human is present).
     """
     if not payload.get("__agent__"):
         return None
@@ -259,7 +275,11 @@ async def execute_approved_by_human(spec: ApprovalSpec, payload: dict) -> Approv
     A failing hook is logged and does not stop the approved action.
 
     A workspace-bound card approved after its workspace went away is refused
-    first (stale_workspace_refusal), before the hook or the executor runs."""
+    first (stale_workspace_refusal), before the hook or the executor runs.
+    The origin stamps (UNREVIEWED_KEY, ``__agent__``) are dropped: a payload
+    posted back from a card is a person's yes, whatever rode along with it."""
+    payload.pop(UNREVIEWED_KEY, None)
+    payload.pop("__agent__", None)
     stale = stale_workspace_refusal(spec, payload)
     if stale is not None:
         log.info("approval: refused an out-of-date card: %s", stale.error)
