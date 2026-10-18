@@ -354,7 +354,7 @@
       <code>auxiliary_models</code> map names the model per task instead: a value is a
       <code>chat_models</code> key, and the special value <code>"main"</code> means the session's own
       model. A task absent from the map keeps its historical default, so the empty default map behaves
-      exactly as before. The nine tasks, from
+      exactly as before. The ten tasks, from
       <code class="path">server/infrastructure/auxiliary.py</code>:</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Task</th><th>Historical default</th><th>What it does</th></tr></thead>
@@ -366,6 +366,7 @@
         <tr><td><code>permission_explainer</code></td><td>Haiku</td><td>Writes the risk level and explanation on an approval card.</td></tr>
         <tr><td><code>query_rewrite</code></td><td>Haiku</td><td>Rewrites a follow-up question into a standalone search query before grounding.</td></tr>
         <tr><td><code>ci_diagnose</code></td><td>Haiku</td><td>Reads a failing CI run and says what broke.</td></tr>
+        <tr><td><code>activity_label</code></td><td>Haiku</td><td>Writes a caption of maximum eight words for the tool calls of each round in a chat turn. A group that has calls from many rounds shows the last caption. If the call fails or does not return in 3 s, the group keeps its deterministic label. A round that stops for an approval or a question gets no caption. If this task uses an on-device model, the server does not write captions.</td></tr>
         <tr><td><code>compaction</code></td><td>the session model</td><td>Summarizes older turns when the context window fills.</td></tr>
         <tr><td><code>learning_review</code></td><td>the session model</td><td>The post-turn review that turns corrections into memories and skills.</td></tr>
       </tbody>
@@ -414,6 +415,7 @@
         <tr><td><code>goal_loop</code></td><td><code>true</code></td><td>Goal loop + completion gate: a session goal (set with <code>/goal</code>) auto-continues the turn until a judge says it is achieved (the <code>goal_evaluator</code> model for a cloud session, the session's own model on-device), capped by <code>goal_max_consecutive_blocks</code> (8). See <a href="arch-goals.html">The goal loop &amp; completion gate</a>.</td></tr>
         <tr><td><code>deliverable_check</code></td><td><code>true</code></td><td>Check every delivery a reply claims (a file saved, a folder, a removal, an artifact card, a push, commit, pull request, merge, issue, upload, message, deploy, schedule, link, memory or setting) against the disk and the turn's successful tool calls (a recap of earlier work against what earlier replies verified), and hold back from the chat each sentence whose claim does not hold. The turn continues with the held sentences named to the model, and ends with a note on what did not happen. Off, replies stream unchecked.</td></tr>
         <tr><td><code>verify_on_stop</code></td><td><code>true</code></td><td>When a turn edited code files but no test, lint, typecheck or build command ran successfully afterwards, the completion gate asks for a real verification or an honest blocker before the turn ends. At most two nudges per turn; prose-only edits never trigger it.</td></tr>
+        <tr><td><code>activity_labels</code></td><td><code>true</code></td><td>Write a short caption for the tool calls of each round in a chat turn, with the <code>activity_label</code> model. A group that has calls from many rounds shows the last caption. The deterministic label stays when the call is refused, fails, or does not return in 3 s. Off in Local mode. The Feature flags panel shows the reason.</td></tr>
         <tr><td><code>tool_loop_guard</code></td><td><code>true</code></td><td>Refuse a tool call that repeats the same arguments after two identical results, one that already failed three times unchanged, or a repeating cycle of calls; cap runaway web searches and delegation per turn. See <a href="#loop-caps">Loop-guard caps</a>.</td></tr>
         <tr><td><code>cron_verify</code></td><td><code>true</code></td><td>Verify a cron run actually achieved its prompt before pushing an "ok" status.</td></tr>
         <tr><td><code>dream_consolidation</code></td><td><code>true</code></td><td>Cross-session memory distillation after 24 hours and 5 sessions.</td></tr>

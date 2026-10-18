@@ -14,6 +14,7 @@ own call site. One config map now names the model per task::
         "permission_explainer": "haiku",
         "query_rewrite": "haiku",
         "ci_diagnose": "haiku",
+        "activity_label": "haiku",
         "compaction": "main",
         "learning_review": "main"
     }
@@ -41,6 +42,7 @@ raises the guard's refusal for a cloud one.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 
 log = logging.getLogger("whisper-studio")
 
@@ -54,6 +56,7 @@ TASKS: tuple[str, ...] = (
     "permission_explainer",
     "query_rewrite",
     "ci_diagnose",
+    "activity_label",
     "compaction",
     "learning_review",
 )
@@ -151,6 +154,7 @@ _TASK_NAMES = {
     "permission_explainer": "The permission explainer",
     "query_rewrite": "Query rewriting",
     "ci_diagnose": "CI failure diagnosis",
+    "activity_label": "Activity labels",
     "compaction": "Context compaction",
     "learning_review": "The learning review",
 }
@@ -169,6 +173,7 @@ TASK_SOURCES = {
     "permission_explainer": "explainer",
     "query_rewrite": "query_rewrite",
     "ci_diagnose": "ci_diagnose",
+    "activity_label": "activity_label",
     "compaction": "compaction",
     "learning_review": "memory",
 }
@@ -198,6 +203,7 @@ def aux_one_shot(
     default_key: str = "haiku",
     main_model_key: str | None = None,
     session_id: str = "",
+    get_bedrock_client: Callable[[], object] | None = None,
 ) -> str:
     """Run a one-shot completion on the model configured for ``task``, logged
     in the cost log under the task's source (TASK_SOURCES) and ``session_id``.
@@ -206,6 +212,10 @@ def aux_one_shot(
     routing is ``server.infrastructure.oneshot.one_shot``'s. Raises on hard
     failure, exactly like ``one_shot``, so callers keep their own fallbacks.
     In Local mode a cloud key raises the cloud guard's refusal.
+
+    ``get_bedrock_client`` gives the bedrock-runtime client for a Claude key
+    in place of the shared chat client, for a caller with its own timeouts
+    and retries (the activity captions).
     """
     from server.infrastructure.oneshot import one_shot
     from server.local.runtime import is_local_model
@@ -226,6 +236,7 @@ def aux_one_shot(
         feature=feature,
         source=source,
         session_id=session_id,
+        get_bedrock_client=get_bedrock_client,
     )
 
 

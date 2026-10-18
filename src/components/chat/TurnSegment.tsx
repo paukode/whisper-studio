@@ -1,4 +1,5 @@
 import React from 'react';
+import { captionIn } from '@/components/chat/turnEntries';
 import type { ChatMessage, ToolUseEvent } from '@/types/chat';
 import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer';
 import { ProgramArtifactCard } from '@/components/chat/ProgramArtifactCard';
@@ -65,9 +66,9 @@ const TurnSegmentView: React.FC<TurnSegmentProps> = ({ rows, indices, taskCheckp
     );
   const rowOf = (tool: ToolUseEvent | undefined) => rows[(tool && owner.get(tool)) ?? 0];
 
-  // A group's written caption is keyed by its first call's id, on that
-  // call's row.
-  const writtenLabelOf = (tools: ToolUseEvent[]) => rowOf(tools[0]).activityLabels?.[tools[0]?.toolId ?? ''];
+  // A group's written caption is keyed by its first call's id, on whichever
+  // row of the run committed it (captionIn).
+  const writtenLabelOf = (tools: ToolUseEvent[]) => captionIn(rows, tools[0]?.toolId ?? '');
   // A screenshot's dragged size is keyed by the call's place in its row's
   // toolUse, which never changes once the row is committed.
   const mediaFor = (tool: ToolUseEvent) => {

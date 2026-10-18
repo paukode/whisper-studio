@@ -191,6 +191,29 @@ def _drop_cached_bedrock_clients():
     recall = sys.modules.get("server.memory.recall")
     if recall is not None:
         recall._reset_recall_client_cache()
+    labels = sys.modules.get("server.chat.engine.activity_labels")
+    if labels is not None:
+        labels._reset_caption_client_cache()
+
+
+@pytest.fixture(autouse=True)
+def _no_live_activity_labels(monkeypatch):
+    """A chat turn with a tool round asks the auxiliary model for an activity
+    caption (server/chat/engine/activity_labels.py). In a unit test that call
+    would reach whatever Bedrock client the test faked for the turn itself,
+    or a real one. Refused here, so the caption falls back to None (the
+    deterministic label) and no frame is added; tests of the labeller patch
+    in their own fake. Imported, not looked up in sys.modules, so the guard
+    also holds for a test that imports the engine inside its body. Each test
+    also starts with no call in a thread, so one test's abandoned caption
+    cannot skip the next test's."""
+    from server.chat.engine import activity_labels
+
+    def refuse(*a, **k):
+        raise RuntimeError("no live activity label calls in unit tests")
+
+    monkeypatch.setattr(activity_labels, "aux_one_shot", refuse)
+    monkeypatch.setattr(activity_labels, "_in_thread", {})
 
 
 @pytest.fixture(scope="session")

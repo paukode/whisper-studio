@@ -158,3 +158,16 @@ export function traceRuns(rows: readonly ChatMessage[]): number[][] {
   }
   return runs;
 }
+
+/** The written caption of an activity group drawn from `rows` (one run of
+ *  traceRuns), keyed by the group's first toolId. A caption is stored on the
+ *  row that committed it, which is the group's last row when the group spans
+ *  rows, so every row of the run is read, the latest first: a group that got
+ *  captions from several rounds shows the last one. */
+export function captionIn(rows: readonly ChatMessage[], key: string): string | undefined {
+  for (let k = rows.length - 1; k >= 0; k -= 1) {
+    const label = rows[k].activityLabels?.[key];
+    if (label) return label;
+  }
+  return undefined;
+}

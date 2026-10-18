@@ -22,6 +22,9 @@ import { useSettingsStore } from '@/stores/settingsStore';
 import type { PendingApproval } from '@/stores/chatStore';
 import type { TurnModelSettings } from '@/types/chat';
 import { dropRuntime, useRuntimeIndex, getChatStore } from '@/stores/sessionRuntimes';
+import { useSessionStore } from '@/stores/sessionStore';
+import { ACTIVITY_MIN_RUN, groupAgentTools, groupForActivity, isActivityEntry } from '@/components/chat/AgentCard';
+import { captionIn, traceRuns, turnEntries } from '@/components/chat/turnEntries';
 
 /** The settings the request that opened a test stream carried. */
 const SETTINGS: TurnModelSettings = {
@@ -872,5 +875,127 @@ describe('readSSEStream tool frames', () => {
       { toolName: 'ws_write_file', result: 'wrote a.ts', status: 'complete' },
       { toolName: 'ws_write_file', result: 'Awaiting approval: Write b.ts', status: 'complete' },
     ]);
+  });
+});
+
+describe('readSSEStream activity_label', () => {
+  const signal = () => new AbortController().signal;
+  const committed = (sid: string) => getChatStore(sid).getState().messages;
+  const card = { workflow_started: { run_id: 'wf_1', name: 'nightly' } };
+  const hook = { hook_blocked: { tool_name: 'ws_run_command', reason: 'blocked' } };
+  const call = (id: string, name = 'ws_read_file') => [
+    { skill: name, tool_use_id: id },
+    { skill_input: name, input: { path: `${id}.ts` }, tool_use_id: id },
+    { skill_result: name, output: 'ok', tool_use_id: id, is_error: false, exit_code: null },
+  ];
+  const label = (ids: string[], text: string) => ({
+    activity_label: { tool_use_id: ids[0], tool_use_ids: ids, label: text },
+  });
+  /** The caption the committed view shows on each activity group: per run
+   *  of a turn's rows, the group's first toolId looked up across the run,
+   *  exactly as TurnSegment reads it. */
+  const shownCaptions = (sid: string) => turnEntries(committed(sid)).flatMap((entry) =>
+    entry.kind !== 'turn' ? [] : traceRuns(entry.rows).flatMap((run) => {
+      const rows = run.map((k) => entry.rows[k]);
+      return groupForActivity(groupAgentTools(rows.flatMap((r) => r.toolUse ?? [])), { minRun: ACTIVITY_MIN_RUN })
+        .filter(isActivityEntry)
+        .map((g) => captionIn(rows, g.tools[0].toolId) ?? null);
+    }));
+
+  afterEach(() => {
+    for (const id of useRuntimeIndex.getState().liveIds) dropRuntime(id);
+    vi.restoreAllMocks();
+  });
+
+  it('a caption for a live group lands on the message that commits it', async () => {
+    const sid = 'sess-label-live';
+    const result = await readSSEStream(sseResponse([
+      ...call('tu_1'),
+      ...call('tu_2', 'ws_grep'),
+      label(['tu_1', 'tu_2'], 'Found the config loader'),
+      card,
+    ]), sid, signal(), SETTINGS);
+
+    expect(committed(sid)[0].activityLabels).toEqual({ tu_1: 'Found the config loader' });
+    expect(shownCaptions(sid)).toEqual(['Found the config loader']);
+    // Taken by the commit: nothing is left for the caller to place again.
+    expect(result.activityLabels).toEqual([]);
+  });
+
+  it('a caption for calls still live when the stream ends is handed to the final commit', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(sseResponse([
+      ...call('tu_c1'),
+      label(['tu_c1'], 'Read the migration'),
+      { text: 'The migration adds one column.' },
+    ]));
+    const approval: PendingApproval = {
+      toolUseId: 'tu_w', action: 'ws_write_file', category: 'write', preview: 'diff',
+      summary: 'Write a.ts', payload: { path: 'a.ts' }, sessionId: 'sess-label-final',
+      alwaysAsks: false, turnSettings: SETTINGS,
+    };
+    await sendApprovalContinuation(approval, 'sess-label-final', true, undefined, { ok: true, output: 'wrote' });
+
+    const [message] = committed('sess-label-final');
+    expect(message.toolUse?.map((t) => t.toolId)).toEqual(['tu_c1']);
+    expect(message.activityLabels).toEqual({ tu_c1: 'Read the migration' });
+  });
+
+  it('a caption that lands after the flush patches the committed row and saves', async () => {
+    // What each save would write for the first row. The row count does not
+    // change on a patch, so only an explicit save can see the caption.
+    const saved: unknown[] = [];
+    vi.spyOn(useSessionStore.getState(), 'debouncedSave').mockImplementation((id) => {
+      saved.push(committed(id)[0]?.activityLabels);
+    });
+    const sid = 'sess-label-late';
+    await readSSEStream(sseResponse([
+      ...call('tu_1'),
+      card,
+      { text: 'Now the fix.' },
+      label(['tu_1'], 'Read the failing test'),
+    ]), sid, signal(), SETTINGS);
+
+    const rows = committed(sid);
+    expect(rows).toHaveLength(2);
+    expect(rows[0].activityLabels).toEqual({ tu_1: 'Read the failing test' });
+    expect(rows[1].activityLabels).toBeUndefined();
+    expect(saved[saved.length - 1]).toEqual({ tu_1: 'Read the failing test' });
+  });
+
+  it('a group that spans rounds keeps the last caption, under its first call', async () => {
+    const sid = 'sess-label-rounds';
+    await readSSEStream(sseResponse([
+      ...call('tu_1'),
+      label(['tu_1'], 'Read the plan'),
+      ...call('tu_2', 'ws_grep'),
+      label(['tu_2'], 'Found every caller of the plan'),
+      card,
+    ]), sid, signal(), SETTINGS);
+
+    expect(committed(sid)[0].activityLabels).toEqual({ tu_1: 'Found every caller of the plan' });
+  });
+
+  it('a group folded across tool-only rows takes the caption under the first call of the fold', async () => {
+    // A hook card commits the segment, so the group's calls end up on two
+    // tool-only rows that the transcript folds back into one group.
+    const sid = 'sess-label-fold';
+    await readSSEStream(sseResponse([
+      ...call('tu_1'),
+      hook,
+      ...call('tu_2', 'ws_grep'),
+      label(['tu_2'], 'Traced the blocked command'),
+      hook,
+    ]), sid, signal(), SETTINGS);
+
+    expect(committed(sid)[2].activityLabels).toEqual({ tu_1: 'Traced the blocked command' });
+    expect(shownCaptions(sid)).toEqual(['Traced the blocked command']);
+  });
+
+  it('a caption for calls nobody holds any more changes nothing', async () => {
+    const save = vi.spyOn(useSessionStore.getState(), 'debouncedSave');
+    const sid = 'sess-label-gone';
+    await readSSEStream(sseResponse([label(['tu_gone'], 'Read a file')]), sid, signal(), SETTINGS);
+    expect(committed(sid)).toEqual([]);
+    expect(save).not.toHaveBeenCalled();
   });
 });

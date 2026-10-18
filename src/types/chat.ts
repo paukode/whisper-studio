@@ -482,6 +482,10 @@ export interface SSEEventData {
   };
   /** Present only alongside a preview_screenshot skill_result. */
   preview_image?: { media_type: string; data: string };
+  /** A model-written caption for the activity group that holds the calls of
+   *  one round, keyed by the round's first labelled call; `tool_use_ids`
+   *  names every call of the round (chatStream/activityLabels.ts). */
+  activity_label?: { tool_use_id: string; tool_use_ids?: string[]; label: string };
 
   // Approvals (new generic shape)
   approval_request?: ApprovalRequest;

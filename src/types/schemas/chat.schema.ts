@@ -99,6 +99,15 @@ export const SSEEventDataSchema = z.object({
     added: z.number().nullable().optional(),
     removed: z.number().nullable().optional(),
   }).optional(),
+  /** A model-written caption for the activity group that holds the calls
+   *  of one round (server/chat/engine/activity_labels.py), keyed by the
+   *  round's first labelled call. A nested z.object drops undeclared keys,
+   *  so each is named. */
+  activity_label: z.object({
+    tool_use_id: z.string(),
+    tool_use_ids: z.array(z.string()).optional(),
+    label: z.string(),
+  }).optional(),
   /** Tool-call arguments still streaming (a large artifact): size so far.
    *  A nested z.object drops undeclared keys, so the id is named here too. */
   skill_progress: z.object({

@@ -193,6 +193,13 @@ def run_chat_turn(monkeypatch, fake_client, body):
     if hasattr(routes_mod, "spawn"):
         monkeypatch.setattr(routes_mod, "spawn", _swallow)
 
+    # Deterministic: no activity caption is started (server/chat/engine/
+    # activity_labels.py), so a tool round adds no activity_label frame and
+    # no wait at the end of the turn, and the pinned fixtures stay as they are.
+    import server.chat.engine.activity_labels as activity_labels_mod
+
+    monkeypatch.setattr(activity_labels_mod, "start_label_task", lambda *a, **k: None)
+
     stream_slot.active_streams.clear()
 
     app = FastAPI()
