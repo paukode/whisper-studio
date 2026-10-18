@@ -27,7 +27,7 @@ from server.utils import ndjson_dumps
 log = logging.getLogger("whisper-studio")
 
 # What the gate does with the call after gate_approval (ApprovalStep.kind).
-REPLY = "reply"  # append ``text`` as its tool_result, no skill_result frame
+REPLY = "reply"  # ``text`` is its answer as is: tool_result and frame, unbudgeted
 OUTPUT = "output"  # ``text`` is its output from here on: budgeted and framed
 PAUSE = "pause"  # an approval card went out: the turn pauses, no sibling runs
 

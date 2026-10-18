@@ -40,6 +40,10 @@ ASK_PAUSE_MARKER = "[ASK_USER_PAUSE] Awaiting answer; will be replaced on contin
 ASK_UNANSWERED = (
     "[No answer] The user did not answer this question. Ask it again if you still need the answer."
 )
+# What the row of a call that needed a workspace says while the folder card
+# waits: the call never ran. The model's own placeholder for it is replaced
+# by the card's answer on the continuation (routes._resume_messages).
+WS_PROMPT_NOT_RUN = "[Not executed] No workspace was connected, so this call did not run."
 
 log = logging.getLogger("whisper-studio")
 
@@ -62,10 +66,12 @@ MAX_AUTO_DENIALS = 2
 # What a tool result opens with when the call did not do its job: the gate's
 # own markers (a tool exception, a denial, a sibling skipped after a failed
 # command, a tool outside an agent's scope, plan mode, a hook, the loop
-# guard) and an executor's own error line. One list for the loop guard's
+# guard, a call canceled by another call's pause, a payload the gate could
+# not read) and an executor's own error line. One list for the loop guard's
 # repeated-failure count and the skill_result frame's is_error flag.
 _ERROR_PREFIXES = (
     "[Tool Error]",
+    "[Error]",
     "Error:",
     "Error ",
     "error:",
@@ -75,13 +81,26 @@ _ERROR_PREFIXES = (
     "[Plan Mode]",
     "[Hook denied]",
     "[Loop guard]",
+    "[Not executed]",
 )
-# A command tool's own exit status, appended to its result
-# (server/workspace/executors.py, server/executors/code.py).
-_EXIT_CODE_RE = re.compile(r"\(exit code (-?\d+)")
-# Tools whose result carries that suffix only on failure: a result without it
-# ran and exited 0.
-_EXIT_CODE_SILENT_ON_SUCCESS = frozenset({"ws_run_command"})
+# Where a command tool writes its own exit status, one fixed place each, so a
+# file, a diff or a log that merely mentions an exit code is never read as
+# one. ws_run_command (server/workspace/executors.py run_workspace_command)
+# ends a finished run that failed with "(exit code N)" or "(exit code N:
+# meaning)" on a line of its own, followed at most by the "[Left running]"
+# paragraph; a run that exited 0 says nothing.
+_RUN_EXIT_RE = re.compile(r"\n\(exit code (-?\d+)(?::[^\n]*)?\)(?:\n\[Left running\][^\n]*)?\Z")
+# A ws_run_command that never finished in the foreground has no exit status:
+# a background start or handoff, no workspace (or one the user let go of),
+# no command.
+_RUN_UNFINISHED = ("[Background Task Started]", "No workspace connected", "No command provided")
+# aws_cli (server/executors/code.py do_aws_cli) opens a failure with its exit
+# status, after the gate's "Error: " when the gate ran it inline.
+_AWS_EXIT_RE = re.compile(r"(?:Error: )?\(exit code (-?\d+)\)")
+# What the gate appends after a tool returned: a PostToolUse hook's context
+# (_append_hook_context), and the loop guard's note before it.
+_HOOK_NOTE = "\n\n[Hook] "
+_LOOP_NOTE_RE = re.compile(r"\n\n\[Loop guard note: [^\n]*\]\Z")
 
 
 class ToolOutcome(NamedTuple):
@@ -89,25 +108,41 @@ class ToolOutcome(NamedTuple):
     exit_code: int | None
 
 
+def _executor_text(text: str) -> str:
+    """``text`` without the notes the gate appended after the tool returned,
+    so an exit status at the end of the executor's own text is found."""
+    hook = text.rfind(_HOOK_NOTE)
+    if hook != -1:
+        text = text[:hook]
+    note = _LOOP_NOTE_RE.search(text)
+    return text[: note.start()] if note else text
+
+
 def tool_outcome(tool_name: str, output) -> ToolOutcome:
     """Whether a tool result reports a failure, and the exit code it carries.
 
     Read on the FULL output, never a preview. ``is_error`` is true when the
     output opens with one of the gate's error markers or reports a non-zero
-    exit code. ``exit_code`` is the last "(exit code N" in the output; 0 for
-    ws_run_command when the output has none and no error marker (its
-    executor only says so on failure); None for every other tool. The loop
-    guard and the skill_result frame share this one rule."""
+    exit code. Only a command tool reports an exit code, read where its
+    executor writes it and nowhere else: ws_run_command's last line (0 when
+    a finished run has none and no error marker, since its executor only
+    says so on failure; None when it never finished in the foreground) and
+    aws_cli's first line on a failure. Every other tool's code is None, and
+    its content never makes it an error. The loop guard and the skill_result
+    frame share this one rule."""
     text = output if isinstance(output, str) else str(output)
     prefixed = text.startswith(_ERROR_PREFIXES)
-    codes = _EXIT_CODE_RE.findall(text)
-    exit_code: int | None
-    if codes:
-        exit_code = int(codes[-1])
-    elif tool_name in _EXIT_CODE_SILENT_ON_SUCCESS and not prefixed:
-        exit_code = 0
-    else:
-        exit_code = None
+    exit_code: int | None = None
+    if tool_name == "ws_run_command":
+        found = _RUN_EXIT_RE.search(_executor_text(text))
+        if found:
+            exit_code = int(found.group(1))
+        elif not prefixed and not text.startswith(_RUN_UNFINISHED):
+            exit_code = 0
+    elif tool_name == "aws_cli":
+        found = _AWS_EXIT_RE.match(text)
+        if found:
+            exit_code = int(found.group(1))
     return ToolOutcome(prefixed or bool(exit_code), exit_code)
 
 
@@ -131,6 +166,14 @@ def _result_frame(
             **extra,
         }
     )
+
+
+def _reply(state: "ToolState", text: str, tool_results: list, sse_events: list) -> None:
+    """Answer ``state`` with ``text`` as is (no budget, it is the gate's own
+    line): the tool_result the model reads and the skill_result frame its row
+    shows, so no call is left looking as if it ran."""
+    sse_events.append(_result_frame(state, text, text))
+    tool_results.append({"type": "tool_result", "tool_use_id": state.tool_id, "content": text})
 
 
 def _append_hook_context(state: "ToolState", outcome) -> None:
@@ -648,6 +691,11 @@ async def _process_tool_results(
     sse_events: list[str] = []
     has_pending_approval = False
     has_user_question = False
+    # The call the turn paused on for a card, and the folder card's frame:
+    # it goes out last, after every row's result, since the client commits
+    # the rows above the card when it arrives.
+    paused_id: str | None = None
+    prompt_frame: str | None = None
 
     for state in states:
         # Flush side effects as SSE events
@@ -679,16 +727,13 @@ async def _process_tool_results(
         if isinstance(tool_output, str) and tool_output.startswith("[WS_WORKSPACE_PROMPT]"):
             if unattended:
                 # No human to show a folder picker to — refuse and keep going.
-                tool_results.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": state.tool_id,
-                        "content": (
-                            "Error: no workspace connected and cannot prompt "
-                            "the user unattended. Open a workspace first, or "
-                            "ask the parent to."
-                        ),
-                    }
+                _reply(
+                    state,
+                    "Error: no workspace connected and cannot prompt "
+                    "the user unattended. Open a workspace first, or "
+                    "ask the parent to.",
+                    tool_results,
+                    sse_events,
                 )
                 continue
             prompt_data = tool_output[len("[WS_WORKSPACE_PROMPT]") :]
@@ -696,17 +741,18 @@ async def _process_tool_results(
                 prompt_parsed = json.loads(prompt_data)
             except json.JSONDecodeError as e:
                 log.error("Malformed [WS_WORKSPACE_PROMPT] payload: %s", e)
-                tool_results.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": state.tool_id,
-                        "content": f"[Error] Malformed workspace-prompt payload: {e}",
-                    }
+                _reply(
+                    state,
+                    f"[Error] Malformed workspace-prompt payload: {e}",
+                    tool_results,
+                    sse_events,
                 )
                 continue
             prompt_parsed = {**prompt_parsed, "tool_use_id": state.tool_id}
-            sse_events.append(ndjson_dumps({"ws_workspace_prompt": prompt_parsed}))
+            sse_events.append(_result_frame(state, WS_PROMPT_NOT_RUN, WS_PROMPT_NOT_RUN))
+            prompt_frame = ndjson_dumps({"ws_workspace_prompt": prompt_parsed})
             has_pending_approval = True
+            paused_id = state.tool_id
             break
 
         # Workspace approval detection. Tools signal "needs approval" by
@@ -729,11 +775,11 @@ async def _process_tool_results(
             )
             if step.kind == APPROVAL_PAUSE:
                 has_pending_approval = True
+                # Its row waits for the card's answer (the client patches it).
+                paused_id = state.tool_id
                 break  # Do not execute sibling tools in this batch.
             if step.kind == APPROVAL_REPLY:
-                tool_results.append(
-                    {"type": "tool_result", "tool_use_id": state.tool_id, "content": step.text}
-                )
+                _reply(state, step.text, tool_results, sse_events)
                 continue
             # An inline run's result or a refusal: processed like any output.
             tool_output = step.text
@@ -753,12 +799,11 @@ async def _process_tool_results(
                 img_parsed = json.loads(img_data)
             except json.JSONDecodeError as e:
                 log.error("Malformed [WS_PREVIEW_IMAGE] payload: %s", e)
-                tool_results.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": state.tool_id,
-                        "content": f"[Error] Malformed preview-image payload: {e}",
-                    }
+                _reply(
+                    state,
+                    f"[Error] Malformed preview-image payload: {e}",
+                    tool_results,
+                    sse_events,
                 )
                 continue
             caption = img_parsed.get("caption", "Screenshot")
@@ -769,7 +814,7 @@ async def _process_tool_results(
                     state,
                     caption,
                     caption,
-                    # Frontend-only field — PreviewScreenshotCard keys off this
+                    # Frontend-only field: PreviewScreenshotCard keys off this
                     # to render the <img>; other skill_result consumers ignore it.
                     preview_image={"media_type": media_type, "data": data},
                 )
@@ -864,7 +909,9 @@ async def _process_tool_results(
                         "content": content,
                     }
                 )
-            else:
+            elif state.tool_id == paused_id:
+                # The paused call's row is answered by its card; the folder
+                # card's call already has its frame.
                 tool_results.append(
                     {
                         "type": "tool_result",
@@ -872,6 +919,10 @@ async def _process_tool_results(
                         "content": not_executed_msg,
                     }
                 )
+            else:
+                _reply(state, not_executed_msg, tool_results, sse_events)
+        if prompt_frame:
+            sse_events.append(prompt_frame)
     elif has_user_question:
         # For ask_user_question: the tool's output is already "[PAUSE] …"
         # text appended to tool_results, but Bedrock hasn't seen the user's

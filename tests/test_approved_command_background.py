@@ -113,3 +113,16 @@ def test_approved_quick_command_still_returns_inline(ws):
     assert "hello" in (outcome.output or "")
     assert outcome.error == "exit code 3"
     assert registry.list_tasks(session_id="s-inline") == []
+
+
+def test_an_approved_command_reports_the_exit_code_it_finished_with(ws):
+    # The card's row shows the same exit chip as an inline run's
+    # (ApprovalOutcome.exit_code, returned by POST /api/approval/execute).
+    done = _run(_approved_payload("touch a.txt", "s-exit"))
+    assert done.ok and done.exit_code == 0
+    failed = _run(_approved_payload("touch b.txt && false", "s-exit"))
+    assert not failed.ok and failed.exit_code == 1
+    # Still running in the background: no exit status yet.
+    later = _run(_approved_payload("sleep 5", "s-exit", run_in_background=True))
+    assert later.ok and later.exit_code is None
+    assert shell.stop_task(_task_id(later.output))

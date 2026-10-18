@@ -64,12 +64,69 @@ def test_ws_run_command_without_a_suffix_exited_zero():
 
 def test_other_command_tools_without_a_suffix_report_no_exit_code():
     assert tool_outcome("run_python", "hello") == ToolOutcome(False, None)
+    assert tool_outcome("aws_cli", "{}") == ToolOutcome(False, None)
     assert tool_outcome("terminal_run", "exit_code: 0\n---\nhello") == ToolOutcome(False, None)
 
 
 def test_non_zero_exit_code_is_an_error_without_any_marker():
     assert tool_outcome("ws_run_command", "boom\n(exit code 3)") == ToolOutcome(True, 3)
-    assert tool_outcome("run_python", "(exit code 1)\nTraceback") == ToolOutcome(True, 1)
+    # aws_cli opens a failure with it, after "Error: " when the gate ran it.
+    assert tool_outcome("aws_cli", "(exit code 1)\nboom") == ToolOutcome(True, 1)
+    assert tool_outcome("aws_cli", "Error: (exit code 2)\nboom") == ToolOutcome(True, 2)
+
+
+@pytest.mark.parametrize(
+    ("tool", "output"),
+    [
+        ("ws_read_file", "    1\tassert out == '(exit code 1)'"),
+        ("ws_grep", "tests/x.py:3: (exit code 2: failed)"),
+        ("git_diff", '+    print("(exit code 1)")'),
+        ("run_python", "(exit code 1)\nprinted by the script"),
+    ],
+)
+def test_text_that_mentions_an_exit_code_is_no_failure(tool, output):
+    # Only a command tool reports an exit code, where its executor writes it:
+    # a file, a search hit or a diff that mentions one is no failure.
+    assert tool_outcome(tool, output) == ToolOutcome(False, None)
+
+
+def test_a_command_whose_output_mentions_an_exit_code_exited_zero():
+    out = "def test():\n    assert run() == '(exit code 2)'\nDone."
+    assert tool_outcome("ws_run_command", out) == ToolOutcome(False, 0)
+
+
+@pytest.mark.parametrize(
+    "tail",
+    [
+        "\n[Left running] The command returned, but processes it started are still running.",
+        "\n\n[Loop guard note: this is consecutive identical call number 2 to ws_run_command.]",
+        "\n\n[Hook] lint the output\n[Hook] and report",
+    ],
+)
+def test_the_exit_code_is_found_before_what_follows_it(tail):
+    # The run's own "[Left running]" paragraph, and what the gate appends
+    # after the tool returned, do not hide the run's exit status.
+    assert tool_outcome("ws_run_command", f"boom\n(exit code 1){tail}") == ToolOutcome(True, 1)
+
+
+def test_an_approved_command_that_failed_reports_its_exit_code():
+    # The gate's inline run (tool_approvals.inline_result_text).
+    out = "Error: exit code 1\n\nboom\n(exit code 1)"
+    assert tool_outcome("ws_run_command", out) == ToolOutcome(True, 1)
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        "[Background Task Started] task_id=abc123\nCommand: npm run build\nThe command is running.",
+        "No workspace connected.",
+        "No workspace connected: the user disconnected /a while this turn was running.",
+        "No command provided.",
+    ],
+)
+def test_a_command_that_never_finished_has_no_exit_code(output):
+    # Still running in the background, or never started: no "exit 0" chip.
+    assert tool_outcome("ws_run_command", output) == ToolOutcome(False, None)
 
 
 def test_exit_code_with_a_meaning_and_a_negative_code_parse():
@@ -213,12 +270,80 @@ def test_sibling_emitted_before_a_pause_carries_id_and_outcome():
     sibling.status = "completed"
     _results, sse_events, pending, _question = _run([prompt, sibling])
     assert pending is True
+    frames = {f["tool_use_id"]: f for f in _frames(sse_events, "skill_result")}
+    assert frames["tu_s"]["is_error"] is True and frames["tu_s"]["exit_code"] == 1
+
+
+def test_the_call_a_folder_card_waits_on_says_it_did_not_run():
+    # Its row must not read as done ("Wrote a.txt"), and its frame goes out
+    # before the card's, which commits the rows above the card on the client;
+    # so do the frames of the siblings it canceled.
+    prompt = _State("tu_p", "ws_write_file", '[WS_WORKSPACE_PROMPT]{"path": "a.txt"}')
+    later = _State("tu_l", "ws_read_file", "")
+    results, sse_events, pending, _question = _run([prompt, later])
+    assert pending is True
+    kinds = [next(iter(json.loads(e))) for e in sse_events]
+    assert kinds == ["skill_result", "skill_result", "ws_workspace_prompt"]
+    frames = {f["tool_use_id"]: f for f in _frames(sse_events, "skill_result")}
+    assert frames["tu_p"]["output"] == te.WS_PROMPT_NOT_RUN
+    assert frames["tu_p"]["is_error"] is True
+    assert frames["tu_l"]["output"].startswith("[Not executed]")
+    assert frames["tu_l"]["is_error"] is True
+    # The model's placeholder for the paused call is the one the card's
+    # answer replaces on the continuation.
+    by_id = {r["tool_use_id"]: r["content"] for r in results}
+    assert by_id["tu_p"].startswith("[Not executed]")
+
+
+def _approval_state(tool_id: str, path: str) -> _State:
+    payload = json.dumps({"action": "write", "path": path, "content": "hi", "original": ""})
+    return _State(tool_id, "ws_write_file", f"[WS_APPROVAL]{payload}")
+
+
+def _gate(monkeypatch, states, session_approvals):
+    from server.approval.bootstrap import register_defaults
+
+    register_defaults()
+    monkeypatch.setattr(
+        "server.security.permissions.load_permissions", lambda: {"mode": "default", "rules": []}
+    )
+    return asyncio.run(
+        te.process_tool_results(
+            states,
+            budget_fn=lambda _name, out: out,
+            session_approvals=session_approvals,
+            config=None,
+            model_id="",
+            recent_messages=[],
+        )
+    )
+
+
+def test_a_call_denied_by_a_session_rule_says_so_on_its_row(monkeypatch):
+    results, sse_events, pending, _q = _gate(
+        monkeypatch, [_approval_state("tu_w", "a.py")], {"write": "deny"}
+    )
+    assert pending is False
     (frame,) = _frames(sse_events, "skill_result")
-    assert frame["tool_use_id"] == "tu_s"
-    assert frame["is_error"] is True and frame["exit_code"] == 1
+    assert frame["tool_use_id"] == "tu_w" and frame["is_error"] is True
+    assert frame["output"].startswith("[Denied by session rule]")
+    assert results == [{"type": "tool_result", "tool_use_id": "tu_w", "content": frame["output"]}]
 
 
-def test_sleep_side_effect_frames_carry_the_id():
+def test_siblings_an_approval_card_canceled_say_they_did_not_run(monkeypatch):
+    # Two writes that both need a card: the first pauses on it and its row
+    # waits for the answer (no frame); the second never ran.
+    states = [_approval_state("tu_a", "a.py"), _approval_state("tu_b", "b.py")]
+    results, sse_events, pending, _q = _gate(monkeypatch, states, {})
+    assert pending is True
+    (frame,) = _frames(sse_events, "skill_result")
+    assert frame["tool_use_id"] == "tu_b" and frame["is_error"] is True
+    assert frame["output"].startswith("[Not executed]")
+    assert [r["tool_use_id"] for r in results] == ["tu_a", "tu_b"]
+    assert all(r["content"].startswith("[Not executed]") for r in results)
+
+
+def test_sleep_adds_no_frame_of_its_own():
     executor = ThreadPoolExecutor(max_workers=1)
 
     async def _go():
@@ -238,14 +363,10 @@ def test_sleep_side_effect_frames_carry_the_id():
         _output, side_effects = asyncio.run(_go())
     finally:
         executor.shutdown(wait=False)
-    assert side_effects[0] == {
-        "skill": "sleep",
-        "input": {"seconds": 0.0},
-        "tool_use_id": "tu_sleep",
-    }
-    # The gate emits the one skill_result frame (with its meta); the router
-    # adds none of its own.
-    assert len(side_effects) == 1
+    # The runner emits the call's one skill frame and the gate its one
+    # skill_result: a second skill frame under the same id drew a second
+    # row that never resolved.
+    assert side_effects == []
     assert _output == "Slept for 0.0 seconds."
 
 
