@@ -2054,6 +2054,12 @@ input.segment-speaker {
     /* JS auto-grows the height with content (ChatInput.tsx); this cap is
        ~2.5x the resting two-row height, beyond which the textarea scrolls. */
     resize: none; outline: none; max-height: 185px; overflow-y: auto;
+    /* The composer never scrolls sideways: a box that scrolls on one axis
+       lets the other scroll too, and WebKit (the Mac app) kept a long
+       unbroken run (a path, a URL, a pasted line) at full width behind a
+       horizontal scrollbar. Text wraps at the composer's width instead,
+       breaking a long word wherever it must. */
+    overflow-x: hidden; white-space: pre-wrap; overflow-wrap: anywhere;
     transition: border-color 0.2s, box-shadow 0.2s, max-height 0.25s ease;
 }
 .chat-input:focus {
