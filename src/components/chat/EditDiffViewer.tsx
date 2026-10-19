@@ -5,7 +5,6 @@ import { ApiError } from '@/types/api';
 import { DiffDialog, type DiffBody } from '@/components/git/DiffDialog';
 import { useDiffQuery } from '@/components/git/useDiffQuery';
 import { collapseUnchanged, rowsFromTexts } from '@/utils/diffRows';
-import { resolvePath } from './ActivityRow';
 
 const NOT_KEPT: DiffBody = { kind: 'info', text: 'The diff for this edit was not kept.' };
 
@@ -25,7 +24,6 @@ export const EditDiffViewer: React.FC = () => {
 
 const EditDiff: React.FC<{ toolUseId: string; path: string }> = ({ toolUseId, path }) => {
   const close = useUIStore((s) => s.closeEditDiff);
-  const wsPath = useUIStore((s) => s.wsPath);
   const { data, error, pending } = useDiffQuery(['workspace-edit', toolUseId], () => getEdit(toolUseId));
   const recordBody = useMemo(() => (data ? bodyFor(data) : null), [data]);
 
@@ -36,10 +34,11 @@ const EditDiff: React.FC<{ toolUseId: string; path: string }> = ({ toolUseId, pa
 
   return (
     <DiffDialog
-      // The pill's absolute path until the record lands (and on a 404), then
-      // the workspace-relative one the edit wrote: both shown relative to the
-      // workspace, so the line keeps one form.
-      path={resolvePath(data?.path || path, wsPath).shown}
+      // The absolute path the edit wrote, as the record kept it, so a later
+      // change of workspace cannot move it. The pill's own path (absolute
+      // once joined to the workspace) until the record lands, on a 404, and
+      // for a record kept before it held one.
+      path={data?.full_path || path}
       // A created file opens against an empty original: every line added.
       // An existing empty file the write filled has one too, and was modified.
       status={kept ? (data.created ? 'added' : 'modified') : undefined}

@@ -3,6 +3,7 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider, onlineManager } from '@tanstack/react-query';
 import { GitDiffViewer } from './GitDiffViewer';
 import { ApiError } from '@/types/api';
+import { useUIStore } from '@/stores/uiStore';
 
 const getGitFileDiff = vi.fn();
 vi.mock('@/api/git', () => ({
@@ -33,6 +34,20 @@ function renderViewer(client: QueryClient) {
 afterEach(() => {
   onlineManager.setOnline(true);
   getGitFileDiff.mockReset();
+  useUIStore.setState({ wsPath: '' });
+});
+
+describe('GitDiffViewer header', () => {
+  it('shows the full path: the workspace-relative path joined to the workspace', async () => {
+    useUIStore.setState({ wsPath: '/repo' });
+    getGitFileDiff.mockResolvedValue(DIFF);
+
+    const { container } = renderViewer(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+    expect(await screen.findByText('Modified')).toBeTruthy();
+    expect(container.querySelector('.git-diff-title')?.textContent).toBe('/repo/a.txtModified');
+    expect(getGitFileDiff).toHaveBeenCalledWith('a.txt');
+  });
 });
 
 describe('GitDiffViewer failure states', () => {

@@ -4139,16 +4139,21 @@ button.ws-git-status-badge:hover {
     touch-action: none;
 }
 .git-diff-title {
+    min-width: 0;
     font-size: var(--fs-small);
     font-weight: 600;
     color: var(--text-primary);
     line-height: 1.5;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    overflow-wrap: anywhere;
+}
+/* The folders before the file name, quieter than the name itself. */
+.git-diff-dir {
+    font-weight: 400;
+    color: var(--text-secondary);
 }
 .git-diff-status {
     margin-left: 8px;
+    white-space: nowrap;
     font-weight: 400;
     font-size: var(--fs-caption);
     color: var(--text-muted);
@@ -4205,18 +4210,6 @@ button.ws-git-status-badge:hover {
 .git-diff-close:hover {
     background: var(--bg-hover);
     color: var(--text-primary);
-}
-.git-diff-path {
-    padding: 5px 14px;
-    border-bottom: 1px solid var(--border);
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: var(--fs-caption);
-    line-height: 1.5;
-    color: var(--text-muted);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    flex-shrink: 0;
 }
 .git-diff-body {
     flex: 1;

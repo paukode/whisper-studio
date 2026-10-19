@@ -16,7 +16,8 @@ export type DiffBody =
   | { kind: 'info'; text: string };
 
 export interface DiffDialogProps {
-  /** The path on the line under the header; its last part is the title. */
+  /** The file's full path, the header's title; its last part names the
+   *  dialog for a screen reader. */
   path: string;
   /** Left out until the diff is known. */
   status?: DiffStatus;
@@ -101,6 +102,7 @@ export const DiffDialog: React.FC<DiffDialogProps> = ({
   }, [onClose, dialogRef]);
 
   const fileName = path.split('/').pop() || path;
+  const dir = path.slice(0, path.length - fileName.length);
   const showStats = (added ?? 0) > 0 || (removed ?? 0) > 0;
 
   return (
@@ -119,7 +121,10 @@ export const DiffDialog: React.FC<DiffDialogProps> = ({
         aria-label={`Diff of ${fileName}`}
       >
         <div className="git-diff-header" onPointerDown={onMoveStart}>
-          <span className="git-diff-title" title={path}>
+          {/* The whole path, wrapped rather than cut, so the file name at
+              its end is always in view. */}
+          <span className="git-diff-title">
+            {dir && <span className="git-diff-dir">{dir}</span>}
             {fileName}
             {status && <span className="git-diff-status">{STATUS_WORDS[status]}</span>}
           </span>
@@ -159,10 +164,6 @@ export const DiffDialog: React.FC<DiffDialogProps> = ({
               {ICON.x}
             </button>
           </div>
-        </div>
-
-        <div className="git-diff-path" title={path}>
-          {path}
         </div>
 
         <div className="git-diff-body">

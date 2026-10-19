@@ -9,8 +9,10 @@ turn ended. The row's own numbers (added, removed) come from the same
 through GET /api/workspace/edits/{tool_use_id} (server/workspace/routes).
 
 Records live under ``<data root>/edits/<tool_use_id>.json`` and hold
-{path, original, modified, added, removed, approximate, created, at,
-stored}. The texts are not kept for a text over EDIT_TEXT_CAP bytes, or for
+{path, full_path, original, modified, added, removed, approximate, created,
+at, stored}. ``path`` is the workspace-relative path the call named;
+``full_path`` is the absolute path it wrote, which the dialog's header shows
+(right even after the workspace changes). The texts are not kept for a text over EDIT_TEXT_CAP bytes, or for
 a dotenv or credential file (a key, a .env, a credentials.json): the record
 is still written, with both texts null and ``stored`` false, so the dialog
 can say the diff was not kept. A prune removes records older than
@@ -204,10 +206,12 @@ def record_edit(
     stats: dict,
     *,
     created: bool = False,
+    full_path: str = "",
 ) -> bool:
     """Write the record for ``tool_use_id`` and set ``stats["stored"]``.
     ``created`` says the write made the file, which an empty ``original``
-    alone cannot tell from an existing empty file.
+    alone cannot tell from an existing empty file. ``full_path`` is the
+    absolute path of the file written.
 
     Returns False, with nothing written, for an id that is not a plain token
     or when the folder cannot be written; the write the record describes has
@@ -219,6 +223,7 @@ def record_edit(
     keep_texts = not holds_secrets(path) and _fits(original) and _fits(modified)
     record = {
         "path": path,
+        "full_path": full_path,
         "original": original if keep_texts else None,
         "modified": modified if keep_texts else None,
         "added": stats.get("added"),
