@@ -28,6 +28,8 @@ import { LivePanel } from './LivePanel';
  * So we probe the target first and only mount the iframe once it answers,
  * showing a "Waiting for the dev server…" state meanwhile. The probe keeps
  * retrying until the server is up (the auto-retry), so a slow boot self-heals.
+ * A stopped pane has nothing to wait for and never probes; Restart brings the
+ * probe back.
  */
 
 // Retry cadence while the server isn't answering yet, per-attempt abort budget,
@@ -158,6 +160,9 @@ export const LiveBrowserPanel: React.FC<{
   const [forceShowToken, setForceShowToken] = useState<string | null>(null);
   const [loadKey, setLoadKey] = useState(0);
   const ready = readyToken === token;
+  // No running server and no routed URL: the pane shows "Preview server
+  // stopped", and there is nothing to wait for.
+  const stopped = !running && !liveNavUrl;
   const forceShow = forceShowToken === shownUrl;
   const slow = slowToken === token && !ready;
 
@@ -220,7 +225,7 @@ export const LiveBrowserPanel: React.FC<{
   // reachable, so it's exempt. All setState happens in the async callback, not
   // the effect body.
   useEffect(() => {
-    if (mode === 'watch' || !shownUrl) return;
+    if (mode === 'watch' || !shownUrl || stopped) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const tick = async () => {
@@ -237,21 +242,21 @@ export const LiveBrowserPanel: React.FC<{
     };
     void tick();
     return () => { cancelled = true; if (timer) clearTimeout(timer); };
-  }, [token, shownUrl, mode]);
+  }, [token, shownUrl, mode, stopped]);
 
   // Surface the slow-boot hint if the target still hasn't answered after a
   // while (keyed to `token`, so it clears on a new target).
   useEffect(() => {
-    if (mode === 'watch' || !shownUrl) return;
+    if (mode === 'watch' || !shownUrl || stopped) return;
     const t = setTimeout(() => setSlowToken(token), SLOW_HINT_MS);
     return () => clearTimeout(t);
-  }, [token, shownUrl, mode]);
+  }, [token, shownUrl, mode, stopped]);
 
   // ── Stopped: no running server AND no routed URL to show. A URL-only view (a
   //    localhost link routed in without a registered session) skips this. A
   //    pane whose last preview belonged to another chat says so instead of
   //    offering to restart that chat's server from here. ──
-  if (!running && !liveNavUrl) {
+  if (stopped) {
     return (
       <div style={{ flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, padding: 16, background: 'var(--bg-inset, #0d0d0d)' }}>
         <div style={{ color: 'var(--text-muted, #888)', fontSize: 13 }}>
