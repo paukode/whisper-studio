@@ -125,7 +125,15 @@ def _write_stats(
     except OSError:
         pass
     if tool_use_id and original is not None:
-        edits.record_edit(str(tool_use_id), path, original, modified, stats, created=created)
+        edits.record_edit(
+            str(tool_use_id),
+            path,
+            original,
+            modified,
+            stats,
+            created=created,
+            full_path=os.path.normpath(full),
+        )
     return stats
 
 

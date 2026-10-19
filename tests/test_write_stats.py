@@ -82,6 +82,8 @@ def test_the_edit_is_kept_under_the_calls_id_for_the_diff_dialog(ws):
     record = edits.read_edit("toolu_01")
     assert record is not None
     assert record["path"] == "a.txt"
+    # The absolute path the write went to, for the diff dialog's header.
+    assert record["full_path"] == str(ws / "a.txt")
     assert record["original"] == "old\n"
     assert record["modified"] == "new\n"
     assert (record["added"], record["removed"]) == (1, 1)
@@ -89,8 +91,9 @@ def test_the_edit_is_kept_under_the_calls_id_for_the_diff_dialog(ws):
 
 
 def test_a_created_files_record_has_an_empty_original(ws):
-    _write({"path": "c.txt", "content": "fresh\n", "__tool_use_id__": "toolu_02"})
+    _write({"path": "./new/c.txt", "content": "fresh\n", "__tool_use_id__": "toolu_02"})
     record = edits.read_edit("toolu_02")
+    assert record["full_path"] == str(ws / "new" / "c.txt")
     assert record["original"] == ""
     assert record["modified"] == "fresh\n"
 

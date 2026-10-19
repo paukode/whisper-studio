@@ -141,10 +141,14 @@ def test_the_deadline_stops_the_exact_diff_and_falls_back(monkeypatch):
 
 def test_record_then_read_round_trips_and_marks_the_stats_stored():
     stats = {"added": 1, "removed": 1, "lines": 1, "bytes": 4, "stored": False}
-    assert edits.record_edit("toolu_abc", "src/a.py", "old\n", "new\n", stats) is True
+    ok = edits.record_edit(
+        "toolu_abc", "src/a.py", "old\n", "new\n", stats, full_path="/repo/src/a.py"
+    )
+    assert ok is True
     assert stats["stored"] is True
     record = edits.read_edit("toolu_abc")
     assert record["path"] == "src/a.py"
+    assert record["full_path"] == "/repo/src/a.py"
     assert record["original"] == "old\n"
     assert record["modified"] == "new\n"
     assert record["added"] == 1 and record["removed"] == 1
