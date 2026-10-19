@@ -21,6 +21,7 @@ vi.mock('@/api/workspace', () => ({
 
 const record = (r: Partial<EditRecord>): EditRecord => ({
   path: 'src/app.ts',
+  full_path: '/repo/src/app.ts',
   original: 'one\ntwo\nthree\n',
   modified: 'one\nTWO\nthree\nfour\n',
   added: 2,
@@ -32,10 +33,10 @@ const record = (r: Partial<EditRecord>): EditRecord => ({
   ...r,
 });
 
-function openViewer() {
-  // The pill hands over the absolute path; the record holds the
-  // workspace-relative one.
-  useUIStore.setState({ wsPath: '/repo', editDiff: { toolUseId: 'tu_edit', path: '/repo/src/app.ts' } });
+function openViewer(wsPath = '/repo') {
+  // The pill hands over its path joined to the connected workspace; the
+  // record holds the absolute path the edit wrote.
+  useUIStore.setState({ wsPath, editDiff: { toolUseId: 'tu_edit', path: `${wsPath}/src/app.ts` } });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
@@ -69,7 +70,9 @@ describe('EditDiffViewer', () => {
   });
 
   it('opens a created file against an empty original: every row an addition, status Added', async () => {
-    getEdit.mockResolvedValue(record({ path: 'src/new.ts', original: '', modified: 'a\nb\nc\n', added: 3, removed: 0, created: true }));
+    getEdit.mockResolvedValue(
+      record({ path: 'src/new.ts', full_path: '/repo/src/new.ts', original: '', modified: 'a\nb\nc\n', added: 3, removed: 0, created: true }),
+    );
 
     const { container } = openViewer();
 
@@ -77,8 +80,9 @@ describe('EditDiffViewer', () => {
     expect(getEdit).toHaveBeenCalledWith('tu_edit');
     expect(codeCells(container, 'added')).toEqual(['a', 'b', 'c']);
     expect(codeCells(container, 'removed')).toEqual([]);
-    expect(container.querySelector('.git-diff-title')?.textContent).toBe('new.tsAdded');
-    expect(container.querySelector('.git-diff-path')?.textContent).toBe('src/new.ts');
+    // The header holds the whole path, its folders set apart from the name.
+    expect(container.querySelector('.git-diff-title')?.textContent).toBe('/repo/src/new.tsAdded');
+    expect(container.querySelector('.git-diff-dir')?.textContent).toBe('/repo/src/');
     expect(container.querySelector('.git-diff-stats')?.textContent).toBe('+3 -0');
   });
 
@@ -125,9 +129,8 @@ describe('EditDiffViewer', () => {
 
     expect(await screen.findByText('The diff for this edit was not kept.')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
-    expect(container.querySelector('.git-diff-title')?.textContent).toBe('app.ts');
-    // The pill's absolute path, shown relative to the workspace like a record's.
-    expect(container.querySelector('.git-diff-path')?.textContent).toBe('src/app.ts');
+    // The pill's own path, absolute like a record's.
+    expect(container.querySelector('.git-diff-title')?.textContent).toBe('/repo/src/app.ts');
 
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     expect(useUIStore.getState().editDiff).toBeNull();
@@ -139,10 +142,28 @@ describe('EditDiffViewer', () => {
 
     const { container } = openViewer();
 
-    expect(container.querySelector('.git-diff-path')?.textContent).toBe('src/app.ts');
+    expect(container.querySelector('.git-diff-title')?.textContent).toBe('/repo/src/app.ts');
     resolve(record({}));
     expect(await screen.findByText('Modified')).toBeTruthy();
-    expect(container.querySelector('.git-diff-path')?.textContent).toBe('src/app.ts');
+    expect(container.querySelector('.git-diff-title')?.textContent).toBe('/repo/src/app.tsModified');
+  });
+
+  it('shows the path the edit wrote, not one joined to a workspace connected since', async () => {
+    getEdit.mockResolvedValue(record({}));
+
+    const { container } = openViewer('/elsewhere');
+
+    expect(await screen.findByText('Modified')).toBeTruthy();
+    expect(container.querySelector('.git-diff-title')?.textContent).toBe('/repo/src/app.tsModified');
+  });
+
+  it('shows the pill path for a record kept before it held the full path', async () => {
+    getEdit.mockResolvedValue(record({ full_path: undefined }));
+
+    const { container } = openViewer();
+
+    expect(await screen.findByText('Modified')).toBeTruthy();
+    expect(container.querySelector('.git-diff-title')?.textContent).toBe('/repo/src/app.tsModified');
   });
 
   it('closes on Esc', async () => {

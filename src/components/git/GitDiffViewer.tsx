@@ -1,5 +1,7 @@
 import React, { useMemo } from 'react';
 import { getGitFileDiff, type GitFileDiff } from '@/api/git';
+import { useUIStore } from '@/stores/uiStore';
+import { resolvePath } from '@/components/chat/ActivityRow';
 import {
   collapseUnchanged,
   rowsFromHunks,
@@ -23,12 +25,15 @@ export interface GitDiffViewerProps {
  * browser. DiffDialog draws it.
  */
 export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({ path, onClose }) => {
+  const wsPath = useUIStore((s) => s.wsPath);
   const { data, pending } = useDiffQuery(['git-file-diff', path], () => getGitFileDiff(path));
   const rows = useMemo(() => (data ? rowsFor(data) : null), [data]);
 
   return (
     <DiffDialog
-      path={path}
+      // The header shows the full path: the panel's workspace is the repo
+      // root, so its relative path joins to it.
+      path={resolvePath(path, wsPath).absolute ?? path}
       status={data?.status}
       added={data?.added}
       removed={data?.removed}

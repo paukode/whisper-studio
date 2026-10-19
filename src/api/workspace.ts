@@ -62,6 +62,9 @@ export function sourceFileRawUrl(path: string): string {
  *  `approximate`); `at` is when the edit ran, in ISO 8601. */
 export interface EditRecord {
   path: string;
+  /** The absolute path the call wrote, which the dialog's header shows.
+   *  A record kept before the field was added has none. */
+  full_path?: string;
   original: string | null;
   modified: string | null;
   added: number | null;
