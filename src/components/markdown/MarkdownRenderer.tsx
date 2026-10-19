@@ -1,8 +1,9 @@
-import { useId, useMemo, useRef, useEffect } from 'react';
+import { useId, useMemo, useRef, useEffect, useLayoutEffect } from 'react';
 import { marked } from 'marked';
 import { renderCodeBlock, attachCodeBlockHandlers, beginCodeBlockParse } from '@/utils/codeBlockEnhancer';
 import { renderMarkdownSafe } from '@/utils/sanitizeHtml';
 import { attachWsFileHandlers } from '@/utils/wsFileLinks';
+import { attachTableResizers } from '@/utils/tableResize';
 import { linkifyPaths } from '@/utils/pathLinks';
 import { useHtmlProp } from '@/hooks/useHtmlProp';
 import { useUIStore } from '@/stores/uiStore';
@@ -63,6 +64,14 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
   useEffect(() => {
     if (!containerRef.current) return;
     return attachWsFileHandlers(containerRef.current);
+  }, [html]);
+
+  // Frame every table (wide ones scroll sideways) and give its header cells
+  // column resize handles (utils/tableResize.ts). A layout effect, so a wide
+  // table is never painted outside its frame for a frame.
+  useLayoutEffect(() => {
+    if (!containerRef.current) return;
+    return attachTableResizers(containerRef.current);
   }, [html]);
 
   // html is sanitized by DOMPurify inside renderMarkdownSafe above, so it
