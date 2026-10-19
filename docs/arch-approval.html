@@ -370,7 +370,8 @@
       an absolute path (<code>_do_save_to_path</code>) gives no counts and no stored edit.</p>
     <p>When the call has a <code>tool_use_id</code>,
       <code class="path">server/workspace/edits.py</code> keeps the file before and after the write
-      for the diff dialog. The dialog reads the record from
+      for the diff dialog. The record also keeps the absolute path of the file. The header of the
+      dialog shows this path, also after you connect a different workspace. The dialog reads the record from
       <code>GET /api/workspace/edits/{tool_use_id}</code>. The record does not keep the text of a
       file over 2 MB, or of a dotenv or credential file. The app deletes records after 30 days. When
       all records use more than 200 MB, the app deletes the oldest records first.</p>
