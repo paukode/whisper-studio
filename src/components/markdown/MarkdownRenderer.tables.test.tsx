@@ -130,11 +130,13 @@ describe('markdown table styles', () => {
     expect(reduced?.[1]).toMatch(/\.md-col-resize::after\s*\{\s*transition:\s*none/);
   });
 
-  it('styles chat tables in one place', () => {
+  it('styles chat tables in one place, for chat replies and agent reports alike', () => {
     const chatTableRules = rules(styleCss).filter((r) =>
       /\.chat-msg\.assistant (table|th|td|tr)\b/.test(r.selector),
     );
     expect(chatTableRules.map((r) => r.selector)).toEqual([]);
-    expect(rule(markdownCss, '.chat-msg.assistant .markdown-content table')).toMatch(/font-size:\s*var\(--fs-small\)/);
+    const compact = rule(markdownCss, ':is(.chat-msg.assistant, .agent-report-text) .markdown-content table');
+    expect(compact).toMatch(/font-size:\s*var\(--fs-small\)/);
+    expect(rule(markdownCss, ':is(.chat-msg.assistant, .agent-report-text) .markdown-content td')).toMatch(/color:\s*var\(--text-secondary\)/);
   });
 });
