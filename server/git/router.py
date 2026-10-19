@@ -17,9 +17,11 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from server.git.core import (
+    STATUS_PORCELAIN_ARGS,
     _run_git,
     get_branch,
     get_default_branch,
+    parse_porcelain_status,
 )
 from server.git.diff import fetch_git_diff
 from server.git.file_diff import build_file_diff
@@ -78,17 +80,11 @@ def _require_git_workspace() -> str:
 def git_status_endpoint():
     """Quick status for UI indicators, includes per-file status."""
     ws = _require_git_workspace()
-    result = _run_git(["--no-optional-locks", "status", "--porcelain"], cwd=ws)
+    result = _run_git(STATUS_PORCELAIN_ARGS, cwd=ws)
     files = []
     changed = 0
     untracked = 0
-    for line in result.stdout.strip().split("\n"):
-        if not line:
-            continue
-        code = line[:2]
-        filename = line[2:].strip()
-        if not filename:
-            continue
+    for code, filename in parse_porcelain_status(result.stdout):
         if code == "??":
             untracked += 1
             files.append({"path": filename, "status": "?"})
@@ -233,15 +229,9 @@ def git_changes_endpoint():
         return cached[1]
 
     # status
-    result = _run_git(["--no-optional-locks", "status", "--porcelain"], cwd=ws)
+    result = _run_git(STATUS_PORCELAIN_ARGS, cwd=ws)
     files = []
-    for line in result.stdout.strip().split("\n"):
-        if not line:
-            continue
-        code = line[:2]
-        filename = line[2:].strip()
-        if not filename:
-            continue
+    for code, filename in parse_porcelain_status(result.stdout):
         if code == "??":
             files.append({"path": filename, "status": "?", "staged": False})
         else:
