@@ -1,10 +1,12 @@
 /* ─────────────────────────────────────────────────────────────────────────
-   Markdown rendering — the single modern stylesheet for `.markdown-content`.
+   Markdown rendering: the single modern stylesheet for `.markdown-content`.
 
    Applies everywhere MarkdownRenderer / StreamingMarkdown render: the dock
    plan panel, file preview, notebook cells, and chat. Chat bubbles keep a
    few tighter overrides via the more-specific `.chat-msg.assistant …` rules
-   in style.css; everything else inherits this modern baseline.
+   in style.css; everything else inherits this modern baseline. The chat
+   table rules (13px, the 2px header rule, row lines) live in this file's
+   Tables section.
 
    Loaded AFTER style.css so the authoritative code-block rules below win ties.
    ───────────────────────────────────────────────────────────────────────── */
@@ -90,18 +92,47 @@
 .markdown-content blockquote > *:first-child { margin-top: 0; }
 .markdown-content blockquote > *:last-child { margin-bottom: 0; }
 
-/* ---- Tables ---- */
+/* ---- Tables ----
+   src/utils/tableResize.ts puts every table in a `.md-table-wrap` frame
+   before it paints (a streaming reply on every token, the handles once it
+   ends): a table wider than its column scrolls sideways there instead of
+   crushing its columns or spilling out of the bubble. The frame carries the
+   table's outer margin and its type size, so 1em is the table's em. */
+.markdown-content .md-table-wrap {
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    margin: 1em 0;
+    font-size: 0.95em;
+    /* Keeps the handles' z-index inside the frame. */
+    isolation: isolate;
+}
+/* A frame that opens or closes the message, or a quote, sits flush like
+   any other first or last block. */
+.markdown-content > .md-table-wrap:first-child,
+.markdown-content blockquote > .md-table-wrap:first-child { margin-top: 0; }
+.markdown-content > .md-table-wrap:last-child,
+.markdown-content blockquote > .md-table-wrap:last-child { margin-bottom: 0; }
+/* The app's scrollbars are 5px (style.css sets only the vertical width). */
+.markdown-content .md-table-wrap::-webkit-scrollbar { height: 5px; }
 .markdown-content table {
     width: 100%;
     border-collapse: collapse;
-    margin: 1em 0;
-    font-size: 0.95em;
 }
+/* Columns take their width from whole words. `.markdown-content` lets prose
+   break anywhere (`word-break: break-word`, which acts as `overflow-wrap:
+   anywhere`), and an automatic-layout table counts each of those breaks
+   when it sizes a column: short columns shrank to a letter or two a line
+   ("Prio/rity") while a long one took the width. In a cell a word breaks
+   only at spaces; `overflow-wrap: break-word` still breaks a word that
+   cannot fit, but never lowers a column's minimum width. */
 .markdown-content th,
 .markdown-content td {
     padding: 6px 12px;
     border: 1px solid var(--border);
     text-align: left;
+    word-break: normal;
+    overflow-wrap: break-word;
 }
 .markdown-content th {
     font-weight: 600;
@@ -109,6 +140,80 @@
     color: var(--text-primary);
 }
 .markdown-content tr:nth-child(2n) td { background: var(--bg-inset); }
+.markdown-content .md-th-label { display: block; }
+
+/* Chat bubbles and agent reports (AgentReportCard.tsx): a compact table at
+   the 13px step, a 2px rule under the header and 1px lines between the
+   rows, so a table reads the same wherever the chat shows one. */
+:is(.chat-msg.assistant, .agent-report-text) .markdown-content .md-table-wrap { margin: 8px 0; }
+/* In a quote the first and last frame still sit flush with the quote's rule. */
+:is(.chat-msg.assistant, .agent-report-text) .markdown-content blockquote > .md-table-wrap:first-child { margin-top: 0; }
+:is(.chat-msg.assistant, .agent-report-text) .markdown-content blockquote > .md-table-wrap:last-child { margin-bottom: 0; }
+:is(.chat-msg.assistant, .agent-report-text) .markdown-content table { font-size: var(--fs-small); }
+:is(.chat-msg.assistant, .agent-report-text) .markdown-content th {
+    padding: 6px 10px;
+    border-bottom: 2px solid var(--border);
+}
+:is(.chat-msg.assistant, .agent-report-text) .markdown-content td {
+    padding: 5px 10px;
+    color: var(--text-secondary);
+}
+:is(.chat-msg.assistant, .agent-report-text) .markdown-content tr:last-child td { border-bottom: none; }
+
+/* A resized table (tableResize.ts): the widths are the reader's, so the
+   layout is fixed and the text wraps to them, breaking a long word or a path
+   where it must. A header word that does not fit ends in an ellipsis. */
+.markdown-content table.md-table-resized { table-layout: fixed; }
+.markdown-content table.md-table-resized td { overflow-wrap: anywhere; }
+.markdown-content table.md-table-resized th { overflow-wrap: normal; }
+.markdown-content table.md-table-resized .md-th-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Column dividers: a handle on the right edge of every header cell but the
+   last. The hit area is centered on the cell's padding edge, where the
+   collapsed 1px column border begins (half of it lies in each cell), so its
+   1px line at `left: 50%` covers that border exactly. The line shows in
+   --border-strong on hover, and in the accent while it moves or has focus,
+   when it runs down the whole column (tableResize.ts sets --md-col-line to
+   the height of the table below the header cell). */
+.markdown-content .md-table-wrap th { position: relative; }
+.markdown-content .md-col-resize {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    right: -4px;
+    width: 8px;
+    z-index: 1;
+    cursor: col-resize;
+    touch-action: none;
+}
+.markdown-content .md-col-resize::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 1px;
+    background: transparent;
+    transition: background-color 0.15s ease;
+}
+.markdown-content .md-col-resize:hover::after { background: var(--border-strong); }
+.markdown-content .md-col-resize.is-dragging::after,
+.markdown-content .md-col-resize:focus-visible::after {
+    bottom: calc(-1 * var(--md-col-line, 0px));
+    background: var(--accent);
+}
+.markdown-content .md-col-resize:focus-visible { outline: none; }
+/* A finger needs a wider target; touch-action keeps a drag on the handle
+   from scrolling the frame. */
+@media (hover: none) {
+    .markdown-content .md-col-resize { right: -6px; width: 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .markdown-content .md-col-resize::after { transition: none; }
+}
 
 /* ---- Inline code (not inside a code block) ---- */
 .markdown-content :not(pre) > code {
@@ -120,6 +225,17 @@
     border: 1px solid var(--border);
     color: var(--text-primary);
     word-break: break-word;
+}
+/* In a table cell a path or an identifier stays whole, and its column is as
+   wide as it is (the frame scrolls when the table outgrows the bubble). A
+   resized table wraps it to the column the reader chose. */
+.markdown-content :is(th, td) code:not(pre code) {
+    word-break: normal;
+    white-space: nowrap;
+}
+.markdown-content table.md-table-resized td code:not(pre code) {
+    white-space: normal;
+    overflow-wrap: anywhere;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────

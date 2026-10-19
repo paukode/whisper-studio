@@ -20,6 +20,9 @@ import { describe, it, expect } from 'vitest';
 const RUNTIME_DEFINED = new Set<string>([
   // A chat picture's dragged width (src/components/chat/MediaResize.tsx).
   '--media-w',
+  // How far a moving or focused table divider's line runs below the header
+  // (src/utils/tableResize.ts).
+  '--md-col-line',
 ]);
 
 // static/dist is deliberately excluded — it's the built bundle.

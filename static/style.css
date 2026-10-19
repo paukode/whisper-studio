@@ -1186,20 +1186,8 @@ input.segment-speaker {
     border-left: 2px solid var(--accent); padding-left: 10px; margin: 6px 0;
     color: var(--text-secondary);
 }
-.chat-msg.assistant table {
-    width: 100%; border-collapse: collapse; margin: 8px 0;
-    font-size: var(--fs-small);
-}
-.chat-msg.assistant th {
-    text-align: left; font-weight: 600; padding: 6px 10px;
-    background: var(--surface-2); border-bottom: 2px solid var(--border);
-    color: var(--text-primary);
-}
-.chat-msg.assistant td {
-    padding: 5px 10px; border-bottom: 1px solid var(--border);
-    color: var(--text-secondary);
-}
-.chat-msg.assistant tr:last-child td { border-bottom: none; }
+/* Chat tables are styled with every other markdown table, in
+ * static/modules/markdown.css. */
 .chat-msg.assistant h1, .chat-msg.assistant h2, .chat-msg.assistant h3 {
     margin: 10px 0 4px; color: var(--text-primary); font-weight: 600;
 }

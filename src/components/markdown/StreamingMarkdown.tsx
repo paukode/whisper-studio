@@ -1,4 +1,4 @@
-import { useId, useRef, useEffect, useMemo } from 'react';
+import { useId, useRef, useEffect, useLayoutEffect, useMemo } from 'react';
 import { marked, Marked } from 'marked';
 import {
   renderCodeBlock,
@@ -7,6 +7,7 @@ import {
 } from '@/utils/codeBlockEnhancer';
 import { renderMarkdownSafe } from '@/utils/sanitizeHtml';
 import { attachWsFileHandlers } from '@/utils/wsFileLinks';
+import { attachTableResizers, frameTables } from '@/utils/tableResize';
 import { linkifyPaths } from '@/utils/pathLinks';
 import { useHtmlProp } from '@/hooks/useHtmlProp';
 import { useUIStore } from '@/stores/uiStore';
@@ -151,8 +152,11 @@ export const StreamingMarkdown: React.FC<StreamingMarkdownProps> = ({
       : '';
     container.innerHTML = html;
 
-    // Restore scroll positions on the fresh DOM, tag the active block,
+    // Frame the tables, so a wide one scrolls in its frame instead of
+    // pushing the chat sideways; the resize handles wait for the final html.
+    // Then restore scroll positions on the fresh DOM, tag the active block,
     // and re-attach delegated click handlers (Copy/Preview/Open/...).
+    frameTables(container);
     applyCodeBlockScroll(container);
     markActiveStreamingBlock(container);
     cleanupRef.current?.();
@@ -201,6 +205,15 @@ export const StreamingMarkdown: React.FC<StreamingMarkdownProps> = ({
   useEffect(() => {
     if (isStreaming || !containerRef.current) return;
     return attachCodeBlockHandlers(containerRef.current);
+  }, [finalHtml, isStreaming]);
+
+  // Frame the tables and add column resize handles once the final html is in
+  // place (utils/tableResize.ts). The handles wait for the end of the stream:
+  // every token replaces the DOM, and a table is still growing rows. A layout
+  // effect, so the final html never paints a wide table outside its frame.
+  useLayoutEffect(() => {
+    if (isStreaming || !containerRef.current) return;
+    return attachTableResizers(containerRef.current);
   }, [finalHtml, isStreaming]);
 
   // Route #wsfile= links (search sources, write results, path mentions) to
