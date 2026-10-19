@@ -182,6 +182,9 @@ describe('a turn saves picture sizes on the row that holds them', () => {
     const message = assistant({ toolUse: [read, shot], mediaSizes: { 'shot-1': { w: 320 } } });
     getActiveChatStore().getState().setMessages([message]);
     const { container } = render(<TurnBubble rows={[message]} indices={[0]} />);
+    // A screenshot group starts collapsed; opening it shows the picture.
+    expect(container.querySelector('.preview-screenshot-card')).toBeNull();
+    container.querySelectorAll<HTMLButtonElement>('.activity-summary').forEach((b) => fireEvent.click(b));
     const card = container.querySelector('.preview-screenshot-card')!;
     expect(card).toHaveClass('media-sized');
 
@@ -206,6 +209,7 @@ describe('a turn saves picture sizes on the row that holds them', () => {
     const second = assistant({ content: '', toolUse: [shot('s2')], timestamp: '2026-09-25T10:00:01.000Z' });
     getActiveChatStore().getState().setMessages([user, first, second]);
     const { container } = render(<TurnBubble rows={[first, second]} indices={[1, 2]} />);
+    container.querySelectorAll<HTMLButtonElement>('.activity-summary').forEach((b) => fireEvent.click(b));
 
     const cards = container.querySelectorAll('.preview-screenshot-card');
     expect(cards).toHaveLength(2);

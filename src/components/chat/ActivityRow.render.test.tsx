@@ -141,6 +141,44 @@ describe('ActivityRow', () => {
     expect(container.querySelector('pre.activity-call-raw')).toBeNull();
   });
 
+  it('copies a call output from the button in its corner, and says so for a moment', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+    const { container } = render(<ActivityRow tools={[read]} />);
+    fireEvent.click(summary(container));
+    fireEvent.click(screen.getByRole('button', { name: 'Show output' }));
+    const copy = screen.getByRole('button', { name: 'Copy output' });
+    expect(container.querySelector('.activity-call-raw-wrap')?.contains(copy)).toBe(true);
+
+    await act(async () => {
+      fireEvent.click(copy);
+    });
+    expect(writeText).toHaveBeenCalledWith(read.result);
+    expect(screen.getByRole('button', { name: 'Copied' })).toBeTruthy();
+    // Copying never toggles the call's output.
+    expect(container.querySelector('pre.activity-call-raw')).not.toBeNull();
+
+    act(() => {
+      vi.advanceTimersByTime(1600);
+    });
+    expect(screen.getByRole('button', { name: 'Copy output' })).toBeTruthy();
+    vi.useRealTimers();
+  });
+
+  it('starts a screenshot group collapsed and shows the picture once it is opened', () => {
+    const shot = call('preview_screenshot', {
+      input: {},
+      result: "Screenshot of preview session 'site' (1280x800)",
+      previewImage: { media_type: 'image/jpeg', data: '/9j/4AAQ' },
+    });
+    const { container } = render(<ActivityRow tools={[shot]} />);
+    expect(container.querySelector('.activity-row.open')).toBeNull();
+    expect(container.querySelector('.preview-screenshot-card')).toBeNull();
+    fireEvent.click(summary(container));
+    expect(container.querySelector('.preview-screenshot-card')).not.toBeNull();
+  });
+
   it('opens an error group with its failed output in view, red only on the marks', () => {
     const failed = call('ws_run_command', {
       input: { command: 'venv/bin/ruff check .' },

@@ -76,6 +76,7 @@ export const ICON = {
   // tell the state from the drawing.
   chevronRight: icon(<polyline points="9 6 15 12 9 18" />),
   chevronDown: icon(<polyline points="6 9 12 15 18 9" />),
+  copy: icon(<><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></>),
   check: icon(<polyline points="20 6 9 17 4 12" />, 'done'),
   alertCircle: icon(<><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></>, 'error'),
   stop: icon(<rect x="5" y="5" width="14" height="14" rx="2" />, 'stopped'),
