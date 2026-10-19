@@ -28,13 +28,19 @@ import { LivePanel } from './LivePanel';
  * So we probe the target first and only mount the iframe once it answers,
  * showing a "Waiting for the dev server…" state meanwhile. The probe keeps
  * retrying until the server is up (the auto-retry), so a slow boot self-heals.
+ * Once the slow-boot hint shows it retries every 5 s instead of every 0.8 s:
+ * a target that never comes up costs one request every few seconds, not more
+ * than one a second for as long as the pane stays open. A stopped pane has
+ * nothing to wait for and never probes; Restart brings the probe back.
  */
 
 // Retry cadence while the server isn't answering yet, per-attempt abort budget,
-// and how long to wait before nudging the user that the boot is unusually slow.
+// how long to wait before nudging the user that the boot is unusually slow, and
+// the slower cadence from that nudge on.
 const PROBE_RETRY_MS = 800;
 const PROBE_TIMEOUT_MS = 2500;
 const SLOW_HINT_MS = 15000;
+const SLOW_PROBE_RETRY_MS = 5000;
 
 /**
  * Is `url` accepting connections? We can't read a cross-origin response, but a
@@ -158,6 +164,9 @@ export const LiveBrowserPanel: React.FC<{
   const [forceShowToken, setForceShowToken] = useState<string | null>(null);
   const [loadKey, setLoadKey] = useState(0);
   const ready = readyToken === token;
+  // No running server and no routed URL: the pane shows "Preview server
+  // stopped", and there is nothing to wait for.
+  const stopped = !running && !liveNavUrl;
   const forceShow = forceShowToken === shownUrl;
   const slow = slowToken === token && !ready;
 
@@ -220,9 +229,10 @@ export const LiveBrowserPanel: React.FC<{
   // reachable, so it's exempt. All setState happens in the async callback, not
   // the effect body.
   useEffect(() => {
-    if (mode === 'watch' || !shownUrl) return;
+    if (mode === 'watch' || !shownUrl || stopped) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const startedAt = Date.now();
     const tick = async () => {
       const ok = await probeReachable(shownUrl, PROBE_TIMEOUT_MS);
       if (cancelled) return;
@@ -233,25 +243,26 @@ export const LiveBrowserPanel: React.FC<{
         setReadyToken(token);
         return; // server is up; the iframe owns the connection now
       }
-      timer = setTimeout(tick, PROBE_RETRY_MS);
+      const slowNow = Date.now() - startedAt >= SLOW_HINT_MS;
+      timer = setTimeout(tick, slowNow ? SLOW_PROBE_RETRY_MS : PROBE_RETRY_MS);
     };
     void tick();
     return () => { cancelled = true; if (timer) clearTimeout(timer); };
-  }, [token, shownUrl, mode]);
+  }, [token, shownUrl, mode, stopped]);
 
   // Surface the slow-boot hint if the target still hasn't answered after a
   // while (keyed to `token`, so it clears on a new target).
   useEffect(() => {
-    if (mode === 'watch' || !shownUrl) return;
+    if (mode === 'watch' || !shownUrl || stopped) return;
     const t = setTimeout(() => setSlowToken(token), SLOW_HINT_MS);
     return () => clearTimeout(t);
-  }, [token, shownUrl, mode]);
+  }, [token, shownUrl, mode, stopped]);
 
   // ── Stopped: no running server AND no routed URL to show. A URL-only view (a
   //    localhost link routed in without a registered session) skips this. A
   //    pane whose last preview belonged to another chat says so instead of
   //    offering to restart that chat's server from here. ──
-  if (!running && !liveNavUrl) {
+  if (stopped) {
     return (
       <div style={{ flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, padding: 16, background: 'var(--bg-inset, #0d0d0d)' }}>
         <div style={{ color: 'var(--text-muted, #888)', fontSize: 13 }}>

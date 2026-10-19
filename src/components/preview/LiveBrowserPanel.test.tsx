@@ -5,7 +5,7 @@
  * self-heals into the live iframe (the auto-retry).
  */
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, cleanup, fireEvent, act } from '@testing-library/react';
 
 // Keep the API layer inert — we only care about the render gate here.
 vi.mock('@/api/preview', () => ({
@@ -128,5 +128,72 @@ describe('LiveBrowserPanel: Stop and Restart ownership', () => {
     render(<LiveBrowserPanel name="test" url={TARGET} port={65500} owner={CHAT} />);
     expect(screen.getByText('No preview is running in this chat')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Restart' })).toBeNull();
+  });
+});
+
+// Field report: the Mac app log held about 2000 refused loads in an hour. A
+// pane showing "Preview server stopped" kept probing the dead port every
+// 0.8 s until it was closed.
+describe('LiveBrowserPanel: probe cadence', () => {
+  const advance = async (ms: number) => {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
+  };
+  const refused = () => Promise.reject(new TypeError('refused'));
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('a stopped pane never probes, and a running server brings the probe back', async () => {
+    const probe = vi.fn(refused);
+    vi.stubGlobal('fetch', probe);
+    useDockStore.setState({ liveSession: null });
+    render(<LiveBrowserPanel name="test" url={TARGET} port={65500} owner={CHAT} />);
+    expect(screen.getByText('Preview server stopped')).toBeInTheDocument();
+    await advance(10_000);
+    expect(probe).not.toHaveBeenCalled();
+
+    // Restart (or the agent) brings the server back.
+    act(() => seedRunningSession());
+    await advance(100);
+    expect(probe).toHaveBeenCalledWith(TARGET, expect.objectContaining({ mode: 'no-cors' }));
+  });
+
+  it('probes every 5 s once the slow hint shows, and still mounts a late server', async () => {
+    let up = false;
+    const probe = vi.fn(() => (up ? Promise.resolve({}) : refused()));
+    vi.stubGlobal('fetch', probe);
+    render(<LiveBrowserPanel name="test" url={TARGET} port={65500} />);
+
+    await advance(15_000);
+    expect(screen.getByText(/Taking longer than usual/)).toBeInTheDocument();
+    const beforeHint = probe.mock.calls.length;
+    await advance(20_000);
+    const afterHint = probe.mock.calls.length - beforeHint;
+    // 0.8 s apart before the hint, 5 s apart after it.
+    expect(beforeHint).toBeGreaterThanOrEqual(15);
+    expect(afterHint).toBeGreaterThanOrEqual(3);
+    expect(afterHint).toBeLessThanOrEqual(5);
+
+    up = true;
+    await advance(5_000);
+    expect(iframe()).not.toBeNull();
+  });
+
+  it('Retry probes at the fast pace again', async () => {
+    const probe = vi.fn(refused);
+    vi.stubGlobal('fetch', probe);
+    render(<LiveBrowserPanel name="test" url={TARGET} port={65500} />);
+    await advance(20_000);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    const atRetry = probe.mock.calls.length;
+    await advance(4_000);
+    expect(probe.mock.calls.length - atRetry).toBeGreaterThanOrEqual(4);
   });
 });
