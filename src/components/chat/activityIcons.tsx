@@ -2,14 +2,14 @@ import React from 'react';
 
 /**
  * The stroke icons of the chat's chrome: the glyph each tool is drawn with in
- * an activity row, the delivery chips and the agent card, the state marks
- * (chevrons, check, alert, stop), the thinking block's marks, and the marks of
- * the chat's cards and banners (approval, cron, CI, workflow, goal, the
- * cross-session message, the /btw popup). Every icon is a 12px feather-style
- * SVG drawn in currentColor, so the surrounding slot sets its size and
- * colour: the chrome of the transcript (bubbles, rows, cards, banners) draws
- * no emoji and no text glyph. The composer's command menu keeps its own
- * emoji icons (chatInputConstants.ts).
+ * an activity row, the delivery chips, the agent card and the agent report
+ * card, the state marks (chevrons, check, alert, stop), the thinking block's
+ * marks, and the marks of the chat's cards and banners (approval, cron, CI,
+ * workflow, goal, the cross-session message, the /btw popup). Every icon is a
+ * 12px feather-style SVG drawn in currentColor, so the surrounding slot sets
+ * its size and colour: the chrome of the transcript (bubbles, rows, cards,
+ * banners) draws no emoji and no text glyph. The composer's command menu
+ * keeps its own emoji icons (chatInputConstants.ts).
  */
 const icon = (children: React.ReactNode, mark?: string) => (
   <svg className={mark ? `activity-ic activity-mark-${mark}` : 'activity-ic'} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -71,6 +71,8 @@ export const ICON = {
   flag: icon(<><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" /><line x1="4" y1="22" x2="4" y2="15" /></>),
   mic: icon(<><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" /><path d="M19 10v2a7 7 0 0 1-14 0v-2" /><line x1="12" y1="19" x2="12" y2="22" /></>),
   graph: icon(<><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><line x1="8.6" y1="10.7" x2="15.4" y2="6.3" /><line x1="8.6" y1="13.3" x2="15.4" y2="17.7" /></>),
+  // An agent report that landed with no live turn (AgentReportCard).
+  inbox: icon(<><polyline points="22 12 16 12 14 15 10 15 8 12 2 12" /><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" /></>),
   // State marks and chrome. A state mark carries its own class
   // (activity-mark-error, -stopped, -done) so a test or a stylesheet can
   // tell the state from the drawing.

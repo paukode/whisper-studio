@@ -138,11 +138,18 @@ const ChatMessageView: React.FC<ChatMessageProps> = ({ message, index }) => {
 
   // Agent reports delivered outside a live turn (cancelled team, background
   // or resumed agent). UI-only in storage; the model reads a relabeled copy.
+  // Left-aligned at an assistant turn's width, but not a bubble: no message
+  // actions, and the timestamp only when the payload carries one. A report
+  // with no agents has nothing to show, so it draws nothing at all.
   if (message.role === 'agent_report') {
-    if (message.agentReport) {
-      return <AgentReportCard report={message.agentReport} />;
-    }
-    return null;
+    const report = message.agentReport;
+    if (!report?.agents?.length) return null;
+    return (
+      <div className="chat-msg-wrap assistant-wrap agent-report-wrap">
+        <AgentReportCard report={report} />
+        {report.timestamp && <span className="msg-timestamp">{formatMessageTimestamp(report.timestamp)}</span>}
+      </div>
+    );
   }
 
   // Cross-session message rows: a text message another session sent this
