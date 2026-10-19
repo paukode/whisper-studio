@@ -290,12 +290,14 @@
       reopened it, or the agent was running in the background all along. Those results land in the chat
       on their own.</p>
     <ul>
-      <li><b>A report card</b> appears in the conversation, titled <code>Agent reports:</code> with the
-        team or agent name, a line saying why it arrived this way, and one collapsible row per agent
-        showing its report and how it ended (<code>finished</code>,
-        <code>stopped at the time limit, report written</code>,
-        <code>cancelled, report salvaged by the runtime</code>, and so on). Each row ends with
-        <code>Full record: task_output &lt;id&gt;</code>.</li>
+      <li><b>A report card</b> shows in the conversation as one closed line, the same as a line of tool
+        activity. The line shows <b>"Report from"</b> and the agent name, the task, and a chip with the
+        stop reason and the number of rounds. Examples of chips are <code>finished · 15 rounds</code>,
+        <code>time limit</code>, <code>cancelled</code>, and <code>failed</code>. A report from a team
+        starts as one line, <b>"Reports from 3 agents"</b>, that opens to one line for each agent. Until
+        you open a report, its icon shows in the accent color and its line shows a <b>"New"</b> chip.
+        An open line shows the report and an <b>"Open in the agent pane"</b> control. The reason for
+        the card shows at the top of the open card.</li>
       <li><b>A notification</b> is recorded at the same time, so the bell in the header tells you
         results are ready even if you are in another session.</li>
       <li><b>An answer follows.</b> If a turn happens to be running, the reports are folded straight

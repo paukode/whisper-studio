@@ -141,9 +141,11 @@
 
     <h3 id="no-live-turn">When no turn is waiting</h3>
     <p>Reports also arrive when nothing is listening: you pressed Stop, the app restarted, the agent ran
-      detached, or it was resumed after it had stopped. Those reports are persisted into the session as
-      an <b>agent report row</b> (role <code>agent_report</code>) and rendered as a report card, one
-      collapsible row per agent, the report as markdown and the stop reason named in words. A
+      detached, or it was resumed after it had stopped. The backend writes those reports into the
+      session as an <b>agent report row</b> (role <code>agent_report</code>). The chat shows the row as
+      a report card. The card starts as one closed line, and the line of a team opens to one line for
+      each agent. Each agent line gives the stop reason in a chip and opens to the report as markdown.
+      A <b>"New"</b> chip shows on the line until you open the report. A
       notification is recorded alongside it, so it shows up in the bell panel even if you are looking at
       another session.</p>
     <p>The row is backend-owned rather than written by the SPA, and it is one of the few non-chat roles
@@ -231,7 +233,7 @@
       <dt><code class="path">server/tasks/events.py</code></dt><dd><code>emit_agent_report</code>: persists the report row, publishes it live, triggers the wake, and records the notification.</dd>
       <dt><code class="path">server/infrastructure/sessions.py</code></dt><dd>The report and answer row caps, and the prompt views that relabel both for the model.</dd>
       <dt><code class="path">src/components/preview/AgentPanel.tsx</code></dt><dd>The agent pane: the run's status line with Extend, and its full feed read from the record and followed live.</dd>
-      <dt><code class="path">src/components/chat/AgentReportCard.tsx</code></dt><dd>Reports delivered outside a live turn, one row per agent with its stop reason.</dd>
+      <dt><code class="path">src/components/chat/AgentReportCard.tsx</code></dt><dd>Reports that the session receives when no turn runs. Each report is a closed line, the same as tool activity, with the stop reason and a "New" chip.</dd>
     </div>
 
     <div class="callout callout--tip">
