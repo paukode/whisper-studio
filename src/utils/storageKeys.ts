@@ -20,4 +20,7 @@ export const STORAGE_KEYS = {
   EXPLORER_COACH_DISMISSED: 'whisper_explorer_coach_dismissed',
   /** Settings > Costs: last range, granularity and split */
   COSTS_VIEW: 'whisper_costs_view',
+  /** Agent reports this viewer has opened: a JSON list of the most recent
+   *  keys, one per report agent (team id, report timestamp, agent id) */
+  AGENT_REPORT_SEEN: 'whisper_agent_report_seen',
 } as const;
