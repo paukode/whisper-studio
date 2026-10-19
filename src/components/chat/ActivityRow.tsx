@@ -193,6 +193,32 @@ function CallSubject({ desc, wsPath }: { desc: CallDesc; wsPath: string }) {
   );
 }
 
+/** Copies a call's output as the box shows it (the result preview, the
+ *  first 2,000 characters of a long one). It says "Copied" for a moment. */
+function CopyOutput({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return undefined;
+    const timer = window.setTimeout(() => setCopied(false), 1500);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+  const label = copied ? 'Copied' : 'Copy output';
+  return (
+    <button
+      type="button"
+      className={`activity-call-copy${copied ? ' copied' : ''}`}
+      aria-label={label}
+      title={label}
+      onClick={(e) => {
+        e.stopPropagation();
+        void navigator.clipboard?.writeText(text).then(() => setCopied(true), () => undefined);
+      }}
+    >
+      {copied ? ICON.check : ICON.copy}
+    </button>
+  );
+}
+
 function CallLine({ tool, expanded, onToggle, wsPath, mediaFor }: CallLineProps) {
   const desc = describeCall(tool);
   const outcome = callOutcome(tool, desc);
@@ -261,7 +287,10 @@ function CallLine({ tool, expanded, onToggle, wsPath, mediaFor }: CallLineProps)
       )}
       {expanded && !shot && result && (
         <>
-          <pre className="activity-call-raw">{result}</pre>
+          <div className="activity-call-raw-wrap">
+            <pre className="activity-call-raw">{result}</pre>
+            <CopyOutput text={result} />
+          </div>
           {tool.meta?.truncated === true && (
             <div className="activity-call-note">
               {typeof outputChars === 'number' && outputChars > result.length
@@ -285,8 +314,9 @@ export const ActivityRow: React.FC<ActivityRowProps> = ({ tools, writtenLabel, m
 
   // An error or an unchecked goal opens the group, also when it lands while
   // the row is already on screen; the user's own toggle wins after that. A
-  // screenshot opens too: the picture is the one thing its tool exists to show.
-  const defaultOpen = state === 'error' || state === 'unchecked' || tools.some((t) => Boolean(t.previewImage));
+  // screenshot group starts collapsed like any finished step; opening it
+  // shows the picture at once (expandedByDefault below).
+  const defaultOpen = state === 'error' || state === 'unchecked';
   const [open, setOpen] = useState(defaultOpen);
   const [wasDefaultOpen, setWasDefaultOpen] = useState(defaultOpen);
   if (defaultOpen !== wasDefaultOpen) {
@@ -298,7 +328,8 @@ export const ActivityRow: React.FC<ActivityRowProps> = ({ tools, writtenLabel, m
   // transcript carries the tool name as its toolId, so two same-named calls
   // would share a key and one click would toggle both.
   const keys = useMemo(() => tools.map((t, i) => `${i}-${t.toolId || t.toolName}`), [tools]);
-  // A failed call and a screenshot show their output unless the user hid it.
+  // Inside an open group, a failed call and a screenshot show their output
+  // unless the user hid it.
   const [overrides, setOverrides] = useState<Map<string, boolean>>(() => new Map());
   const expandedByDefault = (t: ToolUseEvent) => Boolean(t.previewImage) || (t.status === 'error' && Boolean(t.result));
   const isExpanded = (i: number) => overrides.get(keys[i]) ?? expandedByDefault(tools[i]);

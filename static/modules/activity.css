@@ -257,11 +257,16 @@ button.activity-pill:hover { border-color: var(--accent); }
 .activity-call-toggle[aria-expanded="true"] .activity-ic { transform: rotate(180deg); }
 .activity-call.failed > .activity-call-line > .activity-slot:first-child { color: var(--accent-record); }
 
-/* Raw output under a call. */
+/* Raw output under a call: wrapped, so a long line of JSON or a command
+   reads without scrolling sideways, with a copy button in its corner. */
+.activity-call-raw-wrap {
+    position: relative;
+    margin: 2px 0 6px 26px;
+}
 .chat-msg.assistant .activity-call-raw,
 .activity-call-raw {
-    margin: 2px 0 6px 26px;
-    padding: 8px 10px;
+    margin: 0;
+    padding: 8px 34px 8px 10px;
     background: var(--bg-inset);
     border: 1px solid var(--border);
     border-radius: 6px;
@@ -269,12 +274,39 @@ button.activity-pill:hover { border-color: var(--accent); }
     font-size: var(--fs-caption);
     line-height: 1.5;
     color: var(--text-secondary);
-    white-space: pre;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
     word-break: normal;
-    overflow: auto;
+    overflow-x: hidden;
+    overflow-y: auto;
     max-height: 280px;
     overscroll-behavior: contain;
 }
+.activity-call-copy {
+    position: absolute;
+    top: 6px;
+    right: 12px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-elevated);
+    color: var(--text-muted);
+    font-size: var(--fs-caption);
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s, color 0.15s;
+}
+.activity-call-raw-wrap:hover .activity-call-copy,
+.activity-call-copy:focus-visible,
+.activity-call-copy.copied { opacity: 1; }
+.activity-call-copy:hover { color: var(--text-primary); background: var(--bg-hover); }
+.activity-call-copy.copied { color: var(--accent-live); }
+@media (hover: none) { .activity-call-copy { opacity: 1; } }
 .activity-call-note {
     margin: -2px 0 6px 26px;
     font-size: var(--fs-caption);
