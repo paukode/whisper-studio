@@ -163,4 +163,37 @@ describe('LiveBrowserPanel: probe cadence', () => {
     await advance(100);
     expect(probe).toHaveBeenCalledWith(TARGET, expect.objectContaining({ mode: 'no-cors' }));
   });
+
+  it('probes every 5 s once the slow hint shows, and still mounts a late server', async () => {
+    let up = false;
+    const probe = vi.fn(() => (up ? Promise.resolve({}) : refused()));
+    vi.stubGlobal('fetch', probe);
+    render(<LiveBrowserPanel name="test" url={TARGET} port={65500} />);
+
+    await advance(15_000);
+    expect(screen.getByText(/Taking longer than usual/)).toBeInTheDocument();
+    const beforeHint = probe.mock.calls.length;
+    await advance(20_000);
+    const afterHint = probe.mock.calls.length - beforeHint;
+    // 0.8 s apart before the hint, 5 s apart after it.
+    expect(beforeHint).toBeGreaterThanOrEqual(15);
+    expect(afterHint).toBeGreaterThanOrEqual(3);
+    expect(afterHint).toBeLessThanOrEqual(5);
+
+    up = true;
+    await advance(5_000);
+    expect(iframe()).not.toBeNull();
+  });
+
+  it('Retry probes at the fast pace again', async () => {
+    const probe = vi.fn(refused);
+    vi.stubGlobal('fetch', probe);
+    render(<LiveBrowserPanel name="test" url={TARGET} port={65500} />);
+    await advance(20_000);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    const atRetry = probe.mock.calls.length;
+    await advance(4_000);
+    expect(probe.mock.calls.length - atRetry).toBeGreaterThanOrEqual(4);
+  });
 });
