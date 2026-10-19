@@ -1,0 +1,135 @@
+/* ─── Agent report card (src/components/chat/AgentReportCard.tsx) ───
+   Reports from agents that finished with no live turn to carry them, drawn
+   in the activity rows' family: each line reuses modules/activity.css (icon
+   slot, chevron, label, mono tail, chips) and this sheet adds only the card,
+   the cue an unopened report carries, and the report body. The card sits at
+   an assistant turn's width with the in-bubble card chrome and the turn
+   bubble's padding. Tokens come from modules/themes.css and the type scale
+   from style.css; nothing is redefined here. */
+
+/* One width with an assistant turn that holds activity rows, so the chip
+   columns of the report and the turns line up. */
+.chat-msg-wrap.assistant-wrap.agent-report-wrap { width: 66.67%; }
+/* The timestamp under the card starts where the card's text does. */
+.agent-report-wrap > .msg-timestamp { padding-left: 15px; }
+
+.agent-report-card {
+    min-width: 0;
+    padding: 10px 14px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: var(--fs-body);
+    line-height: 1.5;
+}
+
+/* A line's chevron turns while it is open, as an activity row's does. */
+.agent-report-line[aria-expanded="true"] > .activity-chevron { transform: rotate(90deg); }
+
+/* Not opened yet: the report icon in the accent with one pulse when the line
+   first shows, and a New chip first in the chip column. */
+.agent-report-line.unseen > .activity-slot {
+    color: var(--accent);
+    border-radius: 50%;
+    animation: agent-report-pulse 1.6s ease-out 1;
+}
+@keyframes agent-report-pulse {
+    from { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent); }
+    to { box-shadow: 0 0 0 7px transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .agent-report-line.unseen > .activity-slot { animation: none; }
+}
+.agent-report-card .activity-chip.agent-report-new {
+    color: var(--accent);
+    background: var(--accent-dim);
+    border-color: transparent;
+    font-weight: 600;
+}
+/* A finished run: the done colour on the chip's text and rim, so it stays
+   apart from the filled New chip in every theme (the daltonized ones draw
+   done in amber, next to a gold accent). */
+.agent-report-card .activity-chip.done {
+    color: var(--success);
+    border-color: color-mix(in srgb, var(--success) 40%, var(--border));
+}
+/* Red only on marks, as on an activity row: a failed agent colours its
+   label and, once seen, its icon; the chip takes .activity-chip.err. */
+.agent-report-line.failed > .activity-label,
+.agent-report-line.failed:not(.unseen) > .activity-slot { color: var(--accent-record); }
+
+/* Open: the agents' lines and a report hang from the chevron on a rule, as
+   an open activity group's detail lines do. */
+.agent-report-team,
+.agent-report-body {
+    min-width: 0;
+    margin: 2px 0 6px 29px;
+    padding-left: 11px;
+    border-left: 1px solid var(--border-strong);
+}
+/* An agent's line in the team list: its hover stops short of the rule, as a
+   detail line's does, and its icon starts at the list's edge. */
+.agent-report-team .activity-head { margin: 0 -8px 0 -6px; }
+.agent-report-team .activity-summary { padding-left: 6px; }
+
+.agent-report-reason {
+    margin: 2px 0 4px;
+    font-size: var(--fs-caption);
+    line-height: 1.5;
+    color: var(--text-muted);
+}
+
+/* The report itself at the chat's reading size, wrapped: a long line, a
+   path or a code block never scrolls the card sideways. */
+.agent-report-text {
+    min-width: 0;
+    padding: 2px 0;
+    user-select: text;
+}
+.agent-report-text .markdown-content {
+    font-size: var(--fs-content);
+    line-height: 1.6;
+    /* break-word, not anywhere: anywhere lets a table column shrink to one
+       character when the browser sizes it. */
+    overflow-wrap: break-word;
+}
+.agent-report-text .markdown-content .code-block-wrap pre {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    overflow-x: hidden;
+}
+/* The turn bubble's prose steps (the .chat-msg.assistant rules in
+   style.css), so a report reads like the turns around it: headings on the
+   chat's scale with no rule under them, tight paragraphs, bold in the
+   accent. */
+.agent-report-text .markdown-content h1,
+.agent-report-text .markdown-content h2,
+.agent-report-text .markdown-content h3 { margin: 10px 0 4px; }
+.agent-report-text .markdown-content h1,
+.agent-report-text .markdown-content h2 {
+    font-size: var(--fs-title);
+    padding-bottom: 0;
+    border-bottom: none;
+}
+.agent-report-text .markdown-content h3 { font-size: var(--fs-content); }
+.agent-report-text .markdown-content p { margin: 4px 0; }
+.agent-report-text .markdown-content strong { color: var(--accent); }
+.agent-report-text .markdown-content :not(pre) > code {
+    padding: 2px 5px;
+    border-radius: 4px;
+    font-size: var(--fs-caption);
+}
+
+.agent-report-open {
+    margin: 4px 0 2px;
+    padding: 0 2px;
+    border: none;
+    background: transparent;
+    font: inherit;
+    font-size: var(--fs-caption);
+    line-height: 1.5;
+    color: var(--accent);
+    cursor: pointer;
+}
+.agent-report-open:hover { text-decoration: underline; }
