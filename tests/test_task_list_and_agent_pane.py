@@ -5,6 +5,7 @@ drops the retired task_event chat rows."""
 import asyncio
 import json
 import sqlite3
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
@@ -117,7 +118,76 @@ def test_record_route_serves_the_feed_and_404s_unknown_agents(client):
     assert r.status_code == 200
     assert [e["phase"] for e in r.json()["events"]] == ["started", "text"]
     assert r.json()["meta"]["task"] == "probe"
+    assert r.json()["shared_brief"] is None
     assert client.get("/api/agents/missing/record").status_code == 404
+
+
+# ── a workflow brief the run's agents share folds in the pane ────────────────
+
+BRIEF = (
+    "USER REQUEST: plan the evolution. "
+    + "Keep every app read only. " * 30
+    + "\nYOUR SPECIALIST TASK:\n"
+)
+
+
+def test_the_record_names_the_brief_a_workflow_run_shares(client):
+    _open("w1", task=BRIEF + "Audit the dashboard.", workflow_run_id="run1")
+    _open("w2", task=BRIEF + "Audit the planner.", workflow_run_id="run1")
+    _open("w3", task=BRIEF + "Verify the pipeline.", workflow_run_id="run1")
+    # The same brief outside this run is not a sibling: another run, or no run.
+    _open("x1", task=BRIEF + "Audit the dashboard.", workflow_run_id="run2")
+    _open("n1", task=BRIEF + "Audit the dashboard.")
+    shared = client.get("/api/agents/w1/record").json()["shared_brief"]
+    # "Audit the " is shared with w2 too, but the fold ends at the line break.
+    assert shared == {"text": BRIEF, "agents": 2}
+    assert journal_mod.load_feed("x1")["shared_brief"] is None
+    assert journal_mod.load_feed("n1")["shared_brief"] is None
+
+
+def test_a_brief_ends_at_a_sentence_when_the_task_follows_on_the_same_line():
+    one_line = "USER REQUEST: plan the evolution. " + "Keep every app read only. " * 30
+    _open("w4", task=one_line + "Then audit the dashboard.", workflow_run_id="run3")
+    _open("w5", task=one_line + "Then verify the pipeline.", workflow_run_id="run3")
+    assert journal_mod.load_feed("w4")["shared_brief"] == {"text": one_line, "agents": 1}
+
+
+def test_a_short_or_identical_shared_opening_stays_inline():
+    _open("s1a", task="Short brief.\nAudit the dashboard.", workflow_run_id="run4")
+    _open("s1b", task="Short brief.\nAudit the planner.", workflow_run_id="run4")
+    assert journal_mod.load_feed("s1a")["shared_brief"] is None
+    # Two agents given the very same task have nothing of their own to show.
+    _open("same1", task=BRIEF + "Audit the dashboard.", workflow_run_id="run5")
+    _open("same2", task=BRIEF + "Audit the dashboard.", workflow_run_id="run5")
+    assert journal_mod.load_feed("same1")["shared_brief"] is None
+
+
+def test_the_workflow_adapter_records_the_run_on_each_agent(monkeypatch):
+    from server.workflows.agent_adapter import run_workflow_agent
+
+    seen: dict = {}
+
+    async def _fake_run_agent(task, **kwargs):
+        seen.update(kwargs)
+        return SimpleNamespace(
+            agent_id="a", status="completed", output="x", structured_output=None, usage={}
+        )
+
+    monkeypatch.setattr("server.agents.runtime.run_agent", _fake_run_agent)
+    asyncio.run(
+        run_workflow_agent(
+            "do it",
+            {"label": "planner-audit"},
+            session_id="s",
+            default_model_id="m",
+            effort_label=None,
+            workspace_path=None,
+            run_id="r9",
+            depth=1,
+        )
+    )
+    assert seen["workflow_run_id"] == "r9"
+    assert seen["agent_name"] == "planner-audit"
 
 
 # ── a running row's output tail ──────────────────────────────────────────────

@@ -6,7 +6,8 @@ the task registry row (written only after a normal return, so a cancelled or
 crashed member left nothing). The journal makes the record primary:
 
     <storage_root>/agents/<session_id>/<agent_id>/
-        meta.json       task, type, model, budgets, status, stop reason, usage
+        meta.json       the whole task, type, model, workflow run, budgets,
+                        status, stop reason, usage
         events.jsonl    every progress event as it happened
         messages.json   the API message list, rewritten at every round start
         report.md       the final report: the model's own, or a salvage one
@@ -117,20 +118,66 @@ def _line_count(path: str) -> int:
 # Events the pane reads in one request; a chatty run keeps its newest ones.
 FEED_EVENTS_MAX = 2000
 
+# A workflow script often opens every agent's task with the same long brief.
+# The pane folds an opening at least this long, so the part that differs is
+# what shows; a shorter shared opening stays inline.
+SHARED_BRIEF_MIN = 500
+
+
+def shared_brief(agent_dir: str, meta: dict) -> dict | None:
+    """The opening this agent's task shares with another agent of the same
+    workflow run, as ``{"text": brief, "agents": k}``: the shared text cut
+    back to a line or sentence end, and how many other agents' tasks start
+    with it. The text, not an offset, because the pane slices in UTF-16 and
+    Python counts code points. None outside a workflow, when the shared part
+    is short, or when nothing of the agent's own follows it."""
+    run_id = meta.get("workflow_run_id")
+    task = meta.get("task") or ""
+    if not run_id or len(task) <= SHARED_BRIEF_MIN:
+        return None
+    session_dir, own = os.path.split(agent_dir)
+    try:
+        names = os.listdir(session_dir)
+    except OSError:
+        return None
+    others: list[str] = []
+    for name in names:
+        if name == own:
+            continue
+        try:
+            with open(os.path.join(session_dir, name, "meta.json"), encoding="utf-8") as f:
+                other = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if other.get("workflow_run_id") == run_id and isinstance(other.get("task"), str):
+            others.append(other["task"])
+    longest = max((len(os.path.commonprefix([task, o])) for o in others), default=0)
+    if longest >= len(task):
+        return None
+    line_end = task.rfind("\n", 0, longest)
+    sentence_end = task.rfind(". ", 0, longest)
+    cut = max(line_end + 1 if line_end >= 0 else 0, sentence_end + 2 if sentence_end >= 0 else 0)
+    if cut < SHARED_BRIEF_MIN or not task[cut:].strip():
+        return None
+    brief = task[:cut]
+    return {"text": brief, "agents": sum(1 for o in others if o.startswith(brief))}
+
 
 def load_feed(agent_id: str, session_id: str | None = None) -> dict | None:
     """What the agent pane shows: meta, the newest FEED_EVENTS_MAX progress
-    events (oldest first) and the report. The API message list is left on
-    disk; the pane never needs it."""
+    events (oldest first), the report, and the brief the task shares with
+    its workflow siblings. The API message list is left on disk; the pane
+    never needs it."""
     d = find_dir(agent_id, session_id)
     if not d:
         return None
-    out: dict = {"agent_id": agent_id, "meta": {}, "events": [], "report": ""}
+    out: dict = {"agent_id": agent_id, "meta": {}, "events": [], "report": "", "shared_brief": None}
     try:
         with open(os.path.join(d, "meta.json"), encoding="utf-8") as f:
             out["meta"] = json.load(f)
     except (OSError, ValueError):
         pass
+    out["shared_brief"] = shared_brief(d, out["meta"])
     try:
         with open(os.path.join(d, "events.jsonl"), encoding="utf-8") as f:
             lines = f.readlines()[-FEED_EVENTS_MAX:]
@@ -248,10 +295,13 @@ class AgentJournal:
         parent_agent_id: str | None = None,
         team_id: str | None = None,
         agent_name: str | None = None,
+        workflow_run_id: str | None = None,
         resumed: bool = False,
     ) -> AgentJournal | None:
         """Create (or reopen) the record and its registry row. Returns None
-        when the disk is not writable; callers treat that as "no journal"."""
+        when the disk is not writable; callers treat that as "no journal".
+        The task is kept whole: the pane shows the part of it that differs
+        from the other agents of the same workflow run."""
         d = os.path.join(agents_root(), _safe(session_id), agent_id)
         try:
             os.makedirs(d, exist_ok=True)
@@ -272,13 +322,14 @@ class AgentJournal:
             **prev,
             "agent_id": agent_id,
             "session_id": session_id,
-            "task": prev.get("task") or (task or "")[:4000],
+            "task": prev.get("task") or task or "",
             "last_message": (task or "")[:4000] if resumed else "",
             "agent_type": agent_type,
             "agent_name": agent_name,
             "model": model or "",
             "parent_agent_id": parent_agent_id,
             "team_id": team_id,
+            "workflow_run_id": prev.get("workflow_run_id") or workflow_run_id,
             "max_turns": max_turns,
             "deadline_seconds": deadline_seconds,
             "status": "running",

@@ -76,6 +76,28 @@ def test_run_leaves_a_complete_record_and_returns_its_report(monkeypatch):
     assert row["output_path"].endswith("events.jsonl")
 
 
+def test_a_workflow_agent_keeps_its_whole_task_and_its_run(monkeypatch):
+    # A workflow brief runs past any fixed cap; the agent's own task comes
+    # after it, so the record keeps every character and the run it belongs to.
+    _patch_engine(monkeypatch, _tool_then_text("FINDINGS: done."))
+    task = "Shared brief sentence. " * 400 + "\nYOUR SPECIALIST TASK:\nAudit the planner."
+    result = asyncio.run(
+        run_agent(
+            task,
+            agent_type="general",
+            session_id="s1",
+            model_id_override="m",
+            workflow_run_id="run-7",
+        )
+    )
+    meta = _record(result.agent_id)["meta"]
+    assert meta["task"] == task
+    assert meta["workflow_run_id"] == "run-7"
+    # The header's task list still gets a short title.
+    title = registry.get_task(result.agent_id)["title"]
+    assert task.startswith(title) and len(title) <= 200
+
+
 def test_turn_limit_is_named_and_the_final_round_asks_for_a_report(monkeypatch):
     _patch_engine(monkeypatch, _tool_then_text("FINDINGS: partial, two files checked."))
     cfg = dataclasses.replace(get_agent_config("general"), max_turns=2, deadline_seconds=None)

@@ -96,6 +96,9 @@ async def run_workflow_agent(
             depth=depth,
             event_channel=f"workflow:{run_id}",
             cost_source="workflow",
+            # Recorded in the agent's journal so its pane can fold the brief
+            # this run's agents share and show the agent's own task first.
+            workflow_run_id=run_id,
         )
     except Exception as e:  # noqa: BLE001 — surface as a failed agent, never crash the run
         log.warning("workflow agent error (run %s): %s", run_id, e)
