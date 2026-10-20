@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  formatSeconds,
   mergeEvents,
   metaAfter,
   recordReadout,
@@ -92,6 +93,16 @@ describe('recordReadout', () => {
     expect(recordReadout(capped, 0)).toMatchObject({ status: 'stopped at the cost cap', running: false, elapsedS: 60 });
     const failed = rec({ meta: meta({ status: 'failed', stop_reason: 'error' }) });
     expect(recordReadout(failed, 0).status).toBe('failed');
+  });
+});
+
+describe('formatSeconds', () => {
+  it('reads seconds, then minutes, and carries a rounded-up second into the minute', () => {
+    expect(formatSeconds(42.4)).toBe('42s');
+    expect(formatSeconds(471)).toBe('7m 51s');
+    expect(formatSeconds(480)).toBe('8m');
+    expect(formatSeconds(59.6)).toBe('1m');
+    expect(formatSeconds(119.6)).toBe('2m');
   });
 });
 

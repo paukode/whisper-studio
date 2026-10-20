@@ -225,13 +225,13 @@ export function statusText(t: BackgroundTaskInfo, now: number): string {
   return took ? `${outcome} · ${took}` : outcome;
 }
 
-/** "820ms" / "8.2s" / "1m 04s" */
+/** "820ms" / "8.2s" / "1m 04s". Rounds before it splits, so 59.6 s of a
+ *  minute carries into the next one instead of reading "45m 60s". */
 export function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
-  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
-  const m = Math.floor(ms / 60_000);
-  const s = Math.round((ms % 60_000) / 1000);
-  return `${m}m ${String(s).padStart(2, '0')}s`;
+  if (Math.round(ms / 100) < 600) return `${(ms / 1000).toFixed(1)}s`;
+  const total = Math.round(ms / 1000);
+  return `${Math.floor(total / 60)}m ${String(total % 60).padStart(2, '0')}s`;
 }
 
 /** A path under the user's home folder shown as "~/..." (the app is macOS only). */

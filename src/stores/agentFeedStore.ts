@@ -240,9 +240,12 @@ export function recordReadout(rec: AgentRecord, now: number): RecordReadout {
   };
 }
 
+/** "42s" / "7m 51s" / "8m". Rounds before it splits, so 119.6 s reads
+ *  "2m", not "1m 60s". */
 export function formatSeconds(s: number): string {
-  if (s < 60) return `${Math.round(s)}s`;
-  const m = Math.floor(s / 60);
-  const rest = Math.round(s - m * 60);
+  const total = Math.round(s);
+  if (total < 60) return `${total}s`;
+  const m = Math.floor(total / 60);
+  const rest = total % 60;
   return rest ? `${m}m ${String(rest).padStart(2, '0')}s` : `${m}m`;
 }

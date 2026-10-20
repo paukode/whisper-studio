@@ -41,6 +41,10 @@ describe('statusText', () => {
     expect(formatDuration(820)).toBe('820ms');
     expect(formatDuration(8200)).toBe('8.2s');
     expect(formatDuration(64000)).toBe('1m 04s');
+    // A second that rounds up carries into the minute, never ":60".
+    expect(formatDuration(45 * 60_000 + 59_600)).toBe('46m 00s');
+    expect(formatDuration(59_940)).toBe('59.9s');
+    expect(formatDuration(59_960)).toBe('1m 00s');
     expect(homeRelative('/Users/pat/project')).toBe('~/project');
     expect(homeRelative('/opt/work')).toBe('/opt/work');
   });
