@@ -916,6 +916,10 @@ input.segment-speaker {
    ================================================================ */
 .chat-messages {
     padding: 16px 18px; display: flex; flex-direction: column; gap: 10px;
+    /* useFollowBottom keeps the reader's place when heights above change.
+     * WebKit has no scroll anchoring of its own; Chromium's would move the
+     * view a second time. */
+    overflow-anchor: none;
 }
 /* Welcome centered state */
 .chat-welcome-center {

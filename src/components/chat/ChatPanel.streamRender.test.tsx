@@ -5,9 +5,9 @@
  * every message in the session: a 300-message session spent more time
  * re-rendering history than the stream took to arrive, and the reply fell
  * behind the network by 100 ms and more. The live bubble must still get
- * every token, and the view must still follow the tail. Once a turn has
- * committed a row, the live reply is the tail of that turn's bubble, and the
- * bubble must not re-render on a token either.
+ * every token. Once a turn has committed a row, the live reply is the tail
+ * of that turn's bubble, and the bubble must not re-render on a token either.
+ * (Following the tail is a size rule now: hooks/useFollowBottom.test.tsx.)
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, act } from '@testing-library/react';
@@ -71,7 +71,6 @@ describe('ChatPanel while a reply streams', () => {
     h.embedded = [];
     h.turns = [];
     h.noEnterByFirst = new Map();
-    Element.prototype.scrollIntoView = vi.fn();
   });
 
   it('feeds every token to the live reply without re-rendering the messages above', async () => {
@@ -85,8 +84,6 @@ describe('ChatPanel while a reply streams', () => {
     chat.getState().setStreaming(true);
     render(<ChatPanel />);
     const rendersBefore = h.messageRenders;
-    const scroll = Element.prototype.scrollIntoView as ReturnType<typeof vi.fn>;
-    scroll.mockClear();
 
     for (const token of ['Dear ', 'team, ', 'thanks.']) {
       await act(async () => {
@@ -98,8 +95,6 @@ describe('ChatPanel while a reply streams', () => {
     expect(h.streamed[h.streamed.length - 1]).toBe('Dear team, thanks.');
     // A new turn's reply has a bubble of its own.
     expect(h.embedded.every((e) => !e)).toBe(true);
-    // Following the tail still happens as the text grows.
-    expect(scroll).toHaveBeenCalled();
   });
 
   it("streams a turn's tail inside its bubble without re-rendering the bubble", async () => {
@@ -181,10 +176,6 @@ describe('ChatPanel while a reply streams', () => {
 });
 
 describe('the new-messages pill', () => {
-  beforeEach(() => {
-    Element.prototype.scrollIntoView = vi.fn();
-  });
-
   it('counts the bubbles that appeared below, not the rows a turn committed', async () => {
     useSessionStore.setState({ currentSessionId: 'unseen-pill', liveSessions: {}, sessions: [] });
     const chat = getChatStore('unseen-pill');
@@ -194,14 +185,16 @@ describe('the new-messages pill', () => {
       { role: 'assistant', content: 'Reading first.', timestamp: at(1) },
     ]);
     const { container } = render(<ChatPanel />);
-    // The user scrolled up to read.
+    // The user scrolled up from the bottom to read.
     const panel = container.querySelector('#chatMessages') as HTMLElement;
     Object.defineProperty(panel, 'scrollHeight', { value: 2000, configurable: true });
     Object.defineProperty(panel, 'clientHeight', { value: 400, configurable: true });
-    panel.scrollTop = 0;
-    await act(async () => {
-      panel.dispatchEvent(new Event('scroll'));
-    });
+    for (const top of [1600, 0]) {
+      await act(async () => {
+        panel.scrollTop = top;
+        panel.dispatchEvent(new Event('scroll'));
+      });
+    }
 
     // Three more rows of the same turn: one bubble grew, none appeared.
     await act(async () => {

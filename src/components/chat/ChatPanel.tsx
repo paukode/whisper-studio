@@ -21,6 +21,7 @@ import { downloadFile } from '@/utils/downloadFile';
 import { useTaskStore } from '@/stores/taskStore';
 import { fetchSessionTasks } from '@/api/tasks';
 import { permissionModeLabel } from '@/utils/permissionModes';
+import { useFollowBottom } from '@/hooks/useFollowBottom';
 import type { Delivery } from '@/types/chat';
 
 /**
@@ -30,14 +31,10 @@ import type { Delivery } from '@/types/chat';
  * has, the reply is the embedded tail of the turn's bubble.
  */
 const LiveReply: React.FC<{
-  onGrow: () => void;
   embedded?: boolean;
   priorDeliveries?: readonly Delivery[];
-}> = ({ onGrow, embedded, priorDeliveries }) => {
+}> = ({ embedded, priorDeliveries }) => {
   const content = useActiveChatStore((s) => s.currentStreamContent);
-  useEffect(() => {
-    if (content) onGrow();
-  }, [content, onGrow]);
   return <StreamingMessage content={content} isStreaming embedded={embedded} priorDeliveries={priorDeliveries} />;
 };
 
@@ -64,16 +61,14 @@ export const ChatPanel: React.FC = () => {
   // composer pill and status bar so every surface names modes identically.
   const modeLabel = permissionModeLabel(permissionMode);
   const messagesRef = useRef<HTMLDivElement>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  // Tracks whether the user is currently parked at the bottom of the
-  // chat. Used to decide whether new messages should auto-scroll. Held
-  // as a ref (not state) so the scroll handler can update it without
-  // triggering re-renders on every wheel tick.
-  const wasAtBottomRef = useRef(true);
-  // Count of new bubbles that appeared while the user was NOT at the
-  // bottom, surfaced as a "N new" pill so live cron firings aren't
-  // silently buried below the fold.
+  // Count of new bubbles that appeared while the user was reading further
+  // up, surfaced as a "N new" pill so live cron firings aren't silently
+  // buried below the fold.
   const [unseenBelow, setUnseenBelow] = useState(0);
+  const clearUnseen = useCallback(() => setUnseenBelow(0), []);
+  // The view follows the newest line until the user scrolls up, and stays
+  // where they left it until they scroll back down: the transcript's rule.
+  const follow = useFollowBottom(messagesRef, currentSessionId, clearUnseen);
 
   // Use chatStore as the single source of truth for the current conversation.
   // Session history is loaded into chatStore when switching sessions.
@@ -152,27 +147,6 @@ export const ChatPanel: React.FC = () => {
     setStreamCtx({ sessionId: currentSessionId, streaming: isStreaming, count: allMessages.length });
   }
 
-  // Detect whether the scroll position is at (or near) the bottom.
-  // Tolerance of 80 px so small layout shifts don't flip the flag, and
-  // anything within ~one card height of the bottom still counts as
-  // "user is following the conversation". Re-evaluated on every scroll
-  // event of the panel-body.
-  const recomputeAtBottom = useCallback(() => {
-    const el = messagesRef.current;
-    if (!el) return;
-    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
-    const atBottom = distance < 80;
-    wasAtBottomRef.current = atBottom;
-    if (atBottom) setUnseenBelow(0);
-  }, []);
-
-  useEffect(() => {
-    const el = messagesRef.current;
-    if (!el) return;
-    el.addEventListener('scroll', recomputeAtBottom, { passive: true });
-    return () => el.removeEventListener('scroll', recomputeAtBottom);
-  }, [recomputeAtBottom]);
-
   // Hydrate the Tasks store for this session so the in-chat task row and the
   // Tasks drawer reflect the plan even on a restored conversation (the live
   // `todo_update` SSE events don't replay). The server list is authoritative
@@ -194,13 +168,9 @@ export const ChatPanel: React.FC = () => {
     return () => { active = false; };
   }, [currentSessionId]);
 
-  // Smart auto-scroll: only follow new messages when the user is
-  // already at the bottom. If they've scrolled up to read something,
-  // increment the unseen counter instead of yanking the viewport.
-  // Smooth scrolling for user-initiated turns, instant for background
-  // cron firings to avoid stacking animations under rapid arrivals. The
-  // counter counts bubbles: a row that only grows the last turn's bubble
-  // scrolls along but adds nothing to it.
+  // New bubbles that land while the user reads further up count toward the
+  // pill instead of moving the view. The counter counts bubbles: a row that
+  // only grows the last turn's bubble adds nothing to it.
   const prevMessageCountRef = useRef(allMessages.length);
   const prevEntryCountRef = useRef(displayEntries.length);
   useEffect(() => {
@@ -208,40 +178,18 @@ export const ChatPanel: React.FC = () => {
     const delta = Math.max(0, displayEntries.length - prevEntryCountRef.current);
     prevMessageCountRef.current = allMessages.length;
     prevEntryCountRef.current = displayEntries.length;
-    if (!grew) return;
-    if (wasAtBottomRef.current) {
-      // Read, not subscribed: a subscription here re-rendered the panel and
-      // every message in it on each streamed token.
-      const behavior: ScrollBehavior =
-        getActiveChatStore().getState().currentStreamContent.length > 0 ? 'smooth' : 'auto';
-      messagesEndRef.current?.scrollIntoView({ behavior, block: 'end' });
-    } else if (delta > 0) {
+    if (grew && delta > 0 && !follow.following()) {
       setUnseenBelow((n) => n + delta);
     }
-  }, [allMessages.length, displayEntries.length]);
-
-  // Streamed text grows inside LiveReply, which calls this after each paint
-  // of new text. When the user is following along (at bottom), keep the
-  // viewport snapped to the tail.
-  const followStream = useCallback(() => {
-    if (!wasAtBottomRef.current) return;
-    messagesEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
-  }, []);
+  }, [allMessages.length, displayEntries.length, follow]);
 
   // The live tail a streaming turn's bubble draws after its committed rows.
   // Stable, so the bubble re-renders only when its rows change, never on a
-  // token: LiveReply alone follows the stream.
+  // token: LiveReply alone redraws the stream.
   const renderLive = useCallback(
-    (priorDeliveries: readonly Delivery[]) => (
-      <LiveReply onGrow={followStream} embedded priorDeliveries={priorDeliveries} />
-    ),
-    [followStream],
+    (priorDeliveries: readonly Delivery[]) => <LiveReply embedded priorDeliveries={priorDeliveries} />,
+    [],
   );
-
-  const jumpToBottom = useCallback(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-    setUnseenBelow(0);
-  }, []);
 
   const handleClear = useCallback(() => {
     getActiveChatStore().getState().clearMessages();
@@ -451,7 +399,7 @@ export const ChatPanel: React.FC = () => {
         <VoiceLiveMessage />
 
         {/* Streaming response that starts a new turn */}
-        {isStreaming && !liveTurn && <LiveReply onGrow={followStream} />}
+        {isStreaming && !liveTurn && <LiveReply />}
 
         {/* Approval card, shown when a tool needs permission */}
         <ErrorBoundary label="ApprovalBanner">
@@ -463,8 +411,6 @@ export const ChatPanel: React.FC = () => {
           <AutoModeBreakerBanner />
         </ErrorBoundary>
 
-        <div ref={messagesEndRef} />
-
         {/* Floating "new messages" pill: appears when live cron firings
          * (or other background events) arrive while the user is scrolled
          * up reading older content. Click to snap to the bottom. */}
@@ -472,7 +418,7 @@ export const ChatPanel: React.FC = () => {
           <button
             type="button"
             className="chat-unseen-pill"
-            onClick={jumpToBottom}
+            onClick={follow.jumpToBottom}
             aria-label={`Jump to ${unseenBelow} new message${unseenBelow === 1 ? '' : 's'}`}
           >
             {ICON.arrowDown}
