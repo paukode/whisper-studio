@@ -115,6 +115,7 @@ async def run_agent(
     agent_id: str | None = None,
     resume_agent_id: str | None = None,
     cost_source: str = "agent",
+    workflow_run_id: str | None = None,
 ) -> AgentResult:
     """Run an agent with full tool execution loop.
 
@@ -287,6 +288,7 @@ async def run_agent(
         parent_agent_id=parent_agent_id,
         team_id=team_id,
         agent_name=agent_name,
+        workflow_run_id=workflow_run_id,
         resumed=_resume is not None,
     )
     # Live budget grant (Extend on the card): rounds/seconds added to the cap

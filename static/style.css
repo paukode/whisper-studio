@@ -5536,7 +5536,9 @@ button.ws-git-status-badge:hover {
     position: fixed;
     top: 50px;
     right: 12px;
-    width: 360px;
+    /* Wide enough for an agent's name (a workflow label) beside its status. */
+    width: 480px;
+    max-width: calc(100vw - 24px);
     max-height: 60vh;
     display: flex;
     flex-direction: column;
@@ -5775,6 +5777,10 @@ button.ws-git-status-badge:hover {
     max-height: 320px;
     overflow-y: auto;
 }
+/* The task's folds (a shared workflow brief, a long task's rest) hold prose,
+   so they keep the body font inside the tool-result box. */
+.agent-ev-task-fold { font-family: inherit; font-size: inherit; }
+.agent-ev-brief { margin-bottom: 4px; }
 /* Reports are written line by line (FINDINGS, EVIDENCE, ...); keep the breaks. */
 .agent-pane-report { padding: 8px 12px; border-top: 1px solid var(--border); white-space: pre-wrap; }
 .agent-pane-report > summary { font-size: var(--fs-caption); color: var(--text-muted); cursor: pointer; margin-bottom: 6px; }

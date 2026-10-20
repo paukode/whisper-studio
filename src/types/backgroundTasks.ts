@@ -28,6 +28,9 @@ export interface TaskEventPayload {
   task_id: string;
   kind: BackgroundTaskKind;
   title: string;
+  /** A named agent's name (a workflow label, a team member); empty otherwise.
+   *  The store keeps it as `meta.agent_name`, where a hydrated row has it. */
+  agent_name?: string;
   status: string;
   exit_code?: number | null;
   duration_ms?: number | null;

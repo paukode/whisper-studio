@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  formatSeconds,
   mergeEvents,
   metaAfter,
   recordReadout,
@@ -62,6 +63,7 @@ describe('recordReadout', () => {
     meta: meta(),
     events: [],
     report: '',
+    sharedBrief: null,
     loading: false,
     error: null,
     pending: [],
@@ -94,6 +96,16 @@ describe('recordReadout', () => {
   });
 });
 
+describe('formatSeconds', () => {
+  it('reads seconds, then minutes, and carries a rounded-up second into the minute', () => {
+    expect(formatSeconds(42.4)).toBe('42s');
+    expect(formatSeconds(471)).toBe('7m 51s');
+    expect(formatSeconds(480)).toBe('8m');
+    expect(formatSeconds(59.6)).toBe('1m');
+    expect(formatSeconds(119.6)).toBe('2m');
+  });
+});
+
 describe('agentFeedStore', () => {
   beforeEach(() => {
     useAgentFeedStore.setState({ records: {} });
@@ -106,7 +118,12 @@ describe('agentFeedStore', () => {
       vi.fn().mockResolvedValue({
         ok: true,
         status: 200,
-        json: async () => ({ meta: meta(), events: [ev({ seq: 1, phase: 'started' })], report: '' }),
+        json: async () => ({
+          meta: meta(),
+          events: [ev({ seq: 1, phase: 'started' })],
+          report: '',
+          shared_brief: { text: 'BRIEF\n', agents: 2 },
+        }),
       }),
     );
     await useAgentFeedStore.getState().open('a1');
@@ -115,6 +132,7 @@ describe('agentFeedStore', () => {
     const rec = useAgentFeedStore.getState().records.a1;
     expect(rec.events.map((e) => e.seq)).toEqual([1, 2]);
     expect(rec.loading).toBe(false);
+    expect(rec.sharedBrief).toEqual({ text: 'BRIEF\n', agents: 2 });
     // A second open of a loaded record does not read it again.
     await useAgentFeedStore.getState().open('a1');
     expect(fetch).toHaveBeenCalledTimes(1);
@@ -136,6 +154,7 @@ describe('agentFeedStore', () => {
     expect(rec.events.map((e) => e.seq)).toEqual([1, 2, 3]);
     expect(rec.meta?.status).toBe('stopped');
     expect(rec.pending).toEqual([]);
+    expect(rec.sharedBrief).toBeNull();
   });
 
   it('ignores runs nobody opened and says when there is no record', async () => {

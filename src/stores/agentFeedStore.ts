@@ -35,12 +35,22 @@ export interface AgentRecordMeta {
   usage?: { cost_usd?: number };
   team_id?: string | null;
   parent_agent_id?: string | null;
+  workflow_run_id?: string | null;
+}
+
+/** The opening a workflow agent's task shares with other agents of the same
+ *  run (server/agents/journal.py shared_brief): the text, and how many other
+ *  agents' tasks start with it. */
+export interface SharedBrief {
+  text: string;
+  agents: number;
 }
 
 export interface AgentRecord {
   meta: AgentRecordMeta | null;
   events: AgentProgressEvent[];
   report: string;
+  sharedBrief: SharedBrief | null;
   loading: boolean;
   /** 404 or a network failure: the pane says so instead of staying blank. */
   error: string | null;
@@ -110,7 +120,7 @@ export function metaAfter(meta: AgentRecordMeta | null, ev: AgentProgressEvent):
   }
 }
 
-const EMPTY: AgentRecord = { meta: null, events: [], report: '', loading: true, error: null, pending: [] };
+const EMPTY: AgentRecord = { meta: null, events: [], report: '', sharedBrief: null, loading: true, error: null, pending: [] };
 
 export const useAgentFeedStore = create<AgentFeedState>((set, get) => ({
   records: {},
@@ -119,15 +129,20 @@ export const useAgentFeedStore = create<AgentFeedState>((set, get) => ({
     const existing = get().records[agentId];
     if (existing && !existing.error) return;
     set((s) => ({ records: { ...s.records, [agentId]: { ...EMPTY } } }));
-    let loaded: Pick<AgentRecord, 'meta' | 'events' | 'report'> | null = null;
+    let loaded: Pick<AgentRecord, 'meta' | 'events' | 'report' | 'sharedBrief'> | null = null;
     let error: string | null = null;
     try {
       const r = await fetch(`/api/agents/${encodeURIComponent(agentId)}/record`);
       if (r.status === 404) error = 'No record for this agent.';
       else if (!r.ok) error = `The record could not be read (HTTP ${r.status}).`;
       else {
-        const data = (await r.json()) as { meta: AgentRecordMeta; events: AgentProgressEvent[]; report: string };
-        loaded = { meta: data.meta, events: data.events, report: data.report };
+        const data = (await r.json()) as {
+          meta: AgentRecordMeta;
+          events: AgentProgressEvent[];
+          report: string;
+          shared_brief: SharedBrief | null;
+        };
+        loaded = { meta: data.meta, events: data.events, report: data.report, sharedBrief: data.shared_brief ?? null };
       }
     } catch {
       error = 'The record could not be read.';
@@ -142,6 +157,7 @@ export const useAgentFeedStore = create<AgentFeedState>((set, get) => ({
         meta,
         events: mergeEvents(loaded.events, rec.pending),
         report: loaded.report,
+        sharedBrief: loaded.sharedBrief,
         loading: false,
         error: null,
         pending: [],
@@ -224,9 +240,12 @@ export function recordReadout(rec: AgentRecord, now: number): RecordReadout {
   };
 }
 
+/** "42s" / "7m 51s" / "8m". Rounds before it splits, so 119.6 s reads
+ *  "2m", not "1m 60s". */
 export function formatSeconds(s: number): string {
-  if (s < 60) return `${Math.round(s)}s`;
-  const m = Math.floor(s / 60);
-  const rest = Math.round(s - m * 60);
+  const total = Math.round(s);
+  if (total < 60) return `${total}s`;
+  const m = Math.floor(total / 60);
+  const rest = total % 60;
   return rest ? `${m}m ${String(rest).padStart(2, '0')}s` : `${m}m`;
 }

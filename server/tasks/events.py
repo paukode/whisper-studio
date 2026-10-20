@@ -139,11 +139,15 @@ def emit_task_event(session_id: str, event_type: str, task: dict) -> None:
     """
     if event_type not in ("task_started", "task_completed", "task_failed", "task_stopped"):
         raise ValueError(f"unknown task event type: {event_type!r}")
+    meta = task.get("meta")
     payload = {
         "event_type": event_type,
         "task_id": task.get("task_id", ""),
         "kind": task.get("kind", ""),
         "title": task.get("title", ""),
+        # A named agent's name, which the list shows in place of the title;
+        # empty for every other task.
+        "agent_name": str(meta.get("agent_name") or "") if isinstance(meta, dict) else "",
         "status": task.get("status", ""),
         "exit_code": task.get("exit_code"),
         "duration_ms": _duration_ms(task),

@@ -39,7 +39,8 @@
     <h2 id="the-journal">The journal directory</h2>
     <p>Each run gets a directory under the app's storage root, keyed by session and agent id:</p>
     <div class="code-block"><pre><code>&lt;storage&gt;/agents/&lt;session_id&gt;/&lt;agent_id&gt;/
-    meta.json       task, type, model, budgets, status, stop reason, usage
+    meta.json       the whole task, type, model, workflow run, budgets,
+                    status, stop reason, usage
     events.jsonl    every progress event as it happened
     messages.json   the API message list, rewritten at every round start
     report.md       the final report: the model's own, or a salvage one</code></pre></div>
@@ -53,7 +54,7 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Moment</th><th>Written</th></tr></thead>
       <tbody>
-        <tr><td><b>Open</b>, before the first model call</td><td><code>meta.json</code> with the task, agent type, model, turn cap and deadline, plus a <code>started</code> event. The background-task registry row is created here too, pointing at <code>events.jsonl</code>.</td></tr>
+        <tr><td><b>Open</b>, before the first model call</td><td><code>meta.json</code> with the task, agent type, model, turn cap and deadline, plus a <code>started</code> event. The journal does not cut the task. For a workflow agent, <code>meta.json</code> also keeps the ID of the workflow run. The background-task registry row is created here too, pointing at <code>events.jsonl</code>.</td></tr>
         <tr><td><b>Every progress event</b></td><td>One JSON line appended to <code>events.jsonl</code>: <code>started</code>, <code>turn_start</code>, <code>text</code>, <code>tool_call</code>, <code>tool_result</code>, and the terminal phase. The same events feed the live report card.</td></tr>
         <tr><td><b>Every round start</b></td><td><code>messages.json</code> is rewritten atomically with the full API message list. This checkpoint is what lets a killed run be resumed later with its context intact.</td></tr>
         <tr><td><b>Finish</b>, however it ends</td><td><code>report.md</code>, and <code>meta.json</code> updated with the terminal status, the stop reason, the round count and token usage. The registry row is closed with the report as its result text.</td></tr>
@@ -67,6 +68,13 @@
     <p>Because the registry row exists from the first round, <code>task_output &lt;agent_id&gt;</code>
       tails a live agent's progress log and returns a finished one's report, regardless of how it ended
       and regardless of whether the turn that launched it is still around.</p>
+
+    <p>A workflow script can start the task of each agent with the same long text. When the pane
+      reads the record, <code>shared_brief</code> compares the task with the tasks of the other agents
+      in the same workflow run. The function returns the longest text at the start of the task that
+      also starts the task of one of these agents. This text stops at the end of a line or a
+      sentence. The function returns no text if this text is shorter than 500 characters, or if no
+      text of the agent follows it.</p>
 
     <h2 id="the-report">The report, and the round reserved for it</h2>
     <p>An agent's last message is its return value, so the runtime makes sure the last message is a
@@ -224,7 +232,7 @@
 
     <h2 id="key-files">Key files</h2>
     <div class="spec">
-      <dt><code class="path">server/agents/journal.py</code></dt><dd>The on-disk record: directory layout, the per-round checkpoint, the report template, the relay note, and <code>salvage_report</code>.</dd>
+      <dt><code class="path">server/agents/journal.py</code></dt><dd>The on-disk record: directory layout, the per-round checkpoint, the report template, the relay note, <code>salvage_report</code>, and <code>shared_brief</code>.</dd>
       <dt><code class="path">server/agents/runtime.py</code></dt><dd><code>run_agent</code>: opens the journal before the first call, emits and journals every event, and writes the terminal report on every exit path.</dd>
       <dt><code class="path">server/agents/runtime_support.py</code></dt><dd><code>budget_readout</code>: the rounds, time and cost stamped on every <code>turn_start</code>.</dd>
       <dt><code class="path">server/chat/engine/runner.py</code></dt><dd>The soft limit, the reserved final round, and the live budget extension re-read at every round start.</dd>
@@ -232,7 +240,7 @@
       <dt><code class="path">server/agents/wake.py</code></dt><dd>Mid-turn delivery, the one-round synthesis turn, and the guards around both.</dd>
       <dt><code class="path">server/tasks/events.py</code></dt><dd><code>emit_agent_report</code>: persists the report row, publishes it live, triggers the wake, and records the notification.</dd>
       <dt><code class="path">server/infrastructure/sessions.py</code></dt><dd>The report and answer row caps, and the prompt views that relabel both for the model.</dd>
-      <dt><code class="path">src/components/preview/AgentPanel.tsx</code></dt><dd>The agent pane: the run's status line with Extend, and its full feed read from the record and followed live.</dd>
+      <dt><code class="path">src/components/preview/AgentPanel.tsx</code></dt><dd>The agent pane: the run's status line with Extend, and its full feed read from the record and followed live. For a workflow agent, the task row shows the part of the agent first. The text that is the same for the agents of the run is in a closed section.</dd>
       <dt><code class="path">src/components/chat/AgentReportCard.tsx</code></dt><dd>Reports that the session receives when no turn runs. Each report is a closed line, the same as tool activity, with the stop reason and a "New" chip.</dd>
     </div>
 

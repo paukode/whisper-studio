@@ -8,9 +8,12 @@ import {
   recordReadout,
   useAgentFeedStore,
   type AgentProgressEvent,
+  type SharedBrief,
 } from '@/stores/agentFeedStore';
 
 const EXTEND_ROUNDS = 20;
+/** How much of an agent's own task shows before the rest folds. */
+const TASK_SHOWN_CHARS = 4000;
 
 /**
  * AgentPanel: one agent's full feed in the dock, live while it runs. The
@@ -66,12 +69,7 @@ export const AgentPanel: React.FC<{ agentId: string }> = ({ agentId }) => {
         {readout.running && <ExtendButton agentId={agentId} />}
       </div>
       <div className="agent-pane-feed" ref={feedRef} onScroll={onScroll}>
-        {rec.meta?.task && (
-          <div className="agent-ev">
-            <span className="agent-ev-label">task</span>
-            <div className="agent-ev-body agent-ev-task">{rec.meta.task}</div>
-          </div>
-        )}
+        {rec.meta?.task && <TaskRow task={rec.meta.task} shared={rec.sharedBrief} />}
         {items.map((item, i) => (
           <FeedRow key={i} item={item} />
         ))}
@@ -151,6 +149,64 @@ const ExtendButton: React.FC<{ agentId: string }> = ({ agentId }) => {
     <button type="button" className="agent-pane-extend" onClick={() => void extend()} disabled={busy} title="Grant more rounds while the context is still loaded">
       {busy ? 'Extending…' : `Extend +${EXTEND_ROUNDS}`}
     </button>
+  );
+};
+
+export interface TaskParts {
+  /** The opening shared with other agents of the workflow run; '' when none. */
+  brief: string;
+  /** The agent's own task, up to about `shownChars`. */
+  own: string;
+  /** What follows a long own part; '' when it fits. */
+  rest: string;
+}
+
+/** Split a task for the pane: the shared brief (only when the task really
+ *  starts with it), the agent's own part, and the rest of a long one, cut at
+ *  a line break or a space in the second half of what shows. */
+export function taskParts(task: string, brief: string, shownChars = TASK_SHOWN_CHARS): TaskParts {
+  const shared = brief && brief.length < task.length && task.startsWith(brief) ? brief : '';
+  const body = task.slice(shared.length);
+  if (body.length <= shownChars) return { brief: shared, own: body, rest: '' };
+  const lineEnd = body.lastIndexOf('\n', shownChars);
+  const space = body.lastIndexOf(' ', shownChars);
+  const end = lineEnd > shownChars / 2 ? lineEnd + 1 : space > shownChars / 2 ? space + 1 : shownChars;
+  return { brief: shared, own: body.slice(0, end), rest: body.slice(end) };
+}
+
+const chars = (n: number) => `${n.toLocaleString('en-US')} chars`;
+
+/** The task row: the agent's own task first. A brief it shares with other
+ *  agents of its workflow run folds above it, and a long task's rest folds
+ *  below it. */
+const TaskRow: React.FC<{ task: string; shared: SharedBrief | null }> = ({ task, shared }) => {
+  const { brief, own, rest } = taskParts(task, shared?.text ?? '');
+  const others = shared?.agents ?? 0;
+  return (
+    <div className="agent-ev">
+      <span className="agent-ev-label">task</span>
+      <div className="agent-ev-body agent-ev-task">
+        {brief && (
+          <details className="agent-ev-result agent-ev-brief">
+            <summary>
+              <ChevronIcon direction="right" />
+              shared brief · {chars(brief.length)} · also given to {others} other agent{others === 1 ? '' : 's'}
+            </summary>
+            <div className="agent-ev-pre agent-ev-task-fold">{brief.trimEnd()}</div>
+          </details>
+        )}
+        {own}
+        {rest && (
+          <details className="agent-ev-result">
+            <summary>
+              <ChevronIcon direction="right" />
+              rest of the task · {chars(rest.length)}
+            </summary>
+            <div className="agent-ev-pre agent-ev-task-fold">{rest}</div>
+          </details>
+        )}
+      </div>
+    </div>
   );
 };
 

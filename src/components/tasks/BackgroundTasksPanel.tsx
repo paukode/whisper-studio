@@ -78,6 +78,7 @@ const TaskRow: React.FC<{ task: BackgroundTaskInfo; now: number }> = ({ task, no
   const stopTask = useBackgroundTaskStore((s) => s.stopTask);
   const dismiss = useBackgroundTaskStore((s) => s.dismiss);
   const openAgent = useDockStore((s) => s.openAgent);
+  const label = taskLabel(task);
   const running = task.status === 'running';
   const leaveAt = running ? null : lingerUntil(task);
   const secondsLeft = leaveAt === null ? 0 : Math.max(0, Math.ceil((leaveAt - now) / 1000));
@@ -96,8 +97,11 @@ const TaskRow: React.FC<{ task: BackgroundTaskInfo; now: number }> = ({ task, no
           <ChevronIcon direction={expanded ? 'down' : 'right'} />
         </button>
         <span className="bg-tasks-kind">{task.kind}</span>
-        <span className={`bg-tasks-row-title${task.kind === 'shell' ? ' mono' : ''}`} title={task.title}>
-          {task.title}
+        <span
+          className={`bg-tasks-row-title${task.kind === 'shell' ? ' mono' : ''}`}
+          title={label === task.title ? task.title : `${label}\n${task.title}`}
+        >
+          {label}
         </span>
         <span className="bg-tasks-status">
           {!running && task.status === 'completed' && <CheckIcon />}
@@ -105,7 +109,7 @@ const TaskRow: React.FC<{ task: BackgroundTaskInfo; now: number }> = ({ task, no
           {!running && ` · clears in ${secondsLeft}s`}
         </span>
         {task.kind === 'agent' && (
-          <button type="button" className="bg-tasks-btn" onClick={() => openAgent(task.task_id, task.title)}>
+          <button type="button" className="bg-tasks-btn" onClick={() => openAgent(task.task_id, label)}>
             Open
           </button>
         )}
@@ -192,6 +196,14 @@ function useOutputTail(taskId: string, active: boolean): string {
   return text;
 }
 
+/** What a row is called: a named agent's name (a workflow label, a team
+ *  member), so agents that share a brief stay apart; otherwise the title. The
+ *  title, the start of the task, stays in the tooltip and the details. */
+export function taskLabel(t: BackgroundTaskInfo): string {
+  const name = t.kind === 'agent' ? t.meta?.agent_name : undefined;
+  return typeof name === 'string' && name ? name : t.title;
+}
+
 function byRunningThenNewest(a: BackgroundTaskInfo, b: BackgroundTaskInfo): number {
   const ar = a.status === 'running' ? 0 : 1;
   const br = b.status === 'running' ? 0 : 1;
@@ -213,13 +225,13 @@ export function statusText(t: BackgroundTaskInfo, now: number): string {
   return took ? `${outcome} · ${took}` : outcome;
 }
 
-/** "820ms" / "8.2s" / "1m 04s" */
+/** "820ms" / "8.2s" / "1m 04s". Rounds before it splits, so 59.6 s of a
+ *  minute carries into the next one instead of reading "45m 60s". */
 export function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
-  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
-  const m = Math.floor(ms / 60_000);
-  const s = Math.round((ms % 60_000) / 1000);
-  return `${m}m ${String(s).padStart(2, '0')}s`;
+  if (Math.round(ms / 100) < 600) return `${(ms / 1000).toFixed(1)}s`;
+  const total = Math.round(ms / 1000);
+  return `${Math.floor(total / 60)}m ${String(total % 60).padStart(2, '0')}s`;
 }
 
 /** A path under the user's home folder shown as "~/..." (the app is macOS only). */

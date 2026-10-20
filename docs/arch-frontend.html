@@ -369,8 +369,13 @@
         <code>agent_progress</code> frames merged by the journal's <code>seq</code>. The pane's status
         line reads state, model, rounds against the cap, time and estimated cost, and while an agent is
         running <b>Extend +20</b> grants it more rounds (<code>POST /api/agents/{id}/extend</code>)
-        without losing its loaded context. See <a href="arch-agent-recorder.html">the agent flight
-        recorder</a>.</dd>
+        without losing its loaded context. The first row of the feed is the task. For a workflow
+        agent, the row shows the part of the task that is different from the other agents of the
+        run. The text that is the same for these agents is in a closed "shared brief" section above
+        it. The section title gives the length of the text and the number of the other agents. If
+        the part of the agent is longer than 4,000 characters, the row shows maximum 4,000
+        characters. The text that follows is in a second closed section. See
+        <a href="arch-agent-recorder.html">the agent flight recorder</a>.</dd>
     </div>
     <p><code class="path">src/components/chat/ChatMessage.tsx</code> shows the user bubble and
       four card roles that do not use the normal bubble: <code>cron_event</code>,
@@ -473,7 +478,7 @@
       <dt><code class="path">src/components/chat/ActivityRow.tsx</code></dt><dd>The activity row: the group label, the chips, one line for each call, and the output of each call.</dd>
       <dt><code class="path">src/components/chat/AgentRows.tsx</code></dt><dd>One row per agent in the chat, with Open for the dock's agent pane.</dd>
       <dt><code class="path">src/components/preview/AgentPanel.tsx</code></dt><dd>The agent pane: status line, Extend, Stop, and the live feed of everything the agent does.</dd>
-      <dt><code class="path">src/components/tasks/BackgroundTasksPanel.tsx</code></dt><dd>The list under the header's tasks pill: every task across sessions, unfolding details, Open, Stop, and the 30 second linger of a finished row.</dd>
+      <dt><code class="path">src/components/tasks/BackgroundTasksPanel.tsx</code></dt><dd>The list under the header's tasks pill: every task across sessions, unfolding details, Open, Stop, and the 30 second linger of a finished row. The row of an agent with a name shows the name, and the details of the row show the start of the task.</dd>
       <dt><code class="path">src/components/chat/AgentReportCard.tsx</code></dt><dd>Reports that the session received when no turn ran. Each report is a closed line, the same as tool activity. The line gives the stop reason and opens to the report and the agent pane.</dd>
       <dt><code class="path">src/stores/agentFeedStore.ts</code></dt><dd>The agent pane's records: the journal read once, the live tail merged by seq, and the status readout.</dd>
       <dt><code class="path">src/types/schemas/chat.schema.ts</code></dt><dd>The Zod schema every SSE payload is validated against; the client half of the frame contract.</dd>

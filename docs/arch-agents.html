@@ -72,7 +72,10 @@
         That is what makes <code>task_output</code> work for <em>any</em> agent, not just a detached
         one, and what emits <code>task_event</code> lifecycle events through
         <code class="path">server/tasks/events.py</code> into the header's task list (live only; the
-        registry row is the record, the chat shows nothing for it).</p></li>
+        registry row is the record, the chat shows nothing for it). The row and each
+        <code>task_event</code> also give the name of an agent that has a name, for example the label
+        of a workflow agent. The task list shows this name instead of the title, and the details of
+        the row show the start of the task.</p></li>
       <li><h4>Resolves the model</h4><p>Agents <b>inherit the session-selected model</b> through a
         <code>model_id_override</code> threaded from <code>/api/chat</code>. There is no hardcoded
         per-type model. A <code>spawn_agent</code> call can override it with a <code>chat_models</code>

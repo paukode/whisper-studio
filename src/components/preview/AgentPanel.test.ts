@@ -1,7 +1,8 @@
 /** The feed's reading order: tool results fold under their calls, the run's
- *  end is one row, and the waiting line names the tool still out. */
+ *  end is one row, and the waiting line names the tool still out. The task
+ *  row shows the agent's own task first. */
 import { describe, expect, it } from 'vitest';
-import { feedItems, waitingFor } from './AgentPanel';
+import { feedItems, taskParts, waitingFor } from './AgentPanel';
 import type { AgentProgressEvent } from '@/stores/agentFeedStore';
 
 const ev = (over: Partial<AgentProgressEvent>): AgentProgressEvent => ({ agent_id: 'a1', phase: 'text', ...over }) as AgentProgressEvent;
@@ -29,6 +30,37 @@ describe('feedItems', () => {
   it('keeps a result that has no call of its own', () => {
     const items = feedItems([ev({ seq: 1, phase: 'tool_result', tool_name: 'ws_grep' })]);
     expect(items).toEqual([{ kind: 'tool', call: null, result: items[0].kind === 'tool' ? items[0].result : null }]);
+  });
+});
+
+describe('taskParts', () => {
+  const brief = 'USER REQUEST: the same long brief.\nYOUR SPECIALIST TASK:\n';
+
+  it("puts the agent's own part first and keeps the shared brief apart", () => {
+    const parts = taskParts(`${brief}Audit the planner.`, brief);
+    expect(parts).toEqual({ brief, own: 'Audit the planner.', rest: '' });
+    // The three parts are the whole task, nothing lost or repeated.
+    expect(parts.brief + parts.own + parts.rest).toBe(`${brief}Audit the planner.`);
+  });
+
+  it('folds nothing when the task does not start with the brief, or is only the brief', () => {
+    expect(taskParts('Another task entirely.', brief)).toEqual({ brief: '', own: 'Another task entirely.', rest: '' });
+    expect(taskParts(brief, brief)).toEqual({ brief: '', own: brief, rest: '' });
+    expect(taskParts('Plain task.', '')).toEqual({ brief: '', own: 'Plain task.', rest: '' });
+  });
+
+  it('shows a long own part up to a line break and folds the rest', () => {
+    const own = `${'a'.repeat(60)}\n${'b'.repeat(30)}\n${'c'.repeat(40)}`;
+    const parts = taskParts(`${brief}${own}`, brief, 100);
+    expect(parts.own).toBe(`${'a'.repeat(60)}\n${'b'.repeat(30)}\n`);
+    expect(parts.rest).toBe('c'.repeat(40));
+    expect(parts.brief + parts.own + parts.rest).toBe(`${brief}${own}`);
+  });
+
+  it('cuts at the show limit when the long part has no break in its second half', () => {
+    const parts = taskParts('x'.repeat(250), '', 100);
+    expect(parts.own).toHaveLength(100);
+    expect(parts.rest).toHaveLength(150);
   });
 });
 
