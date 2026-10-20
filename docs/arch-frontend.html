@@ -478,7 +478,7 @@
       <dt><code class="path">src/components/chat/ActivityRow.tsx</code></dt><dd>The activity row: the group label, the chips, one line for each call, and the output of each call.</dd>
       <dt><code class="path">src/components/chat/AgentRows.tsx</code></dt><dd>One row per agent in the chat, with Open for the dock's agent pane.</dd>
       <dt><code class="path">src/components/preview/AgentPanel.tsx</code></dt><dd>The agent pane: status line, Extend, Stop, and the live feed of everything the agent does.</dd>
-      <dt><code class="path">src/components/tasks/BackgroundTasksPanel.tsx</code></dt><dd>The list under the header's tasks pill: every task across sessions, unfolding details, Open, Stop, and the 30 second linger of a finished row.</dd>
+      <dt><code class="path">src/components/tasks/BackgroundTasksPanel.tsx</code></dt><dd>The list under the header's tasks pill: every task across sessions, unfolding details, Open, Stop, and the 30 second linger of a finished row. The row of an agent with a name shows the name, and the details of the row show the start of the task.</dd>
       <dt><code class="path">src/components/chat/AgentReportCard.tsx</code></dt><dd>Reports that the session received when no turn ran. Each report is a closed line, the same as tool activity. The line gives the stop reason and opens to the report and the agent pane.</dd>
       <dt><code class="path">src/stores/agentFeedStore.ts</code></dt><dd>The agent pane's records: the journal read once, the live tail merged by seq, and the status readout.</dd>
       <dt><code class="path">src/types/schemas/chat.schema.ts</code></dt><dd>The Zod schema every SSE payload is validated against; the client half of the frame contract.</dd>
