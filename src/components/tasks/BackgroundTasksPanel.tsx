@@ -78,6 +78,7 @@ const TaskRow: React.FC<{ task: BackgroundTaskInfo; now: number }> = ({ task, no
   const stopTask = useBackgroundTaskStore((s) => s.stopTask);
   const dismiss = useBackgroundTaskStore((s) => s.dismiss);
   const openAgent = useDockStore((s) => s.openAgent);
+  const label = taskLabel(task);
   const running = task.status === 'running';
   const leaveAt = running ? null : lingerUntil(task);
   const secondsLeft = leaveAt === null ? 0 : Math.max(0, Math.ceil((leaveAt - now) / 1000));
@@ -96,8 +97,11 @@ const TaskRow: React.FC<{ task: BackgroundTaskInfo; now: number }> = ({ task, no
           <ChevronIcon direction={expanded ? 'down' : 'right'} />
         </button>
         <span className="bg-tasks-kind">{task.kind}</span>
-        <span className={`bg-tasks-row-title${task.kind === 'shell' ? ' mono' : ''}`} title={task.title}>
-          {task.title}
+        <span
+          className={`bg-tasks-row-title${task.kind === 'shell' ? ' mono' : ''}`}
+          title={label === task.title ? task.title : `${label}\n${task.title}`}
+        >
+          {label}
         </span>
         <span className="bg-tasks-status">
           {!running && task.status === 'completed' && <CheckIcon />}
@@ -105,7 +109,7 @@ const TaskRow: React.FC<{ task: BackgroundTaskInfo; now: number }> = ({ task, no
           {!running && ` · clears in ${secondsLeft}s`}
         </span>
         {task.kind === 'agent' && (
-          <button type="button" className="bg-tasks-btn" onClick={() => openAgent(task.task_id, task.title)}>
+          <button type="button" className="bg-tasks-btn" onClick={() => openAgent(task.task_id, label)}>
             Open
           </button>
         )}
@@ -190,6 +194,14 @@ function useOutputTail(taskId: string, active: boolean): string {
     };
   }, [taskId, active]);
   return text;
+}
+
+/** What a row is called: a named agent's name (a workflow label, a team
+ *  member), so agents that share a brief stay apart; otherwise the title. The
+ *  title, the start of the task, stays in the tooltip and the details. */
+export function taskLabel(t: BackgroundTaskInfo): string {
+  const name = t.kind === 'agent' ? t.meta?.agent_name : undefined;
+  return typeof name === 'string' && name ? name : t.title;
 }
 
 function byRunningThenNewest(a: BackgroundTaskInfo, b: BackgroundTaskInfo): number {

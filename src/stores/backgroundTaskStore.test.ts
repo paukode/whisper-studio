@@ -45,6 +45,15 @@ describe('backgroundTaskStore', () => {
     expect(state.runningCount).toBe(1);
   });
 
+  it("keeps a named agent's name from its live frame where a hydrated row has it", () => {
+    const store = useBackgroundTaskStore.getState();
+    store.applyEvent('s1', ev({ task_id: 'a1', kind: 'agent', title: 'USER REQUEST: same brief', agent_name: 'planner-audit' }));
+    expect(useBackgroundTaskStore.getState().tasks.a1.meta).toEqual({ agent_name: 'planner-audit' });
+    // A later frame without a name keeps the one the row has.
+    store.applyEvent('s1', ev({ task_id: 'a1', kind: 'agent', event_type: 'task_completed', status: 'completed', agent_name: '' }));
+    expect(useBackgroundTaskStore.getState().tasks.a1.meta?.agent_name).toBe('planner-audit');
+  });
+
   it('a finished row keeps its exit code for LINGER_MS, then leaves on its own', () => {
     const store = useBackgroundTaskStore.getState();
     store.applyEvent('s1', ev());

@@ -325,7 +325,8 @@ class AgentJournal:
             "task": prev.get("task") or task or "",
             "last_message": (task or "")[:4000] if resumed else "",
             "agent_type": agent_type,
-            "agent_name": agent_name,
+            # A resume passes no name; the run keeps the one it started with.
+            "agent_name": agent_name or prev.get("agent_name"),
             "model": model or "",
             "parent_agent_id": parent_agent_id,
             "team_id": team_id,
@@ -359,6 +360,9 @@ class AgentJournal:
                 output_path=j.events_path,
                 meta={
                     "agent_type": agent_type,
+                    # The list names a named agent (a workflow label, a team
+                    # member) by its name; the title keeps the task's start.
+                    "agent_name": j._meta["agent_name"] or "",
                     "model": model or "",
                     "journal_dir": d,
                     "team_id": team_id or "",

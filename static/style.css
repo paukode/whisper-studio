@@ -5536,7 +5536,9 @@ button.ws-git-status-badge:hover {
     position: fixed;
     top: 50px;
     right: 12px;
-    width: 360px;
+    /* Wide enough for an agent's name (a workflow label) beside its status. */
+    width: 480px;
+    max-width: calc(100vw - 24px);
     max-height: 60vh;
     display: flex;
     flex-direction: column;

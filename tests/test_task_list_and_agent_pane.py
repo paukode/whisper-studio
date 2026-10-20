@@ -88,6 +88,29 @@ def test_journal_announces_its_row_live(monkeypatch):
     assert len(frames) == 2
 
 
+def test_a_named_agent_carries_its_name_to_the_task_list(monkeypatch):
+    # Workflow agents can share a long brief, so the start of the task is the
+    # same for all of them; the list names each by its own name instead.
+    published: list = []
+    from server.agents import event_bus as bus_mod
+
+    monkeypatch.setattr(bus_mod.event_bus, "publish", lambda s, ev: published.append(ev))
+    j = _open("a8", agent_name="planner-audit")
+    j.finish(status="completed", stop_reason="completed", report="done", turns_used=1)
+    # A resume passes no name; the row and the record keep the first one.
+    _open("a8", resumed=True)
+    _open("a9")
+    frames = [ev["taskEvent"] for ev in published if ev.get("type") == "task_event"]
+    assert [(f["task_id"], f["event_type"], f["agent_name"]) for f in frames] == [
+        ("a8", "task_started", "planner-audit"),
+        ("a8", "task_completed", "planner-audit"),
+        ("a8", "task_started", "planner-audit"),
+        ("a9", "task_started", ""),
+    ]
+    assert registry.get_task("a8")["meta"]["agent_name"] == "planner-audit"
+    assert journal_mod.load_feed("a8")["meta"]["agent_name"] == "planner-audit"
+
+
 # ── the feed the pane loads ──────────────────────────────────────────────────
 
 

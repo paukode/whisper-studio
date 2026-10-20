@@ -5,8 +5,9 @@
  */
 import { fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { BackgroundTasksPanel, formatDuration, homeRelative, statusText } from './BackgroundTasksPanel';
+import { BackgroundTasksPanel, formatDuration, homeRelative, statusText, taskLabel } from './BackgroundTasksPanel';
 import { useBackgroundTaskStore } from '@/stores/backgroundTaskStore';
+import { useDockStore } from '@/stores/dockStore';
 import type { BackgroundTaskInfo } from '@/types/backgroundTasks';
 
 const T0 = Date.parse('2026-10-18T10:00:00Z');
@@ -80,5 +81,31 @@ describe('BackgroundTasksPanel', () => {
     expect(getByText(/started .* · opus/)).toBeTruthy();
     expect(getByText('Open')).toBeTruthy();
     expect(useBackgroundTaskStore.getState().expanded.a1).toBe(true);
+  });
+
+  it('names a named agent row by its name, keeps the task in the details, and opens under the name', () => {
+    const brief = 'USER REQUEST: Review dashboard-code-share, capacity-planner, and emea-delivery-app';
+    const agent = (task_id: string, name: string) => row({ task_id, kind: 'agent', title: brief, command: null, meta: { agent_name: name } });
+    useBackgroundTaskStore.getState().upsert(agent('a1', 'planner-audit'));
+    useBackgroundTaskStore.getState().upsert(agent('a2', 'emea-audit'));
+    useDockStore.setState({ panels: [], sizes: [], open: false });
+    const { getAllByTestId, getAllByText, getAllByLabelText } = render(<BackgroundTasksPanel />);
+    const titles = getAllByTestId('bg-task-row').map((r) => r.querySelector('.bg-tasks-row-title'));
+    expect(titles.map((t) => t?.textContent).sort()).toEqual(['emea-audit', 'planner-audit']);
+    // The tooltip gives the whole name over the start of the task, which the
+    // unfolded details also keep.
+    expect(titles.map((t) => t?.getAttribute('title')).sort()).toEqual([`emea-audit\n${brief}`, `planner-audit\n${brief}`]);
+    fireEvent.click(getAllByLabelText('Show details')[0]);
+    expect(getAllByText(brief)).toHaveLength(1);
+    fireEvent.click(getAllByText('Open')[0]);
+    const opened = useDockStore.getState().panels.map((p) => p.title);
+    expect(opened).toHaveLength(1);
+    expect(['emea-audit', 'planner-audit']).toContain(opened[0]);
+  });
+
+  it('keeps the title for an agent without a name and for other kinds', () => {
+    expect(taskLabel(row({ kind: 'agent', title: 'Probe the org', meta: {} }))).toBe('Probe the org');
+    expect(taskLabel(row({ kind: 'agent', title: 'Probe the org', meta: { agent_name: 'probe' } }))).toBe('probe');
+    expect(taskLabel(row({ kind: 'shell', title: 'npm run build', meta: { agent_name: 'x' } }))).toBe('npm run build');
   });
 });

@@ -98,7 +98,7 @@ export const useBackgroundTaskStore = create<BackgroundTaskState>((set, get) => 
         pid: existing?.pid ?? null,
         output_path: existing?.output_path ?? null,
         result_text: ev.result_tail ?? existing?.result_text ?? null,
-        meta: existing?.meta,
+        meta: ev.agent_name ? { ...existing?.meta, agent_name: ev.agent_name } : existing?.meta,
         created_at: started ? ev.timestamp : (existing?.created_at ?? ev.timestamp),
         updated_at: ev.timestamp,
         finished_at: started ? null : ev.timestamp,
