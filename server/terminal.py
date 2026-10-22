@@ -219,7 +219,12 @@ def _child_acquire_ctty():
 
 
 def _create_pty_session(
-    cwd: str, cols: int = 80, rows: int = 24, hidden: bool = False, write_mode: str = "open"
+    cwd: str,
+    cols: int = 80,
+    rows: int = 24,
+    hidden: bool = False,
+    write_mode: str = "open",
+    scratch_dir: str | None = None,
 ) -> _PtySession:
     """Spawn a new PTY session running the user's shell.
 
@@ -269,11 +274,17 @@ def _create_pty_session(
     # so commands typed into it inherit the same filesystem deny-list as the
     # workspace shell. Visible sessions are the user's own terminal and stay
     # unsandboxed. No-op off macOS (validation is still applied upstream).
+    # A confined one may also write the chat session's own scratch folder,
+    # where its npm, pip and uv caches live.
     profile_path = None
     if hidden:
-        from server.sandbox import build_pty_sandbox_wrap
+        from server.sandbox import build_pty_sandbox_wrap, scratch_cache_env
 
-        shell_cmd, profile_path = build_pty_sandbox_wrap(shell_cmd, cwd, write_mode=write_mode)
+        shell_cmd, profile_path = build_pty_sandbox_wrap(
+            shell_cmd, cwd, write_mode=write_mode, scratch_dir=scratch_dir
+        )
+        if write_mode == "workspace" and scratch_dir:
+            env.update(scratch_cache_env(scratch_dir))
 
     process = subprocess.Popen(
         shell_cmd,
@@ -620,11 +631,15 @@ _interactive_lock = threading.Lock()
 
 
 def get_or_open_interactive(
-    chat_session_id: str, cwd: str, write_mode: str = "workspace"
+    chat_session_id: str,
+    cwd: str,
+    write_mode: str = "workspace",
+    scratch_dir: str | None = None,
 ) -> _PtySession:
     """The persistent interactive PTY for this chat session, opening one on
     first use. Writes are workspace-confined by default (same ladder as
-    terminal_run's sandbox mode)."""
+    terminal_run's sandbox mode), with the session's own ``scratch_dir``
+    writable."""
     with _interactive_lock:
         pty_id = _interactive_ptys.get(chat_session_id)
         if pty_id:
@@ -632,7 +647,9 @@ def get_or_open_interactive(
                 existing = _sessions.get(pty_id)
             if existing is not None and existing.alive:
                 return existing
-        session = _create_pty_session(cwd, hidden=True, write_mode=write_mode)
+        session = _create_pty_session(
+            cwd, hidden=True, write_mode=write_mode, scratch_dir=scratch_dir
+        )
         _interactive_ptys[chat_session_id] = session.id
         return session
 
@@ -670,18 +687,19 @@ async def run_in_sandbox(
     cwd: str | None = None,
     timeout: float = _DEFAULT_TIMEOUT_S,
     write_mode: str = "open",
+    scratch_dir: str | None = None,
 ) -> dict:
     """Spawn a fresh hidden PTY session, run `command`, kill the session.
     Use for the default (sandbox) mode of terminal_run. The session is
     invisible to the user and removed from `_sessions` on completion.
-    ``write_mode="workspace"`` confines writes to cwd + temp (agent-stamped
-    commands — see server/sandbox.py)."""
+    ``write_mode="workspace"`` confines writes to cwd + the chat session's own
+    ``scratch_dir`` + temp (see server/sandbox.py)."""
     if not cwd:
         cwd = os.path.expanduser("~")
     if not os.path.isdir(cwd):
         return {"output": f"cwd not found: {cwd}", "exit_code": -1, "timed_out": False}
 
-    session = _create_pty_session(cwd, hidden=True, write_mode=write_mode)
+    session = _create_pty_session(cwd, hidden=True, write_mode=write_mode, scratch_dir=scratch_dir)
     try:
         # Give the shell a moment to print its banner / first prompt so
         # our command isn't lost in the warmup. Drain by recording the

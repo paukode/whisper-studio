@@ -81,7 +81,7 @@ def test_terminal_run_defaults_to_workspace_write(monkeypatch):
 
     seen = {}
 
-    async def fake_run_in_sandbox(command, cwd=None, timeout=None, write_mode="open"):
+    async def fake_run_in_sandbox(command, cwd=None, timeout=None, write_mode="open", **_):
         seen["write_mode"] = write_mode
         return {"exit_code": 0, "output": "ok", "timed_out": False}
 
@@ -242,7 +242,15 @@ def test_a_confined_ws_run_command_is_confined_to_the_workspace_not_the_cwd(monk
     seen = {}
 
     def fake_handoff(
-        command, exec_command, *, cwd, session_id="", timeout=0, write_mode="open", write_root=None
+        command,
+        exec_command,
+        *,
+        cwd,
+        session_id="",
+        timeout=0,
+        write_mode="open",
+        write_root=None,
+        scratch_dir=None,
     ):
         seen.update(cwd=cwd, write_mode=write_mode, write_root=write_root)
         return handoff.HandoffResult(background=False, output="", returncode=0)

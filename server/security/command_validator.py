@@ -27,9 +27,10 @@ _SPLIT_PATTERN = re.compile(
 
 
 def split_subcommands(command: str) -> list[str]:
-    """Split a compound command into subcommands on ;, &&, ||.
+    """Split a compound command into subcommands on ;, &&, || and the pipes
+    and background & between them (every unquoted ;, & and |).
 
-    Respects single and double quotes — does not split inside them.
+    Respects single and double quotes: does not split inside them.
     Returns a list of stripped, non-empty subcommand strings.
     """
     parts = _SPLIT_PATTERN.findall(command)
@@ -71,7 +72,12 @@ _DANGEROUS_PATTERNS = [
     re.compile(r";\s*rm\s"),  # rm after semicolon
     re.compile(r">\s*/etc/"),  # redirect to system dirs
     re.compile(r"/proc/.*/environ"),  # proc environ access
-    re.compile(r"\brm\s+-rf\s+/"),  # rm -rf with absolute path
+    # rm -rf of the filesystem root itself. Any other absolute path is the rm
+    # floor's to judge (server.security.delete_scope): inside the workspace or
+    # the app's folders the mode decides, anywhere else a person approves. A
+    # block on every absolute path refused the session's own scratch cleanup
+    # and pushed the model to spell the path as $VAR, which always asks.
+    re.compile(r"\brm\s+-rf\s+/+\*?(?:\s|$)"),
     re.compile(r"mkfs\b"),  # format filesystem
     re.compile(r"dd\s+.*of=/dev/"),  # dd to device
 ]
@@ -328,16 +334,16 @@ def _delete_sites(command: str, depth: int) -> list[DeleteSite]:
         return [_UNKNOWN_SITE]
     command = strip_heredoc_bodies(command)
     sites: list[DeleteSite] = []
-    # split_subcommands only splits on ;/&&/||, not bare newlines — a
-    # multi-line script has no separator between lines at all, so without
-    # this a line merely following an rm-free first line would never be
-    # inspected on its own.
+    # split_subcommands splits on every UNQUOTED ;, & and | (pipeline stages
+    # included), not on bare newlines: a multi-line script has no separator
+    # between lines at all, so without the line split a line merely following
+    # an rm-free first line would never be inspected on its own. A | inside
+    # quotes is data, never a pipe: splitting there again (a regex like
+    # 'a|b') left each piece with an unclosed quote, and a parse failure
+    # reads as a delete of unknown reach.
     for line in command.split("\n"):
-        for sub in split_subcommands(line):
-            for segment in sub.split("|"):
-                segment = segment.strip()
-                if segment:
-                    sites.extend(_segment_delete_sites(segment, depth))
+        for segment in split_subcommands(line):
+            sites.extend(_segment_delete_sites(segment, depth))
     # A find that deletes in a shape the token walk did not read (fail
     # toward asking): the delete is real, its reach unknown.
     if _FIND_DELETE_RE.search(command) and not any(s.verb == "find" for s in sites):

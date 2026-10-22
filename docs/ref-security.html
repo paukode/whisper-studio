@@ -365,8 +365,9 @@
         <tr>
           <td><code>workspace</code> (workspace-write)</td>
           <td>Deny all writes, then allow back the command's own working tree, the git directories a
-            linked worktree needs, system temp, and any explicitly allowed credential path such as the
-            AWS CLI's own cache. The rule order is load-bearing: the secret denials come last, so a
+            linked worktree needs, the calling session's own scratch folder (which also holds the npm,
+            pip, and uv caches of the run), system temp, and any explicitly allowed credential path
+            such as the AWS CLI's own cache. The rule order is load-bearing: the secret denials come last, so a
             workspace that contains your home directory can never re-expose
             <code class="path">~/.ssh</code> through its own write allow.</td>
           <td>The default for <code>run_python</code> and <code>terminal_run</code>, and what every

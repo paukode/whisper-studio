@@ -39,7 +39,7 @@ async def _do_write(payload: dict) -> ApprovalOutcome:
     path = payload.get("path", "")
     content = workspace._normalize_lf(payload.get("content", ""))
     full = os.path.join(ws, path)
-    if not workspace._ws_path_allowed(full, ws):
+    if not workspace._ws_path_allowed(full, ws, payload.get("session_id")):
         return ApprovalOutcome(ok=False, error="Invalid path")
     # The file before the write: the undo backup, and the old side of the
     # diff stats and the stored edit below. Empty for a created file; None
@@ -203,7 +203,8 @@ async def _do_delete(payload: dict) -> ApprovalOutcome:
         return ApprovalOutcome(ok=False, error="No workspace connected")
     path = payload.get("path", "")
     full = os.path.join(ws, path)
-    if not workspace._ws_path_allowed(full, ws) or not os.path.exists(full):
+    allowed = workspace._ws_path_allowed(full, ws, payload.get("session_id"))
+    if not allowed or not os.path.exists(full):
         return ApprovalOutcome(ok=False, error="Path not found")
     try:
         # A large tree (node_modules) takes seconds to remove.
@@ -315,7 +316,7 @@ async def _do_create_document(payload: dict) -> ApprovalOutcome:
         return ApprovalOutcome(ok=False, error="No workspace connected")
     path = payload.get("path", "")
     full = os.path.join(ws, path)
-    if not workspace._ws_path_allowed(full, ws):
+    if not workspace._ws_path_allowed(full, ws, payload.get("session_id")):
         return ApprovalOutcome(ok=False, error="Invalid path")
     try:
         data = base64.b64decode(payload.get("content_b64", ""))

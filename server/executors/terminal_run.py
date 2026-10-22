@@ -328,7 +328,15 @@ async def do_terminal_run(payload: dict) -> tuple[bool, str]:
             )
             write_mode = "open"
 
-        result = await run_in_sandbox(command, cwd=cwd, timeout=timeout, write_mode=write_mode)
+        from server.workspace.paths import own_scratch_dir
+
+        result = await run_in_sandbox(
+            command,
+            cwd=cwd,
+            timeout=timeout,
+            write_mode=write_mode,
+            scratch_dir=own_scratch_dir(payload.get("session_id")),
+        )
     else:
         session = latest_visible_session()
         if session is None:
@@ -430,7 +438,11 @@ async def do_terminal_send(payload: dict) -> tuple[bool, str]:
     if text and not text.endswith(("\n", "\x04", "\x03")):
         text += "\n"
 
-    session = get_or_open_interactive(chat_session_id, cwd)
+    from server.workspace.paths import own_scratch_dir
+
+    session = get_or_open_interactive(
+        chat_session_id, cwd, scratch_dir=own_scratch_dir(chat_session_id)
+    )
     result = await send_and_wait(session, text, timeout=timeout)
 
     reason = result["wait_reason"]
@@ -482,7 +494,7 @@ def _exec_terminal_close(tool_input, transcript, current_attachments):
 def _exec_terminal_run(tool_input, transcript, current_attachments):
     """Emit an approval request. Actual command runs only after approval
     (or session-allow via 'Yes, all cli')."""
-    tool_input.pop("__session_id__", "")
+    session_id = tool_input.pop("__session_id__", "")
     command = (tool_input.get("command") or "").strip()
     if not command:
         return "Error: command is required."
@@ -499,6 +511,7 @@ def _exec_terminal_run(tool_input, transcript, current_attachments):
             "cwd": tool_input.get("cwd") or "",
             "sandbox_permissions": (tool_input.get("sandbox_permissions") or "").strip(),
             "justification": (tool_input.get("justification") or "").strip(),
+            "session_id": session_id,
         }
     )
     return f"[WS_APPROVAL]{payload}"

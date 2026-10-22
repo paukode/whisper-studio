@@ -58,13 +58,14 @@ def start_shell_task(
     exec_command: str | None = None,
     write_mode: str = "open",
     write_root: str | None = None,
+    scratch_dir: str | None = None,
 ) -> dict:
     """Start ``command`` in the background; returns {task_id, output_path, status}.
 
     ``exec_command`` is the possibly-wrapped form actually executed (cwd
     tracking, snapshot wrapping); ``command`` is what the user asked for and
-    becomes the task title. ``write_mode`` and ``write_root`` are the
-    sandbox's (see ``popen_sandboxed``).
+    becomes the task title. ``write_mode``, ``write_root`` and
+    ``scratch_dir`` are the sandbox's (see ``popen_sandboxed``).
     """
     import uuid
 
@@ -95,6 +96,7 @@ def start_shell_task(
             stdout_file=out_file,
             write_mode=write_mode,
             write_root=write_root,
+            scratch_dir=scratch_dir,
         )
     except Exception as e:
         out_file.close()
