@@ -33,7 +33,7 @@ describe('splitChunk', () => {
     ]);
     // The segment that keeps the original id is the first part.
     expect(segs[0].id).toBe('seg');
-    expect(segs[1].chunks).toEqual([{ id: 3, start: 0 }]);
+    expect(segs[1].chunks).toMatchObject([{ id: 3, start: 0 }]);
   });
 
   it('keeps one segment when every turn has the same speaker', () => {

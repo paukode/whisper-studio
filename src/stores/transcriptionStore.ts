@@ -118,21 +118,24 @@ export const createTranscriptionStore = () => createStore<TranscriptionState>()(
   // user edit — so it must not set `edited`. It records `freshIndex` (where the
   // appended tail starts) and `receivedAt` so the UI can fade in only the new
   // words. The original `timestamp` is preserved (segments are stamped at their
-  // start, not on every append).
+  // start, not on every append); the chunk keeps its own arrival time for a
+  // later split.
   appendSegmentText: (segmentId: string, extraText: string, chunkId?: number, translating?: boolean) => {
     set((state) => ({
       segments: state.segments.map((seg) => {
         if (seg.id !== segmentId) return seg;
         const freshIndex = seg.text.length + 1; // +1 skips the joining space
+        const now = Date.now();
         return {
           ...seg,
           text: `${seg.text} ${extraText}`,
-          receivedAt: Date.now(),
+          receivedAt: now,
           freshIndex,
           // Track where this chunk's text starts so a later speaker_update
-          // can split the segment at exactly this boundary.
+          // can split the segment at exactly this boundary, and when it
+          // arrived so the part split off there shows its own time.
           chunks: chunkId !== undefined
-            ? [...(seg.chunks ?? []), { id: chunkId, start: freshIndex }]
+            ? [...(seg.chunks ?? []), { id: chunkId, start: freshIndex, at: now }]
             : seg.chunks,
           pendingTranslations: translating && chunkId !== undefined
             ? [...(seg.pendingTranslations ?? []), chunkId]
@@ -199,7 +202,7 @@ export const createTranscriptionStore = () => createStore<TranscriptionState>()(
         if (labels.every((l) => l === seg.speaker)) return [seg];
 
         // Group consecutive chunks that share a (possibly corrected) label.
-        const groups: { speaker: string; chunks: { id: number; start: number }[] }[] = [];
+        const groups: { speaker: string; chunks: NonNullable<TranscriptSegment['chunks']> }[] = [];
         seg.chunks.forEach((c, i) => {
           const last = groups[groups.length - 1];
           if (last && last.speaker === labels[i]) last.chunks.push(c);
@@ -212,6 +215,11 @@ export const createTranscriptionStore = () => createStore<TranscriptionState>()(
         }
         // Mixed labels: split at the recorded chunk boundaries. The first
         // part keeps the segment id so renames/edits anchored to it survive.
+        // Every later part is stamped with the arrival of its own first
+        // chunk. Sentences arrive under a provisional label and merge into
+        // the last segment until their real label splits them off, so a
+        // part that kept the segment's time left a whole recording showing
+        // the moment of its first sentence (field report 2026-10-22).
         return groups.map((g, gi) => {
           const start = g.chunks[0].start;
           const end = gi + 1 < groups.length ? groups[gi + 1].chunks[0].start : seg.text.length;
@@ -226,9 +234,10 @@ export const createTranscriptionStore = () => createStore<TranscriptionState>()(
           return {
             ...seg,
             id: gi === 0 ? seg.id : crypto.randomUUID(),
+            timestamp: gi === 0 ? seg.timestamp : (g.chunks[0].at ?? seg.timestamp),
             speaker: g.speaker,
             text: seg.text.slice(start, end).trim(),
-            chunks: g.chunks.map((c) => ({ id: c.id, start: c.start - base })),
+            chunks: g.chunks.map((c) => ({ ...c, start: c.start - base })),
             translations: translations?.length ? translations : undefined,
             pendingTranslations: pending?.length ? pending : undefined,
             // Reveal animation fields are stale after a split — drop them.
@@ -254,8 +263,10 @@ export const createTranscriptionStore = () => createStore<TranscriptionState>()(
         const replacement = turns.map((p) => p.text).join(' ');
         const delta = replacement.length - (end - start);
         let offset = start;
+        // Every turn arrived with the sentence it was cut from.
+        const arrived = seg.chunks[at].at;
         const turnChunks = turns.map((p) => {
-          const chunk = { id: p.chunk_id, start: offset };
+          const chunk = { id: p.chunk_id, start: offset, at: arrived };
           offset += p.text.length + 1;
           return chunk;
         });
