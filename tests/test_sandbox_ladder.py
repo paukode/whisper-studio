@@ -95,7 +95,7 @@ def test_invalid_permissions_value_is_refused():
 def test_confined_agent_run_fails_closed_without_backend(monkeypatch):
     monkeypatch.setattr(sandbox, "pty_sandbox_backend", lambda: "none")
 
-    async def fake_run_in_sandbox(command, cwd=None, timeout=None, write_mode="open"):
+    async def fake_run_in_sandbox(command, cwd=None, timeout=None, write_mode="open", **_):
         raise AssertionError("must not run when failing closed")
 
     monkeypatch.setattr("server.terminal.run_in_sandbox", fake_run_in_sandbox)
@@ -108,7 +108,7 @@ def test_confined_interactive_run_discloses_without_backend(monkeypatch):
     monkeypatch.setattr(sandbox, "pty_sandbox_backend", lambda: "none")
     seen = {}
 
-    async def fake_run_in_sandbox(command, cwd=None, timeout=None, write_mode="open"):
+    async def fake_run_in_sandbox(command, cwd=None, timeout=None, write_mode="open", **_):
         seen["write_mode"] = write_mode
         return {"exit_code": 0, "output": "ok", "timed_out": False}
 

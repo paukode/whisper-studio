@@ -87,7 +87,8 @@ def _python_write_mode(payload: dict) -> tuple[str, str]:
 
     Returns (write_mode, error). Default is workspace confinement (the harness
     decides; the model doesn't have to be explicit): writes limited to the
-    workspace, temp, and ~/.aws. danger-full-access lifts that for ONE approved
+    workspace, the session's own scratch folder, temp, and ~/.aws.
+    danger-full-access lifts that for ONE approved
     call — it requires a justification, always forces a real approval prompt
     (see resolve_static_decision), and is refused from unattended agents."""
     perms = (payload.get("sandbox_permissions") or "workspace-write").strip()
@@ -129,8 +130,9 @@ def do_run_python(payload: dict) -> tuple[bool, str]:
     # run_sandboxed runs `/bin/sh -c <str>`, so the code goes to a temp file and
     # we invoke it by path. ~/.aws is allowed so boto3 can authenticate. The
     # cwd is the workspace when one is connected so workspace-write confinement
-    # covers the project tree the script most plausibly writes to.
-    from server.workspace import get_workspace_path
+    # covers the project tree the script most plausibly writes to; the
+    # session's own scratch folder is writable beside it.
+    from server.workspace import get_workspace_path, own_scratch_dir
 
     cwd = get_workspace_path() or "/tmp"
     if not os.path.isdir(cwd):
@@ -148,6 +150,7 @@ def do_run_python(payload: dict) -> tuple[bool, str]:
             timeout=RUN_PYTHON_TIMEOUT_S,
             allow_paths=_CLOUD_CRED_PATHS,
             write_mode=write_mode,
+            scratch_dir=own_scratch_dir(payload.get("session_id")),
         )
     except subprocess.TimeoutExpired:
         return False, f"execution timed out ({RUN_PYTHON_TIMEOUT_S}s limit)"
@@ -197,6 +200,7 @@ def exec_run_python(tool_input, transcript, current_attachments):
             "code": code,
             "sandbox_permissions": (tool_input.get("sandbox_permissions") or "").strip(),
             "justification": (tool_input.get("justification") or "").strip(),
+            "session_id": tool_input.get("__session_id__", ""),
         }
     )
     return f"[WS_APPROVAL]{payload}"

@@ -81,14 +81,18 @@ def _ensure_ext(path: str, fmt: str) -> str:
     return path if path.lower().endswith(f".{fmt}") else f"{path}.{fmt}"
 
 
-def _approval_result(resolved: tuple[str, str], relative_path: str, data: bytes, fmt: str) -> str:
+def _approval_result(
+    resolved: tuple[str, str], relative_path: str, data: bytes, fmt: str, tool_input: dict
+) -> str:
     """Package the FINISHED document bytes for approval — the executor never
     writes to the destination directly.
 
     `resolved` is _resolve_target's success tuple. For ("workspace", ...),
     packages a create_document action keyed by the workspace-relative path.
     For ("absolute", ...), stages the bytes in the app sandbox and packages
-    the shared save_to_path move action (see module docstring)."""
+    the shared save_to_path move action (see module docstring). The calling
+    session rides along, since a workspace-style path may be its own scratch
+    folder."""
     kind, target = resolved
     if kind == "absolute":
         target = _ensure_ext(target, fmt)
@@ -100,6 +104,7 @@ def _approval_result(resolved: tuple[str, str], relative_path: str, data: bytes,
             "content_b64": base64.b64encode(data).decode("ascii"),
             "format": fmt,
             "size": len(data),
+            "session_id": tool_input.get("__session_id__", ""),
         }
     )
     return f"[WS_APPROVAL]{payload}"
@@ -138,7 +143,7 @@ def _exec_create_docx(tool_input, transcript, current_attachments):
     except Exception as e:
         return f"Error building docx: {e}"
 
-    return _approval_result(resolved, path, buf.getvalue(), "docx")
+    return _approval_result(resolved, path, buf.getvalue(), "docx", tool_input)
 
 
 @register_executor("create_pptx", read_only=False, concurrent_safe=False)
@@ -179,7 +184,7 @@ def _exec_create_pptx(tool_input, transcript, current_attachments):
     except Exception as e:
         return f"Error building pptx: {e}"
 
-    return _approval_result(resolved, path, buf.getvalue(), "pptx")
+    return _approval_result(resolved, path, buf.getvalue(), "pptx", tool_input)
 
 
 @register_executor("create_xlsx", read_only=False, concurrent_safe=False)
@@ -217,7 +222,7 @@ def _exec_create_xlsx(tool_input, transcript, current_attachments):
     except Exception as e:
         return f"Error building xlsx: {e}"
 
-    return _approval_result(resolved, path, buf.getvalue(), "xlsx")
+    return _approval_result(resolved, path, buf.getvalue(), "xlsx", tool_input)
 
 
 @register_executor("inspect_document", read_only=True, concurrent_safe=True)
@@ -311,4 +316,4 @@ def _exec_create_pdf(tool_input, transcript, current_attachments):
     except Exception as e:
         return f"Error building pdf: {e}"
 
-    return _approval_result(resolved, path, buf.getvalue(), "pdf")
+    return _approval_result(resolved, path, buf.getvalue(), "pdf", tool_input)

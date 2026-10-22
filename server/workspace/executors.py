@@ -39,7 +39,8 @@ from .paths import (
     _is_system_path,
     _normalize_lf,
     _ws_path_allowed,
-    scratch_root,
+    in_other_scratch,
+    own_scratch_dir,
     stage_file_bytes,
 )
 from .read_only import _is_read_only_command
@@ -57,32 +58,47 @@ from .state import (
 log = logging.getLogger("whisper-studio")
 
 
-def outside_roots_error(path: str, ws: str) -> str:
+def outside_roots_error(path: str, ws: str, session_id: str) -> str:
     """The refusal for a ws_* file tool aimed at changing a file outside both
     places it may change.
 
     A plain tool result, never the folder picker: the workspace the user
     connected is not in question, only the path is, and the model can act on
-    this on its own (a path inside the workspace or the scratch folder, a
+    this on its own (a path inside the workspace or its own scratch folder, a
     save the user approves, or terminal_run's escalation) without pausing the
     turn. Reading is a different matter: ws_read_file and ws_list_directory
-    read anywhere (see resolve_read_path)."""
+    read anywhere but other sessions' scratch folders (see resolve_read_path)."""
+    if in_other_scratch(os.path.join(ws, path), session_id):
+        return other_scratch_error(path, session_id)
+    scratch = own_scratch_dir(session_id)
+    places = f"this session's scratch folder ({scratch})" if scratch else "a scratch folder"
     return (
-        f"Error: {path} is outside the connected workspace ({ws}) and outside the "
-        f"scratch folder ({scratch_root()}). The ws_* file tools change files only in "
-        "those two places (reading works anywhere). To write elsewhere, pass the "
-        "absolute path to ws_create_file or save_file, which asks the user to approve "
-        "the save, or use terminal_run with sandbox_permissions='danger-full-access'."
+        f"Error: {path} is outside the connected workspace ({ws}) and outside "
+        f"{places}. The ws_* file tools "
+        "change files only in those two places (reading works anywhere). To write "
+        "elsewhere, pass the absolute path to ws_create_file or save_file, which asks "
+        "the user to approve the save, or use terminal_run with "
+        "sandbox_permissions='danger-full-access'."
     )
 
 
-def resolve_read_path(path: str, ws: str | None) -> tuple[str | None, str | None]:
+def other_scratch_error(path: str, session_id: str) -> str:
+    """The refusal for a ws_* file tool aimed at another session's scratch
+    folder: a session works only in its own (the user's rule)."""
+    return (
+        f"Error: {path} is in another session's scratch folder. This session reads "
+        f"and changes files only in its own scratch folder ({own_scratch_dir(session_id)})."
+    )
+
+
+def resolve_read_path(path: str, ws: str | None, session_id: str) -> tuple[str | None, str | None]:
     """Where a ws_* read tool reads from: ``(full path, refusal)``.
 
     Reading never asks and is allowed anywhere on this machine (the user's
     rule), so an absolute path may point outside the connected workspace and
     the scratch folder, with or without a workspace connected; a relative
-    path needs the workspace to resolve against. The two exceptions are the
+    path needs the workspace to resolve against. The exceptions are other
+    sessions' scratch folders (a session works only in its own), the
     credential stores the OS sandbox denies to every command
     (server/security/sensitive_paths.py) and the kernel pseudo-filesystems,
     refused with a plain error."""
@@ -93,7 +109,9 @@ def resolve_read_path(path: str, ws: str | None) -> tuple[str | None, str | None
         full = os.path.join(ws, raw) if raw and raw != "." else ws
     else:
         return None, "No workspace connected."
-    if ws and _ws_path_allowed(full, ws):
+    if in_other_scratch(full, session_id):
+        return None, other_scratch_error(path, session_id)
+    if ws and _ws_path_allowed(full, ws, session_id):
         return full, None
     if _is_system_path(full):
         return None, f"Error: {path} is not a readable location."
@@ -259,7 +277,7 @@ def _exec_ws_read_file(tool_input, transcript, current_attachments):
     ws = get_workspace_path()
     session_id = tool_input.pop("__session_id__", "")
     path = tool_input.get("path", "")
-    full, refusal = resolve_read_path(path, ws)
+    full, refusal = resolve_read_path(path, ws, session_id)
     if refusal:
         return refusal
     if not os.path.isfile(full):
@@ -330,8 +348,9 @@ def _exec_ws_read_file(tool_input, transcript, current_attachments):
 @register_executor("ws_list_directory", read_only=True, concurrent_safe=True)
 def _exec_ws_list_dir(tool_input, transcript, current_attachments):
     ws = get_workspace_path()
+    session_id = tool_input.pop("__session_id__", "")
     path = tool_input.get("path", "").strip() or "."
-    full, refusal = resolve_read_path(path, ws)
+    full, refusal = resolve_read_path(path, ws, session_id)
     if refusal:
         return refusal
     if not os.path.isdir(full):
@@ -367,8 +386,8 @@ def _exec_ws_write_file(tool_input, transcript, current_attachments):
     path = tool_input.get("path", "")
     content = _normalize_lf(tool_input.get("content", ""))
     full = os.path.join(ws, path)
-    if not _ws_path_allowed(full, ws):
-        return outside_roots_error(path, ws)
+    if not _ws_path_allowed(full, ws, session_id):
+        return outside_roots_error(path, ws, session_id)
     if not os.path.isfile(full):
         return f"File not found: {path}. Use ws_create_file for new files."
     # Write gate: must have a full prior read, file must not have changed
@@ -381,7 +400,13 @@ def _exec_ws_write_file(tool_input, transcript, current_attachments):
     except Exception as e:
         return f"Error reading original: {e}"
     payload = json.dumps(
-        {"action": "write", "path": path, "content": content, "original": original}
+        {
+            "action": "write",
+            "path": path,
+            "content": content,
+            "original": original,
+            "session_id": session_id,
+        }
     )
     return f"[WS_APPROVAL]{payload}"
 
@@ -428,8 +453,8 @@ def _exec_ws_edit_file(tool_input, transcript, current_attachments):
         return "Error: old_string and new_string are identical."
 
     full = os.path.join(ws, path)
-    if not _ws_path_allowed(full, ws):
-        return outside_roots_error(path, ws)
+    if not _ws_path_allowed(full, ws, session_id):
+        return outside_roots_error(path, ws, session_id)
     if not os.path.isfile(full):
         return f"File not found: {path}"
 
@@ -486,6 +511,7 @@ def _exec_ws_edit_file(tool_input, transcript, current_attachments):
         "path": path,
         "content": new_content,
         "original": original,
+        "session_id": session_id,
     }
     # Flag a fuzzy match so the approval banner can tell the user the edit
     # only matched after quote normalization — the model's old_string did not
@@ -580,7 +606,14 @@ def _exec_ws_create_file(tool_input, transcript, current_attachments):
         return f"Directory already exists: {path}. You don't need to create directories — they are created automatically when you create files inside them. Proceed to create the files directly."
     if os.path.isfile(full):
         return f"File already exists: {path}. Use ws_write_file to modify it."
-    payload = json.dumps({"action": "create", "path": path, "content": content})
+    payload = json.dumps(
+        {
+            "action": "create",
+            "path": path,
+            "content": content,
+            "session_id": tool_input.get("__session_id__", ""),
+        }
+    )
     return f"[WS_APPROVAL]{payload}"
 
 
@@ -632,10 +665,11 @@ def _exec_ws_delete_file(tool_input, transcript, current_attachments):
     ws = get_workspace_path()
     if not ws:
         return _workspace_prompt_payload("ws_delete_file", tool_input)
+    session_id = tool_input.pop("__session_id__", "")
     path = tool_input.get("path", "")
     full = os.path.join(ws, path)
-    if not _ws_path_allowed(full, ws):
-        return outside_roots_error(path, ws)
+    if not _ws_path_allowed(full, ws, session_id):
+        return outside_roots_error(path, ws, session_id)
     if not os.path.exists(full):
         return f"File not found: {path}"
     try:
@@ -643,7 +677,9 @@ def _exec_ws_delete_file(tool_input, transcript, current_attachments):
             original = f.read()
     except Exception:
         original = "(binary or unreadable)"
-    payload = json.dumps({"action": "delete", "path": path, "original": original})
+    payload = json.dumps(
+        {"action": "delete", "path": path, "original": original, "session_id": session_id}
+    )
     return f"[WS_APPROVAL]{payload}"
 
 
@@ -724,7 +760,8 @@ def run_workspace_command(
     classifier or an agent let through, "open" for one a person approved on
     its card (server.approval.executors._do_command). A confined run is
     confined to the workspace itself, not to the tracked cwd, so a session
-    that cd'd out of the workspace still cannot write there.
+    that cd'd out of the workspace still cannot write there; the session's own
+    scratch folder is writable beside it, and holds its package caches.
     """
     from server.cwd_tracker import (
         extract_cwd_from_output,
@@ -739,12 +776,19 @@ def run_workspace_command(
     # the workspace is disconnected or switched while it runs.
     cwd_generation = generation()
     effective_cwd = get_cwd(session_id, ws) if session_id else ws
+    scratch_dir = own_scratch_dir(session_id)
     redirected = _apply_stdin_redirect(command) if _needs_stdin_redirect(command) else command
     exec_command = wrap_command_for_cwd(redirected)
 
     if run_in_background:
         text = _start_background_command(
-            command, exec_command, effective_cwd, session_id, write_mode, write_root=ws
+            command,
+            exec_command,
+            effective_cwd,
+            session_id,
+            write_mode,
+            write_root=ws,
+            scratch_dir=scratch_dir,
         )
         return CommandRun(text=text, background=True)
 
@@ -756,6 +800,7 @@ def run_workspace_command(
         timeout=_AUTO_BACKGROUND_SECONDS,
         write_mode=write_mode,
         write_root=ws,
+        scratch_dir=scratch_dir,
     )
     if result.background:
         text = _background_started_message(command, result.task_id, result.output_path)
@@ -807,12 +852,19 @@ def _start_background_command(
     write_mode: str = "open",
     *,
     write_root: str | None = None,
+    scratch_dir: str | None = None,
 ) -> str:
     """Start a command in the background and return a status message."""
     from server.tasks.shell import start_shell_task
 
     task_info = start_shell_task(
-        command, cwd=cwd, session_id=session_id, exec_command=exec_command, write_mode=write_mode
+        command,
+        cwd=cwd,
+        session_id=session_id,
+        exec_command=exec_command,
+        write_mode=write_mode,
+        write_root=write_root,
+        scratch_dir=scratch_dir,
     )
     return _background_started_message(command, task_info["task_id"], task_info["output_path"])
 

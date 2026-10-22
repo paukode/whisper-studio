@@ -16,7 +16,10 @@ Two write modes:
     the control, and flows like saving a document to ~/Documents keep working.
   - "workspace": Codex-style default-deny — reads stay open (minus secrets)
     but writes are confined to the command's working tree (plus the git dirs
-    a linked worktree needs), system temp, and explicit allow_paths. Applied
+    a linked worktree needs), the calling session's own scratch folder,
+    system temp, and explicit allow_paths. Package caches (npm, pip, uv) are
+    pointed into that scratch folder, since their usual home-folder places
+    are outside the confinement. Applied
     to agent-stamped (unattended) commands, where no human reviews each
     command: the OS, not the prompt, bounds the blast radius. On Linux the
     bwrap wrapper has always mounted the root read-only with only cwd and
@@ -102,12 +105,17 @@ _WORKSPACE_WRITE_SYSTEM_ROOTS = [
 ]
 
 
-def _workspace_write_roots(cwd: str, allow_paths: list[str] | None) -> list[str]:
+def _workspace_write_roots(
+    cwd: str, allow_paths: list[str] | None, scratch_dir: str | None = None
+) -> list[str]:
     """The write-allowed subpaths for ``write_mode="workspace"``: the command's
-    own working tree (plus the git dirs a linked worktree needs), system temp,
-    and any explicitly allowed credential paths (the aws CLI writes its own
-    ~/.aws/cli/cache)."""
+    own working tree (plus the git dirs a linked worktree needs), the calling
+    session's own scratch folder (where the prompt sends throwaway files,
+    virtualenvs and package caches), system temp, and any explicitly allowed
+    credential paths (the aws CLI writes its own ~/.aws/cli/cache)."""
     roots = [os.path.realpath(cwd), *_git_write_roots(cwd)]
+    if scratch_dir:
+        roots.append(os.path.realpath(scratch_dir))
     roots.extend(_WORKSPACE_WRITE_SYSTEM_ROOTS)
     for p in allow_paths or []:
         roots.append(os.path.realpath(os.path.expanduser(p)))
@@ -115,13 +123,38 @@ def _workspace_write_roots(cwd: str, allow_paths: list[str] | None) -> list[str]
     return [r for r in roots if not (r in seen or seen.add(r))]
 
 
+def scratch_cache_env(scratch_dir: str) -> dict[str, str]:
+    """Environment that sends npm, pip and uv to package caches inside the
+    session's scratch folder. Their default caches (~/.npm, ~/Library/Caches)
+    are outside a confined run's write roots, so without this an install
+    fails on its own cache, and the model asks for full filesystem access."""
+    cache = os.path.join(scratch_dir, "cache")
+    return {
+        "npm_config_cache": os.path.join(cache, "npm"),
+        "PIP_CACHE_DIR": os.path.join(cache, "pip"),
+        "UV_CACHE_DIR": os.path.join(cache, "uv"),
+    }
+
+
+def _scratch_env(write_mode: str, scratch_dir: str | None) -> dict[str, str]:
+    """The package-cache environment for a confined run, else nothing: an open
+    run can write the user's own caches, and a read-only one writes nowhere."""
+    if write_mode != "workspace" or not scratch_dir:
+        return {}
+    return scratch_cache_env(scratch_dir)
+
+
 def _generate_macos_profile(
-    workspace: str, allow_paths: list[str] | None = None, write_mode: str = "open"
+    workspace: str,
+    allow_paths: list[str] | None = None,
+    write_mode: str = "open",
+    scratch_dir: str | None = None,
 ) -> str:
     """Generate a macOS sandbox-exec profile that denies sensitive paths.
 
     ``write_mode="workspace"`` additionally denies ALL writes and then allows
-    them back only under the roots from ``_workspace_write_roots``. Rule ORDER
+    them back only under the roots from ``_workspace_write_roots`` (the
+    session's ``scratch_dir`` among them). Rule ORDER
     is load-bearing (a later SBPL rule overrides an earlier match): the global
     write deny comes first, the writable roots after it, and the secret deny
     rules LAST — so a workspace that contains (or is) the home directory can
@@ -150,7 +183,7 @@ def _generate_macos_profile(
 
     if write_mode == "workspace":
         write_allows = []
-        for root in _workspace_write_roots(workspace, allow_paths):
+        for root in _workspace_write_roots(workspace, allow_paths, scratch_dir):
             escaped = root.replace('"', '\\"')
             write_allows.append(f'(allow file-write* (subpath "{escaped}"))')
         write_allow_block = "\n".join(write_allows)
@@ -351,6 +384,7 @@ def run_sandboxed(
     input_data: str | None = None,
     env_extra: dict | None = None,
     write_mode: str = "open",
+    scratch_dir: str | None = None,
 ) -> subprocess.CompletedProcess:
     """Run a command with OS-level sandboxing if available.
 
@@ -364,9 +398,12 @@ def run_sandboxed(
     allow_paths on macOS (see the module docstring); the bwrap path has always
     behaved that way regardless of mode, and the no-sandbox fallback cannot
     enforce it (command validators remain the only layer there).
+    ``scratch_dir`` is the calling session's own scratch folder: writable under
+    "workspace", and home to the run's package caches (scratch_cache_env).
 
     Falls back to plain subprocess.run if no sandbox is available.
     """
+    env_extra = {**_scratch_env(write_mode, scratch_dir), **(env_extra or {})}
     if _is_sandbox_exec_available():
         return _run_macos_sandboxed(
             command,
@@ -378,6 +415,7 @@ def run_sandboxed(
             input_data=input_data,
             env_extra=env_extra,
             write_mode=write_mode,
+            scratch_dir=scratch_dir,
         )
     if _is_bwrap_available():
         return _run_bwrap_sandboxed(
@@ -390,6 +428,7 @@ def run_sandboxed(
             input_data=input_data,
             env_extra=env_extra,
             write_mode=write_mode,
+            scratch_dir=scratch_dir,
         )
     # Fallback: no OS-level sandbox
     from server.process_utils import kill_process_group, new_process_group
@@ -424,9 +463,12 @@ def _run_macos_sandboxed(
     input_data: str | None = None,
     env_extra: dict | None = None,
     write_mode: str = "open",
+    scratch_dir: str | None = None,
 ) -> subprocess.CompletedProcess:
     """Run command under macOS sandbox-exec."""
-    profile = _generate_macos_profile(cwd, allow_paths, write_mode=write_mode)
+    profile = _generate_macos_profile(
+        cwd, allow_paths, write_mode=write_mode, scratch_dir=scratch_dir
+    )
 
     # Write profile to temp file (sandbox-exec needs a file path)
     fd, profile_path = tempfile.mkstemp(suffix=".sb", prefix="whisper_sandbox_")
@@ -478,6 +520,7 @@ def _run_bwrap_sandboxed(
     input_data: str | None = None,
     env_extra: dict | None = None,
     write_mode: str = "workspace",
+    scratch_dir: str | None = None,
 ) -> subprocess.CompletedProcess:
     """Run command under bubblewrap (Linux).
 
@@ -492,7 +535,7 @@ def _run_bwrap_sandboxed(
     _bwrap_network_restriction_args's docstring for exactly what that does
     and does not cover.
     """
-    bwrap_args = _bwrap_argv(command, cwd, allow_paths, write_mode)
+    bwrap_args = _bwrap_argv(command, cwd, allow_paths, write_mode, scratch_dir=scratch_dir)
 
     from server.process_utils import kill_process_group, new_process_group
 
@@ -520,11 +563,13 @@ def _bwrap_argv(
     allow_paths: list[str] | None,
     write_mode: str,
     write_root: str | None = None,
+    scratch_dir: str | None = None,
 ) -> list[str]:
     """The bwrap argv that runs ``command`` in ``cwd``. Only "readonly" changes
     the filesystem shape: no rw workspace bind, and /tmp a throwaway tmpfs.
     ``write_root`` is the tree bound read-write (the workspace a confined
-    command may write in); it defaults to ``cwd``."""
+    command may write in); it defaults to ``cwd``. ``scratch_dir``, the
+    session's own scratch folder, is bound read-write beside it."""
     if write_mode == "readonly":
         fs_args = [
             "--ro-bind",
@@ -545,6 +590,8 @@ def _bwrap_argv(
             "/tmp",
             "/tmp",  # read-write tmp
         ]
+        if scratch_dir:
+            fs_args += ["--bind", scratch_dir, scratch_dir]  # the session's scratch
     argv = [
         "bwrap",
         *fs_args,
@@ -569,6 +616,7 @@ def popen_sandboxed(
     stdout_file,
     write_mode: str = "open",
     write_root: str | None = None,
+    scratch_dir: str | None = None,
 ) -> tuple[subprocess.Popen, str | None]:
     """Start a sandbox-wrapped process streaming combined stdout/stderr to a file.
 
@@ -596,21 +644,26 @@ def popen_sandboxed(
     ``write_root`` is the tree a "workspace" run may write in; it defaults to
     ``cwd``. A ws_run_command passes the connected workspace, so a session
     that cd'd out of it (the cwd tracker follows a ``cd``) is still confined
-    to the workspace, not to wherever it went.
+    to the workspace, not to wherever it went. ``scratch_dir`` is the
+    session's own scratch folder, as in ``run_sandboxed``.
     The output file is opened here, outside the sandbox, so output still flows.
     """
     from server.process_utils import new_process_group
 
     profile_path: str | None = None
     if _is_sandbox_exec_available():
-        profile = _generate_macos_profile(write_root or cwd, write_mode=write_mode)
+        profile = _generate_macos_profile(
+            write_root or cwd, write_mode=write_mode, scratch_dir=scratch_dir
+        )
         fd, profile_path = tempfile.mkstemp(suffix=".sb", prefix="whisper_bg_sandbox_")
         with os.fdopen(fd, "w") as f:
             f.write(profile)
         argv: list | str = ["sandbox-exec", "-f", profile_path, "/bin/sh", "-c", command]
         shell = False
     elif _is_bwrap_available():
-        argv = _bwrap_argv(command, cwd, None, write_mode, write_root=write_root)
+        argv = _bwrap_argv(
+            command, cwd, None, write_mode, write_root=write_root, scratch_dir=scratch_dir
+        )
         shell = False
     else:
         argv = command
@@ -624,7 +677,7 @@ def popen_sandboxed(
             stdout=stdout_file,
             stderr=subprocess.STDOUT,
             preexec_fn=new_process_group,
-            env=_merged_env(None),
+            env=_merged_env(_scratch_env(write_mode, scratch_dir)),
         )
     except Exception:
         if profile_path:
@@ -637,12 +690,14 @@ def popen_sandboxed(
 
 
 def build_pty_sandbox_wrap(
-    shell_cmd: list[str], cwd: str, write_mode: str = "open"
+    shell_cmd: list[str], cwd: str, write_mode: str = "open", scratch_dir: str | None = None
 ) -> tuple[list[str], str | None]:
     """Wrap an interactive shell command in macOS sandbox-exec so a long-lived
     PTY shell (terminal_run's hidden sandbox session) runs under the same
     filesystem deny-list as run_sandboxed — and, for agent-stamped runs
-    (``write_mode="workspace"``), the same default-deny write confinement.
+    (``write_mode="workspace"``), the same default-deny write confinement,
+    with the session's own ``scratch_dir`` writable. The caller sets the
+    package-cache environment (scratch_cache_env) on the shell it starts.
 
     Returns ``(argv, profile_path)``. The caller MUST ``os.unlink(profile_path)``
     once the process exits (the profile file must outlive the shell, unlike the
@@ -654,7 +709,7 @@ def build_pty_sandbox_wrap(
     """
     if not _is_sandbox_exec_available():
         return shell_cmd, None
-    profile = _generate_macos_profile(cwd, write_mode=write_mode)
+    profile = _generate_macos_profile(cwd, write_mode=write_mode, scratch_dir=scratch_dir)
     fd, profile_path = tempfile.mkstemp(suffix=".sb", prefix="whisper_pty_sandbox_")
     with os.fdopen(fd, "w") as f:
         f.write(profile)
@@ -710,7 +765,10 @@ def classify_sandbox_denial(output: str, write_mode: str) -> str | None:
     mode_label = (
         "read-only (no writes anywhere)"
         if write_mode == "readonly"
-        else "workspace-write (writes confined to the working directory, temp, and /dev)"
+        else (
+            "workspace-write (writes confined to the working directory, this "
+            "session's scratch folder, temp, and /dev)"
+        )
     )
     return (
         f"[sandbox] This command ran under the {mode_label} OS sandbox, and the "

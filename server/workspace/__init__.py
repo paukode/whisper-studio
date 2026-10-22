@@ -61,7 +61,10 @@ from .paths import (  # noqa: E402,F401
     _ws_path_allowed,
     _ws_validate_path,
     get_scratch_dir,
+    in_other_scratch,
+    in_own_scratch,
     is_staged_path,
+    own_scratch_dir,
     scratch_root,
     stage_file_bytes,
 )

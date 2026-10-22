@@ -169,6 +169,40 @@ def get_scratch_dir(session_id: str) -> str:
     return path
 
 
+def own_scratch_dir(session_id: str | None) -> str | None:
+    """The scratch folder this session may use (get_scratch_dir), or None
+    without a session or when the id cannot name one.
+
+    A session works only in its own folder, never in another session's (the
+    user's rule). The id arrives in tool and approval payloads, so it must be
+    one plain folder name: a separator, a leading dot (``..``) or a leading
+    underscore (the ``_staging`` area) would reach outside that folder."""
+    safe_id = (session_id or "").strip()
+    if not safe_id or any(c in safe_id for c in ("/", "\\", "\0")) or safe_id[0] in "._":
+        return None
+    return get_scratch_dir(safe_id)
+
+
+def in_own_scratch(filepath: str, session_id: str | None) -> bool:
+    """True when ``filepath`` lies inside this session's own scratch folder."""
+    own = own_scratch_dir(session_id)
+    if own is None:
+        return False
+    real = os.path.realpath(filepath)
+    root = os.path.realpath(own)
+    return real == root or real.startswith(root + os.sep)
+
+
+def in_other_scratch(filepath: str, session_id: str | None) -> bool:
+    """True when ``filepath`` lies in the scratch area but outside this
+    session's own folder: another session's folder, or the staging area."""
+    real = os.path.realpath(filepath)
+    root = os.path.realpath(scratch_root())
+    if not (real == root or real.startswith(root + os.sep)):
+        return False
+    return not in_own_scratch(filepath, session_id)
+
+
 # ── Save-flow staging ─────────────────────────────────────────────────
 # File-saving tools build their full content BEFORE the approval card is
 # shown: the finished bytes are written to this app-sandbox staging area at
@@ -343,25 +377,20 @@ def scratch_root() -> str:
     return os.path.join(DATA_DIR, "scratch")
 
 
-def _ws_path_allowed(filepath: str, ws_root: str) -> bool:
+def _ws_path_allowed(filepath: str, ws_root: str, session_id: str | None = None) -> bool:
     """Containment for the assistant's ws_* file tools and their approvals.
 
-    Two roots are reachable: the connected workspace, and the scratch area the
-    system prompt sends throwaway files to (app-owned storage under the data
-    root, one folder per session). The model is told to put probe scripts and
-    intermediates there by absolute path, so the tools that create, read, edit
-    and delete files must accept that path, or every probe stalls the turn.
+    Two roots are reachable: the connected workspace, and the calling
+    session's own scratch folder (app-owned storage under the data root),
+    where the system prompt sends throwaway files. The model is told to put
+    probe scripts and intermediates there by absolute path, so the tools that
+    create, read, edit and delete files must accept that path, or every probe
+    stalls the turn. Without a session id no scratch folder is reachable.
 
-    The staging area inside the scratch root stays out of reach: approvals
-    move finished files out of it, and nothing else may touch it (see
-    is_staged_path)."""
+    Other sessions' folders and the staging area stay out of reach (see
+    own_scratch_dir and is_staged_path)."""
     if _ws_validate_path(filepath, ws_root):
         return True
     if _is_system_path(filepath):
         return False
-    real = os.path.realpath(filepath)
-    staging = os.path.realpath(_staging_root())
-    if real == staging or real.startswith(staging + os.sep):
-        return False
-    root = os.path.realpath(scratch_root())
-    return real.startswith(root + os.sep)
+    return in_own_scratch(filepath, session_id)

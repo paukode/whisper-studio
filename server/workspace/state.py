@@ -20,6 +20,7 @@ from .paths import (
     _is_system_path,
     _ws_path_allowed,
     _ws_validate_path,
+    in_other_scratch,
 )
 
 log = logging.getLogger("whisper-studio")
@@ -270,8 +271,8 @@ def _workspace_prompt_payload(tool_name: str, tool_input: dict) -> str:
     The workspace was fine, the path was not, and a folder picker cannot fix a
     path: a new file at an absolute path goes through the save approval
     instead (resolve_write_destination), and a modify or delete outside both
-    the workspace and the scratch folder is a plain refusal the model can act
-    on (server/workspace/executors.py's outside_roots_error).
+    the workspace and the session's own scratch folder is a plain refusal the
+    model can act on (server/workspace/executors.py's outside_roots_error).
 
     ``recent`` is pruned to directories that still exist. Dead entries linger
     in the recents file for a long time (a pytest temp workspace that leaked
@@ -324,9 +325,10 @@ def resolve_write_destination(tool_name: str, tool_input: dict) -> tuple[str, st
       words, e.g. "in Downloads" -> ~/Downloads/report.docx): use it.
     - No destination but a workspace is connected: `path` is resolved
       workspace-relative. An absolute `path` inside the workspace is folded
-      back to its relative form; one inside the session scratch folder (the
-      place the system prompt sends probe files) is a workspace-style write
-      by absolute path. Any other path that lands outside the workspace is a
+      back to its relative form; one inside the session's own scratch folder
+      (the place the system prompt sends probe files) is a workspace-style
+      write by absolute path, and one inside another session's scratch
+      folder is refused. Any other path that lands outside the workspace is a
       destination like destination_path: the save approval card shows the
       full path and the user decides there. It never raises the folder
       picker; the workspace was fine, and switching roots cannot fix a path.
@@ -361,8 +363,14 @@ def resolve_write_destination(tool_name: str, tool_input: dict) -> tuple[str, st
                 # relative spelling every other workspace write uses.
                 tool_input["path"] = os.path.relpath(os.path.realpath(full), os.path.realpath(ws))
             return "workspace", full
-        if _ws_path_allowed(full, ws):
+        session_id = tool_input.get("__session_id__", "")
+        if _ws_path_allowed(full, ws, session_id):
             return "workspace", full
+        if in_other_scratch(full, session_id):
+            return (
+                f"Error: {path} is in another session's scratch folder. This session "
+                "writes only in its own scratch folder."
+            )
         if _is_system_path(full):
             return f"Error: {path} is not a location files can be written to."
         return "absolute", os.path.realpath(full)

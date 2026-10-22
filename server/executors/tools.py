@@ -118,7 +118,8 @@ RUN_PYTHON_TOOL = {
         "must approve before the code runs. Use for calculations, data analysis, text "
         "processing, parsing, and quick prototyping when no shell is needed. The cwd "
         "is the connected workspace (else /tmp), and WRITES are OS-confined to that "
-        "tree plus temp and ~/.aws (workspace-write); when the script genuinely must "
+        "tree plus this session's scratch folder, temp and ~/.aws (workspace-write); "
+        "when the script genuinely must "
         "write elsewhere, retry with sandbox_permissions='danger-full-access' plus a "
         "one-line justification, which always asks the user per call. Limits are a 90 "
         "second timeout, no stdin, and no state between calls; secret paths like "
@@ -144,7 +145,8 @@ RUN_PYTHON_TOOL = {
                 "enum": ["workspace-write", "read-only", "danger-full-access"],
                 "description": (
                     "Filesystem confinement. Omit for the default workspace-write "
-                    "(writes limited to the workspace, temp, and ~/.aws). read-only "
+                    "(writes limited to the workspace, this session's scratch folder, "
+                    "temp, and ~/.aws). read-only "
                     "denies all writes. danger-full-access runs unconfined, requires "
                     "justification, and always triggers a per-call approval prompt."
                 ),
@@ -170,7 +172,9 @@ TERMINAL_RUN_TOOL = {
         "themselves; asking is friction, this is one approval click. mode=sandbox "
         "(default) uses a hidden ephemeral PTY with a minimal rc-free shell, sandboxed "
         "away from secrets, with WRITES confined by the OS to the working directory "
-        "plus temp (workspace-write). When a command genuinely must write elsewhere, "
+        "plus this session's scratch folder and temp (workspace-write); npm, pip and uv "
+        "keep their caches in that scratch folder. When a command genuinely must write "
+        "elsewhere, "
         "retry it with sandbox_permissions='danger-full-access' plus a one-line "
         "justification; that always asks the user to approve that exact command, even "
         "when commands are otherwise session-approved. mode=visible types the command "
@@ -223,12 +227,13 @@ TERMINAL_RUN_TOOL = {
                 "enum": ["workspace-write", "read-only", "danger-full-access"],
                 "description": (
                     "Filesystem confinement for sandbox mode. Omit for the default "
-                    "workspace-write (writes limited to cwd + temp). read-only denies "
+                    "workspace-write (writes limited to cwd, this session's scratch "
+                    "folder and temp). read-only denies "
                     "all writes. danger-full-access runs unconfined, requires "
                     "justification, and always triggers a per-call approval prompt; "
                     "use it only after a workspace-write run was blocked by the "
                     "sandbox, or when the task clearly requires writing outside the "
-                    "working directory."
+                    "working directory and the scratch folder."
                 ),
             },
             "justification": {

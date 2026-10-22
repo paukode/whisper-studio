@@ -84,7 +84,13 @@ def register_defaults() -> None:
                 # matched_via_normalization is set only by ws_edit_file's fuzzy
                 # quote match; ws_write_file never emits it, so build_payload
                 # simply omits it there.
-                payload_fields=["path", "content", "original", "matched_via_normalization"],
+                payload_fields=[
+                    "path",
+                    "content",
+                    "original",
+                    "matched_via_normalization",
+                    "session_id",
+                ],
             ),
         )
 
@@ -97,7 +103,7 @@ def register_defaults() -> None:
                 summary=_summary_create,
                 executor=_do_write,
                 risk_hint="low",
-                payload_fields=["path", "content"],
+                payload_fields=["path", "content", "session_id"],
             ),
         )
 
@@ -114,7 +120,7 @@ def register_defaults() -> None:
             summary=_summary_create_document,
             executor=_do_create_document,
             risk_hint="low",
-            payload_fields=["path", "content_b64", "format", "size"],
+            payload_fields=["path", "content_b64", "format", "size", "session_id"],
         ),
     )
 
@@ -175,7 +181,7 @@ def register_defaults() -> None:
                 summary=_summary_delete,
                 executor=_do_delete,
                 risk_hint="medium",
-                payload_fields=["path"],
+                payload_fields=["path", "session_id"],
             ),
         )
 
@@ -242,7 +248,7 @@ def register_defaults() -> None:
         mode = p.get("mode") or "sandbox"
         if (p.get("sandbox_permissions") or "").strip() == "danger-full-access":
             reason = (p.get("justification") or "no justification given").strip()
-            return f"FULL FILESYSTEM ACCESS — {reason} — terminal_run [{mode}]: {cmd}"
+            return f"FULL FILESYSTEM ACCESS: {reason} (terminal_run [{mode}]: {cmd})"
         return f"terminal_run [{mode}]: {cmd}"
 
     def _terminal_run_command(p: dict) -> str:
@@ -266,6 +272,7 @@ def register_defaults() -> None:
                 "cwd",
                 "sandbox_permissions",
                 "justification",
+                "session_id",
             ],
             render_command=_terminal_run_command,
         ),
@@ -492,7 +499,7 @@ def register_defaults() -> None:
         label = "Run Python: " + first[:80] + ("…" if len(first) > 80 else "")
         if (p.get("sandbox_permissions") or "").strip() == "danger-full-access":
             reason = (p.get("justification") or "no justification given").strip()
-            return f"FULL FILESYSTEM ACCESS — {reason} — {label}"
+            return f"FULL FILESYSTEM ACCESS: {reason} ({label})"
         return label
 
     register(
@@ -503,7 +510,7 @@ def register_defaults() -> None:
             summary=_run_python_summary,
             executor=_do_run_python,
             risk_hint="medium",
-            payload_fields=["code", "sandbox_permissions", "justification"],
+            payload_fields=["code", "sandbox_permissions", "justification", "session_id"],
             render_command=lambda p: p.get("code") or "",
         ),
     )
