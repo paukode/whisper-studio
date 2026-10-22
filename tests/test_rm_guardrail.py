@@ -77,6 +77,42 @@ def test_does_not_flag_unrelated_commands():
     assert not is_rm_command("confirm --yes")
 
 
+def test_a_pipe_inside_quotes_is_data_not_a_pipeline():
+    # The regression (2026-10-22): a regex alternation such as 'a|b' was split
+    # at its quoted |, each half kept an unclosed quote, and that parse failure
+    # read as a delete of unknown reach, so a plain search asked in bypass.
+    assert not is_rm_command("rg -n 'DB =|PLANNER =' backend/app")
+    assert not is_rm_command('grep -E "x|y" f.txt')
+    assert not is_rm_command("echo 'a|rm -rf /'")
+    assert is_rm_command("rg -l 'a|b' . | xargs rm")
+    assert is_rm_command("bash -c 'ls | rm -rf /x'")
+
+
+def test_only_the_filesystem_root_is_a_hard_block():
+    """rm -rf / stays refused outright. Any other absolute path goes to the
+    rm floor, which lets the mode decide inside the workspace and the app's
+    folders (the session's own scratch cleanup) and asks anywhere else."""
+    from server.security.command_validator import validate_command
+
+    for root in ("rm -rf /", "rm -rf /*", "rm -rf / --no-preserve-root", "rm -rf //"):
+        assert validate_command(root), root
+    assert validate_command("rm -rf /Users/me/.whisper/data/scratch/s1/probe") is None
+    assert validate_command("rm -rf /Users/me/project/dist") is None
+
+
+def test_a_search_with_alternations_hits_no_floor():
+    """The command from the field report, verbatim in shape: a search over a
+    brace-expanded file list chained to a jq read. It deletes nothing, so no
+    floor applies and the mode decides (bypass runs it)."""
+    command = (
+        "rg -n -A 3 -B 2 'DB =|RESOURCE_REQUESTS =|LOE_TEAM =|ReadInternalWebsites|"
+        "generic_search' app/backend/{sources,demand,main}.py app/frontend/src/lib/pipeline.ts; "
+        "jq '{topLevelKeys: keys, meta: .meta, sources: .sources}' app/data/snapshot.json"
+    )
+    assert delete_sites(command) == []
+    assert approval_floor("ws_run_command", {"command": command}, "cli") is None
+
+
 def test_does_not_flag_rm_mentioned_only_in_heredoc_data():
     # The heredoc BODY is literal file content, not a command — "rm -rf /" is
     # text being written to a file here, not executed.

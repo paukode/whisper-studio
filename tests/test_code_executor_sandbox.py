@@ -10,7 +10,7 @@ from server.executors import code as codemod
 
 
 def test_aws_cli_rejects_chained_dangerous_command():
-    ok, msg = codemod.do_aws_cli({"command": "aws s3 ls; rm -rf /tmp/x"})
+    ok, msg = codemod.do_aws_cli({"command": "aws s3 ls; rm -rf /"})
     assert ok is False
     assert msg
 
@@ -40,7 +40,7 @@ def test_aws_cli_runs_sandboxed_with_aws_allowed(monkeypatch):
 def test_run_python_runs_sandboxed_and_cleans_temp(monkeypatch):
     captured = {}
 
-    def fake(cmd, *, cwd, timeout, allow_paths=None, write_mode="open"):
+    def fake(cmd, *, cwd, timeout, allow_paths=None, write_mode="open", **_):
         captured["cmd"] = cmd
         captured["allow_paths"] = allow_paths
         captured["write_mode"] = write_mode
