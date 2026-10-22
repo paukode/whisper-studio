@@ -35,7 +35,7 @@ describe('applySpeakerUpdates', () => {
     expect(segs[0]).toMatchObject({ id: 'seg-1', speaker: 'Speaker 1', text: 'Hello there' });
     expect(segs[1]).toMatchObject({ speaker: 'Speaker 2', text: 'General Kenobi' });
     // Split parts keep usable chunk offsets for any later correction.
-    expect(segs[1].chunks).toEqual([{ id: 1, start: 0 }]);
+    expect(segs[1].chunks).toMatchObject([{ id: 1, start: 0 }]);
   });
 
   it('leaves segments without chunk tracking untouched', () => {

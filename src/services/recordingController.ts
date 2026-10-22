@@ -269,7 +269,7 @@ function onTranscriptResult(
       id: crypto.randomUUID(),
       text,
       speaker,
-      chunks: chunkId !== undefined ? [{ id: chunkId, start: 0 }] : undefined,
+      chunks: chunkId !== undefined ? [{ id: chunkId, start: 0, at: now }] : undefined,
       pendingTranslations: translating && chunkId !== undefined ? [chunkId] : undefined,
       // This turn started at a handover with no clean silence, so its first
       // words may belong to either speaker. Only meaningful on the segment

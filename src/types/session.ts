@@ -23,12 +23,13 @@ export interface TranscriptSegment {
   // them undefined, so historic transcripts render instantly without animating.
   receivedAt?: number;         // epoch-ms when the latest text arrived
   freshIndex?: number;         // char offset where the freshly-arrived tail begins
-  // Live-only: which backend chunk_ids built this segment and where each
-  // chunk's text starts within it. Lets a `speaker_update` (diarization
-  // re-clustering correction) relabel or split a merged segment
-  // retroactively. Meaningless for historic segments — chunk_ids are
-  // scoped to one live recording.
-  chunks?: { id: number; start: number }[];
+  // Live-only: which backend chunk_ids built this segment, where each
+  // chunk's text starts within it, and when it arrived (epoch-ms). Lets a
+  // `speaker_update` (diarization re-clustering correction) relabel or split
+  // a merged segment retroactively, and gives each split-off part the time
+  // its own first words arrived. Meaningless for historic segments:
+  // chunk_ids are scoped to one live recording.
+  chunks?: { id: number; start: number; at?: number }[];
   // Translation companion lines, one per source chunk, kept in chunk order
   // (chunk ids are monotonic). `target` is the translation's language code
   // (absent = 'en', the historical default). Persisted with the segment so
