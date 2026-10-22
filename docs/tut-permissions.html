@@ -290,13 +290,17 @@
 
     <h2 id="app-storage">Writes inside ~/.whisper never ask</h2>
     <p>The app's own folder, <code class="path">~/.whisper</code>, is where its files belong: your
-      rules and <code>WHISPER.md</code>, the scratch folder for throwaway probe scripts, memory, and
-      the rest of <code class="path">data/</code>. Creating, writing or editing a file there raises no
+      rules and <code>WHISPER.md</code>, the scratch folder of each session for throwaway probe
+      scripts, virtual environments, and package caches, memory, and the rest of
+      <code class="path">data/</code>. Creating, writing or editing a file there raises no
       card in any mode, and no per-category override changes that. <code>plan</code> keeps the one
       distinction: memory still updates there with no card, while recording a rule
       (<code>rules_write</code>) shows an approval card in plan mode only. Deleting a file there is silent in
       <code>bypassPermissions</code> only; every other mode applies its normal delete rule. Files in
       your workspace are untouched by this: they follow the mode and the rules above.</p>
+    <p>A session uses only its own scratch folder. The file tools refuse the scratch folder of a
+      different session. A sandboxed command can write in the scratch folder of its own session, so
+      the work there is possible without full filesystem access.</p>
 
     <h2 id="hard-guards">The guards that never turn off</h2>
     <p>Modes and rules control the <em>consent</em> layer: whether you are asked. Underneath them sit
@@ -312,7 +316,7 @@
       <div class="card">
         <h3>Destructive patterns are blocked</h3>
         <p>A command validator refuses a small set of clearly destructive shapes before they can run
-          at all: <code>rm -rf /</code> at an absolute path, <code>mkfs</code>, <code>dd</code> to a
+          at all: <code>rm -rf /</code> on the filesystem root, <code>mkfs</code>, <code>dd</code> to a
           device, redirects into <code>/etc/</code>, and hidden command substitution like
           <code>$(...)</code> or backticks. These are denied regardless of mode.</p>
       </div>

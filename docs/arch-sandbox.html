@@ -77,7 +77,7 @@
       <thead><tr><th><code>write_mode</code></th><th>What the profile does</th></tr></thead>
       <tbody>
         <tr><td><code>open</code></td><td><code>(allow default)</code> plus the secret deny block. Writes anywhere the user could write. This is the default of <code>run_sandboxed</code> itself, and what an approved <code>ws_run_command</code> gets.</td></tr>
-        <tr><td><code>workspace</code></td><td>Denies all writes, then allows back a specific set of roots: the working directory, a linked worktree's git directory and its common directory, the temp directories, and <code class="path">/dev</code>, plus anything passed as <code>allow_paths</code>. On Linux, bubblewrap binds the filesystem read-only and rebinds the workspace and <code class="path">/tmp</code> writable.</td></tr>
+        <tr><td><code>workspace</code></td><td>Denies all writes, then allows back a specific set of roots: the working directory, a linked worktree's git directory and its common directory, the calling session's own scratch folder, the temp directories, and <code class="path">/dev</code>, plus anything passed as <code>allow_paths</code>. On Linux, bubblewrap binds the filesystem read-only and rebinds the workspace, the session's scratch folder, and <code class="path">/tmp</code> writable.</td></tr>
         <tr><td><code>readonly</code></td><td>Denies all writes except <code class="path">/dev</code>. On Linux, a read-only bind with a <code>tmpfs</code> over <code class="path">/tmp</code>.</td></tr>
       </tbody>
     </table></div>
@@ -85,13 +85,20 @@
       the writable roots second, and the secret denies <b>last</b>. That ordering is what stops a
       workspace that happens to <em>be</em> your home directory from re-exposing
       <code class="path">~/.ssh</code> through the allow-back.</p>
+    <p>A session can write only in its own scratch folder,
+      <code class="path">data/scratch/&lt;session&gt;</code>. The folder of a different session is not
+      writable. A <code>workspace</code> run also keeps its package caches in that folder. The sandbox
+      sets three variables: <code>npm_config_cache</code>, <code>PIP_CACHE_DIR</code>, and
+      <code>UV_CACHE_DIR</code>. Each one refers to a folder in
+      <code class="path">data/scratch/&lt;session&gt;/cache</code>. The default caches in the
+      home folder are outside the writable roots, so an install without these variables fails.</p>
     <p>The assistant does not choose those literals. <code>run_python</code> and
       <code>terminal_run</code> take a <code>sandbox_permissions</code> parameter with three values,
       mapped onto the modes above:</p>
     <div class="table-wrap"><table>
       <thead><tr><th><code>sandbox_permissions</code></th><th>Maps to</th><th>Meaning</th></tr></thead>
       <tbody>
-        <tr><td><code>workspace-write</code></td><td><code>workspace</code></td><td>The default. Write inside the project and the temp directories, nowhere else.</td></tr>
+        <tr><td><code>workspace-write</code></td><td><code>workspace</code></td><td>The default. Write inside the project, the session's own scratch folder, and the temp directories, nowhere else.</td></tr>
         <tr><td><code>read-only</code></td><td><code>readonly</code></td><td>Run it, change nothing.</td></tr>
         <tr><td><code>danger-full-access</code></td><td><code>open</code></td><td>Write anywhere. Asking for this always raises an approval card, whatever the permission mode, because it is a request to drop the confinement.</td></tr>
       </tbody>
