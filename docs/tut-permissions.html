@@ -332,7 +332,10 @@
       <code>find -delete</code>, and the same commands hidden behind <code>sudo</code> or
       <code>xargs</code>, aimed at your home folder, a parent of the workspace, a variable the
       command line cannot resolve, or anything else beyond the workspace and the app's own
-      folder - always raises a card. So does a command that asks to run with <b>full disk write
+      folder - always raises a card. The app reads a relative path in a delete from the folder
+      that a <code>cd</code> before the delete in the same command moves to. If the command line
+      does not name that folder (<code>cd "$DIR"</code>, <code>cd -</code>, <code>pushd</code>, or
+      <code>popd</code>), the delete always shows a card. So does a command that asks to run with <b>full disk write
       access</b> instead of the usual project-only confinement. Neither can be waved through by a
       mode, a rule, or a "yes to all", and an unattended agent cannot run either on your behalf.
       Inside the workspace the line is the mode's: Bypass runs <code>rm -rf dist</code> without a

@@ -11,7 +11,7 @@ splitting compound commands on ;, &&, ||.
 import os
 import re
 import shlex
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 
 from server.security.sensitive_paths import validator_path_patterns
 
@@ -35,6 +35,19 @@ def split_subcommands(command: str) -> list[str]:
     """
     parts = _SPLIT_PATTERN.findall(command)
     return [p.strip() for p in parts if p.strip()]
+
+
+def _statements(line: str) -> list[tuple[str, str, str]]:
+    """split_subcommands of one line, each with the operators around it: the
+    run of ;, & and | before it and the one after it ("" at either end of the
+    line)."""
+    found = [m for m in _SPLIT_PATTERN.finditer(line) if m.group().strip()]
+    statements = []
+    for k, m in enumerate(found):
+        before = line[found[k - 1].end() if k else 0 : m.start()].strip()
+        after = line[m.end() : found[k + 1].start() if k + 1 < len(found) else len(line)]
+        statements.append((before, m.group().strip(), after.strip()))
+    return statements
 
 
 # Heredoc opener: <<DELIM, <<-DELIM, <<'DELIM', <<"DELIM"
@@ -152,6 +165,20 @@ _MAX_SCRIPT_DEPTH = 4
 # find's own -delete action, and the common find ... -exec rm pattern, destroy
 # files without the literal token "rm" ever being find's own argv[0].
 _FIND_DELETE_RE = re.compile(r"\bfind\b.*?(-delete\b|-exec\s+rm\b)")
+# `cd` (and zsh's `chdir`) moves every later statement of the same shell; its
+# -L/-P/-e/-@ options say how it follows links, not where it goes.
+_CD_VERBS = frozenset({"cd", "chdir"})
+_CD_OPTION = re.compile(r"^-[LPe@]+$")
+# pushd and popd move to a directory the command line does not name: popd's
+# comes off the directory stack.
+_DIRSTACK_VERBS = frozenset({"pushd", "popd"})
+# A redirection word (`2>/dev/null`, `>`, `<<<`) is never a cd operand. One
+# with nothing after its operator takes the next word as its target.
+_REDIRECTION = re.compile(r"^(?:\d+|&)?(?:>&|<&|<<<|>>|>\||>|<)(.*)$")
+# Words that start a loop. Its body runs again after its own later
+# statements, so a directory change late in the body moves a delete that
+# comes before it on the next pass.
+_LOOP_WORDS = frozenset({"for", "while", "until", "select", "repeat", "foreach", "do"})
 
 
 def _shell_script(tokens: list[str], i: int) -> str | None:
@@ -200,18 +227,65 @@ def _base(token: str) -> str:
 
 
 @dataclass(frozen=True)
+class ChDir:
+    """A directory change a statement makes for the statements after it.
+    ``target`` is the ``cd`` operand as written, or None when the command
+    line does not name one (``cd -``, a bare ``cd``, ``pushd``, ``popd``); a
+    target with a variable in it is passed on as written, for the caller to
+    find unresolvable like any other operand. ``sure`` when the delete it
+    precedes runs only after it succeeded, in the same shell: the cd starts a
+    statement of its own and only ``&&`` joins it to the delete. Otherwise
+    the delete may run where it was (the cd failed before a ``;``, ran in a
+    pipeline stage or a subshell, or sits behind ``||``)."""
+
+    target: str | None
+    sure: bool = False
+
+
+@dataclass(frozen=True)
 class DeleteSite:
     """One deleting statement in a command: its verb and the operands it would
     delete. ``operands`` is None when the command line alone cannot say what
     gets deleted (paths fed by xargs or parallel, a segment that does not
     tokenize, a script nested too deep); a caller deciding where the delete
-    reaches must treat that as anywhere."""
+    reaches must treat that as anywhere. ``chdirs`` are the directory changes
+    before it, in order (an outer command line's before those of the -c
+    script it runs)."""
 
     verb: str
     operands: list[str] | None
+    chdirs: tuple[ChDir, ...] = ()
+
+
+@dataclass
+class _Walk:
+    """What the statements read so far do to the shell's working directory.
+    A -c script or an ``eval`` text is read with a walk of its own that
+    starts from its caller's changes (``inherited`` of them): its own
+    operators decide only about its own changes."""
+
+    chdirs: list[ChDir] = field(default_factory=list)
+    inherited: int = 0
+    moved: bool = False  # a statement of this walk changed directory
+    loops: bool = False  # a statement of this walk starts a loop
+
+    def child(self) -> "_Walk":
+        return _Walk(list(self.chdirs), len(self.chdirs))
+
+    def unsure(self) -> None:
+        """The chain of ``&&`` from this walk's changes is broken."""
+        own = self.chdirs[self.inherited :]
+        self.chdirs[self.inherited :] = [ChDir(c.target) for c in own]
 
 
 _UNKNOWN_SITE = DeleteSite("?", None)
+# What may come before a statement for a cd in it to be sure: nothing, or an
+# operator that runs it in the current shell whatever ran before (not `||`,
+# which can skip it, nor a pipe, which can run it in a subshell).
+_CHAIN_STARTS = frozenset({"", ";", "&", "&&"})
+# A paren anywhere in a statement may open or close a subshell, whose cd
+# ends with it.
+_SUBSHELL_CHARS = frozenset("()")
 # Wrappers that feed the command its operands on stdin, so the operands are
 # not on the command line.
 _STDIN_FEEDERS = frozenset({"xargs", "parallel"})
@@ -267,19 +341,67 @@ def _find_site(tokens: list[str], j: int) -> DeleteSite | None:
     return DeleteSite("find", paths or ["."])
 
 
-def _script_delete_sites(tokens: list[str], j: int, depth: int) -> list[DeleteSite]:
+def _script_delete_sites(tokens: list[str], j: int, depth: int, walk: _Walk) -> list[DeleteSite]:
     """The deletes inside the script a shell at ``tokens[j]`` runs with -c, or
     the arguments an ``eval`` there runs."""
     base = _base(tokens[j])
     if base == "eval":
-        return _delete_sites(" ".join(tokens[j + 1 :]), depth + 1)
+        # eval runs its text in this shell, so its cds stay for what follows.
+        text = walk.child()
+        sites = _delete_sites(" ".join(tokens[j + 1 :]), depth + 1, text)
+        walk.chdirs[:] = text.chdirs
+        walk.moved = walk.moved or text.moved
+        walk.loops = walk.loops or text.loops
+        return sites
     if base in _SHELLS:
         script = _shell_script(tokens, j)
-        return _delete_sites(script, depth + 1) if script is not None else []
+        return _delete_sites(script, depth + 1, walk.child()) if script is not None else []
     return []
 
 
-def _segment_delete_sites(segment: str, depth: int) -> list[DeleteSite]:
+def _cd_target(args: list[str]) -> str | None:
+    """The directory ``cd args`` moves to, as written, or None when the words
+    do not name exactly one: no operand (home), ``-`` (the previous
+    directory), a stack entry (``-2``, ``+1``), an option cd does not have,
+    or zsh's two-operand form, which edits the current path."""
+    words: list[str] = []
+    k = 0
+    while k < len(args):
+        redirection = _REDIRECTION.match(args[k])
+        if redirection:
+            k += 1 if redirection.group(1) else 2
+            continue
+        words.append(args[k])
+        k += 1
+    while words and _CD_OPTION.match(words[0]):
+        words.pop(0)
+    if words and words[0] == "--":
+        words.pop(0)
+    if len(words) != 1 or re.match(r"^[-+]", words[0]):
+        return None
+    return words[0]
+
+
+def _record_chdir(tokens: list[str], i: int, walk: _Walk, chained: bool) -> None:
+    """Note the directory change the statement whose command is ``tokens[i]``
+    makes for the statements after it, if it makes one. It is sure only when
+    the statement is ``chained`` and nothing comes before the cd: a wrapper
+    can run it in a child process, ``!`` turns its failure into success."""
+    k = i + 1 if tokens[i] == "builtin" and i + 1 < len(tokens) else i
+    verb = _base(tokens[k])
+    if verb in _CD_VERBS:
+        target = _cd_target(tokens[k + 1 :])
+    elif verb in _DIRSTACK_VERBS:
+        target = None
+    else:
+        return
+    walk.chdirs.append(ChDir(target, chained and i == 0))
+    walk.moved = True
+
+
+def _segment_delete_sites(
+    segment: str, depth: int, walk: _Walk | None = None, chained: bool = False
+) -> list[DeleteSite]:
     """The deletes one pipeline stage performs. Its leading command (past
     environment-variable assignments such as ``FOO=bar rm`` and any
     invocation wrapper) is a delete verb, a ``find`` that deletes, or a
@@ -291,7 +413,13 @@ def _segment_delete_sites(segment: str, depth: int) -> list[DeleteSite]:
     reach is unknown: a parse failure is exactly the kind of thing an
     obfuscated command produces. A segment that runs nothing at all (a bare
     ``x=1``, an option cluster, a reserved word on its own line) deletes
-    nothing: every shell script is full of those."""
+    nothing: every shell script is full of those.
+
+    Each delete carries the directory changes ``walk`` holds when the segment
+    starts; a ``cd`` in the segment itself is added to ``walk`` for the
+    segments after it (``chained``: the operator before the segment lets
+    the cd be sure, see ChDir)."""
+    walk = walk if walk is not None else _Walk()
     try:
         tokens = shlex.split(segment, posix=True)
     except ValueError:
@@ -311,44 +439,62 @@ def _segment_delete_sites(segment: str, depth: int) -> list[DeleteSite]:
     ):
         wrapped = True
         i = _skip_assignments_and_flags(i + 1)  # the wrapper's own flags/env args
+    walk.loops = walk.loops or any(_base(t) in _LOOP_WORDS for t in tokens[: i + 1])
     if i >= len(tokens):
         return []
+    chdirs = tuple(walk.chdirs)
     last = len(tokens) if wrapped else i + 1
     sites: list[DeleteSite] = []
     for j in range(i, last):
         base = _base(tokens[j])
         if base in _DELETE_VERBS:
             fed = any(_base(t) in _STDIN_FEEDERS for t in tokens[:j])
-            sites.append(DeleteSite(base, None if fed else _delete_operands(tokens, j)))
+            operands = None if fed else _delete_operands(tokens, j)
+            sites.append(DeleteSite(base, operands, chdirs))
             break
         if base == "find":
             site = _find_site(tokens, j)
             if site is not None:
-                sites.append(site)
+                sites.append(replace(site, chdirs=chdirs))
                 break
-        sites.extend(_script_delete_sites(tokens, j, depth))
+        sites.extend(_script_delete_sites(tokens, j, depth, walk))
+    _record_chdir(tokens, i, walk, chained)
     return sites
 
 
-def _delete_sites(command: str, depth: int) -> list[DeleteSite]:
+def _delete_sites(command: str, depth: int, walk: _Walk | None = None) -> list[DeleteSite]:
     if depth > _MAX_SCRIPT_DEPTH:
         return [_UNKNOWN_SITE]
+    walk = walk if walk is not None else _Walk()
     command = strip_heredoc_bodies(command)
     sites: list[DeleteSite] = []
-    # split_subcommands splits on every UNQUOTED ;, & and | (pipeline stages
-    # included), not on bare newlines: a multi-line script has no separator
-    # between lines at all, so without the line split a line merely following
-    # an rm-free first line would never be inspected on its own. A | inside
-    # quotes is data, never a pipe: splitting there again (a regex like
-    # 'a|b') left each piece with an unclosed quote, and a parse failure
-    # reads as a delete of unknown reach.
+    # _statements splits as split_subcommands does: on every UNQUOTED ;, &
+    # and | (pipeline stages included), not on bare newlines: a multi-line
+    # script has no separator between lines at all, so without the line
+    # split a line merely following an rm-free first line would never be
+    # inspected on its own. A | inside quotes is data, never a pipe:
+    # splitting there again (a regex like 'a|b') left each piece with an
+    # unclosed quote, and a parse failure reads as a delete of unknown reach.
+    # The operators around each statement say whether a cd before a delete
+    # surely ran (ChDir.sure). A line ending in an operator (`cd x &&`)
+    # carries it to the next line's first statement.
+    carried = ""
     for line in command.split("\n"):
-        for segment in split_subcommands(line):
-            sites.extend(_segment_delete_sites(segment, depth))
+        for before, segment, after in _statements(line):
+            chained = (before or carried) in _CHAIN_STARTS
+            sites.extend(_segment_delete_sites(segment, depth, walk, chained))
+            if after != "&&" or _SUBSHELL_CHARS & set(segment):
+                walk.unsure()
+            carried = after
     # A find that deletes in a shape the token walk did not read (fail
     # toward asking): the delete is real, its reach unknown.
     if _FIND_DELETE_RE.search(command) and not any(s.verb == "find" for s in sites):
         sites.append(_UNKNOWN_SITE)
+    # A loop runs a directory change again, before the deletes that precede
+    # it in the body and more than once for the ones after it, so a line
+    # that has both leaves no delete in it a working directory it can name.
+    if walk.loops and walk.moved:
+        sites = [replace(s, chdirs=(ChDir(None),)) for s in sites]
     return sites
 
 
@@ -360,7 +506,8 @@ def delete_sites(command: str) -> list[DeleteSite]:
     -c script (`sh -c "rm -rf build"`, `bash -lc '...'`) or an `eval`, or
     find's own -delete / -exec rm. A parse failure on any segment (unbalanced
     quotes, the kind of thing a disguised command produces) is a delete of
-    unknown reach: fail toward requiring approval, not away from it.
+    unknown reach: fail toward requiring approval, not away from it. Each
+    delete also carries the ``cd``s that run before it (DeleteSite.chdirs).
 
     Heredoc bodies are stripped first: they are literal data (e.g. a file
     being written), not commands, so text that merely CONTAINS the word "rm"

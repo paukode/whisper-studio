@@ -167,6 +167,16 @@ def test_delete_sites_report_what_each_delete_names():
     ]
 
 
+def test_delete_sites_carry_the_cds_before_them():
+    from server.security.command_validator import ChDir
+
+    assert delete_sites("cd web && rm -rf dist")[0].chdirs == (ChDir("web", sure=True),)
+    assert delete_sites("cd web; rm -rf dist")[0].chdirs == (ChDir("web"),)
+    assert delete_sites("cd -P -- web 2>/dev/null && rm x")[0].chdirs == (ChDir("web", True),)
+    assert delete_sites("popd && rm x")[0].chdirs == (ChDir(None, True),)
+    assert delete_sites("rm -rf dist; cd web")[0].chdirs == ()
+
+
 def test_detects_rm_inside_a_shell_script_argument():
     # The script after -c is a command line of its own; `sh -c "rm -rf build"`
     # used to read as the command `sh`.
@@ -254,6 +264,7 @@ def test_a_delete_inside_the_workspace_is_an_ordinary_command(workspace):
         "rm -rf dist/*",
         "rm old.log",
         "find . -name '*.pyc' -delete",
+        "cd web && npm run build && cd .. && rm -rf dist",
     ):
         assert approval_floor("ws_run_command", {"command": command}, "cli") is None
         assert _decide(command, mode=MODE_BYPASS) == "allow"
@@ -278,6 +289,8 @@ def test_a_delete_outside_the_workspace_always_asks(workspace, tmp_path):
         "find / -name '*.tmp' -delete",
         "npm run build && rm -rf ~/old",
         "( rm -rf ~/old )",
+        "cd ~/Documents && rm -rf notes",
+        'cd "$OUT" && rm -rf build',
     )
     for command in outside:
         assert approval_floor("ws_run_command", {"command": command}, "cli") == "rm", command

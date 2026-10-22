@@ -104,3 +104,85 @@ def test_no_roots_means_every_delete_is_beyond(ws):
 def test_a_relative_delete_with_no_working_directory_is_beyond(ws):
     assert deletes_beyond("rm -rf dist", None, [ws])
     assert not deletes_beyond(f"rm -rf {ws}/dist", None, [ws])
+
+
+def test_a_cd_before_the_delete_moves_its_relative_operands(ws, tmp_path):
+    roots = [ws]
+    assert deletes_beyond("cd ~/Documents && rm -rf notes", ws, roots)
+    assert not deletes_beyond("cd sub && rm -rf build", ws, roots)
+    assert deletes_beyond('cd "$X" && rm -rf y', ws, roots)
+    assert not deletes_beyond(f"cd {ws}/dist; rm *", ws, roots)
+    # The glob is read in the directory the cd names, not the workspace.
+    other = tmp_path / "other"
+    other.mkdir()
+    assert deletes_beyond(f"cd {other}; rm *", ws, roots)
+    assert deletes_beyond("cd ~/Documents\nrm -rf notes", ws, roots)
+    assert deletes_beyond("cd ~/Documents && find . -delete", ws, roots)
+    assert not deletes_beyond("cd sub && find . -delete", ws, roots)
+
+
+def test_a_cd_the_command_line_cannot_follow_leaves_no_working_directory(ws):
+    roots = [ws]
+    for cd in ('cd "$X"', "cd ${HOME}/x", "cd -", "cd", "cd a b", "cd dist*", "cd -2"):
+        assert deletes_beyond(f"{cd} && rm -rf build", ws, roots), cd
+    for stack in ("pushd sub", "popd"):
+        assert deletes_beyond(f"{stack} && rm -rf build", ws, roots), stack
+    # An absolute operand needs no working directory.
+    assert not deletes_beyond(f'cd "$X" && rm -rf {ws}/dist', ws, roots)
+    assert not deletes_beyond(f"popd; rm -rf {ws}/dist", ws, roots)
+
+
+def test_only_an_and_chain_makes_the_cd_sure(ws, tmp_path):
+    """A cd joined to the delete by && alone surely ran before it. After any
+    other operator the delete may run where the command started, so both
+    directories are checked."""
+    other = tmp_path / "other"
+    other.mkdir()
+    roots = [ws]
+    assert not deletes_beyond(f"cd {ws}/dist && rm *", str(other), roots)
+    assert not deletes_beyond(f"cd {ws}/dist && rm *", None, roots)
+    assert not deletes_beyond(f"cd {ws}/dist &&\nrm *", str(other), roots)
+    for unsure in (
+        f"cd {ws}/dist; rm *",
+        f"cd {ws}/dist\nrm *",
+        f"cd {ws}/dist || rm *",
+        f"cd {ws}/dist | rm *",
+        f"echo | cd {ws}/dist && rm *",
+        f"true || cd {ws}/dist && rm *",
+        f"! cd {ws}/dist && rm *",
+        f"time cd {ws}/dist && rm *",
+        f"(cd {ws}/dist) && rm *",
+        f"( true && cd {ws}/dist && true ) && rm *",
+        f"cd {ws}/dist & rm *",
+    ):
+        assert deletes_beyond(unsure, str(other), roots), unsure
+    assert not deletes_beyond("cd sub && npm run build && cd .. && rm -rf dist", ws, roots)
+    assert not deletes_beyond("cd sub && rm -rf ../dist", ws, roots)
+    assert deletes_beyond("cd sub; rm -rf ../dist", ws, roots)
+
+
+def test_cds_in_scripts_subshells_and_loops(ws):
+    roots = [ws]
+    assert deletes_beyond("bash -c 'cd ~/Documents && rm -rf notes'", ws, roots)
+    # A child shell's cd ends with it; an eval's stays.
+    assert not deletes_beyond("bash -c 'cd ~/Documents'; rm -rf notes", ws, roots)
+    assert deletes_beyond("eval 'cd ~/Documents'; rm -rf notes", ws, roots)
+    assert not deletes_beyond("cd sub && bash -c 'true; rm -rf ../dist'", ws, roots)
+    assert deletes_beyond("( cd ~/Documents && rm -rf notes )", ws, roots)
+    assert deletes_beyond("{ cd ~/Documents; rm -rf notes; }", ws, roots)
+    assert deletes_beyond("if cd ~/Documents; then rm -rf notes; fi", ws, roots)
+    # The next pass of a loop runs its delete after the cd that follows it.
+    assert deletes_beyond("for i in 1 2; do rm -rf build; cd ~/Documents; done", ws, roots)
+    assert not deletes_beyond("for i in 1 2; do rm -rf build; done", ws, roots)
+
+
+def test_a_cd_through_a_symlink_lands_where_the_link_points(ws, tmp_path):
+    target = tmp_path / "shared"
+    target.mkdir()
+    os.symlink(target, os.path.join(ws, "link"))
+    roots = [ws]
+    assert deletes_beyond("cd link && rm -rf x", ws, roots)
+    # rm climbs from the real directory, so .. is the link target's parent.
+    assert deletes_beyond("cd link && rm -rf ../dist", ws, roots)
+    # cd -P (or a shell in physical mode) reads link/.. off the real path.
+    assert deletes_beyond("cd link/.. && rm -rf dist", ws, roots)
