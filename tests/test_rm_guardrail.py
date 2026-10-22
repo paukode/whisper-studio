@@ -194,6 +194,7 @@ def test_detects_rm_after_a_reserved_word():
     assert is_rm_command("sh -c 'if true; then rm -rf dist; fi'")
     assert is_rm_command("if rm x; then echo gone; fi")
     assert is_rm_command("(rm -rf build)")
+    assert is_rm_command("( rm -rf build )")
 
 
 def test_shell_scripts_reads_a_shell_anywhere_in_an_argv():
@@ -276,6 +277,7 @@ def test_a_delete_outside_the_workspace_always_asks(workspace, tmp_path):
         "echo build | xargs rm -rf",
         "find / -name '*.tmp' -delete",
         "npm run build && rm -rf ~/old",
+        "( rm -rf ~/old )",
     )
     for command in outside:
         assert approval_floor("ws_run_command", {"command": command}, "cli") == "rm", command

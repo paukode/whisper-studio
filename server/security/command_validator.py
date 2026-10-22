@@ -138,8 +138,9 @@ _INVOKE_WRAPPERS = frozenset(
 )
 # Shell reserved words that start a statement whose command follows them
 # (`if rm x; then`, `then rm -rf dist; fi`): skipped like a wrapper, and
-# everything after them is checked.
-_SHELL_KEYWORDS = frozenset({"if", "then", "else", "elif", "do", "while", "until", "!", "{"})
+# everything after them is checked. A subshell's opening paren written as a
+# word of its own (`( rm -rf x )`) starts one the same way.
+_SHELL_KEYWORDS = frozenset({"if", "then", "else", "elif", "do", "while", "until", "!", "{", "("})
 # Shells whose -c argument is a whole script of its own (`sh -c "rm -rf x"`,
 # `bash -lc '...'`): the script is checked like any other command line.
 _SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "mksh", "ash", "fish", "csh", "tcsh"})
