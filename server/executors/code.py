@@ -251,22 +251,28 @@ def do_aws_cli(payload: dict) -> tuple[bool, str]:
     warning = validate_command(command)
     if warning:
         return False, warning
-    from server.workspace import get_workspace_path
+    from server.workspace import get_workspace_path, own_scratch_dir
 
-    cwd = get_workspace_path() or os.path.expanduser("~")
-    if not os.path.isdir(cwd):
-        cwd = os.path.expanduser("~")
+    workspace = get_workspace_path()
+    if workspace and not os.path.isdir(workspace):
+        workspace = None
     try:
         result = run_sandboxed(
             f"{command} < /dev/null",
-            cwd=cwd,
+            cwd=workspace or os.path.expanduser("~"),
             timeout=30,
             allow_paths=_CLOUD_CRED_PATHS,
-            # Always workspace-write confined: the CLI's only legitimate local
-            # writes are its own ~/.aws cache (kept writable via allow_paths),
-            # the workspace (s3 cp downloads), and temp. Remote AWS mutations
-            # are unaffected — this confines the LOCAL filesystem only.
+            # Always workspace-write confined, also after a person's yes on
+            # the card: the CLI's only legitimate local writes are its own
+            # ~/.aws cache (kept writable via allow_paths), the workspace (s3
+            # cp downloads), this session's scratch folder, and temp. With no
+            # workspace the cwd stays $HOME for relative reads, but no tree is
+            # writable: a cwd root would open all of $HOME to a run that
+            # bypass let through with no card. Remote AWS mutations are
+            # unaffected: this confines the LOCAL filesystem only.
             write_mode="workspace",
+            write_root=workspace,
+            scratch_dir=own_scratch_dir(payload.get("session_id")),
         )
     except subprocess.TimeoutExpired:
         return False, "command timed out after 30s"
@@ -277,6 +283,11 @@ def do_aws_cli(payload: dict) -> tuple[bool, str]:
         output = output[:10_000] + "\n... (truncated)"
     if result.returncode == 0:
         return True, output or "(command completed successfully, no output)"
+    from server.sandbox import classify_sandbox_denial
+
+    hint = classify_sandbox_denial(output, "workspace")
+    if hint:
+        output = f"{output}\n{hint}"
     return (
         False,
         f"(exit code {result.returncode})\n{output}"
@@ -299,5 +310,11 @@ def exec_aws_cli(tool_input, transcript, current_attachments):
         return f"[PARAM_CHECK]\n{command}"
     if not command.startswith("aws "):
         return "Invalid command — must start with 'aws'."
-    payload = json.dumps({"action": "aws_cli", "command": command})
+    payload = json.dumps(
+        {
+            "action": "aws_cli",
+            "command": command,
+            "session_id": tool_input.get("__session_id__", ""),
+        }
+    )
     return f"[WS_APPROVAL]{payload}"
