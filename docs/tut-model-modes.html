@@ -131,9 +131,10 @@
       than 85% of the budget, the row shows "tight fit". Example: on an 18 GB Mac, the budget is
       13.5 GiB. Ministral 3 14B uses 13.8 GiB at 32K tokens, thus the row shows "won't fit".</p>
     <p>If the app cannot read the header, the app adds 2 GiB to the file size. This also applies to
-      an MLX model, because an MLX model has no GGUF header. The result does not include the prompt
-      cache of llama-server. When a chat sends a different prompt, llama-server keeps the previous
-      context in memory, to a maximum of 8 GiB.</p>
+      an MLX model, because an MLX model has no GGUF header. The llama-server process also keeps a
+      prompt cache and context checkpoints in memory. The app limits these caches to the part of the
+      budget that the model does not use. Thus a model that fits also stays in the budget during a
+      long chat. If the model does not fit, the size of the prompt cache is 0.</p>
     <p>Installing your first local chat model does one more thing worth knowing: it automatically
       flips <code>backends.index_llm</code> from <code>haiku</code> to <code>local</code> if it was
       still on the cloud default, so the one-shot summarization and relationship work that
