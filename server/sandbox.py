@@ -701,8 +701,10 @@ def build_pty_sandbox_wrap(
     PTY shell (terminal_run's hidden sandbox session) runs under the same
     filesystem deny-list as run_sandboxed — and, for agent-stamped runs
     (``write_mode="workspace"``), the same default-deny write confinement,
-    with the session's own ``scratch_dir`` writable. The caller sets the
-    package-cache environment (scratch_cache_env) on the shell it starts.
+    with the session's own ``scratch_dir`` writable. The caller starts the
+    shell with the ``run_sandboxed`` environment (``_merged_env`` over
+    ``_scratch_env``), so the credential denylist, the egress proxy vars and
+    the package caches hold there too.
 
     ``write_root`` is the tree a "workspace" shell may write in, not the
     folder it starts in: a shell started outside the workspace still writes

