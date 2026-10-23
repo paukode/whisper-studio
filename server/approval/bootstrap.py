@@ -531,7 +531,7 @@ def register_defaults() -> None:
             summary=_aws_summary,
             executor=_do_aws_cli,
             risk_hint="medium",
-            payload_fields=["command"],
+            payload_fields=["command", "session_id"],
             render_command=lambda p: p.get("command") or "",
         ),
     )

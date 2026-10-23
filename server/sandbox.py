@@ -17,7 +17,7 @@ Two write modes:
   - "workspace": Codex-style default-deny — reads stay open (minus secrets)
     but writes are confined to the command's working tree (plus the git dirs
     a linked worktree needs), the calling session's own scratch folder,
-    system temp, and explicit allow_paths. Package caches (npm, pip, uv) are
+    system temp, and explicit write_paths. Package caches (npm, pip, uv) are
     pointed into that scratch folder, since their usual home-folder places
     are outside the confinement. Applied
     to agent-stamped (unattended) commands, where no human reviews each
@@ -54,8 +54,9 @@ _DENIED_PATHS = expanded_sandbox_paths()
 
 def _effective_denied_paths(allow_paths: list[str] | None) -> list[str]:
     """The deny-list minus any path the caller explicitly allows. Used so
-    cloud-credential tools (aws_cli, boto3 run_python) can reach ~/.aws while
-    every other secret (~/.ssh, git creds, /etc/shadow, …) stays blocked."""
+    cloud-credential tools (aws_cli, boto3 run_python) can read ~/.aws while
+    every other secret (~/.ssh, git creds, /etc/shadow, …) stays blocked. An
+    allowed path stays read-only (_credential_write_rules)."""
     if not allow_paths:
         return _DENIED_PATHS
     allowed_real = {os.path.realpath(os.path.expanduser(p)) for p in allow_paths}
@@ -105,23 +106,50 @@ _WORKSPACE_WRITE_SYSTEM_ROOTS = [
 ]
 
 
-def _workspace_write_roots(
-    tree: str | None, allow_paths: list[str] | None, scratch_dir: str | None = None
-) -> list[str]:
+def _workspace_write_roots(tree: str | None, scratch_dir: str | None = None) -> list[str]:
     """The write-allowed subpaths for ``write_mode="workspace"``: the tree the
     run may write in (plus the git dirs a linked worktree needs) when there is
     one, the calling session's own scratch folder (where the prompt sends
-    throwaway files, virtualenvs and package caches), system temp, and any
-    explicitly allowed credential paths (the aws CLI writes its own
-    ~/.aws/cli/cache)."""
+    throwaway files, virtualenvs and package caches), and system temp. A
+    caller's write_paths (the AWS CLI caches) come later, in
+    _credential_write_rules."""
     roots = [os.path.realpath(tree), *_git_write_roots(tree)] if tree else []
     if scratch_dir:
         roots.append(os.path.realpath(scratch_dir))
     roots.extend(_WORKSPACE_WRITE_SYSTEM_ROOTS)
-    for p in allow_paths or []:
-        roots.append(os.path.realpath(os.path.expanduser(p)))
     seen: set[str] = set()
     return [r for r in roots if not (r in seen or seen.add(r))]
+
+
+def _spellings(path: str) -> list[str]:
+    """``path`` with ~ expanded, and its resolved form when that differs:
+    Seatbelt matches the path as given, and a caller may reach either."""
+    given = os.path.abspath(os.path.expanduser(path))
+    real = os.path.realpath(given)
+    return [given] if real == given else [given, real]
+
+
+def _credential_write_rules(
+    allow_paths: list[str] | None, write_paths: list[str] | None
+) -> list[str]:
+    """SBPL rules that keep every allowed credential folder read-only, apart
+    from the caller's write_paths beneath it (the AWS CLI caches).
+
+    The aws CLI and boto3 run programs that files in ~/.aws name
+    (credential_process, "!" CLI aliases, plugins), so a write there is code
+    that a later AWS call runs, boto3 in the server process included. These
+    rules go LAST, after the workspace write allows, so a workspace that
+    contains ~/.aws (the home folder) cannot open it again."""
+    rules = []
+    for path in allow_paths or []:
+        for spelling in _spellings(path):
+            escaped = spelling.replace('"', '\\"')
+            rules.append(f'(deny file-write* (subpath "{escaped}"))')
+    for path in write_paths or []:
+        for spelling in _spellings(path):
+            escaped = spelling.replace('"', '\\"')
+            rules.append(f'(allow file-write* (subpath "{escaped}"))')
+    return rules
 
 
 def scratch_cache_env(scratch_dir: str) -> dict[str, str]:
@@ -150,8 +178,13 @@ def _generate_macos_profile(
     allow_paths: list[str] | None = None,
     write_mode: str = "open",
     scratch_dir: str | None = None,
+    write_paths: list[str] | None = None,
 ) -> str:
     """Generate a macOS sandbox-exec profile that denies sensitive paths.
+
+    ``allow_paths`` re-allows deny-listed credential folders for READING;
+    they stay read-only except ``write_paths`` beneath them, in "open" and
+    "workspace" mode alike (_credential_write_rules, the last rules).
 
     ``write_mode="workspace"`` additionally denies ALL writes and then allows
     them back only under the roots from ``_workspace_write_roots`` (the
@@ -185,7 +218,7 @@ def _generate_macos_profile(
 
     if write_mode == "workspace":
         write_allows = []
-        for root in _workspace_write_roots(workspace, allow_paths, scratch_dir):
+        for root in _workspace_write_roots(workspace, scratch_dir):
             escaped = root.replace('"', '\\"')
             write_allows.append(f'(allow file-write* (subpath "{escaped}"))')
         write_allow_block = "\n".join(write_allows)
@@ -210,6 +243,11 @@ def _generate_macos_profile(
 (allow default)
 {deny_block}
 """
+
+    if write_mode != "readonly":
+        credential_rules = _credential_write_rules(allow_paths, write_paths)
+        if credential_rules:
+            profile += "\n".join(credential_rules) + "\n"
 
     network_rules = _macos_network_restriction_rules()
     if network_rules:
@@ -375,6 +413,20 @@ def _merged_env(env_extra: dict | None) -> dict:
     return base
 
 
+class _Cwd:
+    """The default ``write_root`` of run_sandboxed and _bwrap_argv: the run's
+    own working directory. A marker, since None already means "no tree"."""
+
+
+_CWD = _Cwd()
+
+
+def _resolve_write_root(write_root: str | None | _Cwd, cwd: str) -> str | None:
+    """The tree a "workspace" run may write in: ``cwd`` for the default, else
+    ``write_root`` as given (None: no tree)."""
+    return cwd if isinstance(write_root, _Cwd) else write_root
+
+
 def run_sandboxed(
     command: str,
     *,
@@ -387,25 +439,34 @@ def run_sandboxed(
     env_extra: dict | None = None,
     write_mode: str = "open",
     scratch_dir: str | None = None,
+    write_root: str | None | _Cwd = _CWD,
+    write_paths: list[str] | None = None,
 ) -> subprocess.CompletedProcess:
     """Run a command with OS-level sandboxing if available.
 
     ``allow_paths`` removes specific entries from the deny-list (e.g. ``~/.aws``
-    for the AWS tools, which need their credentials to function). ``env_extra``
+    for the AWS tools, which need their credentials to function); they stay
+    read-only. ``write_paths`` are folders beneath them that the run may write
+    (the AWS CLI caches); each must exist, or the macOS sandbox refuses to
+    create it. ``env_extra``
     adds variables to the subprocess environment (passed via ``env=``, NOT
     prepended to the command — a command prefix would corrupt any command that
     begins with a shell compound construct like ``if``/``for``/``case``).
 
     ``write_mode="workspace"`` confines WRITES to the working tree + temp +
-    allow_paths on macOS (see the module docstring); the bwrap path has always
+    write_paths on macOS (see the module docstring); the bwrap path has always
     behaved that way regardless of mode, and the no-sandbox fallback cannot
     enforce it (command validators remain the only layer there).
     ``scratch_dir`` is the calling session's own scratch folder: writable under
     "workspace", and home to the run's package caches (scratch_cache_env).
+    ``write_root`` is the tree a "workspace" run may write in. It defaults to
+    ``cwd``; None writes no tree, only the scratch folder, temp and
+    write_paths (aws_cli with no workspace connected, whose cwd is $HOME).
 
     Falls back to plain subprocess.run if no sandbox is available.
     """
     env_extra = {**_scratch_env(write_mode, scratch_dir), **(env_extra or {})}
+    tree = _resolve_write_root(write_root, cwd)
     if _is_sandbox_exec_available():
         return _run_macos_sandboxed(
             command,
@@ -418,6 +479,8 @@ def run_sandboxed(
             env_extra=env_extra,
             write_mode=write_mode,
             scratch_dir=scratch_dir,
+            write_root=tree,
+            write_paths=write_paths,
         )
     if _is_bwrap_available():
         return _run_bwrap_sandboxed(
@@ -431,6 +494,8 @@ def run_sandboxed(
             env_extra=env_extra,
             write_mode=write_mode,
             scratch_dir=scratch_dir,
+            write_root=tree,
+            write_paths=write_paths,
         )
     # Fallback: no OS-level sandbox
     from server.process_utils import kill_process_group, new_process_group
@@ -466,10 +531,17 @@ def _run_macos_sandboxed(
     env_extra: dict | None = None,
     write_mode: str = "open",
     scratch_dir: str | None = None,
+    write_root: str | None = None,
+    write_paths: list[str] | None = None,
 ) -> subprocess.CompletedProcess:
-    """Run command under macOS sandbox-exec."""
+    """Run command under macOS sandbox-exec. ``write_root`` is the resolved
+    tree a "workspace" run may write in (None: no tree)."""
     profile = _generate_macos_profile(
-        cwd, allow_paths, write_mode=write_mode, scratch_dir=scratch_dir
+        write_root,
+        allow_paths,
+        write_mode=write_mode,
+        scratch_dir=scratch_dir,
+        write_paths=write_paths,
     )
 
     # Write profile to temp file (sandbox-exec needs a file path)
@@ -523,12 +595,15 @@ def _run_bwrap_sandboxed(
     env_extra: dict | None = None,
     write_mode: str = "workspace",
     scratch_dir: str | None = None,
+    write_root: str | None = None,
+    write_paths: list[str] | None = None,
 ) -> subprocess.CompletedProcess:
     """Run command under bubblewrap (Linux).
 
     bwrap has always been workspace-write shaped (read-only root, rw binds
-    for cwd + /tmp), so ``write_mode="open"`` and ``"workspace"`` behave the
-    same here. ``write_mode="readonly"`` drops the rw workspace bind and
+    for the write root + /tmp), so ``write_mode="open"`` and ``"workspace"``
+    behave the same here. ``write_root`` is the resolved tree (None: no tree).
+    ``write_mode="readonly"`` drops the rw workspace bind and
     replaces /tmp with a throwaway tmpfs, so nothing the command writes
     survives anywhere.
 
@@ -537,7 +612,15 @@ def _run_bwrap_sandboxed(
     _bwrap_network_restriction_args's docstring for exactly what that does
     and does not cover.
     """
-    bwrap_args = _bwrap_argv(command, cwd, allow_paths, write_mode, scratch_dir=scratch_dir)
+    bwrap_args = _bwrap_argv(
+        command,
+        cwd,
+        allow_paths,
+        write_mode,
+        write_root=write_root,
+        scratch_dir=scratch_dir,
+        write_paths=write_paths,
+    )
 
     from server.process_utils import kill_process_group, new_process_group
 
@@ -564,14 +647,19 @@ def _bwrap_argv(
     cwd: str,
     allow_paths: list[str] | None,
     write_mode: str,
-    write_root: str | None = None,
+    write_root: str | None | _Cwd = _CWD,
     scratch_dir: str | None = None,
+    write_paths: list[str] | None = None,
 ) -> list[str]:
     """The bwrap argv that runs ``command`` in ``cwd``. Only "readonly" changes
     the filesystem shape: no rw workspace bind, and /tmp a throwaway tmpfs.
     ``write_root`` is the tree bound read-write (the workspace a confined
-    command may write in); it defaults to ``cwd``. ``scratch_dir``, the
-    session's own scratch folder, is bound read-write beside it."""
+    command may write in); it defaults to ``cwd``, and None binds no tree.
+    ``scratch_dir``, the session's own scratch folder, is bound read-write
+    beside it. The ``allow_paths`` are bound read-only on top of those, also
+    inside the tree, and the ``write_paths`` beneath them read-write (the
+    same shape as _credential_write_rules on macOS)."""
+    tree = _resolve_write_root(write_root, cwd)
     if write_mode == "readonly":
         fs_args = [
             "--ro-bind",
@@ -581,19 +669,18 @@ def _bwrap_argv(
             "/tmp",  # writable but ephemeral, nothing persists
         ]
     else:
-        fs_args = [
-            "--ro-bind",
-            "/",
-            "/",  # read-only root
-            "--bind",
-            write_root or cwd,
-            write_root or cwd,  # read-write workspace
-            "--bind",
-            "/tmp",
-            "/tmp",  # read-write tmp
-        ]
+        fs_args = ["--ro-bind", "/", "/"]  # read-only root
+        if tree:
+            fs_args += ["--bind", tree, tree]  # read-write workspace
+        fs_args += ["--bind", "/tmp", "/tmp"]  # read-write tmp
         if scratch_dir:
             fs_args += ["--bind", scratch_dir, scratch_dir]  # the session's scratch
+        for path in map(os.path.expanduser, allow_paths or []):
+            if os.path.exists(path):
+                fs_args += ["--ro-bind", path, path]  # credentials, read-only
+        for path in map(os.path.expanduser, write_paths or []):
+            if os.path.exists(path):
+                fs_args += ["--bind", path, path]  # their caches
     argv = [
         "bwrap",
         *fs_args,
@@ -664,7 +751,7 @@ def popen_sandboxed(
         shell = False
     elif _is_bwrap_available():
         argv = _bwrap_argv(
-            command, cwd, None, write_mode, write_root=write_root, scratch_dir=scratch_dir
+            command, cwd, None, write_mode, write_root=write_root or cwd, scratch_dir=scratch_dir
         )
         shell = False
     else:

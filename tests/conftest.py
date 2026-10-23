@@ -254,3 +254,15 @@ def _pin_mac_languages(monkeypatch, _english_only_mac_prefs):
     from server.asr import languages
 
     monkeypatch.setattr(languages, "_MAC_GLOBAL_PREFS", _english_only_mac_prefs)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_aws_dir(tmp_path_factory, monkeypatch):
+    """Never create folders in the developer's real ~/.aws: aws_cli and
+    run_python create ~/.aws/cli/cache before they run
+    (server/executors/code.py::_aws_cache_paths). Every test gets an ~/.aws
+    that does not exist, so nothing is created; tests of the cache folders
+    point _AWS_DIR at their own."""
+    from server.executors import code
+
+    monkeypatch.setattr(code, "_AWS_DIR", str(tmp_path_factory.mktemp("aws-home") / ".aws"))

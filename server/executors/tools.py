@@ -73,10 +73,12 @@ AWS_CLI_TOOL = {
         "methods. The command runs in a sandbox with the user's AWS credentials and is "
         "shown on an approval card before it executes, so route mutations here rather "
         'than through terminal_run. It must start with "aws ", has a 30s default '
-        "timeout, and output is truncated at 10,000 characters. Command substitution "
-        "($() or backticks outside single quotes) is blocked; run a read via aws_boto3 "
-        "first and substitute literal values, and wrap --query JMESPath filters in "
-        "single quotes. When a mutating command is missing a required parameter, set "
+        "timeout, and output is truncated at 10,000 characters. It runs one aws "
+        "command with no shell: pipes, redirects, ;, &&, $VARIABLES and $() do not "
+        "work, so send one command per call with literal values (run a read via "
+        "aws_boto3 first to get them). Quote arguments as in a shell, and wrap "
+        "--query JMESPath filters in single quotes. When a mutating command is "
+        "missing a required parameter, set "
         "mode to check_params to return a parameter checklist for the user instead of "
         "running. For ordinary reads (list, describe, get) use aws_boto3 instead; it is "
         "faster and needs no approval."
@@ -88,8 +90,9 @@ AWS_CLI_TOOL = {
                 "type": "string",
                 "description": (
                     "Full AWS CLI command starting with 'aws ' (e.g. aws s3api "
-                    "create-bucket --bucket my-bucket --region eu-west-1). No $() or "
-                    "backtick substitution; single-quote any --query JMESPath. In "
+                    "create-bucket --bucket my-bucket --region eu-west-1). One aws "
+                    "command, no shell: no pipes, redirects, ;, && or $() "
+                    "substitution; single-quote any --query JMESPath. In "
                     "check_params mode this field instead carries the plain-text "
                     "parameter checklist to show the user."
                 ),

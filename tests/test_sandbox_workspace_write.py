@@ -47,12 +47,18 @@ def test_workspace_mode_rule_order_is_deny_allow_secrets(tmp_path):
     assert global_deny < first_allow < first_secret_deny
 
 
-def test_allow_paths_are_writable_in_workspace_mode(tmp_path):
-    profile = sandbox._generate_macos_profile(
-        str(tmp_path), allow_paths=["~/.aws"], write_mode="workspace"
-    )
+def test_allow_paths_stay_read_only_and_write_paths_are_writable(tmp_path):
+    """~/.aws is readable for the AWS tools, and only its caches are writable
+    (tests/test_aws_cli_one_program.py has the why)."""
     aws = os.path.realpath(os.path.expanduser("~/.aws"))
-    assert f'(allow file-write* (subpath "{aws}"))' in profile
+    cache = os.path.join(aws, "cli", "cache")
+    profile = sandbox._generate_macos_profile(
+        str(tmp_path), allow_paths=["~/.aws"], write_mode="workspace", write_paths=[cache]
+    )
+    assert f'(deny file-read* file-write* (subpath "{aws}"))' not in profile
+    assert f'(allow file-write* (subpath "{aws}"))' not in profile
+    assert f'(deny file-write* (subpath "{aws}"))' in profile
+    assert f'(allow file-write* (subpath "{cache}"))' in profile
 
 
 def test_git_write_roots_resolves_worktree_and_common_dirs(tmp_path):
