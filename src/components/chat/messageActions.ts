@@ -1,6 +1,6 @@
-import { marked } from 'marked';
 import type { ChatMessage as ChatMessageType, CronEventPayload } from '@/types/chat';
 import { downloadFile } from '@/utils/downloadFile';
+import { renderMarkdownSafe } from '@/utils/sanitizeHtml';
 
 /** Rescue cron_event rows persisted under the older flat shape. Returns
  *  null if the row doesn't carry the minimum cron fields. */
@@ -85,22 +85,33 @@ export function exportTurn(rows: readonly ChatMessageType[]): void {
 }
 
 /**
- * Copy assistant message content as rich text (HTML) to clipboard.
+ * Copy an assistant turn as rich text: the rendered HTML for apps that read
+ * formatting (Word, Outlook, OneNote) and the markdown as plain text. Call it
+ * from the click handler itself.
  *
- * Defensive against undefined/null content: legacy chat_history rows or
- * upstream bugs (e.g. a cron_event row that lost its payload) can leave
- * `content` unset, and `marked.parse(undefined)` throws. Treat null/undef
- * as empty string so the click never crashes the page.
+ * It copies the way Cmd+C does: execCommand('copy') fires a copy event,
+ * synchronously, and the listener fills it. navigator.clipboard.write() with
+ * Blob items failed silently in a long-running Mac app session while
+ * writeText kept working, and only a restart brought it back.
+ *
+ * Returns false when the browser refused the copy, so the caller can say so.
  */
-export async function copyRichText(content: string | undefined | null): Promise<void> {
-  const safe = content ?? '';
-  const html = marked.parse(safe, { async: false }) as string;
-  const htmlBlob = new Blob([html], { type: 'text/html' });
-  const textBlob = new Blob([safe], { type: 'text/plain' });
-  await navigator.clipboard.write([
-    new ClipboardItem({
-      'text/html': htmlBlob,
-      'text/plain': textBlob,
-    }),
-  ]);
+export function copyRichText(content: string | undefined | null): boolean {
+  const markdown = content ?? '';
+  const html = renderMarkdownSafe(markdown);
+  let filled = false;
+  const fill = (e: ClipboardEvent) => {
+    if (!e.clipboardData) return;
+    e.clipboardData.setData('text/html', html);
+    e.clipboardData.setData('text/plain', markdown);
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    filled = true;
+  };
+  document.addEventListener('copy', fill, { capture: true });
+  try {
+    return document.execCommand('copy') && filled;
+  } finally {
+    document.removeEventListener('copy', fill, { capture: true });
+  }
 }

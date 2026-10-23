@@ -10,6 +10,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { TurnBubble } from './TurnBubble';
 import { getActiveChatStore } from '@/stores/sessionRuntimes';
+import { useUIStore } from '@/stores/uiStore';
+import { stubExecCommand } from '@/test/clipboardCopy';
 import type { SessionTask } from '@/stores/taskStore';
 import type { ChatMessage, Delivery, ToolUseEvent } from '@/types/chat';
 
@@ -63,6 +65,8 @@ beforeEach(() => {
 
 afterEach(() => {
   getActiveChatStore().getState().setMessages([]);
+  useUIStore.setState({ toasts: [], toastQueue: [] });
+  Reflect.deleteProperty(document, 'execCommand');
   vi.restoreAllMocks();
 });
 
@@ -101,6 +105,26 @@ describe('TurnBubble', () => {
     expect(writeText).toHaveBeenCalledWith(
       "I'll start with the reducer.\n\nThe reducer commits prose on its own. Saved report.html.\n\nDone: pushed main.",
     );
+  });
+
+  it('copies the same prose as rich text, the markdown kept as the plain text', () => {
+    const copy = stubExecCommand(true);
+    render(<TurnBubble rows={turn} indices={indices} />);
+    fireEvent.click(screen.getByTitle('Copy Rich Text'));
+    expect(copy.data.get('text/plain')).toBe(
+      "I'll start with the reducer.\n\nThe reducer commits prose on its own. Saved report.html.\n\nDone: pushed main.",
+    );
+    expect(copy.data.get('text/html')).toContain('<p>Done: pushed main.</p>');
+    expect(useUIStore.getState().toasts).toEqual([]);
+  });
+
+  it('says so when the browser refuses the rich text copy', () => {
+    stubExecCommand(false);
+    render(<TurnBubble rows={turn} indices={indices} />);
+    fireEvent.click(screen.getByTitle('Copy Rich Text'));
+    expect(useUIStore.getState().toasts.map((t) => [t.type, t.message])).toEqual([
+      ['error', 'Could not copy as rich text'],
+    ]);
   });
 
   it('deletes every row of the turn and nothing else', () => {

@@ -6,6 +6,7 @@ import { traceRuns, spokenTurn } from '@/components/chat/turnEntries';
 import { DeliveryChips } from '@/components/chat/DeliveryChips';
 import { mergeDeliveries } from '@/hooks/chatStream/deliveries';
 import { getActiveChatStore } from '@/stores/sessionRuntimes';
+import { useUIStore } from '@/stores/uiStore';
 import { formatMessageTimestamp } from '@/utils/formatTimestamp';
 import { exportTurn, copyRichText, turnText } from '@/components/chat/messageActions';
 
@@ -86,6 +87,12 @@ const TurnBubbleView: React.FC<TurnBubbleProps> = ({
     }));
   }, [first]);
 
+  const handleCopyRich = useCallback(() => {
+    if (!copyRichText(turnText(rows))) {
+      useUIStore.getState().addToast({ type: 'error', message: 'Could not copy as rich text', persist: false });
+    }
+  }, [rows]);
+
   const handleDelete = useCallback(() => {
     getActiveChatStore().getState().deleteMessages(indices);
   }, [indices]);
@@ -133,7 +140,7 @@ const TurnBubbleView: React.FC<TurnBubbleProps> = ({
                   <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
                 </svg>
               </button>
-              <button className="msg-action-btn" onClick={() => void copyRichText(turnText(rows))} title="Copy Rich Text">
+              <button className="msg-action-btn" onClick={handleCopyRich} title="Copy Rich Text">
                 <svg {...ICON_PROPS}>
                   <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
                   <polyline points="15 14 17 16 21 12"/>
