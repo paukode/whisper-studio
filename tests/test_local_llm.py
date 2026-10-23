@@ -172,6 +172,18 @@ def test_local_system_prompt_tools_mode_tells_model_it_has_tools():
     assert "do not claim you lack tools" in p
 
 
+def test_local_tools_prompt_carries_the_cloud_keep_working_rule():
+    """A local model follows the same multi-step instruction as the cloud
+    models: the one shared rule, not a paraphrase that can drift. Without it a
+    model that announces a step and stops ends the turn with nothing done."""
+    from server.prompts.base import BASE, KEEP_WORKING
+
+    assert KEEP_WORKING in BASE
+    assert KEEP_WORKING in L.build_local_system_prompt(tools=True)
+    # The no-tools identity has no tool loop to keep going in.
+    assert KEEP_WORKING not in L.build_local_system_prompt(tools=False)
+
+
 def test_local_system_prompt_notes_connected_workspace_when_tools_on(monkeypatch):
     from server.prompts import rules
 

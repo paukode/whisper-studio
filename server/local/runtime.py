@@ -276,7 +276,7 @@ _LOCAL_SYSTEM_TOOLS = (
     "conversation; rely on those rather than assuming. Depending on what is "
     "enabled they may let you search and read the web, read and search the "
     "workspace, inspect code, run git, manage tasks and memory, and edit or create "
-    "files. Use the declared tools whenever they help — DO NOT claim you lack "
+    "files. Use the declared tools whenever they help: DO NOT claim you lack "
     "tools, internet, or a filesystem when a matching tool is declared. To use a "
     "tool, emit a tool call; then answer using the result. Prefer reading and "
     "searching before answering questions about the user's code or files. Actions "
@@ -285,6 +285,22 @@ _LOCAL_SYSTEM_TOOLS = (
     "reject. Call only the tools you actually need, and stop calling tools once "
     "you can answer."
 )
+
+
+# Said right after the shared keep-working rule. A model that announces a step
+# and stops ends the turn with nothing done: the loop only resumes it after a
+# tool call (seen on a Gemma 4 coder fine-tune, 2026-10-20).
+_SAME_REPLY = "When you say what you are about to do, make that tool call in the same reply."
+
+
+def _tools_identity() -> str:
+    """The tools-on identity plus the multi-step rule the cloud prompt carries
+    (server/prompts/base.py KEEP_WORKING), so a local model follows the same
+    tool-calling instruction as the cloud models. Imported here, not at module
+    level: server.prompts pulls in the whole prompt registry."""
+    from server.prompts.base import KEEP_WORKING
+
+    return f"{_LOCAL_SYSTEM_TOOLS} {KEEP_WORKING}{_SAME_REPLY}"
 
 
 def _local_workspace_note(ws_path: str) -> str:
@@ -333,7 +349,7 @@ def build_local_system_prompt(
     """
     from server.prompts.rules import append_rules
 
-    parts = [_LOCAL_SYSTEM_TOOLS if tools else _LOCAL_SYSTEM_BASE]
+    parts = [_tools_identity() if tools else _LOCAL_SYSTEM_BASE]
     if tools and ws_path:
         parts.append(_local_workspace_note(ws_path))
     for extra in (whisper_md, memory, session_memory):
