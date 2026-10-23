@@ -19,14 +19,18 @@ from dataclasses import dataclass
 
 # ── Architecture gate ────────────────────────────────────────────────────────
 # Architectures the bundled llama.cpp (build >= 10090, see
-# server/local/llama_server.py MIN_BUILD) reliably runs. The families the brief
-# asks for — Qwen, Gemma, Mistral/Ministral, Llama, Phi — plus a handful of
-# equally well-supported ones. Kept conservative on purpose:
-#   * brand-new / hybrid-attention archs the current build does NOT load yet
-#     (e.g. "qwen3next") are omitted so we never offer a model that fails at
-#     load. Bump this set when the bundled engine is upgraded (design P4).
-#   * most Mistral / Ministral / Mixtral GGUFs report arch "llama" (the token
-#     the converter writes), which is already covered by "llama".
+# server/local/llama_server.py MIN_BUILD) reliably runs: Qwen, Gemma,
+# Mistral/Ministral, Llama and Phi, plus a handful of equally well-supported
+# families. Kept conservative on purpose:
+#   * an arch the build knows but nobody has load-tested stays out (for
+#     example the hybrid-attention "qwen3next"), so we never offer a model
+#     that fails at load. Bump this set when the bundled engine is upgraded
+#     (design P4).
+#   * most Mistral / Mixtral GGUFs report arch "llama" (the token the converter
+#     writes), which is already covered by "llama". Ministral 3 reports
+#     "mistral3".
+#   * "gemma4" and "mistral3" were load-tested 2026-10-23 on llama-server
+#     b10289 (Gemma 4 12B QAT Q4_0, Ministral 3 14B Reasoning UD-Q4_K_XL).
 SUPPORTED_ARCHS: frozenset[str] = frozenset(
     {
         "llama",
@@ -39,7 +43,9 @@ SUPPORTED_ARCHS: frozenset[str] = frozenset(
         "gemma2",
         "gemma3",
         "gemma3n",
+        "gemma4",
         "mistral",
+        "mistral3",
         "phi2",
         "phi3",
         "phi3moe",

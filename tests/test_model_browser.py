@@ -25,9 +25,12 @@ def test_arch_allowlist_accepts_supported_and_rejects_new():
     assert compat.arch_supported("qwen3moe")
     assert compat.arch_supported("qwen35")  # Qwen3.5/3.8 family, llama.cpp b10090+
     assert compat.arch_supported("gemma3")
+    # The header archs of the Recommended Gemma 4 and Ministral 3 GGUFs.
+    assert compat.arch_supported("gemma4")
+    assert compat.arch_supported("mistral3")
     assert compat.arch_supported("llama")
     assert compat.arch_supported("PHI3")  # case-insensitive
-    # Brand-new / hybrid archs the bundled engine can't load yet, and junk.
+    # Archs the bundled engine knows but nobody has load-tested, and junk.
     assert not compat.arch_supported("qwen3next")
     assert not compat.arch_supported("mamba")
     assert not compat.arch_supported(None)
