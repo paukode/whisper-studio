@@ -18,7 +18,7 @@ def test_aws_cli_rejects_chained_dangerous_command():
 def test_aws_cli_runs_sandboxed_with_aws_allowed(monkeypatch):
     calls = {}
 
-    def fake(cmd, *, cwd, timeout, allow_paths=None, write_mode="open"):
+    def fake(cmd, *, cwd, timeout, allow_paths=None, write_mode="open", **_):
         calls["cmd"] = cmd
         calls["allow_paths"] = allow_paths
         calls["write_mode"] = write_mode
@@ -29,8 +29,9 @@ def test_aws_cli_runs_sandboxed_with_aws_allowed(monkeypatch):
     assert ok is True
     assert calls["allow_paths"] and any(".aws" in p for p in calls["allow_paths"])
     assert "aws s3 ls" in calls["cmd"]
-    # Always workspace-confined: local writes limited to the workspace, temp,
-    # and ~/.aws (the CLI's own cache), for humans and agents alike.
+    # Always workspace-confined: local writes limited to the workspace, the
+    # session's scratch folder, temp, and ~/.aws (the CLI's own cache), for
+    # humans and agents alike (tests/test_aws_cli_write_root.py).
     assert calls["write_mode"] == "workspace"
     ok, out = codemod.do_aws_cli({"command": "aws s3 ls", "__agent__": True})
     assert ok is True
