@@ -183,6 +183,23 @@ def test_local_system_prompt_notes_connected_workspace_when_tools_on(monkeypatch
     assert "ws_read_file" in p
 
 
+def test_local_workspace_note_says_unnamed_code_means_the_workspace(monkeypatch):
+    """A request like "can you review this code for me?" names no file.
+    On-device models asked which file to review instead of looking (benchmark
+    2026-10-23), so the note must say that such a request means the connected
+    workspace, and that the model looks before it asks."""
+    from server.prompts import rules
+
+    monkeypatch.setattr(rules, "load_global_instructions", lambda: "")
+    p = L.build_local_system_prompt(tools=True, ws_path="/Users/me/proj")
+    note = p[p.index("/Users/me/proj") :]
+    assert '"this code"' in note
+    assert "means this workspace" in note
+    assert "instead of asking which file" in note
+    # Invariant 10: no em dashes in prompts.
+    assert chr(0x2014) not in note
+
+
 def test_local_system_prompt_skips_workspace_note_without_tools(monkeypatch):
     from server.prompts import rules
 
