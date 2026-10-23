@@ -424,6 +424,55 @@ def test_a_chroot_leaves_every_operand_unknown():
     assert not is_rm_command("chroot /mnt ls")
 
 
+def test_detects_rm_in_a_command_line_watch_or_parallel_joins():
+    # Both join the words after their options and run them with a shell.
+    for command in (
+        "watch 'rm -rf ~/x'",
+        "watch -n 5 'rm -rf ~/x'",
+        "watch -d -n 1 'rm -rf' ~/x",
+        "nohup watch 'rm -rf ~/x'",
+    ):
+        assert _first_operands(command) == ["~/x"], command
+    # parallel fills its arguments in, so what its deletes name is unknown.
+    for command in (
+        "parallel 'rm -rf {}' ::: a b",
+        "parallel -j 4 'rm -rf ~/x/{}' ::: a",
+        "ls | parallel 'rm -rf {}'",
+    ):
+        assert delete_sites(command)[0].operands is None, command
+    for command in ("watch -n 5 ls", "watch 'du -sh dist'", "parallel gzip ::: *.log"):
+        assert not is_rm_command(command), command
+
+
+def test_detects_rm_in_a_command_find_runs():
+    # The {} stands for the paths find walks: each starting point.
+    assert _first_operands(r"find . -exec sh -c 'rm -rf ~/x' \;") == ["~/x"]
+    assert _first_operands(r"find dist -exec sh -c 'rm -rf {}' \;") == ["dist"]
+    assert _first_operands(r"find a b -exec sh -c 'rm -rf {}/cache' \;") == ["a/cache", "b/cache"]
+    assert _first_operands("find / -exec sudo rm -rf {} +") == ["/"]
+    assert _first_operands(r"find . -ok env rm {} \;") == ["."]
+    # Run in the folder of each found file, it deletes where the line cannot say.
+    assert delete_sites(r"find . -execdir sh -c 'rm -rf {}' \;")[0].operands is None
+    both = delete_sites(r"find . -exec rm {} \; -exec sh -c 'rm -rf ~/x' \;")
+    assert [s.operands for s in both] == [["."], ["~/x"]]
+    for command in (
+        r"find . -name x -exec echo {} \;",
+        r"find . -exec sh -c 'gzip {}' \;",
+        "find . -exec chmod +x {} +",
+    ):
+        assert not is_rm_command(command), command
+
+
+def test_a_script_fed_by_xargs_deletes_what_its_input_names():
+    # The regression: {} in the script read as a folder of the workspace.
+    for command in (
+        "xargs -I{} sh -c 'rm -rf {}'",
+        "find / -name x | xargs -I % sh -c 'rm -rf %'",
+        "cat list.txt | xargs sh -c 'rm -rf \"$@\"' _",
+    ):
+        assert delete_sites(command)[0].operands is None, command
+
+
 def test_shell_scripts_reads_a_shell_anywhere_in_an_argv():
     from server.security.delete_sites import shell_scripts
 
@@ -522,6 +571,10 @@ def test_a_delete_outside_the_workspace_always_asks(workspace, tmp_path):
         "trap 'rm -rf ~/old' EXIT",
         "su root -c 'rm -rf ~/old'",
         "chroot / rm -rf /tmp/x",
+        "watch -n 5 'rm -rf ~/old'",
+        "parallel 'rm -rf {}' ::: a",
+        "find / -name '*.tmp' -exec sh -c 'rm -f {}' \\;",
+        "find . | xargs -I{} sh -c 'rm -rf {}'",
     )
     for command in outside:
         assert approval_floor("ws_run_command", {"command": command}, "cli") == "rm", command
@@ -635,6 +688,9 @@ def test_refuse_if_agent_rm_blocks_rm_wherever_the_command_hides_it():
         "trap 'rm -rf x' EXIT",
         "su root -c 'rm -rf x'",
         "chroot / rm -rf x",
+        "watch -n 5 'rm -rf x'",
+        "parallel 'rm -rf {}' ::: a",
+        "find . -exec sh -c 'rm -rf {}' \\;",
     ):
         outcome = refuse_if_agent_rm({"__agent__": True, "command": command})
         assert outcome is not None and outcome.ok is False, command

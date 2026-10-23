@@ -322,3 +322,26 @@ def test_a_delete_run_as_another_user_asks_where_the_line_cannot_say(ws):
         "sudo sh -c 'rm -rf dist'",
     ):
         assert not deletes_beyond(command, ws, roots), command
+
+
+def test_deletes_in_lines_watch_parallel_and_find_run_reach_their_operands(ws):
+    roots = [ws]
+    for command in (
+        "watch -n 5 'rm -rf ~/x'",
+        "watch 'rm -rf ../x'",
+        "parallel 'rm -rf {}' ::: dist",
+        r"find / -exec sh -c 'rm -rf {}' \;",
+        r"find dist -exec sh -c 'rm -rf ~/x' \;",
+        "find .. -exec sudo rm {} +",
+        r"find dist -execdir sh -c 'rm -rf {}' \;",
+        "find dist | xargs -I{} sh -c 'rm -rf {}'",
+    ):
+        assert deletes_beyond(command, ws, roots), command
+    for command in (
+        "watch 'rm -rf dist'",
+        "watch -n 2 'ls dist'",
+        r"find dist -exec sh -c 'rm -rf {}' \;",
+        "find dist -exec sudo rm {} +",
+        "find . -name '*.pyc' -exec rm {} +",
+    ):
+        assert not deletes_beyond(command, ws, roots), command
