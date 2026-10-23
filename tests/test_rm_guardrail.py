@@ -307,6 +307,8 @@ def test_a_symlink_out_of_the_workspace_reads_as_outside(workspace, tmp_path):
     os.symlink(target, workspace / "link")
     assert approval_floor("ws_run_command", {"command": "rm -rf link/"}, "cli") == "rm"
     assert approval_floor("ws_run_command", {"command": "rm -rf link/*"}, "cli") == "rm"
+    # The kernel climbs .. from where the link points, not from the link.
+    assert approval_floor("ws_run_command", {"command": "rm -rf link/../x"}, "cli") == "rm"
 
 
 def test_the_working_directory_decides_where_a_relative_delete_lands(workspace, tmp_path):

@@ -37,7 +37,9 @@ def resolve_operand(operand: str, cwd: str | None) -> str | None:
     starts from the real path of the working directory, as the kernel starts
     from it: a working directory reached through a symlink is where the link
     points, so ``..`` climbs from there. The result is a real path, so a
-    symlink inside the workspace that points elsewhere is read as elsewhere.
+    symlink inside the workspace that points elsewhere is read as elsewhere,
+    and a ``..`` after it climbs from where it points, as the kernel climbs
+    (``link/../x`` is beside the link's target, not beside the link).
     """
     if not operand or any(c in operand for c in _UNRESOLVABLE):
         return None
@@ -52,7 +54,9 @@ def resolve_operand(operand: str, cwd: str | None) -> str | None:
         if not cwd:
             return None
         path = os.path.join(os.path.realpath(cwd), path)
-    return os.path.realpath(os.path.normpath(path))
+    # realpath alone: a normpath first would drop link/.. off the path as
+    # written, before the link was followed.
+    return os.path.realpath(path)
 
 
 def _change_dir(cwd: str | None, target: str | None) -> list[str | None]:

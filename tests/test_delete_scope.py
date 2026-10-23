@@ -186,3 +186,20 @@ def test_a_cd_through_a_symlink_lands_where_the_link_points(ws, tmp_path):
     assert deletes_beyond("cd link && rm -rf ../dist", ws, roots)
     # cd -P (or a shell in physical mode) reads link/.. off the real path.
     assert deletes_beyond("cd link/.. && rm -rf dist", ws, roots)
+
+
+def test_a_dotdot_after_a_symlink_climbs_from_where_it_points(ws, tmp_path):
+    """The kernel follows the link before it reads the .. after it, so
+    link/../x is beside the link's target, not beside the link."""
+    target = tmp_path / "shared" / "x"
+    target.mkdir(parents=True)
+    os.symlink(target, os.path.join(ws, "link"))
+    beside = os.path.realpath(str(tmp_path / "shared" / "y"))
+    assert resolve_operand("link/../y", ws) == beside
+    assert resolve_operand("link/../*", ws) == os.path.dirname(beside)
+    roots = [ws]
+    assert deletes_beyond("rm -rf link/../y", ws, roots)
+    assert deletes_beyond("rm -rf link/..", ws, roots)
+    assert deletes_beyond("find link/.. -delete", ws, roots)
+    # A .. after a real folder climbs back into the workspace as before.
+    assert not deletes_beyond("rm -rf dist/../dist", ws, roots)
