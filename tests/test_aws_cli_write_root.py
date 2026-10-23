@@ -128,12 +128,17 @@ def test_an_ordinary_failure_gets_no_hint(monkeypatch):
 
 def test_a_profile_with_no_tree_keeps_scratch_temp_and_the_aws_cache(tmp_path):
     scratch = str(tmp_path / SID)
+    cache = os.path.join(AWS, "cli", "cache")
     profile = sandbox._generate_macos_profile(
-        None, allow_paths=["~/.aws"], write_mode="workspace", scratch_dir=scratch
+        None,
+        allow_paths=["~/.aws"],
+        write_mode="workspace",
+        scratch_dir=scratch,
+        write_paths=[cache],
     )
     allows = [line for line in profile.splitlines() if line.startswith("(allow file-write*")]
     assert f'(allow file-write* (subpath "{os.path.realpath(HOME)}"))' not in allows
-    assert f'(allow file-write* (subpath "{AWS}"))' in allows
+    assert f'(allow file-write* (subpath "{cache}"))' in allows
     assert f'(allow file-write* (subpath "{os.path.realpath(scratch)}"))' in allows
     assert '(allow file-write* (subpath "/private/tmp"))' in allows
 
