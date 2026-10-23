@@ -9,10 +9,22 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
-from server.models_manager import manager, sizes
-from server.models_manager.catalog import ModelEntry, bytes_on_disk, entries, get_entry
+from server.models_manager import manager, sizes, tool_check
+from server.models_manager.catalog import (
+    GROUP_LOCAL_CHAT,
+    ModelEntry,
+    bytes_on_disk,
+    entries,
+    get_entry,
+)
 
 router = APIRouter(prefix="/api/models", tags=["models"])
+
+
+def _tool_check(entry: ModelEntry) -> dict | None:
+    """An on-device chat model's tool-call check (running or stored), so the
+    row can say whether the model calls tools; None for every other model."""
+    return tool_check.result_of(entry.key) if entry.group == GROUP_LOCAL_CHAT else None
 
 
 def _entry_or_404(key: str) -> ModelEntry:
@@ -50,6 +62,7 @@ async def get_catalog():
                 # 1-based position while state == "queued", else null.
                 "queue_position": manager.queue_position(entry.key),
                 "error": error,
+                "tool_check": _tool_check(entry),
             }
         )
     return {"models": models}
@@ -69,6 +82,8 @@ async def get_status():
             "progress": manager.progress_of(entry, state),
             "queue_position": manager.queue_position(entry.key),
             "error": error,
+            # Polled while a check runs too, so the row follows its progress.
+            "tool_check": _tool_check(entry),
         }
     return {"models": out}
 

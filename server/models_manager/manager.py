@@ -248,6 +248,7 @@ def reap() -> None:
     retry, instead of an eternal "downloading" the UI can only spin on.
     """
     failed: list[str] = []
+    finished: list[str] = []
     to_terminate: list[_Job] = []
     now = time.time()
     with _lock:
@@ -260,6 +261,8 @@ def reap() -> None:
                 del _jobs[key]
                 if job.cancelled or rc == 0:
                     _errors.pop(key, None)
+                    if rc == 0 and not job.cancelled:
+                        finished.append(key)
                     continue
                 _errors[key] = _failure_message(job.log_path, rc)
                 _progress_max.pop(key, None)  # run over — next run re-measures
@@ -302,7 +305,24 @@ def reap() -> None:
         entry = get_entry(key)
         if entry is not None:
             _drop_partial_sentinel(entry)
+    for key in finished:
+        _check_tool_calls(key)
     _pump()
+
+
+def _check_tool_calls(key: str) -> None:
+    """A finished on-device chat download gets its tool-call check
+    (tool_check.py): a model that cannot call tools must say so in Settings,
+    not in a chat that ends after one sentence."""
+    entry = get_entry(key)
+    if entry is None or entry.group != GROUP_LOCAL_CHAT:
+        return
+    from server.models_manager import tool_check
+
+    try:
+        tool_check.schedule(key)
+    except Exception as e:  # noqa: BLE001 - a check that cannot start never fails the download
+        log.warning("Could not start the tool-call check of %s: %s", key, e)
 
 
 def _pump() -> None:
@@ -507,11 +527,25 @@ def _refuse_if_answering(key: str) -> None:
         raise ModelBusy(_ANSWERING)
 
 
+def _refuse_if_checking(key: str) -> None:
+    """Raise ModelBusy while the tool-call check runs on ``key``. The check
+    holds the model like a chat turn, so without this the refusal would say a
+    chat is answering when none is."""
+    from server.models_manager import tool_check
+
+    if tool_check.is_running(key):
+        raise ModelBusy(
+            "This model is being checked for tool calls. Try the delete again when the "
+            "check finishes (a few minutes)."
+        )
+
+
 def delete(entry: ModelEntry) -> dict:
     """Remove the model from disk. Refused while its download is running or
     while it is answering in a chat; a QUEUED model is dequeued first, then
     whatever is on disk is removed."""
     if entry.group == GROUP_LOCAL_CHAT:
+        _refuse_if_checking(entry.key)
         _refuse_if_answering(entry.key)
     reap()
     with _lock:
@@ -557,5 +591,9 @@ def delete(entry: ModelEntry) -> dict:
     with _lock:
         _errors.pop(entry.key, None)
         _progress_max.pop(entry.key, None)
+    if entry.group == GROUP_LOCAL_CHAT:
+        from server.models_manager import tool_check
+
+        tool_check.forget(entry.key)
     log.info("Model deleted: %s (%s).", entry.key, root)
     return {"deleted": True, "dequeued": dequeued, "stopped_llama_server": stopped}
