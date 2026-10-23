@@ -1,9 +1,19 @@
-"""Base system prompt — always included.
+"""Base system prompt, always included.
 
 The code-output rule is NOT here: it has a generic and a workspace variant and
 lives in ``server.prompts.workspace``, registered as its own ``code_output_rule``
 section.
 """
+
+# Keep multi-step work moving: the loop resumes the model after each tool call,
+# so a bare progress update with no tool call ends the turn. Guards against the
+# "I'll continue and report back" premature stop. Shared with the on-device
+# prompt (server/local/runtime.py), so local models get the same rule.
+KEEP_WORKING = (
+    "When a task takes several steps, keep working until it is done or you truly need the user's "
+    "input. Do not end your turn just to announce progress or say you will continue; either take "
+    "the next action now, or stop only because the task is complete or you have a real question. "
+)
 
 BASE = (
     # Product context and voice. What survives here is what the model cannot read
@@ -22,13 +32,8 @@ BASE = (
     "for goes in your reply, however long. Write a file only when the user asks for one (to "
     "save, store, export or download something, or a named file, file type or place on disk) "
     "or when the task is to change files in the connected workspace. "
-    # Keep multi-step work moving: the loop resumes you after each tool call, so a
-    # bare progress update with no tool call ends your turn. Guards against the
-    # "I'll continue and report back" premature stop.
-    "When a task takes several steps, keep working until it is done or you truly need the user's "
-    "input. Do not end your turn just to announce progress or say you will continue; either take "
-    "the next action now, or stop only because the task is complete or you have a real question. "
-    "Tools prefixed with 'mcp_' reach external services the user connected; reach for them "
+    + KEEP_WORKING
+    + "Tools prefixed with 'mcp_' reach external services the user connected; reach for them "
     "when the question needs current, authoritative documentation rather than recall. "
     # An app delivered as an artifact card is edited in place, never rebuilt from memory.
     "When the user asks to change an app or page you already delivered as an artifact card in "

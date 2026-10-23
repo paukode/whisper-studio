@@ -27,6 +27,7 @@ here — this adapter only bridges them to the engine's event vocabulary.
 
 import json
 import logging
+import re
 
 from server.infrastructure.errors import PromptTooLongError
 
@@ -121,6 +122,59 @@ def _continue_nudge(messages: list[dict]) -> dict:
     return {"role": "user", "content": text}
 
 
+# A short reply that says what the model will do next and then stops. The
+# loop resumes a model only after a tool call, so such a reply ends the turn
+# with nothing done. Measured 2026-10-23: Ministral 3 14B answered "can you
+# review this code for me?" with "Let me first list the files ... I'll then
+# read and analyze them" and no call in 2 of 5 runs; a Gemma 4 coder
+# fine-tune did it on most turns. Asking the user something is a real reason
+# to stop, so a question or a request for input never counts.
+_ANNOUNCES = re.compile(
+    r"\b(?:I'll|I will|I'm going to|I am going to|let me(?! know)|let's|first,? I|next,? I"
+    r"|to get started)\b",
+    re.IGNORECASE,
+)
+_ASKS_USER = re.compile(
+    r"\?|\b(?:please (?:provide|share|tell|paste|specify)|could you|can you|would you"
+    r"|let me know)\b",
+    re.IGNORECASE,
+)
+_ANNOUNCE_MAX_CHARS = 600
+
+_ANNOUNCE_NUDGE = (
+    "(Continue: you said what you will do next, but your reply has no tool call. "
+    "Make that tool call now. If no tool is needed, give your final answer instead.)"
+)
+
+
+def _announces_next_step(text: str) -> bool:
+    """Whether ``text`` only announces a next step (see _ANNOUNCES)."""
+    t = text.strip()
+    return (
+        0 < len(t) <= _ANNOUNCE_MAX_CHARS
+        and _ANNOUNCES.search(t) is not None
+        and _ASKS_USER.search(t) is None
+    )
+
+
+def _summed_usage(usages: list) -> dict | None:
+    """One round's llama-server usage across its attempts: the retry's prompt
+    reuses the cached prefix, so summing counts each prefilled token once."""
+    rows = [u for u in usages if isinstance(u, dict)]
+    if not rows:
+        return None
+
+    def cached(u):
+        d = u.get("prompt_tokens_details")
+        return int(d.get("cached_tokens") or 0) if isinstance(d, dict) else 0
+
+    return {
+        "prompt_tokens": sum(int(u.get("prompt_tokens") or 0) for u in rows),
+        "completion_tokens": sum(int(u.get("completion_tokens") or 0) for u in rows),
+        "prompt_tokens_details": {"cached_tokens": sum(cached(u) for u in rows)},
+    }
+
+
 class LocalAdapter:
     provider = "local"
     # Set by the engine each round: called with ``(body, attempt)`` for every
@@ -176,11 +230,16 @@ class LocalAdapter:
             "supports_tool_choice": self.supports_tool_choice,
         }
 
-    def wire_request(self, messages, tools, is_last_round, *, retry: bool = False) -> dict:
+    def wire_request(
+        self, messages, tools, is_last_round, *, retry: bool = False, announced: str = ""
+    ) -> dict:
         """The exact chat-completions body posted for a round (the transport
         adds only the stream options). ``retry`` adds the empty-completion
-        nudge. Pure, so a request snapshot can rebuild it off the loop and
-        record what the model server actually receives."""
+        nudge. ``announced`` is the reply of an attempt that only announced a
+        step: it goes back as the model's own words, followed by a nudge to
+        make the call. Both nudges are request-only, never persisted. Pure, so
+        a request snapshot can rebuild it off the loop and record what the
+        model server actually receives."""
         from server.local.tools import _to_openai_fn
 
         schemas = [_to_openai_fn(t) for t in tools] if (tools and self.tools_enabled) else []
@@ -189,7 +248,16 @@ class LocalAdapter:
             # so the final round genuinely cannot call one. Costs this round's
             # prompt-cache prefix, but the final round is the last one anyway.
             schemas = []
-        sent = [*messages, _continue_nudge(messages)] if retry else messages
+        if announced:
+            sent = [
+                *messages,
+                {"role": "assistant", "content": announced},
+                {"role": "user", "content": _ANNOUNCE_NUDGE},
+            ]
+        elif retry:
+            sent = [*messages, _continue_nudge(messages)]
+        else:
+            sent = messages
         body: dict = {
             "model": self.wire_model,
             "messages": self.to_openai_messages(sent),
@@ -280,15 +348,34 @@ class LocalAdapter:
             _stream_round,
         )
 
-        # Some fine-tunes decode a handful of tokens and stop without ever
-        # entering plain-text or emitting a tool call, seen most often right
-        # after a tool result. One retry with an explicit "continue" nudge
-        # recovers most of these for free: llama-server's prefix cache means
-        # the retry re-processes only the tiny nudge at the end of the last
-        # user turn, not the whole prompt (confirmed: a stalled round's retry
+        # A round gets at most one retry, of one of two kinds. llama-server's
+        # prefix cache makes either cheap: the retry re-processes only its
+        # short tail, not the whole prompt (confirmed: a stalled round's retry
         # re-prompts in the tens, not thousands, of tokens).
+        #   * Empty: some fine-tunes decode a handful of tokens and stop with
+        #     neither text nor a tool call, most often right after a tool
+        #     result. The retry adds a "continue" nudge.
+        #   * Announced: a short reply that only says what the model will do
+        #     next (_announces_next_step) while tools were offered. The retry
+        #     sends that reply back as the model's own words with a nudge to
+        #     make the call. Its output is held until it proves to be a call:
+        #     the user already saw the announcement, so prose from the retry
+        #     is dropped and the announcement stands as the round's answer.
+        announced = ""
+        spent: list = []
+        round_chars = 0
+        reasoning_chars = 0
+        round_text = ""
+        calls: list[dict] = []
+        finish_reason: str | None = None
         for attempt in range(2):
-            payload = self.wire_request(messages, tools, is_last_round, retry=attempt > 0)
+            payload = self.wire_request(
+                messages,
+                tools,
+                is_last_round,
+                retry=attempt > 0 and not announced,
+                announced=announced,
+            )
             props_by_tool = _schema_props(payload.get("tools") or [])
             if attempt and self.on_retry_request is not None:
                 try:
@@ -296,34 +383,46 @@ class LocalAdapter:
                 except Exception as e:  # noqa: BLE001 - a snapshot never costs the round
                     log.debug("retry request hook failed: %s", e)
 
+            hold = bool(announced)
+            held: list = []
             thinking_open = False
-            calls: list[dict] = []
-            round_usage: dict | None = None
-            finish_reason: str | None = None
-            round_chars = 0
-            reasoning_chars = 0
-            round_text = ""
+            attempt_calls: list[dict] = []
+            attempt_usage: dict | None = None
+            attempt_finish: str | None = None
+            attempt_text = ""
             try:
                 async for kind, piece in _stream_round(self.base_url, payload):
+                    events: list = []
                     if kind == "thinking":
                         if not thinking_open:
                             thinking_open = True
-                            yield ThinkingStart()
+                            events.append(ThinkingStart())
                         reasoning_chars += len(piece)
-                        yield ThinkingDelta(text=piece)
+                        events.append(ThinkingDelta(text=piece))
                     elif kind == "text":
                         if thinking_open:
                             thinking_open = False
-                            yield ThinkingStop()
+                            events.append(ThinkingStop())
                         round_chars += len(piece)
-                        round_text += piece
-                        self._turn_out_chars += len(piece)
-                        yield TextDelta(text=piece)
+                        attempt_text += piece
+                        events.append(TextDelta(text=piece))
                     else:  # ("done", {...})
-                        calls = piece.get("calls") or []
-                        round_usage = piece.get("usage")
-                        finish_reason = piece.get("finish_reason")
+                        attempt_calls = piece.get("calls") or []
+                        attempt_usage = piece.get("usage")
+                        attempt_finish = piece.get("finish_reason")
+                    if hold:
+                        held.extend(events)
+                        continue
+                    for ev in events:
+                        if isinstance(ev, TextDelta):
+                            self._turn_out_chars += len(ev.text)
+                        yield ev
             except Exception as e:
+                if hold:
+                    # The announcement already reached the user: a failed
+                    # retry leaves it as the round's answer.
+                    log.warning("Local model round %d call retry failed: %r", round_num, e)
+                    break
                 if thinking_open:
                     yield ThinkingStop()
                 msg = str(e)
@@ -337,12 +436,46 @@ class LocalAdapter:
                 yield RoundError(message=msg)
                 return
             if thinking_open:  # reasoned but produced no answer text this round
-                yield ThinkingStop()
+                if hold:
+                    held.append(ThinkingStop())
+                else:
+                    yield ThinkingStop()
+            spent.append(attempt_usage)
 
+            if hold:
+                if attempt_calls:
+                    if attempt_text.strip():
+                        held.insert(0, TextDelta(text="\n\n"))
+                        round_text = f"{announced}\n\n{attempt_text}"
+                    for ev in held:
+                        if isinstance(ev, TextDelta):
+                            self._turn_out_chars += len(ev.text)
+                        yield ev
+                    calls, finish_reason = attempt_calls, attempt_finish
+                log.info(
+                    "Local turn (%s) only announced a step at round %d; the retry %s.",
+                    self.model_key,
+                    round_num,
+                    "made the call" if attempt_calls else "made no call either",
+                )
+                break
+            calls, finish_reason, round_text = attempt_calls, attempt_finish, attempt_text
             # A round the output cap cut off is not a stall: nudging it would
             # only spend the same budget again.
-            if calls or round_text or finish_reason == "length" or attempt == 1:
+            if calls or finish_reason == "length" or attempt == 1:
                 break
+            if round_text:
+                offered = bool(payload.get("tools")) and payload.get("tool_choice") != "none"
+                if not (offered and _announces_next_step(round_text)):
+                    break
+                announced = round_text
+                log.info(
+                    "Local turn (%s) only announced a step at round %d; "
+                    "retrying once with a call nudge.",
+                    self.model_key,
+                    round_num,
+                )
+                continue
             log.info(
                 "Local turn (%s) got an empty completion at round %d; "
                 "retrying once with a continuation nudge.",
@@ -399,7 +532,7 @@ class LocalAdapter:
         # prefix. Summing full prompts would recount the conversation every
         # tool round. No usage (older builds): characters / 4 of the body
         # posted and of what came back (text, reasoning, tool-call arguments).
-        usage = round_usage if isinstance(round_usage, dict) else {}
+        usage = _summed_usage(spent) or {}
         prompt = int(usage.get("prompt_tokens") or 0)
         completion = int(usage.get("completion_tokens") or 0)
         details = usage.get("prompt_tokens_details")

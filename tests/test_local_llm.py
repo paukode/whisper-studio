@@ -172,6 +172,18 @@ def test_local_system_prompt_tools_mode_tells_model_it_has_tools():
     assert "do not claim you lack tools" in p
 
 
+def test_local_tools_prompt_carries_the_cloud_keep_working_rule():
+    """A local model follows the same multi-step instruction as the cloud
+    models: the one shared rule, not a paraphrase that can drift. Without it a
+    model that announces a step and stops ends the turn with nothing done."""
+    from server.prompts.base import BASE, KEEP_WORKING
+
+    assert KEEP_WORKING in BASE
+    assert KEEP_WORKING in L.build_local_system_prompt(tools=True)
+    # The no-tools identity has no tool loop to keep going in.
+    assert KEEP_WORKING not in L.build_local_system_prompt(tools=False)
+
+
 def test_local_system_prompt_notes_connected_workspace_when_tools_on(monkeypatch):
     from server.prompts import rules
 
@@ -181,6 +193,23 @@ def test_local_system_prompt_notes_connected_workspace_when_tools_on(monkeypatch
     # it via ws_* tools instead of claiming no project was provided.
     assert "/Users/me/proj" in p
     assert "ws_read_file" in p
+
+
+def test_local_workspace_note_says_unnamed_code_means_the_workspace(monkeypatch):
+    """A request like "can you review this code for me?" names no file.
+    On-device models asked which file to review instead of looking (benchmark
+    2026-10-23), so the note must say that such a request means the connected
+    workspace, and that the model looks before it asks."""
+    from server.prompts import rules
+
+    monkeypatch.setattr(rules, "load_global_instructions", lambda: "")
+    p = L.build_local_system_prompt(tools=True, ws_path="/Users/me/proj")
+    note = p[p.index("/Users/me/proj") :]
+    assert '"this code"' in note
+    assert "means this workspace" in note
+    assert "instead of asking which file" in note
+    # Invariant 10: no em dashes in prompts.
+    assert chr(0x2014) not in note
 
 
 def test_local_system_prompt_skips_workspace_note_without_tools(monkeypatch):

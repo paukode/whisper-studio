@@ -276,7 +276,7 @@ _LOCAL_SYSTEM_TOOLS = (
     "conversation; rely on those rather than assuming. Depending on what is "
     "enabled they may let you search and read the web, read and search the "
     "workspace, inspect code, run git, manage tasks and memory, and edit or create "
-    "files. Use the declared tools whenever they help — DO NOT claim you lack "
+    "files. Use the declared tools whenever they help: DO NOT claim you lack "
     "tools, internet, or a filesystem when a matching tool is declared. To use a "
     "tool, emit a tool call; then answer using the result. Prefer reading and "
     "searching before answering questions about the user's code or files. Actions "
@@ -287,19 +287,43 @@ _LOCAL_SYSTEM_TOOLS = (
 )
 
 
+# Said right after the shared keep-working rule. A model that announces a step
+# and stops ends the turn with nothing done: the loop only resumes it after a
+# tool call (seen on a Gemma 4 coder fine-tune, 2026-10-20).
+_SAME_REPLY = "When you say what you are about to do, make that tool call in the same reply."
+
+
+def _tools_identity() -> str:
+    """The tools-on identity plus the multi-step rule the cloud prompt carries
+    (server/prompts/base.py KEEP_WORKING), so a local model follows the same
+    tool-calling instruction as the cloud models. Imported here, not at module
+    level: server.prompts pulls in the whole prompt registry."""
+    from server.prompts.base import KEEP_WORKING
+
+    return f"{_LOCAL_SYSTEM_TOOLS} {KEEP_WORKING}{_SAME_REPLY}"
+
+
 def _local_workspace_note(ws_path: str) -> str:
     """A trimmed workspace marker for the local prompt.
 
     The cloud ``workspace_prompt`` is ~400 tokens of write/approval workflow the
     on-device model doesn't need spelled out. This is the one thing it DOES need:
     that a workspace is connected right now and it should reach it via ws_* tools
-    instead of telling the user no project was provided."""
+    instead of telling the user no project was provided.
+
+    The third sentence pins what an unnamed "this code" refers to. Measured
+    2026-10-23 on "can you review this code for me?" (5 runs per model and
+    prompt): Gemma 4 12B and Qwen3.5 9B asked which file to review instead of
+    looking in 1 to 4 of 5 runs, more often with the longer cloud prompt. Every
+    other request in that benchmark already ended in a valid tool call."""
     return (
         f"A code workspace is connected at '{ws_path}'. When the user asks about "
         "their project, code, or files, use the ws_* tools (ws_read_file, ws_grep, "
-        "ws_glob, ws_list_directory) to read and search it — do NOT say that no "
-        "file, folder, or project was provided. Read files before answering "
-        "questions about them."
+        "ws_glob, ws_list_directory) to read and search it: do NOT say that no "
+        'file, folder, or project was provided. A request about "this code", "the '
+        'code", "my project" or "the repo" that names no file means this '
+        "workspace, so list and read it with those tools first instead of asking "
+        "which file to look at. Read files before answering questions about them."
     )
 
 
@@ -325,7 +349,7 @@ def build_local_system_prompt(
     """
     from server.prompts.rules import append_rules
 
-    parts = [_LOCAL_SYSTEM_TOOLS if tools else _LOCAL_SYSTEM_BASE]
+    parts = [_tools_identity() if tools else _LOCAL_SYSTEM_BASE]
     if tools and ws_path:
         parts.append(_local_workspace_note(ws_path))
     for extra in (whisper_md, memory, session_memory):
