@@ -132,7 +132,11 @@
         <code>rm</code>, <code>rmdir</code>, <code>unlink</code>, <code>shred</code>,
         <code>srm</code>, and <code>find ... -delete</code> / <code>find ... -exec rm</code>, and
         reports what each delete names. It also reads the script that a <code>trap</code>, an
-        <code>su -c</code>, or an <code>env -S</code> string runs. It finds the command after a
+        <code>su -c</code>, or an <code>env -S</code> string runs. It also reads the command that
+        <code>watch</code>, <code>parallel</code>, or <code>find -exec</code> runs. In a command
+        that <code>find</code> runs, the app reads <code>{}</code> as each folder that
+        <code>find</code> searches. A script that gets its paths from <code>xargs</code> or
+        <code>parallel</code> deletes paths that the line does not name. It finds the command after a
         case pattern, a function head, a redirection, and the zsh words <code>noglob</code> and
         <code>nocorrect</code>. It records each <code>cd</code>, <code>env -C</code>, and
         <code>sudo -D</code> move before a delete. Under <code>sudo -R</code> or
