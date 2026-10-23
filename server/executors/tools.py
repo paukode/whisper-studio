@@ -171,15 +171,17 @@ TERMINAL_RUN_TOOL = {
         "combined stdout/stderr. Prefer this over asking the user to run something "
         "themselves; asking is friction, this is one approval click. mode=sandbox "
         "(default) uses a hidden ephemeral PTY with a minimal rc-free shell, sandboxed "
-        "away from secrets, with WRITES confined by the OS to the working directory "
-        "plus this session's scratch folder and temp (workspace-write); npm, pip and uv "
-        "keep their caches in that scratch folder. When a command genuinely must write "
-        "elsewhere, "
-        "retry it with sandbox_permissions='danger-full-access' plus a one-line "
+        "away from secrets, with WRITES confined by the OS to the connected workspace "
+        "plus this session's scratch folder and temp (workspace-write), wherever the "
+        "command starts; with no workspace, only the scratch folder and temp. npm, pip "
+        "and uv keep their caches in that scratch folder. When a command genuinely must "
+        "write elsewhere, retry it with sandbox_permissions='danger-full-access' plus a one-line "
         "justification; that always asks the user to approve that exact command, even "
         "when commands are otherwise session-approved. mode=visible types the command "
         "into the user's open terminal so they can watch, and errors if none is open; "
-        "use it only when the user asks to see it run. Every call is approval-gated "
+        "it runs in that terminal's current folder (cwd is ignored) with no write "
+        "confinement, so it always asks the user to approve, in every permission mode. "
+        "Use it only when the user asks to see it run. Every call is approval-gated "
         "and validated first; dangerous commands and interactive ones that wait for "
         "stdin (vim, less, top, watch, ssh without BatchMode=yes, sudo without -n) are "
         "refused before running. Default timeout 30s, max 300s; on timeout partial "
@@ -202,8 +204,8 @@ TERMINAL_RUN_TOOL = {
                 "type": "string",
                 "description": (
                     "Either sandbox (default; hidden ephemeral PTY, invisible to the "
-                    "user) or visible (types into the user's open terminal and errors "
-                    "if none is open)."
+                    "user) or visible (types into the user's open terminal, errors "
+                    "if none is open, and always asks the user to approve)."
                 ),
             },
             "timeout": {
@@ -217,9 +219,11 @@ TERMINAL_RUN_TOOL = {
             "cwd": {
                 "type": "string",
                 "description": (
-                    "Working directory. Defaults to the workspace path if connected, "
-                    "else $HOME. Supports ~ expansion; a nonexistent path falls back "
-                    "silently."
+                    "Working directory for sandbox mode. Defaults to the workspace path "
+                    "if connected, else $HOME. A relative path is resolved against the "
+                    "workspace. Supports ~ expansion; a nonexistent path falls back "
+                    "silently. Visible mode ignores it and runs in the terminal's "
+                    "current folder."
                 ),
             },
             "sandbox_permissions": {
@@ -227,13 +231,13 @@ TERMINAL_RUN_TOOL = {
                 "enum": ["workspace-write", "read-only", "danger-full-access"],
                 "description": (
                     "Filesystem confinement for sandbox mode. Omit for the default "
-                    "workspace-write (writes limited to cwd, this session's scratch "
-                    "folder and temp). read-only denies "
+                    "workspace-write (writes limited to the workspace, this session's "
+                    "scratch folder and temp, not to cwd). read-only denies "
                     "all writes. danger-full-access runs unconfined, requires "
                     "justification, and always triggers a per-call approval prompt; "
                     "use it only after a workspace-write run was blocked by the "
                     "sandbox, or when the task clearly requires writing outside the "
-                    "working directory and the scratch folder."
+                    "workspace and the scratch folder."
                 ),
             },
             "justification": {
@@ -265,7 +269,8 @@ TERMINAL_SEND_TOOL = {
         "keep reading), or session_exit (the shell exited). Send an empty string to "
         "just read pending output without typing. Every call is approval-gated and "
         "the first command line is validated. Default read budget 10s, max 300s. "
-        "Writes are confined to the workspace and temp. Call terminal_close when done."
+        "Writes are confined to the workspace, this session's scratch folder and "
+        "temp; a new workspace opens a fresh terminal. Call terminal_close when done."
     ),
     "input_schema": {
         "type": "object",
@@ -291,7 +296,8 @@ TERMINAL_SEND_TOOL = {
                 "description": (
                     "Working directory for the terminal when it is first opened. "
                     "Ignored on later sends (the session persists). Defaults to the "
-                    "workspace path if connected, else $HOME."
+                    "workspace path if connected, else $HOME. A relative path is "
+                    "resolved against the workspace."
                 ),
             },
         },

@@ -179,7 +179,7 @@ def test_terminal_run_and_send_confine_to_their_sessions_scratch(data_dir, monke
         seen["run"] = scratch_dir
         return {"exit_code": 0, "output": "ok", "timed_out": False}
 
-    def fake_open(chat_session_id, cwd, write_mode="workspace", scratch_dir=None):
+    def fake_open(chat_session_id, cwd, write_mode="workspace", scratch_dir=None, **_):
         seen["send"] = scratch_dir
         return object()
 

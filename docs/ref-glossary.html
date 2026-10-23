@@ -819,7 +819,8 @@
           <td>workspace-write (sandbox mode)</td>
           <td>The sandbox write mode that denies every write and then allows back only the command's own
             working tree, the git directories a linked worktree needs, the session's own scratch folder,
-            and system temp. It is the
+            and system temp. For <code>terminal_run</code>, that tree is the connected workspace,
+            also when the command starts in a different folder. It is the
             default for <code>run_python</code> and <code>terminal_run</code>, and it is what every
             unattended agent command gets, so the OS rather than the prompt bounds what a delegated
             agent can touch. The other two modes are <code>read-only</code> and, behind a written

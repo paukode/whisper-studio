@@ -76,7 +76,8 @@
         <code class="path">~/.whisper</code>. Reading never asks anywhere, apart from the
         credential stores below. A command that ran without a card (bypass, a session approval, a
         rule, the Auto classifier) is workspace-write confined by the OS like an agent's; only a
-        command approved on its card runs with open writes.</li>
+        command approved on its card runs with open writes. A command that the assistant types into
+        your visible terminal has no OS confinement, so it raises a card in every mode.</li>
       <li><b>Unattended agents write only inside their own tree.</b> A shell command or Python script
         run by an agent, with no human reading each call, gets a sandbox profile that denies all
         writes and allows them back only under the command's working tree, the git directories a
@@ -367,7 +368,10 @@
           <td>Deny all writes, then allow back the command's own working tree, the git directories a
             linked worktree needs, the calling session's own scratch folder (which also holds the npm,
             pip, and uv caches of the run), system temp, and any explicitly allowed credential path
-            such as the AWS CLI's own cache. The rule order is load-bearing: the secret denials come last, so a
+            such as the AWS CLI's own cache. For <code>terminal_run</code> and
+            <code>ws_run_command</code>, that tree is the connected workspace, also when the command
+            starts in a different folder. With no workspace, a <code>terminal_run</code> shell writes
+            only in its scratch folder and the temporary folders. The rule order is load-bearing: the secret denials come last, so a
             workspace that contains your home directory can never re-expose
             <code class="path">~/.ssh</code> through its own write allow.</td>
           <td>The default for <code>run_python</code> and <code>terminal_run</code>, and what every

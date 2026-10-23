@@ -713,12 +713,17 @@ def _exec_ws_run_command(tool_input, transcript, current_attachments):
 
     # Everything else runs through the same path once approved: the session
     # keeps its cwd and owns the task, and run_in_background plus the 30s
-    # handoff apply exactly as they do to read-only commands.
+    # handoff apply exactly as they do to read-only commands. The payload names
+    # the folder the command will run in (the session's tracked cwd, which an
+    # earlier `cd` may have moved), so the card shows it and the rm floor
+    # resolves a relative delete where it lands.
+    from server.cwd_tracker import get_cwd
+
     payload = json.dumps(
         {
             "action": "command",
             "command": command,
-            "cwd": ws,
+            "cwd": get_cwd(session_id, ws) if session_id else ws,
             "session_id": session_id,
             "run_in_background": run_in_background,
         }

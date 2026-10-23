@@ -146,7 +146,11 @@
         expanded, a glob cut at its wildcard, symlinks followed, and a <code>..</code> after a
         symlink read from the target of the link, as the kernel reads it), and the floor fires when one lands
         outside the roots or cannot be resolved at all (a variable, paths fed by
-        <code>xargs</code>, a segment that does not parse), so it fails toward asking. A statement
+        <code>xargs</code>, a segment that does not parse), so it fails toward asking. The working
+        directory is the folder where the command starts. For <code>ws_run_command</code>, it is the
+        tracked cwd of the session. For a sandboxed <code>terminal_run</code>, it is the folder that
+        <code>resolve_cwd</code> gives to the run. A visible <code>terminal_run</code> has no known
+        working directory, so each relative delete there counts as outside. A statement
         that runs nothing (a bare <code>x=1</code>) is not a delete. Note that this
         check does not <em>block</em> anything: it forces the card. A <code>preview_start</code>
         that names a launch config carries no command of its own, so the check also reads the
@@ -156,6 +160,10 @@
         <code>sandbox_permissions: "danger-full-access"</code> always returns ask. That parameter is
         a request to drop the sandbox's write confinement for one command, so it can never be covered
         by a mode, a rule, or a session approval.</p></li>
+      <li><h4>A command in the visible terminal</h4><p>A <code>terminal_run</code> call with
+        <code>mode: "visible"</code> always returns ask. The command goes into the user's own shell.
+        That shell runs in its current folder, and the OS does not limit its writes. No mode, rule,
+        or session approval can cover it, and an unattended agent cannot use visible mode.</p></li>
       <li><h4>MCP approve tier</h4><p>An MCP tool whose server or tool is marked
         <code>approval_mode: "approve"</code> in <code>mcp_servers.json</code> always returns ask.
         Like the previous check, this is a hard floor: the user explicitly marked that server as one

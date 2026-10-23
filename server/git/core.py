@@ -278,6 +278,36 @@ def normalize_git_remote_url(url: str) -> str | None:
     return None
 
 
+# NUL-separated so paths come back unquoted (a space or a non-ASCII byte
+# makes plain --porcelain wrap the path in quotes) and renames need no
+# "old -> new" splitting.
+STATUS_PORCELAIN_ARGS = ["--no-optional-locks", "status", "--porcelain=v1", "-z"]
+
+
+def parse_porcelain_status(stdout: str) -> list[tuple[str, str]]:
+    """Split `git status --porcelain=v1 -z` output into (code, path) pairs.
+
+    Each entry is "XY PATH". A rename or copy is followed by one more field,
+    the source path, which is skipped: the pair reports the new path. The
+    output is never stripped, because the first entry can start with a space
+    (an unstaged change has a blank index column) and stripping it would
+    shift the code into the staged column.
+    """
+    entries: list[tuple[str, str]] = []
+    fields = stdout.split("\0")
+    i = 0
+    while i < len(fields):
+        entry = fields[i]
+        i += 1
+        if len(entry) < 4:
+            continue
+        code = entry[:2]
+        entries.append((code, entry[3:]))
+        if "R" in code or "C" in code:
+            i += 1
+    return entries
+
+
 def get_is_clean(path: str) -> bool:
     """Check if working tree is clean (no uncommitted changes)."""
     try:
@@ -293,17 +323,13 @@ def get_file_status(path: str) -> dict:
     Returns: {"tracked": [...], "untracked": [...]}
     """
     try:
-        result = _run_git(["--no-optional-locks", "status", "--porcelain"], cwd=path)
+        result = _run_git(STATUS_PORCELAIN_ARGS, cwd=path)
         tracked = []
         untracked = []
-        for line in result.stdout.strip().split("\n"):
-            if not line:
-                continue
-            status = line[:2]
-            filename = line[2:].strip()
+        for status, filename in parse_porcelain_status(result.stdout):
             if status == "??":
                 untracked.append(filename)
-            elif filename:
+            else:
                 tracked.append(filename)
         return {"tracked": tracked, "untracked": untracked}
     except Exception:

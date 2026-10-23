@@ -275,9 +275,9 @@ def approval_floor(tool_name: str, tool_input: dict, category: str) -> str | Non
     A floor always asks a human: no permission mode, category override,
     trusted-skill flag, session approval ("Yes, all" / "Block"), custom rule
     or default decides it. Returns which floor ("github-destructive", "rm",
-    "sandbox-escalation", "mcp-approve"). Any floor marks the approval card's
-    request ``always_asks``, so the card never offers a remember-for-session
-    choice that would then be ignored.
+    "sandbox-escalation", "visible-terminal", "mcp-approve"). Any floor marks
+    the approval card's request ``always_asks``, so the card never offers a
+    remember-for-session choice that would then be ignored.
     """
     # Destructive GitHub mutations (repo/ref delete, PR merge, archive/rename,
     # API DELETE) ALWAYS require an explicit human approval — no bypass mode,
@@ -315,7 +315,7 @@ def approval_floor(tool_name: str, tool_input: dict, category: str) -> str | Non
     if commands:
         from server.security.delete_scope import deletes_beyond
 
-        cwd, roots = _delete_roots(tool_input)
+        cwd, roots = _delete_roots(tool_name, tool_input)
         if any(deletes_beyond(command, cwd, roots) for command in commands):
             return "rm"
 
@@ -328,6 +328,16 @@ def approval_floor(tool_name: str, tool_input: dict, category: str) -> str | Non
     # later escalated call into an unconfined auto-run.
     if str(tool_input.get("sandbox_permissions") or "").strip() == "danger-full-access":
         return "sandbox-escalation"
+
+    # A terminal_run typed into the user's visible terminal: the same absolute
+    # floor as sandbox escalation, for the same reason. That shell runs with no
+    # OS write confinement, so only a person reading the command keeps a write
+    # or delete outside the workspace from happening. Without this, bypass, a
+    # "Yes, all cli", a rule or the Auto classifier would run it unconfined
+    # with no card. The rm floor above cannot cover it alone: it sees only
+    # rm-like deletes, and the shell's working directory is unknown.
+    if _visible_terminal(tool_name, tool_input):
+        return "visible-terminal"
 
     # MCP tool calls: a dedicated tier on top of (not instead of) everything
     # below. A server/tool marked `approval_mode: "approve"` in
@@ -348,7 +358,15 @@ def approval_floor(tool_name: str, tool_input: dict, category: str) -> str | Non
     return None
 
 
-def _delete_roots(tool_input: dict) -> tuple[str | None, list[str]]:
+def _visible_terminal(tool_name: str, tool_input: dict) -> bool:
+    """A terminal_run typed into the user's own visible terminal."""
+    return (
+        "terminal_run" in (tool_name, tool_input.get("action"))
+        and str(tool_input.get("mode") or "").strip() == "visible"
+    )
+
+
+def _delete_roots(tool_name: str, tool_input: dict) -> tuple[str | None, list[str]]:
     """The working directory a command-shaped call deletes relative to, and
     the roots a delete may stay inside without the rm floor: the workspace the
     call is bound to (the root stamped on a workspace-bound card, else the
@@ -356,12 +374,25 @@ def _delete_roots(tool_input: dict) -> tuple[str | None, list[str]]:
     app_storage_roots). A ``cwd`` in the input is the command's working
     directory, resolved against the workspace when relative; without one the
     command runs in the workspace. No workspace means no working directory for
-    a relative operand, so such a delete counts as outside."""
+    a relative operand, so such a delete counts as outside.
+
+    A sandbox terminal_run starts where its executor puts it
+    (server.executors.terminal_run.resolve_cwd), and the floor reads that same
+    folder. A visible one is typed into the user's shell, which runs wherever
+    an earlier command or the user left it and ignores ``cwd``: it has no
+    known working directory, so every relative delete there counts as outside.
+    """
     from server.infrastructure.paths import app_storage_roots
     from server.workspace.state import get_workspace_path
 
     ws = tool_input.get("workspace_root") or get_workspace_path()
     roots = ([ws] if ws else []) + list(app_storage_roots())
+    if _visible_terminal(tool_name, tool_input):
+        return None, roots
+    if "terminal_run" in (tool_name, tool_input.get("action")):
+        from server.executors.terminal_run import resolve_cwd
+
+        return resolve_cwd(tool_input.get("cwd"), ws), roots
     cwd = tool_input.get("cwd")
     if isinstance(cwd, str) and cwd.strip():
         cwd = os.path.expanduser(cwd.strip())
@@ -416,9 +447,9 @@ def resolve_static_decision(
     else resolved it (the caller then falls back to the classifier).
 
     Evaluation order: hard floors (github-destructive, a delete outside the
-    workspace, sandbox escalation, MCP server marked approve; see
-    approval_floor) → app storage (a write under ~/.whisper is allowed in
-    every mode, a delete there only in bypassPermissions; see
+    workspace, sandbox escalation, a visible terminal run, MCP server marked
+    approve; see approval_floor) → app storage (a write under ~/.whisper is
+    allowed in every mode, a delete there only in bypassPermissions; see
     targets_app_storage) → category mode override → bypassPermissions
     (absolute inside the workspace; a save to a path outside it and reach into
     a folder outside it keep asking, see OUTSIDE_WORKSPACE_CATEGORIES) →
