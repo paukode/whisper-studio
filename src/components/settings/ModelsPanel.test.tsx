@@ -390,4 +390,106 @@ describe('ModelsPanel', () => {
     // The Local chat row still renders despite being in the hide-list.
     expect(await screen.findByText('Gemma 4 12B (Local)')).toBeInTheDocument();
   });
+
+  describe('tool-call check line', () => {
+    // An installed local chat model, as the catalog reports it once its
+    // download finished and the backend's tool-call check started or ended.
+    const localRow = (tool_check: Record<string, unknown>) => ({
+      key: 'local_gemma_coder',
+      label: 'Gemma 4 Coder (Local)',
+      group: 'local-chat',
+      repo_id: 'yuxinlu1/gemma-4-12B-coder-fable5-composer2.5-v1-GGUF',
+      installed: true,
+      size_bytes_estimate: 7_381_381_664,
+      bytes_on_disk: 7_381_381_664,
+      progress: 1,
+      state: 'installed',
+      queue_position: null,
+      error: null,
+      tool_check,
+    });
+    const serveCatalog = (row: Record<string, unknown>, status?: () => unknown) =>
+      api.get.mockImplementation((url: string) => {
+        if (url === '/api/models/catalog') return Promise.resolve({ models: [row] });
+        if (url === '/api/models/status' && status) return Promise.resolve(status());
+        return Promise.resolve({ models: {} });
+      });
+
+    it('reports a passed check', async () => {
+      serveCatalog(localRow({ state: 'passed', passed: 5, runs: 5, total: 5, reason: '' }));
+      renderPanel();
+
+      expect(await screen.findByText('Tool calls: 5 of 5 tests passed.')).toBeInTheDocument();
+    });
+
+    it('warns about a failed check with its reason, and adds no control', async () => {
+      serveCatalog(
+        localRow({
+          state: 'failed',
+          passed: 0,
+          runs: 1,
+          total: 5,
+          reason: 'answered without calling a tool',
+        }),
+      );
+      renderPanel();
+      await screen.findByText('Gemma 4 Coder (Local)');
+
+      const warning = screen.getByRole('alert');
+      expect(warning).toHaveTextContent(
+        'Tool calls failed in test 1 of 5: it answered without calling a tool.',
+      );
+      expect(warning).toHaveTextContent('cannot reliably use the workspace or other tools');
+      // Same actions as any installed local chat row: the line only reports.
+      expect(screen.queryByRole('button', { name: /check/i })).not.toBeInTheDocument();
+    });
+
+    it('says why a check did not run', async () => {
+      serveCatalog(
+        localRow({
+          state: 'error',
+          passed: 0,
+          runs: 0,
+          total: 5,
+          reason: 'Could not load the model: llama-server exited during load',
+        }),
+      );
+      renderPanel();
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'Tool-call check did not run. Could not load the model: llama-server exited during load',
+      );
+    });
+
+    it('follows a running check test by test until it ends', async () => {
+      const running = { state: 'running', passed: 1, run: 2, total: 5 };
+      const passed = { state: 'passed', passed: 5, runs: 5, total: 5, reason: '' };
+      let polls = 0;
+      // The download is done (installed), so only the running check keeps
+      // the 1s status poll alive; its second answer ends the check.
+      serveCatalog(localRow(running), () => {
+        polls += 1;
+        return {
+          models: {
+            local_gemma_coder: {
+              state: 'installed',
+              bytes_on_disk: 7_381_381_664,
+              size_bytes_estimate: 7_381_381_664,
+              progress: 1,
+              queue_position: null,
+              error: null,
+              tool_check: polls === 1 ? running : passed,
+            },
+          },
+        };
+      });
+      renderPanel();
+
+      expect(await screen.findByText('Checking tool calls: test 2 of 5…')).toBeInTheDocument();
+      expect(
+        await screen.findByText('Tool calls: 5 of 5 tests passed.', {}, { timeout: 4000 }),
+      ).toBeInTheDocument();
+      expect(polls).toBeGreaterThanOrEqual(2);
+    });
+  });
 });
