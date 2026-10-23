@@ -106,14 +106,15 @@ _WORKSPACE_WRITE_SYSTEM_ROOTS = [
 
 
 def _workspace_write_roots(
-    cwd: str, allow_paths: list[str] | None, scratch_dir: str | None = None
+    tree: str | None, allow_paths: list[str] | None, scratch_dir: str | None = None
 ) -> list[str]:
-    """The write-allowed subpaths for ``write_mode="workspace"``: the command's
-    own working tree (plus the git dirs a linked worktree needs), the calling
-    session's own scratch folder (where the prompt sends throwaway files,
-    virtualenvs and package caches), system temp, and any explicitly allowed
-    credential paths (the aws CLI writes its own ~/.aws/cli/cache)."""
-    roots = [os.path.realpath(cwd), *_git_write_roots(cwd)]
+    """The write-allowed subpaths for ``write_mode="workspace"``: the tree the
+    run may write in (plus the git dirs a linked worktree needs) when there is
+    one, the calling session's own scratch folder (where the prompt sends
+    throwaway files, virtualenvs and package caches), system temp, and any
+    explicitly allowed credential paths (the aws CLI writes its own
+    ~/.aws/cli/cache)."""
+    roots = [os.path.realpath(tree), *_git_write_roots(tree)] if tree else []
     if scratch_dir:
         roots.append(os.path.realpath(scratch_dir))
     roots.extend(_WORKSPACE_WRITE_SYSTEM_ROOTS)
@@ -145,7 +146,7 @@ def _scratch_env(write_mode: str, scratch_dir: str | None) -> dict[str, str]:
 
 
 def _generate_macos_profile(
-    workspace: str,
+    workspace: str | None,
     allow_paths: list[str] | None = None,
     write_mode: str = "open",
     scratch_dir: str | None = None,
@@ -154,7 +155,8 @@ def _generate_macos_profile(
 
     ``write_mode="workspace"`` additionally denies ALL writes and then allows
     them back only under the roots from ``_workspace_write_roots`` (the
-    session's ``scratch_dir`` among them). Rule ORDER
+    session's ``scratch_dir`` among them); a ``workspace`` of None writes no
+    tree, only the scratch folder and temp. Rule ORDER
     is load-bearing (a later SBPL rule overrides an earlier match): the global
     write deny comes first, the writable roots after it, and the secret deny
     rules LAST — so a workspace that contains (or is) the home directory can
@@ -690,7 +692,10 @@ def popen_sandboxed(
 
 
 def build_pty_sandbox_wrap(
-    shell_cmd: list[str], cwd: str, write_mode: str = "open", scratch_dir: str | None = None
+    shell_cmd: list[str],
+    write_root: str | None,
+    write_mode: str = "open",
+    scratch_dir: str | None = None,
 ) -> tuple[list[str], str | None]:
     """Wrap an interactive shell command in macOS sandbox-exec so a long-lived
     PTY shell (terminal_run's hidden sandbox session) runs under the same
@@ -698,6 +703,10 @@ def build_pty_sandbox_wrap(
     (``write_mode="workspace"``), the same default-deny write confinement,
     with the session's own ``scratch_dir`` writable. The caller sets the
     package-cache environment (scratch_cache_env) on the shell it starts.
+
+    ``write_root`` is the tree a "workspace" shell may write in, not the
+    folder it starts in: a shell started outside the workspace still writes
+    only inside it. None writes no tree, only the scratch folder and temp.
 
     Returns ``(argv, profile_path)``. The caller MUST ``os.unlink(profile_path)``
     once the process exits (the profile file must outlive the shell, unlike the
@@ -709,7 +718,7 @@ def build_pty_sandbox_wrap(
     """
     if not _is_sandbox_exec_available():
         return shell_cmd, None
-    profile = _generate_macos_profile(cwd, write_mode=write_mode, scratch_dir=scratch_dir)
+    profile = _generate_macos_profile(write_root, write_mode=write_mode, scratch_dir=scratch_dir)
     fd, profile_path = tempfile.mkstemp(suffix=".sb", prefix="whisper_pty_sandbox_")
     with os.fdopen(fd, "w") as f:
         f.write(profile)

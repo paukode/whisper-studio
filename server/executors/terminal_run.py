@@ -6,6 +6,9 @@ Two modes:
                        Invisible to the user. Use for "check / try / probe".
   - visible:           write into the most-recently-active visible PTY
                        session so the user can watch the command stream.
+                       It runs in that shell's current folder (cwd is
+                       ignored) with no write confinement, so every call
+                       asks a person (approval_floor's visible-terminal).
 
 Every call goes through the [WS_APPROVAL] → approval_request pipeline.
 The approval card shows the literal command + mode.
@@ -133,10 +136,30 @@ def _resolve_sandbox_permissions(payload: dict) -> tuple[str, str, str]:
     return perms, justification, ""
 
 
+def _named_cwd(payload_cwd: str | None) -> str:
+    """The cwd argument as given, stripped, with ~ expanded ("" for none)."""
+    return os.path.expanduser((payload_cwd or "").strip())
+
+
 def uses_workspace_cwd(payload_cwd: str | None) -> bool:
-    """True when _resolve_cwd falls back to the workspace for this cwd: none
-    was given, or the one given is not a directory."""
-    return not payload_cwd or not os.path.isdir(os.path.expanduser(payload_cwd))
+    """True when the folder resolve_cwd picks depends on the workspace: no cwd
+    was given, a relative one was (it is joined to the workspace), or the one
+    given is not a directory (the run falls back to the workspace)."""
+    named = _named_cwd(payload_cwd)
+    return not (os.path.isabs(named) and os.path.isdir(named))
+
+
+def binds_workspace(payload: dict) -> bool:
+    """Whether a terminal_run or terminal_send depends on the workspace
+    connected when it runs: it starts there (uses_workspace_cwd), or it is a
+    sandbox shell whose writes are confined to it (workspace-write, the
+    default, and every terminal_send, which has no mode). Its approval card is
+    then stamped with that workspace (server/approval/bootstrap.py)."""
+    if uses_workspace_cwd(payload.get("cwd")):
+        return True
+    mode = (payload.get("mode") or "sandbox").strip()
+    perms = (payload.get("sandbox_permissions") or "workspace-write").strip()
+    return mode == "sandbox" and perms == "workspace-write"
 
 
 def _lost_workspace_refusal(payload_cwd: str | None) -> str | None:
@@ -151,16 +174,30 @@ def _lost_workspace_refusal(payload_cwd: str | None) -> str | None:
     return workspace_lost_message()
 
 
-def _resolve_cwd(payload_cwd: str | None) -> str:
-    """Resolve the cwd argument: expanduser, fall back to workspace then $HOME."""
-    if not uses_workspace_cwd(payload_cwd):
-        return os.path.expanduser(payload_cwd)
+def resolve_cwd(payload_cwd: str | None, workspace: str | None) -> str:
+    """The folder a sandbox run, or a new interactive terminal, starts in: an
+    absolute cwd (~ expanded) that is a directory, a relative one joined to
+    the workspace, else the workspace, else $HOME. Never the server process's
+    own folder. The rm floor resolves a relative delete against this same
+    folder (server.security.permissions._delete_roots), so the check and the
+    run cannot disagree."""
+    ws = workspace if workspace and os.path.isdir(workspace) else None
+    named = _named_cwd(payload_cwd)
+    if named and not os.path.isabs(named):
+        named = os.path.join(ws, named) if ws else ""
+    if named and os.path.isdir(named):
+        return os.path.normpath(named)
+    return ws or os.path.expanduser("~")
+
+
+def _confining_workspace() -> str | None:
+    """The workspace a confined sandbox shell may write in, or None without one
+    (it then writes only its scratch folder and temp). Never the cwd: a run
+    that starts outside the workspace still writes only inside it."""
     from server.workspace import get_workspace_path
 
     ws = get_workspace_path()
-    if ws and os.path.isdir(ws):
-        return ws
-    return os.path.expanduser("~")
+    return ws if ws and os.path.isdir(ws) else None
 
 
 def _visible_busy(program: str) -> str:
@@ -280,6 +317,16 @@ async def do_terminal_run(payload: dict) -> tuple[bool, str]:
     mode = (payload.get("mode") or "sandbox").strip()
     if mode not in ("sandbox", "visible"):
         return False, f"invalid mode {mode!r} — must be 'sandbox' or 'visible'"
+    if mode == "visible" and payload.get("__agent__"):
+        # The visible terminal has no write confinement, so the approval
+        # floor asks a person for every visible run; an unattended run has
+        # no person to ask.
+        return False, (
+            "mode='visible' is not permitted from an unattended subagent: the "
+            "user's terminal runs without write confinement, so a person must "
+            "approve each command typed there. Use mode='sandbox', or ask the "
+            "top-level session to run it."
+        )
 
     try:
         timeout = float(payload.get("timeout", _DEFAULT_TIMEOUT_S))
@@ -295,7 +342,8 @@ async def do_terminal_run(payload: dict) -> tuple[bool, str]:
     if perm_error:
         return False, perm_error
 
-    cwd = _resolve_cwd(payload.get("cwd"))
+    ws = _confining_workspace()
+    cwd = resolve_cwd(payload.get("cwd"), ws)
 
     preamble = ""
     write_mode = "open"
@@ -336,6 +384,7 @@ async def do_terminal_run(payload: dict) -> tuple[bool, str]:
             timeout=timeout,
             write_mode=write_mode,
             scratch_dir=own_scratch_dir(payload.get("session_id")),
+            write_root=ws,
         )
     else:
         session = latest_visible_session()
@@ -432,7 +481,8 @@ async def do_terminal_send(payload: dict) -> tuple[bool, str]:
         return False, "timeout must be a number (seconds)"
     timeout = max(0.5, min(timeout, float(_MAX_TIMEOUT_S)))
 
-    cwd = _resolve_cwd(payload.get("cwd"))
+    ws = _confining_workspace()
+    cwd = resolve_cwd(payload.get("cwd"), ws)
     # A bare send with no trailing newline never reaches a REPL that reads full
     # lines, so append one unless the caller sent control bytes deliberately.
     if text and not text.endswith(("\n", "\x04", "\x03")):
@@ -441,7 +491,7 @@ async def do_terminal_send(payload: dict) -> tuple[bool, str]:
     from server.workspace.paths import own_scratch_dir
 
     session = get_or_open_interactive(
-        chat_session_id, cwd, scratch_dir=own_scratch_dir(chat_session_id)
+        chat_session_id, cwd, scratch_dir=own_scratch_dir(chat_session_id), write_root=ws
     )
     result = await send_and_wait(session, text, timeout=timeout)
 

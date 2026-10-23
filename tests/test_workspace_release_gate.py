@@ -285,7 +285,19 @@ def test_a_terminal_cwd_that_is_not_a_directory_is_workspace_bound(ws_a, ws_b):
         spec = registry.get(action)
         assert spec.binds_workspace({"cwd": ""})
         assert spec.binds_workspace({"cwd": missing})
-        assert not spec.binds_workspace({"cwd": str(ws_a)})
+        assert spec.binds_workspace({"cwd": "relative/to/the/workspace"})
+        # A confined run writes only in the workspace, wherever it starts.
+        assert spec.binds_workspace({"cwd": str(ws_a)})
+
+    # Only a run whose writes are not confined to the workspace, started in a
+    # folder of its own, does not depend on the workspace.
+    spec = registry.get("terminal_run")
+    for unconfined in (
+        {"mode": "visible"},
+        {"sandbox_permissions": "read-only"},
+        {"sandbox_permissions": "danger-full-access"},
+    ):
+        assert not spec.binds_workspace({"cwd": str(ws_a), **unconfined}), unconfined
 
 
 # ── A released turn cannot connect a folder itself ───────────────────────

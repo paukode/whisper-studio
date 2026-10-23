@@ -78,6 +78,7 @@ class _PtySession:
         cwd: str,
         hidden: bool = False,
         profile_path: str | None = None,
+        write_root: str | None = None,
     ):
         self.id = session_id
         self.master_fd = master_fd
@@ -91,6 +92,8 @@ class _PtySession:
         # Temp sandbox-exec profile backing a sandboxed hidden PTY (macOS);
         # unlinked in kill(). None when unsandboxed.
         self.profile_path = profile_path
+        # The tree a confined hidden PTY may write in (_create_pty_session).
+        self.write_root = write_root
         # Output capture machinery.
         self.output_buffer = bytearray()
         self.output_lock = threading.Lock()
@@ -225,6 +228,7 @@ def _create_pty_session(
     hidden: bool = False,
     write_mode: str = "open",
     scratch_dir: str | None = None,
+    write_root: str | None = None,
 ) -> _PtySession:
     """Spawn a new PTY session running the user's shell.
 
@@ -232,6 +236,11 @@ def _create_pty_session(
     sessions list and used only by terminal_run for one-shot commands.
     Either way, the reader task is started immediately so output capture
     works whether or not a WebSocket ever attaches.
+
+    `write_root` is the tree a confined (`write_mode="workspace"`) hidden
+    shell may write in: the connected workspace, never `cwd`, so a shell
+    started outside the workspace cannot write where it started. None writes
+    no tree, only the session's scratch folder and temp.
 
     Visible sessions use the user's login shell (`zsh -l`) so the prompt
     looks normal. Sandbox sessions use a minimal shell with no rc files
@@ -281,7 +290,7 @@ def _create_pty_session(
         from server.sandbox import build_pty_sandbox_wrap, scratch_cache_env
 
         shell_cmd, profile_path = build_pty_sandbox_wrap(
-            shell_cmd, cwd, write_mode=write_mode, scratch_dir=scratch_dir
+            shell_cmd, write_root, write_mode=write_mode, scratch_dir=scratch_dir
         )
         if write_mode == "workspace" and scratch_dir:
             env.update(scratch_cache_env(scratch_dir))
@@ -302,7 +311,15 @@ def _create_pty_session(
     fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
 
     session = _PtySession(
-        session_id, master_fd, process, cols, rows, cwd, hidden=hidden, profile_path=profile_path
+        session_id,
+        master_fd,
+        process,
+        cols,
+        rows,
+        cwd,
+        hidden=hidden,
+        profile_path=profile_path,
+        write_root=write_root,
     )
     with _sessions_lock:
         _sessions[session_id] = session
@@ -635,20 +652,34 @@ def get_or_open_interactive(
     cwd: str,
     write_mode: str = "workspace",
     scratch_dir: str | None = None,
+    write_root: str | None = None,
 ) -> _PtySession:
     """The persistent interactive PTY for this chat session, opening one on
-    first use. Writes are workspace-confined by default (same ladder as
-    terminal_run's sandbox mode), with the session's own ``scratch_dir``
-    writable."""
+    first use. Writes are confined to ``write_root`` by default (same ladder
+    as terminal_run's sandbox mode), with the session's own ``scratch_dir``
+    writable. A PTY opened for another write root (the workspace changed
+    since) is closed and a fresh one opened, so it never keeps writing into a
+    folder that is no longer the workspace."""
     with _interactive_lock:
         pty_id = _interactive_ptys.get(chat_session_id)
         if pty_id:
             with _sessions_lock:
                 existing = _sessions.get(pty_id)
             if existing is not None and existing.alive:
-                return existing
+                if existing.write_root == write_root:
+                    return existing
+                with _sessions_lock:
+                    _sessions.pop(pty_id, None)
+                try:
+                    existing.kill()
+                except Exception:
+                    pass
         session = _create_pty_session(
-            cwd, hidden=True, write_mode=write_mode, scratch_dir=scratch_dir
+            cwd,
+            hidden=True,
+            write_mode=write_mode,
+            scratch_dir=scratch_dir,
+            write_root=write_root,
         )
         _interactive_ptys[chat_session_id] = session.id
         return session
@@ -688,18 +719,22 @@ async def run_in_sandbox(
     timeout: float = _DEFAULT_TIMEOUT_S,
     write_mode: str = "open",
     scratch_dir: str | None = None,
+    write_root: str | None = None,
 ) -> dict:
     """Spawn a fresh hidden PTY session, run `command`, kill the session.
     Use for the default (sandbox) mode of terminal_run. The session is
     invisible to the user and removed from `_sessions` on completion.
-    ``write_mode="workspace"`` confines writes to cwd + the chat session's own
-    ``scratch_dir`` + temp (see server/sandbox.py)."""
+    ``write_mode="workspace"`` confines writes to ``write_root`` (the
+    workspace, not cwd) + the chat session's own ``scratch_dir`` + temp (see
+    server/sandbox.py)."""
     if not cwd:
         cwd = os.path.expanduser("~")
     if not os.path.isdir(cwd):
         return {"output": f"cwd not found: {cwd}", "exit_code": -1, "timed_out": False}
 
-    session = _create_pty_session(cwd, hidden=True, write_mode=write_mode, scratch_dir=scratch_dir)
+    session = _create_pty_session(
+        cwd, hidden=True, write_mode=write_mode, scratch_dir=scratch_dir, write_root=write_root
+    )
     try:
         # Give the shell a moment to print its banner / first prompt so
         # our command isn't lost in the warmup. Drain by recording the

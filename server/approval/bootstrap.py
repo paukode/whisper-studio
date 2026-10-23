@@ -775,10 +775,10 @@ def _no_explicit_cwd(p: dict) -> bool:
 
 
 def _terminal_uses_workspace(p: dict) -> bool:
-    # No cwd, or one that is not a directory: both fall back to the workspace.
-    from server.executors.terminal_run import uses_workspace_cwd
+    # Starts in the workspace, or writes confined to it (a sandbox run).
+    from server.executors.terminal_run import binds_workspace
 
-    return uses_workspace_cwd(p.get("cwd"))
+    return binds_workspace(p)
 
 
 def _preview_uses_workspace(p: dict) -> bool:
@@ -794,9 +794,12 @@ def _preview_uses_workspace(p: dict) -> bool:
 # a worktree, git and gh calls in its repo, and code that runs in it. Their
 # cards carry the root they were raised in, and a Yes after that workspace
 # was disconnected or replaced is refused instead of acting on the new one
-# (server/approval/spec.py::stale_workspace_refusal). A terminal run or send
-# is bound unless it names a cwd that exists, and a preview start unless it
-# names a cwd or a pinned launch config records its workspace.
+# (server/approval/spec.py::stale_workspace_refusal). A terminal send is
+# always bound (its writes are confined to the workspace); a terminal run is
+# bound unless it names an absolute cwd that exists and its writes are not
+# confined to the workspace (a visible, read-only or full-access run); a
+# preview start unless it names a cwd or a pinned launch config records its
+# workspace.
 _WORKSPACE_BOUND = {
     **dict.fromkeys(
         (
