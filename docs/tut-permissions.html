@@ -270,11 +270,12 @@
 
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
-      <div class="callout__body"><p>Resolution order, top to bottom: three absolutes first -
+      <div class="callout__body"><p>Resolution order, top to bottom: four absolutes first -
         <code>github-destructive</code>, any command that deletes outside the connected workspace
         (<code>rm</code> and its relatives, including <code>find -delete</code>, aimed at a path
         beyond the workspace and the app's own folder, or at one the command line cannot resolve),
-        and any command asking to run outside the sandbox's write confinement - then an MCP server
+        any command asking to run outside the sandbox's write confinement, and any command typed
+        into your visible terminal - then an MCP server
         you marked as needing approval &rarr; the per-category mode, if set, replaces the global
         mode &rarr; <code>bypassPermissions</code>, which covers everything inside the workspace
         but not a save to a path outside it or access to a new folder &rarr; a trusted skill
@@ -282,7 +283,7 @@
         &rarr; a preview started by name from <code class="path">launch.json</code> with a
         command you approved once (it starts)
         &rarr; the mode's own default. So <code>bypassPermissions</code> overrides even a
-        <code>deny</code> rule, but a stricter per-category mode overrides it, the three absolutes
+        <code>deny</code> rule, but a stricter per-category mode overrides it, the four absolutes
         override everything, and every other mode respects your rules first. A delete that stays
         inside the workspace (<code>rm -rf dist</code> before a build) is an ordinary command: it
         follows the mode, so Bypass runs it and a "yes to all commands" covers it.</p></div>
@@ -327,7 +328,7 @@
       job belongs to <code>sandbox-exec</code>. And of course, reads never prompt because they cannot
       change anything: <code>ws_read_file</code> and <code>ws_list_directory</code> read any file
       or folder on your Mac by absolute path, with or without a workspace connected.</p>
-    <p>Two things always stop for a click, whatever the dial says. A command that <b>deletes
+    <p>Three things always stop for a click, whatever the dial says. A command that <b>deletes
       outside the workspace</b> - <code>rm</code>, <code>rmdir</code>, <code>shred</code>,
       <code>find -delete</code>, and the same commands hidden behind <code>sudo</code> or
       <code>xargs</code>, aimed at your home folder, a parent of the workspace, a variable the
@@ -335,9 +336,12 @@
       folder - always raises a card. The app reads a relative path in a delete from the folder
       that a <code>cd</code> before the delete in the same command moves to. If the command line
       does not name that folder (<code>cd "$DIR"</code>, <code>cd -</code>, <code>pushd</code>, or
-      <code>popd</code>), the delete always shows a card. So does a command that asks to run with <b>full disk write
-      access</b> instead of the usual project-only confinement. Neither can be waved through by a
-      mode, a rule, or a "yes to all", and an unattended agent cannot run either on your behalf.
+      <code>popd</code>), the delete always shows a card. So does a command that asks to run with
+      <b>full disk write access</b> instead of the usual project-only confinement. A command that
+      the assistant types into your <b>visible terminal</b> also raises a card each time. That
+      terminal runs in its current folder, and the OS does not limit its writes. None of the three
+      can be waved through by a mode, a rule, or a "yes to all", and an unattended agent cannot run
+      any of them on your behalf.
       Inside the workspace the line is the mode's: Bypass runs <code>rm -rf dist</code> without a
       card, and every other mode treats it like any other command.</p>
     <p>The app also finds a delete in a <code>case</code> branch, a shell function, a
@@ -363,7 +367,11 @@
       folder opened as a new workspace, a delete that reaches out of the tree, or a command
       escaping the sandbox. A command that Bypass, a "yes to all", a rule or Auto mode let run
       without a card runs with its writes confined to the workspace by the OS, exactly like a
-      command an agent runs; only a command you approved on its card runs with open writes.</p>
+      command an agent runs; only a command you approved on its card runs with open writes. A
+      sandboxed terminal command writes only in the workspace, its scratch folder, and the temporary
+      folders, also
+      when it starts in a different folder. With no connected workspace, it writes only in its
+      scratch folder and the temporary folders.</p>
     <p>Two more sections sit under <b>Settings &rsaquo; Permissions</b> alongside the mode and the
       rules. <b>Sandbox Network Policy</b> chooses how much of the internet sandboxed commands can
       reach: Permissive (no restriction, the default), Curated (common package and docs domains plus

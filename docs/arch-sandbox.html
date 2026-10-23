@@ -50,7 +50,9 @@
       <code>build_pty_sandbox_wrap</code>, which returns the same profile so an interactive shell runs
       under the identical deny-list as a one-shot command. (On non-macOS or when
       <code>sandbox-exec</code> is missing, it returns the command unchanged and validation becomes
-      the only enforcement.) One sibling entry point exists alongside <code>run_sandboxed</code>:
+      the only enforcement.) In workspace-write mode, the write root of that shell is the connected
+      workspace, not the folder where the shell starts. With no workspace, the shell writes only in
+      its scratch folder and the temporary folders. One sibling entry point exists alongside <code>run_sandboxed</code>:
       <code>popen_sandboxed</code>, a non-blocking <code>Popen</code> variant with the same deny
       profile and the same egress rules, used by the background-command handoff in
       <code class="path">server/tasks/handoff.py</code>. It inherits the parent environment, so under
