@@ -8,6 +8,10 @@ from .paths import _WS_BINARY_EXTS, _WS_IGNORED_DIRS
 def _ws_list_dir(root: str, rel_path: str = "") -> list[dict]:
     """List immediate children of a directory (non-recursive).
 
+    Nothing is hidden: dot entries (.venv, .git, .env) and build folders
+    (dist, node_modules) list like any other, so the file tree shows what the
+    disk holds. Search and the index keep their own skip rules.
+
     Returns a list of entries, each with:
       - name: filename or dirname
       - path: relative path from workspace root
@@ -21,13 +25,9 @@ def _ws_list_dir(root: str, rel_path: str = "") -> list[dict]:
     entries = []
     try:
         for name in sorted(os.listdir(target)):
-            if name.startswith(".") or name == "Thumbs.db":
-                continue
             full = os.path.join(target, name)
             entry_rel = os.path.join(rel_path, name) if rel_path else name
             if os.path.isdir(full):
-                if name in _WS_IGNORED_DIRS:
-                    continue
                 entries.append({"name": name, "path": entry_rel, "type": "directory"})
             elif os.path.isfile(full):
                 ext = os.path.splitext(name)[1].lower()
