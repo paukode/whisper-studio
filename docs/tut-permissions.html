@@ -340,16 +340,21 @@
       mode, a rule, or a "yes to all", and an unattended agent cannot run either on your behalf.
       Inside the workspace the line is the mode's: Bypass runs <code>rm -rf dist</code> without a
       card, and every other mode treats it like any other command.</p>
-    <p>The app also finds a delete in a <code>case</code> branch, in a shell function, and after
-      the zsh words <code>noglob</code> and <code>nocorrect</code>. A shell function can run at
-      any time. If a function contains a <code>cd</code>, each delete with a relative path in the
-      command shows a card.</p>
+    <p>The app also finds a delete in a <code>case</code> branch, a shell function, a
+      <code>trap</code>, and a zsh short loop. It also finds a delete in an <code>env -S</code>
+      string, in an <code>su -c</code> script, and after <code>noglob</code> or
+      <code>nocorrect</code>. A shell function and a trap can run at any time. If the command
+      contains a function or a trap and also a <code>cd</code>, each delete with a relative path
+      in the command shows a card.</p>
     <p>The app reads a relative path from the folder that <code>env -C</code> or
       <code>sudo -D</code> names. A delete with a relative path after
       <code>sudo -i</code> shows a card, because the command runs in the home folder of the other
-      user. A delete after <code>sudo -R</code> always shows a card, because each path is then in
-      a different root folder. If a path goes through a symlink and then up with
-      <code>..</code>, the app reads <code>..</code> from the target of the link.</p>
+      user. A delete after <code>sudo -R</code> or <code>chroot</code> always shows a card,
+      because each path is then in a different root folder. In a script that runs as a different
+      user (<code>sudo sh -c</code>, <code>su -c</code>), a path that starts with <code>~</code>
+      shows a card, because there <code>~</code> is the home folder of the other user. If a path
+      goes through a symlink and then up with <code>..</code>, the app reads <code>..</code> from
+      the target of the link.</p>
     <p>The line that holds in every mode is the workspace boundary. Reading never asks, anywhere
       on your Mac, apart from credential stores such as <code class="path">~/.ssh</code> and
       <code class="path">~/.aws</code>, which no tool reads. Changing anything outside the
