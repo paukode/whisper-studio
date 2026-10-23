@@ -104,12 +104,14 @@
         effective mode back to asking after 3 consecutive denials or 5 in the last 10 calls, with an
         explicit one-click resume. No setup needed beyond selecting <code>auto</code> mode itself. See
         <a href="ref-settings.html#auto-mode-breaker">the circuit breaker</a>.</li>
-      <li><b><code>aws_cli</code> runs through a shell.</b> The executor runs the command with
-        <code>/bin/sh -c</code>. In this command, <code>;</code> and <code>&amp;&amp;</code> are shell
-        operators. Two controls apply. The command validator blocks command substitution
-        (<code>$()</code> and backticks outside single quotation marks). The OS sandbox lets the full
-        line write only in the workspace, the session scratch folder, the temporary folders, and
-        <code class="path">~/.aws</code>. With no workspace, the line cannot write in the home
+      <li><b><code>aws_cli</code> runs one program, with no shell.</b> The executor divides the
+        command into words with the rules of sh for quotation marks. It blocks a shell operator outside
+        quotation marks: <code>;</code>, <code>&amp;&amp;</code>, <code>||</code>, <code>|</code>,
+        <code>&amp;</code>, a redirection, or a subshell. Then it puts each word in quotation marks, and the
+        shell runs only <code>aws</code> and expands nothing. The executor expands a <code>~</code> at the
+        start of a word. The OS sandbox lets the command write only in the workspace, the session
+        scratch folder, the temporary folders, and the AWS CLI caches in
+        <code class="path">~/.aws</code>. With no workspace, the command cannot write in the home
         folder.</li>
       <li><b>Shell and Python execution is sandboxed.</b> Every subprocess on the code-execution paths
         is wrapped in <code>sandbox-exec(5)</code> on macOS (and <code>bwrap</code> on Linux),
@@ -281,7 +283,8 @@
           <td><code>validate_command</code> + <code>run_sandboxed</code> on <code>aws_cli</code> /
             <code>run_python</code> / <code>terminal_run</code></td>
           <td>Approved CLI / Python / terminal commands are validated, then executed under the OS
-            sandbox (with <code class="path">~/.aws</code> re-allowed so AWS auth still works).</td>
+            sandbox (with <code class="path">~/.aws</code> re-allowed, read-only, so AWS auth still
+            works, and writable only in its caches).</td>
           <td>The <b>boundary</b> is the sandbox; validation is the layer in front.</td>
         </tr>
         <tr>
@@ -346,8 +349,8 @@
       <dt><code class="path">server/security/sensitive_paths.py</code> - the shared deny-list</dt>
       <dd>Read and write denial of a curated secret-store list: SSH and GPG keys, cloud credentials for
         AWS, Google Cloud, Azure, Docker and Kubernetes
-        (<code class="path">~/.aws</code> is denied for generic commands but re-allowed per-call for the
-        AWS tools), git credentials and <code class="path">.netrc</code>, npm and PyPI tokens, and,
+        (<code class="path">~/.aws</code> is denied for generic commands but re-allowed per-call, read-only,
+        for the AWS tools), git credentials and <code class="path">.netrc</code>, npm and PyPI tokens, and,
         for the sandbox only, browser cookies and keychains, shell history and password-manager stores.
         One module feeds both consumers, as expanded paths for the OS sandbox profile and as regexes
         for the command validator, so the two layers cannot drift on the shared core.</dd>
@@ -513,7 +516,7 @@
         <tr><td>What does the server bind by default?</td><td><code>127.0.0.1</code>. LAN needs <code>HOST=0.0.0.0</code>.</td></tr>
         <tr><td>What sanitizes rendered Markdown?</td><td><code>marked</code> then DOMPurify 3.4.6, at every render site.</td></tr>
         <tr><td>How is command consent enforced?</td><td>A server-held pause plus executor-side re-validation via <code class="path">server/approval/router.py</code>.</td></tr>
-        <tr><td>Does <code>aws_cli</code> run through a shell?</td><td>Yes, <code>/bin/sh -c</code>. The validator blocks command substitution. The OS sandbox lets it write only in the workspace, its scratch folder, the temporary folders, and <code class="path">~/.aws</code>.</td></tr>
+        <tr><td>Does <code>aws_cli</code> run through a shell?</td><td>No. It runs one <code>aws</code> command with each word in quotation marks, and it blocks <code>;</code>, <code>|</code>, <code>&amp;&amp;</code> and redirections.</td></tr>
         <tr><td>What contains shell / Python execution?</td><td><code>sandbox-exec(5)</code> (macOS) or <code>bwrap</code> (Linux).</td></tr>
         <tr><td>Where can an unattended agent write?</td><td>Its own working tree, the git dirs a worktree needs, and temp. Nothing else; the escape hatch is refused for agents.</td></tr>
         <tr><td>Are plugins loaded automatically?</td><td>No. Opt-in per plugin; a dropped file does nothing until enabled.</td></tr>

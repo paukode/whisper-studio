@@ -140,7 +140,7 @@
       <code>_DENIED_PATHS</code> in <code>server/sandbox.py</code>), and the Linux bwrap setup
       <code>--ro-bind</code>s the filesystem read-only and masks the same paths. It denies read/write
       of SSH/GPG keys, cloud credentials (<code>~/.aws</code> is denied for generic commands but
-      re-allowed per-call for the AWS tools), git credentials, browser cookies/keychains, shell
+      re-allowed per-call, read-only, for the AWS tools), git credentials, browser cookies/keychains, shell
       history, and password-manager stores.</p>
     <p>A second dimension sits on top of that deny-list: how much the command may <b>write</b>. Three
       modes exist - write anywhere, write only inside the workspace and the temp directories, or

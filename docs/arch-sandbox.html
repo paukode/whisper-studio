@@ -124,7 +124,7 @@
       <li><b>SSH and GPG keys</b> - <code class="path">~/.ssh</code>, <code class="path">~/.gnupg</code>.</li>
       <li><b>Cloud credentials</b> - <code class="path">~/.aws</code>, <code class="path">~/.config/gcloud</code>,
         <code class="path">~/.azure</code>, <code class="path">~/.docker</code>, <code class="path">~/.kube</code>.
-        Note that <code class="path">~/.aws</code> is denied for generic commands but re-allowed per-call for the AWS tools (see below).</li>
+        Note that <code class="path">~/.aws</code> is denied for generic commands but re-allowed per-call, read-only, for the AWS tools (see below).</li>
       <li><b>Git and package-registry credentials</b> - <code class="path">~/.git-credentials</code>,
         <code class="path">~/.netrc</code>, <code class="path">~/.npmrc</code>, <code class="path">~/.pypirc</code>.</li>
       <li><b>Browser cookies and keychains</b> - Chrome / Chromium / Firefox / Brave / Safari profiles,
@@ -188,10 +188,22 @@
       through <code>run_sandboxed</code> at all, so it is restricted instead by a read-only prefix
       check rather than the filesystem sandbox. The re-allow itself is scoped to the sandboxed AWS
       calls; a generic shell command never sees <code class="path">~/.aws</code>.</p>
+    <p>The re-allow is read-only. The AWS CLI and boto3 run programs that files in
+      <code class="path">~/.aws</code> name: <code>credential_process</code> in the configuration
+      file, CLI aliases that start with <code>!</code>, and CLI plugins. A write to
+      <code class="path">~/.aws</code> can thus become code that the next AWS calls run, also in the
+      server process, which has no sandbox.</p>
+    <p>Thus <code>run_sandboxed</code> keeps each <code>allow_paths</code> entry read-only. It lets
+      the run write only in its <code>write_paths</code>: the CLI cache
+      <code class="path">~/.aws/cli/cache</code> and the SSO token cache
+      <code class="path">~/.aws/sso/cache</code>. These rules come last in the profile, and a
+      workspace that contains <code class="path">~/.aws</code> cannot make it writable. The sandbox
+      cannot let a run create a new folder in <code class="path">~/.aws</code>. Thus the executor
+      creates <code class="path">~/.aws/cli/cache</code> before the run.</p>
     <p><code>aws_cli</code> always runs in workspace-write mode, also after a person approves its
       card. Its write root is the connected workspace. With no workspace, the command starts in the
       home folder, but it cannot write there. It writes only in the session scratch folder, the
-      temporary folders, and <code class="path">~/.aws</code>.</p>
+      temporary folders, and the AWS CLI caches in <code class="path">~/.aws</code>.</p>
 
     <h2 id="residual-risk">Accepted residual risk</h2>
     <p>Because the default is <em>allow</em>, two things follow directly, and both are accepted on
