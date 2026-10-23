@@ -281,12 +281,26 @@
         needs only <code>repo_id</code> and <code>dir</code>, because its weights are a whole-repo
         snapshot rather than a single file. An entry still missing a weight field after the merge is
         dropped with a warning rather than failing later at load time.</li>
-      <li><b>A lean system prompt.</b> The cloud system prompt is tool-heavy and workspace-heavy (roughly
-        2 to 2.5K tokens the local model cannot act on), so <code>build_local_system_prompt(...)</code>
-        drops it and keeps a short identity plus project and memory context. This speeds prefill and
-        frees context space. With tools on it swaps in a tools-positive identity (the no-tools one makes
-        the model refuse instead of calling what is declared) and, when a workspace is connected, a
-        short marker telling it to reach the code through the <code>ws_*</code> tools.</li>
+      <li><b>A lean system prompt.</b> The cloud system prompt has approximately 2,400 tokens of tool
+        and workspace instructions. <code>build_local_system_prompt(...)</code> does not use that
+        prompt. It keeps a short identity and the project and memory context. Thus the prefill is
+        shorter and more context space stays free. With tools on, the identity tells the model to call
+        the tools in the request. With the no-tools identity, the model does not call the tools.</li>
+      <li><b>Tool-calling instructions.</b> The local prompt also has the multi-step rule of the cloud
+        prompt (<code>KEEP_WORKING</code> in <code>server/prompts/base.py</code>). Thus a local model
+        gets the same instruction: do the next step immediately, and do not stop after a plan with no
+        tool call. When a workspace is connected, a short note tells the model to use the
+        <code>ws_*</code> tools. The note also tells the model that a request for "this code" that
+        names no file refers to the workspace. On 2026-10-23, a benchmark with Gemma 4 12B, Qwen3.5 9B,
+        and Ministral 3 14B used 6 requests with 5 runs each. The full cloud prompt gave a smaller
+        number of tool calls than the local prompt.</li>
+      <li><b>One more request after a plan with no tool call.</b> A local model can end a short
+        answer with a plan for its next step and no tool call. Because the loop starts a new round
+        only after a tool call, this answer ends the turn. In this condition, the adapter sends one more
+        request in the same round. The request gives the answer back to the model with an
+        instruction to make the tool call. The adapter shows the second answer only if it has a tool
+        call, and it does not save the instruction in the history. A question to the user, or a
+        request for more input, does not start this second request.</li>
       <li><b>A configurable context window.</b> llama.cpp fixes the window when the server starts, so
         changing it restarts the process. <code>ensure_serving</code> resolves the size in order: an
         explicit request, then the last size the user asked for, then the model's registry
