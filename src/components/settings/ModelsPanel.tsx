@@ -7,7 +7,7 @@ import {
   fetchModelsStatus,
   startModelDownload,
 } from '@/api/models';
-import type { ManagedModel, ManagedModelGroup } from '@/api/models';
+import type { ManagedModel, ManagedModelGroup, ManagedModelStatus, ToolCheck } from '@/api/models';
 import { removeModelFromList } from '@/api/modelBrowser';
 import { useUIStore } from '@/stores/uiStore';
 import { useSettingsStore } from '@/stores/settingsStore';
@@ -56,6 +56,46 @@ const ordinal = (n: number): string => {
 
 /** A download that is running or waiting for a slot — rows that poll + Cancel. */
 const isActive = (state: ManagedModel['state']) => state === 'downloading' || state === 'queued';
+
+/** A row the status poll must follow: an active download, or the tool-call
+ *  check that starts when a local chat download finishes. */
+const needsPoll = (m: Pick<ManagedModelStatus, 'state' | 'tool_check'>) =>
+  isActive(m.state) || m.tool_check?.state === 'running';
+
+/** The tool-call check line under a local chat row. No control: the check
+ *  runs by itself after a download, and the line only reports it. */
+const ToolCheckLine: React.FC<{ check: ToolCheck }> = ({ check }) => {
+  if (check.state === 'running') {
+    return (
+      <div className="settings-item-desc">
+        {check.run
+          ? `Checking tool calls: test ${check.run} of ${check.total}…`
+          : 'Checking tool calls: loading the model…'}
+      </div>
+    );
+  }
+  if (check.state === 'passed') {
+    return (
+      <div className="settings-item-desc">
+        Tool calls: {check.passed} of {check.total} tests passed.
+      </div>
+    );
+  }
+  const text =
+    check.state === 'failed'
+      ? `Tool calls failed in test ${check.runs} of ${check.total}: it ${check.reason}. ` +
+        'This model can chat, but it cannot reliably use the workspace or other tools.'
+      : `Tool-call check did not run. ${check.reason ?? ''}`.trim();
+  return (
+    <div
+      className="settings-item-desc"
+      style={{ color: 'var(--risk-warn)', marginTop: 2 }}
+      role="alert"
+    >
+      {text}
+    </div>
+  );
+};
 
 const StatusChip: React.FC<{ model: ManagedModel }> = ({ model }) => {
   if (model.state === 'queued') {
@@ -137,20 +177,19 @@ export const ModelsPanel: React.FC<{ section?: ModelSection }> = ({ section }) =
   });
   // Poll while anything is downloading OR queued: the server pumps its queue
   // on status polls, so polling is what makes a queued model start at all.
-  const catalogActive = (catalogQuery.data?.models ?? []).some((m) => isActive(m.state));
+  // A running tool-call check polls too, so its row follows test by test.
+  const catalogActive = (catalogQuery.data?.models ?? []).some(needsPoll);
 
   const statusQuery = useQuery({
     queryKey: ['models-manager-status'],
     queryFn: fetchModelsStatus,
     enabled: catalogActive,
     // Poll at 1s while its own payload still shows a running or queued
-    // download; the interval stops itself the moment everything is idle,
-    // even before the catalog refetch below lands.
+    // download, or a running tool-call check; the interval stops itself the
+    // moment everything is idle, even before the catalog refetch below lands.
     refetchInterval: (query) => {
       const status = query.state.data?.models;
-      const stillActive = status
-        ? Object.values(status).some((s) => isActive(s.state))
-        : true;
+      const stillActive = status ? Object.values(status).some(needsPoll) : true;
       return stillActive ? 1000 : false;
     },
   });
@@ -159,7 +198,7 @@ export const ModelsPanel: React.FC<{ section?: ModelSection }> = ({ section }) =
   // catalog once so `enabled` above flips off and installed/error rows show
   // authoritative catalog data.
   const statusIdle =
-    !!statusQuery.data && !Object.values(statusQuery.data.models).some((s) => isActive(s.state));
+    !!statusQuery.data && !Object.values(statusQuery.data.models).some(needsPoll);
   useEffect(() => {
     if (catalogActive && statusIdle) {
       void queryClient.invalidateQueries({ queryKey: ['models-manager-catalog'] });
@@ -369,6 +408,7 @@ export const ModelsPanel: React.FC<{ section?: ModelSection }> = ({ section }) =
                           {m.error}
                         </div>
                       )}
+                      {m.tool_check && <ToolCheckLine check={m.tool_check} />}
                     </div>
                     <div className="settings-item-actions" style={{ display: 'flex', gap: 6 }}>
                       {isActive(m.state) ? (

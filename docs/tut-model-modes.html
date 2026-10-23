@@ -119,6 +119,22 @@
     <p>Installed models get a <b>Local</b> badge in the picker. A row's overflow menu offers
       <b>Delete downloaded files</b> (frees the weights, keeps the model listed) and <b>Remove from
       list</b> (takes it out of the picker entirely).</p>
+    <p id="tool-check">When the download of a local chat model is complete, the app does a tool-call
+      check on the model. The app loads the model as for a chat turn. Then the app sends the same
+      first chat turn 5 times. This turn asks for the bugs in a connected workspace and gives the full
+      tool list of the first round. No tool runs. A test passes when the answer is a call to a tool
+      from that list, with arguments of the types in the tool schema.</p>
+    <p>The check stops at the first test that fails. On an 18 GB Mac, the check runs for
+      approximately 2 minutes. While the check runs, the row of the model in
+      <b>Settings &rarr; Models &rarr; Chat</b> shows "Checking tool calls: test 2 of 5". After the
+      check, the row shows "Tool calls: 5 of 5 tests passed." or a warning. The warning gives the
+      number of the test that failed and the cause. It ends with "This model can chat, but it cannot
+      reliably use the workspace or other tools."</p>
+    <p>If the check cannot run, the row gives the cause. An example is a model that does not load.
+      If a local chat turn with a different model runs, the check waits until the turn ends. If the
+      model was not in memory before the check, the app stops the model after the check. You cannot
+      delete the model while the check runs. A model without the <code>supports_tools</code> flag
+      gets no check.</p>
 
     <h3 id="engines">The two on-device engines</h3>
     <p>On-device chat is served by one of two local engines, chosen automatically from the model you

@@ -197,6 +197,23 @@ def _drop_cached_bedrock_clients():
 
 
 @pytest.fixture(autouse=True)
+def _no_live_tool_checks(monkeypatch):
+    """A finished local-chat download starts a tool-call check
+    (server/models_manager/tool_check.py), which loads the model in llama-server.
+    In a unit test that would start a real model server on a fake file, so the
+    launch is refused: the check never starts and its live state is dropped, as
+    for any launch failure. Tests of the check call run_check themselves. Each
+    test also starts with no check marked running."""
+    from server.models_manager import tool_check
+
+    def refuse(key):
+        raise RuntimeError("no live tool-call checks in unit tests")
+
+    monkeypatch.setattr(tool_check, "_launch", refuse)
+    monkeypatch.setattr(tool_check, "_live", {})
+
+
+@pytest.fixture(autouse=True)
 def _no_live_activity_labels(monkeypatch):
     """A chat turn with a tool round asks the auxiliary model for an activity
     caption (server/chat/engine/activity_labels.py). In a unit test that call

@@ -5,6 +5,23 @@ import { del, get, post } from '@/api/client';
 export type ManagedModelGroup = 'transcription' | 'indexing' | 'local-chat';
 export type ManagedModelState = 'absent' | 'queued' | 'downloading' | 'installed' | 'error';
 
+/** The tool-call check a local chat model gets after its download
+ *  (server/models_manager/tool_check.py): `running` while it loads the model
+ *  and replays a first chat turn `total` times, then `passed` (every run
+ *  called a tool), `failed` (stopped at the first run that did not, with
+ *  `reason`), or `error` (the check could not run). */
+export interface ToolCheck {
+  state: 'running' | 'passed' | 'failed' | 'error';
+  total: number;
+  passed: number;
+  /** running: the run in progress (0 while the model loads). */
+  run?: number;
+  /** passed/failed/error: how many runs it made. */
+  runs?: number;
+  reason?: string;
+  checked_at?: string;
+}
+
 export interface ManagedModel {
   key: string;
   label: string;
@@ -25,6 +42,8 @@ export interface ManagedModel {
   error: string | null;
   /** Always-installed infrastructure model; hidden from Settings lists. */
   bundled?: boolean;
+  /** Local chat models only; null when no check ran. */
+  tool_check?: ToolCheck | null;
 }
 
 export interface ManagedModelStatus {
@@ -36,6 +55,8 @@ export interface ManagedModelStatus {
   /** See ManagedModel.queue_position. */
   queue_position: number | null;
   error: string | null;
+  /** See ManagedModel.tool_check. */
+  tool_check?: ToolCheck | null;
 }
 
 export const fetchModelsCatalog = () =>
