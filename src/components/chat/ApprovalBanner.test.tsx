@@ -11,7 +11,7 @@
  * Only the action executor and the network are faked: the card drives the
  * real approval leg and the real continuation.
  */
-import { render, fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, render, fireEvent, screen, waitFor } from '@testing-library/react';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { PendingApproval } from '@/stores/chatStore';
 import { dropRuntime, getChatStore, useRuntimeIndex } from '@/stores/sessionRuntimes';
@@ -144,6 +144,56 @@ describe('ApprovalBanner', () => {
     );
     expect(bodies).toHaveLength(0);
     expect(getChatStore(SID).getState().isStreaming).toBe(false);
+  });
+
+  // One banner draws the card of whichever session is open: ChatPanel is not
+  // remounted on a session switch. A Yes in one session used to hold
+  // "Running…" on the other session's card until the first session's
+  // resumed turn ended.
+  it('a card in another session stays answerable while one session runs its approved action', async () => {
+    const bodies = continuationBodies();
+    let finish: ((v: unknown) => void) | null = null;
+    executeApproval.mockImplementationOnce(() => new Promise((r) => { finish = r; }));
+    const OTHER = 'sess-approval-other';
+    getChatStore(SID).getState().enqueueApproval(approval('tu_a'));
+    getChatStore(OTHER).getState().enqueueApproval({ ...approval('tu_b'), sessionId: OTHER });
+
+    render(<ApprovalBanner />);
+    fireEvent.click(screen.getByRole('button', { name: 'Yes' }));
+    await waitFor(() => expect(executeApproval).toHaveBeenCalledTimes(1));
+
+    act(() => useSessionStore.setState({ currentSessionId: OTHER }));
+    const yes = screen.getByRole('button', { name: 'Yes' });
+    expect((yes as HTMLButtonElement).disabled).toBe(false);
+
+    // Answering it resumes that session now, not after the first one's turn.
+    executeApproval.mockResolvedValueOnce({ ok: true, output: 'b done' });
+    fireEvent.click(yes);
+    await waitFor(() => expect(bodies.map((b) => b.approved_tool_result.tool_use_id)).toEqual(['tu_b']));
+
+    finish!({ ok: true, output: 'a done' });
+    await waitFor(() => expect(bodies).toHaveLength(2));
+    expect(bodies[1].approved_tool_result.tool_use_id).toBe('tu_a');
+  });
+
+  it('a card in the same session waits while that session runs its approved action', async () => {
+    const bodies = continuationBodies();
+    let finish: ((v: unknown) => void) | null = null;
+    executeApproval.mockImplementationOnce(() => new Promise((r) => { finish = r; }));
+    getChatStore(SID).getState().enqueueApproval(approval('tu_first'));
+
+    render(<ApprovalBanner />);
+    fireEvent.click(screen.getByRole('button', { name: 'Yes' }));
+    await waitFor(() => expect(executeApproval).toHaveBeenCalledTimes(1));
+
+    act(() => getChatStore(SID).getState().enqueueApproval(approval('tu_next')));
+    const running = screen.getByRole('button', { name: 'Running…' });
+    expect((running as HTMLButtonElement).disabled).toBe(true);
+
+    finish!({ ok: true, output: 'done' });
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    const yes = await screen.findByRole('button', { name: 'Yes' });
+    expect((yes as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('No resumes the turn with the denial and runs nothing', async () => {

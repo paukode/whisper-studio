@@ -17,26 +17,35 @@ import { ICON } from './activityIcons';
 export function ApprovalBanner() {
   const currentApproval = useActiveChatStore((s) => s.currentApproval);
   const approvalQueue = useActiveChatStore((s) => s.approvalQueue);
-  const [isProcessing, setIsProcessing] = useState(false);
+  // The sessions whose answer is still running. This one banner draws the
+  // card of whichever session is open (ChatPanel is not remounted on a
+  // session switch), and an answer runs until the resumed turn ends, so a
+  // single flag held "Running…" on every other session's card for that long.
+  const [answering, setAnswering] = useState<ReadonlySet<string>>(() => new Set());
 
   // One handler for every button. The leg binds the approval's OWNING session
   // store up front (the continuation can outlive a session switch) and keeps
   // that session busy from the click until the resumed turn has the stream,
   // so Stop, ESC and the composer all see it working (hooks/chatStream/approvalLeg).
   const handleAnswer = useCallback(async (approval: PendingApproval, accepted: boolean, forSession: boolean) => {
-    setIsProcessing(true);
-    const chat = getChatStore(approval.sessionId);
+    const sessionId = approval.sessionId;
+    setAnswering((prev) => new Set(prev).add(sessionId));
+    const chat = getChatStore(sessionId);
     try {
       await answerApproval(approval, accepted, forSession);
     } finally {
       // Always recover the card UI. Skipping this on the failure path left
-      // `isProcessing` stuck true, which disabled every button on the NEXT
+      // the session marked answering, which disabled every button on its NEXT
       // approval card ("Running...") until a reload, and left queued approvals
       // permanently unshown.
       if (!chat.getState().currentApproval) {
         chat.getState().showNextApproval();
       }
-      setIsProcessing(false);
+      setAnswering((prev) => {
+        const next = new Set(prev);
+        next.delete(sessionId);
+        return next;
+      });
     }
   }, []);
 
@@ -73,6 +82,7 @@ export function ApprovalBanner() {
 
   if (!currentApproval) return null;
 
+  const isProcessing = answering.has(currentApproval.sessionId);
   const payload = currentApproval.payload ?? {};
   const explanationText = extractExplanation(currentApproval.explanation);
   const riskLabel = currentApproval.riskHint ?? null;
