@@ -188,6 +188,10 @@
       through <code>run_sandboxed</code> at all, so it is restricted instead by a read-only prefix
       check rather than the filesystem sandbox. The re-allow itself is scoped to the sandboxed AWS
       calls; a generic shell command never sees <code class="path">~/.aws</code>.</p>
+    <p><code>aws_cli</code> always runs in workspace-write mode, also after a person approves its
+      card. Its write root is the connected workspace. With no workspace, the command starts in the
+      home folder, but it cannot write there. It writes only in the session scratch folder, the
+      temporary folders, and <code class="path">~/.aws</code>.</p>
 
     <h2 id="residual-risk">Accepted residual risk</h2>
     <p>Because the default is <em>allow</em>, two things follow directly, and both are accepted on
