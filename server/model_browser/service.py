@@ -14,12 +14,18 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 
-from server.model_browser import compat, hf_client, install
+from server.model_browser import compat, gguf_kv, hf_client, install
 
 log = logging.getLogger("whisper-studio")
 
 _SEARCH_LIMIT = 30
 _PER_AUTHOR_LIMIT = 12
+
+# KV shape per (repo_id, filename), kept for the life of the process: the
+# Discover tab asks again on every open, and a published file's header does
+# not change. Only a header that was read is kept (its shape can still be
+# None); a failed read is tried again next time.
+_kv_shapes: dict[tuple[str, str], gguf_kv.KvShape | None] = {}
 
 
 class InstallError(Exception):
@@ -124,6 +130,33 @@ def _memory_fields() -> dict:
         "mem_reserved_bytes": reserved,
         "mem_budget_bytes": int(budget) if budget is not None else None,
     }
+
+
+def _kv_shape(repo_id: str, filename: str, local_path: str | None = None) -> gguf_kv.KvShape | None:
+    """The KV layout of a GGUF file: from the file itself when it is on disk,
+    else from a ranged read of its header on Hugging Face. None when the
+    header cannot be read or gives no shape. Never raises."""
+    key = (repo_id, filename)
+    if key in _kv_shapes:
+        return _kv_shapes[key]
+    meta = None
+    if local_path and os.path.isfile(local_path):
+        try:
+            with open(local_path, "rb") as f:
+                meta = gguf_kv.read_metadata(f)
+        except (OSError, gguf_kv.GgufError) as e:
+            log.debug("Could not read the GGUF header of %s: %s", local_path, e)
+    if meta is None:
+        meta = hf_client.gguf_file_metadata(repo_id, filename)
+    if meta is None:
+        return None
+    shape = gguf_kv.kv_shape(meta)
+    _kv_shapes[key] = shape
+    return shape
+
+
+def _kv_cache_bytes(shape: gguf_kv.KvShape | None, n_ctx: int) -> int | None:
+    return gguf_kv.kv_cache_bytes(shape, n_ctx) if shape else None
 
 
 def _norm_fmt(fmt: str | None) -> str:
@@ -323,6 +356,13 @@ def repo_detail(repo_id: str, fmt: str = "gguf") -> dict:
     mem = _memory_fields()
     total_mem = mem["mem_total_bytes"]
     reserved = mem["mem_reserved_bytes"]
+    # Every quant of a repo has the same layers, and the KV cache is f16
+    # whatever the weight quant, so one header gives the cache for all rows,
+    # at the context an install from this view writes.
+    kv_bytes = None
+    if recommended:
+        n_ctx = install.resolve_ctx(None, meta.context_length)
+        kv_bytes = _kv_cache_bytes(_kv_shape(repo_id, recommended), n_ctx)
     return {
         "repo_id": repo_id,
         "format": "gguf",
@@ -344,8 +384,8 @@ def repo_detail(repo_id: str, fmt: str = "gguf") -> dict:
                 "is_sharded": o.is_sharded,
                 "shard_count": o.shard_count,
                 "recommended": o.filename == recommended,
-                "fit": compat.fit_verdict(o.size_bytes, total_mem, reserved),
-                "needed_bytes": compat.needed_bytes(o.size_bytes),
+                "fit": compat.fit_verdict(o.size_bytes, total_mem, reserved, kv_bytes),
+                "needed_bytes": compat.needed_bytes(o.size_bytes, kv_bytes),
             }
             for o in options
         ],
@@ -520,18 +560,30 @@ def recommended() -> list[dict]:
     each row carrying its canonical install key, one-click filename/quant, a
     ``downloaded`` flag so the UI can badge already-present models, and a fit
     verdict for the machine this server runs on."""
+    from server.infrastructure.paths import models_root
     from server.local import registry
 
     mem = _memory_fields()
     total_mem = mem["mem_total_bytes"]
     reserved = mem["mem_reserved_bytes"]
     downloading_keys = _downloading_keys()
+    catalog = registry.recommended_models()
+
+    # One header per model: the weights on disk when downloaded, else a ranged
+    # read on Hugging Face (cached after the first open, run side by side).
+    def shape(meta: dict) -> gguf_kv.KvShape | None:
+        local = os.path.join(models_root(), meta["dir"], meta["filename"])
+        return _kv_shape(meta["repo_id"], meta["filename"], local)
+
+    with ThreadPoolExecutor(max_workers=max(1, len(catalog))) as pool:
+        shapes = dict(zip(catalog, pool.map(shape, catalog.values()), strict=True))
 
     rows: list[dict] = []
-    for key, meta in registry.recommended_models().items():
+    for key, meta in catalog.items():
         repo = meta["repo_id"]
         author, _, name = repo.partition("/")
         size_bytes = meta.get("size_bytes")
+        kv_bytes = _kv_cache_bytes(shapes[key], int(meta.get("ctx") or install.DEFAULT_CTX))
         rows.append(
             {
                 "key": key,
@@ -548,8 +600,8 @@ def recommended() -> list[dict]:
                 "downloaded": bool(meta.get("downloaded")),
                 "downloading": key in downloading_keys,
                 "size_bytes": size_bytes,
-                "fit": compat.fit_verdict(size_bytes, total_mem, reserved),
-                "needed_bytes": compat.needed_bytes(size_bytes),
+                "fit": compat.fit_verdict(size_bytes, total_mem, reserved, kv_bytes),
+                "needed_bytes": compat.needed_bytes(size_bytes, kv_bytes),
             }
         )
     return rows

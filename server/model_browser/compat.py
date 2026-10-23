@@ -101,35 +101,49 @@ _PARAM_SIZE_RE = re.compile(r"(\d+(?:\.\d+)?)\s*[bB]\b")
 #     out from under it — recommendedMaxWorkingSetSize on Apple Silicon sits
 #     around 3/4 of total unified memory. 0.75 approximates that ceiling on any
 #     machine, not just the one this was observed on.
-#   * A resident context needs more than the raw weights: KV cache at a large
-#     context size plus llama.cpp's compute buffers. 2 GiB is a rough constant
-#     rather than a per-model computation (ctx size, layer count, etc. all
-#     matter), but it is enough to catch the failure mode this exists for —
-#     weights alone leaving no room for anything else.
+#   * A resident context needs more than the raw weights: the KV cache at the
+#     context the app loads the model with, plus llama.cpp's compute buffers.
+#     The KV cache is per model (gguf_kv.py reads it from the GGUF header) and
+#     at 32K ranges from a fraction of a GiB to more than the weights. Only a
+#     model whose header gives no KV shape (an MLX snapshot, an unreadable
+#     header) falls back to the flat RUNTIME_OVERHEAD_BYTES for both.
+#   * COMPUTE_OVERHEAD_BYTES covers the rest of the process. Measured
+#     2026-10-23 on an 18 GB M3 Pro (llama-server b10289, 32K, a 30K-token
+#     prompt): compute buffers, recurrent state and process memory came to
+#     0.45 GiB (Qwen3.5 9B), 0.56 GiB (Ministral 3 14B) and 0.93 GiB (Gemma 4
+#     12B, of which 0.63 GiB were two sliding-window context checkpoints).
+#     Not counted: the server's prompt cache (--cache-ram, 8 GiB by default),
+#     which grows by the used KV cache each time a different prompt arrives.
 MEM_BUDGET_FRACTION = 0.75
 RUNTIME_OVERHEAD_BYTES = 2 << 30  # 2 GiB
+COMPUTE_OVERHEAD_BYTES = 1 << 30  # 1 GiB, beside a known KV cache
 
 # Second threshold within the budget: a quant that fits but leaves little
-# headroom is flagged "tight" rather than a clean "ok", since large-context
-# KV growth or another app's memory pressure can tip it into the same failure.
+# headroom is flagged "tight" rather than a clean "ok", since another app's
+# memory pressure can tip it into the same failure.
 _TIGHT_FRACTION = 0.85
 
 
-def needed_bytes(size_bytes: int | None) -> int | None:
-    """How much free memory this quant needs to run at all: its own weights
-    plus the fixed runtime overhead (KV cache + llama.cpp compute buffers).
-    None when size is unknown, so the caller omits the field rather than
-    render a guess. Lets the UI state the requirement in the model's own
+def needed_bytes(size_bytes: int | None, kv_cache_bytes: int | None = None) -> int | None:
+    """How much free memory this quant needs to run at all: its own weights,
+    the KV cache, and llama.cpp's compute buffers. ``kv_cache_bytes`` is the
+    model's KV cache at the context the app runs it with; None (unknown)
+    falls back to the flat RUNTIME_OVERHEAD_BYTES for the cache and buffers
+    together. None when size is unknown, so the caller omits the field rather
+    than render a guess. Lets the UI state the requirement in the model's own
     terms ("needs about N GB free") instead of only a relative verdict."""
     if not size_bytes or size_bytes <= 0:
         return None
-    return size_bytes + RUNTIME_OVERHEAD_BYTES
+    if kv_cache_bytes is None:
+        return size_bytes + RUNTIME_OVERHEAD_BYTES
+    return size_bytes + max(0, kv_cache_bytes) + COMPUTE_OVERHEAD_BYTES
 
 
 def fit_verdict(
     size_bytes: int | None,
     total_mem_bytes: int | None,
     reserved_bytes: int = 0,
+    kv_cache_bytes: int | None = None,
 ) -> str | None:
     """Whether a quant of ``size_bytes`` can run alongside ``reserved_bytes``
     of other resident models on a machine with ``total_mem_bytes`` of RAM.
@@ -138,9 +152,9 @@ def fit_verdict(
     is unknown or non-positive, so the caller can omit the field rather than
     render a guess. ``total_mem_bytes`` and ``reserved_bytes`` describe the
     CALLER's machine — this function hardcodes no machine's numbers, only the
-    fractions above.
+    fractions above. ``kv_cache_bytes`` is as for needed_bytes.
     """
-    needed = needed_bytes(size_bytes)
+    needed = needed_bytes(size_bytes, kv_cache_bytes)
     if needed is None or not total_mem_bytes or total_mem_bytes <= 0:
         return None
     budget = MEM_BUDGET_FRACTION * total_mem_bytes - max(0, reserved_bytes)

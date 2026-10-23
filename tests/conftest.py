@@ -214,6 +214,20 @@ def _no_live_tool_checks(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_live_gguf_header_reads(monkeypatch):
+    """The memory-fit grade reads a model's GGUF header on Hugging Face
+    (server/model_browser/hf_client.py::gguf_file_metadata) when the weights
+    are not on disk. In a unit test that read answers as a failed one (None),
+    so the grade keeps its flat allowance and no request leaves the test;
+    tests of the KV estimate stub the header themselves. Each test also starts
+    with an empty shape cache, so one test's header cannot answer the next."""
+    from server.model_browser import hf_client, service
+
+    monkeypatch.setattr(hf_client, "gguf_file_metadata", lambda repo_id, filename: None)
+    monkeypatch.setattr(service, "_kv_shapes", {})
+
+
+@pytest.fixture(autouse=True)
 def _no_live_activity_labels(monkeypatch):
     """A chat turn with a tool round asks the auxiliary model for an activity
     caption (server/chat/engine/activity_labels.py). In a unit test that call
