@@ -59,19 +59,24 @@ def test_a_new_folder_names_its_parent_and_a_touched_folder_names_itself(tmp_pat
     assert ev["files"] == []
 
 
-def test_hidden_and_build_folders_are_ignored_like_the_listing_does(tmp_path):
-    ev = coalesce(
-        str(tmp_path),
-        [
-            (Change.added, str(tmp_path / ".git" / "index.lock")),
-            (Change.added, str(tmp_path / "frontend" / "node_modules" / "x" / "index.js")),
-            (Change.modified, str(tmp_path / "backend" / ".venv" / "lib" / "a.py")),
-            (Change.added, str(tmp_path / "backend" / "__pycache__" / "a.pyc")),
-            (Change.added, str(tmp_path / ".DS_Store")),
-        ],
-    )
+def test_dot_entries_and_build_folders_are_reported_like_any_other(tmp_path):
+    # The listing hides nothing, so an open .venv or dist must follow the disk too.
+    paths = [
+        tmp_path / ".venv",
+        tmp_path / ".git" / "HEAD",
+        tmp_path / "dist" / "app.js",
+        tmp_path / "frontend" / "node_modules" / "x" / "index.js",
+        tmp_path / ".env.example",
+    ]
+    for p in paths[1:]:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("x\n")
+    paths[0].mkdir()
 
-    assert ev is None
+    ev = coalesce(str(tmp_path), [(Change.added, str(p)) for p in paths])
+
+    assert ev["dirs"] == ["", ".git", "dist", "frontend/node_modules/x"]
+    assert ev["files"] == sorted(str(p.relative_to(tmp_path)) for p in paths[1:])
 
 
 def test_too_many_folders_are_not_named_so_the_ui_reloads_all_it_has(tmp_path):

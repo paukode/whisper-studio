@@ -1,6 +1,6 @@
 import React, { useCallback, useRef, useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { inConnectedRoot, useWorkspaceStore } from '@/stores/workspaceStore';
+import { eventPath, inConnectedRoot, useWorkspaceStore } from '@/stores/workspaceStore';
 import { useUIStore } from '@/stores/uiStore';
 import { indexStatus, queryFile, type BinaryFileInfo } from '@/api/workspace';
 import { getLangForPath } from '@/utils/languageDetection';
@@ -78,7 +78,7 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({ onCollapse }) =>
       const named = files == null ? null : new Set(files);
       const ws = useWorkspaceStore.getState();
       for (const tab of ws.editorTabs) {
-        if (named && !named.has(tab.path)) continue;
+        if (named && !named.has(eventPath(tab.path))) continue;
         if (tab.isDirty) continue; // Don't overwrite user edits
         // A tab kept from another root is not this workspace's file of that path.
         if (!inConnectedRoot(tab)) continue;

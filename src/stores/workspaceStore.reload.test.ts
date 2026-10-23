@@ -4,7 +4,7 @@ import type { FileTreeEntry } from '@/types/workspace';
 vi.mock('@/api/workspace', () => ({ listDir: vi.fn() }));
 
 import { listDir } from '@/api/workspace';
-import { loadedDirs, useWorkspaceStore } from './workspaceStore';
+import { eventPath, loadedDirs, useWorkspaceStore } from './workspaceStore';
 
 /**
  * The tree follows the disk through `reloadDirs`: the backend's
@@ -107,6 +107,39 @@ describe('workspaceStore.reloadDirs', () => {
     await useWorkspaceStore.getState().reloadDirs(['capacity-planner']);
 
     expect(names(useWorkspaceStore.getState().fileTree[0].children)).toEqual(['backend', 'docs', 'SPEC.md']);
+  });
+});
+
+describe('reloadDirs with the listing as the backend returns it', () => {
+  // Listing '.' gives "./"-prefixed paths; the watcher names folders without
+  // the prefix. The field case: only root-level changes ever showed.
+  it('a folder the event names without "./" is re-listed by its tree path', async () => {
+    useWorkspaceStore.setState({
+      fileTree: [
+        dir('./capacity-planner-staffing-macos', [
+          dir('./capacity-planner-staffing-macos/dist', [file('./capacity-planner-staffing-macos/dist/app.zip')]),
+          dir('./capacity-planner-staffing-macos/docs'),
+        ]),
+      ],
+    });
+    vi.mocked(listDir).mockImplementation(async (path) =>
+      path === './capacity-planner-staffing-macos/dist'
+        ? [file('./capacity-planner-staffing-macos/dist/app.zip'), file('./capacity-planner-staffing-macos/dist/new.txt')]
+        : [],
+    );
+
+    await useWorkspaceStore.getState().reloadDirs(['capacity-planner-staffing-macos/dist']);
+
+    expect(listed()).toEqual(['./capacity-planner-staffing-macos/dist']);
+    const dist = useWorkspaceStore.getState().fileTree[0].children?.find((n) => n.name === 'dist');
+    expect(names(dist?.children)).toEqual(['app.zip', 'new.txt']);
+  });
+
+  it('eventPath maps tree paths onto the names the event uses', () => {
+    expect(eventPath('.')).toBe('');
+    expect(eventPath('./docs/a.md')).toBe('docs/a.md');
+    expect(eventPath('docs/a.md')).toBe('docs/a.md');
+    expect(eventPath('./.venv')).toBe('.venv');
   });
 });
 
