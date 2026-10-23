@@ -14,7 +14,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from server.models_manager import manager, tool_check
+from server.models_manager import manager, sizes, tool_check
 from server.models_manager.catalog import get_entry
 from server.models_manager.routes import router
 
@@ -128,6 +128,11 @@ def stack(tmp_path, monkeypatch):
     monkeypatch.setattr(serving, "resident_key", lambda: state.resident)
     monkeypatch.setattr(serving, "wire_model", lambda key: "gemma")
     monkeypatch.setattr(serving, "supports_tool_choice", lambda key: True)
+    # The catalog route prefetches real sizes from Hugging Face in a thread;
+    # left live, it reaches the network and fills the shared size cache that
+    # later tests read their fallback sizes from.
+    monkeypatch.setattr(sizes, "fetch_size", lambda repo_id, filename=None: None)
+    monkeypatch.setattr(sizes, "prefetch", lambda entries: None)
     manager._jobs.clear()
     manager._queue.clear()
     manager._errors.clear()
