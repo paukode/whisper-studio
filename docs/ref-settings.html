@@ -120,8 +120,11 @@
           <td><b>Models &gt; Discover</b></td>
           <td>Models</td>
           <td>The model browser for on-device models. The app ships with <b>no local model installed by
-            default</b>; Discover lists recommended models you can install, each graded by whether it
-            actually fits your device's memory. Installing a local chat model also flips
+            default</b>; Discover lists recommended models you can install. Each row shows if your Mac
+            has sufficient memory for the model. The calculation uses the file size, the KV cache of
+            the model at the context window of the install, and the compute buffers. Refer to
+            <a href="tut-model-modes.html#fit-grade">Memory fit</a>. Installing a local chat model
+            also flips
             <code>backends.index_llm</code> to it. Removing a local model deletes its weights; removing a
             cloud (Bedrock) model just tombstones it in the picker.</td>
         </tr>

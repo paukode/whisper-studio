@@ -111,6 +111,29 @@
       <img src="assets/img/model-discover.png" alt="The Discover tab in Settings, searching Hugging Face for on-device chat models">
       <figcaption><strong>Settings &rarr; Models &rarr; Discover.</strong> Search Hugging Face for a GGUF or MLX chat model and install it. A handful of models are marked Recommended if you want a known-good starting point.</figcaption>
     </figure>
+    <h4 id="fit-grade">Memory fit</h4>
+    <p>The app compares the memory that a model uses with a memory budget. The budget is 75% of
+      the total memory of your Mac. The app subtracts the size of the speech recognition model and
+      the speaker model, because these models can stay in memory during a chat.</p>
+    <p>A local model uses memory for 3 items: the model file, the KV cache, and the compute buffers
+      of llama-server. When llama-server loads a model, it creates the KV cache for the full context
+      window. For a GGUF model, the app reads the header of the GGUF file before the download. The
+      app reads only the start of the file, usually 64 KB. If the model is on your Mac, the app
+      reads the local file. The header gives the layers, the attention heads, and the sliding window
+      of the model.</p>
+    <p>From these values, the app calculates the KV cache at the context window that the install
+      writes. For most models, this context window is 32K tokens. At 32K tokens, the KV cache of
+      Ministral 3 14B is 5 GiB. The KV cache of Qwen3.5 9B is 1 GiB, because only 1 layer of each 4
+      layers keeps a cache. The KV cache of Gemma 4 12B is approximately 1 GiB, because 40 of its 48
+      layers keep only a window of 1,024 tokens.</p>
+    <p>The memory for the model is the sum of the file size, the KV cache, and 1 GiB for the compute
+      buffers. If this sum is more than the budget, the row shows "won't fit". If the sum is more
+      than 85% of the budget, the row shows "tight fit". Example: on an 18 GB Mac, the budget is
+      13.5 GiB. Ministral 3 14B uses 13.8 GiB at 32K tokens, thus the row shows "won't fit".</p>
+    <p>If the app cannot read the header, the app adds 2 GiB to the file size. This also applies to
+      an MLX model, because an MLX model has no GGUF header. The result does not include the prompt
+      cache of llama-server. When a chat sends a different prompt, llama-server keeps the previous
+      context in memory, to a maximum of 8 GiB.</p>
     <p>Installing your first local chat model does one more thing worth knowing: it automatically
       flips <code>backends.index_llm</code> from <code>haiku</code> to <code>local</code> if it was
       still on the cloud default, so the one-shot summarization and relationship work that
