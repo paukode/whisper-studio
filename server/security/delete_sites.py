@@ -311,6 +311,13 @@ _STDIN_FEEDERS = frozenset({"xargs", "parallel"})
 _FIND_LEADING_OPTS = re.compile(r"^-[HLPEXdsx]+$")
 _FIND_OPTS_WITH_VALUE = frozenset({"-f", "-D"})
 _FIND_EXEC_ACTIONS = frozenset({"-exec", "-execdir", "-ok", "-okdir"})
+# The actions that run their command in the folder of each found file.
+_FIND_IN_FOUND_DIR = frozenset({"-execdir", "-okdir"})
+# watch (procps) joins the words after its options and runs them with
+# `sh -c`; parallel does the same with its command template, up to the first
+# of these separators, and fills in its arguments.
+_JOINED_COMMANDS = frozenset({"watch", "parallel"})
+_PARALLEL_SEPARATORS = frozenset({":::", "::::", ":::+", "::::+"})
 
 
 def _delete_operands(tokens: list[str], j: int) -> list[str]:
@@ -339,6 +346,12 @@ def _find_site(tokens: list[str], j: int) -> DeleteSite | None:
     )
     if not deletes:
         return None
+    return DeleteSite("find", _find_starts(rest))
+
+
+def _find_starts(rest: list[str]) -> list[str]:
+    """The starting points a find walks, read from the words after it (the
+    working directory when it names none)."""
     paths: list[str] = []
     k = 0
     while k < len(rest):
@@ -355,13 +368,79 @@ def _find_site(tokens: list[str], j: int) -> DeleteSite | None:
             break
         paths.append(tok)
         k += 1
-    return DeleteSite("find", paths or ["."])
+    return paths or ["."]
+
+
+def _find_exec_sites(tokens: list[str], j: int, depth: int, walk: _Walk) -> list[DeleteSite]:
+    """The deletes of the commands a ``find`` at ``tokens[j]`` runs with
+    -exec, -execdir, -ok or -okdir, when the command is not a delete verb of
+    its own (_find_site reads those): ``-exec sh -c 'rm -rf {}' \\;``,
+    ``-exec sudo rm {} +``. A ``{}`` stands for the paths find walks, so it
+    reads as each starting point. A command run in the folder of each found
+    file (-execdir, -okdir) deletes where the line cannot say."""
+    rest = tokens[j + 1 :]
+    starts = _find_starts(rest)
+    moves = _wrapper_moves(tokens, j)
+    sites: list[DeleteSite] = []
+    k = 0
+    while k < len(rest):
+        if rest[k] not in _FIND_EXEC_ACTIONS:
+            k += 1
+            continue
+        end = k + 1
+        while end < len(rest) and not (
+            rest[end] == ";" or (rest[end] == "+" and rest[end - 1] == "{}")
+        ):
+            end += 1
+        command = rest[k + 1 : end]
+        if command and _base(command[0]) not in _DELETE_VERBS:
+            unknown = moves is None or rest[k] in _FIND_IN_FOUND_DIR
+            found = _delete_sites(shlex.join(command), depth + 1, walk.child(moves or ()))
+            sites.extend(_with_found_paths(site, starts, unknown) for site in found)
+        k = end + 1
+    return sites
+
+
+def _with_found_paths(site: DeleteSite, starts: list[str], unknown: bool) -> DeleteSite:
+    """``site``, from a command a find runs, with each ``{}`` in its
+    operands read as each of find's starting points, or with no readable
+    operands when where it runs is ``unknown``."""
+    if unknown or site.operands is None:
+        return replace(site, operands=None)
+    operands: list[str] = []
+    for operand in site.operands:
+        if "{}" in operand:
+            operands.extend(operand.replace("{}", start) for start in starts)
+        else:
+            operands.append(operand)
+    return replace(site, operands=operands)
+
+
+def _joined_command_sites(tokens: list[str], j: int, depth: int, walk: _Walk) -> list[DeleteSite]:
+    """The deletes of the command line a ``watch`` or ``parallel`` at
+    ``tokens[j]`` joins from its words and runs with a shell (``watch -n 5
+    'rm -rf x'``, ``parallel 'rm -rf {}' ::: a b``). Where its own options
+    end is not read: each later word that is not an option is tried as the
+    start of the line. parallel fills its arguments in, so what its deletes
+    name cannot be read."""
+    parallel = _base(tokens[j]) == "parallel"
+    end = len(tokens)
+    if parallel:
+        end = next((k for k in range(j + 1, end) if tokens[k] in _PARALLEL_SEPARATORS), end)
+    other_user = any(_base(t) in _OTHER_USERS for t in tokens[:j])
+    sites: list[DeleteSite] = []
+    for k in range(j + 1, end):
+        if not tokens[k].startswith("-"):
+            line = " ".join(tokens[k:end])
+            sites.extend(_run_script(line, tokens, j, depth, walk, other_user))
+    return [replace(s, operands=None) for s in sites] if parallel else sites
 
 
 def _script_delete_sites(tokens: list[str], j: int, depth: int, walk: _Walk) -> list[DeleteSite]:
     """The deletes inside the script a shell at ``tokens[j]`` runs with -c,
     the arguments an ``eval`` there runs, the script a ``trap`` there sets to
-    run later, or the script an ``su`` there runs as another user."""
+    run later, the command line a ``watch`` or ``parallel`` there joins, or
+    the script an ``su`` there runs as another user."""
     base = _base(tokens[j])
     if base == "eval":
         # eval runs its text in this shell, so its cds stay for what follows.
@@ -388,6 +467,8 @@ def _script_delete_sites(tokens: list[str], j: int, depth: int, walk: _Walk) -> 
             return []
         other_user = any(_base(t) in _OTHER_USERS for t in tokens[:j])
         return _run_script(script, tokens, j, depth, walk, other_user)
+    if base in _JOINED_COMMANDS:
+        return _joined_command_sites(tokens, j, depth, walk)
     if base == "su":
         script, login = _su_script(tokens[j + 1 :])
         if script is None:
@@ -408,14 +489,19 @@ def _run_script(
     """The deletes of ``script``, run in a shell of its own by the command at
     ``tokens[j]``: after the moves its wrappers make, and the move to the
     target user's home a ``login`` shell makes. Run as another user, its
-    ``~`` is that user's home (_in_another_home)."""
+    ``~`` is that user's home (_in_another_home). Fed by xargs or parallel
+    (``xargs -I{} sh -c 'rm -rf {}'``), it deletes paths that come from its
+    input, so what its deletes name cannot be read."""
     moves = _wrapper_moves(tokens, j)
     home = (ChDir(None, sure=True),) if login else ()
     child = walk.child((moves or ()) + home)
     sites = _delete_sites(script, depth + 1, child)
     if other_user:
         sites = [_in_another_home(s, child.inherited) for s in sites]
-    return sites if moves is not None else [replace(s, operands=None) for s in sites]
+    fed = any(_base(t) in _STDIN_FEEDERS for t in tokens[:j])
+    if moves is None or fed:
+        return [replace(s, operands=None) for s in sites]
+    return sites
 
 
 def _in_another_home(site: DeleteSite, inherited: int) -> DeleteSite:
@@ -735,7 +821,9 @@ def _segment_delete_sites(
     chdirs = tuple(walk.chdirs)
     last = len(tokens) if wrapped or defines else i + 1
     sites: list[DeleteSite] = []
-    for j in range(i, last):
+    # Behind a wrapper the wrappers are checked too: watch and parallel run a
+    # command line they join from the words after them.
+    for j in range(0 if wrapped else i, last):
         base = _base(tokens[j])
         if base in _DELETE_VERBS:
             fed = any(_base(t) in _STDIN_FEEDERS for t in tokens[:j])
@@ -744,8 +832,11 @@ def _segment_delete_sites(
             break
         if base == "find":
             site = _find_site(tokens, j)
+            run = _find_exec_sites(tokens, j, depth, walk)
             if site is not None:
                 sites.append(_placed(site, tokens, j, chdirs))
+            sites.extend(run)
+            if site is not None or run:
                 break
         sites.extend(_script_delete_sites(tokens, j, depth, walk))
         _record_chdir(tokens, j, walk, chained)

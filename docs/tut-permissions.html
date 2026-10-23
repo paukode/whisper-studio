@@ -343,7 +343,8 @@
     <p>The app also finds a delete in a <code>case</code> branch, a shell function, a
       <code>trap</code>, and a zsh short loop. It also finds a delete in an <code>env -S</code>
       string, in an <code>su -c</code> script, and after <code>noglob</code> or
-      <code>nocorrect</code>. A shell function and a trap can run at any time. If the command
+      <code>nocorrect</code>. It also finds a delete in a command that <code>watch</code>,
+      <code>parallel</code>, or <code>find -exec</code> runs. A shell function and a trap can run at any time. If the command
       contains a function or a trap and also a <code>cd</code>, each delete with a relative path
       in the command shows a card.</p>
     <p>The app reads a relative path from the folder that <code>env -C</code> or
