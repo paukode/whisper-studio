@@ -324,6 +324,106 @@ def test_a_wrapper_that_changes_directory_moves_its_delete():
         assert delete_sites(command)[0].chdirs == (), command
 
 
+def test_detects_rm_in_an_env_split_string():
+    # env -S splits its string into more of env's own arguments, so the
+    # command (and options such as -C) can sit inside it.
+    from server.security.delete_sites import ChDir
+
+    for command in (
+        "env -S 'rm -rf ~/x'",
+        "env -iS 'rm -rf ~/x'",
+        "env --split-string='rm -rf' ~/x",
+        "sudo env -S 'rm -rf ~/x'",
+        "env -S 'env -S \"rm -rf ~/x\"'",
+    ):
+        assert _first_operands(command) == ["~/x"], command
+    moved = delete_sites("env -S '-C ~/Documents rm -rf notes'")[0]
+    assert moved.chdirs == (ChDir("~/Documents", sure=True),)
+    assert delete_sites("env -S 'rm \"x'")[0].operands is None  # does not split
+    assert not is_rm_command("env -S 'npm test'")
+
+
+def test_detects_rm_after_a_redirection():
+    for command in (
+        "2>/dev/null rm -rf ~/x",
+        "> out.log rm -rf ~/x",
+        "<input.txt 2>&1 rm -rf ~/x",
+        "FOO=1 >/dev/null rm -rf ~/x",
+        "sudo 2>/dev/null rm -rf ~/x",
+    ):
+        assert _first_operands(command) == ["~/x"], command
+    assert not is_rm_command("2>/dev/null npm test")
+
+
+def test_detects_rm_in_zsh_short_loops_and_coprocesses():
+    for command in (
+        "for i (1 2) rm -rf ~/x",
+        "foreach i (1 2) rm -rf ~/x",
+        "repeat 2 rm -rf ~/x",
+        "for ((i = 0; i < 2; i++)) rm -rf ~/x",
+        "coproc rm -rf ~/x",
+        "coproc NAME { rm -rf ~/x; }",
+    ):
+        assert _first_operands(command) == ["~/x"], command
+    # A loop's word list runs nothing, even when a word is a delete verb.
+    assert not is_rm_command("for f in rm cp mv; do which $f; done")
+    assert not is_rm_command("select tool in rm cp; do echo $tool; done")
+
+
+def test_detects_rm_in_a_trap():
+    for command in (
+        "trap 'rm -rf ~/x' EXIT",
+        "trap -- 'rm -rf ~/x' INT TERM",
+        "sh -c 'trap \"rm -rf ~/x\" EXIT; npm test'",
+    ):
+        assert _first_operands(command) == ["~/x"], command
+    for command in ("trap - EXIT", "trap -p", "trap", "trap 'echo bye' EXIT"):
+        assert not is_rm_command(command), command
+
+
+def test_detects_rm_in_an_su_script():
+    from server.security.delete_sites import ChDir
+
+    # On macOS the -c follows the login name and goes to the user's shell.
+    assert _first_operands("su root -c 'rm -rf /x'") == ["/x"]
+    assert _first_operands("su -c 'rm -rf /x' root") == ["/x"]
+    assert _first_operands("su --command='rm -rf /x' root") == ["/x"]
+    assert _first_operands("su root -c 'npm run build && rm -rf dist'") == ["dist"]
+    # A login shell starts in the user's home, which the line does not name.
+    home = (ChDir(None, sure=True),)
+    for command in ("su - root -c 'rm -rf dist'", "su -l root -c 'rm -rf dist'"):
+        assert delete_sites(command)[0].chdirs == home, command
+    assert delete_sites("su root -c 'rm -rf dist'")[0].chdirs == ()
+    assert not is_rm_command("su root")
+    assert not is_rm_command("su root -c 'npm test'")
+
+
+def test_a_script_run_as_another_user_reads_its_tilde_as_unknown():
+    from server.security.delete_sites import ChDir
+
+    # There ~ is the target user's home, not the one the command line names.
+    for command in (
+        "sudo sh -c 'rm -rf ~/x'",
+        "doas bash -c 'rm -rf ~/x'",
+        "su root -c 'rm -rf ~/x'",
+    ):
+        assert delete_sites(command)[0].operands is None, command
+    script_cd = delete_sites("sudo sh -c 'cd ~/web && rm -rf dist'")[0]
+    assert script_cd.chdirs == (ChDir(None, sure=True),)
+    # A ~ the outer shell expands is the caller's own, as before.
+    assert _first_operands("sudo rm -rf ~/x") == ["~/x"]
+    assert _first_operands("sh -c 'rm -rf ~/x'") == ["~/x"]
+    outer_cd = delete_sites("cd ~/web && sudo sh -c 'rm -rf dist'")[0]
+    assert outer_cd.chdirs == (ChDir("~/web", sure=True),)
+
+
+def test_a_chroot_leaves_every_operand_unknown():
+    assert delete_sites("chroot /mnt rm -rf /x")[0].operands is None
+    assert delete_sites("chroot -u nobody /mnt rm -rf x")[0].operands is None
+    assert delete_sites("sudo chroot /mnt sh -c 'rm -rf /x'")[0].operands is None
+    assert not is_rm_command("chroot /mnt ls")
+
+
 def test_shell_scripts_reads_a_shell_anywhere_in_an_argv():
     from server.security.delete_sites import shell_scripts
 
@@ -414,6 +514,14 @@ def test_a_delete_outside_the_workspace_always_asks(workspace, tmp_path):
         "noglob rm -rf ~/old",
         "env -C ~/Documents rm -rf notes",
         "sudo -D ~/Documents rm -rf notes",
+        "env -S 'rm -rf ~/old'",
+        "2>/dev/null rm -rf ~/old",
+        "for i (1 2) rm -rf ~/old",
+        "repeat 2 rm -rf ~/old",
+        "coproc rm -rf ~/old",
+        "trap 'rm -rf ~/old' EXIT",
+        "su root -c 'rm -rf ~/old'",
+        "chroot / rm -rf /tmp/x",
     )
     for command in outside:
         assert approval_floor("ws_run_command", {"command": command}, "cli") == "rm", command
@@ -519,6 +627,14 @@ def test_refuse_if_agent_rm_blocks_rm_wherever_the_command_hides_it():
         "nocorrect rm -rf x",
         "env -C /tmp rm -rf x",
         "sudo -D /tmp rm -rf x",
+        "env -S 'rm -rf x'",
+        "2>/dev/null rm -rf x",
+        "for i (1 2) rm -rf x",
+        "repeat 2 rm -rf x",
+        "coproc rm -rf x",
+        "trap 'rm -rf x' EXIT",
+        "su root -c 'rm -rf x'",
+        "chroot / rm -rf x",
     ):
         outcome = refuse_if_agent_rm({"__agent__": True, "command": command})
         assert outcome is not None and outcome.ok is False, command

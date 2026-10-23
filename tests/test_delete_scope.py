@@ -270,3 +270,55 @@ def test_a_wrapper_that_changes_directory_moves_its_relative_operands(ws, tmp_pa
     ):
         assert deletes_beyond(command, ws, roots), command
     assert not deletes_beyond(f"sudo -i rm -rf {ws}/dist", ws, roots)
+
+
+def test_deletes_hidden_in_env_strings_redirections_loops_and_coprocesses_reach_their_operands(ws):
+    roots = [ws]
+    for command in (
+        "env -S 'rm -rf ~/x'",
+        "env -S '-C ~/Documents rm -rf notes'",
+        "2>/dev/null rm -rf ~/x",
+        "npm test; 2>&1 rm -rf ../x",
+        "for i (1 2) rm -rf ~/x",
+        "repeat 2 rm -rf ../x",
+        "coproc rm -rf ~/x",
+    ):
+        assert deletes_beyond(command, ws, roots), command
+    for command in (
+        "env -S 'rm -rf dist'",
+        "2>/dev/null rm -rf dist",
+        "repeat 2 rm -rf dist/*",
+        "for f in rm cp; do echo $f; done",
+    ):
+        assert not deletes_beyond(command, ws, roots), command
+
+
+def test_a_trap_delete_runs_after_every_later_cd(ws):
+    """A trap's script runs at a signal or at exit, after any cd that
+    follows it, so with a cd anywhere in the command its relative operands
+    have no working directory the line names."""
+    roots = [ws]
+    assert deletes_beyond("trap 'rm -rf ~/x' EXIT", ws, roots)
+    assert not deletes_beyond("trap 'rm -rf dist' EXIT", ws, roots)
+    assert deletes_beyond("trap 'rm -rf dist' EXIT; cd ~/Documents", ws, roots)
+    assert deletes_beyond("trap 'cd ~/Documents' EXIT; rm -rf notes", ws, roots)
+    assert not deletes_beyond(f"trap 'rm -rf {ws}/dist' EXIT; cd ~/Documents", ws, roots)
+
+
+def test_a_delete_run_as_another_user_asks_where_the_line_cannot_say(ws):
+    roots = [ws]
+    for command in (
+        "su root -c 'rm -rf ~/x'",
+        "su - root -c 'rm -rf dist'",
+        "sudo sh -c 'rm -rf ~/x'",
+        "sudo sh -c 'cd ~/web && rm -rf dist'",
+        "chroot / rm -rf /tmp/x",
+        f"chroot / rm -rf {ws}/dist",
+    ):
+        assert deletes_beyond(command, ws, roots), command
+    for command in (
+        "su root -c 'rm -rf dist'",
+        f"su - root -c 'rm -rf {ws}/dist'",
+        "sudo sh -c 'rm -rf dist'",
+    ):
+        assert not deletes_beyond(command, ws, roots), command

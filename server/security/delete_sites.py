@@ -13,6 +13,7 @@ blanket approval would otherwise run silently must still stop for `rm`.
 import re
 import shlex
 from dataclasses import dataclass, field, replace
+from typing import NamedTuple
 
 from server.security.command_validator import split_statements, strip_heredoc_bodies
 
@@ -47,18 +48,27 @@ _INVOKE_WRAPPERS = frozenset(
         "chrt",
         "taskset",
         "watch",
+        "chroot",
     }
 )
 # Shell reserved words that start a statement whose command follows them
 # (`if rm x; then`, `then rm -rf dist; fi`): skipped like a wrapper, and
 # everything after them is checked. A subshell's opening paren written as a
-# word of its own (`( rm -rf x )`) starts one the same way. `case` and
-# `function` put a word or two before the command they lead to (`case $x in
-# a) rm -rf x`, `function f { rm -rf x; }`), which the check of every later
-# word finds.
+# word of its own (`( rm -rf x )`) starts one the same way. `case`,
+# `function`, `coproc` and zsh's short loops put a word or two before the
+# command they lead to (`case $x in a) rm -rf x`, `function f { rm -rf x; }`,
+# `coproc NAME rm -rf x`, `for i (1 2) rm -rf x`, `repeat 3 rm -rf x`), which
+# the check of every later word finds.
 _SHELL_KEYWORDS = frozenset(
-    {"if", "then", "else", "elif", "do", "while", "until", "!", "{", "(", "case", "function"}
+    {
+        *("if", "then", "else", "elif", "do", "while", "until", "!", "{", "("),
+        *("case", "function", "coproc", "for", "select", "foreach", "repeat"),
+    }
 )
+# Loops whose `NAME ... in WORDS` form runs no command in the same statement:
+# the words after `in` are only the list (`for f in rm cp; do`).
+_LIST_LOOPS = frozenset({"for", "select", "foreach"})
+_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 # zsh's precommand modifiers and the builtin keyword: each runs the command
 # after it in this same shell (`noglob rm -rf x`, `builtin cd web`).
 _PRECOMMANDS = frozenset({"builtin", "noglob", "nocorrect"})
@@ -69,10 +79,20 @@ _FUNCTION_PARENS = re.compile(r"\(\s*\)")
 _QUOTED_TEXT = re.compile(r"""'[^']*'|"(?:[^"\\]|\\.)*"|\\.""", re.DOTALL)
 _ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 # Shells whose -c argument is a whole script of its own (`sh -c "rm -rf x"`,
-# `bash -lc '...'`): the script is checked like any other command line.
+# `bash -lc '...'`): the script is checked like any other command line. Run
+# behind a wrapper that switches user, its `~` is that user's home.
 _SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "mksh", "ash", "fish", "csh", "tcsh"})
 # Shell options that consume the next word (`bash -o pipefail -c ...`).
 _SHELL_LONG_OPTS_WITH_VALUE = frozenset({"--rcfile", "--init-file"})
+_OTHER_USERS = frozenset({"sudo", "doas"})
+# su runs its -c script (GNU: --command) in the target user's shell, where
+# `~` is that user's home; `-`, `-l` and `--login` start it in that home.
+_SU_SCRIPT = re.compile(r"^-([A-Za-z]*?)c(.*)$")
+_SU_SCRIPT_LONG = ("--command", "--session-command")
+_SU_LOGIN = frozenset({"-", "--login"})
+# Wrappers that run the command under another root directory, where no path
+# it names reads as written (`chroot /mnt rm -rf /x`).
+_ROOT_CHANGERS = frozenset({"chroot"})
 # Scripts nested deeper than this (`sh -c "bash -c '...'"`) are treated as
 # rm-like: fail toward asking.
 _MAX_SCRIPT_DEPTH = 4
@@ -339,8 +359,9 @@ def _find_site(tokens: list[str], j: int) -> DeleteSite | None:
 
 
 def _script_delete_sites(tokens: list[str], j: int, depth: int, walk: _Walk) -> list[DeleteSite]:
-    """The deletes inside the script a shell at ``tokens[j]`` runs with -c, or
-    the arguments an ``eval`` there runs."""
+    """The deletes inside the script a shell at ``tokens[j]`` runs with -c,
+    the arguments an ``eval`` there runs, the script a ``trap`` there sets to
+    run later, or the script an ``su`` there runs as another user."""
     base = _base(tokens[j])
     if base == "eval":
         # eval runs its text in this shell, so its cds stay for what follows.
@@ -350,17 +371,116 @@ def _script_delete_sites(tokens: list[str], j: int, depth: int, walk: _Walk) -> 
         walk.moved = walk.moved or text.moved
         walk.loops = walk.loops or text.loops
         return sites
+    if base == "trap":
+        script = _trap_script(tokens[j + 1 :])
+        if script is None:
+            return []
+        later = walk.child()
+        sites = _delete_sites(script, depth + 1, later)
+        # It runs at a signal or at exit, after any cd that follows it, and its
+        # own cd moves what runs after it: read like a function body.
+        walk.loops = walk.loops or bool(sites) or later.moved
+        walk.moved = walk.moved or later.moved
+        return sites
     if base in _SHELLS:
         script = _shell_script(tokens, j)
         if script is None:
             return []
-        moves = _wrapper_moves(tokens, j)
-        sites = _delete_sites(script, depth + 1, walk.child(moves or ()))
-        return sites if moves is not None else [replace(s, operands=None) for s in sites]
+        other_user = any(_base(t) in _OTHER_USERS for t in tokens[:j])
+        return _run_script(script, tokens, j, depth, walk, other_user)
+    if base == "su":
+        script, login = _su_script(tokens[j + 1 :])
+        if script is None:
+            return []
+        return _run_script(script, tokens, j, depth, walk, True, login)
     return []
 
 
-def _attached_value(value: str) -> str | None:
+def _run_script(
+    script: str,
+    tokens: list[str],
+    j: int,
+    depth: int,
+    walk: _Walk,
+    other_user: bool,
+    login: bool = False,
+) -> list[DeleteSite]:
+    """The deletes of ``script``, run in a shell of its own by the command at
+    ``tokens[j]``: after the moves its wrappers make, and the move to the
+    target user's home a ``login`` shell makes. Run as another user, its
+    ``~`` is that user's home (_in_another_home)."""
+    moves = _wrapper_moves(tokens, j)
+    home = (ChDir(None, sure=True),) if login else ()
+    child = walk.child((moves or ()) + home)
+    sites = _delete_sites(script, depth + 1, child)
+    if other_user:
+        sites = [_in_another_home(s, child.inherited) for s in sites]
+    return sites if moves is not None else [replace(s, operands=None) for s in sites]
+
+
+def _in_another_home(site: DeleteSite, inherited: int) -> DeleteSite:
+    """``site``, from a script run as another user, where ``~`` is that
+    user's home: a ``cd`` of the script's own to a path that starts with
+    ``~`` goes somewhere the line does not name, and an operand that starts
+    with one leaves the delete's reach unknown."""
+    own = tuple(
+        ChDir(None, c.sure) if (c.target or "").startswith("~") else c
+        for c in site.chdirs[inherited:]
+    )
+    site = replace(site, chdirs=site.chdirs[:inherited] + own)
+    if any(op.startswith("~") for op in site.operands or ()):
+        return replace(site, operands=None)
+    return site
+
+
+def _trap_script(args: list[str]) -> str | None:
+    """The script ``trap args`` sets to run later, past its options, or None
+    when it sets none: no arguments (a listing) or ``-`` (a reset)."""
+    k = 0
+    while k < len(args) and args[k].startswith("-") and args[k] != "-":
+        k += 1
+        if args[k - 1] == "--":
+            break
+    if k >= len(args) or args[k] == "-":
+        return None
+    return args[k]
+
+
+def _su_script(args: list[str]) -> tuple[str | None, bool]:
+    """The script ``su args`` runs with -c (GNU: --command), or None when it
+    runs only a shell, and whether that shell is a login shell (``-``,
+    ``-l``, ``--login``), which starts in the target user's home. On macOS
+    the -c comes after the login name and goes to the user's shell."""
+    login = any(a in _SU_LOGIN or re.match(r"^-[A-Za-z]*l", a) for a in args)
+    for k, word in enumerate(args):
+        name, eq, value = word.partition("=")
+        if name in _SU_SCRIPT_LONG:
+            return (value if eq else _word_at(args, k + 1)), login
+        short = None if word.startswith("--") else _SU_SCRIPT.match(word)
+        if short:
+            return (short.group(2) or _word_at(args, k + 1)), login
+    return None, login
+
+
+def _word_at(words: list[str], k: int) -> str | None:
+    return words[k] if k < len(words) else None
+
+
+class _Option(NamedTuple):
+    """One option a wrapper reads: its letter, its value as written (None
+    when it takes none, or the line ends first), whether that value is
+    written onto the option's own word, the words it spans (``start`` up to
+    ``stop``) and the flag letters before it in its word (``-iS``)."""
+
+    letter: str
+    value: str | None
+    attached: bool
+    start: int
+    stop: int
+    flags: str
+
+
+def _attached_value(value: str | None) -> str | None:
     """An option value written onto its option (``-Ddir``, ``--chdir=dir``).
     The shell expands ``~`` only at the start of a word, so a value that
     starts with one names a folder called ``~``; read as unknown."""
@@ -369,15 +489,14 @@ def _attached_value(value: str) -> str | None:
 
 def _wrapper_options(
     tokens: list[str], w: int, spec: _WrapperOptions
-) -> tuple[list[tuple[str, str | None]], int] | None:
-    """The options the wrapper at ``tokens[w]`` reads, as (letter, value)
-    pairs, and the index of the first word after them (its command, or an
-    assignment before it). ``-D dir``, ``-nDdir`` and ``--chdir=dir`` all
-    read as ("D", "dir"); a value missing at the end of the line is None.
-    Redirections between the options are passed over. None when a word is
-    an option the wrapper does not have, or a long name that is not one of
-    its names or a unique prefix of one."""
-    found: list[tuple[str, str | None]] = []
+) -> tuple[list[_Option], int] | None:
+    """The options the wrapper at ``tokens[w]`` reads, and the index of the
+    first word after them (its command, or an assignment before it).
+    ``-D dir``, ``-nDdir`` and ``--chdir=dir`` all read as a "D" whose value
+    is "dir". Redirections between the options are passed over. None when a
+    word is an option the wrapper does not have, or a long name that is not
+    one of its names or a unique prefix of one."""
+    found: list[_Option] = []
     k = w + 1
     while k < len(tokens):
         word = tokens[k]
@@ -387,6 +506,7 @@ def _wrapper_options(
             continue
         if word == "--" or not word.startswith("-"):
             break
+        start = k
         if word.startswith("--"):
             name, eq, value = word[2:].partition("=")
             names = [name] if name in spec.long else [n for n in spec.long if n.startswith(name)]
@@ -395,9 +515,10 @@ def _wrapper_options(
             letter, takes_value = spec.long[names[0]]
             if takes_value and not eq:
                 k += 1
-                found.append((letter, tokens[k] if k < len(tokens) else None))
+                found.append(_Option(letter, _word_at(tokens, k), False, start, k + 1, ""))
             else:
-                found.append((letter, _attached_value(value) if takes_value else None))
+                value = value if takes_value else None
+                found.append(_Option(letter, value, bool(eq), start, k + 1, ""))
             k += 1
             continue
         letters = word[1:]
@@ -405,16 +526,39 @@ def _wrapper_options(
             if letter not in spec.short:
                 return None
             if not spec.short[letter]:
-                found.append((letter, None))
+                found.append(_Option(letter, None, False, start, k + 1, letters[:n]))
                 continue
             if letters[n + 1 :]:
-                found.append((letter, _attached_value(letters[n + 1 :])))
+                found.append(_Option(letter, letters[n + 1 :], True, start, k + 1, letters[:n]))
             else:
                 k += 1
-                found.append((letter, tokens[k] if k < len(tokens) else None))
+                found.append(_Option(letter, _word_at(tokens, k), False, start, k + 1, letters[:n]))
             break
         k += 1
     return found, k
+
+
+def _split_env_strings(tokens: list[str]) -> list[str]:
+    """``tokens`` with each ``env -S string`` replaced by the words the
+    string splits into. env reads them as more of its own arguments, so the
+    string can hold options, assignments and the command itself (``env -S
+    'rm -rf x'``). Raises ValueError when a string does not split, or when
+    strings hold strings deeper than a script may nest."""
+    spec = _WRAPPER_OPTIONS["env"]
+    for _ in range(_MAX_SCRIPT_DEPTH + 1):
+        split = None
+        for w, word in enumerate(tokens):
+            read = _wrapper_options(tokens, w, spec) if _base(word) == "env" else None
+            option = next((o for o in (read[0] if read else ()) if o.letter == "S"), None)
+            if option is not None:
+                flags = [f"-{option.flags}"] if option.flags else []
+                words = shlex.split(option.value or "", posix=True)
+                split = tokens[: option.start] + flags + words + tokens[option.stop :]
+                break
+        if split is None:
+            return tokens
+        tokens = split
+    raise ValueError("env -S strings nest too deep")
 
 
 def _wrapper_moves(tokens: list[str], j: int) -> tuple[ChDir, ...] | None:
@@ -425,10 +569,13 @@ def _wrapper_moves(tokens: list[str], j: int) -> tuple[ChDir, ...] | None:
     the command line does not name. Each is sure: when the move fails, the
     wrapper does not run the command. A wrapper given an option it does not
     have moves it somewhere unknown. None when a wrapper runs the command
-    under another root (``sudo -R``): no path it names reads as written."""
+    under another root (``sudo -R``, ``chroot``): no path it names reads as
+    written."""
     moves: list[ChDir] = []
     w = 0
     while w < j:
+        if _base(tokens[w]) in _ROOT_CHANGERS:
+            return None
         spec = _WRAPPER_OPTIONS.get(_base(tokens[w]))
         read = _wrapper_options(tokens, w, spec) if spec is not None else None
         if read is None:
@@ -437,12 +584,13 @@ def _wrapper_moves(tokens: list[str], j: int) -> tuple[ChDir, ...] | None:
             w += 1
             continue
         options, w = read  # an option's value is never a wrapper of its own
-        for letter, value in options:
-            if letter in spec.roots:
+        for option in options:
+            if option.letter in spec.roots:
                 return None
-            if letter in spec.chdirs:
+            if option.letter in spec.chdirs:
+                value = _attached_value(option.value) if option.attached else option.value
                 moves.append(ChDir(value, sure=True))
-            elif letter in spec.homes:
+            elif option.letter in spec.homes:
                 moves.append(ChDir(None, sure=True))
     return tuple(moves)
 
@@ -513,22 +661,39 @@ def _leads_to_command(word: str) -> bool:
 
 def _command_index(tokens: list[str]) -> tuple[int, bool]:
     """Where a statement's command sits, past environment-variable
-    assignments (``FOO=bar rm``), flags, and the words that lead to it
-    (_leads_to_command), and whether any such word was passed: a wrapper
-    option's value can sit where the command's name would be, so every
-    later word is checked then too."""
+    assignments (``FOO=bar rm``), flags, redirections (``2>/dev/null rm``)
+    and the words that lead to it (_leads_to_command), and whether any such
+    word was passed: a wrapper option's value can sit where the command's
+    name would be, so every later word is checked then too. A list loop's
+    ``for NAME in WORDS`` runs no command: its index is past the end."""
 
-    def skip_assignments_and_flags(i: int) -> int:
-        while i < len(tokens) and (_ASSIGNMENT.match(tokens[i]) or tokens[i].startswith("-")):
-            i += 1
+    def skip_assignments_flags_and_redirections(i: int) -> int:
+        while i < len(tokens):
+            redirection = _REDIRECTION.match(tokens[i])
+            if redirection:
+                i += 1 if redirection.group(1) else 2
+            elif _ASSIGNMENT.match(tokens[i]) or tokens[i].startswith("-"):
+                i += 1
+            else:
+                break
         return i
 
-    i = skip_assignments_and_flags(0)
+    i = skip_assignments_flags_and_redirections(0)
     led = False
     while i < len(tokens) and _leads_to_command(tokens[i]):
+        if tokens[i] in _LIST_LOOPS and _loops_over_words(tokens, i):
+            return len(tokens), True
         led = True
-        i = skip_assignments_and_flags(i + 1)  # the wrapper's own flags/env args
+        i = skip_assignments_flags_and_redirections(i + 1)  # the wrapper's own flags/env args
     return i, led
+
+
+def _loops_over_words(tokens: list[str], i: int) -> bool:
+    """Whether the loop word at ``tokens[i]`` starts ``NAME ... in WORDS``."""
+    k = i + 1
+    while k < len(tokens) and tokens[k] != "in" and _NAME.match(tokens[k]):
+        k += 1
+    return i + 1 < k < len(tokens) and tokens[k] == "in"
 
 
 def _segment_delete_sites(
@@ -556,7 +721,7 @@ def _segment_delete_sites(
     sure, see ChDir)."""
     walk = walk if walk is not None else _Walk()
     try:
-        tokens = shlex.split(segment, posix=True)
+        tokens = _split_env_strings(shlex.split(segment, posix=True))
     except ValueError:
         return [_UNKNOWN_SITE]
 
