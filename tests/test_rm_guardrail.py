@@ -271,6 +271,59 @@ def test_a_cd_in_a_function_body_or_a_case_arm_is_tracked():
     assert delete_sites("noglob cd web && rm -rf dist")[0].chdirs == (ChDir("web", sure=True),)
 
 
+def test_a_wrapper_that_changes_directory_moves_its_delete():
+    from server.security.command_validator import ChDir
+
+    documents = (ChDir("~/Documents", sure=True),)
+    for command in (
+        "env -C ~/Documents rm -rf notes",
+        "env -i -C ~/Documents FOO=1 rm -rf notes",
+        "env -iC ~/Documents rm -rf notes",
+        "env --chdir ~/Documents rm -rf notes",
+        "sudo -D ~/Documents rm -rf notes",
+        "sudo -u root -nD ~/Documents rm -rf notes",
+        "sudo 2>/dev/null -D ~/Documents rm -rf notes",
+        "sudo --chdir ~/Documents rm -rf notes",
+        "sudo --chd ~/Documents rm -rf notes",  # getopt_long takes a unique prefix
+        "nohup sudo -D ~/Documents rm -rf notes",
+        "sudo -D ~/Documents bash -c 'rm -rf notes'",
+        "env -C ~/Documents find . -delete",
+    ):
+        assert delete_sites(command)[0].chdirs == documents, command
+    assert delete_sites("sudo --chdir=/tmp rm x")[0].chdirs == (ChDir("/tmp", sure=True),)
+    # A user called sudo is an option value, not a second sudo moving again.
+    assert delete_sites("sudo -u sudo -D web rm x")[0].chdirs == (ChDir("web", sure=True),)
+    assert delete_sites("cd web && env -C out rm x")[0].chdirs == (
+        ChDir("web", sure=True),
+        ChDir("out", sure=True),
+    )
+    # A folder the line does not name: a value written onto its option is
+    # not tilde-expanded, a value can be missing, sudo -i moves to the target
+    # user's home, and an option the wrapper does not have (or a long name
+    # two of its options start with) cannot be read past.
+    unknown = (ChDir(None, sure=True),)
+    for command in (
+        "env -C~/Documents rm -rf notes",
+        "sudo --chdir=~/Documents rm -rf notes",
+        "sudo -i rm -rf notes",
+        "sudo --login rm -rf notes",
+        "sudo -X -D /tmp rm -rf notes",
+        "sudo --ch /tmp rm -rf notes",
+    ):
+        assert delete_sites(command)[0].chdirs == unknown, command
+    # Under another root no operand reads as written.
+    assert delete_sites("sudo -R /mnt rm -rf /x")[0].operands is None
+    assert delete_sites("sudo --chroot=/mnt sh -c 'rm -rf /x'")[0].operands is None
+    # Option values and words that only look like a wrapper move nothing.
+    for command in (
+        "sudo -u env rm -rf notes",
+        "env -u C rm x",
+        "sudo -p -D rm x",
+        "nice env rm x",
+    ):
+        assert delete_sites(command)[0].chdirs == (), command
+
+
 def test_shell_scripts_reads_a_shell_anywhere_in_an_argv():
     from server.security.command_validator import shell_scripts
 
@@ -359,6 +412,8 @@ def test_a_delete_outside_the_workspace_always_asks(workspace, tmp_path):
         "f() { rm -rf ~/old; }; f",
         "function f { cd ~/Documents; }; f; rm -rf notes",
         "noglob rm -rf ~/old",
+        "env -C ~/Documents rm -rf notes",
+        "sudo -D ~/Documents rm -rf notes",
     )
     for command in outside:
         assert approval_floor("ws_run_command", {"command": command}, "cli") == "rm", command
@@ -462,6 +517,8 @@ def test_refuse_if_agent_rm_blocks_rm_wherever_the_command_hides_it():
         "function f { rm -rf x; }; f",
         "noglob rm -rf x",
         "nocorrect rm -rf x",
+        "env -C /tmp rm -rf x",
+        "sudo -D /tmp rm -rf x",
     ):
         outcome = refuse_if_agent_rm({"__agent__": True, "command": command})
         assert outcome is not None and outcome.ok is False, command

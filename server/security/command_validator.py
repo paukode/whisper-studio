@@ -196,6 +196,85 @@ _REDIRECTION = re.compile(r"^(?:\d+|&)?(?:>&|<&|<<<|>>|>\||>|<)(.*)$")
 _LOOP_WORDS = frozenset({"for", "while", "until", "select", "repeat", "foreach", "do"})
 
 
+@dataclass(frozen=True)
+class _WrapperOptions:
+    """The options a wrapper reads before the command it runs: whether each
+    short letter takes a value, and each long name's letter ("" when it has
+    none) and whether it takes a value. getopt_long also accepts a unique
+    prefix of a long name. ``chdirs`` move the command to the directory
+    they name, ``homes`` to the target user's home, ``roots`` under another
+    root directory."""
+
+    short: dict[str, bool]
+    long: dict[str, tuple[str, bool]]
+    chdirs: frozenset[str] = frozenset()
+    homes: frozenset[str] = frozenset()
+    roots: frozenset[str] = frozenset()
+
+
+# env (BSD and GNU) and sudo, the wrappers that can move the command they run
+# (`env -C dir rm`, `sudo -D dir rm`), with every option they have, so the
+# words before the command are read exactly (`sudo -u root -nD dir rm`).
+_WRAPPER_OPTIONS = {
+    "env": _WrapperOptions(
+        short={**dict.fromkeys("0iv", False), **dict.fromkeys("CLPSUu", True)},
+        long={
+            "block-signal": ("", False),
+            "chdir": ("C", True),
+            "debug": ("v", False),
+            "default-signal": ("", False),
+            "help": ("", False),
+            "ignore-environment": ("i", False),
+            "ignore-signal": ("", False),
+            "list-signal-handling": ("", False),
+            "null": ("0", False),
+            "split-string": ("S", True),
+            "unset": ("u", True),
+            "version": ("", False),
+        },
+        chdirs=frozenset("C"),
+    ),
+    "sudo": _WrapperOptions(
+        short={**dict.fromkeys("ABbEeHhiKklNnPSsVv", False), **dict.fromkeys("aCcDgpRrTtUu", True)},
+        long={
+            "askpass": ("A", False),
+            "auth-type": ("a", True),
+            "background": ("b", False),
+            "bell": ("B", False),
+            "chdir": ("D", True),
+            "chroot": ("R", True),
+            "close-from": ("C", True),
+            "command-timeout": ("T", True),
+            "edit": ("e", False),
+            "group": ("g", True),
+            "help": ("h", False),
+            "host": ("", True),
+            "list": ("l", False),
+            "login": ("i", False),
+            "login-class": ("c", True),
+            "non-interactive": ("n", False),
+            "other-user": ("U", True),
+            "preserve-env": ("E", False),
+            "preserve-groups": ("P", False),
+            "prompt": ("p", True),
+            "remove-timestamp": ("K", False),
+            "reset-timestamp": ("k", False),
+            "role": ("r", True),
+            "set-home": ("H", False),
+            "shell": ("s", False),
+            "stdin": ("S", False),
+            "type": ("t", True),
+            "user": ("u", True),
+            "validate": ("v", False),
+            "version": ("V", False),
+        },
+        chdirs=frozenset("D"),
+        homes=frozenset("i"),
+        roots=frozenset("R"),
+    ),
+}
+
+
 def _shell_script(tokens: list[str], i: int) -> str | None:
     """The script a shell at ``tokens[i]`` runs with -c, or None when it has
     no -c (``bash build.sh`` runs a file this check cannot see)."""
@@ -284,8 +363,11 @@ class _Walk:
     moved: bool = False  # a statement of this walk changed directory
     loops: bool = False  # a statement of this walk starts a loop or defines a function
 
-    def child(self) -> "_Walk":
-        return _Walk(list(self.chdirs), len(self.chdirs))
+    def child(self, moves: tuple[ChDir, ...] = ()) -> "_Walk":
+        """A walk for a script run from here, after ``moves``: the changes
+        the wrappers that run it make (_wrapper_moves)."""
+        chdirs = [*self.chdirs, *moves]
+        return _Walk(chdirs, len(chdirs))
 
     def unsure(self) -> None:
         """The chain of ``&&`` from this walk's changes is broken."""
@@ -370,8 +452,109 @@ def _script_delete_sites(tokens: list[str], j: int, depth: int, walk: _Walk) -> 
         return sites
     if base in _SHELLS:
         script = _shell_script(tokens, j)
-        return _delete_sites(script, depth + 1, walk.child()) if script is not None else []
+        if script is None:
+            return []
+        moves = _wrapper_moves(tokens, j)
+        sites = _delete_sites(script, depth + 1, walk.child(moves or ()))
+        return sites if moves is not None else [replace(s, operands=None) for s in sites]
     return []
+
+
+def _attached_value(value: str) -> str | None:
+    """An option value written onto its option (``-Ddir``, ``--chdir=dir``).
+    The shell expands ``~`` only at the start of a word, so a value that
+    starts with one names a folder called ``~``; read as unknown."""
+    return value if value and not value.startswith("~") else None
+
+
+def _wrapper_options(
+    tokens: list[str], w: int, spec: _WrapperOptions
+) -> tuple[list[tuple[str, str | None]], int] | None:
+    """The options the wrapper at ``tokens[w]`` reads, as (letter, value)
+    pairs, and the index of the first word after them (its command, or an
+    assignment before it). ``-D dir``, ``-nDdir`` and ``--chdir=dir`` all
+    read as ("D", "dir"); a value missing at the end of the line is None.
+    Redirections between the options are passed over. None when a word is
+    an option the wrapper does not have, or a long name that is not one of
+    its names or a unique prefix of one."""
+    found: list[tuple[str, str | None]] = []
+    k = w + 1
+    while k < len(tokens):
+        word = tokens[k]
+        redirection = _REDIRECTION.match(word)
+        if redirection:
+            k += 1 if redirection.group(1) else 2
+            continue
+        if word == "--" or not word.startswith("-"):
+            break
+        if word.startswith("--"):
+            name, eq, value = word[2:].partition("=")
+            names = [name] if name in spec.long else [n for n in spec.long if n.startswith(name)]
+            if len(names) != 1:
+                return None
+            letter, takes_value = spec.long[names[0]]
+            if takes_value and not eq:
+                k += 1
+                found.append((letter, tokens[k] if k < len(tokens) else None))
+            else:
+                found.append((letter, _attached_value(value) if takes_value else None))
+            k += 1
+            continue
+        letters = word[1:]
+        for n, letter in enumerate(letters):
+            if letter not in spec.short:
+                return None
+            if not spec.short[letter]:
+                found.append((letter, None))
+                continue
+            if letters[n + 1 :]:
+                found.append((letter, _attached_value(letters[n + 1 :])))
+            else:
+                k += 1
+                found.append((letter, tokens[k] if k < len(tokens) else None))
+            break
+        k += 1
+    return found, k
+
+
+def _wrapper_moves(tokens: list[str], j: int) -> tuple[ChDir, ...] | None:
+    """The directory changes the wrappers before ``tokens[j]`` make for the
+    command they run, in order. ``env -C`` and ``sudo -D`` move it to the
+    directory they name (None when the command line does not name one, see
+    _wrapper_options); ``sudo -i`` moves it to the target user's home, which
+    the command line does not name. Each is sure: when the move fails, the
+    wrapper does not run the command. A wrapper given an option it does not
+    have moves it somewhere unknown. None when a wrapper runs the command
+    under another root (``sudo -R``): no path it names reads as written."""
+    moves: list[ChDir] = []
+    w = 0
+    while w < j:
+        spec = _WRAPPER_OPTIONS.get(_base(tokens[w]))
+        read = _wrapper_options(tokens, w, spec) if spec is not None else None
+        if read is None:
+            if spec is not None:
+                moves.append(ChDir(None, sure=True))
+            w += 1
+            continue
+        options, w = read  # an option's value is never a wrapper of its own
+        for letter, value in options:
+            if letter in spec.roots:
+                return None
+            if letter in spec.chdirs:
+                moves.append(ChDir(value, sure=True))
+            elif letter in spec.homes:
+                moves.append(ChDir(None, sure=True))
+    return tuple(moves)
+
+
+def _placed(site: DeleteSite, tokens: list[str], j: int, chdirs: tuple[ChDir, ...]) -> DeleteSite:
+    """``site``, the delete whose verb is ``tokens[j]``, with the directory
+    changes before it: ``chdirs`` from the statements before, then those its
+    wrappers make. Under another root its operands cannot be read."""
+    moves = _wrapper_moves(tokens, j)
+    if moves is None:
+        return DeleteSite(site.verb, None, chdirs)
+    return replace(site, chdirs=chdirs + moves)
 
 
 def _cd_target(args: list[str]) -> str | None:
@@ -467,9 +650,10 @@ def _segment_delete_sites(
     nothing: every shell script is full of those.
 
     Each delete carries the directory changes ``walk`` holds when the segment
-    starts; a ``cd`` among the checked words is added to ``walk`` for the
-    segments after it (``chained``: the operator before the segment lets
-    the cd be sure, see ChDir)."""
+    starts, then those its own wrappers make (``env -C``, ``sudo -D``); a
+    ``cd`` among the checked words is added to ``walk`` for the segments
+    after it (``chained``: the operator before the segment lets the cd be
+    sure, see ChDir)."""
     walk = walk if walk is not None else _Walk()
     try:
         tokens = shlex.split(segment, posix=True)
@@ -491,12 +675,12 @@ def _segment_delete_sites(
         if base in _DELETE_VERBS:
             fed = any(_base(t) in _STDIN_FEEDERS for t in tokens[:j])
             operands = None if fed else _delete_operands(tokens, j)
-            sites.append(DeleteSite(base, operands, chdirs))
+            sites.append(_placed(DeleteSite(base, operands), tokens, j, chdirs))
             break
         if base == "find":
             site = _find_site(tokens, j)
             if site is not None:
-                sites.append(replace(site, chdirs=chdirs))
+                sites.append(_placed(site, tokens, j, chdirs))
                 break
         sites.extend(_script_delete_sites(tokens, j, depth, walk))
         _record_chdir(tokens, j, walk, chained)

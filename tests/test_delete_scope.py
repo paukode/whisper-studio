@@ -238,3 +238,35 @@ def test_a_cd_in_a_function_body_leaves_no_working_directory(ws):
         assert deletes_beyond(command, ws, roots), command
     # An absolute operand needs no working directory.
     assert not deletes_beyond(f"f() {{ cd ~/Documents; }}; f; rm -rf {ws}/dist", ws, roots)
+
+
+def test_a_wrapper_that_changes_directory_moves_its_relative_operands(ws, tmp_path):
+    other = tmp_path / "other"
+    other.mkdir()
+    roots = [ws]
+    for command in (
+        "env -C ~/Documents rm -rf notes",
+        "sudo -D ~/Documents rm -rf notes",
+        "sudo -u root -D ~/Documents rm -rf notes",
+        "env -C .. rm -rf x",
+        "env -C ~/Documents find . -delete",
+        "sudo -D ~/Documents sh -c 'rm -rf notes'",
+        "cd dist && env -C ../.. rm -rf x",
+    ):
+        assert deletes_beyond(command, ws, roots), command
+    # The wrapper does not run the command when its move fails, so the move
+    # is sure: the command's own working directory is not where it deletes.
+    assert not deletes_beyond("env -C dist rm -rf old", ws, roots)
+    assert not deletes_beyond(f"env -C {ws}/dist rm -rf old", str(other), roots)
+    assert not deletes_beyond(f"sudo -D {ws} sh -c 'rm -rf dist'", str(other), roots)
+    # A folder the line does not name, or another root, always asks for a
+    # relative operand; under another root an absolute one asks too.
+    for command in (
+        'env -C "$D" rm -rf dist',
+        "env -C~/x rm -rf dist",
+        "sudo -i rm -rf dist",
+        "sudo -R / rm -rf dist",
+        f"sudo -R / rm -rf {ws}/dist",
+    ):
+        assert deletes_beyond(command, ws, roots), command
+    assert not deletes_beyond(f"sudo -i rm -rf {ws}/dist", ws, roots)
