@@ -15,6 +15,10 @@ llama.cpp's own layout (one slot, no --swa-full):
   * a recurrent layer of a hybrid model keeps a small fixed state and no KV
     rows (``full_attention_interval``, or a per-layer head_count_kv of 0);
   * the last ``shared_kv_layers`` layers reuse earlier layers' cache.
+
+The same shape sizes a llama-server context checkpoint (the state a window or
+recurrent layer cannot rebuild after a prompt diverges), which
+server/local/llama_server.py needs to cap the server's own caches.
 """
 
 from __future__ import annotations
@@ -135,6 +139,7 @@ class KvShape:
     full_bytes_per_token: int  # layers that keep the whole context
     window_bytes_per_token: int  # sliding-window layers
     window: int  # their window in tokens, 0 when the model has none
+    recurrent_bytes: int = 0  # fixed state of the recurrent layers, per sequence
 
 
 def _is_count(value: Any) -> bool:
@@ -199,6 +204,7 @@ def kv_shape(meta: dict[str, Any]) -> KvShape | None:
     interval = get("full_attention_interval")
     if _is_count(interval) and interval > 1:
         has_kv = [ok and (il + 1) % interval == 0 for il, ok in enumerate(has_kv)]
+    recurrent = has_kv.count(False) * _recurrent_state_bytes(get)
     shared = get("attention.shared_kv_layers")
     if _is_count(shared) and 0 < shared < n_layer:
         has_kv = [ok and il < n_layer - shared for il, ok in enumerate(has_kv)]
@@ -211,7 +217,26 @@ def kv_shape(meta: dict[str, Any]) -> KvShape | None:
             windowed += heads_kv[il] * (k_dim_swa + v_dim_swa) * _KV_ELEMENT_BYTES
         else:
             full += heads_kv[il] * (k_dim + v_dim) * _KV_ELEMENT_BYTES
-    return KvShape(full, windowed, window if windowed else 0)
+    return KvShape(full, windowed, window if windowed else 0, recurrent)
+
+
+def _recurrent_state_bytes(get) -> int:
+    """The f32 state one recurrent layer keeps per sequence, as llama.cpp sizes
+    it (n_embd_r + n_embd_s): the convolution window and the SSM state. 0 when
+    the header has no SSM keys."""
+    conv, state, inner = get("ssm.conv_kernel"), get("ssm.state_size"), get("ssm.inner_size")
+    groups = get("ssm.group_count") or 0
+    if not all(_is_count(v) and v > 0 for v in (conv, state, inner)) or not _is_count(groups):
+        return 0
+    return ((conv - 1) * (inner + 2 * groups * state) + state * inner) * 4
+
+
+def checkpoint_bytes(shape: KvShape) -> int:
+    """Bytes of one llama-server context checkpoint: what a window or recurrent
+    layer cannot rebuild from the cache once a prompt diverges, so the server
+    copies it at the end of a prompt. 0 for a model with neither layer kind,
+    which gets no checkpoints."""
+    return shape.window_bytes_per_token * shape.window + shape.recurrent_bytes
 
 
 def _pad(n: int) -> int:
