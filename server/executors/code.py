@@ -14,10 +14,65 @@ from server.security.command_validator import validate_command
 
 log = logging.getLogger("whisper-studio")
 
-# Cloud-credential dirs the AWS tools legitimately need — re-allowed through the
-# sandbox deny-list so aws_cli / boto3 can authenticate, while ~/.ssh, git
-# credentials, /etc/shadow, etc. stay blocked.
-_CLOUD_CRED_PATHS = [os.path.expanduser("~/.aws")]
+# Cloud-credential dirs the AWS tools legitimately need, re-allowed through the
+# sandbox deny-list for READING so aws_cli / boto3 can authenticate, while
+# ~/.ssh, git credentials, /etc/shadow, etc. stay blocked. They stay read-only
+# apart from the caches (_aws_cache_paths): the aws CLI and boto3 run programs
+# that files there name (credential_process, "!" CLI aliases, plugins), so a
+# write there is code that a later AWS call runs, boto3 in the server process
+# included.
+_AWS_DIR = os.path.expanduser("~/.aws")
+_CLOUD_CRED_PATHS = [_AWS_DIR]
+
+# Shell control operators and subshell parentheses. aws_cli runs one aws
+# program with no shell, so a line that holds one outside quotes is refused.
+_SHELL_OPERATOR_CHARS = frozenset(";&|<>()")
+
+
+def _aws_cache_paths() -> list[str]:
+    """The folders in ~/.aws that the AWS tools may write: the CLI's
+    credential cache and the SSO token cache. The macOS sandbox allows a write
+    under a folder only when the folder exists, so the CLI cache is created
+    here, outside the sandbox, when ~/.aws exists."""
+    cli_cache = os.path.join(_AWS_DIR, "cli", "cache")
+    if os.path.isdir(_AWS_DIR):
+        try:
+            os.makedirs(cli_cache, exist_ok=True)
+        except OSError as e:
+            log.warning("aws: cannot create %s: %s", cli_cache, e)
+    return [cli_cache, os.path.join(_AWS_DIR, "sso", "cache")]
+
+
+def aws_cli_argv(command: str) -> tuple[list[str], str]:
+    """The argv aws_cli runs for ``command``, or ([], why it is refused).
+
+    The words are split with the quoting rules of sh (shlex), and the line runs
+    as ONE program: a shell operator outside quotes (;, &&, ||, |, &, a
+    redirect, a subshell) is refused, and do_aws_cli quotes every word
+    (shlex.join), so the shell expands nothing. A leading ~ in a word is
+    expanded here, since the aws CLI does not expand it in a local path."""
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    try:
+        tokens = list(lexer)
+        argv = shlex.split(command)
+    except ValueError as e:
+        return [], f"aws_cli cannot read the command: {e}."
+    operators = sorted({t for t in tokens if t and set(t) <= _SHELL_OPERATOR_CHARS})
+    if operators:
+        return [], (
+            "aws_cli runs one aws command with no shell, so "
+            f"{' '.join(operators)} does not work. Send one aws command per call, "
+            "with no pipes, redirects or command chains."
+        )
+    if not argv or argv[0] != "aws":
+        return [], "aws_cli runs only the aws program: the command must start with 'aws'."
+    return [
+        "aws",
+        *(os.path.expanduser(a) if a == "~" or a.startswith("~/") else a for a in argv[1:]),
+    ], ""
+
 
 # Read-only AWS guardrail.
 #
@@ -149,6 +204,7 @@ def do_run_python(payload: dict) -> tuple[bool, str]:
             cwd=cwd,
             timeout=RUN_PYTHON_TIMEOUT_S,
             allow_paths=_CLOUD_CRED_PATHS,
+            write_paths=_aws_cache_paths(),
             write_mode=write_mode,
             scratch_dir=own_scratch_dir(payload.get("session_id")),
         )
@@ -248,6 +304,9 @@ def do_aws_cli(payload: dict) -> tuple[bool, str]:
         return False, "no command provided"
     if not command.startswith("aws "):
         return False, "invalid command — must start with 'aws'"
+    argv, refusal = aws_cli_argv(command)
+    if refusal:
+        return False, refusal
     warning = validate_command(command)
     if warning:
         return False, warning
@@ -258,18 +317,20 @@ def do_aws_cli(payload: dict) -> tuple[bool, str]:
         workspace = None
     try:
         result = run_sandboxed(
-            f"{command} < /dev/null",
+            # Every word quoted: sh runs the aws program and nothing else.
+            f"{shlex.join(argv)} < /dev/null",
             cwd=workspace or os.path.expanduser("~"),
             timeout=30,
             allow_paths=_CLOUD_CRED_PATHS,
+            write_paths=_aws_cache_paths(),
             # Always workspace-write confined, also after a person's yes on
-            # the card: the CLI's only legitimate local writes are its own
-            # ~/.aws cache (kept writable via allow_paths), the workspace (s3
-            # cp downloads), this session's scratch folder, and temp. With no
-            # workspace the cwd stays $HOME for relative reads, but no tree is
-            # writable: a cwd root would open all of $HOME to a run that
-            # bypass let through with no card. Remote AWS mutations are
-            # unaffected: this confines the LOCAL filesystem only.
+            # the card: the CLI's only legitimate local writes are its caches
+            # in ~/.aws (write_paths), the workspace (s3 cp downloads), this
+            # session's scratch folder, and temp. With no workspace the cwd
+            # stays $HOME for relative reads, but no tree is writable: a cwd
+            # root would open all of $HOME to a run that bypass let through
+            # with no card. Remote AWS mutations are unaffected: this
+            # confines the LOCAL filesystem only.
             write_mode="workspace",
             write_root=workspace,
             scratch_dir=own_scratch_dir(payload.get("session_id")),
@@ -310,6 +371,9 @@ def exec_aws_cli(tool_input, transcript, current_attachments):
         return f"[PARAM_CHECK]\n{command}"
     if not command.startswith("aws "):
         return "Invalid command — must start with 'aws'."
+    _, refusal = aws_cli_argv(command)
+    if refusal:
+        return f"Error: {refusal}"
     payload = json.dumps(
         {
             "action": "aws_cli",
