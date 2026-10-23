@@ -10,6 +10,7 @@ from server.security.command_validator import (
     check_gh_command,
     check_sed_inplace,
     check_subcommand_cap,
+    split_subcommands,
     strip_heredoc_bodies,
     validate_command,
 )
@@ -87,6 +88,14 @@ def test_real_chained_pipeline_still_capped():
     cmd = "echo x" + " | cat" * 60
     assert check_subcommand_cap(cmd) is not None
     assert validate_command(cmd) is not None
+
+
+def test_the_and_of_a_redirection_is_not_a_separator():
+    # Splitting `2>&1` at its & left `1 ...` read as a command of its own.
+    assert split_subcommands("npm test 2>&1 | tail -5") == ["npm test 2>&1", "tail -5"]
+    assert split_subcommands("make &>/dev/null && rm -rf x") == ["make &>/dev/null", "rm -rf x"]
+    assert split_subcommands("cat <&3; echo ok") == ["cat <&3", "echo ok"]
+    assert split_subcommands("npm run dev & npm test") == ["npm run dev", "npm test"]
 
 
 def test_command_after_heredoc_still_validated():

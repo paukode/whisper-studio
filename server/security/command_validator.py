@@ -17,9 +17,11 @@ from server.security.sensitive_paths import validator_path_patterns
 # Subcommand splitting
 # ---------------------------------------------------------------------------
 
-# Matches unquoted ;, &&, || as command separators
+# Matches unquoted ;, &&, || as command separators. The & of a redirection
+# (`2>&1`, `<&3`, `&>/dev/null`) belongs to its word: splitting there left
+# `1 rm -rf x` with `1` read as the command.
 _SPLIT_PATTERN = re.compile(
-    r"""(?:[^"'\\;|&]|"[^"]*"|'[^']*'|\\.)+""",
+    r"""(?:[<>]&|&>|[^"'\\;|&]|"[^"]*"|'[^']*'|\\.)+""",
     re.DOTALL,
 )
 
