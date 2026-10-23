@@ -55,7 +55,7 @@ class DevServerProcess:
     async def spawn(
         cls, command: list[str], *, cwd: str, env: dict | None = None
     ) -> DevServerProcess:
-        from server.sandbox import build_pty_sandbox_wrap
+        from server.sandbox import _merged_env, build_pty_sandbox_wrap
         from server.security.command_validator import validate_command
 
         # Validate the RAW joined argv, not a shell-quoted form: this process
@@ -87,7 +87,10 @@ class DevServerProcess:
                 asyncio.create_subprocess_exec(
                     *argv,
                     cwd=cwd,
-                    env={**os.environ, **(env or {})},
+                    # The same env as every other sandboxed child: no GitHub
+                    # token, and the egress proxy vars under a non-permissive
+                    # tier (the profile denies direct 80/443). Caller env last.
+                    env=_merged_env(env),
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     start_new_session=True,
