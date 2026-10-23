@@ -19,61 +19,10 @@ import pytest
 from server.model_browser import compat, gguf_kv, service
 from server.model_browser.hf_client import RepoGguf
 from server.model_browser.hf_client import gguf_file_metadata as real_gguf_file_metadata
+from tests.gguf_headers import gguf_bytes, header
 
 GIB = 1 << 30
 CTX = 32768
-
-
-# ── a minimal GGUF v3 header writer ──────────────────────────────────────────
-def _str(s: str) -> bytes:
-    b = s.encode()
-    return struct.pack("<Q", len(b)) + b
-
-
-def _typed(value) -> tuple[int, bytes]:
-    if isinstance(value, bool):
-        return 7, struct.pack("<?", value)
-    if isinstance(value, int):
-        return 4, struct.pack("<I", value)
-    if isinstance(value, float):
-        return 6, struct.pack("<f", value)
-    if isinstance(value, str):
-        return 8, _str(value)
-    if isinstance(value, list):
-        etype = _typed(value[0])[0]
-        body = b"".join(_typed(v)[1] for v in value)
-        return 9, struct.pack("<IQ", etype, len(value)) + body
-    raise TypeError(value)
-
-
-def gguf_bytes(meta: dict) -> bytes:
-    """A GGUF v3 header (no tensors) with ``meta`` in insertion order."""
-    out = b"GGUF" + struct.pack("<IQQ", 3, 0, len(meta))
-    for key, value in meta.items():
-        vtype, body = _typed(value)
-        out += _str(key) + struct.pack("<I", vtype) + body
-    return out
-
-
-_ATTENTION_KEYS = {"sliding_window", "sliding_window_pattern", "shared_kv_layers"}
-
-
-def header(arch="llama", layers=40, heads=32, kv_heads=8, head_dim=128, **extra) -> dict:
-    """Header key/values of a plain full-attention model, plus ``extra`` keys
-    (named without the arch prefix, and without ``attention.`` for the
-    window and shared-layer keys)."""
-    extra = {(f"attention.{k}" if k in _ATTENTION_KEYS else k): v for k, v in extra.items()}
-    meta = {
-        "general.architecture": arch,
-        f"{arch}.block_count": layers,
-        f"{arch}.embedding_length": heads * head_dim,
-        f"{arch}.attention.head_count": heads,
-        f"{arch}.attention.head_count_kv": kv_heads,
-        f"{arch}.attention.key_length": head_dim,
-        f"{arch}.attention.value_length": head_dim,
-    }
-    meta.update({f"{arch}.{k}": v for k, v in extra.items()})
-    return meta
 
 
 def kv(meta: dict, n_ctx: int = CTX) -> int:
@@ -208,6 +157,45 @@ def test_layers_without_kv_heads_or_with_shared_kv_cost_nothing():
 )
 def test_a_header_without_the_attention_keys_gives_no_shape(meta):
     assert gguf_kv.kv_shape(meta) is None
+
+
+# ── context checkpoint size: relations ───────────────────────────────────────
+def hybrid(interval=4, **ssm) -> dict:
+    """A Qwen3.5-like hybrid: every ``interval``-th layer attends, the others
+    are recurrent with the given ``ssm.*`` keys."""
+    meta = header(arch="qwen35", layers=32, full_attention_interval=interval)
+    keys = {"conv_kernel": 4, "state_size": 128, "group_count": 16, "inner_size": 4096, **ssm}
+    meta.update({f"qwen35.ssm.{k}": v for k, v in keys.items()})
+    return meta
+
+
+def checkpoint(meta: dict) -> int:
+    shape = gguf_kv.kv_shape(meta)
+    assert shape is not None
+    return gguf_kv.checkpoint_bytes(shape)
+
+
+def test_a_full_attention_model_has_no_checkpoint_state():
+    assert checkpoint(header()) == 0
+
+
+def test_a_window_checkpoint_grows_with_the_window():
+    pattern = [True, True, False]
+    small = header(arch="gemma4", layers=3, sliding_window=1024, sliding_window_pattern=pattern)
+    large = header(arch="gemma4", layers=3, sliding_window=2048, sliding_window_pattern=pattern)
+    assert checkpoint(large) > checkpoint(small) > 0
+
+
+def test_a_hybrid_checkpoint_is_its_recurrent_state():
+    assert checkpoint(hybrid(state_size=256)) > checkpoint(hybrid(state_size=128)) > 0
+    # More recurrent layers (fewer attention layers) keep more state.
+    assert checkpoint(hybrid(interval=8)) > checkpoint(hybrid(interval=4))
+    # The recurrent state does not depend on the context, so it is not KV cache.
+    assert kv(hybrid()) == kv(header(arch="qwen35", layers=32, full_attention_interval=4))
+
+
+def test_recurrent_layers_without_ssm_keys_count_no_state():
+    assert checkpoint(header(arch="qwen35", layers=32, full_attention_interval=4)) == 0
 
 
 # ── the fit grade ────────────────────────────────────────────────────────────

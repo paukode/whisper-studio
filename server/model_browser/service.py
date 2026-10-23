@@ -132,6 +132,12 @@ def _memory_fields() -> dict:
     }
 
 
+def memory_budget_bytes() -> int | None:
+    """The slice of this machine's RAM a loaded chat model may use: the same
+    budget the fit grade compares against. None when RAM is unknown."""
+    return _memory_fields()["mem_budget_bytes"]
+
+
 def _kv_shape(repo_id: str, filename: str, local_path: str | None = None) -> gguf_kv.KvShape | None:
     """The KV layout of a GGUF file: from the file itself when it is on disk,
     else from a ranged read of its header on Hugging Face. None when the

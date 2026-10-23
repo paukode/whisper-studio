@@ -112,8 +112,9 @@ _PARAM_SIZE_RE = re.compile(r"(\d+(?:\.\d+)?)\s*[bB]\b")
 #     prompt): compute buffers, recurrent state and process memory came to
 #     0.45 GiB (Qwen3.5 9B), 0.56 GiB (Ministral 3 14B) and 0.93 GiB (Gemma 4
 #     12B, of which 0.63 GiB were two sliding-window context checkpoints).
-#     Not counted: the server's prompt cache (--cache-ram, 8 GiB by default),
-#     which grows by the used KV cache each time a different prompt arrives.
+#     Not counted here: the server's prompt cache and context checkpoints,
+#     which grow during a session. server/local/llama_server.py::cache_caps
+#     limits them to what this estimate leaves of the budget.
 MEM_BUDGET_FRACTION = 0.75
 RUNTIME_OVERHEAD_BYTES = 2 << 30  # 2 GiB
 COMPUTE_OVERHEAD_BYTES = 1 << 30  # 1 GiB, beside a known KV cache

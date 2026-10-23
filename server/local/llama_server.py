@@ -48,6 +48,26 @@ _STARTUP_TIMEOUT = float(os.environ.get("WHISPER_LLAMA_SERVER_TIMEOUT", "600"))
 _ONESHOT_TIMEOUT = float(os.environ.get("WHISPER_LLAMA_ONESHOT_TIMEOUT", "600"))
 _HOST = "127.0.0.1"
 
+# The server's own caches grow in host memory during a session, beside the
+# weights, KV cache and compute buffers that the Discover fit grade counts:
+#   * the prompt cache (--cache-ram, 8 GiB by default) saves the slot's used KV
+#     cache whenever a different prompt arrives (a subagent, an index job), so
+#     the first chat's next turn restores it instead of prefilling it again;
+#   * context checkpoints (--ctx-checkpoints, 32 per slot by default) copy the
+#     sliding-window or recurrent state near the end of each prompt, so a turn
+#     whose prompt diverges there resumes without a full prefill.
+# Both are capped per model so the loaded model stays inside the fit budget:
+# the checkpoints get a fixed count, the prompt cache what is left over, never
+# more than the server's own default. Three checkpoints, the set the server
+# makes near the end of one prompt. Measured 2026-10-23 over multi-round chats
+# on Qwen3.5 9B and Gemma 4 12B: a continued chat restored the newest, and a
+# new prompt that shared the previous one's system prompt restored the oldest
+# of the three. With two, Qwen3.5 prefilled that prompt again in full (3,466
+# tokens instead of 895). A Gemma 4 checkpoint is 320 MiB, and every prompt
+# cache entry carries copies of them.
+_CTX_CHECKPOINTS = 3
+_CACHE_RAM_DEFAULT_MIB = 8192
+
 _lock = threading.Lock()
 # Serializes the whole (re)start sequence in ensure_serving. _lock only guards
 # the quick state reads/writes; without a second lock around stop()+spawn+wait,
@@ -214,6 +234,57 @@ def _wait_healthy(port: int, proc: subprocess.Popen, deadline: float) -> bool:
     return False
 
 
+def cache_caps(
+    needed_bytes: int | None, budget_bytes: int | None, checkpoint_bytes: int
+) -> tuple[int, int]:
+    """``(context checkpoints, prompt cache MiB)`` for a model that needs
+    ``needed_bytes`` once loaded, inside ``budget_bytes``. The checkpoints come
+    first (prefix reuse on window and hybrid models depends on them); the
+    prompt cache gets what is left of the budget, up to the server's default.
+    No room left, or a size that is unknown, gives no prompt cache."""
+    if needed_bytes is None or budget_bytes is None:
+        return _CTX_CHECKPOINTS, 0
+    spare = budget_bytes - needed_bytes - _CTX_CHECKPOINTS * max(0, checkpoint_bytes)
+    return _CTX_CHECKPOINTS, min(max(0, spare) >> 20, _CACHE_RAM_DEFAULT_MIB)
+
+
+def _weights_bytes(model_path: str) -> int:
+    """On-disk size of the weights, every shard of a sharded GGUF included."""
+    from server.model_browser.compat import shard_info
+
+    folder, name = os.path.split(model_path)
+    shard = shard_info(name)
+    if shard is None:
+        return os.path.getsize(model_path)
+    base, _index, total = shard
+    return sum(
+        os.path.getsize(os.path.join(folder, f"{base}-{i:05d}-of-{total:05d}.gguf"))
+        for i in range(1, total + 1)
+    )
+
+
+def _cache_cap_args(model_path: str, n_ctx: int) -> list[str]:
+    """--ctx-checkpoints and --cache-ram for this model at ``n_ctx`` on this
+    machine, from its GGUF header and the fit budget. Never raises: a header or
+    a budget it cannot read gives no prompt cache."""
+    needed = budget = None
+    checkpoint = 0
+    try:
+        from server.model_browser import compat, gguf_kv, service
+
+        budget = service.memory_budget_bytes()
+        with open(model_path, "rb") as f:
+            shape = gguf_kv.kv_shape(gguf_kv.read_metadata(f))
+        if shape is not None:
+            checkpoint = gguf_kv.checkpoint_bytes(shape)
+        kv = gguf_kv.kv_cache_bytes(shape, n_ctx) if shape else None
+        needed = compat.needed_bytes(_weights_bytes(model_path), kv)
+    except Exception as e:
+        log.debug("Could not size llama-server caches for %s: %s", model_path, e)
+    checkpoints, cache_mib = cache_caps(needed, budget, checkpoint)
+    return ["--ctx-checkpoints", str(checkpoints), "--cache-ram", str(cache_mib)]
+
+
 def ensure_serving(key: str, n_ctx: int | None = None) -> str:
     """Guarantee ``key`` is being served and return its base URL.
 
@@ -277,6 +348,7 @@ def ensure_serving(key: str, n_ctx: int | None = None) -> str:
         port = _free_port()
         os.makedirs(os.path.join(MODELS_DIR, ".logs"), exist_ok=True)
         log_path = os.path.join(MODELS_DIR, ".logs", f"llama-server-{key}.log")
+        caps = _cache_cap_args(model_path, target_ctx)
         cmd = [
             exe,
             "--model",
@@ -305,14 +377,18 @@ def ensure_serving(key: str, n_ctx: int | None = None) -> str:
             # thought markers into the answer.
             "--reasoning-format",
             "auto",
+            # Prompt cache and checkpoints sized to the fit budget (see cache_caps).
+            *caps,
         ]
+        # Last, so an override in the environment wins over the flags above.
         extra = os.environ.get("WHISPER_LLAMA_SERVER_ARGS", "").split()
         cmd.extend(extra)
 
         log.info(
-            "Starting llama-server for %s (n_ctx=%d) on port %d; log -> %s",
+            "Starting llama-server for %s (n_ctx=%d, %s) on port %d; log -> %s",
             key,
             target_ctx,
+            " ".join(caps),
             port,
             log_path,
         )

@@ -233,7 +233,7 @@
       on the already-resident model skips all of this on a lock-free fast path, so it never queues
       behind another model's download. The call is blocking either way, so both the chat path and the
       load endpoint run it in a thread executor rather than on the event loop.</p>
-    <p>A GGUF process is started on an ephemeral port with four flags that carry the design:</p>
+    <p>A GGUF process is started on an ephemeral port with six flags that carry the design:</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Flag</th><th>Why</th></tr></thead>
       <tbody>
@@ -241,10 +241,13 @@
         <tr><td><code>--parallel 1</code></td><td>One slot. The default is 4, and each slot gets its own KV cache, so the default quadruples KV memory for a single-user desktop app and can OOM Metal at a large context.</td></tr>
         <tr><td><code>--cache-reuse 256</code></td><td>Reuses cached prompt prefixes across turns, so a follow-up does not re-prefill the whole system plus tools prompt.</td></tr>
         <tr><td><code>--reasoning-format auto</code></td><td>Puts reasoning on its own channel (<code>reasoning_content</code>) instead of leaking raw thought markers into the answer.</td></tr>
+        <tr><td><code>--ctx-checkpoints 3</code></td><td>Keeps a maximum of 3 context checkpoints in the slot (the llama-server default is 32). A checkpoint is a copy of the sliding-window state or the recurrent state. Near the end of each prompt, llama-server makes 3 checkpoints. With these checkpoints, a turn that changes the last tokens of the previous prompt does not process the full prompt again. A new prompt with the same system prompt can also use them. One checkpoint is 320 MiB on Gemma 4 12B.</td></tr>
+        <tr><td><code>--cache-ram N</code></td><td>Sets the maximum size of the prompt cache in MiB, to a maximum of 8192 (the llama-server default). When the slot gets a different prompt, llama-server saves the context of the slot in the prompt cache. The next turn of the first chat restores it. The app calculates N for each model and context window. For N, the app subtracts 4 items from the <a href="tut-model-modes.html#fit-grade">Memory fit</a> budget: the model file, the KV cache, 1 GiB of compute buffers, and 3 checkpoints. If the model does not fit in the budget, N is 0.</td></tr>
       </tbody>
     </table></div>
     <p><code>WHISPER_LLAMA_SERVER_ARGS</code> appends extra arguments for anything else you want to
-      pass (<code>WHISPER_MLX_SERVER_ARGS</code> does the same for the MLX engine). The subprocess logs
+      pass (<code>WHISPER_MLX_SERVER_ARGS</code> does the same for the MLX engine). An argument in
+      this variable comes after the flags above, thus it replaces the value of the same flag. The subprocess logs
       to <code class="path">models/.logs/</code>, and a failed start raises with that log's tail, so a
       load error names its own cause. Each engine has its own startup timeout,
       <code>WHISPER_LLAMA_SERVER_TIMEOUT</code> and <code>WHISPER_MLX_SERVER_TIMEOUT</code>, both ten
