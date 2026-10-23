@@ -152,8 +152,22 @@ _INVOKE_WRAPPERS = frozenset(
 # Shell reserved words that start a statement whose command follows them
 # (`if rm x; then`, `then rm -rf dist; fi`): skipped like a wrapper, and
 # everything after them is checked. A subshell's opening paren written as a
-# word of its own (`( rm -rf x )`) starts one the same way.
-_SHELL_KEYWORDS = frozenset({"if", "then", "else", "elif", "do", "while", "until", "!", "{", "("})
+# word of its own (`( rm -rf x )`) starts one the same way. `case` and
+# `function` put a word or two before the command they lead to (`case $x in
+# a) rm -rf x`, `function f { rm -rf x; }`), which the check of every later
+# word finds.
+_SHELL_KEYWORDS = frozenset(
+    {"if", "then", "else", "elif", "do", "while", "until", "!", "{", "(", "case", "function"}
+)
+# zsh's precommand modifiers and the builtin keyword: each runs the command
+# after it in this same shell (`noglob rm -rf x`, `builtin cd web`).
+_PRECOMMANDS = frozenset({"builtin", "noglob", "nocorrect"})
+# A function definition (`f() { ...; }`, `f () cmd`, zsh's `f g () cmd`): an
+# unquoted pair of parens with nothing between them. Quoted text and escaped
+# characters are taken out before the search.
+_FUNCTION_PARENS = re.compile(r"\(\s*\)")
+_QUOTED_TEXT = re.compile(r"""'[^']*'|"(?:[^"\\]|\\.)*"|\\.""", re.DOTALL)
+_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 # Shells whose -c argument is a whole script of its own (`sh -c "rm -rf x"`,
 # `bash -lc '...'`): the script is checked like any other command line.
 _SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "mksh", "ash", "fish", "csh", "tcsh"})
@@ -177,7 +191,8 @@ _DIRSTACK_VERBS = frozenset({"pushd", "popd"})
 _REDIRECTION = re.compile(r"^(?:\d+|&)?(?:>&|<&|<<<|>>|>\||>|<)(.*)$")
 # Words that start a loop. Its body runs again after its own later
 # statements, so a directory change late in the body moves a delete that
-# comes before it on the next pass.
+# comes before it on the next pass. A function body runs the same way, at
+# each call.
 _LOOP_WORDS = frozenset({"for", "while", "until", "select", "repeat", "foreach", "do"})
 
 
@@ -267,7 +282,7 @@ class _Walk:
     chdirs: list[ChDir] = field(default_factory=list)
     inherited: int = 0
     moved: bool = False  # a statement of this walk changed directory
-    loops: bool = False  # a statement of this walk starts a loop
+    loops: bool = False  # a statement of this walk starts a loop or defines a function
 
     def child(self) -> "_Walk":
         return _Walk(list(self.chdirs), len(self.chdirs))
@@ -382,32 +397,68 @@ def _cd_target(args: list[str]) -> str | None:
     return words[0]
 
 
-def _record_chdir(tokens: list[str], i: int, walk: _Walk, chained: bool) -> None:
-    """Note the directory change the statement whose command is ``tokens[i]``
-    makes for the statements after it, if it makes one. It is sure only when
-    the statement is ``chained`` and nothing comes before the cd: a wrapper
-    can run it in a child process, ``!`` turns its failure into success."""
-    k = i + 1 if tokens[i] == "builtin" and i + 1 < len(tokens) else i
-    verb = _base(tokens[k])
+def _record_chdir(tokens: list[str], j: int, walk: _Walk, chained: bool) -> None:
+    """Note the directory change a ``cd`` at ``tokens[j]`` makes for the
+    statements after it, if the word there is one. It is sure only when the
+    statement is ``chained`` and nothing but a precommand modifier comes
+    before the cd: a wrapper can run it in a child process, ``!`` turns its
+    failure into success, a case arm or a function body may never run."""
+    verb = _base(tokens[j])
     if verb in _CD_VERBS:
-        target = _cd_target(tokens[k + 1 :])
+        target = _cd_target(tokens[j + 1 :])
     elif verb in _DIRSTACK_VERBS:
         target = None
     else:
         return
-    walk.chdirs.append(ChDir(target, chained and i == 0))
+    sure = chained and all(t in _PRECOMMANDS for t in tokens[:j])
+    walk.chdirs.append(ChDir(target, sure))
     walk.moved = True
+
+
+def _leads_to_command(word: str) -> bool:
+    """Whether ``word`` comes before a statement's command rather than being
+    it: an invocation wrapper, a reserved word, a precommand modifier, or a
+    word that ends in a paren (a case arm's pattern such as ``a)`` or
+    ``(a|b)``, a function's name with its parens such as ``f()``)."""
+    return (
+        _base(word) in _INVOKE_WRAPPERS
+        or word in _SHELL_KEYWORDS
+        or word in _PRECOMMANDS
+        or word.endswith(")")
+    )
+
+
+def _command_index(tokens: list[str]) -> tuple[int, bool]:
+    """Where a statement's command sits, past environment-variable
+    assignments (``FOO=bar rm``), flags, and the words that lead to it
+    (_leads_to_command), and whether any such word was passed: a wrapper
+    option's value can sit where the command's name would be, so every
+    later word is checked then too."""
+
+    def skip_assignments_and_flags(i: int) -> int:
+        while i < len(tokens) and (_ASSIGNMENT.match(tokens[i]) or tokens[i].startswith("-")):
+            i += 1
+        return i
+
+    i = skip_assignments_and_flags(0)
+    led = False
+    while i < len(tokens) and _leads_to_command(tokens[i]):
+        led = True
+        i = skip_assignments_and_flags(i + 1)  # the wrapper's own flags/env args
+    return i, led
 
 
 def _segment_delete_sites(
     segment: str, depth: int, walk: _Walk | None = None, chained: bool = False
 ) -> list[DeleteSite]:
     """The deletes one pipeline stage performs. Its leading command (past
-    environment-variable assignments such as ``FOO=bar rm`` and any
-    invocation wrapper) is a delete verb, a ``find`` that deletes, or a
-    shell/eval running a deleting script. Behind a wrapper (or a reserved
-    word such as ``then``) every later word is checked as well, since a
-    wrapper option's value can sit where the command's name would be.
+    environment-variable assignments such as ``FOO=bar rm``, invocation
+    wrappers, reserved words, zsh's precommand modifiers and a case arm's
+    pattern, see _command_index) is a delete verb, a ``find`` that deletes,
+    or a shell/eval running a deleting script. Behind any of those every
+    later word is checked as well, since a wrapper option's value can sit
+    where the command's name would be. A function definition is checked the
+    same way: its body can follow any number of names.
 
     A segment that cannot be tokenized (unbalanced quotes) is a delete whose
     reach is unknown: a parse failure is exactly the kind of thing an
@@ -416,7 +467,7 @@ def _segment_delete_sites(
     nothing: every shell script is full of those.
 
     Each delete carries the directory changes ``walk`` holds when the segment
-    starts; a ``cd`` in the segment itself is added to ``walk`` for the
+    starts; a ``cd`` among the checked words is added to ``walk`` for the
     segments after it (``chained``: the operator before the segment lets
     the cd be sure, see ChDir)."""
     walk = walk if walk is not None else _Walk()
@@ -425,25 +476,15 @@ def _segment_delete_sites(
     except ValueError:
         return [_UNKNOWN_SITE]
 
-    def _skip_assignments_and_flags(i: int) -> int:
-        while i < len(tokens) and (
-            re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[i]) or tokens[i].startswith("-")
-        ):
-            i += 1
-        return i
-
-    i = _skip_assignments_and_flags(0)
-    wrapped = False
-    while i < len(tokens) and (
-        _base(tokens[i]) in _INVOKE_WRAPPERS or tokens[i] in _SHELL_KEYWORDS
-    ):
-        wrapped = True
-        i = _skip_assignments_and_flags(i + 1)  # the wrapper's own flags/env args
-    walk.loops = walk.loops or any(_base(t) in _LOOP_WORDS for t in tokens[: i + 1])
+    i, wrapped = _command_index(tokens)
+    defines = "function" in tokens[:i] or bool(
+        _FUNCTION_PARENS.search(_QUOTED_TEXT.sub("", segment))
+    )
+    walk.loops = walk.loops or defines or any(_base(t) in _LOOP_WORDS for t in tokens[: i + 1])
     if i >= len(tokens):
         return []
     chdirs = tuple(walk.chdirs)
-    last = len(tokens) if wrapped else i + 1
+    last = len(tokens) if wrapped or defines else i + 1
     sites: list[DeleteSite] = []
     for j in range(i, last):
         base = _base(tokens[j])
@@ -458,7 +499,7 @@ def _segment_delete_sites(
                 sites.append(replace(site, chdirs=chdirs))
                 break
         sites.extend(_script_delete_sites(tokens, j, depth, walk))
-    _record_chdir(tokens, i, walk, chained)
+        _record_chdir(tokens, j, walk, chained)
     return sites
 
 

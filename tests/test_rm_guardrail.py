@@ -207,6 +207,70 @@ def test_detects_rm_after_a_reserved_word():
     assert is_rm_command("( rm -rf build )")
 
 
+def _first_operands(command):
+    sites = delete_sites(command)
+    return sites[0].operands if sites else None
+
+
+def test_detects_rm_in_a_case_arm():
+    # The arm's pattern (`1)`, `a|b)`, `(a)`) sits where the command word
+    # would be, and `case` itself was read as the command.
+    for command in (
+        "case 1 in 1) rm -rf ~/x ;; esac",
+        "case $x in a|b) rm -rf ~/x;; esac",
+        "case $x in (a) rm -rf ~/x;; esac",
+        "case $x in\n  *) rm -rf ~/x ;;\nesac",
+        "sh -c 'case $1 in clean) rm -rf ~/x;; esac'",
+    ):
+        assert _first_operands(command) == ["~/x"], command
+    assert not is_rm_command("case $x in a) echo hi ;; *) npm test ;; esac")
+
+
+def test_detects_rm_in_a_function_body():
+    for command in (
+        "f() { rm -rf ~/x; }; f",
+        "f () { rm -rf ~/x; }; f",
+        "function f { rm -rf ~/x; }; f",
+        "function f() { rm -rf ~/x; }; f",
+        "f() rm -rf ~/x",  # zsh: a simple command as the body
+        "f g () { rm -rf ~/x; }",  # zsh: one body for two names
+    ):
+        assert _first_operands(command) == ["~/x"], command
+    assert "~/x" in _first_operands("f() ( rm -rf ~/x ); f")
+    assert not is_rm_command("f() { npm test; }; f")
+    assert not is_rm_command("git commit -m 'call f() once'")
+
+
+def test_detects_rm_behind_zsh_precommand_modifiers():
+    for command in (
+        "noglob rm -rf ~/x",
+        "nocorrect rm -rf ~/x",
+        "builtin rm -rf ~/x",  # zsh/files makes rm a builtin
+        "noglob sudo rm -rf ~/x",
+        "if true; then noglob rm -rf ~/x; fi",
+    ):
+        assert _first_operands(command) == ["~/x"], command
+    assert not is_rm_command("noglob git log --oneline")
+
+
+def test_a_cd_in_a_function_body_or_a_case_arm_is_tracked():
+    from server.security.command_validator import ChDir
+
+    # A function body runs at each call, as often as it is called: with a cd
+    # in it no delete in the command has a working directory the line names.
+    for command in (
+        "f() { cd web; }; f; rm -rf dist",
+        "function f { cd web; }; f; rm -rf dist",
+        "f() {\n  cd web\n}\nf\nrm -rf dist",
+        "f() { rm -rf dist; cd web; }; f; f",
+    ):
+        assert delete_sites(command)[0].chdirs == (ChDir(None),), command
+    assert delete_sites("f() { rm -rf dist; }; f")[0].chdirs == ()
+    # A case arm may not run, so its cd is not sure.
+    assert delete_sites("case $x in a) cd web ;; esac; rm -rf dist")[0].chdirs == (ChDir("web"),)
+    assert delete_sites("noglob cd web && rm -rf dist")[0].chdirs == (ChDir("web", sure=True),)
+
+
 def test_shell_scripts_reads_a_shell_anywhere_in_an_argv():
     from server.security.command_validator import shell_scripts
 
@@ -291,6 +355,10 @@ def test_a_delete_outside_the_workspace_always_asks(workspace, tmp_path):
         "( rm -rf ~/old )",
         "cd ~/Documents && rm -rf notes",
         'cd "$OUT" && rm -rf build',
+        "case 1 in 1) rm -rf ~/old ;; esac",
+        "f() { rm -rf ~/old; }; f",
+        "function f { cd ~/Documents; }; f; rm -rf notes",
+        "noglob rm -rf ~/old",
     )
     for command in outside:
         assert approval_floor("ws_run_command", {"command": command}, "cli") == "rm", command
@@ -383,6 +451,20 @@ def test_refuse_if_agent_rm_blocks_unattended_rm():
     outcome = refuse_if_agent_rm({"__agent__": True, "command": "rm -rf /tmp/x"})
     assert outcome is not None
     assert outcome.ok is False
+
+
+def test_refuse_if_agent_rm_blocks_rm_wherever_the_command_hides_it():
+    from server.approval.spec import refuse_if_agent_rm
+
+    for command in (
+        "case 1 in 1) rm -rf x ;; esac",
+        "f() { rm -rf x; }; f",
+        "function f { rm -rf x; }; f",
+        "noglob rm -rf x",
+        "nocorrect rm -rf x",
+    ):
+        outcome = refuse_if_agent_rm({"__agent__": True, "command": command})
+        assert outcome is not None and outcome.ok is False, command
 
 
 def test_refuse_if_agent_rm_allows_unattended_non_rm():

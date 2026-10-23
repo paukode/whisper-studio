@@ -203,3 +203,38 @@ def test_a_dotdot_after_a_symlink_climbs_from_where_it_points(ws, tmp_path):
     assert deletes_beyond("find link/.. -delete", ws, roots)
     # A .. after a real folder climbs back into the workspace as before.
     assert not deletes_beyond("rm -rf dist/../dist", ws, roots)
+
+
+def test_deletes_in_case_arms_functions_and_behind_precommands_reach_their_operands(ws):
+    roots = [ws]
+    for command in (
+        "case 1 in 1) rm -rf ~/x ;; esac",
+        "case $x in a|b) rm -rf ../x;; esac",
+        "f() { rm -rf ~/x; }; f",
+        "function f { rm -rf ~/x; }; f",
+        "noglob rm -rf ~/x",
+        "nocorrect rm -rf ../x",
+    ):
+        assert deletes_beyond(command, ws, roots), command
+    for command in (
+        "case $1 in clean) rm -rf dist ;; esac",
+        "f() { rm -rf dist; }; f",
+        "noglob rm -rf dist/*",
+    ):
+        assert not deletes_beyond(command, ws, roots), command
+
+
+def test_a_cd_in_a_function_body_leaves_no_working_directory(ws):
+    """The body runs at each call, as often as it is called, so its cd may
+    run before any delete in the command, the body's own included."""
+    roots = [ws]
+    for command in (
+        "f() { cd ~/Documents; }; f; rm -rf notes",
+        "function f { cd ~/Documents; }; f; rm -rf notes",
+        "f() {\n  cd ~/Documents\n}\nf\nrm -rf notes",
+        "f() { rm -rf notes; cd ~/Documents; }; f; f",
+        "f() { cd ..; }; f; f; rm -rf ws",
+    ):
+        assert deletes_beyond(command, ws, roots), command
+    # An absolute operand needs no working directory.
+    assert not deletes_beyond(f"f() {{ cd ~/Documents; }}; f; rm -rf {ws}/dist", ws, roots)
