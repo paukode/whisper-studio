@@ -162,7 +162,8 @@
         reaches it. Remote HTTP MCP servers are not child processes and never see your environment at
         all.</li>
       <li><b>Sandboxed shells</b> get the GitHub subset only. <code>run_python</code>,
-        <code>aws_cli</code>, <code>ws_run_command</code> and the workspace shell endpoint all build
+        <code>aws_cli</code>, <code>ws_run_command</code>, the workspace shell endpoint and preview
+        dev servers all build
         their environment through <code>_merged_env</code>, which drops
         <code>GITHUB_ENV_VARS</code>. The cloud keys are deliberately left in place: sandboxed code
         authenticates to Bedrock and AWS with them.</li>
