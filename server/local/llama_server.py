@@ -58,13 +58,14 @@ _HOST = "127.0.0.1"
 #     whose prompt diverges there resumes without a full prefill.
 # Both are capped per model so the loaded model stays inside the fit budget:
 # the checkpoints get a fixed count, the prompt cache what is left over, never
-# more than the server's own default. Two checkpoints: the server makes three
-# near the end of a prompt (512 tokens apart) and, measured 2026-10-23 over
-# multi-round chats on Qwen3.5 9B and Gemma 4 12B, only ever restored the
-# newest; the second guards a template that re-renders the prompt's last
-# tokens. A Gemma 4 checkpoint is 320 MiB, and every prompt cache entry
-# carries copies of them.
-_CTX_CHECKPOINTS = 2
+# more than the server's own default. Three checkpoints, the set the server
+# makes near the end of one prompt. Measured 2026-10-23 over multi-round chats
+# on Qwen3.5 9B and Gemma 4 12B: a continued chat restored the newest, and a
+# new prompt that shared the previous one's system prompt restored the oldest
+# of the three. With two, Qwen3.5 prefilled that prompt again in full (3,466
+# tokens instead of 895). A Gemma 4 checkpoint is 320 MiB, and every prompt
+# cache entry carries copies of them.
+_CTX_CHECKPOINTS = 3
 _CACHE_RAM_DEFAULT_MIB = 8192
 
 _lock = threading.Lock()
