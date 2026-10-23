@@ -375,6 +375,20 @@ def _merged_env(env_extra: dict | None) -> dict:
     return base
 
 
+class _Cwd:
+    """The default ``write_root`` of run_sandboxed and _bwrap_argv: the run's
+    own working directory. A marker, since None already means "no tree"."""
+
+
+_CWD = _Cwd()
+
+
+def _resolve_write_root(write_root: str | None | _Cwd, cwd: str) -> str | None:
+    """The tree a "workspace" run may write in: ``cwd`` for the default, else
+    ``write_root`` as given (None: no tree)."""
+    return cwd if isinstance(write_root, _Cwd) else write_root
+
+
 def run_sandboxed(
     command: str,
     *,
@@ -387,6 +401,7 @@ def run_sandboxed(
     env_extra: dict | None = None,
     write_mode: str = "open",
     scratch_dir: str | None = None,
+    write_root: str | None | _Cwd = _CWD,
 ) -> subprocess.CompletedProcess:
     """Run a command with OS-level sandboxing if available.
 
@@ -402,10 +417,14 @@ def run_sandboxed(
     enforce it (command validators remain the only layer there).
     ``scratch_dir`` is the calling session's own scratch folder: writable under
     "workspace", and home to the run's package caches (scratch_cache_env).
+    ``write_root`` is the tree a "workspace" run may write in. It defaults to
+    ``cwd``; None writes no tree, only the scratch folder, temp and
+    allow_paths (aws_cli with no workspace connected, whose cwd is $HOME).
 
     Falls back to plain subprocess.run if no sandbox is available.
     """
     env_extra = {**_scratch_env(write_mode, scratch_dir), **(env_extra or {})}
+    tree = _resolve_write_root(write_root, cwd)
     if _is_sandbox_exec_available():
         return _run_macos_sandboxed(
             command,
@@ -418,6 +437,7 @@ def run_sandboxed(
             env_extra=env_extra,
             write_mode=write_mode,
             scratch_dir=scratch_dir,
+            write_root=tree,
         )
     if _is_bwrap_available():
         return _run_bwrap_sandboxed(
@@ -431,6 +451,7 @@ def run_sandboxed(
             env_extra=env_extra,
             write_mode=write_mode,
             scratch_dir=scratch_dir,
+            write_root=tree,
         )
     # Fallback: no OS-level sandbox
     from server.process_utils import kill_process_group, new_process_group
@@ -466,10 +487,12 @@ def _run_macos_sandboxed(
     env_extra: dict | None = None,
     write_mode: str = "open",
     scratch_dir: str | None = None,
+    write_root: str | None = None,
 ) -> subprocess.CompletedProcess:
-    """Run command under macOS sandbox-exec."""
+    """Run command under macOS sandbox-exec. ``write_root`` is the resolved
+    tree a "workspace" run may write in (None: no tree)."""
     profile = _generate_macos_profile(
-        cwd, allow_paths, write_mode=write_mode, scratch_dir=scratch_dir
+        write_root, allow_paths, write_mode=write_mode, scratch_dir=scratch_dir
     )
 
     # Write profile to temp file (sandbox-exec needs a file path)
@@ -523,12 +546,14 @@ def _run_bwrap_sandboxed(
     env_extra: dict | None = None,
     write_mode: str = "workspace",
     scratch_dir: str | None = None,
+    write_root: str | None = None,
 ) -> subprocess.CompletedProcess:
     """Run command under bubblewrap (Linux).
 
     bwrap has always been workspace-write shaped (read-only root, rw binds
-    for cwd + /tmp), so ``write_mode="open"`` and ``"workspace"`` behave the
-    same here. ``write_mode="readonly"`` drops the rw workspace bind and
+    for the write root + /tmp), so ``write_mode="open"`` and ``"workspace"``
+    behave the same here. ``write_root`` is the resolved tree (None: no tree).
+    ``write_mode="readonly"`` drops the rw workspace bind and
     replaces /tmp with a throwaway tmpfs, so nothing the command writes
     survives anywhere.
 
@@ -537,7 +562,9 @@ def _run_bwrap_sandboxed(
     _bwrap_network_restriction_args's docstring for exactly what that does
     and does not cover.
     """
-    bwrap_args = _bwrap_argv(command, cwd, allow_paths, write_mode, scratch_dir=scratch_dir)
+    bwrap_args = _bwrap_argv(
+        command, cwd, allow_paths, write_mode, write_root=write_root, scratch_dir=scratch_dir
+    )
 
     from server.process_utils import kill_process_group, new_process_group
 
@@ -564,14 +591,16 @@ def _bwrap_argv(
     cwd: str,
     allow_paths: list[str] | None,
     write_mode: str,
-    write_root: str | None = None,
+    write_root: str | None | _Cwd = _CWD,
     scratch_dir: str | None = None,
 ) -> list[str]:
     """The bwrap argv that runs ``command`` in ``cwd``. Only "readonly" changes
     the filesystem shape: no rw workspace bind, and /tmp a throwaway tmpfs.
     ``write_root`` is the tree bound read-write (the workspace a confined
-    command may write in); it defaults to ``cwd``. ``scratch_dir``, the
-    session's own scratch folder, is bound read-write beside it."""
+    command may write in); it defaults to ``cwd``, and None binds no tree.
+    ``scratch_dir``, the session's own scratch folder, is bound read-write
+    beside it."""
+    tree = _resolve_write_root(write_root, cwd)
     if write_mode == "readonly":
         fs_args = [
             "--ro-bind",
@@ -581,17 +610,10 @@ def _bwrap_argv(
             "/tmp",  # writable but ephemeral, nothing persists
         ]
     else:
-        fs_args = [
-            "--ro-bind",
-            "/",
-            "/",  # read-only root
-            "--bind",
-            write_root or cwd,
-            write_root or cwd,  # read-write workspace
-            "--bind",
-            "/tmp",
-            "/tmp",  # read-write tmp
-        ]
+        fs_args = ["--ro-bind", "/", "/"]  # read-only root
+        if tree:
+            fs_args += ["--bind", tree, tree]  # read-write workspace
+        fs_args += ["--bind", "/tmp", "/tmp"]  # read-write tmp
         if scratch_dir:
             fs_args += ["--bind", scratch_dir, scratch_dir]  # the session's scratch
     argv = [
@@ -664,7 +686,7 @@ def popen_sandboxed(
         shell = False
     elif _is_bwrap_available():
         argv = _bwrap_argv(
-            command, cwd, None, write_mode, write_root=write_root, scratch_dir=scratch_dir
+            command, cwd, None, write_mode, write_root=write_root or cwd, scratch_dir=scratch_dir
         )
         shell = False
     else:
