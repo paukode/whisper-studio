@@ -27,6 +27,10 @@ log = logging.getLogger("whisper-studio")
 _SEARCH_EXPAND = ["downloads", "likes", "trendingScore", "gguf", "lastModified"]
 _SEARCH_EXPAND_MLX = ["downloads", "likes", "trendingScore", "config", "lastModified"]
 
+# Bytes fetched per ranged request when reading a GGUF header. The model keys
+# end within the first few KB, before the tokenizer vocabulary.
+_HEADER_BLOCK = 64 << 10
+
 
 @dataclass
 class SearchHit:
@@ -133,6 +137,25 @@ def repo_gguf_meta(repo_id: str) -> RepoGguf:
         context_length=_gguf_field(gguf, "context_length"),
         has_chat_template=bool(_gguf_field(gguf, "chat_template")),
     )
+
+
+def gguf_file_metadata(repo_id: str, filename: str) -> dict | None:
+    """The header key/values of one GGUF file in a repo, read with ranged
+    requests (no download). ``expand=["gguf"]`` returns only the architecture,
+    the context length and the chat template, and the KV-cache size needs the
+    layer, head and window keys. The reader stops at the tokenizer vocabulary,
+    so this is one request of ``_HEADER_BLOCK`` bytes for a usual header.
+    None on any failure."""
+    from huggingface_hub import HfFileSystem
+
+    from server.model_browser.gguf_kv import read_metadata
+
+    try:
+        with HfFileSystem().open(f"{repo_id}/{filename}", "rb", block_size=_HEADER_BLOCK) as f:
+            return read_metadata(f)
+    except Exception as e:
+        log.debug("GGUF header read failed for %s/%s: %s", repo_id, filename, e)
+        return None
 
 
 def repo_mlx_meta(repo_id: str) -> tuple[str | None, bool]:
