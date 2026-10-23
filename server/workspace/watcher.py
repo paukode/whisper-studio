@@ -3,8 +3,9 @@
 ``watchfiles`` (the Rust notify crate: FSEvents on macOS, inotify on Linux)
 watches the connected folder recursively on a daemon thread. Every batch of
 raw changes is reduced to the folders whose listing may differ and the files
-whose content changed, under the ignore rules of the listing endpoint (dot
-entries and _WS_IGNORED_DIRS), and published as ONE app-wide
+whose content changed (every entry counts: the listing hides nothing, so a
+change inside .git or node_modules matters once that folder is open), and
+published as ONE app-wide
 ``workspace_changed`` event on the session-events channel. The UI re-lists
 only the loaded folders the event names and re-reads only the open tabs it
 names (src/stores/workspaceStore.ts, reloadDirs).
@@ -24,8 +25,6 @@ from collections.abc import Callable, Iterable
 
 from watchfiles import Change
 
-from server.workspace.paths import _WS_IGNORED_DIRS
-
 log = logging.getLogger("whisper-studio")
 
 # A batch closes 150 ms after its last change, or 600 ms after its first.
@@ -35,13 +34,6 @@ _DEBOUNCE_MS = 600
 _RUST_TIMEOUT_MS = 1000
 # Past this many entries the event names none, and the UI reloads all it has.
 _MAX_NAMED = 200
-
-
-def _hidden(rel: str) -> bool:
-    """What the listing hides, the watcher ignores: dot entries and build folders."""
-    return any(
-        part.startswith(".") or part in _WS_IGNORED_DIRS for part in rel.split(os.sep) if part
-    )
 
 
 def coalesce(root: str, changes: Iterable[tuple[Change, str]]) -> dict | None:
@@ -60,8 +52,6 @@ def coalesce(root: str, changes: Iterable[tuple[Change, str]]) -> dict | None:
     for change, path in changes:
         rel = os.path.relpath(path, root)
         if rel == "." or rel.startswith(".."):
-            continue
-        if _hidden(rel):
             continue
         full = os.path.join(root, rel)
         if os.path.isfile(full):

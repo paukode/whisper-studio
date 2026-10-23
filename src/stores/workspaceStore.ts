@@ -65,6 +65,14 @@ export interface WorkspaceState {
 
 /** The listing path of the workspace root. */
 const ROOT_DIR = '.';
+
+/** A tree path as the backend's workspace_changed event names it. Listing
+ *  the root ('.') prefixes every child path with "./" and the watcher does
+ *  not, so without this no folder or tab below the root ever matched. */
+export function eventPath(path: string): string {
+  return path === ROOT_DIR ? '' : path.replace(/^\.\//, '');
+}
+
 /** The newest reload request per folder, so a slower earlier listing of the
  *  same folder cannot overwrite a later one. */
 const reloadSeq = new Map<string, number>();
@@ -85,7 +93,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   reloadDirs: async (changed: string[] | null) => {
     const named = changed === null ? null : new Set(changed);
     const targets = [ROOT_DIR, ...loadedDirs(get().fileTree)].filter(
-      (dir) => named === null || named.has(dir === ROOT_DIR ? '' : dir),
+      (dir) => named === null || named.has(eventPath(dir)),
     );
     await Promise.all(
       targets.map(async (dir) => {

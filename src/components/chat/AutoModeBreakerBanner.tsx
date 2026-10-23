@@ -14,17 +14,20 @@ import { ICON } from './activityIcons';
  */
 export function AutoModeBreakerBanner() {
   const breaker = useActiveChatStore((s) => s.autoModeBreaker);
-  const [isResuming, setIsResuming] = useState(false);
+  // Keyed by session, like ApprovalBanner's answering set: this one banner
+  // draws every session's notice.
+  const [resuming, setResuming] = useState<ReadonlySet<string>>(() => new Set());
 
   // Bind the breaker's OWNING session store once, same reasoning as
   // ApprovalBanner: the click can happen after the user has switched to a
   // different session than the one that tripped.
   const handleResume = useCallback(async () => {
     if (!breaker) return;
-    setIsResuming(true);
-    const chat = getChatStore(breaker.sessionId);
+    const sessionId = breaker.sessionId;
+    setResuming((prev) => new Set(prev).add(sessionId));
+    const chat = getChatStore(sessionId);
     try {
-      await resumeAutoMode(breaker.sessionId);
+      await resumeAutoMode(sessionId);
       chat.getState().clearAutoModeBreaker();
       useUIStore.getState().addToast({
         type: 'success',
@@ -40,11 +43,17 @@ export function AutoModeBreakerBanner() {
         key: 'auto-mode-resume-error',
       });
     } finally {
-      setIsResuming(false);
+      setResuming((prev) => {
+        const next = new Set(prev);
+        next.delete(sessionId);
+        return next;
+      });
     }
   }, [breaker]);
 
   if (!breaker) return null;
+
+  const isResuming = resuming.has(breaker.sessionId);
 
   return (
     <div className="chat-msg-wrap assistant-wrap">
