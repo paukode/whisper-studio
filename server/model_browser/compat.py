@@ -31,6 +31,9 @@ from dataclasses import dataclass
 #     "mistral3".
 #   * "gemma4" and "mistral3" were load-tested 2026-10-23 on llama-server
 #     b10289 (Gemma 4 12B QAT Q4_0, Ministral 3 14B Reasoning UD-Q4_K_XL).
+#   * each name is the GGUF ``general.architecture`` token, not the HF
+#     ``model_type``. b10289 refuses "mistral", "phi3moe" and "cohere" as
+#     unknown architectures (Command-R is "command-r"), so they are not here.
 SUPPORTED_ARCHS: frozenset[str] = frozenset(
     {
         "llama",
@@ -44,15 +47,12 @@ SUPPORTED_ARCHS: frozenset[str] = frozenset(
         "gemma3",
         "gemma3n",
         "gemma4",
-        "mistral",
         "mistral3",
         "phi2",
         "phi3",
-        "phi3moe",
         "phimoe",
         "stablelm",
         "starcoder2",
-        "cohere",
         "cohere2",
         "granite",
         "granitemoe",

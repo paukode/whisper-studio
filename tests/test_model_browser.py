@@ -32,6 +32,10 @@ def test_arch_allowlist_accepts_supported_and_rejects_new():
     assert compat.arch_supported("PHI3")  # case-insensitive
     # Archs the bundled engine knows but nobody has load-tested, and junk.
     assert not compat.arch_supported("qwen3next")
+    # HF model_type names that llama.cpp refuses as unknown architectures.
+    assert not compat.arch_supported("mistral")
+    assert not compat.arch_supported("phi3moe")
+    assert not compat.arch_supported("cohere")
     assert not compat.arch_supported("mamba")
     assert not compat.arch_supported(None)
     assert not compat.arch_supported("")
