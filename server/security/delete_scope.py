@@ -5,8 +5,8 @@ before a command deletes anything the permission mode may not delete on its
 own: anything outside the connected workspace and the app's own folders. A
 delete that stays inside those roots is an ordinary command and follows the
 mode, the session's answers and the rules like any other. This module reads
-the operands of every deleting statement (server.security.command_validator.
-delete_sites) and resolves them the way the shell would start to, against
+the operands of every deleting statement (server.security.delete_sites)
+and resolves them the way the shell would start to, against
 the command's working directory and the ``cd``s before them, to say which
 side of that line they fall on. It fails toward asking: an operand the
 command line alone cannot resolve (a variable, a substitution, a relative
@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import os
 
-from server.security.command_validator import ChDir, delete_sites
+from server.security.delete_sites import ChDir, delete_sites
 
 _GLOB_CHARS = "*?[{"
 _UNRESOLVABLE = ("$", "`")
@@ -61,7 +61,7 @@ def resolve_operand(operand: str, cwd: str | None) -> str | None:
 
 def _change_dir(cwd: str | None, target: str | None) -> list[str | None]:
     """Where ``cd target`` run in ``cwd`` lands, or [None] when the command
-    line cannot say: no single target (command_validator._cd_target), a
+    line cannot say: no single target (delete_sites._cd_target), a
     variable, a substitution, a glob, an unknown ``~user``, or a relative
     target with no known working directory. ``~`` expands as it does for an
     operand. A symlink can make two landings differ, and both are kept: the

@@ -121,7 +121,7 @@
         anything beyond the connected workspace and the app's own folder always returns ask,
         whatever the mode; a delete that stays inside them is an ordinary command and follows the
         mode (the user's rule: inside the workspace, bypass means bypass).
-        <code>delete_sites</code> (<code class="path">server/security/command_validator.py</code>)
+        <code>delete_sites</code> (<code class="path">server/security/delete_sites.py</code>)
         parses the command with <code>shlex</code> rather than matching a substring, so it sees
         through wrappers (<code>sudo</code>, <code>env</code>, <code>command</code>,
         <code>nice</code>, <code>exec</code>, <code>doas</code>, <code>xargs</code>,

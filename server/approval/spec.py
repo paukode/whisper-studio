@@ -100,7 +100,7 @@ def refuse_if_agent_rm(payload: dict, command_field: str = "command") -> Approva
     """
     if not payload.get("__agent__"):
         return None
-    from server.security.command_validator import is_rm_command
+    from server.security.delete_sites import is_rm_command
 
     if not is_rm_command(payload.get(command_field) or ""):
         return None

@@ -134,7 +134,7 @@ def floor_commands(tool_name: str, tool_input: dict) -> list[str]:
     """
     if _config_name(tool_name, tool_input) is None:
         return []
-    from server.security.command_validator import shell_scripts
+    from server.security.delete_sites import shell_scripts
 
     argvs: list[list[str]] = []
     for config in (resolve_named(tool_name, tool_input), pinned_config(tool_input)):

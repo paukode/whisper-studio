@@ -18,7 +18,7 @@ import os
 
 import pytest
 
-from server.security.command_validator import delete_sites, is_rm_command
+from server.security.delete_sites import delete_sites, is_rm_command
 from server.security.permissions import (
     MODE_ACCEPT_EDITS,
     MODE_BYPASS,
@@ -128,7 +128,7 @@ def test_unparseable_segment_is_treated_as_rm_like():
     # well-formed; this failure mode only reaches a caller that hands
     # _segment_delete_sites a raw, unsplit segment. The delete's reach is
     # unknown, which the floor reads as outside.
-    from server.security.command_validator import _segment_delete_sites
+    from server.security.delete_sites import _segment_delete_sites
 
     sites = _segment_delete_sites("echo 'unterminated", 0)
     assert len(sites) == 1 and sites[0].operands is None
@@ -168,7 +168,7 @@ def test_delete_sites_report_what_each_delete_names():
 
 
 def test_delete_sites_carry_the_cds_before_them():
-    from server.security.command_validator import ChDir
+    from server.security.delete_sites import ChDir
 
     assert delete_sites("cd web && rm -rf dist")[0].chdirs == (ChDir("web", sure=True),)
     assert delete_sites("cd web; rm -rf dist")[0].chdirs == (ChDir("web"),)
@@ -254,7 +254,7 @@ def test_detects_rm_behind_zsh_precommand_modifiers():
 
 
 def test_a_cd_in_a_function_body_or_a_case_arm_is_tracked():
-    from server.security.command_validator import ChDir
+    from server.security.delete_sites import ChDir
 
     # A function body runs at each call, as often as it is called: with a cd
     # in it no delete in the command has a working directory the line names.
@@ -272,7 +272,7 @@ def test_a_cd_in_a_function_body_or_a_case_arm_is_tracked():
 
 
 def test_a_wrapper_that_changes_directory_moves_its_delete():
-    from server.security.command_validator import ChDir
+    from server.security.delete_sites import ChDir
 
     documents = (ChDir("~/Documents", sure=True),)
     for command in (
@@ -325,7 +325,7 @@ def test_a_wrapper_that_changes_directory_moves_its_delete():
 
 
 def test_shell_scripts_reads_a_shell_anywhere_in_an_argv():
-    from server.security.command_validator import shell_scripts
+    from server.security.delete_sites import shell_scripts
 
     assert shell_scripts(["sh", "-c", "rm -rf build && npm run dev"]) == [
         "rm -rf build && npm run dev"
