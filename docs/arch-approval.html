@@ -121,7 +121,7 @@
         anything beyond the connected workspace and the app's own folder always returns ask,
         whatever the mode; a delete that stays inside them is an ordinary command and follows the
         mode (the user's rule: inside the workspace, bypass means bypass).
-        <code>delete_sites</code> (<code class="path">server/security/command_validator.py</code>)
+        <code>delete_sites</code> (<code class="path">server/security/delete_sites.py</code>)
         parses the command with <code>shlex</code> rather than matching a substring, so it sees
         through wrappers (<code>sudo</code>, <code>env</code>, <code>command</code>,
         <code>nice</code>, <code>exec</code>, <code>doas</code>, <code>xargs</code>,
@@ -131,10 +131,16 @@
         <code>bash -lc '...'</code>) and an <code>eval</code> as commands of their own, and catches
         <code>rm</code>, <code>rmdir</code>, <code>unlink</code>, <code>shred</code>,
         <code>srm</code>, and <code>find ... -delete</code> / <code>find ... -exec rm</code>, and
-        reports what each delete names. <code>deletes_beyond</code>
+        reports what each delete names. It also reads the script that a <code>trap</code>, an
+        <code>su -c</code>, or an <code>env -S</code> string runs. It finds the command after a
+        case pattern, a function head, a redirection, and the zsh words <code>noglob</code> and
+        <code>nocorrect</code>. It records each <code>cd</code>, <code>env -C</code>, and
+        <code>sudo -D</code> move before a delete. Under <code>sudo -R</code> or
+        <code>chroot</code>, the operands are unknown. <code>deletes_beyond</code>
         (<code class="path">server/security/delete_scope.py</code>) then resolves those operands
         the way the shell starts to, against the command's working directory (<code>~</code>
-        expanded, a glob cut at its wildcard, symlinks followed), and the floor fires when one lands
+        expanded, a glob cut at its wildcard, symlinks followed, and a <code>..</code> after a
+        symlink read from the target of the link, as the kernel reads it), and the floor fires when one lands
         outside the roots or cannot be resolved at all (a variable, paths fed by
         <code>xargs</code>, a segment that does not parse), so it fails toward asking. A statement
         that runs nothing (a bare <code>x=1</code>) is not a delete. Note that this

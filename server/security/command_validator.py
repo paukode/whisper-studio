@@ -10,8 +10,6 @@ splitting compound commands on ;, &&, ||.
 
 import os
 import re
-import shlex
-from dataclasses import dataclass
 
 from server.security.sensitive_paths import validator_path_patterns
 
@@ -19,9 +17,11 @@ from server.security.sensitive_paths import validator_path_patterns
 # Subcommand splitting
 # ---------------------------------------------------------------------------
 
-# Matches unquoted ;, &&, || as command separators
+# Matches unquoted ;, &&, || as command separators. The & of a redirection
+# (`2>&1`, `<&3`, `&>/dev/null`) belongs to its word: splitting there left
+# `1 rm -rf x` with `1` read as the command.
 _SPLIT_PATTERN = re.compile(
-    r"""(?:[^"'\\;|&]|"[^"]*"|'[^']*'|\\.)+""",
+    r"""(?:[<>]&|&>|[^"'\\;|&]|"[^"]*"|'[^']*'|\\.)+""",
     re.DOTALL,
 )
 
@@ -35,6 +35,19 @@ def split_subcommands(command: str) -> list[str]:
     """
     parts = _SPLIT_PATTERN.findall(command)
     return [p.strip() for p in parts if p.strip()]
+
+
+def split_statements(line: str) -> list[tuple[str, str, str]]:
+    """split_subcommands of one line, each with the operators around it: the
+    run of ;, & and | before it and the one after it ("" at either end of the
+    line)."""
+    found = [m for m in _SPLIT_PATTERN.finditer(line) if m.group().strip()]
+    statements = []
+    for k, m in enumerate(found):
+        before = line[found[k - 1].end() if k else 0 : m.start()].strip()
+        after = line[m.end() : found[k + 1].start() if k + 1 < len(found) else len(line)]
+        statements.append((before, m.group().strip(), after.strip()))
+    return statements
 
 
 # Heredoc opener: <<DELIM, <<-DELIM, <<'DELIM', <<"DELIM"
@@ -89,289 +102,6 @@ def check_dangerous_patterns(command: str) -> str | None:
         if pattern.search(command):
             return f"Blocked: dangerous pattern ({pattern.pattern})"
     return None
-
-
-# ---------------------------------------------------------------------------
-# rm / recursive-delete detection — the "never without a human's approval"
-# guardrail. Deliberately separate from _DANGEROUS_PATTERNS: those BLOCK a
-# command outright (validate_command's callers reject it, full stop); this
-# one only marks a command for the stronger approval rule in
-# server/tool_approvals.py and server/approval/bootstrap.py (always ask a real
-# human, never satisfied by a session-wide "allow all commands", the
-# auto-mode classifier, bypassPermissions, or an unattended agent's
-# unconditional auto-approve). A command an agent or a blanket approval would
-# otherwise run silently must still stop for `rm`.
-# ---------------------------------------------------------------------------
-
-# The verb itself, plus the closest cousins that destroy data the same way.
-# Kept separate from find/xargs invocation below, which needs its own check.
-_DELETE_VERBS = frozenset({"rm", "rmdir", "unlink", "shred", "srm"})
-# Wrapper commands whose ARGUMENT list eventually names the command actually
-# run: strip them so `sudo rm`, `env FOO=bar rm`, `nice -19 rm`, `xargs rm`,
-# `nohup rm`, `time rm` are still caught. `env`'s own VAR=value arguments are
-# handled by re-running the var-assignment skip after each wrapper, since
-# `env` can take several before the real command. A wrapper option that takes
-# a value (`sudo -u root rm`, `timeout 10 rm`, `xargs -I {} rm {}`) would hide
-# the real command from that skip, so once a wrapper is seen every later word
-# is checked too (see _segment_delete_sites).
-_INVOKE_WRAPPERS = frozenset(
-    {
-        "sudo",
-        "env",
-        "command",
-        "nice",
-        "exec",
-        "doas",
-        "xargs",
-        "parallel",
-        "nohup",
-        "time",
-        "timeout",
-        "setsid",
-        "stdbuf",
-        "caffeinate",
-        "ionice",
-        "chrt",
-        "taskset",
-        "watch",
-    }
-)
-# Shell reserved words that start a statement whose command follows them
-# (`if rm x; then`, `then rm -rf dist; fi`): skipped like a wrapper, and
-# everything after them is checked.
-_SHELL_KEYWORDS = frozenset({"if", "then", "else", "elif", "do", "while", "until", "!", "{"})
-# Shells whose -c argument is a whole script of its own (`sh -c "rm -rf x"`,
-# `bash -lc '...'`): the script is checked like any other command line.
-_SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "mksh", "ash", "fish", "csh", "tcsh"})
-# Shell options that consume the next word (`bash -o pipefail -c ...`).
-_SHELL_LONG_OPTS_WITH_VALUE = frozenset({"--rcfile", "--init-file"})
-# Scripts nested deeper than this (`sh -c "bash -c '...'"`) are treated as
-# rm-like: fail toward asking.
-_MAX_SCRIPT_DEPTH = 4
-# find's own -delete action, and the common find ... -exec rm pattern, destroy
-# files without the literal token "rm" ever being find's own argv[0].
-_FIND_DELETE_RE = re.compile(r"\bfind\b.*?(-delete\b|-exec\s+rm\b)")
-
-
-def _shell_script(tokens: list[str], i: int) -> str | None:
-    """The script a shell at ``tokens[i]`` runs with -c, or None when it has
-    no -c (``bash build.sh`` runs a file this check cannot see)."""
-    has_c = False
-    j = i + 1
-    while j < len(tokens):
-        tok = tokens[j]
-        if tok == "--":
-            j += 1
-            break
-        if tok.startswith("--"):
-            j += 2 if tok in _SHELL_LONG_OPTS_WITH_VALUE else 1
-            continue
-        if len(tok) > 1 and tok[0] in "-+":
-            flags = tok[1:]
-            has_c = has_c or "c" in flags
-            # -o option / +O shopt_name: the option cluster ends in a letter
-            # that takes the next word as its value.
-            j += 2 if flags[-1] in "oO" else 1
-            continue
-        break
-    if has_c and j < len(tokens):
-        return tokens[j]
-    return None
-
-
-def shell_scripts(argv: list[str]) -> list[str]:
-    """The scripts an argv hands to a shell with -c, wherever the shell sits in
-    it (``["nohup", "bash", "-lc", "rm -rf dist"]``). For a command that is
-    exec'd without a shell, so its arguments were never one command line: the
-    rm check reads each script as a command line of its own."""
-    scripts = []
-    for i, tok in enumerate(argv):
-        if _base(tok) in _SHELLS:
-            script = _shell_script(argv, i)
-            if script is not None:
-                scripts.append(script)
-    return scripts
-
-
-def _base(token: str) -> str:
-    """A word's command name: its basename, past a subshell's opening paren."""
-    return token.lstrip("(").rsplit("/", 1)[-1]
-
-
-@dataclass(frozen=True)
-class DeleteSite:
-    """One deleting statement in a command: its verb and the operands it would
-    delete. ``operands`` is None when the command line alone cannot say what
-    gets deleted (paths fed by xargs or parallel, a segment that does not
-    tokenize, a script nested too deep); a caller deciding where the delete
-    reaches must treat that as anywhere."""
-
-    verb: str
-    operands: list[str] | None
-
-
-_UNKNOWN_SITE = DeleteSite("?", None)
-# Wrappers that feed the command its operands on stdin, so the operands are
-# not on the command line.
-_STDIN_FEEDERS = frozenset({"xargs", "parallel"})
-# find's own options that precede its starting points (BSD and GNU); -f and
-# -D take the next word.
-_FIND_LEADING_OPTS = re.compile(r"^-[HLPEXdsx]+$")
-_FIND_OPTS_WITH_VALUE = frozenset({"-f", "-D"})
-_FIND_EXEC_ACTIONS = frozenset({"-exec", "-execdir", "-ok", "-okdir"})
-
-
-def _delete_operands(tokens: list[str], j: int) -> list[str]:
-    """What the delete verb at ``tokens[j]`` deletes: every later word that is
-    not an option. ``--`` ends the options, as it does for rm."""
-    operands: list[str] = []
-    options_done = False
-    for tok in tokens[j + 1 :]:
-        if not options_done and tok == "--":
-            options_done = True
-            continue
-        if not options_done and len(tok) > 1 and tok.startswith("-"):
-            continue
-        operands.append(tok)
-    return operands
-
-
-def _find_site(tokens: list[str], j: int) -> DeleteSite | None:
-    """The delete a ``find`` at ``tokens[j]`` performs through ``-delete`` or
-    ``-exec rm``, with the starting points it walks as the operands (the
-    working directory when it names none), or None when it deletes nothing."""
-    rest = tokens[j + 1 :]
-    deletes = "-delete" in rest or any(
-        a in _FIND_EXEC_ACTIONS and _base(b) in _DELETE_VERBS
-        for a, b in zip(rest, rest[1:], strict=False)
-    )
-    if not deletes:
-        return None
-    paths: list[str] = []
-    k = 0
-    while k < len(rest):
-        tok = rest[k]
-        if tok in _FIND_OPTS_WITH_VALUE:
-            if tok == "-f" and k + 1 < len(rest):
-                paths.append(rest[k + 1])
-            k += 2
-            continue
-        if _FIND_LEADING_OPTS.match(tok):
-            k += 1
-            continue
-        if tok.startswith(("-", "(", "!", ",")):
-            break
-        paths.append(tok)
-        k += 1
-    return DeleteSite("find", paths or ["."])
-
-
-def _script_delete_sites(tokens: list[str], j: int, depth: int) -> list[DeleteSite]:
-    """The deletes inside the script a shell at ``tokens[j]`` runs with -c, or
-    the arguments an ``eval`` there runs."""
-    base = _base(tokens[j])
-    if base == "eval":
-        return _delete_sites(" ".join(tokens[j + 1 :]), depth + 1)
-    if base in _SHELLS:
-        script = _shell_script(tokens, j)
-        return _delete_sites(script, depth + 1) if script is not None else []
-    return []
-
-
-def _segment_delete_sites(segment: str, depth: int) -> list[DeleteSite]:
-    """The deletes one pipeline stage performs. Its leading command (past
-    environment-variable assignments such as ``FOO=bar rm`` and any
-    invocation wrapper) is a delete verb, a ``find`` that deletes, or a
-    shell/eval running a deleting script. Behind a wrapper (or a reserved
-    word such as ``then``) every later word is checked as well, since a
-    wrapper option's value can sit where the command's name would be.
-
-    A segment that cannot be tokenized (unbalanced quotes) is a delete whose
-    reach is unknown: a parse failure is exactly the kind of thing an
-    obfuscated command produces. A segment that runs nothing at all (a bare
-    ``x=1``, an option cluster, a reserved word on its own line) deletes
-    nothing: every shell script is full of those."""
-    try:
-        tokens = shlex.split(segment, posix=True)
-    except ValueError:
-        return [_UNKNOWN_SITE]
-
-    def _skip_assignments_and_flags(i: int) -> int:
-        while i < len(tokens) and (
-            re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[i]) or tokens[i].startswith("-")
-        ):
-            i += 1
-        return i
-
-    i = _skip_assignments_and_flags(0)
-    wrapped = False
-    while i < len(tokens) and (
-        _base(tokens[i]) in _INVOKE_WRAPPERS or tokens[i] in _SHELL_KEYWORDS
-    ):
-        wrapped = True
-        i = _skip_assignments_and_flags(i + 1)  # the wrapper's own flags/env args
-    if i >= len(tokens):
-        return []
-    last = len(tokens) if wrapped else i + 1
-    sites: list[DeleteSite] = []
-    for j in range(i, last):
-        base = _base(tokens[j])
-        if base in _DELETE_VERBS:
-            fed = any(_base(t) in _STDIN_FEEDERS for t in tokens[:j])
-            sites.append(DeleteSite(base, None if fed else _delete_operands(tokens, j)))
-            break
-        if base == "find":
-            site = _find_site(tokens, j)
-            if site is not None:
-                sites.append(site)
-                break
-        sites.extend(_script_delete_sites(tokens, j, depth))
-    return sites
-
-
-def _delete_sites(command: str, depth: int) -> list[DeleteSite]:
-    if depth > _MAX_SCRIPT_DEPTH:
-        return [_UNKNOWN_SITE]
-    command = strip_heredoc_bodies(command)
-    sites: list[DeleteSite] = []
-    # split_subcommands splits on every UNQUOTED ;, & and | (pipeline stages
-    # included), not on bare newlines: a multi-line script has no separator
-    # between lines at all, so without the line split a line merely following
-    # an rm-free first line would never be inspected on its own. A | inside
-    # quotes is data, never a pipe: splitting there again (a regex like
-    # 'a|b') left each piece with an unclosed quote, and a parse failure
-    # reads as a delete of unknown reach.
-    for line in command.split("\n"):
-        for segment in split_subcommands(line):
-            sites.extend(_segment_delete_sites(segment, depth))
-    # A find that deletes in a shape the token walk did not read (fail
-    # toward asking): the delete is real, its reach unknown.
-    if _FIND_DELETE_RE.search(command) and not any(s.verb == "find" for s in sites):
-        sites.append(_UNKNOWN_SITE)
-    return sites
-
-
-def delete_sites(command: str) -> list[DeleteSite]:
-    """Every statement in this shell command that deletes files, with what it
-    deletes: rm and its close cousins directly, `sudo`/`env`/`nohup`/`time`/
-    etc.-wrapped, piped, chained with ;/&&/||, on its own line with no
-    separator (a multi-line terminal_run/workflow script), inside a shell's
-    -c script (`sh -c "rm -rf build"`, `bash -lc '...'`) or an `eval`, or
-    find's own -delete / -exec rm. A parse failure on any segment (unbalanced
-    quotes, the kind of thing a disguised command produces) is a delete of
-    unknown reach: fail toward requiring approval, not away from it.
-
-    Heredoc bodies are stripped first: they are literal data (e.g. a file
-    being written), not commands, so text that merely CONTAINS the word "rm"
-    must not trip this.
-    """
-    return _delete_sites(command, 0)
-
-
-def is_rm_command(command: str) -> bool:
-    """True if any statement in this shell command deletes files (see
-    delete_sites)."""
-    return bool(delete_sites(command))
 
 
 # ---------------------------------------------------------------------------
