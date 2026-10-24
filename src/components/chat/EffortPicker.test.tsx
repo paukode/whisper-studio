@@ -63,3 +63,39 @@ describe('EffortPicker — popover header', () => {
     }
   });
 });
+
+describe('EffortPicker — Thinking on an on-device model', () => {
+  const LOCAL_LEVELS = ['none', 'low', 'medium', 'high', 'max'];
+
+  beforeEach(() => {
+    useSettingsStore.setState({
+      models: [
+        { key: 'opus', name: 'Opus', effort_levels: FULL_TIERS },
+        { key: 'local_gemma', name: 'Gemma 4', is_local: true, effort_levels: LOCAL_LEVELS },
+      ] as never,
+      selectedModel: 'local_gemma',
+      effortLevel: 'high',
+      localThinkingLevel: 'max',
+    });
+  });
+
+  it('is the Thinking chip, at the local level, not the cloud effort', () => {
+    render(<EffortPicker />);
+    const pill = screen.getByRole('button', { name: /Thinking level: Max/i });
+    expect(pill.textContent).toBe('Max');
+    expect(screen.getByText(/no cap; the default/)).toBeTruthy();
+  });
+
+  it('calls the off level Off', () => {
+    useSettingsStore.setState({ localThinkingLevel: 'none' });
+    render(<EffortPicker />);
+    expect(screen.getByRole('button', { name: /Thinking level: Off/i })).toBeTruthy();
+  });
+
+  it('writes the local level and leaves the cloud effort alone', () => {
+    useSettingsStore.getState().setLocalThinkingLevel('low');
+    const s = useSettingsStore.getState();
+    expect(s.localThinkingLevel).toBe('low');
+    expect(s.effortLevel).toBe('high');
+  });
+});

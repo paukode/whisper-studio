@@ -160,7 +160,6 @@ beforeEach(() => {
     id: 'local:unsloth-qwen3-0-6b-gguf-q4-k-m',
     label: 'Qwen3-0.6B-GGUF Q4_K_M (Local)',
     ctx: 32768,
-    supports_thinking: true,
     supports_tools: true,
     download: 'started',
   });
@@ -329,7 +328,6 @@ describe('ModelBrowser (Discover)', () => {
           quant: 'Q4_K_M',
           param_size: '30B',
           ctx: 32768,
-          supports_thinking: true,
           supports_tools: true,
           downloaded: false,
           size_bytes: 19_972_876_288,
@@ -389,7 +387,6 @@ describe('ModelBrowser (Discover)', () => {
       id: 'local:qwen-qwen2-5-coder-1-5b-instruct-gguf-q4-k-m',
       label: 'Qwen2.5-Coder-1.5B-Instruct-GGUF Q4_K_M (Local)',
       ctx: 32768,
-      supports_thinking: false,
       supports_tools: false,
       download: 'started',
     });
@@ -616,7 +613,6 @@ describe('ModelBrowser (Discover)', () => {
               quant: 'Q4_0',
               param_size: '12B',
               ctx: 32768,
-              supports_thinking: true,
               supports_tools: true,
               downloaded: false,
               downloading: true,

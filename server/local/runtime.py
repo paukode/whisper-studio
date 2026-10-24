@@ -358,9 +358,5 @@ def build_local_system_prompt(
     return append_rules("\n\n".join(parts))
 
 
-def supports_thinking(key: str) -> bool:
-    return bool(LOCAL_MODELS.get(key, {}).get("supports_thinking"))
-
-
 def supports_tools(key: str) -> bool:
     return bool(LOCAL_MODELS.get(key, {}).get("supports_tools"))

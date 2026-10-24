@@ -89,7 +89,7 @@ def _run_local_turn(
     messages=None,
     session_id="local-t",
     tools_enabled=False,
-    thinking=False,
+    thinking_level=None,
     **pipeline_kw,
 ):
     fake = _fake_rounds(*rounds)
@@ -99,7 +99,7 @@ def _run_local_turn(
         model_key="local_gemma",
         base_url="http://127.0.0.1:9999",
         system_prompt="sys",
-        thinking=thinking,
+        thinking_level=thinking_level,
         tools_enabled=tools_enabled,
     )
     ctx = TurnContext(
@@ -124,7 +124,7 @@ def _run_local_turn(
 
 def test_reasoning_becomes_thinking_events(monkeypatch):
     blob, _ = _run_local_turn(
-        monkeypatch, [([("thinking", "hmm"), ("text", "answer")], [])], thinking=True
+        monkeypatch, [([("thinking", "hmm"), ("text", "answer")], [])], thinking_level="max"
     )
     assert '"thinking_start": true' in blob
     assert '"thinking": "hmm"' in blob
@@ -206,7 +206,7 @@ def test_last_round_payload_forbids_tools(monkeypatch):
         model_key="k",
         base_url="http://x",
         system_prompt="",
-        thinking=False,
+        thinking_level=None,
         tools_enabled=True,
     )
     fake = _fake_rounds(([("text", "final")], []))
@@ -227,7 +227,11 @@ def test_last_round_payload_forbids_tools(monkeypatch):
 
 def test_adapter_coerces_loose_argument_types(monkeypatch):
     adapter = LocalAdapter(
-        model_key="k", base_url="http://x", system_prompt="", thinking=False, tools_enabled=True
+        model_key="k",
+        base_url="http://x",
+        system_prompt="",
+        thinking_level=None,
+        tools_enabled=True,
     )
     fake = _fake_rounds(([], [{"id": "c", "name": "t", "input": {"n": "5", "b": "true"}}]))
     monkeypatch.setattr(SS, "_stream_round", fake)
@@ -312,7 +316,7 @@ def test_context_overflow_raises_prompt_too_long_and_salvages(monkeypatch):
         model_key="local_gemma",
         base_url="http://x",
         system_prompt="s",
-        thinking=False,
+        thinking_level=None,
         tools_enabled=False,
     )
     ctx = TurnContext(
@@ -379,7 +383,11 @@ def test_transport_error_surfaces_and_ends(monkeypatch):
     monkeypatch.setattr(SS, "_stream_round", boom)
     _fake_tool_pipeline(monkeypatch)
     adapter = LocalAdapter(
-        model_key="k", base_url="http://x", system_prompt="", thinking=False, tools_enabled=False
+        model_key="k",
+        base_url="http://x",
+        system_prompt="",
+        thinking_level=None,
+        tools_enabled=False,
     )
     ctx = TurnContext(
         cost_source="chat",
@@ -405,7 +413,11 @@ def test_transport_error_surfaces_and_ends(monkeypatch):
 
 def test_conversion_flattens_blocks_and_keeps_tool_fidelity():
     adapter = LocalAdapter(
-        model_key="k", base_url="http://x", system_prompt="SYS", thinking=False, tools_enabled=True
+        model_key="k",
+        base_url="http://x",
+        system_prompt="SYS",
+        thinking_level=None,
+        tools_enabled=True,
     )
     msgs = adapter.to_openai_messages(
         [
@@ -445,7 +457,11 @@ def test_empty_completion_after_a_tool_result_keeps_the_tool_wording(monkeypatch
 
 def _adapter():
     return LocalAdapter(
-        model_key="k", base_url="http://x", system_prompt="SYS", thinking=False, tools_enabled=True
+        model_key="k",
+        base_url="http://x",
+        system_prompt="SYS",
+        thinking_level=None,
+        tools_enabled=True,
     )
 
 
@@ -544,7 +560,7 @@ def test_thinking_that_spends_the_whole_cap_names_the_limit(monkeypatch):
     after a tool result: no nudge retry, no continuation, and the note names
     the output limit."""
     blob, fake = _run_local_turn(
-        monkeypatch, [([("thinking", "a long chain")], [], {}, "length")], thinking=True
+        monkeypatch, [([("thinking", "a long chain")], [], {}, "length")], thinking_level="max"
     )
     assert len(fake.payloads) == 1
     assert "output limit" in blob

@@ -27,7 +27,6 @@ ENTRY = {
     "id": "local:gemma-test",
     "label": LABEL,
     "engine": "gguf",
-    "supports_thinking": True,
     "supports_tools": True,
     "ctx": 32768,
 }
@@ -41,6 +40,10 @@ def _run(coro):
 def _on_device(monkeypatch):
     """KEY is the resident llama-server model, with clean serving state."""
     monkeypatch.setattr(runtime, "LOCAL_MODELS", {KEY: ENTRY, "local_other": dict(ENTRY)})
+    # The model's chat template has a thinking mode (Gemma 4).
+    from server.local import thinking
+
+    monkeypatch.setattr(thinking, "caps_for", lambda key: thinking.Caps(True, False))
     monkeypatch.setattr(serving, "_busy_turns", 0)
     monkeypatch.setattr(serving, "_claims", [])
     monkeypatch.setattr(serving, "_stopping", 0)

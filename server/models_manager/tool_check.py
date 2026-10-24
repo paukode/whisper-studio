@@ -262,7 +262,7 @@ def run_check(key: str) -> dict:
     """Load ``key``, run the check, store and return the result. Blocking:
     a cold load and the first prompt take minutes on an 18 GB Mac."""
     from server.chat.engine.local import LocalAdapter
-    from server.local import runtime, serving
+    from server.local import runtime, serving, thinking
 
     _set_live(key, run=0, passed=0)
     was_resident = serving.resident_key() == key
@@ -278,7 +278,8 @@ def run_check(key: str) -> dict:
             model_key=key,
             base_url=base_url,
             system_prompt=runtime.build_local_system_prompt(tools=True, ws_path=_EXAMPLE_WORKSPACE),
-            thinking=runtime.supports_thinking(key),
+            # The first chat turn runs at the composer's default level.
+            thinking_level=thinking.DEFAULT_LEVEL if thinking.levels_for(key) else None,
             tools_enabled=True,
             wire_model=serving.wire_model(key),
             supports_tool_choice=serving.supports_tool_choice(key),

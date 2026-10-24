@@ -111,7 +111,6 @@ def _get_chat_model_meta(config: dict | None = None) -> dict:
                 "id": m.get("id") or f"local:{key}",
                 "label": m.get("label") or key,
                 "is_local": True,
-                "supports_thinking": bool(m.get("supports_thinking")),
                 "supports_tools": bool(m.get("supports_tools")),
             },
         )

@@ -6,7 +6,9 @@ vi.mock('@/api/client', () => ({ get: getMock, put: putMock }));
 const { loadStatusMock } = vi.hoisted(() => ({ loadStatusMock: vi.fn() }));
 vi.mock('@/services/voiceController', () => ({ voiceController: { loadStatus: loadStatusMock } }));
 
-import { chatModelBlockReason, pickActiveModel, useSettingsStore } from './settingsStore';
+import { activeEffortLevel, chatModelBlockReason, pickActiveModel, useSettingsStore } from './settingsStore';
+import { turnModelSettings } from '@/hooks/chatStream/turnSettings';
+import { clampEffort } from '@/utils/effort';
 import { useUIStore } from './uiStore';
 import type { ModelEntry } from './settingsStore';
 
@@ -245,5 +247,53 @@ describe('setModelMode and voice availability', () => {
     await flush();
     expect(loadStatusMock).not.toHaveBeenCalled();
     expect(useSettingsStore.getState().config.modelMode).toBe('cloud');
+  });
+});
+
+describe('thinking level of on-device models', () => {
+  const opus = { key: 'opus', name: 'Opus', effort_levels: ['low', 'medium', 'high', 'extra', 'max'] };
+  const gemma = { key: 'local_gemma', name: 'Gemma 4', is_local: true, effort_levels: ['none', 'low', 'medium', 'high', 'max'] };
+  const mlx = { key: 'local_mlx', name: 'Qwen MLX', is_local: true, effort_levels: ['none', 'max'] };
+
+  beforeEach(() => {
+    useSettingsStore.setState({
+      models: [opus, gemma, mlx] as never,
+      selectedModel: 'opus',
+      effortLevel: 'extra',
+      localThinkingLevel: 'max',
+    });
+  });
+
+  it('keeps the cloud effort and the local thinking level apart across switches', () => {
+    const store = useSettingsStore.getState();
+    store.setSelectedModel('local_gemma');
+    store.setLocalThinkingLevel('low');
+    store.setSelectedModel('opus');
+    const s = useSettingsStore.getState();
+    expect(s.effortLevel).toBe('extra'); // not clamped against the local ladder
+    expect(s.localThinkingLevel).toBe('low');
+  });
+
+  it('keeps thinking on when a local model offers only Off and Max', () => {
+    const store = useSettingsStore.getState();
+    store.setSelectedModel('local_gemma');
+    store.setLocalThinkingLevel('high');
+    store.setSelectedModel('local_mlx');
+    expect(useSettingsStore.getState().localThinkingLevel).toBe('max');
+    expect(clampEffort('none', ['none', 'max'])).toBe('none');
+    expect(clampEffort('none', ['low', 'medium', 'high', 'max'])).toBe('low'); // cloud rule kept
+  });
+
+  it('sends the level of the model the turn runs on', () => {
+    useSettingsStore.getState().setSelectedModel('local_gemma');
+    expect(turnModelSettings().effort_level).toBe('max');
+    expect(activeEffortLevel(useSettingsStore.getState())).toBe('max');
+    useSettingsStore.getState().setSelectedModel('opus');
+    expect(turnModelSettings().effort_level).toBe('extra');
+  });
+
+  it('remembers the local level across reloads', () => {
+    useSettingsStore.getState().setLocalThinkingLevel('medium');
+    expect(localStorage.getItem('whisper.localThinkingLevel')).toBe('medium');
   });
 });

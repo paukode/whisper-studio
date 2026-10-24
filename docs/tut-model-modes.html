@@ -169,6 +169,17 @@
       delete the model while the check runs. A model without the <code>supports_tools</code> flag
       gets no check.</p>
 
+    <h3 id="thinking">Thinking levels on a local model</h3>
+    <p>When you select a local model with a reasoning mode, the composer shows the "Thinking" chip
+      next to the model. The levels are "Off", "Low", "Medium", "High" and "Max". "Max" is the default
+      and has no token limit. "Low", "Medium" and "High" stop the reasoning at 1,024, 4,096 and
+      16,384 tokens. The answer gets its own tokens after the reasoning. The level stays the same when
+      you change to a cloud model and back, and the cloud effort level does not change.</p>
+    <p>The chat template of the model shows if the model has a reasoning mode. A template that reads
+      <code>reasoning_effort</code>, for example the template of gpt-oss, gets the level directly. For
+      other templates, llama-server stops the reasoning at the token limit of the level. mlx-lm cannot
+      limit the reasoning. Thus, an MLX model of this type shows only "Off" and "Max".</p>
+
     <h3 id="engines">The two on-device engines</h3>
     <p>On-device chat is served by one of two local engines, chosen automatically from the model you
       installed. You never pick an engine by hand; it is worth knowing only because the two behave

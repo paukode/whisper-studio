@@ -233,7 +233,7 @@ def test_the_on_device_request_never_forces(honors_tool_choice):
         model_key="k",
         base_url="http://x",
         system_prompt="s",
-        thinking=False,
+        thinking_level=None,
         tools_enabled=True,
         supports_tool_choice=honors_tool_choice,
     )

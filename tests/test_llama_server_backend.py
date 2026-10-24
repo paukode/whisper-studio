@@ -88,7 +88,6 @@ def test_registry_adds_a_config_only_model(monkeypatch):
                 "filename": "llama-4-8b-Q4_K_M.gguf",
                 "dir": "llama-4-8b",
                 "supports_tools": True,
-                "supports_thinking": True,
             }
         },
     )

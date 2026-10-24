@@ -1,7 +1,7 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useDismiss } from '@/hooks/useDismiss';
-import { effortLabel } from '@/utils/effort';
+import { effortLabel, thinkingLabel } from '@/utils/effort';
 import { StardustEffortSlider } from '@/components/chat/StardustEffortSlider';
 import { HelpTip } from '@/components/common/HelpTip';
 
@@ -19,6 +19,17 @@ const EFFORT_NOTES: Record<string, string> = {
   ultracode: 'Deep reasoning plus parallel subagents. Slowest overall; highest quality and cost, heavy token use.',
 };
 
+/** The same tip for an on-device model's thinking levels. Accurate to
+ *  server/local/thinking.py: llama-server caps the thinking at these token
+ *  counts, a model with its own levels (gpt-oss) gets the level itself. */
+const THINKING_NOTES: Record<string, string> = {
+  none: 'No thinking. The model answers at once; fastest.',
+  low: 'Short thinking, up to about 1K tokens. Fast; good for easy questions.',
+  medium: 'Moderate thinking, up to about 4K tokens. Balanced for everyday work.',
+  high: 'Long thinking, up to about 16K tokens. Slower; for hard problems.',
+  max: 'Thinks as long as the model needs, no cap; the default. Slowest.',
+};
+
 interface EffortPickerProps {
   /** Called when the slider opens so the parent can close its other toolbar
    *  dropdowns (single-open behaviour). */
@@ -31,20 +42,27 @@ interface EffortPickerProps {
  * `/effort` command, the command palette, and model-switch clamping all
  * read/write the same store value (`effortLevel`), so every surface stays in
  * sync. Models with no effort tier (Haiku) render a static "no effort" pill
- * and no slider.
+ * and no slider. On an on-device model the same chip is the Thinking control:
+ * it reads and writes `localThinkingLevel`, the model's own levels (Off to
+ * Max), so a cloud model's effort is never changed by a local choice.
  */
 export const EffortPicker: React.FC<EffortPickerProps> = ({ onOpen }) => {
-  const effortLevel = useSettingsStore((s) => s.effortLevel);
-  const setEffortLevel = useSettingsStore((s) => s.setEffortLevel);
+  const cloudLevel = useSettingsStore((s) => s.effortLevel);
+  const setCloudLevel = useSettingsStore((s) => s.setEffortLevel);
+  const localLevel = useSettingsStore((s) => s.localThinkingLevel);
+  const setLocalLevel = useSettingsStore((s) => s.setLocalThinkingLevel);
   const models = useSettingsStore((s) => s.models);
   const selectedModel = useSettingsStore((s) => s.selectedModel);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
-  const levels = useMemo(
-    () => models.find((m) => m.key === selectedModel)?.effort_levels ?? [],
-    [models, selectedModel],
-  );
+  const model = useMemo(() => models.find((m) => m.key === selectedModel), [models, selectedModel]);
+  const levels = model?.effort_levels ?? [];
+  const local = !!model?.is_local;
+  const effortLevel = local ? localLevel : cloudLevel;
+  const setEffortLevel = local ? setLocalLevel : setCloudLevel;
+  const labelOf = local ? thinkingLabel : effortLabel;
+  const kind = local ? 'Thinking' : 'Effort';
 
   // Close on Escape or a click anywhere outside the wrap (incl. other toolbar
   // buttons, which live outside it).
@@ -58,7 +76,7 @@ export const EffortPicker: React.FC<EffortPickerProps> = ({ onOpen }) => {
     );
   }
 
-  const note = EFFORT_NOTES[effortLevel] ?? 'Adaptive reasoning depth.';
+  const note = (local ? THINKING_NOTES : EFFORT_NOTES)[effortLevel] ?? 'Adaptive reasoning depth.';
 
   return (
     <div className="toolbar-dropdown-wrap" ref={ref}>
@@ -66,8 +84,8 @@ export const EffortPicker: React.FC<EffortPickerProps> = ({ onOpen }) => {
         type="button"
         className={`effort-chip effort-${effortLevel}`}
         id="effortBadge"
-        title={`Effort: ${effortLabel(effortLevel)}, click to adjust`}
-        aria-label={`Effort level: ${effortLabel(effortLevel)}. Click to adjust.`}
+        title={`${kind}: ${labelOf(effortLevel)}, click to adjust`}
+        aria-label={`${kind} level: ${labelOf(effortLevel)}. Click to adjust.`}
         aria-expanded={open}
         onClick={() => {
           setOpen((p) => {
@@ -76,18 +94,24 @@ export const EffortPicker: React.FC<EffortPickerProps> = ({ onOpen }) => {
           });
         }}
       >
-        <span className="effort-chip-name">{effortLabel(effortLevel)}</span>
+        <span className="effort-chip-name">{labelOf(effortLevel)}</span>
       </button>
       <div className="toolbar-dropdown effort-pop" style={{ display: open ? 'block' : 'none' }}>
         <div className="effort-pop-row">
-          <span className="effort-pop-label">Effort</span>
+          <span className="effort-pop-label">{kind}</span>
           <span className={`effort-val effort-${effortLevel}`} data-testid="effort-current">
-            {effortLabel(effortLevel)}
+            {labelOf(effortLevel)}
             <HelpTip text={note} />
           </span>
         </div>
         {open && (
-          <StardustEffortSlider levels={levels} value={effortLevel} onChange={setEffortLevel} />
+          <StardustEffortSlider
+            levels={levels}
+            value={effortLevel}
+            onChange={setEffortLevel}
+            labelFor={labelOf}
+            ariaLabel={`${kind} level`}
+          />
         )}
       </div>
     </div>

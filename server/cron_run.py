@@ -206,8 +206,8 @@ async def _execute_cron_prompt(job_id: str) -> None:
 
         if is_local_model_id(model_id):
             # On-device models need their own cold-start (llama_server.
-            # ensure_serving) and capability probing (supports_tools/
-            # supports_thinking) — a materially separate piece of work this
+            # ensure_serving) and capability probing (supports_tools, the
+            # thinking levels) — a materially separate piece of work this
             # migration doesn't do. Matches run_headless_turn's identical
             # refusal (server/exec/headless.py) for the identical reason.
             # _validate_job_model already keeps an explicit override from

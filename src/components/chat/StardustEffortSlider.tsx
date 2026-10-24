@@ -17,9 +17,18 @@ interface Props {
   levels: string[];
   value: string;
   onChange: (level: string) => void;
+  /** Display name of a level; the effort labels by default. */
+  labelFor?: (level: string) => string;
+  ariaLabel?: string;
 }
 
-export const StardustEffortSlider: React.FC<Props> = ({ levels, value, onChange }) => {
+export const StardustEffortSlider: React.FC<Props> = ({
+  levels,
+  value,
+  onChange,
+  labelFor = effortLabel,
+  ariaLabel = 'Effort level',
+}) => {
   const { resolvedTheme } = useTheme();
 
   const readColors = useCallback((): RGB[] => {
@@ -42,8 +51,8 @@ export const StardustEffortSlider: React.FC<Props> = ({ levels, value, onChange 
       onChange={(i) => onChange(levels[i])}
       readColors={readColors}
       colorKey={`${resolvedTheme}:${levels.join(',')}`}
-      ariaLabel="Effort level"
-      valueText={(i) => effortLabel(levels[i] ?? value)}
+      ariaLabel={ariaLabel}
+      valueText={(i) => labelFor(levels[i] ?? value)}
       boostIndex={levels.indexOf('ultracode')}
     />
   );

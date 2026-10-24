@@ -32,15 +32,20 @@ def _clean_serving(monkeypatch):
     yield
 
 
-def _resident(monkeypatch, key="model_a", *, engine="gguf", thinking=True):
-    """``key`` is resident on ``engine``; the other engine is idle."""
+def _resident(monkeypatch, key="model_a", *, engine="gguf", thinks=True):
+    """``key`` is resident on ``engine``; the other engine is idle. ``thinks``
+    stands in for what the models' chat templates say."""
+    from server.local import thinking
+
     monkeypatch.setattr(
         runtime,
         "LOCAL_MODELS",
-        {
-            "model_a": {"engine": engine, "supports_thinking": thinking},
-            "model_b": {"engine": engine, "supports_thinking": thinking},
-        },
+        {"model_a": {"engine": engine}, "model_b": {"engine": engine}},
+    )
+    monkeypatch.setattr(
+        thinking,
+        "caps_for",
+        lambda k: thinking.Caps(True, False) if thinks else thinking.NO_THINKING,
     )
     target, other = (mlx_server, llama_server) if engine == "mlx" else (llama_server, mlx_server)
     monkeypatch.setattr(target, "resident_key", lambda: key)
@@ -192,20 +197,22 @@ def test_cancelling_the_call_releases_its_mark(monkeypatch):
 
 
 def test_llama_server_body_is_constrained_and_tool_free(monkeypatch):
-    _resident(monkeypatch, engine="gguf", thinking=True)
+    _resident(monkeypatch, engine="gguf", thinks=True)
     seen = _server(monkeypatch, lambda body: _answer("ok"))
     _call(json_schema=SCHEMA)
     body = seen[0]
     assert body["model"] == "model_a"
     assert body["response_format"]["type"] == "json_schema"
     assert body["response_format"]["json_schema"]["schema"] == SCHEMA
+    # A one-shot never thinks: off for every template on llama-server.
     assert body["chat_template_kwargs"] == {"enable_thinking": False}
+    assert body["reasoning_effort"] == "none"
     assert body["temperature"] == 0 and body["stream"] is False
     assert "tools" not in body
 
 
 def test_mlx_body_has_no_response_format(monkeypatch):
-    _resident(monkeypatch, engine="mlx", thinking=False)
+    _resident(monkeypatch, engine="mlx", thinks=False)
     seen = _server(monkeypatch, lambda body: _answer("ok"))
     _call(json_schema=SCHEMA)
     body = seen[0]

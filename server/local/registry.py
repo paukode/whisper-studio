@@ -8,7 +8,6 @@ loadable and selectable with no code change::
       "id": "local:llama-4-8b",          # must start with "local:" (see runtime)
       "label": "Llama 4 8B (Local)",
       "is_local": true,
-      "supports_thinking": true,
       "supports_tools": true,
       "repo_id": "unsloth/Llama-4-8B-Instruct-GGUF",
       "filename": "Llama-4-8B-Instruct-Q4_K_M.gguf",
@@ -24,7 +23,6 @@ a whole-repo snapshot, so there is no ``filename``::
       "label": "Qwen3 4B (Local MLX)",
       "is_local": true,
       "engine": "mlx",
-      "supports_thinking": true,
       "supports_tools": true,
       "repo_id": "mlx-community/Qwen3-4B-4bit",
       "dir": "mlx-community__Qwen3-4B-4bit",
@@ -81,7 +79,6 @@ RECOMMENDED_LOCAL_MODELS: dict[str, dict] = {
         "filename": "gemma-4-12b-it-qat-q4_0.gguf",
         "dir": "gemma-4-12b-it-qat-q4_0",
         "ctx": 32768,
-        "supports_thinking": True,
         "supports_tools": True,
         # Exact GGUF size from the HF repo listing — lets Discover warn before
         # download on a machine too small for this quant, same as a searched one.
@@ -94,7 +91,6 @@ RECOMMENDED_LOCAL_MODELS: dict[str, dict] = {
         "filename": "gemma4-coding-Q4_K_M.gguf",
         "dir": "gemma-4-12b-coder",
         "ctx": 32768,
-        "supports_thinking": True,
         "supports_tools": True,
         "size_bytes": 7381381664,
     },
@@ -105,7 +101,6 @@ RECOMMENDED_LOCAL_MODELS: dict[str, dict] = {
         "filename": "Qwen3.5-9B-Q4_K_M.gguf",
         "dir": "qwen3.5-9b",
         "ctx": 32768,
-        "supports_thinking": True,
         "supports_tools": True,
         "size_bytes": 5680522464,
     },
@@ -116,7 +111,6 @@ RECOMMENDED_LOCAL_MODELS: dict[str, dict] = {
         "filename": "Ministral-3-14B-Reasoning-2512-UD-Q4_K_XL.gguf",
         "dir": "ministral3-14",
         "ctx": 32768,
-        "supports_thinking": True,
         "supports_tools": True,
         "size_bytes": 8366206144,
     },
@@ -155,7 +149,6 @@ def _config_local_models() -> dict[str, dict]:
         entry = {
             "id": ids.get(key) or f"local:{key}",
             "label": m.get("label") or key,
-            "supports_thinking": bool(m.get("supports_thinking", False)),
             "supports_tools": bool(m.get("supports_tools", False)),
         }
         # Only carry weight fields the config actually set, so a built-in of the

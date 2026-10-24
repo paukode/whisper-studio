@@ -184,7 +184,6 @@ the weights:
   "id": "local:llama-4-8b",
   "label": "Llama 4 8B (Local)",
   "is_local": true,
-  "supports_thinking": true,
   "supports_tools": true,
   "repo_id": "some-org/Llama-4-8B-Instruct-GGUF",
   "filename": "Llama-4-8B-Instruct-Q4_K_M.gguf",
@@ -195,7 +194,9 @@ the weights:
 
 `repo_id`, `filename` and `dir` are required for a GGUF entry (an MLX entry
 takes `"engine": "mlx"` and needs no `filename`); an entry missing them is
-skipped with a warning. `ctx` defaults to 32768, which is what the full tool
+skipped with a warning. A reasoning key is not necessary. The composer shows
+the "Thinking" chip for each local model that has a reasoning mode in its chat
+template. `ctx` defaults to 32768, which is what the full tool
 pool needs. The model appears in the picker right away, and its weights
 download the first time you select it, with no `setup.sh` run needed. Most
 people never edit config for this: **Settings > Models > Discover** installs a

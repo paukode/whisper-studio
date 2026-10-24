@@ -307,7 +307,6 @@ def install_model(
         repo_id=repo_id,
         filename=filename,
         quant=quant,
-        arch=meta.arch,
         label=label,
         n_ctx=n_ctx,
         header_ctx=meta.context_length,
@@ -337,7 +336,6 @@ def _install_mlx_model(repo_id: str, label: str | None = None, n_ctx: int | None
 
     key, entry = install.build_mlx_entry(
         repo_id=repo_id,
-        arch=model_type,
         label=label,
         n_ctx=n_ctx,
         # The real trained window from the repo's config.json, so the context
@@ -395,7 +393,6 @@ def _finalize_install(key: str, entry: dict) -> dict:
         "id": entry["id"],
         "label": entry["label"],
         "ctx": entry["ctx"],
-        "supports_thinking": entry["supports_thinking"],
         "supports_tools": entry["supports_tools"],
         "download": start,
         "adopted_index_llm": adopted_index_llm,
@@ -442,7 +439,6 @@ def recommended() -> list[dict]:
                 "quant": compat.parse_quant(meta["filename"]) or "GGUF",
                 "param_size": compat.param_size_label(repo),
                 "ctx": meta.get("ctx"),
-                "supports_thinking": bool(meta.get("supports_thinking")),
                 "supports_tools": bool(meta.get("supports_tools")),
                 "downloaded": bool(meta.get("downloaded")),
                 "downloading": key in downloading_keys,

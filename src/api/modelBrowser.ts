@@ -102,7 +102,6 @@ export interface InstallResult {
   id: string;
   label: string;
   ctx: number;
-  supports_thinking: boolean;
   supports_tools: boolean;
   /** models-manager start result: "started" | "queued" | "already_installed" | … */
   download: string;
@@ -123,7 +122,6 @@ export interface RecommendedModel {
   quant: string;
   param_size: string | null;
   ctx: number | null;
-  supports_thinking: boolean;
   supports_tools: boolean;
   /** Already present on disk (from a prior install or release). */
   downloaded: boolean;

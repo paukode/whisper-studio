@@ -30,7 +30,7 @@ Two differences from ``_run_agent_loop``, both deliberate:
     local candidates from its own fallback chain. Full local support
     additionally needs the llama-server cold-start dance (see
     server/local/route.py) and capability probing
-    (supports_tools/supports_thinking) that is a materially separate piece of
+    (supports_tools, the thinking levels) that is a materially separate piece of
     work, out of this primitive's scope.
 
 Event vocabulary

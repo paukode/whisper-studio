@@ -10,7 +10,7 @@
  * effort, a Brief/Detailed choice reverted to the model default, and a paused
  * local turn resumed on the default cloud model.
  */
-import { useSettingsStore } from '@/stores/settingsStore';
+import { activeEffortLevel, useSettingsStore } from '@/stores/settingsStore';
 import type { ChatMessage, TurnModelSettings } from '@/types/chat';
 
 export function turnModelSettings(): TurnModelSettings {
@@ -23,7 +23,9 @@ export function turnModelSettings(): TurnModelSettings {
   const supportsVerbosity = !!s.models?.find((m) => m.key === s.selectedModel)?.supports_verbosity;
   return {
     model: s.selectedModel,
-    effort_level: s.effortLevel,
+    // An on-device model thinks at its own level (none … max), kept apart from
+    // the cloud effort level.
+    effort_level: activeEffortLevel(s),
     verbosity: s.verbosity,
     brief_mode: supportsVerbosity ? false : s.verbosity === 'low',
   };

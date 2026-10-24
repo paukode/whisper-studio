@@ -81,7 +81,6 @@ def build_entry(
     repo_id: str,
     filename: str,
     quant: str,
-    arch: str | None,
     label: str | None,
     n_ctx: int | None,
     header_ctx: int | None,
@@ -92,16 +91,16 @@ def build_entry(
       * ``supports_tools`` True only at or above ``AGENTIC_MIN_PARAMS_B`` (or when
         the name carries no size) — the tool loop rides on llama-server
         ``--jinja``, which these instruct families support, but a model too small
-        to drive it emits raw JSON into the chat instead of a parsed call;
-      * ``supports_thinking`` True only for reasoning families (qwen3, QwQ,
-        DeepSeek-R1), else False.
+        to drive it emits raw JSON into the chat instead of a parsed call.
+
+    Thinking needs no flag: the composer offers it for every model whose chat
+    template has a thinking mode (server/local/thinking.py), on at max.
     """
     key = registry_key(repo_id, quant)
     entry = {
         "id": _model_id(repo_id, quant),
         "label": label or f"{repo_id.split('/')[-1]} {quant} (Local)",
         "is_local": True,
-        "supports_thinking": compat.is_thinking_model(arch, repo_id, filename),
         "supports_tools": compat.is_agentic_capable(repo_id, filename),
         "repo_id": repo_id,
         "filename": filename,
@@ -113,7 +112,6 @@ def build_entry(
 
 def build_mlx_entry(
     repo_id: str,
-    arch: str | None,
     label: str | None,
     n_ctx: int | None,
     header_ctx: int | None = None,
@@ -139,7 +137,6 @@ def build_mlx_entry(
         "label": label or f"{repo_id.split('/')[-1]} (Local MLX)",
         "is_local": True,
         "engine": "mlx",
-        "supports_thinking": compat.is_thinking_model(arch, repo_id),
         "supports_tools": compat.is_agentic_capable(repo_id),
         "repo_id": repo_id,
         "dir": f"{_dir_name(repo_id)}__mlx",
@@ -200,7 +197,6 @@ def build_recommended_entry(key: str) -> tuple[str, dict]:
         "id": rec["id"],
         "label": rec.get("label") or key,
         "is_local": True,
-        "supports_thinking": bool(rec.get("supports_thinking", False)),
         "supports_tools": bool(rec.get("supports_tools", True)),
         "repo_id": rec["repo_id"],
         "filename": rec["filename"],

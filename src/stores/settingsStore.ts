@@ -85,6 +85,57 @@ async function loadMemoryFlag(): Promise<void> {
   }
 }
 
+/** The thinking level for on-device models, kept apart from the cloud effort
+ *  level so switching between a cloud and a local model changes neither.
+ *  Max (no thinking cap) is the default; persisted like the context window. */
+const LOCAL_THINKING_KEY = 'whisper.localThinkingLevel';
+export const LOCAL_THINKING_LEVELS = ['none', 'low', 'medium', 'high', 'max'];
+export const LOCAL_THINKING_DEFAULT = 'max';
+
+function readLocalThinkingLevel(): string {
+  try {
+    const v = localStorage.getItem(LOCAL_THINKING_KEY);
+    return v && LOCAL_THINKING_LEVELS.includes(v) ? v : LOCAL_THINKING_DEFAULT;
+  } catch {
+    return LOCAL_THINKING_DEFAULT;
+  }
+}
+
+function persistLocalThinkingLevel(v: string): void {
+  try {
+    localStorage.setItem(LOCAL_THINKING_KEY, v);
+  } catch {
+    /* private mode / quota — keep the in-memory value anyway */
+  }
+}
+
+/** The level a model choice reconciles: the local thinking level for an
+ *  on-device model, the cloud effort level for the rest. Models with no
+ *  levels leave both untouched so they restore when switching back. */
+function reconcileLevels(
+  model: ModelEntry | undefined,
+  effortLevel: string,
+  localThinkingLevel: string,
+): { effortLevel?: string; localThinkingLevel?: string } {
+  const allowed = model?.effort_levels ?? [];
+  if (allowed.length === 0) return {};
+  if (model?.is_local) return { localThinkingLevel: clampEffort(localThinkingLevel, allowed) };
+  return { effortLevel: clampEffort(effortLevel, allowed) };
+}
+
+/** The level a run on the selected model uses: the local thinking level for
+ *  an on-device model, the cloud effort level otherwise. Every surface that
+ *  sends a level (a turn, /subagent, a workflow launch) reads it here. */
+export function activeEffortLevel(s: {
+  models: ModelEntry[];
+  selectedModel: string;
+  effortLevel: string;
+  localThinkingLevel: string;
+}): string {
+  const model = s.models.find((m) => m.key === s.selectedModel);
+  return model?.is_local ? s.localThinkingLevel : s.effortLevel;
+}
+
 const VERBOSITY_KEY = 'whisper.verbosity';
 
 function readVerbosity(): string | null {
@@ -146,6 +197,8 @@ export interface SettingsState {
 
   /* Effort & brief */
   effortLevel: string;
+  /** Thinking level for on-device models (none | low | medium | high | max). */
+  localThinkingLevel: string;
   /** GPT-5.x verbosity (text.verbosity); only used by openai_bedrock models. */
   verbosity: string;
   planMode: boolean;
@@ -167,6 +220,7 @@ export interface SettingsState {
   setSelectedModel: (model: string) => void;
   setLoadedLocalModel: (model: string | null) => void;
   setEffortLevel: (level: string) => void;
+  setLocalThinkingLevel: (level: string) => void;
   setVerbosity: (v: string) => void;
   setPlanMode: (on: boolean) => void;
   setAutoMemory: (on: boolean) => void;
@@ -247,6 +301,7 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
   dataRetentionEnabled: false,
   skills: [],
   effortLevel: DEFAULT_EFFORT,
+  localThinkingLevel: readLocalThinkingLevel(),
   verbosity: readVerbosity() ?? 'medium',
   planMode: false,
   // Global memory defaults ON (matches config.example.json feature_flags.auto_memory).
@@ -333,13 +388,16 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
           isRefresh && models.some((m) => m.key === state.selectedModel)
             ? state.selectedModel
             : pickActiveModel(models, def, readSelectedModel());
-        const allowed = models.find((m) => m.key === chosen)?.effort_levels ?? [];
         return {
           models,
           needsLocalModel,
           selectedModel: chosen,
-          // Reconcile effort to whatever the chosen model supports.
-          ...(allowed.length ? { effortLevel: clampEffort(state.effortLevel, allowed) } : {}),
+          // Reconcile the level to whatever the chosen model supports.
+          ...reconcileLevels(
+            models.find((m) => m.key === chosen),
+            state.effortLevel,
+            state.localThinkingLevel,
+          ),
         };
       });
     } catch (err) {
@@ -391,16 +449,20 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
   },
 
   setSelectedModel: (model) => {
-    // Reconcile the effort level to what the new model supports: keep it if
-    // valid, otherwise clamp to the nearest lower level (Ultracode → Max,
-    // Extra → High on a standard-tier model). Effort-less models (Haiku) leave
-    // the stored level untouched so it restores when switching back.
-    const { models, effortLevel } = _get();
-    const allowed = models.find((m) => m.key === model)?.effort_levels ?? [];
+    // Reconcile the level to what the new model supports: keep it if valid,
+    // otherwise clamp to the nearest lower level (Ultracode → Max, Extra → High
+    // on a standard-tier model). An on-device model reconciles its own thinking
+    // level, never the cloud effort. Effort-less models (Haiku) leave the stored
+    // levels untouched so they restore when switching back.
+    const { models, effortLevel, localThinkingLevel } = _get();
     persistSelectedModel(model); // survive page refresh / hard refresh
     set({
       selectedModel: model,
-      ...(allowed.length ? { effortLevel: clampEffort(effortLevel, allowed) } : {}),
+      ...reconcileLevels(
+        models.find((m) => m.key === model),
+        effortLevel,
+        localThinkingLevel,
+      ),
     });
   },
 
@@ -410,6 +472,11 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
 
   setEffortLevel: (level) => {
     set({ effortLevel: level });
+  },
+
+  setLocalThinkingLevel: (level) => {
+    persistLocalThinkingLevel(level);
+    set({ localThinkingLevel: level });
   },
 
   setVerbosity: (v) => {
