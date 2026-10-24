@@ -24,8 +24,20 @@ log = logging.getLogger("whisper-studio")
 # What the search asks the Hub to hydrate on each hit — enough for the result
 # card and the arch gate without a follow-up call. The MLX variant swaps the
 # GGUF header for the transformers config (model_type lives there).
-_SEARCH_EXPAND = ["downloads", "likes", "trendingScore", "gguf", "lastModified"]
-_SEARCH_EXPAND_MLX = ["downloads", "likes", "trendingScore", "config", "lastModified"]
+_SEARCH_EXPAND = ["downloads", "likes", "trendingScore", "gguf", "pipeline_tag", "baseModels"]
+_SEARCH_EXPAND_MLX = ["downloads", "likes", "trendingScore", "config", "pipeline_tag", "baseModels"]
+# The official lane reads the model makers' own repos, which are usually
+# original weights in neither format: tags and library only tell a GGUF or MLX
+# build apart from a base model.
+_OFFICIAL_EXPAND = [
+    "downloads",
+    "likes",
+    "trendingScore",
+    "pipeline_tag",
+    "gated",
+    "tags",
+    "library_name",
+]
 
 # Bytes fetched per ranged request when reading a GGUF header. The model keys
 # end within the first few KB, before the tokenizer vocabulary.
@@ -41,6 +53,12 @@ class SearchHit:
     arch: str | None
     context_length: int | None
     gated: bool
+    pipeline_tag: str | None = None
+    # The repo this one is a quantized build of (Hugging Face's base_model
+    # relation), when the repo declares one.
+    base_model: str | None = None
+    # True when the repo holds GGUF or MLX weights (set by official_models).
+    is_build: bool = False
 
 
 @dataclass
@@ -68,37 +86,17 @@ def _api():
     return HfApi()
 
 
-def search(
-    query: str | None,
-    author: str | None,
-    limit: int,
-    fmt: str = "gguf",
-) -> list[SearchHit]:
-    """One ``list_models`` call, text-generation repos of one weight format.
+def _quantized_base(m) -> str | None:
+    """The base model id when the repo declares itself a quantized build."""
+    base = getattr(m, "base_models", None)
+    if isinstance(base, dict) and base.get("relation") == "quantized":
+        models = base.get("models") or []
+        if models and isinstance(models[0], dict):
+            return models[0].get("id")
+    return None
 
-    ``fmt`` picks the lane: "gguf" filters on the GGUF tag and reads arch/ctx
-    from the GGUF header; "mlx" filters on the MLX library tag and reads the
-    arch (``model_type``) from the transformers config. The Hub is asked to
-    sort by trending only so the ``limit`` window keeps the most notable
-    matches — final ordering is the service layer's relevance ranking. Any
-    failure (offline, bad author) returns an empty list — the caller merges
-    across authors and a single failing author must not sink the whole search.
-    """
-    mlx = fmt == "mlx"
-    try:
-        models = _api().list_models(
-            filter="mlx" if mlx else "gguf",
-            pipeline_tag="text-generation",
-            search=query or None,
-            author=author or None,
-            sort="trendingScore",
-            limit=limit,
-            expand=_SEARCH_EXPAND_MLX if mlx else _SEARCH_EXPAND,
-        )
-    except Exception as e:
-        log.debug("HF model search failed (author=%s, q=%r): %s", author, query, e)
-        return []
 
+def _hits(models, mlx: bool) -> list[SearchHit]:
     hits: list[SearchHit] = []
     for m in models:
         if mlx:
@@ -118,9 +116,93 @@ def search(
                 arch=arch,
                 context_length=context_length,
                 gated=bool(getattr(m, "gated", False)),
+                pipeline_tag=getattr(m, "pipeline_tag", None),
+                base_model=_quantized_base(m),
             )
         )
     return hits
+
+
+def search(
+    query: str | None,
+    author: str | None,
+    limit: int,
+    fmt: str = "gguf",
+) -> list[SearchHit]:
+    """One ``list_models`` call for repos of one weight format.
+
+    ``fmt`` picks the lane: "gguf" filters on the GGUF tag and reads arch/ctx
+    from the GGUF header; "mlx" filters on the MLX library tag and reads the
+    arch (``model_type``) from the transformers config. No pipeline filter: new
+    chat repos are often tagged "image-text-to-text" or not at all, so the
+    caller decides from the tag and the architecture. The Hub sorts by
+    trending only so the ``limit`` window keeps the most notable matches; the
+    final order is the caller's. Any failure (offline, bad author) returns an
+    empty list, so one failing shard cannot sink the whole search.
+    """
+    mlx = fmt == "mlx"
+    try:
+        models = _api().list_models(
+            filter="mlx" if mlx else "gguf",
+            search=query or None,
+            author=author or None,
+            sort="trendingScore",
+            limit=limit,
+            expand=_SEARCH_EXPAND_MLX if mlx else _SEARCH_EXPAND,
+        )
+        return _hits(models, mlx)
+    except Exception as e:
+        log.debug("HF model search failed (author=%s, q=%r): %s", author, query, e)
+        return []
+
+
+def official_models(query: str | None, limit: int) -> list[SearchHit]:
+    """Repos of any format that match ``query``, most downloaded first (most
+    trending with no query), for the caller to keep the official ones. One
+    unscoped call: the Hub takes one author per call, and the model makers'
+    own repos lead the downloads for their model names."""
+    try:
+        models = _api().list_models(
+            search=query or None,
+            sort="downloads" if query else "trendingScore",
+            limit=limit,
+            expand=_OFFICIAL_EXPAND,
+        )
+        return [
+            SearchHit(
+                repo_id=m.id,
+                downloads=getattr(m, "downloads", None),
+                likes=getattr(m, "likes", None),
+                trending_score=getattr(m, "trending_score", None),
+                arch=None,
+                context_length=None,
+                gated=bool(getattr(m, "gated", False)),
+                pipeline_tag=getattr(m, "pipeline_tag", None),
+                is_build="gguf" in (getattr(m, "tags", None) or [])
+                or getattr(m, "library_name", None) == "mlx",
+            )
+            for m in models
+        ]
+    except Exception as e:
+        log.debug("HF official model search failed (q=%r): %s", query, e)
+        return []
+
+
+def conversions(base_model: str, fmt: str, limit: int) -> list[SearchHit]:
+    """The GGUF or MLX repos that declare themselves quantized builds of
+    ``base_model``, most downloaded first."""
+    mlx = fmt == "mlx"
+    try:
+        models = _api().list_models(
+            filter=["mlx" if mlx else "gguf", f"base_model:quantized:{base_model}"],
+            sort="downloads",
+            limit=limit,
+            expand=_SEARCH_EXPAND_MLX if mlx else _SEARCH_EXPAND,
+        )
+        return _hits(models, mlx)
+    except Exception as e:
+        log.debug("HF conversion lookup failed (%s, %s): %s", base_model, fmt, e)
+        return []
 
 
 def repo_gguf_meta(repo_id: str) -> RepoGguf:

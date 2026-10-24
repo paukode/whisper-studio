@@ -12,7 +12,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Request
 
-from server.model_browser import service
+from server.model_browser import search, service
 
 log = logging.getLogger("whisper-studio")
 
@@ -35,7 +35,7 @@ async def browse_search(
     import asyncio
 
     results = await asyncio.to_thread(
-        service.search,
+        search.search,
         q,
         author,
         _truthy(all),
