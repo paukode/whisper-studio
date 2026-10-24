@@ -24,11 +24,10 @@ PYTHON_TARBALL="cpython-${PYTHON_VERSION}+${PYTHON_RELEASE_TAG}-aarch64-apple-da
 PYTHON_URL="https://github.com/astral-sh/python-build-standalone/releases/download/${PYTHON_RELEASE_TAG}/${PYTHON_TARBALL}"
 PYTHON_SHA256="aa2a054f5e04bde63ae199e3bb6bbb634e457423efd294842deeb1299e7e5932"
 
-# llama.cpp official release binaries (>= b10090 required by the backend).
-# Bumped to b10289 for the model browser: newer builds add model-architecture
-# support, so more downloadable models load. Verified b10289 accepts every flag
-# the backend passes and loads+generates on Apple Silicon.
-LLAMA_TAG="b10289"
+# llama.cpp official release binaries: the build in server/local/llama_pin.env
+# (LLAMA_TAG, LLAMA_SHA256), which setup.sh installs for a source checkout too.
+# shellcheck source=../server/local/llama_pin.env
+. "$(dirname "${BASH_SOURCE[0]}")/../server/local/llama_pin.env"
 LLAMA_ASSET="llama-${LLAMA_TAG}-bin-macos-arm64.tar.gz"
 LLAMA_URL="https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_TAG}/${LLAMA_ASSET}"
 
@@ -278,8 +277,10 @@ done
 log "[c] llama-server ($LLAMA_TAG)"
 LLAMA_DIR="$BUILD_DIR/llama"
 LLAMA_BIN_DIR="$LLAMA_DIR/bin"
-download "$LLAMA_URL" "$DL_DIR/$LLAMA_ASSET"
-if [[ -x "$LLAMA_BIN_DIR/llama-server" ]]; then
+download "$LLAMA_URL" "$DL_DIR/$LLAMA_ASSET" "$LLAMA_SHA256"
+# The stamp names the build in bin/, so a new pin re-extracts instead of
+# reusing the previous build's binary.
+if [[ -x "$LLAMA_BIN_DIR/llama-server" && "$(cat "$LLAMA_DIR/.tag" 2>/dev/null)" == "$LLAMA_TAG" ]]; then
     substep "already extracted: $LLAMA_BIN_DIR"
 else
     rm -rf "$LLAMA_DIR"
@@ -296,6 +297,7 @@ else
         || die "llama-server not found inside $LLAMA_ASSET"
     chmod +x "$LLAMA_BIN_DIR/llama-server"
     rm -rf "$LLAMA_DIR/src"
+    echo "$LLAMA_TAG" > "$LLAMA_DIR/.tag"
 fi
 
 # ---------------------------------------------------------------------------
