@@ -120,6 +120,11 @@ def install_local_stack(monkeypatch, *, replies=None, judge_replies=None, mode="
     monkeypatch.setattr(serving, "begin_resident_call", _begin_resident_call)
     monkeypatch.setattr(serving, "wire_model", lambda key: "gemma")
     monkeypatch.setattr(serving, "supports_tool_choice", lambda key: True)
+    # The recommended Gemma 4's chat template has a thinking mode; no weights
+    # are on disk to read it from.
+    from server.local import thinking
+
+    monkeypatch.setattr(thinking, "caps_for", lambda key: thinking.Caps(True, False))
     monkeypatch.setattr(server_stream, "_spawn_memory_hooks", lambda *a, **kw: None)
     server.turns = turns
     return server

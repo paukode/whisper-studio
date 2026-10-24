@@ -205,7 +205,12 @@ def supports_ultracode(meta: dict | None, key: str) -> bool:
 
 def effort_levels_for(meta: dict | None, key: str) -> list[str]:
     """Allowed effort labels for a model: its raw ladder, plus ``ultracode``
-    when the model can orchestrate."""
+    when the model can orchestrate. An on-device model's ladder is its thinking
+    levels, read from its own chat template (server/local/thinking.py)."""
+    if (meta or {}).get("is_local"):
+        from server.local.thinking import levels_for
+
+        return levels_for(key)
     tier = effort_tier_for(meta, key)
     levels = list(EFFORT_TIERS.get(tier, EFFORT_TIERS["standard"]))
     if levels and supports_ultracode(meta, key):
@@ -216,7 +221,9 @@ def effort_levels_for(meta: dict | None, key: str) -> list[str]:
 def clamp_effort(level: str, allowed: list[str]) -> str | None:
     """Clamp ``level`` to the nearest allowed label at or below it (matching
     Claude Code's own fallback rule). Returns ``None`` when the model has no
-    effort support (empty ``allowed``)."""
+    effort support (empty ``allowed``). A level that thinks never clamps to
+    ``none``: on a ladder of only ``none`` and ``max`` (an MLX model with no
+    thinking cap), ``high`` keeps thinking at ``max``."""
     if not allowed:
         return None
     if level in allowed:
@@ -227,10 +234,15 @@ def clamp_effort(level: str, allowed: list[str]) -> str | None:
         ci = EFFORT_ORDER.index(DEFAULT_EFFORT)
     best: str | None = None
     for lv in allowed:
+        if lv == "none":
+            continue
         i = EFFORT_ORDER.index(lv)
         if i <= ci and (best is None or i > EFFORT_ORDER.index(best)):
             best = lv
-    return best or allowed[0]
+    if best:
+        return best
+    thinking = [lv for lv in allowed if lv != "none"]
+    return thinking[0] if thinking else allowed[0]
 
 
 def resolve_effort(meta: dict | None, key: str, requested: str | None) -> str | None:
@@ -247,8 +259,13 @@ def resolve_effort(meta: dict | None, key: str, requested: str | None) -> str | 
 
 def default_effort_for(meta: dict | None, key: str) -> str:
     """The default effort label for a model (DEFAULT_EFFORT, clamped to what
-    the model supports). Falls back to DEFAULT_EFFORT for effort-less models."""
+    the model supports). Falls back to DEFAULT_EFFORT for effort-less models.
+    An on-device model that can think starts at its deepest level, max."""
     allowed = effort_levels_for(meta, key)
+    if (meta or {}).get("is_local") and allowed:
+        from server.local.thinking import DEFAULT_LEVEL
+
+        return DEFAULT_LEVEL
     return clamp_effort(DEFAULT_EFFORT, allowed) or DEFAULT_EFFORT
 
 

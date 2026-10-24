@@ -127,12 +127,6 @@ TRUSTED_AUTHORS: tuple[str, ...] = (
     "mistralai",
 )
 
-# Arch prefixes / name hints that mark a chain-of-thought model, so a freshly
-# installed model gets supports_thinking on by default. Qwen3 is a thinking
-# family; QwQ and DeepSeek-R1 distills are explicit reasoners.
-_THINKING_ARCH_PREFIXES = ("qwen3",)
-_THINKING_NAME_HINTS = ("thinking", "reasoning", "qwq", "-r1", "deepseek-r")
-
 # ── Agentic (tool-calling) gate ──────────────────────────────────────────────
 # Running the tool loop is a capability, not a format switch. llama-server's
 # --jinja parses whatever tool-call syntax the model's template declares, so the
@@ -265,19 +259,6 @@ def parse_mlx_quant(repo_id: str) -> str | None:
     if not matches:
         return None
     return matches[-1].group("quant").lower()
-
-
-def is_thinking_model(arch: str | None, repo_id: str, filename: str = "") -> bool:
-    """Best-effort guess at whether the model exposes a thinking/reasoning mode.
-
-    Used only for the default ``supports_thinking`` flag on install; the user can
-    always correct it in the config editor afterwards.
-    """
-    a = (arch or "").lower()
-    if any(a.startswith(p) for p in _THINKING_ARCH_PREFIXES):
-        return True
-    hay = f"{repo_id} {filename}".lower()
-    return any(h in hay for h in _THINKING_NAME_HINTS)
 
 
 # ── Filename parsing: quant token, shards, mmproj ────────────────────────────

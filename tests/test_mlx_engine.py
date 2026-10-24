@@ -35,7 +35,6 @@ MLX_ENTRY = {
     "engine": "mlx",
     "repo_id": "mlx-community/Qwen3-4B-4bit",
     "dir": "mlx-community__Qwen3-4B-4bit",
-    "supports_thinking": True,
     "supports_tools": True,
 }
 GGUF_ENTRY = {
@@ -334,7 +333,7 @@ def test_adapter_sends_the_wire_model_not_the_key(monkeypatch):
         model_key="local_mlx",
         base_url="http://x",
         system_prompt="",
-        thinking=False,
+        thinking_level=None,
         tools_enabled=False,
         wire_model="default_model",
         supports_tool_choice=False,
@@ -361,7 +360,7 @@ def test_adapter_omits_tools_on_last_round_without_tool_choice(monkeypatch):
         model_key="local_mlx",
         base_url="http://x",
         system_prompt="",
-        thinking=False,
+        thinking_level=None,
         tools_enabled=True,
         wire_model="default_model",
         supports_tool_choice=False,
@@ -536,7 +535,7 @@ def test_mlx_install_refuses_repos_without_mlx_weights(monkeypatch):
 
 def test_build_mlx_entry_shape():
     key, entry = install.build_mlx_entry(
-        repo_id="mlx-community/Qwen3-30B-4bit", arch="qwen3", label=None, n_ctx=None
+        repo_id="mlx-community/Qwen3-30B-4bit", label=None, n_ctx=None
     )
     assert key == "local_mlx_community_qwen3_30b_4bit__4bit"
     assert entry["engine"] == "mlx"
@@ -548,7 +547,6 @@ def test_build_mlx_entry_shape():
     assert entry["id"].startswith("local:")
     assert entry["ctx"] == 32768
     assert entry["supports_tools"] is True  # 30B clears the agentic gate
-    assert entry["supports_thinking"] is True  # qwen3 family
 
 
 class _CatEntry:
@@ -617,11 +615,11 @@ def test_recommended_rows_carry_a_live_downloading_flag(monkeypatch):
 
 def test_build_mlx_entry_uses_the_real_window_from_config_json():
     _, small = install.build_mlx_entry(
-        repo_id="mlx-community/Tiny-8k-4bit", arch="llama", label=None, n_ctx=None, header_ctx=8192
+        repo_id="mlx-community/Tiny-8k-4bit", label=None, n_ctx=None, header_ctx=8192
     )
     assert small["ctx"] == 8192  # an 8K model must not claim 32K
     _, big = install.build_mlx_entry(
-        repo_id="mlx-community/Big-4bit", arch="llama", label=None, n_ctx=None, header_ctx=131072
+        repo_id="mlx-community/Big-4bit", label=None, n_ctx=None, header_ctx=131072
     )
     assert big["ctx"] == 32768  # capped like a GGUF header ctx
 

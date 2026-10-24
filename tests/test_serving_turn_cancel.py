@@ -90,7 +90,9 @@ def test_stop_during_the_route_cold_start_releases_the_mark(monkeypatch):
 
     monkeypatch.setattr(runtime, "is_local_model", lambda k: True)
     monkeypatch.setattr(runtime, "supports_tools", lambda k: False)
-    monkeypatch.setattr(runtime, "supports_thinking", lambda k: False)
+    from server.local import thinking
+
+    monkeypatch.setattr(thinking, "caps_for", lambda k: thinking.NO_THINKING)
     monkeypatch.setattr(runtime, "build_local_system_prompt", lambda *a, **k: "sys")
     done, _ = _slow_load(monkeypatch)
     before = serving.busy_turns()

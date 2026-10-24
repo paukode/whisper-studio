@@ -23,7 +23,7 @@ class _CrashingAdapter(LocalAdapter):
             model_key="k",
             base_url="http://x",
             system_prompt="",
-            thinking=False,
+            thinking_level=None,
             tools_enabled=False,
         )
         self._exc = exc

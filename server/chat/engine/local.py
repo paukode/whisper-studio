@@ -188,7 +188,7 @@ class LocalAdapter:
         model_key: str,
         base_url: str,
         system_prompt: str,
-        thinking: bool,
+        thinking_level: str | None,
         tools_enabled: bool,
         wire_model: str | None = None,
         supports_tool_choice: bool = True,
@@ -196,7 +196,9 @@ class LocalAdapter:
         self.model_key = model_key
         self.base_url = base_url
         self.system_prompt = system_prompt
-        self.thinking = thinking
+        # The composer's thinking level, resolved against this model's own
+        # levels; None when the model cannot think (server/local/thinking.py).
+        self.thinking_level = thinking_level
         self.tools_enabled = tools_enabled
         # What the `model` field on the wire says. llama-server just echoes it;
         # mlx_lm maps "default_model" to its --model path and treats any OTHER
@@ -214,6 +216,13 @@ class LocalAdapter:
             self.max_tokens = int(meta.get("max_output") or 4096)
         except (TypeError, ValueError):
             self.max_tokens = 4096
+        # max_tokens plus the thinking switches for the level: thinking gets
+        # its own room on top of the answer cap.
+        from server.local import thinking as local_thinking
+
+        self._thinking_fields = local_thinking.fields_for(
+            model_key, thinking_level, self.max_tokens
+        )
         # Cumulative visible-text chars across the TURN (all rounds), for the
         # empty-turn quirk message.
         self._turn_out_chars = 0
@@ -222,11 +231,11 @@ class LocalAdapter:
         """Provider half of a request snapshot (server/chat/request_snapshots.py)."""
         return {
             "system_prompt": self.system_prompt,
-            "thinking": self.thinking,
+            "thinking_level": self.thinking_level,
             "tools_enabled": self.tools_enabled,
             "wire_model": self.wire_model,
             "base_url": self.base_url,
-            "max_tokens": self.max_tokens,
+            "max_tokens": self._thinking_fields["max_tokens"],
             "supports_tool_choice": self.supports_tool_choice,
         }
 
@@ -261,17 +270,13 @@ class LocalAdapter:
         body: dict = {
             "model": self.wire_model,
             "messages": self.to_openai_messages(sent),
-            "max_tokens": self.max_tokens,
+            **self._thinking_fields,
         }
         if schemas:
             # Final-round parity with the cloud paths: forbid calls on the
             # last round so the model synthesizes from what it has.
             body["tools"] = schemas
             body["tool_choice"] = "none" if is_last_round else "auto"
-        if self.thinking:
-            # Some builds gate reasoning behind an explicit request; harmless
-            # when the model has no thinking mode.
-            body["chat_template_kwargs"] = {"enable_thinking": True}
         return body
 
     # ── Canonical → OpenAI chat conversion ───────────────────────────────────
@@ -565,8 +570,10 @@ class LocalAdapter:
         whole cap reasoning), a continuation would only reason again from
         scratch. Those two end the turn with a note naming the limit.
         """
-        cap = self.max_tokens
+        cap = self._thinking_fields["max_tokens"]
         fix = f"raise max_output for {self.model_key} in chat_model_meta"
+        if self.thinking_level not in (None, "none"):
+            fix = f"pick a lower Thinking level, or {fix}"
         if calls:
             names = ", ".join(sorted({c["name"] for c in calls}))
             log.warning(

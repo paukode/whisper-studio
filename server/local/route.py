@@ -23,6 +23,7 @@ def local_chat_response(
     *,
     model_key: str,
     body: dict,
+    thinking_level: str | None = None,
     messages: list[dict],
     session_id: str,
     approved_tool_result,
@@ -52,17 +53,16 @@ def local_chat_response(
     # pause store before calling here, so a local resume is just a normal
     # engine turn continuing from the restored history.
 
-    from server.local.runtime import supports_thinking, supports_tools
+    from server.local.runtime import supports_tools
 
-    # No user-facing gates: like the cloud paths, a tool-capable local model
-    # always gets the full pool, and a thinking-capable one always thinks. The
-    # old per-turn toggles (local_tools / local_tool_scope / local_thinking)
-    # are gone; capability flags in the model registry are the only switch, so
-    # a model without a capability simply doesn't use it. The full pool is a
-    # stable prompt prefix, so llama-server's prefix cache absorbs the prefill
-    # cost after the first turn (the 32K default context accommodates it).
+    # Like the cloud paths, a tool-capable local model always gets the full
+    # pool: the capability flag in the model registry is the only switch. The
+    # full pool is a stable prompt prefix, so llama-server's prefix cache
+    # absorbs the prefill cost after the first turn (the 32K default context
+    # accommodates it). Thinking follows the composer's level, which the chat
+    # route resolved against this model's own levels (``thinking_level`` is
+    # None when the model cannot think).
     local_tools_on = supports_tools(model_key)
-    thinking_on = supports_thinking(model_key)
     # Context size: the composer's CTX slider value rides on EVERY local turn,
     # so the chip is the source of truth and a lazy server start can never run
     # at a stale size. Without this, a backend restart wiped the in-memory
@@ -138,7 +138,7 @@ def local_chat_response(
                 model_key=model_key,
                 base_url=base_url,
                 system_prompt=local_system,
-                thinking=thinking_on,
+                thinking_level=thinking_level,
                 tools_enabled=local_tools_on,
                 wire_model=serving.wire_model(model_key),
                 supports_tool_choice=serving.supports_tool_choice(model_key),

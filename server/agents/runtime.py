@@ -705,9 +705,15 @@ async def _run_agent_loop(
     # tier list deliberately omits because the GPT picker does not offer it.
     # Clamping against that list would read the omission as "unsupported" and
     # demote an extra-effort parent's GPT child from xhigh to high.
-    from server.infrastructure.effort import resolve_effort
+    from server.infrastructure.effort import default_effort_for, resolve_effort
 
-    if effort_label is not None and _provider != "openai_bedrock" and not _is_local_agent:
+    if _is_local_agent:
+        # An on-device agent thinks at the parent's level, clamped to its own
+        # thinking levels, or at its default (max) when the parent gave none.
+        effort_label = resolve_effort(
+            _agent_meta, model_key, effort_label or default_effort_for(_agent_meta, model_key)
+        )
+    elif effort_label is not None and _provider != "openai_bedrock":
         effort_label = resolve_effort(_agent_meta, model_key, effort_label)
     if _is_local_agent:
         # Built after _emit exists (below): serving the model can fail, and
@@ -821,7 +827,6 @@ async def _run_agent_loop(
         # serve_turn releases the mark itself when the run is cancelled mid-load.
         from server.chat.engine.local import LocalAdapter
         from server.local import serving
-        from server.local.runtime import supports_thinking
 
         try:
             base_url = await serving.serve_turn(model_key, executor=_agent_executor)
@@ -838,7 +843,7 @@ async def _run_agent_loop(
             model_key=model_key,
             base_url=base_url,
             system_prompt=system,
-            thinking=supports_thinking(model_key),
+            thinking_level=effort_label,
             # Only tool-capable local models reach this loop (run_agent gates
             # on supports_tools), and an agent without tools is pointless.
             tools_enabled=True,

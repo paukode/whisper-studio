@@ -14,6 +14,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from server.local import thinking
 from server.models_manager import manager, sizes, tool_check
 from server.models_manager.catalog import get_entry
 from server.models_manager.routes import router
@@ -157,7 +158,7 @@ def test_check_sends_a_first_chat_turn(stack):
         system_prompt=runtime.build_local_system_prompt(
             tools=True, ws_path=tool_check._EXAMPLE_WORKSPACE
         ),
-        thinking=runtime.supports_thinking(KEY),
+        thinking_level=thinking.DEFAULT_LEVEL if thinking.levels_for(KEY) else None,
         tools_enabled=True,
         wire_model="gemma",
     )

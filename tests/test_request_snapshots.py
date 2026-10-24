@@ -161,7 +161,7 @@ def test_local_snapshots_hold_the_exact_bodies_posted_including_the_retry(snap_r
             model_key="local_gemma",
             base_url="http://x",
             system_prompt="sys",
-            thinking=True,
+            thinking_level="max",
             tools_enabled=False,
         ),
         policy=LOCAL_POLICY,

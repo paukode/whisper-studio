@@ -33,7 +33,7 @@ def _round(monkeypatch, rounds, *, tools=TOOLS, is_last_round=False):
         model_key="local_gemma",
         base_url="http://127.0.0.1:9999",
         system_prompt="sys",
-        thinking=False,
+        thinking_level=None,
         tools_enabled=True,
     )
     messages = [{"role": "user", "content": "can you review this code for me?"}]

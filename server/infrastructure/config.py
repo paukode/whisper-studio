@@ -432,8 +432,6 @@ def _normalize_chat_models(chat_models: dict) -> tuple[dict, dict]:
                 # On-device model (local branch) — runs via the local runtime,
                 # not Bedrock. Surfaced on /api/models for the picker badge.
                 "is_local": bool(val.get("is_local", False)),
-                # Whether this local model has a toggleable thinking mode.
-                "supports_thinking": bool(val.get("supports_thinking", False)),
                 # Whether this local model can use tools (local agentic loop).
                 "supports_tools": bool(val.get("supports_tools", False)),
                 # Which effort levels this model exposes (full/standard/none/

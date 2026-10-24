@@ -447,8 +447,9 @@ async def models_endpoint():
                 # On-device model: runs via the local runtime, not Bedrock. The UI
                 # badges it and routes selection through the local load flow.
                 "is_local": m.get("is_local", False),
-                # Whether this local model has a toggleable thinking/reasoning mode.
-                "supports_thinking": m.get("supports_thinking", False),
+                # Whether this local model can think: its chat template has a
+                # thinking mode (server/local/thinking.py).
+                "supports_thinking": bool(levels) if m.get("is_local") else False,
                 # Whether this local model can use tools (local agentic loop).
                 "supports_tools": m.get("supports_tools", False),
                 # Per-model effort catalogue — the UI drives its picker, the /effort
@@ -1554,8 +1555,8 @@ async def chat_endpoint(request: Request):
         # neither thinking nor effort. Ultracode additionally orchestrates — see
         # build_system_prompt(ultracode=...).
         from server.infrastructure.effort import (
-            DEFAULT_EFFORT,
             clamp_effort,
+            default_effort_for,
             effort_levels_for,
             is_ultracode,
             normalize_effort,
@@ -1571,7 +1572,9 @@ async def chat_endpoint(request: Request):
         _model_meta = _turn_meta.get(model_key) or {}
         _allowed_effort = effort_levels_for(_model_meta, model_key)
         _requested_effort = normalize_effort(
-            body.get("effort_level") or session_config.get("effort_level") or DEFAULT_EFFORT
+            body.get("effort_level")
+            or session_config.get("effort_level")
+            or default_effort_for(_model_meta, model_key)
         )
         effort_label = clamp_effort(_requested_effort, _allowed_effort)  # None ⇒ no effort
         ultracode_active = is_ultracode(effort_label)
@@ -1935,6 +1938,7 @@ async def chat_endpoint(request: Request):
         _local_resp = local_chat_response(
             model_key=model_key,
             body=body,
+            thinking_level=effort_label,
             messages=messages,
             session_id=session_id,
             approved_tool_result=approved_tool_result,

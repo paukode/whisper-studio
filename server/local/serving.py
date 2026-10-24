@@ -516,7 +516,7 @@ async def complete_on_resident(
 
     import httpx
 
-    from server.local.runtime import supports_thinking
+    from server.local import thinking
 
     base = begin_resident_call(key)
     try:
@@ -532,8 +532,8 @@ async def complete_on_resident(
             "stream": False,
             "temperature": 0,
         }
-        if supports_thinking(key):
-            body["chat_template_kwargs"] = {"enable_thinking": False}
+        if thinking.caps_for(key).can_think:
+            body.update(thinking.off_fields(mlx=engine_of(key) == "mlx"))
         if json_schema is not None and engine_of(key) == "gguf":
             body["response_format"] = {
                 "type": "json_schema",

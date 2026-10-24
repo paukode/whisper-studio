@@ -93,13 +93,6 @@ def test_is_agentic_capable_gates_on_the_threshold():
     assert compat.is_agentic_capable("some/random-repo") is True
 
 
-def test_thinking_default():
-    assert compat.is_thinking_model("qwen3", "unsloth/Qwen3-8B-GGUF")
-    assert compat.is_thinking_model("llama", "org/DeepSeek-R1-Distill-Llama-8B-GGUF")
-    assert not compat.is_thinking_model("gemma3", "google/gemma-3-1b-it-GGUF")
-    assert not compat.is_thinking_model("llama", "meta/Llama-3.1-8B-Instruct-GGUF")
-
-
 # ── compat: shard grouping + mmproj hiding + recommended ─────────────────────
 def test_group_gguf_files_hides_mmproj_and_folds_shards():
     files = [
@@ -504,7 +497,8 @@ def test_install_writes_dict_entry_into_chat_models(isolated_home, monkeypatch):
     assert entry["filename"] == "Qwen3-0.6B-Q4_K_M.gguf"
     assert entry["dir"] == "unsloth__Qwen3-0.6B-GGUF"
     assert entry["supports_tools"] is False  # 0.6B is under the agentic threshold
-    assert entry["supports_thinking"] is True  # qwen3 → thinking default on
+    # No thinking flag: the composer reads thinking from the model's template.
+    assert "supports_thinking" not in entry
     assert entry["ctx"] == 32768  # header 40960 capped to the 32K default
 
     # The real registry resolves it with all required weight fields.
@@ -568,7 +562,7 @@ def test_install_honours_explicit_n_ctx(isolated_home, monkeypatch):
     )
     data = json.loads((isolated_home / "config.user.json").read_text())
     assert data["chat_models"][result["key"]]["ctx"] == 65536
-    assert result["supports_thinking"] is False  # gemma → not a thinking default
+    assert "supports_thinking" not in result
 
 
 def test_uninstall_removes_user_entry(isolated_home, monkeypatch):
