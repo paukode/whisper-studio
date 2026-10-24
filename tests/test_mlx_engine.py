@@ -27,7 +27,7 @@ import pytest
 from server.chat.engine.local import LocalAdapter
 from server.local import mlx_server, runtime, serving
 from server.local import registry as R
-from server.model_browser import compat, install, service
+from server.model_browser import compat, install, search, service
 
 MLX_ENTRY = {
     "id": "local:qwen3-4b-mlx",
@@ -450,10 +450,13 @@ def test_parse_mlx_quant_variants():
     assert compat.parse_mlx_quant("mlx-community/NoTag") is None
 
 
-def test_mlx_arch_gate():
+def test_mlx_arch_gate(monkeypatch):
+    from server.model_browser import engine_archs
+
+    monkeypatch.setattr(engine_archs, "mlx_archs", lambda: frozenset({"qwen3", "gemma4"}))
     assert compat.mlx_arch_supported("qwen3")
-    assert compat.mlx_arch_supported("gemma4")
-    assert not compat.mlx_arch_supported("t5")
+    assert compat.mlx_arch_supported("Gemma4")
+    assert not compat.mlx_arch_supported("deepseek_v41")  # this mlx-lm lacks it
     assert not compat.mlx_arch_supported(None)
 
 
@@ -481,19 +484,21 @@ def test_mlx_search_uses_mlx_authors_and_arch_gate(monkeypatch):
                 downloads=99,
                 likes=1,
                 trending_score=9,
-                arch="t5",
+                arch="t5gemma",
                 context_length=None,
                 gated=False,
             ),
         ]
 
-    monkeypatch.setattr(service.hf_client, "search", fake_search)
-    rows = service.search(query="qwen")
-    # The single merged search fans out over BOTH lanes' trusted authors.
-    assert {a for a, f in seen if f == "mlx"} == set(compat.MLX_TRUSTED_AUTHORS)
-    assert {a for a, f in seen if f == "gguf"} == set(compat.TRUSTED_AUTHORS)
+    monkeypatch.setattr(search.hf_client, "search", fake_search)
+    rows = search.search(query="qwen")
+    # The single merged search fans out over BOTH lanes' trusted authors, plus
+    # one wide search per format (author None).
+    assert {a for a, f in seen if f == "mlx"} == set(compat.MLX_TRUSTED_AUTHORS) | {None}
+    assert {a for a, f in seen if f == "gguf"} == set(compat.TRUSTED_AUTHORS) | {None}
     assert rows and all(r["format"] == "mlx" for r in rows)
     assert all("T5" not in r["repo_id"] for r in rows), "unsupported arch must drop"
+    assert all("None/" not in r["repo_id"] for r in rows), "untrusted wide hits stay out"
 
 
 def test_mlx_repo_detail_is_one_whole_repo_option(monkeypatch):
@@ -580,9 +585,9 @@ def test_search_rows_carry_install_state(monkeypatch):
             SearchHit("unsloth/Fresh-GGUF", 3, 1, 2, "llama", 4096, False),
         ]
 
-    monkeypatch.setattr(service.hf_client, "search", fake_search)
+    monkeypatch.setattr(search.hf_client, "search", fake_search)
 
-    rows = {r["repo_id"]: r for r in service.search(query="q", all_of_hf=True)}
+    rows = {r["repo_id"]: r for r in search.search(query="q", all_of_hf=True)}
     mlx_row = rows[MLX_ENTRY["repo_id"]]
     assert mlx_row["format"] == "mlx"
     assert mlx_row["install_state"] == "downloading"

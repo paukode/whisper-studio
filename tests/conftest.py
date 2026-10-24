@@ -227,6 +227,43 @@ def _no_live_gguf_header_reads(monkeypatch):
     monkeypatch.setattr(service, "_kv_shapes", {})
 
 
+# Architectures a recent llama.cpp and mlx-lm load (a subset of llama.cpp
+# b11851 and mlx-lm 0.32.2), standing in for the installed engines.
+ENGINE_LLAMA_ARCHS = frozenset(
+    {
+        "llama", "qwen2", "qwen3", "qwen3moe", "qwen35", "qwen35moe", "qwen3next",
+        "qwen4exp", "gemma", "gemma2", "gemma3", "gemma3n", "gemma4", "mistral3",
+        "phi2", "phi3", "phimoe", "deepseek2", "deepseek4", "command-r", "cohere2",
+        "granite", "granitemoe", "stablelm", "starcoder2", "mamba", "clip", "bert",
+        "t5encoder",
+    }
+)  # fmt: skip
+ENGINE_MLX_ARCHS = frozenset(
+    {
+        "llama", "mistral", "mistral3", "qwen2", "qwen3", "qwen3_moe", "qwen3_next",
+        "qwen3_5", "qwen3_5_moe", "gemma", "gemma2", "gemma3", "gemma3_text", "gemma4",
+        "gemma4_text", "phi3", "deepseek_v3", "deepseek_v41", "gpt_oss", "glm4",
+    }
+)  # fmt: skip
+
+
+@pytest.fixture(autouse=True)
+def _pinned_engine_archs_and_no_live_official_lane(monkeypatch):
+    """Discover's architecture gate reads the installed engines
+    (server/model_browser/engine_archs.py), and its official lane asks Hugging
+    Face for the model makers' repos and their builds. In a unit test the
+    engines answer with the fixed lists above, so no test runs the engine probe
+    or depends on what this machine has installed, and the official lane finds
+    nothing, so no request leaves the test. Tests of those pieces patch in
+    their own answers."""
+    from server.model_browser import engine_archs, hf_client
+
+    monkeypatch.setattr(engine_archs, "llama_archs", lambda: ENGINE_LLAMA_ARCHS)
+    monkeypatch.setattr(engine_archs, "mlx_archs", lambda: ENGINE_MLX_ARCHS)
+    monkeypatch.setattr(hf_client, "official_models", lambda query, limit: [])
+    monkeypatch.setattr(hf_client, "conversions", lambda base_model, fmt, limit: [])
+
+
 @pytest.fixture(autouse=True)
 def _no_live_activity_labels(monkeypatch):
     """A chat turn with a tool round asks the auxiliary model for an activity

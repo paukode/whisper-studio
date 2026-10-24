@@ -107,6 +107,15 @@
       or MLX chat model the local engines can run. Search is limited to trusted publishers unless you
       flip the <b>All of Hugging Face</b> toggle. Every result is graded against your machine's memory
       before you download, so you know whether it fits.</p>
+    <p>Search shows official models first. An official model comes from the organization that made
+      it, for example <code>Qwen</code> or <code>deepseek-ai</code>. A build of an official model is
+      also official, for example <code>unsloth/Qwen3.8-27B-GGUF</code>. Next come the models from the
+      trusted publishers, and then the other results. In each group, the models with the most
+      downloads come first.</p>
+    <p>Discover shows only the models that the installed engines can run. It reads the list of
+      architectures from the installed llama.cpp and mlx-lm. Thus, an engine update adds models with
+      no change to the app. If the engines cannot run a build of an official model, Discover shows the
+      model and the reason. You cannot download that model.</p>
     <figure class="shot">
       <img src="assets/img/model-discover.png" alt="The Discover tab in Settings, searching Hugging Face for on-device chat models">
       <figcaption><strong>Settings &rarr; Models &rarr; Discover.</strong> Search Hugging Face for a GGUF or MLX chat model and install it. A handful of models are marked Recommended if you want a known-good starting point.</figcaption>

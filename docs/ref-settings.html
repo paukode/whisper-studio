@@ -120,7 +120,10 @@
           <td><b>Models &gt; Discover</b></td>
           <td>Models</td>
           <td>The model browser for on-device models. The app ships with <b>no local model installed by
-            default</b>; Discover lists recommended models you can install. Each row shows if your Mac
+            default</b>; Discover lists recommended models you can install. Search shows official models
+            first, then the trusted publishers, then the other results. Discover shows only the
+            architectures that the installed llama.cpp and mlx-lm can run. If the engines cannot run
+            an official model, the row gives the reason. Each row shows if your Mac
             has sufficient memory for the model. The calculation uses the file size, the KV cache of
             the model at the context window of the install, and the compute buffers. Refer to
             <a href="tut-model-modes.html#fit-grade">Memory fit</a>. Installing a local chat model

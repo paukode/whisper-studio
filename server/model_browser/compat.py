@@ -1,15 +1,15 @@
-"""Pure compatibility logic for the in-app model browser.
+"""Compatibility rules for the in-app model browser.
 
-No network here — just the rules that decide which Hugging Face GGUF repos the
-bundled ``llama-server`` can actually run and how to turn a repo's file list
-into a clean per-quant picker. Kept dependency-free so it is trivially unit
-tested with no HF calls.
+No network here: the rules that decide which Hugging Face repos the local
+engines can run, which publishers count as official, and how to turn a repo's
+file list into a clean per-quant picker.
 
-The single most important rule: only surface a model whose GGUF architecture is
-one the bundled llama.cpp reliably loads. Offering a model that then fails at
-load with "unknown model architecture" after a multi-GB download is the exact
-failure this gate exists to prevent, so the allowlist is deliberately
-conservative — hide a maybe rather than promise a model we can't serve.
+The single most important rule: only offer a model whose architecture the
+engine that serves it loads. Offering a model that then fails at load with
+"unknown model architecture" after a multi-GB download is the exact failure
+this gate exists to prevent. The architectures come from the installed engines
+themselves (server/model_browser/engine_archs.py), so an engine upgrade widens
+the gate with no change here.
 """
 
 from __future__ import annotations
@@ -17,41 +17,103 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from server.model_browser import engine_archs
+
 # ── Architecture gate ────────────────────────────────────────────────────────
-# Architectures the bundled llama.cpp (build >= 10090, see
-# server/local/llama_server.py MIN_BUILD) reliably runs. The families the brief
-# asks for — Qwen, Gemma, Mistral/Ministral, Llama, Phi — plus a handful of
-# equally well-supported ones. Kept conservative on purpose:
-#   * brand-new / hybrid-attention archs the current build does NOT load yet
-#     (e.g. "qwen3next") are omitted so we never offer a model that fails at
-#     load. Bump this set when the bundled engine is upgraded (design P4).
-#   * most Mistral / Ministral / Mixtral GGUFs report arch "llama" (the token
-#     the converter writes), which is already covered by "llama".
-SUPPORTED_ARCHS: frozenset[str] = frozenset(
+# Architectures llama.cpp loads that are not chat models, so Discover never
+# offers them for chat: the projector "arch" of mmproj files, encoders and
+# embedding models, speech models, speculative-decoding draft heads, diffusion
+# language models (llama-server serves none) and OCR models.
+NON_CHAT_ARCHS: frozenset[str] = frozenset(
     {
-        "llama",
-        "qwen2",
-        "qwen3",
-        "qwen3moe",
-        "qwen35",
-        "qwen35moe",
-        "gemma",
-        "gemma2",
-        "gemma3",
-        "gemma3n",
-        "mistral",
-        "phi2",
-        "phi3",
-        "phi3moe",
-        "phimoe",
-        "stablelm",
-        "starcoder2",
-        "cohere",
-        "cohere2",
-        "granite",
-        "granitemoe",
+        "clip",
+        "bert",
+        "modern-bert",
+        "nomic-bert",
+        "nomic-bert-moe",
+        "neo-bert",
+        "jina-bert-v2",
+        "jina-bert-v3",
+        "eurobert",
+        "t5",
+        "t5encoder",
+        "gemma-embedding",
+        "gemma-embedding2",
+        "llama-embed",
+        "wavtokenizer-dec",
+        "qwen3tts",
+        "pockettts",
+        "eagle3",
+        "dflash",
+        "dream",
+        "llada",
+        "llada-moe",
+        "rnd1",
+        "deepseek2-ocr",
+        "paddleocr",
     }
 )
+
+# Hugging Face pipeline tags of chat models. Many new GGUF and MLX repos carry
+# "image-text-to-text" (a multimodal chat model) or no tag at all, so a repo
+# with no tag counts as chat and the architecture gate decides.
+CHAT_PIPELINES: frozenset[str] = frozenset(
+    {
+        "text-generation",
+        "image-text-to-text",
+        "any-to-any",
+        "audio-text-to-text",
+        "video-text-to-text",
+    }
+)
+
+
+def chat_pipeline(tag: str | None) -> bool:
+    """True when a repo's pipeline tag is a chat one, or the repo has none."""
+    return not tag or tag in CHAT_PIPELINES
+
+
+# The model makers' own Hugging Face organizations. A repo from one of them, or
+# a conversion whose base model comes from one, is an official model: Discover
+# ranks those first.
+OFFICIAL_AUTHORS: tuple[str, ...] = (
+    "Qwen",
+    "deepseek-ai",
+    "google",
+    "meta-llama",
+    "mistralai",
+    "microsoft",
+    "openai",
+    "nvidia",
+    "ibm-granite",
+    "zai-org",
+    "moonshotai",
+    "MiniMaxAI",
+    "allenai",
+    "CohereLabs",
+    "HuggingFaceTB",
+    "LiquidAI",
+    "tiiuae",
+    "baidu",
+    "tencent",
+    "stepfun-ai",
+    "inclusionAI",
+    "ByteDance-Seed",
+    "internlm",
+    "openbmb",
+    "LGAI-EXAONE",
+    "swiss-ai",
+    "arcee-ai",
+    "ServiceNow-AI",
+    "XiaomiMiMo",
+    "meituan-longcat",
+)
+_OFFICIAL = frozenset(a.lower() for a in OFFICIAL_AUTHORS)
+
+
+def is_official_author(author: str | None) -> bool:
+    return bool(author) and author.lower() in _OFFICIAL
+
 
 # Curated GGUF publishers browsed by default (design §8). "Search all of HF" is
 # an explicit opt-in (``all=1``) to keep quality/safety high.
@@ -167,64 +229,15 @@ def fit_verdict(
 
 
 def arch_supported(arch: str | None) -> bool:
-    """True when ``arch`` (from the GGUF header) is one the engine can run."""
-    return bool(arch) and arch.strip().lower() in SUPPORTED_ARCHS
+    """True when ``arch`` (from the GGUF header) is a chat architecture the
+    installed llama-server loads."""
+    if not arch:
+        return False
+    name = arch.strip().lower()
+    return name not in NON_CHAT_ARCHS and name in engine_archs.llama_archs()
 
 
 # ── MLX lane ─────────────────────────────────────────────────────────────────
-
-# Architectures (HF config.json ``model_type``) the pinned mlx-lm serves. Kept
-# as a curated constant for the same reason as SUPPORTED_ARCHS — this module is
-# pure and unit-tested on Linux CI, where mlx-lm cannot be imported to ask.
-# mlx-lm tracks new families fast, so this mirrors its models/ directory for
-# the mainstream chat families (vision-only and exotic entries omitted on
-# purpose). Bump alongside the mlx-lm pin in requirements.txt.
-MLX_SUPPORTED_ARCHS: frozenset[str] = frozenset(
-    {
-        "llama",
-        "llama4",
-        "llama4_text",
-        "mistral",  # remapped to llama by mlx-lm
-        "mistral3",
-        "ministral3",
-        "mixtral",
-        "qwen2",
-        "qwen2_moe",
-        "qwen3",
-        "qwen3_moe",
-        "qwen3_next",
-        "qwen3_5",
-        "qwen3_5_moe",
-        "gemma",
-        "gemma2",
-        "gemma3",
-        "gemma3_text",
-        "gemma3n",
-        "gemma4",
-        "gemma4_text",
-        "phi",
-        "phi3",
-        "phimoe",
-        "glm4",
-        "glm4_moe",
-        "gpt_oss",
-        "granite",
-        "granitemoe",
-        "cohere",
-        "cohere2",
-        "stablelm",
-        "starcoder2",
-        "smollm3",
-        "olmo2",
-        "olmo3",
-        "deepseek_v3",
-        "internlm3",
-        "exaone4",
-        "nemotron",
-        "minicpm",
-        "helium",
-    }
-)
 
 # The default publishers of ready-converted MLX weights, used as the trusted
 # scope for MLX searches (most GGUF trusted authors publish no MLX repos).
@@ -239,8 +252,9 @@ _MLX_QUANT_RE = re.compile(
 
 
 def mlx_arch_supported(model_type: str | None) -> bool:
-    """True when a repo's config ``model_type`` is one mlx-lm can serve."""
-    return bool(model_type) and model_type.strip().lower() in MLX_SUPPORTED_ARCHS
+    """True when a repo's config ``model_type`` is one the installed mlx-lm
+    serves."""
+    return bool(model_type) and model_type.strip().lower() in engine_archs.mlx_archs()
 
 
 def parse_mlx_quant(repo_id: str) -> str | None:

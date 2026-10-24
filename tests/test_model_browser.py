@@ -15,23 +15,31 @@ import json
 import pytest
 
 from server.infrastructure import config as cfg
-from server.model_browser import compat, install, service
+from server.model_browser import compat, engine_archs, install, search, service
 from server.model_browser.hf_client import RepoGguf, SearchHit
 
 
 # ── compat: architecture gate ────────────────────────────────────────────────
-def test_arch_allowlist_accepts_supported_and_rejects_new():
+def test_arch_gate_follows_the_installed_engine(monkeypatch):
+    """The gate is the engine's own list: what it loads passes, case folded;
+    what it does not know, a non-chat architecture, or nothing does not. An
+    engine upgrade that adds an architecture widens the gate by itself."""
+    monkeypatch.setattr(engine_archs, "llama_archs", lambda: frozenset({"qwen3", "qwen35", "clip"}))
     assert compat.arch_supported("qwen3")
-    assert compat.arch_supported("qwen3moe")
-    assert compat.arch_supported("qwen35")  # Qwen3.5/3.8 family, llama.cpp b10090+
-    assert compat.arch_supported("gemma3")
-    assert compat.arch_supported("llama")
-    assert compat.arch_supported("PHI3")  # case-insensitive
-    # Brand-new / hybrid archs the bundled engine can't load yet, and junk.
-    assert not compat.arch_supported("qwen3next")
-    assert not compat.arch_supported("mamba")
+    assert compat.arch_supported("QWEN35")
+    assert not compat.arch_supported("qwen4exp")  # this build does not know it
+    assert not compat.arch_supported("clip")  # an mmproj projector, not a chat model
     assert not compat.arch_supported(None)
     assert not compat.arch_supported("")
+    monkeypatch.setattr(
+        engine_archs, "llama_archs", lambda: frozenset({"qwen3", "qwen35", "clip", "qwen4exp"})
+    )
+    assert compat.arch_supported("qwen4exp")
+
+
+def test_no_engine_means_no_gguf_model(monkeypatch):
+    monkeypatch.setattr(engine_archs, "llama_archs", lambda: frozenset())
+    assert not compat.arch_supported("llama")
 
 
 # ── compat: quant parsing ────────────────────────────────────────────────────
@@ -255,24 +263,26 @@ def test_reserved_companion_bytes_never_counts_index_models(tmp_path, monkeypatc
         service._reserved_companion_bytes.cache_clear()
 
 
-# ── service.search: arch filtering, dedup, ranking ───────────────────────────
+# ── search: arch filtering, dedup, ranking ───────────────────────────
 def test_search_filters_unsupported_archs_and_dedups(monkeypatch):
     hits = [
         SearchHit("unsloth/Qwen3-8B-GGUF", 300, 5, 3, "qwen3", 40960, False),
         SearchHit("unsloth/Qwen3-Coder-30B-GGUF", 500, 9, 7, "qwen3moe", 262144, False),
-        SearchHit("someone/Qwen3-Next-GGUF", 999, 1, 9, "qwen3next", 262144, False),  # unsupported
+        SearchHit(
+            "someone/DeepSeek-V41-GGUF", 999, 1, 9, "deepseek41", 262144, False
+        ),  # unknown to the engine
         SearchHit("someone/Mystery-GGUF", 999, 1, 9, None, None, False),  # unknown arch
         SearchHit("unsloth/Qwen3-8B-GGUF", 300, 5, 3, "qwen3", 40960, False),  # duplicate
     ]
     monkeypatch.setattr(
-        service.hf_client,
+        search.hf_client,
         "search",
         lambda query, author, limit, fmt="gguf": list(hits) if fmt == "gguf" else [],
     )
 
-    results = service.search(query="qwen3", all_of_hf=True)
+    results = search.search(query="qwen3", all_of_hf=True)
     ids = [r["repo_id"] for r in results]
-    # qwen3 + qwen3moe kept; qwen3next + unknown dropped; duplicate collapsed.
+    # qwen3 + qwen3moe kept; deepseek41 + no arch dropped; duplicate collapsed.
     # Both are equally direct name matches, so downloads break the tie.
     assert ids == ["unsloth/Qwen3-Coder-30B-GGUF", "unsloth/Qwen3-8B-GGUF"]
     assert all(r["supported"] for r in results)
@@ -292,14 +302,16 @@ def test_search_trusted_scope_queries_each_author_of_both_formats(monkeypatch):
         calls.append((author, fmt))
         return [SearchHit(f"{author}/Model-GGUF", 1, 1, 1, "llama", 4096, False)]
 
-    monkeypatch.setattr(service.hf_client, "search", fake_search)
-    results = service.search(query="mistral")  # default scope, no author
-    # Every trusted author of each format's lane was queried.
+    monkeypatch.setattr(search.hf_client, "search", fake_search)
+    results = search.search(query="mistral")  # default scope, no author
+    # Every trusted author of each format's lane was queried, plus one wide
+    # search per format (author None) for the model makers' own builds.
     assert set(calls) == {(a, "gguf") for a in compat.TRUSTED_AUTHORS} | {
         (a, "mlx") for a in compat.MLX_TRUSTED_AUTHORS
-    }
-    # One row per distinct author: an author listed in both lanes returns the
-    # same repo id twice, and the duplicate collapses into the GGUF row.
+    } | {(None, "gguf"), (None, "mlx")}
+    # One row per distinct trusted author: an author listed in both lanes
+    # returns the same repo id twice, and the duplicate collapses into the GGUF
+    # row. The wide search's untrusted "None/Model-GGUF" stays out.
     assert len(results) == len(set(compat.TRUSTED_AUTHORS) | set(compat.MLX_TRUSTED_AUTHORS))
 
 
@@ -313,12 +325,12 @@ def test_search_ranks_by_relevance_not_popularity(monkeypatch):
         SearchHit("unsloth/Qwen3.8-27B-GGUF", 100, 1, 9, "qwen35", None, False),
     ]
     monkeypatch.setattr(
-        service.hf_client,
+        search.hf_client,
         "search",
         lambda query, author, limit, fmt="gguf": list(hits) if fmt == "gguf" else [],
     )
     for q in ("qwen3.8", "qwen 3.8", "qwen-3.8", "Qwen3.8"):
-        ids = [r["repo_id"] for r in service.search(query=q, all_of_hf=True)]
+        ids = [r["repo_id"] for r in search.search(query=q, all_of_hf=True)]
         assert ids == [
             "unsloth/Qwen3.8-27B-GGUF",  # name starts with the query
             "finetuner/Distill-of-Qwen3.8-GGUF",  # query inside the name
@@ -540,9 +552,9 @@ def test_install_turns_tools_off_for_a_small_model(isolated_home, monkeypatch):
 
 
 def test_install_refuses_unsupported_arch(isolated_home, monkeypatch):
-    _stub_hf_and_queue(monkeypatch, arch="qwen3next")
+    _stub_hf_and_queue(monkeypatch, arch="deepseek41")  # unknown to the engine
     with pytest.raises(service.InstallError):
-        service.install_model("someone/Qwen3-Next-GGUF", "model-Q4_K_M.gguf")
+        service.install_model("someone/DeepSeek-V41-GGUF", "model-Q4_K_M.gguf")
     # Nothing was written to the user config.
     assert not (isolated_home / "config.user.json").exists() or "chat_models" not in json.loads(
         (isolated_home / "config.user.json").read_text()
