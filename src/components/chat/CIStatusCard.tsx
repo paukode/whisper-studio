@@ -8,7 +8,7 @@ import React, { useEffect } from 'react';
 import { ciStatus, getWatch, planAutofix, stopWatch } from '@/api/ci';
 import { useCIStore } from '@/stores/ciStore';
 import { useSessionStore } from '@/stores/sessionStore';
-import { useSettingsStore } from '@/stores/settingsStore';
+import { activeEffortLevel, useSettingsStore } from '@/stores/settingsStore';
 import { getChatStore } from '@/stores/sessionRuntimes';
 import { ICON } from '@/components/chat/activityIcons';
 
@@ -130,7 +130,7 @@ export const CIStatusCard: React.FC<{ taskId: string; branch?: string }> = ({ ta
             // provider default and could launch against whatever workspace is
             // connected at click time, not the repo the plan was diagnosed
             // against.
-            effort_label: s.effortLevel,
+            effort_label: activeEffortLevel(s),
             workspace_path: plan.cwd,
           },
           status: 'complete',

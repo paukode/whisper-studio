@@ -313,9 +313,13 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
   const models = useSettingsStore((s) => s.models);
   const selectedModel = useSettingsStore((s) => s.selectedModel);
   const loadedLocalModel = useSettingsStore((s) => s.loadedLocalModel);
-  // On-device model selected? Cloud-only toolbar controls (effort, brief mode)
-  // are hidden for local models since they have no effect there.
+  // On-device model selected? The response-length control is cloud-only; the
+  // effort chip becomes the Thinking chip on a local model that can think.
   const isLocalModel = !!models.find((m) => m.key === selectedModel)?.is_local;
+  // An on-device model whose chat template has a thinking mode gets the
+  // Thinking chip (its levels come from the backend like the cloud ladders).
+  const localCanThink =
+    isLocalModel && (models.find((m) => m.key === selectedModel)?.effort_levels ?? []).length > 0;
 
   // Hydrate the slash-command list with the live model keys so /model
   // autocompletes against whatever's defined in config.json.
@@ -926,9 +930,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
 
         <span className="toolbar-sep"></span>
 
-        {/* Effort chip + slider — beside the model, cloud-only (on-device
-         *  models have no effort tiers). Single-open: opening closes the rest. */}
-        {!isLocalModel && (
+        {/* Effort chip + slider — beside the model. On an on-device model that
+         *  can think it is the Thinking chip (Off to Max); the response-length
+         *  picker stays cloud-only. Single-open: opening closes the rest. */}
+        {(!isLocalModel || localCanThink) && (
           <>
             <EffortPicker
               onOpen={() => {
@@ -936,12 +941,14 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
                 setModeOpen(false); setMoreOpen(false);
               }}
             />
-            <ResponseLengthPicker
-              onOpen={() => {
-                setModelOpen(false); setWsDropdownOpen(false);
-                setModeOpen(false); setMoreOpen(false);
-              }}
-            />
+            {!isLocalModel && (
+              <ResponseLengthPicker
+                onOpen={() => {
+                  setModelOpen(false); setWsDropdownOpen(false);
+                  setModeOpen(false); setMoreOpen(false);
+                }}
+              />
+            )}
             <span className="toolbar-sep"></span>
           </>
         )}

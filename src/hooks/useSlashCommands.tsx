@@ -9,12 +9,12 @@ import { useSessionStore } from '@/stores/sessionStore';
 import { useGoalStore } from '@/stores/goalStore';
 import { launchRun } from '@/api/workflows';
 import { startWatch, planAutofix } from '@/api/ci';
-import { noChatModelHint, useSettingsStore } from '@/stores/settingsStore';
+import { activeEffortLevel, noChatModelHint, useSettingsStore } from '@/stores/settingsStore';
 import type { SettingsState } from '@/stores/settingsStore';
 import type { UseChatStreamReturn } from '@/hooks/useChatStream';
 import { requestModelChange } from '@/components/chat/dataRetentionConsent';
 import { ContextReportPanel, type ContextReport } from '@/components/chat/ContextReportPanel';
-import { clampEffort, effortLabel, EFFORT_ORDER } from '@/utils/effort';
+import { clampEffort, effortLabel, EFFORT_ORDER, thinkingLabel } from '@/utils/effort';
 import { downloadFile } from '@/utils/downloadFile';
 import { useTheme } from '@/providers/ThemeProvider';
 import type { ThemeKey } from '@/types/theme';
@@ -153,23 +153,31 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
 
     switch (cmd) {
       case 'effort': {
-        const allowed = models.find((m) => m.key === selectedModel)?.effort_levels ?? [];
+        const picked = models.find((m) => m.key === selectedModel);
+        const allowed = picked?.effort_levels ?? [];
+        // On an on-device model /effort sets its Thinking level (Off to Max),
+        // never the cloud effort.
+        const local = !!picked?.is_local;
+        const kind = local ? 'Thinking' : 'Effort';
+        const label = local ? thinkingLabel : effortLabel;
+        const setLevel = local ? useSettingsStore.getState().setLocalThinkingLevel : setEffortLevel;
         if (allowed.length === 0) {
-          addToast({ type: 'info', message: 'This model has no effort level', duration: 2500, persist: false });
+          addToast({ type: 'info', message: `This model has no ${kind.toLowerCase()} level`, duration: 2500, persist: false });
           return true;
         }
-        // Accept the raw API name `xhigh` as an alias for the Extra label.
-        const key = arg === 'xhigh' ? 'extra' : arg;
+        // Accept the raw API name `xhigh` as an alias for the Extra label, and
+        // `off` for no thinking.
+        const key = arg === 'xhigh' ? 'extra' : arg === 'off' ? 'none' : arg;
         if (key && allowed.includes(key)) {
-          setEffortLevel(key);
-          addToast({ type: 'success', message: `Effort set to ${effortLabel(key)}`, duration: 2000, persist: false });
+          setLevel(key);
+          addToast({ type: 'success', message: `${kind} set to ${label(key)}`, duration: 2000, persist: false });
         } else if (key && EFFORT_ORDER.includes(key as never)) {
           // Valid level, just not on this model — clamp to nearest lower.
           const clamped = clampEffort(key, allowed);
-          setEffortLevel(clamped);
-          addToast({ type: 'info', message: `${effortLabel(key)} isn't available here; set to ${effortLabel(clamped)}`, duration: 3000, persist: false });
+          setLevel(clamped);
+          addToast({ type: 'info', message: `${label(key)} isn't available here; set to ${label(clamped)}`, duration: 3000, persist: false });
         } else {
-          addToast({ type: 'info', message: `Usage: /effort ${allowed.map(effortLabel).join('|')}`, duration: 3000, persist: false });
+          addToast({ type: 'info', message: `Usage: /effort ${allowed.map(label).join('|')}`, duration: 3000, persist: false });
         }
         return true;
       }
@@ -402,7 +410,9 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
           // used to drop the run onto the configured default model at the
           // provider's default reasoning, so the same saved workflow behaved
           // differently depending on how it was started.
-          const { selectedModel, effortLevel } = useSettingsStore.getState();
+          const settings = useSettingsStore.getState();
+          const { selectedModel } = settings;
+          const effortLevel = activeEffortLevel(settings);
           try {
             const r = await launchRun({
               name: wfName,
@@ -461,7 +471,7 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
                   // launches at no effort, or against whatever is connected by
                   // the time the user clicks Approve instead of the repo the
                   // plan was actually diagnosed against.
-                  toolUse: [{ toolId: 'workflow_preview', toolName: 'workflow_preview', input: { script: plan.script, name: 'ci-autofix', description: plan.summary, phases: [{ title: 'Fix' }, { title: 'Verify' }], budget_tokens: plan.budget_tokens ?? null, model_id: modelId, effort_label: s.effortLevel, workspace_path: plan.cwd }, status: 'complete' }],
+                  toolUse: [{ toolId: 'workflow_preview', toolName: 'workflow_preview', input: { script: plan.script, name: 'ci-autofix', description: plan.summary, phases: [{ title: 'Fix' }, { title: 'Verify' }], budget_tokens: plan.budget_tokens ?? null, model_id: modelId, effort_label: activeEffortLevel(s), workspace_path: plan.cwd }, status: 'complete' }],
                   standalone: true,
                 });
               } else {
@@ -689,7 +699,7 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
               headers: { 'Content-Type': 'application/json' },
               // effort_level so the subagent reasons at the composer's depth,
               // like every other agent the session spawns.
-              body: JSON.stringify({ task, model: selectedModel, session_id: sessionId ?? '', team_id: teamId, effort_level: useSettingsStore.getState().effortLevel }),
+              body: JSON.stringify({ task, model: selectedModel, session_id: sessionId ?? '', team_id: teamId, effort_level: activeEffortLevel(useSettingsStore.getState()) }),
               signal: controller.signal,
             });
             if (!response.ok || !response.body) throw new Error(`subagent HTTP ${response.status}`);

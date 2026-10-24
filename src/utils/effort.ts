@@ -25,9 +25,15 @@ export function effortLabel(level: string): string {
   return EFFORT_LABELS[level] ?? level;
 }
 
+/** Display name of an on-device model's thinking level: Off instead of None. */
+export function thinkingLabel(level: string): string {
+  return level === 'none' ? 'Off' : effortLabel(level);
+}
+
 /** Clamp `level` to the nearest allowed level at or below it — matches the
  *  backend and Claude Code's own fallback rule. Returns `level` unchanged
- *  when the model has no effort support (empty `allowed`). */
+ *  when the model has no effort support (empty `allowed`). A level that
+ *  thinks never clamps to 'none': on a None/Max ladder, High stays on at Max. */
 export function clampEffort(level: string, allowed: string[]): string {
   if (allowed.length === 0) return level;
   if (allowed.includes(level)) return level;
@@ -35,10 +41,12 @@ export function clampEffort(level: string, allowed: string[]): string {
   if (ci < 0) ci = EFFORT_ORDER.indexOf(DEFAULT_EFFORT as EffortLevel);
   let best: string | null = null;
   for (const lv of allowed) {
+    if (lv === 'none') continue;
     const i = EFFORT_ORDER.indexOf(lv as EffortLevel);
     if (i <= ci && (best === null || i > EFFORT_ORDER.indexOf(best as EffortLevel))) best = lv;
   }
-  return best ?? allowed[0];
+  if (best) return best;
+  return allowed.find((lv) => lv !== 'none') ?? allowed[0];
 }
 
 /** Map a legacy/unknown value (e.g. the retired 'auto') onto a known level. */

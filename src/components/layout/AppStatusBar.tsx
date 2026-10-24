@@ -1,5 +1,5 @@
 import React from 'react';
-import { useSettingsStore } from '@/stores/settingsStore';
+import { activeEffortLevel, useSettingsStore } from '@/stores/settingsStore';
 import { useUIStore } from '@/stores/uiStore';
 import { useBackgroundTaskStore } from '@/stores/backgroundTaskStore';
 import { useGitStatusBar } from '@/hooks/useGitStatusBar';
@@ -23,7 +23,9 @@ import { useVoiceClock } from '@/hooks/useVoiceClock';
 export const AppStatusBar: React.FC = () => {
   const selectedModel = useSettingsStore((s) => s.selectedModel);
   const models = useSettingsStore((s) => s.models);
-  const effortLevel = useSettingsStore((s) => s.effortLevel);
+  // The level the selected model runs at: Thinking on an on-device model.
+  const effortLevel = useSettingsStore(activeEffortLevel);
+  const isLocal = useSettingsStore((s) => !!s.models.find((m) => m.key === s.selectedModel)?.is_local);
   const permissionMode = useSettingsStore((s) => s.config.permissionMode);
   const wsConnected = useUIStore((s) => s.wsConnected);
 
@@ -45,7 +47,7 @@ export const AppStatusBar: React.FC = () => {
       </span>
 
       {effortLevel && effortLevel !== 'none' && (
-        <span className="asb-seg asb-effort" title="Reasoning effort">
+        <span className="asb-seg asb-effort" title={isLocal ? 'Thinking level' : 'Reasoning effort'}>
           {effortLevel}
         </span>
       )}

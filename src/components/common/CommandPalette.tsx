@@ -5,7 +5,7 @@ import { useSessionStore } from '@/stores/sessionStore';
 import { useTheme } from '@/providers/ThemeProvider';
 import { useDismiss } from '@/hooks/useDismiss';
 import { requestModelChange } from '@/components/chat/dataRetentionConsent';
-import { effortLabel } from '@/utils/effort';
+import { effortLabel, thinkingLabel } from '@/utils/effort';
 import { PERMISSION_MODES } from '@/utils/permissionModes';
 import { SETTINGS_TABS } from '@/components/settings/SettingsModal';
 import { put } from '@/api/client';
@@ -104,11 +104,18 @@ export const CommandPalette: React.FC = () => {
         }) });
     }
 
-    // Effort levels — only those the selected model supports.
-    const effortLevels = models.find((m) => m.key === selectedModel)?.effort_levels ?? [];
+    // Effort levels — only those the selected model supports. On an on-device
+    // model they are its Thinking levels, kept apart from the cloud effort.
+    const picked = models.find((m) => m.key === selectedModel);
+    const effortLevels = picked?.effort_levels ?? [];
     for (const lvl of effortLevels) {
-      list.push({ id: `effort-${lvl}`, group: 'Effort', title: `Set effort: ${effortLabel(lvl)}`, keywords: 'thinking depth',
-        run: run(() => settings.setEffortLevel(lvl)) });
+      if (picked?.is_local) {
+        list.push({ id: `effort-${lvl}`, group: 'Thinking', title: `Set thinking: ${thinkingLabel(lvl)}`, keywords: 'effort reasoning depth',
+          run: run(() => settings.setLocalThinkingLevel(lvl)) });
+      } else {
+        list.push({ id: `effort-${lvl}`, group: 'Effort', title: `Set effort: ${effortLabel(lvl)}`, keywords: 'thinking depth',
+          run: run(() => settings.setEffortLevel(lvl)) });
+      }
     }
 
     // Themes — keep keywords generic ("appearance") so the distinguishing
