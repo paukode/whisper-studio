@@ -429,6 +429,73 @@ describe('ModelBrowser (Discover)', () => {
     });
   });
 
+  it('marks an official build and names the model it was built from', async () => {
+    const OFFICIAL = {
+      count: 1,
+      results: [
+        {
+          ...SEARCH.results[0],
+          repo_id: 'unsloth/Qwen3.8-27B-GGUF',
+          name: 'Qwen3.8-27B-GGUF',
+          label: 'Qwen3.8-27B-GGUF',
+          official: true,
+          base_model: 'Qwen/Qwen3.8-27B',
+        },
+      ],
+    };
+    api.get.mockImplementation((url: string) => {
+      if (url.startsWith('/api/models/browse/search')) return Promise.resolve(OFFICIAL);
+      if (url === '/api/models') return Promise.resolve({ models: [], default: '' });
+      return Promise.resolve({});
+    });
+    renderBrowser();
+    await screen.findByText('Qwen3.8-27B-GGUF');
+    expect(screen.getByText('official')).toBeInTheDocument();
+    expect(screen.getByText(/build of Qwen\/Qwen3\.8-27B/)).toBeInTheDocument();
+  });
+
+  it('explains an official model the engines cannot run, with nothing to download', async () => {
+    const UNSUPPORTED = {
+      count: 1,
+      results: [
+        {
+          repo_id: 'deepseek-ai/DeepSeek-V4.1-Flash',
+          author: 'deepseek-ai',
+          name: 'DeepSeek-V4.1-Flash',
+          label: 'DeepSeek-V4.1-Flash',
+          format: null,
+          downloads: 1_478_503,
+          likes: 0,
+          trending_score: 0,
+          arch: 'deepseek41',
+          param_size: null,
+          context_length: null,
+          gated: false,
+          supported: false,
+          official: true,
+          base_model: null,
+          unsupported_reason:
+            'The installed llama.cpp and mlx-lm cannot run the deepseek41 architecture yet.',
+        },
+      ],
+    };
+    api.get.mockImplementation((url: string) => {
+      if (url.startsWith('/api/models/browse/search')) return Promise.resolve(UNSUPPORTED);
+      if (url === '/api/models') return Promise.resolve({ models: [], default: '' });
+      return Promise.resolve({});
+    });
+    renderBrowser();
+    await screen.findByText('DeepSeek-V4.1-Flash');
+    expect(screen.getByText('not supported yet')).toBeInTheDocument();
+    expect(screen.getByText(/cannot run the deepseek41 architecture yet/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole('combobox', { name: /choose a quant for DeepSeek-V4\.1-Flash/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /download/i })).not.toBeInTheDocument();
+    // An unsupported row never asks for quants.
+    expect(api.get.mock.calls.some(([url]) => String(url).includes('/browse/repo/'))).toBe(false);
+  });
+
   it('renders merged GGUF and MLX rows: quant picker for GGUF, whole-repo for MLX', async () => {
     const MERGED = { count: 2, results: [...SEARCH.results, ...MLX_SEARCH.results] };
     api.get.mockImplementation((url: string) => {

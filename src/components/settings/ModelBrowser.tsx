@@ -77,6 +77,17 @@ const ChatOnlyChip: React.FC = () => (
   </span>
 );
 
+/** Chip for a model from its maker: the maker's own repo, or a build of it. */
+const OfficialChip: React.FC = () => (
+  <span
+    className="model-local-badge"
+    style={{ color: 'var(--accent, #0a84ff)' }}
+    title="The model maker's own model, or a build of it."
+  >
+    official
+  </span>
+);
+
 /** Green chip for a repo the user already has (some quant installed). */
 const InstalledChip: React.FC = () => (
   <span
@@ -203,7 +214,7 @@ const RepoRow: React.FC<{ result: BrowseResult }> = ({ result }) => {
       const res = await installModel({
         repo_id: result.repo_id,
         filename: isMlx ? '' : (effectiveSelected as string),
-        format: result.format,
+        format: result.format ?? undefined,
       });
       addToast(installToast(res));
       await refreshAfterInstall(queryClient);
@@ -240,6 +251,7 @@ const RepoRow: React.FC<{ result: BrowseResult }> = ({ result }) => {
           >
             {result.name}
             <span className="model-local-badge">{result.author}</span>
+            {result.official && <OfficialChip />}
             {result.param_size && (
               <span style={{ fontSize: 11, color: 'var(--text-secondary, #888)' }}>
                 {result.param_size}
@@ -253,6 +265,7 @@ const RepoRow: React.FC<{ result: BrowseResult }> = ({ result }) => {
             {(result.format ?? 'gguf').toUpperCase()} ·{' '}
             {result.arch ? `${result.arch} · ` : ''}
             {humanCount(result.downloads)} downloads
+            {result.base_model ? ` · build of ${result.base_model}` : ''}
             {result.gated ? ' · gated (needs license acceptance)' : ''}
           </div>
         </div>
@@ -327,6 +340,28 @@ const RepoRow: React.FC<{ result: BrowseResult }> = ({ result }) => {
     </div>
   );
 };
+
+/** An official model with no build the local engines can run: shown so the
+ *  user sees why it is missing, with nothing to download. */
+const UnsupportedRow: React.FC<{ result: BrowseResult }> = ({ result }) => (
+  <div className="settings-item">
+    <div className="settings-item-info">
+      <div
+        className="settings-item-name"
+        style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}
+      >
+        {result.name}
+        <span className="model-local-badge">{result.author}</span>
+        {result.official && <OfficialChip />}
+        <span className="model-local-badge model-chatonly-badge">not supported yet</span>
+      </div>
+      <div className="settings-item-desc">
+        {result.arch ? `${result.arch} · ` : ''}
+        {humanCount(result.downloads)} downloads · {result.unsupported_reason}
+      </div>
+    </div>
+  </div>
+);
 
 /** One curated recommendation: label + size + quant, one-click install. Shows
  *  "Installed" once its weights are on disk. */
@@ -480,7 +515,8 @@ export const ModelBrowser: React.FC = () => {
       <h4 className="models-section-title">Discover models</h4>
       <p className="models-section-desc">
         Download an on-device model. Start with a Recommended pick, or search Hugging
-        Face for any GGUF or MLX chat model the local engines can run.
+        Face for any GGUF or MLX chat model the local engines can run. Official models
+        from their makers come first.
       </p>
 
       <RecommendedSection />
@@ -527,9 +563,13 @@ export const ModelBrowser: React.FC = () => {
       )}
 
       <div className="settings-list">
-        {results.map((r) => (
-          <RepoRow key={r.repo_id} result={r} />
-        ))}
+        {results.map((r) =>
+          r.supported ? (
+            <RepoRow key={r.repo_id} result={r} />
+          ) : (
+            <UnsupportedRow key={r.repo_id} result={r} />
+          ),
+        )}
       </div>
     </div>
   );

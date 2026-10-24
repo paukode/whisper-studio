@@ -13,8 +13,9 @@ export interface BrowseResult {
   author: string;
   name: string;
   label: string;
-  /** Which lane this row came from; MLX rows install whole-repo, no quant picker. */
-  format?: BrowseFormat;
+  /** Which lane this row came from; MLX rows install whole-repo, no quant
+   *  picker. Null on a row for an official model with no runnable build. */
+  format?: BrowseFormat | null;
   downloads: number | null;
   likes: number | null;
   trending_score: number | null;
@@ -28,8 +29,15 @@ export interface BrowseResult {
   tool_capable?: boolean;
   context_length: number | null;
   gated: boolean;
-  /** Always true in returned rows — the backend hides unsupported archs. */
+  /** False only on a row for an official model that no build the local
+   *  engines can run exists for; `unsupported_reason` says why. Every other
+   *  unsupported repo is left out by the backend. */
   supported: boolean;
+  /** The repo comes from the model maker, or is a build of the maker's model. */
+  official?: boolean;
+  /** The model this repo is a quantized build of, when the repo declares one. */
+  base_model?: string | null;
+  unsupported_reason?: string | null;
   /** Whether some quant of this repo is already installed or downloading, so
    *  the row can say so instead of letting the user queue the same multi-GB
    *  download twice. Same source of truth as the Chat tab's download list. */
