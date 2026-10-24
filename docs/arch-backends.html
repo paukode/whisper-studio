@@ -318,13 +318,23 @@
         at a stale size, and it is recorded via <code>set_requested_n_ctx</code> so non-chat callers
         reuse it. On the MLX engine the slider only labels the context meter: <code>mlx_lm</code> has no
         context-size flag, so the window is the one baked into the model's own config.</li>
-      <li><b>The full tool pool, always.</b> There are no user-facing gates: like the cloud paths, a
-        tool-capable local model always gets the full pool, and a thinking-capable one always thinks.
-        The old per-turn toggles (<code>local_tools</code> / <code>local_tool_scope</code> /
-        <code>local_thinking</code>) are gone; the capability flags in the model registry are the only
-        switch. The full pool renders a roughly 17.2K-token prompt, which is why the 32K default context
+      <li><b>The full tool pool, always.</b> There is no user-facing gate: like the cloud paths, a
+        tool-capable local model always gets the full pool. The <code>supports_tools</code> flag in
+        the model registry is the only switch. The full pool renders a roughly 17.2K-token prompt, which is why the 32K default context
         exists (a 16K window would reject the very first tool turn); because it is a stable prompt
         prefix, llama-server's prefix cache absorbs the prefill cost after turn one.</li>
+      <li><b>Thinking levels.</b> Reasoning follows the "Thinking" level of the composer.
+        <code class="path">server/local/thinking.py</code> reads the chat template of the model from
+        the GGUF header or from the MLX files. If the template has a reasoning mode, the composer
+        offers the levels <code>none</code>, <code>low</code>, <code>medium</code>, <code>high</code>
+        and <code>max</code>. The default is <code>max</code>.
+        <p>A template that reads <code>reasoning_effort</code> gets the level. Other templates get
+        <code>enable_thinking</code>. On llama-server, they also get a
+        <code>thinking_budget_tokens</code> limit: 1,024 tokens at <code>low</code>, 4,096 at
+        <code>medium</code> and 16,384 at <code>high</code>. The <code>max</code> level has no limit.
+        mlx-lm has no reasoning limit, so an MLX model of this type offers only <code>none</code> and
+        <code>max</code>. Each request adds the reasoning tokens to <code>max_output</code>. Thus, the
+        reasoning does not use the tokens of the answer.</p></li>
       <li><b>Native tool messages, and looser arguments.</b> Executed results go back as real OpenAI
         <code>tool</code> messages, which is a much stronger signal than folding them into a user turn.
         Because llama-server passes through whatever the model produced (Bedrock validates against the
