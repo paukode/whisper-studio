@@ -51,6 +51,9 @@ tsconfig.tsbuildinfo
 # Setup script log
 setup.log
 
+# The pinned llama.cpp build setup.sh installs (server/local/llama_pin.env)
+vendor/
+
 # Downloaded ML model weights
 models/
 

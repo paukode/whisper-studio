@@ -8,7 +8,7 @@ no such parser (only Functionary/ChatML handlers that would replace the model's
 own template), which is why the previous path was hardcoded to Gemma's markers.
 
 What this module owns:
-  * finding the binary (PATH, then Homebrew)
+  * finding the pinned binary (the app's bundled copy, or setup.sh's)
   * starting it against one model at a chosen context size, and waiting for
     /health
   * one resident model at a time — switching models stops the old process first,
@@ -28,18 +28,17 @@ import socket
 import subprocess
 import threading
 import time
-
-from server.infrastructure.binaries import resolve
+from pathlib import Path
 
 log = logging.getLogger("whisper-studio")
 
-# gemma4 (and any newer architecture) needs a recent llama.cpp. Homebrew's 6940
-# loads gemma3 but fails gemma4 with "unknown model architecture", so refusing
-# early with the upgrade command beats a confusing load error. Bump as needed.
-MIN_BUILD = 10090
+# The build in llama_pin.env, which both installers fetch. A binary older than
+# the pin lacks architectures and flags the app relies on, so refusing early
+# with the fix beats a confusing "unknown model architecture" at load.
+MIN_BUILD = 11851
 
-# Where we look for the binary when it is not on PATH.
-_FALLBACK_DIRS = ("/opt/homebrew/bin", "/usr/local/bin")
+# Where setup.sh installs the pinned build for a source checkout.
+_VENDOR_BINARY = Path(__file__).resolve().parents[2] / "vendor" / "llama" / "bin" / "llama-server"
 
 _STARTUP_TIMEOUT = float(os.environ.get("WHISPER_LLAMA_SERVER_TIMEOUT", "600"))
 # One-shot (non-chat) generations: a long prompt on a 12B can prefill for a
@@ -88,9 +87,15 @@ class LlamaServerUnavailable(RuntimeError):
 def binary_path() -> str | None:
     """Absolute path to ``llama-server``, or None if it isn't installed.
 
-    ``WHISPER_LLAMA_SERVER_PATH`` (the packaged app's pinned binary) wins,
-    then PATH, then the Homebrew dirs."""
-    return resolve("llama-server", "WHISPER_LLAMA_SERVER_PATH", _FALLBACK_DIRS)
+    ``WHISPER_LLAMA_SERVER_PATH`` (set by the packaged app to its bundled
+    binary) wins, else the copy setup.sh installs under ``vendor/llama``. A
+    llama-server on PATH or from Homebrew is never used, so a different build
+    cannot serve models in place of the pinned one."""
+    override = os.environ.get("WHISPER_LLAMA_SERVER_PATH", "").strip()
+    candidate = os.path.abspath(os.path.expanduser(override)) if override else str(_VENDOR_BINARY)
+    if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+        return candidate
+    return None
 
 
 def installed_build() -> int | None:
@@ -130,15 +135,14 @@ def ensure_available() -> str:
     if not exe:
         raise LlamaServerUnavailable(
             "llama-server is not installed, so on-device models cannot run. "
-            "Install it with 'brew install llama.cpp' (macOS) or run "
-            "'bash setup.sh --local', which does it for you."
+            "Run 'bash setup.sh', which installs the pinned llama.cpp build."
         )
     build = installed_build()
     if build is not None and build < MIN_BUILD:
         raise LlamaServerUnavailable(
             f"llama-server build {build} is too old for current model architectures "
             f"(need >= {MIN_BUILD}; older builds fail with 'unknown model "
-            "architecture'). Upgrade with 'brew upgrade llama.cpp'."
+            "architecture'). Run 'bash setup.sh' to install the pinned build."
         )
     return exe
 

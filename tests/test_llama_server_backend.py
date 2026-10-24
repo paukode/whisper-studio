@@ -178,7 +178,7 @@ def test_ensure_available_rejects_too_old_build(monkeypatch):
     monkeypatch.setattr(LS, "installed_build", lambda: LS.MIN_BUILD - 1)
     with pytest.raises(LS.LlamaServerUnavailable) as e:
         LS.ensure_available()
-    assert "brew upgrade" in str(e.value)  # actionable fix, not just a complaint
+    assert "setup.sh" in str(e.value)  # actionable fix, not just a complaint
 
 
 def test_ensure_available_explains_missing_binary(monkeypatch):
@@ -195,21 +195,82 @@ def test_ensure_available_accepts_unknown_build(monkeypatch):
     assert LS.ensure_available() == "/usr/bin/llama-server"
 
 
-# What `llama-server --version` prints on stderr, and the build in it. The Mac
-# app bundles a numbered build (b10289); setup.sh installs Homebrew's, which
-# since llama.cpp took semantic versions (0.5.0) prints a version and a build.
-_VERSION_OUTPUTS = [
-    ("version: 0.5.0 (build 10350, commit 7fe450e)\nbuilt with AppleClang 17.0.0", 10350),
-    ("version: 10289 (f9e832c10)\nbuilt with Apple clang version 17.0.0", 10289),
-    ("version: 0.6.0 (commit 1a2b3c4)\nbuilt with AppleClang 17.0.0", None),
-]
+# ── one pinned build for the Mac app and setup.sh ────────────────────────────
+
+_REPO = Path(__file__).resolve().parents[1]
+_PIN_FILE = _REPO / "server" / "local" / "llama_pin.env"
+
+
+def _pin() -> dict[str, str]:
+    pin = {}
+    for line in _PIN_FILE.read_text().splitlines():
+        key, sep, value = line.partition("=")
+        if sep and not key.startswith("#"):
+            pin[key.strip()] = value.strip()
+    return pin
+
+
+def test_min_build_is_the_pinned_build():
+    """The server refuses anything older than the build both installers fetch."""
+    tag = _pin()["LLAMA_TAG"]
+    assert re.fullmatch(r"b\d+", tag)
+    assert LS.MIN_BUILD == int(tag[1:])
+    assert re.fullmatch(r"[0-9a-f]{64}", _pin()["LLAMA_SHA256"])
+
+
+@pytest.mark.parametrize("script", ["setup.sh", "macapp/build_app.sh"])
+def test_both_installers_read_the_one_pin(script):
+    """build_app.sh bundles and setup.sh installs the same build: each sources
+    the pin file, and neither names a build of its own."""
+    text = (_REPO / script).read_text()
+    assert re.search(r"^\s*\. .*server/local/llama_pin\.env\"?$", text, re.M)
+    assert not re.search(r"^\s*LLAMA_(TAG|SHA256)=", text, re.M)
+
+
+def test_setup_sh_installs_where_the_server_looks():
+    setup = (_REPO / "setup.sh").read_text()
+    home = re.search(r'^LLAMA_HOME="([^"]+)"', setup, re.M).group(1)
+    assert LS._VENDOR_BINARY == _REPO / home / "bin" / "llama-server"
 
 
 def _stand_in_llama_server(directory: Path, output: str) -> str:
+    directory.mkdir(parents=True, exist_ok=True)
     exe = directory / "llama-server"
     exe.write_text(f"#!/bin/sh\ncat >&2 <<'EOF'\n{output}\nEOF\n")
     exe.chmod(0o755)
     return str(exe)
+
+
+def test_binary_path_takes_the_app_binary_then_the_vendor_copy(tmp_path, monkeypatch):
+    vendor = _stand_in_llama_server(tmp_path / "vendor", "version: 1 (x)")
+    app = _stand_in_llama_server(tmp_path / "app", "version: 1 (x)")
+    monkeypatch.setattr(LS, "_VENDOR_BINARY", Path(vendor))
+    monkeypatch.setenv("WHISPER_LLAMA_SERVER_PATH", app)
+    assert LS.binary_path() == app
+    monkeypatch.delenv("WHISPER_LLAMA_SERVER_PATH")
+    assert LS.binary_path() == vendor
+
+
+def test_binary_path_never_takes_a_llama_server_from_path_or_homebrew(tmp_path, monkeypatch):
+    """A Homebrew or PATH llama-server is another build; using it would serve
+    models with a binary the app was not tested with."""
+    on_path = _stand_in_llama_server(tmp_path / "bin", "version: 1 (x)")
+    monkeypatch.setenv("PATH", f"{Path(on_path).parent}:{os.environ.get('PATH', '')}")
+    monkeypatch.delenv("WHISPER_LLAMA_SERVER_PATH", raising=False)
+    monkeypatch.setattr(LS, "_VENDOR_BINARY", tmp_path / "missing" / "llama-server")
+    assert LS.binary_path() is None
+    monkeypatch.setenv("WHISPER_LLAMA_SERVER_PATH", str(tmp_path / "missing" / "llama-server"))
+    assert LS.binary_path() is None
+
+
+# What `llama-server --version` prints on stderr, and the build in it. Since
+# llama.cpp took semantic versions (0.5.0) it prints a version and a build;
+# older builds printed the build where the version now goes.
+_VERSION_OUTPUTS = [
+    ("version: 0.7.0-dev (build 11851, commit edc353842)\nbuilt with AppleClang 21.0.0", 11851),
+    ("version: 10289 (f9e832c10)\nbuilt with Apple clang version 17.0.0", 10289),
+    ("version: 0.6.0 (commit 1a2b3c4)\nbuilt with AppleClang 17.0.0", None),
+]
 
 
 @pytest.mark.parametrize("output, build", _VERSION_OUTPUTS)
@@ -219,21 +280,25 @@ def test_the_gate_reads_the_build_never_a_semantic_version(tmp_path, monkeypatch
     exe = _stand_in_llama_server(tmp_path, output)
     monkeypatch.setenv("WHISPER_LLAMA_SERVER_PATH", exe)
     assert LS.installed_build() == build
-    assert LS.ensure_available() == exe
+    if build is None or build >= LS.MIN_BUILD:
+        assert LS.ensure_available() == exe
+    else:
+        with pytest.raises(LS.LlamaServerUnavailable):
+            LS.ensure_available()
 
 
 @pytest.mark.parametrize("output, build", _VERSION_OUTPUTS)
 def test_setup_sh_reads_the_build_the_server_reads(tmp_path, output, build):
-    """setup.sh decides from this build whether to upgrade llama.cpp, so it
-    reads the same number as the server's gate (empty when unknown)."""
-    setup = (Path(__file__).resolve().parents[1] / "setup.sh").read_text()
+    """setup.sh decides from this build whether its vendor copy is the pinned
+    one, so it reads the same number as the server's gate (empty when unknown)."""
+    setup = (_REPO / "setup.sh").read_text()
     func = re.search(r"^llama_server_build\(\) \{\n.*?^\}\n", setup, re.S | re.M).group(0)
-    _stand_in_llama_server(tmp_path, output)
+    exe = _stand_in_llama_server(tmp_path, output)
     out = subprocess.run(
-        ["/bin/bash", "-c", func + "llama_server_build"],
+        ["/bin/bash", "-c", func + f"llama_server_build {exe} || true"],
         capture_output=True,
         text=True,
-        env={"PATH": f"{tmp_path}:/usr/bin:/bin"},
+        env={"PATH": "/usr/bin:/bin"},
         check=True,
     )
     assert out.stdout.strip() == ("" if build is None else str(build))
