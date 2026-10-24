@@ -97,10 +97,11 @@ brew install git python@3.12 awscli</code></pre></div>
         <code class="path">.nvmrc</code>), then runs <code>npm install</code> and builds the frontend.
         You never install Node yourself.</li>
       <li>Fetches the Playwright Chromium build used by the live-preview browser tools.</li>
-      <li>Installs the pinned <b>llama.cpp</b> build (<code>llama-server</code>) into
-        <code class="path">vendor/llama</code>, in <em>every</em> mode. It is the same build that the
-        Mac app bundles. A model that you install later from Discover works without a new setup
-        run.</li>
+      <li>Installs the <b>llama.cpp</b> build (<code>llama-server</code>) that
+        <code class="path">server/local/llama_pin.env</code> specifies into
+        <code class="path">vendor/llama</code>, in <em>all</em> modes. It is the same build that the Mac
+        app bundles. If you install a model from Discover after the installation, you do not run
+        <code>setup.sh</code> again.</li>
       <li>Fetches the three <b>always-on speech models</b> (about 190 MB): language ID plus the
         ReDimNet2 and ECAPA speaker encoders. These are the same three the Mac app ships inside its
         bundle, and every transcription path needs them.</li>

@@ -203,9 +203,9 @@ curated set in one click.
 
 Tool calling and the thinking channel come from `llama-server`, which uses
 each model's own chat template and upstream's per-family parsers, so a new
-family works without app changes. `setup.sh` installs the same pinned
-llama.cpp build as the Mac app (`server/local/llama_pin.env`) into
-`vendor/llama`. The server uses only that copy, never one from Homebrew.
+family works without app changes. `setup.sh` installs the same llama.cpp
+build as the Mac app (`server/local/llama_pin.env`) into `vendor/llama`. The
+server uses only that copy. It does not use a llama.cpp build from Homebrew.
 
 ## Usage
 

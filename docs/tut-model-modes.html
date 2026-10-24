@@ -167,7 +167,7 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Engine</th><th>Serves</th><th>Notes</th></tr></thead>
       <tbody>
-        <tr><td><b>llama-server</b> (llama.cpp)</td><td>GGUF weights, one file per quantization</td><td>The Mac app bundles the binary. <code>setup.sh</code> installs the same pinned build into <code>vendor/llama</code> in every mode. It owns upstream's per-model tool-call and reasoning parsers, so a new GGUF gets tools and a thinking channel with no code change. The context window is yours to set: a <b>Context window</b> chip appears in the toolbar while a local model is selected, from 32K upward, and changing it reloads the model.</td></tr>
+        <tr><td><b>llama-server</b> (llama.cpp)</td><td>GGUF weights, one file per quantization</td><td>The Mac app bundles the binary. <code>setup.sh</code> installs the same build into <code>vendor/llama</code> in all modes. It owns upstream's per-model tool-call and reasoning parsers, so a new GGUF gets tools and a thinking channel with no code change. The context window is yours to set: a <b>Context window</b> chip appears in the toolbar while a local model is selected, from 32K upward, and changing it reloads the model.</td></tr>
         <tr><td><b>mlx_lm server</b> (MLX)</td><td>MLX snapshot directories</td><td>Runs inside the app's own Python, so availability is an import check rather than a binary on your PATH. Weights load lazily on the first request, so a warmup call runs at load time instead of letting your first real turn pay for it. There is no context-size flag, so the window is whatever the model's own config carries and the chip only reports it.</td></tr>
       </tbody>
     </table></div>
