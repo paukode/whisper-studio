@@ -564,56 +564,67 @@ fi
 # tool-call and reasoning parsers, so a GGUF added to config.json gets tools and
 # a thinking channel with no code change.
 #
-# Installed in EVERY mode, matching the Mac app (which bundles the binary): a
-# model installed later from Settings > Models > Discover must serve without the
-# user re-running setup. It is a small runtime, no model weights come with it.
+# Installed in EVERY mode, matching the Mac app: a model installed later from
+# Settings > Models > Discover must serve without the user re-running setup. It
+# is a small runtime, no model weights come with it.
 #
-# Build matters: gemma4 (and newer architectures) need >= LLAMA_MIN_BUILD. Older
-# builds load fine and then fail with "unknown model architecture", so we upgrade
-# an outdated install rather than leaving that trap. Failure here is REPORTED, not
-# silently absorbed: without llama-server, on-device chat does not work at all
-# (there is no in-process fallback), so a broken install must be visible.
-LLAMA_MIN_BUILD=10090
+# The build is the one in server/local/llama_pin.env, the same release tarball
+# macapp/build_app.sh bundles, so a source install and the Mac app run the same
+# binary. It goes into vendor/llama, the only place the server looks outside
+# the app (a llama-server on PATH or from Homebrew is never used). Failure here
+# is REPORTED, not silently absorbed: without llama-server, on-device chat does
+# not work at all, so a broken install must be visible.
+. server/local/llama_pin.env
+LLAMA_HOME="vendor/llama"
+LLAMA_ASSET="llama-${LLAMA_TAG}-bin-macos-arm64.tar.gz"
+LLAMA_URL="https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_TAG}/${LLAMA_ASSET}"
 
 llama_server_build() {
-    command -v llama-server >/dev/null 2>&1 || return 1
+    [ -x "$1" ] || return 1
     # The build number, from stderr: "version: 0.5.0 (build 10350, commit
     # 7fe450e)" since llama.cpp took semantic versions, "version: 10090
     # (7347430f4)" before. A semantic version's major is never the build
     # (server/local/llama_server.py::installed_build reads it the same way).
-    llama-server --version 2>&1 | sed -n \
+    "$1" --version 2>&1 | sed -n \
         -e 's/.*(build[[:space:]]\{1,\}\([0-9]\{1,\}\).*/\1/p' \
         -e 's/^[[:space:]]*version:[[:space:]]*\([0-9]\{1,\}\)[[:space:]]*(.*/\1/p' | head -1
 }
 
-LLAMA_BUILD="$(llama_server_build || true)"
-if [ -z "$LLAMA_BUILD" ]; then
-    if command -v brew >/dev/null 2>&1; then
-        echo "Installing llama.cpp via Homebrew, which provides the llama-server binary (logs → $SETUP_LOG)..."
-        if brew install llama.cpp >>"$SETUP_LOG" 2>&1; then
-            LLAMA_BUILD="$(llama_server_build || true)"
-            echo "  ✓ llama-server installed (build ${LLAMA_BUILD:-unknown}) at $(command -v llama-server)."
-        else
-            echo "  ✗ llama.cpp install FAILED (see $SETUP_LOG)."
-            echo "    On-device chat will not work until this succeeds, there is no"
-            echo "    fallback runtime. Retry with: brew install llama.cpp"
-        fi
-    else
-        echo "  ✗ Homebrew not found, so llama.cpp cannot be installed automatically."
-        echo "    On-device chat REQUIRES llama-server and has no fallback. Install it"
-        echo "    manually: https://github.com/ggml-org/llama.cpp"
+install_llama_server() {
+    local tmp
+    tmp="$(mktemp -d)"
+    curl -fsSL --retry 3 --retry-delay 2 -o "$tmp/$LLAMA_ASSET" "$LLAMA_URL" || { rm -rf "$tmp"; return 1; }
+    if ! echo "$LLAMA_SHA256  $tmp/$LLAMA_ASSET" | shasum -a 256 -c - >/dev/null 2>&1; then
+        echo "    checksum mismatch for $LLAMA_ASSET"
+        rm -rf "$tmp"
+        return 1
     fi
-elif [ "$LLAMA_BUILD" -lt "$LLAMA_MIN_BUILD" ] 2>/dev/null; then
-    echo "llama.cpp build $LLAMA_BUILD is older than $LLAMA_MIN_BUILD (needed for current"
-    echo "model architectures). Upgrading (logs → $SETUP_LOG)..."
-    if command -v brew >/dev/null 2>&1 && brew upgrade llama.cpp >>"$SETUP_LOG" 2>&1; then
-        echo "  ✓ llama.cpp upgraded to build $(llama_server_build || echo unknown)."
-    else
-        echo "  ✗ Could not upgrade llama.cpp. On-device models may fail with 'unknown"
-        echo "    model architecture'; run 'brew upgrade llama.cpp' manually."
-    fi
+    mkdir -p "$tmp/src"
+    tar -xzf "$tmp/$LLAMA_ASSET" -C "$tmp/src" || { rm -rf "$tmp"; return 1; }
+    rm -rf "$LLAMA_HOME"
+    mkdir -p "$LLAMA_HOME/bin"
+    # llama-server plus every dylib/metallib travel together (@rpath-relative);
+    # cp -RP keeps the versioned-symlink chains the loader resolves.
+    find "$tmp/src" \( -type f -o -type l \) \
+        \( -name 'llama-server' -o -name '*.dylib' -o -name '*.metallib' \) \
+        -exec cp -RP {} "$LLAMA_HOME/bin/" \;
+    rm -rf "$tmp"
+    [ -x "$LLAMA_HOME/bin/llama-server" ]
+}
+
+LLAMA_BUILD="$(llama_server_build "$LLAMA_HOME/bin/llama-server" || true)"
+if [ "$LLAMA_BUILD" = "${LLAMA_TAG#b}" ]; then
+    echo "  ✓ llama-server $LLAMA_TAG present at $LLAMA_HOME/bin/llama-server."
 else
-    echo "  ✓ llama-server present (build $LLAMA_BUILD) at $(command -v llama-server)."
+    echo "Installing llama.cpp $LLAMA_TAG (llama-server) into $LLAMA_HOME..."
+    if install_llama_server >>"$SETUP_LOG" 2>&1; then
+        LLAMA_BUILD="$(llama_server_build "$LLAMA_HOME/bin/llama-server" || true)"
+        echo "  ✓ llama-server installed (build ${LLAMA_BUILD:-unknown}) at $LLAMA_HOME/bin/llama-server."
+    else
+        echo "  ✗ llama.cpp $LLAMA_TAG install FAILED (see $SETUP_LOG)."
+        echo "    On-device chat will not work until this succeeds, there is no"
+        echo "    fallback runtime. Check the network and re-run: bash setup.sh"
+    fi
 fi
 
 # ── Model weights: only the always-on speech models are fetched ─────────────

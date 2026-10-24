@@ -249,11 +249,13 @@ bash setup.sh</code></pre></div>
         writes a <code class="path">config.user.json</code> holding the first-run defaults: <b>local
         mode</b>, with the on-device index backends recorded for later. An existing config is never
         touched. If you passed a mode flag, the chosen <code>model_mode</code> is written on top.</p></li>
-      <li><h4>Installs the on-device serving runtime</h4><p>llama.cpp (the <code>llama-server</code>
-        binary) via Homebrew, in <em>every</em> mode, matching the Mac app which bundles it, so a model
-        you install later from Discover serves without re-running setup. The build number matters:
-        anything older than build 10090 cannot load current model architectures, so an outdated install
-        is upgraded. A failure here is reported loudly, because on-device chat has no fallback runtime.</p></li>
+      <li><h4>Installs the on-device serving runtime</h4><p>The llama.cpp build that
+        <code class="path">server/local/llama_pin.env</code> specifies (the <code>llama-server</code>
+        binary), in <em>all</em> modes. It is the same release build that the Mac app bundles. The
+        script installs it into <code class="path">vendor/llama</code>, and installs it again when the
+        file specifies a different build. If you install a model from Discover after this step, you do
+        not run <code>setup.sh</code> again. The script reports a failure here, because on-device chat
+        has no other runtime.</p></li>
       <li><h4>Fetches the always-on speech models</h4><p>About 190 MB: the language-ID model
         (VoxLingua107) and the two speaker encoders (ReDimNet2, the default, and ECAPA, the fallback).
         Every transcription path needs them and the Mac app ships the same three inside its bundle, so a
@@ -425,7 +427,7 @@ bash setup.sh</code></pre></div>
         <tr><td><code>AccessDeniedException</code> / <code>Could not invoke model</code> in chat</td><td>The AWS user lacks Bedrock permissions, or the Claude model is not enabled in your region.</td></tr>
         <tr><td><code>You don't have access to the model with the specified model ID</code></td><td>Region mismatch - the model is enabled in a different region than Settings says. Align the Bedrock Region.</td></tr>
         <tr><td>The <b>Talk</b> button is disabled</td><td>Hover it: the tooltip names the reason. Usually Nova 2 Sonic is not enabled in the region, the AWS credentials are missing, or the Python running the backend is older than 3.12.</td></tr>
-        <tr><td>An on-device model fails with <code>unknown model architecture</code></td><td>The llama.cpp build is too old. Run <code>brew upgrade llama.cpp</code>.</td></tr>
+        <tr><td>An on-device model fails with <code>unknown model architecture</code></td><td>The llama.cpp build is older than the build in <code class="path">server/local/llama_pin.env</code>. Run <code>bash setup.sh</code>.</td></tr>
         <tr><td>Port 8000 or 5173 already in use</td><td>The script auto-increments to the next free port. Read the URL it actually prints.</td></tr>
         <tr><td>Blank page in the browser</td><td>The frontend bundle is missing. Re-run <code>bash setup.sh</code>, or <code>bash setup.sh --new</code> for a clean rebuild.</td></tr>
       </tbody>

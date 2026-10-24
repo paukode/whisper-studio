@@ -311,7 +311,8 @@ source ~/.zshrc</code></pre></div>
         <tr>
           <td><code>WHISPER_LLAMA_SERVER_PATH</code>, <code>WHISPER_FFMPEG_PATH</code>,
             <code>WHISPER_FFPROBE_PATH</code>, <code>WHISPER_NODE_PATH</code></td>
-          <td>resolved from <code>PATH</code>, then Homebrew</td>
+          <td>llama-server: <code class="path">vendor/llama/bin/llama-server</code> (from
+            <code>setup.sh</code>). The others: resolved from <code>PATH</code>, then Homebrew</td>
           <td>Explicit paths to the four bundled binaries: llama-server, ffmpeg, ffprobe and Node. The
             Mac app sets all four to its own pinned copies, which is why it needs nothing installed on
             the machine. See the environment contract in
