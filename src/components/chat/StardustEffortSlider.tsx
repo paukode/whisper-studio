@@ -12,9 +12,9 @@ import { StardustSlider, parseColor, mix, type RGB } from '@/components/chat/Sta
  * chip / `/effort` / palette use.
  */
 const TONES: Record<string, [string, string]> = {
-  low: ['--tone-blue', '#8ecae6'],
-  high: ['--tone-orange', '#fb8500'],
-  extra: ['--tone-violet', '#c9a7ff'],
+  low: ['--tone-blue', '#7cb7f0'],
+  high: ['--tone-orange', '#f5a25d'],
+  extra: ['--tone-violet', '#b49cff'],
 };
 
 interface Props {
@@ -38,10 +38,10 @@ export const StardustEffortSlider: React.FC<Props> = ({
   const readColors = useCallback((): RGB[] => {
     const cs = getComputedStyle(document.documentElement);
     const v = (n: string, f: string) => cs.getPropertyValue(n).trim() || f;
-    const accent = parseColor(v('--accent', '#219ebc'));
+    const accent = parseColor(v('--accent', '#9a82ff'));
     return levels.map((lv) => {
       if (TONES[lv]) return parseColor(v(...TONES[lv]));
-      if (lv === 'medium' || lv === 'none') return parseColor(v('--text-muted', '#8fa9b8'));
+      if (lv === 'medium' || lv === 'none') return parseColor(v('--text-muted', '#8c8bab'));
       if (lv === 'max') return accent;
       if (lv === 'ultracode') return mix(accent, [255, 255, 255], 0.32);
       return accent;

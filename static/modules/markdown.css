@@ -30,9 +30,8 @@
 .markdown-content h6 {
     margin: 1.4em 0 0.55em;
     line-height: 1.3;
-    font-family: var(--font-mono);
-    font-weight: 500;
-    letter-spacing: -0.02em;
+    font-weight: 700;
+    letter-spacing: -0.015em;
     color: var(--text-heading);
 }
 .markdown-content h1 {
@@ -87,9 +86,8 @@
 .markdown-content blockquote {
     margin: 0.8em 0;
     padding: 0.7em 1em;
-    border: 1px solid var(--success-border);
-    border-left: 3px solid var(--accent);
-    border-radius: 0;
+    border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+    border-radius: var(--radius-md);
     background: var(--accent-dim);
     color: var(--text-primary);
 }
@@ -109,7 +107,7 @@
     margin: 1em 0;
     font-size: 0.95em;
     border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-md);
     /* Keeps the handles' z-index inside the frame. */
     isolation: isolate;
 }

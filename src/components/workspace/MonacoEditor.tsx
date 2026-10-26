@@ -25,16 +25,16 @@ const viewStateCache = new Map<string, editor.ICodeEditorViewState>();
  */
 const MONACO_PALETTES = {
   dark: {
-    base: 'vs-dark', bg: '#052536', fg: '#e6eef3', lineNo: '#4f6b7a', lineNoActive: '#b6c8d2',
-    accent: '#8ecae6', selection: '#219ebc40', lineHighlight: '#ffffff08', border: '#0a3043',
-    keyword: 'ffb703', string: 'a6d98c', number: 'fb8500', comment: '6f8a99', fn: '8ecae6',
-    type: 'c9a7ff', variable: 'b6c8d2', tag: 'ff6b6b', attr: 'ffd166',
+    base: 'vs-dark', bg: '#1a1934', fg: '#c9c8e0', lineNo: '#5a5980', lineNoActive: '#aeadc8',
+    accent: '#9a82ff', selection: '#9a82ff38', lineHighlight: '#ffffff08', border: '#2a2950',
+    keyword: 'b49cff', string: '8fdcae', number: 'f5a25d', comment: '7d7c9e', fn: '7cb7f0',
+    type: 'f28cbc', variable: 'c9c8e0', tag: 'ff8a8a', attr: 'f3c86a',
   },
   light: {
-    base: 'vs', bg: '#edf3f7', fg: '#023047', lineNo: '#8fa3b0', lineNoActive: '#3a5262',
-    accent: '#166e8c', selection: '#219ebc2e', lineHighlight: '#02304708', border: '#dde7ee',
-    keyword: 'a84f00', string: '2f7d32', number: 'a34a07', comment: '667c88', fn: '1b6fa8',
-    type: '7b4bb5', variable: '3a5262', tag: 'c0262d', attr: '8a6400',
+    base: 'vs', bg: '#f3f4f9', fg: '#46445e', lineNo: '#a3a2ba', lineNoActive: '#5d5b78',
+    accent: '#6a45e8', selection: '#6a45e824', lineHighlight: '#1c1a4a08', border: '#e1e3ee',
+    keyword: '6a45e8', string: '24774d', number: 'a8510a', comment: '72718c', fn: '2b62c4',
+    type: 'a8326a', variable: '46445e', tag: 'c23a40', attr: '8f5600',
   },
 } as const;
 

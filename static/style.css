@@ -70,7 +70,6 @@ body {
     min-width: 180px;
     max-width: 480px;
     background: var(--bg-primary);
-    border-right: 1px solid var(--border);
     display: flex;
     flex-direction: column;
     position: relative;
@@ -120,16 +119,17 @@ body {
 .session-list { flex: 1; overflow-y: auto; padding: 8px; }
 
 .session-item {
-    padding: 8px 10px; border-radius: var(--radius-md); cursor: pointer;
-    transition: background 0.12s ease; margin-bottom: 1px; position: relative;
+    padding: 9px 12px; border-radius: var(--radius-md); cursor: pointer;
+    transition: background 0.12s ease, box-shadow 0.12s ease; margin-bottom: 2px; position: relative;
 }
 .session-item:hover {
     background: var(--bg-hover);
 }
 .session-item.active {
-    background: var(--accent-dim);
+    background: var(--bg-surface);
+    box-shadow: var(--shadow-sm);
 }
-.session-item.active .session-item-title { color: var(--accent); }
+.session-item.active .session-item-title { color: var(--text-heading); font-weight: 600; }
 .session-item-title {
     font-size: var(--fs-body); font-weight: 500; color: var(--text-primary);
     margin-bottom: 4px;
@@ -212,7 +212,6 @@ body {
 .header {
     display: flex; align-items: center; justify-content: space-between;
     padding: 10px 20px;
-    border-bottom: 1px solid var(--border);
     background: var(--bg-primary);
     gap: 12px; flex-shrink: 0;
 }
@@ -357,14 +356,13 @@ body {
 .btn-stop:hover { background: var(--bg-hover); }
 
 .btn-sm {
-    padding: 4px 10px; font-size: var(--fs-caption); background: transparent;
-    color: var(--text-muted); border: 1px solid var(--border);
-    border-radius: var(--radius-md); font-weight: 500; gap: 4px;
-    letter-spacing: 0.2px;
+    padding: 5px 12px; font-size: var(--fs-caption); background: var(--chip);
+    color: var(--text-secondary); border: 1px solid transparent;
+    border-radius: var(--radius-pill); font-weight: 600; gap: 4px;
+    letter-spacing: 0;
 }
 .btn-sm:hover:not(:disabled) {
-    background: var(--bg-hover); color: var(--text-secondary);
-    border-color: var(--border-strong);
+    background: var(--bg-hover); color: var(--text-heading);
 }
 
 /* Primary / secondary button variants. Global so primary actions read as
@@ -372,11 +370,13 @@ body {
    own scoped rule). Declared after .btn-sm so the accent wins over the ghost
    .btn-sm background on `.btn btn-primary btn-sm`. */
 .btn-primary {
-    background: var(--accent);
-    color: var(--on-accent); border-color: var(--accent);
+    background: var(--accent-gradient);
+    color: var(--on-accent); border-color: transparent;
+    border-radius: var(--radius-pill);
+    box-shadow: var(--shadow-sm);
 }
 .btn-primary:hover:not(:disabled) {
-    background: var(--accent-hover); border-color: var(--accent-hover);
+    filter: brightness(1.06);
     color: var(--on-accent);
 }
 .btn-secondary {
@@ -499,22 +499,23 @@ body {
 }
 
 .btn-send {
-    background: var(--accent-send); color: var(--on-accent);
-    border: none; border-radius: var(--radius-md);
-    width: 38px; height: 38px;
+    background: var(--accent-gradient); color: var(--on-accent);
+    border: none; border-radius: var(--radius-pill);
+    width: 40px; height: 40px;
+    box-shadow: var(--shadow-sm);
     display: flex; align-items: center; justify-content: center;
     cursor: pointer; flex-shrink: 0; padding: 0;
     transition: background 0.15s ease;
 }
 .btn-send:hover {
-    background: var(--accent-send-hover);
+    filter: brightness(1.06);
 }
 .btn-send:active { transform: translateY(0); }
 .btn-send:disabled { opacity: 0.3; cursor: not-allowed; transform: none; box-shadow: none; }
 .btn-chat-stop {
     background: var(--accent-record); color: #fff;
-    border: none; border-radius: var(--radius-md);
-    width: 38px; height: 38px;
+    border: none; border-radius: var(--radius-pill);
+    width: 40px; height: 40px;
     display: flex; align-items: center; justify-content: center;
     cursor: pointer; flex-shrink: 0; padding: 0;
     transition: all 0.2s ease;
@@ -564,52 +565,30 @@ body {
 #chatPanelWrap:not(.chat-panel-active) .chat-messages {
     flex: 0; overflow: visible;
 }
+/* Start page (no messages): heading, then the composer, then the three
+   tiles, centred as one column. The composer and the tile row share one
+   width (--welcome-width plus the same 24px side padding), so their edges
+   line up. */
+#chatPanelWrap { --welcome-width: 760px; }
 #chatPanelWrap:not(.chat-panel-active) .chat-input-area {
-    border-top: none; background: transparent;
-    max-width: 960px; width: 100%; margin: 0 auto;
-    padding: 24px 32px;
+    background: transparent;
+    max-width: calc(var(--welcome-width) + 48px); width: 100%; margin: 0 auto;
+    padding: 8px 24px 0;
 }
-#chatPanelWrap:not(.chat-panel-active) .welcome-logo svg {
-    width: 96px; height: 96px;
+#chatPanelWrap:not(.chat-panel-active) .composer-box {
+    padding: 18px 16px 12px;
 }
 #chatPanelWrap:not(.chat-panel-active) .welcome-title {
-    font-size: 38px; letter-spacing: -0.04em;
+    font-size: 40px; letter-spacing: -0.02em;
 }
 #chatPanelWrap:not(.chat-panel-active) .chat-welcome-center {
-    gap: 20px; padding: 56px 20px 28px;
+    gap: 10px; padding: 40px 24px 18px;
 }
 #chatPanelWrap:not(.chat-panel-active) .chat-input {
-    font-size: var(--fs-title); padding: 20px 24px; max-height: 240px;
-    border-radius: var(--radius-lg);
-    /* Welcome screen: a taller resting floor (four rows) so the composer opens
-       at full height with the placeholder fully visible on first load — no
-       focus needed. Replaces a stray `rows: 4` declaration that never applied
-       (`rows` is an HTML attribute, not a CSS property). Four rows = 4 * 1.5em
-       + 40px vertical padding + 2px borders. */
-    min-height: calc(6em + 42px);
-}
-#chatPanelWrap:not(.chat-panel-active) .chat-input-row {
-    gap: 10px;
-}
-#chatPanelWrap:not(.chat-panel-active) .btn-send,
-#chatPanelWrap:not(.chat-panel-active) .attach-btn,
-#chatPanelWrap:not(.chat-panel-active) .mic-btn {
-    width: 44px; height: 44px;
-}
-#chatPanelWrap:not(.chat-panel-active) .btn-send svg,
-#chatPanelWrap:not(.chat-panel-active) .attach-btn svg,
-#chatPanelWrap:not(.chat-panel-active) .mic-btn svg {
-    width: 20px; height: 20px;
-}
-#chatPanelWrap:not(.chat-panel-active) .chat-toolbar {
-    padding-top: 10px; gap: 6px;
-}
-#chatPanelWrap:not(.chat-panel-active) .toolbar-btn,
-#chatPanelWrap:not(.chat-panel-active) .effort-chip {
-    font-size: var(--fs-small); padding: 3px 11px;
-}
-#chatPanelWrap:not(.chat-panel-active) .toolbar-btn svg {
-    width: 14px; height: 14px;
+    font-size: var(--fs-content); max-height: 240px;
+    /* A taller resting floor (three rows) so the composer opens with room
+       for the placeholder on first load, no focus needed. */
+    min-height: calc(4.5em + 8px);
 }
 .panels .resize-handle.hidden { display: none; }
 
@@ -625,8 +604,7 @@ body.ws-embed-drag embed {
 .panel-header {
     display: flex; align-items: center; justify-content: space-between;
     padding: 10px 18px;
-    border-bottom: 1px solid var(--border);
-    background: var(--bg-surface);
+    background: var(--bg-primary);
     flex-shrink: 0;
 }
 .panel-header h2 {
@@ -918,11 +896,15 @@ input.segment-speaker {
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     gap: 12px; padding: 40px 20px;
 }
-.welcome-logo { opacity: 0.7; }
+.welcome-logo {
+    width: 58px; height: 58px; margin-bottom: 8px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 18px; background: var(--bg-surface);
+    box-shadow: var(--shadow-md); color: var(--accent);
+}
 .welcome-title {
-    font-family: var(--font-mono);
-    font-size: var(--fs-h1); font-weight: 500; color: var(--text-heading);
-    letter-spacing: -0.03em;
+    font-size: var(--fs-h1); font-weight: 800; color: var(--text-heading);
+    letter-spacing: -0.02em; line-height: 1.1;
 }
 .welcome-subtitle {
     margin-top: -4px;
@@ -957,7 +939,8 @@ input.segment-speaker {
     color: var(--text-primary);
     align-self: flex-end;
     white-space: pre-wrap;
-    border: 1px solid var(--chat-user-border);
+    border: none;
+    box-shadow: var(--shadow-sm);
     position: relative;
 }
 
@@ -1140,7 +1123,8 @@ input.segment-speaker {
     background: var(--chat-assistant-bg);
     color: var(--text-primary);
     align-self: flex-start;
-    border: 1px solid var(--border);
+    border: none;
+    box-shadow: var(--shadow-sm);
 }
 /* Ephemeral slash-command toast */
 
@@ -1179,7 +1163,7 @@ input.segment-speaker {
 /* Chat tables are styled with every other markdown table, in
  * static/modules/markdown.css. */
 .chat-msg.assistant h1, .chat-msg.assistant h2, .chat-msg.assistant h3 {
-    margin: 14px 0 6px; color: var(--text-heading); font-weight: 500;
+    margin: 14px 0 6px; color: var(--text-heading); font-weight: 700;
 }
 /* Heading hierarchy inside an assistant bubble. Body inherits
  * --fs-content (16px) from .chat-msg, so every heading must be at least
@@ -1194,7 +1178,7 @@ input.segment-speaker {
 /* Code block with preview */
 .code-block-wrap {
     position: relative; margin: 8px 0;
-    border: 1px solid var(--border); border-radius: var(--radius-lg);
+    border: 1px solid var(--border); border-radius: var(--radius-md);
     overflow: hidden;
 }
 .code-block-wrap pre {
@@ -1265,12 +1249,24 @@ input.segment-speaker {
 }
 
 .chat-input-area {
-    display: flex; flex-direction: column; gap: 0; padding: 12px 16px;
-    border-top: 1px solid var(--border);
+    display: flex; flex-direction: column; gap: 0; padding: 8px 24px 16px;
     flex-shrink: 0;
-    background: var(--bg-surface);
-    transition: border-color 0.2s;
+    background: var(--bg-primary);
 }
+/* One card holds the whole composer: attachments, the message, and a
+   single row of controls (attach, chips, dictation, voice, send). */
+.composer-box {
+    display: flex; flex-direction: column; gap: 8px;
+    width: 100%; max-width: 860px; margin: 0 auto;
+    padding: 14px 14px 10px;
+    background: var(--bg-surface);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-md);
+    transition: box-shadow 0.2s;
+}
+.composer-box:focus-within { box-shadow: var(--shadow-md), 0 0 0 2px var(--accent-dim); }
+.composer-bar { display: flex; align-items: center; gap: 6px; }
+.composer-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-shrink: 0; }
 
 /* Workflow cards (WS-D ultracode runtime) — inline preview + run. */
 .workflow-card {
@@ -1367,27 +1363,25 @@ input.segment-speaker {
     display: flex; gap: 8px; align-items: center;
 }
 .attach-btn {
-    background: none; border: 1px solid var(--border);
-    color: var(--text-muted); border-radius: var(--radius-lg);
-    width: 38px; height: 38px; flex-shrink: 0;
+    background: var(--chip); border: none;
+    color: var(--text-secondary); border-radius: var(--radius-pill);
+    width: 34px; height: 34px; flex-shrink: 0;
     display: flex; align-items: center; justify-content: center;
     cursor: pointer; transition: all 0.15s;
 }
 .attach-btn:hover {
-    background: var(--bg-hover); color: var(--text-primary);
-    border-color: var(--border-strong);
+    background: var(--bg-hover); color: var(--text-heading);
 }
 .mic-btn {
-    background: none; border: 1px solid var(--border);
-    color: var(--text-muted); border-radius: var(--radius-lg);
-    width: 38px; height: 38px; flex-shrink: 0;
+    background: var(--chip); border: none;
+    color: var(--text-secondary); border-radius: var(--radius-pill);
+    width: 34px; height: 34px; flex-shrink: 0;
     display: flex; align-items: center; justify-content: center;
     cursor: pointer; transition: all 0.15s;
     position: relative;
 }
 .mic-btn:hover {
-    background: var(--bg-hover); color: var(--text-primary);
-    border-color: var(--border-strong);
+    background: var(--bg-hover); color: var(--text-heading);
 }
 .mic-btn.connecting {
     color: var(--text-primary);
@@ -1538,21 +1532,19 @@ input.segment-speaker {
  * with one chip per step. Heavier than an activity row, since it
  * represents a unit of delegated work, not just one call. */
 .agent-card {
-    border: 1px solid var(--border);
-    border-left: 3px solid var(--agent);
-    border-radius: 0 var(--radius-md) var(--radius-md) 0;
+    border: 1px solid color-mix(in srgb, var(--agent) 28%, transparent);
+    border-radius: var(--radius-md);
     margin: 6px 0;
     overflow: hidden;
     transition: border-color 0.3s;
-    background: var(--bg-elevated);
+    background: var(--bg-surface);
+    box-shadow: var(--shadow-sm);
 }
 .agent-card.running {
-    border-color: color-mix(in srgb, var(--agent) 45%, transparent);
-    border-left-color: var(--agent);
+    border-color: color-mix(in srgb, var(--agent) 55%, transparent);
 }
 .agent-card.done {
-    border-color: var(--border-strong);
-    border-left-color: var(--agent);
+    border-color: color-mix(in srgb, var(--agent) 28%, transparent);
 }
 .agent-card.errored {
     border-color: var(--danger);
@@ -2010,17 +2002,17 @@ input.segment-speaker {
 .skill-ac-item:hover .skill-ac-desc, .skill-ac-item.ac-active .skill-ac-desc { opacity: 1; color: var(--text-secondary); }
 /* Chat tabs */
 .chat-input {
-    flex: 1; background: var(--bg-elevated);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg); color: var(--text-primary);
+    flex: 1; background: transparent;
+    border: none;
+    border-radius: 0; color: var(--text-primary);
     font-family: var(--font-sans);
-    font-size: var(--fs-content); padding: 12px 16px; line-height: 1.5;
+    font-size: var(--fs-content); padding: 4px 6px; line-height: 1.5;
     /* Resting floor = two full rows (2 * 1.5em line-height + 24px vertical
        padding + 2px borders, border-box). Without it the JS auto-resize
        collapses the empty textarea to a single line's scrollHeight on first
        mount, clipping the placeholder until focus/typing. The floor also keeps
        auto-grow honest: growth only starts once content exceeds two rows. */
-    min-height: calc(3em + 26px);
+    min-height: calc(3em + 8px);
     /* JS auto-grows the height with content (ChatInput.tsx); this cap is
        ~2.5x the resting two-row height, beyond which the textarea scrolls. */
     resize: none; outline: none; max-height: 185px; overflow-y: auto;
@@ -2032,29 +2024,25 @@ input.segment-speaker {
     overflow-x: hidden; white-space: pre-wrap; overflow-wrap: anywhere;
     transition: border-color 0.2s, box-shadow 0.2s, max-height 0.25s ease;
 }
-.chat-input:focus {
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px var(--accent-dim);
-}
+.chat-input:focus { box-shadow: none; }
 .chat-input::placeholder { color: var(--text-muted); }
 
 /* ---- Chat Toolbar ---- */
 .chat-toolbar {
     display: flex; align-items: center; gap: 6px;
-    padding: 6px 0 0 0; flex-wrap: wrap;
+    padding: 0; flex-wrap: wrap; flex: 1; min-width: 0;
 }
-.toolbar-sep {
-    width: 1px; height: 12px; background: var(--border); flex-shrink: 0;
-}
+/* Pills separate themselves; the old dividers are not drawn. */
+.toolbar-sep { display: none; }
 /* One pill spec for every composer control (toolbar buttons and the
    effort/verbosity chips): same capsule, same border, same height, so the
    row reads as a single family. Colour varies per control, shape never. */
 .toolbar-btn {
-    display: flex; align-items: center; gap: 4px;
-    background: var(--bg-secondary); border: 1px solid var(--border);
+    display: flex; align-items: center; gap: 5px;
+    background: var(--chip); border: 1px solid transparent;
     color: var(--text-secondary);
-    font-size: var(--fs-caption); font-family: inherit; font-weight: 500;
-    line-height: 1.4; cursor: pointer; padding: 2px 9px; border-radius: var(--radius-sm);
+    font-size: var(--fs-caption); font-family: inherit; font-weight: 600;
+    line-height: 1.4; cursor: pointer; padding: 6px 12px; border-radius: var(--radius-pill);
     white-space: nowrap;
 }
 .toolbar-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
@@ -2957,21 +2945,20 @@ button.effort-badge { font: inherit; font-size: 0.7em; font-weight: 700;
    the level's own colour; the popover slider carries the adjustability cue. */
 .effort-chip {
     display: inline-flex; align-items: center; gap: 5px;
-    font-family: inherit; font-size: var(--fs-caption); font-weight: 500;
+    font-family: inherit; font-size: var(--fs-caption); font-weight: 600;
     line-height: 1.4; white-space: nowrap; cursor: pointer;
-    padding: 2px 9px; border-radius: var(--radius-sm);
-    border: 1px solid var(--border); background: var(--bg-secondary);
+    padding: 6px 12px; border-radius: var(--radius-pill);
+    border: 1px solid transparent; background: var(--chip);
     color: var(--text-muted);
 }
 .effort-chip:hover { background: var(--bg-hover); }
 .effort-chip-name { font-weight: 500; }
-.effort-chip.effort-low       { color: var(--tone-blue); border-color: var(--tone-blue); }
+.effort-chip.effort-low       { color: var(--tone-blue); background: color-mix(in srgb, var(--tone-blue) 12%, var(--chip)); }
 .effort-chip.effort-medium    { color: var(--text-muted); }
-.effort-chip.effort-high      { color: var(--tone-orange); border-color: var(--tone-orange); }
-.effort-chip.effort-extra     { color: var(--tone-violet); border-color: var(--tone-violet); }
-.effort-chip.effort-max       { color: var(--accent); border-color: var(--accent); }
-.effort-chip.effort-ultracode { color: var(--tone-gold); border-color: var(--tone-gold);
-    background: color-mix(in srgb, var(--tone-gold) 12%, var(--bg-secondary)); }
+.effort-chip.effort-high      { color: var(--tone-orange); background: color-mix(in srgb, var(--tone-orange) 12%, var(--chip)); }
+.effort-chip.effort-extra     { color: var(--tone-violet); background: color-mix(in srgb, var(--tone-violet) 12%, var(--chip)); }
+.effort-chip.effort-max       { color: var(--accent); background: var(--accent-dim); }
+.effort-chip.effort-ultracode { color: var(--tone-gold); background: color-mix(in srgb, var(--tone-gold) 14%, var(--chip)); }
 
 /* Verbosity chip: label only, neutral colour (the per-level effort tints
    stay reserved for the effort control so the two don't read alike). */
@@ -3221,10 +3208,10 @@ button.effort-badge { font: inherit; font-size: 0.7em; font-weight: 700;
  * meaningful palette since they're conveying state, not theme. */
 .ws-approval-card {
     --callout: var(--accent);
-    background: color-mix(in srgb, var(--callout) 6%, var(--bg-surface));
-    border: 1px solid color-mix(in srgb, var(--callout) 30%, transparent);
-    border-left: 3px solid var(--callout);
-    border-radius: 0 var(--radius-md) var(--radius-md) 0;
+    background: color-mix(in srgb, var(--callout) 7%, var(--bg-surface));
+    border: 1px solid color-mix(in srgb, var(--callout) 28%, transparent);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
     margin-top: 8px; overflow: hidden;
     font-family: var(--font-mono);
     color: var(--text-primary);
@@ -3709,7 +3696,7 @@ button.effort-badge { font: inherit; font-size: 0.7em; font-weight: 700;
 .toolbar-btn.active {
     background: var(--accent-dim);
     color: var(--accent);
-    border-color: var(--accent);
+    border-color: transparent;
 }
 .toolbar-btn.active:hover { background: var(--accent-dim); color: var(--accent-hover); }
 
@@ -3726,10 +3713,10 @@ button.effort-badge { font: inherit; font-size: 0.7em; font-weight: 700;
     color: var(--text-muted);
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
-    padding: 2px 9px;
-    background: var(--bg-secondary);
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--border);
+    padding: 6px 13px;
+    background: var(--chip);
+    border-radius: var(--radius-pill);
+    border: 1px solid transparent;
     white-space: nowrap;
 }
 .tc-sep { opacity: 0.5; }
@@ -4385,7 +4372,7 @@ button.ws-git-status-badge:hover {
 .ws-context-menu,
 .toolbar-dropdown {
     background: var(--bg-elevated);
-    border: 1px solid var(--border-strong);
+    border: 1px solid var(--border);
     border-radius: var(--radius-md);
     box-shadow: var(--shadow-md);
     animation: menuIn 0.18s var(--ease-spring);
@@ -4426,13 +4413,13 @@ button.ws-git-status-badge:hover {
 
 /* ---- Settings modal: same elevation language as the dialog ---- */
 .settings-overlay {
-    background: rgba(0,0,0,0.62);
+    background: rgba(20, 19, 42, 0.45);
 }
 
 .settings-container {
     background: var(--bg-surface);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-lg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xl);
     box-shadow: var(--shadow-lg);
     animation: wdDialogIn 0.34s var(--ease-spring);
 }
@@ -4465,46 +4452,51 @@ button.ws-git-status-badge:hover {
 
 /* ---- Welcome screen: teaching starter actions (Phase 3) ---- */
 .welcome-actions {
-    display: flex;
-    gap: var(--space-3);
-    margin-top: var(--space-5);
-    flex-wrap: wrap;
-    justify-content: center;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--space-4);
+    width: 100%;
+    max-width: calc(var(--welcome-width) + 48px);
+    margin: 22px auto 0;
+    padding: 0 24px 32px;
 }
 
 .welcome-action {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    gap: 3px;
-    width: 180px;
-    padding: var(--space-4);
+    gap: 2px;
+    padding: 18px;
     cursor: pointer;
     text-align: left;
     color: var(--text-secondary);
     background: var(--bg-surface);
-    border: 1px solid var(--border-strong);
+    border: none;
     border-radius: var(--radius-lg);
-    transition: border-color 0.15s ease, color 0.15s ease;
+    box-shadow: var(--shadow-md);
+    transition: box-shadow 0.15s ease, transform 0.15s ease;
 }
 
 .welcome-action:hover {
-    border-color: var(--accent);
-    color: var(--text-primary);
+    box-shadow: var(--shadow-lg);
+    transform: translateY(-1px);
 }
 
-.welcome-action svg {
+.welcome-action-icon {
+    width: 42px; height: 42px; margin-bottom: 12px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 14px;
+    background: var(--accent-dim);
     color: var(--accent);
-    margin-bottom: var(--space-2);
 }
 
 .welcome-action strong {
-    font-size: var(--fs-small);
-    font-weight: 600;
-    color: var(--text-primary);
+    font-size: var(--fs-body);
+    font-weight: 700;
+    color: var(--text-heading);
 }
 
-.welcome-action span {
+.welcome-action > span:last-child {
     font-size: var(--fs-caption);
     color: var(--text-muted);
     line-height: 1.4;

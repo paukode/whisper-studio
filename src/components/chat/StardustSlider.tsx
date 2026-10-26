@@ -111,8 +111,8 @@ export const StardustSlider: React.FC<Props> = ({
     const cs = getComputedStyle(root);
     const v = (n: string, f: string) => cs.getPropertyValue(n).trim() || f;
     eng.palette = readColorsRef.current();
-    eng.track = parseColor(v('--bg-inset', '#011420'));
-    eng.hi = parseColor(v('--text-primary', '#e6eef3'));
+    eng.track = parseColor(v('--bg-inset', '#100f22'));
+    eng.hi = parseColor(v('--text-primary', '#c9c8e0'));
     if (eng.palette[eng.disp]) eng.col = eng.palette[eng.disp].slice() as RGB;
   };
 

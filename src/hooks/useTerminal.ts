@@ -90,11 +90,11 @@ function readXtermTheme(): {
   const tokens = getComputedStyle(document.documentElement);
   const t = (name: string, fallback: string) => tokens.getPropertyValue(name).trim() || fallback;
   return {
-    background: t('--bg-inset', '#011420'),
-    foreground: t('--text-primary', '#e6eef3'),
-    cursor: t('--accent', '#219ebc'),
-    cursorAccent: t('--bg-inset', '#011420'),
-    selectionBackground: t('--accent-dim', 'rgba(33,158,188,0.16)'),
+    background: t('--bg-inset', '#100f22'),
+    foreground: t('--text-primary', '#c9c8e0'),
+    cursor: t('--accent', '#9a82ff'),
+    cursorAccent: t('--bg-inset', '#100f22'),
+    selectionBackground: t('--accent-dim', 'rgba(154,130,255,0.14)'),
   };
 }
 

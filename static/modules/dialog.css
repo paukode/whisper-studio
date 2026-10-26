@@ -33,8 +33,8 @@
 .whisper-dialog {
     position: relative;
     background: var(--bg-surface);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-lg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xl);
     box-shadow: var(--shadow-lg);
     width: 90vw;
     max-height: 84vh;

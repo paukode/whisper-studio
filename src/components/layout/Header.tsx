@@ -28,9 +28,9 @@ import { useVoiceClock } from '@/hooks/useVoiceClock';
 // as a single input. See README → "Capturing system audio (macOS)".
 
 const THEME_SWATCHES: Record<ThemeKey, string> = {
-  auto: 'linear-gradient(135deg, #f6f9fb 50%, #021a29 50%)',
-  light: '#f6f9fb',
-  dark: '#021a29',
+  auto: 'linear-gradient(135deg, #eef0f7 50%, #14132a 50%)',
+  light: '#eef0f7',
+  dark: '#14132a',
 };
 
 export const Header: React.FC = () => {

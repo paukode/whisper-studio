@@ -17,9 +17,9 @@
     min-width: 0;
     padding: 10px 14px;
     background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-left: 3px solid var(--agent);
-    border-radius: 0 var(--radius-md) var(--radius-md) 0;
+    border: 1px solid color-mix(in srgb, var(--agent) 28%, transparent);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-sm);
     color: var(--text-primary);
     font-size: var(--fs-body);
     line-height: 1.5;
