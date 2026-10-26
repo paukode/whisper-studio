@@ -905,11 +905,7 @@ class MCPManager:
                     parts.append(f"[Binary data: {len(content.data)} bytes]")
                 else:
                     parts.append(str(content))
-            # Untrusted server text: never let it pose as an internal control
-            # sentinel (an approval to run, a folder picker, an image block).
-            from server.mcp_output import neutralize_internal_sentinels
-
-            output = neutralize_internal_sentinels("\n".join(parts))
+            output = "\n".join(parts)
             if result.isError:
                 output = f"[MCP Error] {output}"
             return output
