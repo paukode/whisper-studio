@@ -35,6 +35,19 @@ HOME_PATHS = [
     ".git-credentials",  # Git credentials
     ".config/git/credentials",
     ".netrc",
+    # Login-persistence and shell startup files. A write here runs code at the
+    # next shell or login (a persistence foothold), and these files commonly
+    # hold exported secrets too, so a read is a credential-leak vector like
+    # .netrc. The assistant never edits them; the user owns them.
+    ".zshrc",
+    ".zprofile",
+    ".zshenv",
+    ".bashrc",
+    ".bash_profile",
+    ".profile",
+    ".config/fish/config.fish",
+    "Library/LaunchAgents",  # macOS per-user launch agents (login persistence)
+    ".config/autostart",  # Linux per-user autostart (login persistence)
 ]
 
 # Denied only by the OS sandbox (see module docstring).

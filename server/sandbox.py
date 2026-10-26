@@ -173,6 +173,24 @@ def _scratch_env(write_mode: str, scratch_dir: str | None) -> dict[str, str]:
     return scratch_cache_env(scratch_dir)
 
 
+def _control_port_deny_rules() -> list[str]:
+    """Deny a CONFINED command the app's own control API port on loopback.
+
+    A command that no person reviewed runs write-confined, but the OS sandbox
+    does not restrict the network by default, so it could reach
+    http://127.0.0.1:<port>/api/approval/execute and run another command with
+    OPEN writes (escaping its own confinement), or flip the permission mode.
+    Denying the one loopback port the backend listens on closes that, while any
+    other local port (a dev server, a database) stays reachable. The port comes
+    from the environment (``PORT``, the app's own default 8000). Open
+    (human-approved) commands are exempt: a person read that exact command.
+    macOS only; the Linux bwrap path cannot deny a single port."""
+    port = (os.environ.get("PORT") or "8000").strip()
+    if not port.isdigit():
+        return []
+    return [f'(deny network-outbound (remote ip "localhost:{port}"))']
+
+
 def _app_config_targets() -> tuple[list[str], list[str]]:
     """The app's own grant and config files and directories (server.
     infrastructure.paths.app_config_paths / app_config_dirs), each as written
@@ -284,6 +302,14 @@ def _generate_macos_profile(
         credential_rules = _credential_write_rules(allow_paths, write_paths)
         if credential_rules:
             profile += "\n".join(credential_rules) + "\n"
+
+    # A confined command (one no person reviewed) cannot reach the app's own
+    # control API port, so it cannot drive an approval to escape its
+    # confinement. Open (human-approved) commands keep full loopback access.
+    if write_mode != "open":
+        control_denies = _control_port_deny_rules()
+        if control_denies:
+            profile += "\n".join(control_denies) + "\n"
 
     network_rules = _macos_network_restriction_rules()
     if network_rules:
