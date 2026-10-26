@@ -46,7 +46,9 @@ const LiveReply: React.FC<{
  *     div.panel-header#chatPanelHeader (hidden until chat active)
  *     div.panel-body.chat-messages#chatMessages
  *       div.chat-welcome-center#chatWelcomeCenter (shown when no messages)
- *     form.chat-input-area#chatForm
+ *     form.chat-input-area#chatForm (ChatInput)
+ *     div.welcome-actions (no messages: the tiles sit under the composer,
+ *       on its width)
  */
 export const ChatPanel: React.FC = () => {
   const currentSessionId = useSessionStore((s) => s.currentSessionId);
@@ -312,7 +314,7 @@ export const ChatPanel: React.FC = () => {
         {!hasMessages && (
           <div className="chat-welcome-center" id="chatWelcomeCenter">
             <div className="welcome-logo">
-              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.5" strokeLinecap="round">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
                 <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
                 <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
                 <line x1="12" y1="19" x2="12" y2="23"/>
@@ -325,45 +327,6 @@ export const ChatPanel: React.FC = () => {
              *  product name. */}
             <h2 className="welcome-title">What can I help with?</h2>
             <p className="welcome-subtitle">Transcribe a meeting, chat with your code, or run a skill.</p>
-            {/* Teaching starter actions: each names one of the product's
-             *  pillars and triggers the real surface, so a first-run user
-             *  learns the app in three clicks. */}
-            <div className="welcome-actions">
-              <button
-                type="button"
-                className="welcome-action"
-                onClick={() => window.dispatchEvent(new CustomEvent('whisper-start-recording'))}
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
-                  <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-                </svg>
-                <strong>Transcribe a meeting</strong>
-                <span>Live transcription starts instantly. 100% local, nothing leaves your machine</span>
-              </button>
-              <button
-                type="button"
-                className="welcome-action"
-                onClick={() => useUIStore.getState().openWorkspaceConnect()}
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-                </svg>
-                <strong>Connect a workspace</strong>
-                <span>Chat with your code and files</span>
-              </button>
-              <button
-                type="button"
-                className="welcome-action"
-                onClick={() => useUIStore.getState().openSettings('skills')}
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M12 2l2.4 5.3L20 8.5l-4 4.1.9 5.9L12 15.8l-4.9 2.7.9-5.9-4-4.1 5.6-1.2z"/>
-                </svg>
-                <strong>Explore skills</strong>
-                <span>Slash commands and automations</span>
-              </button>
-            </div>
           </div>
         )}
 
@@ -430,6 +393,53 @@ export const ChatPanel: React.FC = () => {
       {/* Goal banner + chat input form */}
       <GoalBanner sessionId={currentSessionId} />
       <ChatInput sessionId={currentSessionId} />
+      {/* Teaching starter actions under the composer, on its width: each
+       *  names one of the product's pillars and triggers the real surface,
+       *  so a first-run user learns the app in three clicks. */}
+      {!hasMessages && (
+        <div className="welcome-actions">
+          <button
+            type="button"
+            className="welcome-action"
+            onClick={() => window.dispatchEvent(new CustomEvent('whisper-start-recording'))}
+          >
+            <span className="welcome-action-icon" aria-hidden="true">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+              </svg>
+            </span>
+            <strong>Transcribe</strong>
+            <span>Live, on your Mac</span>
+          </button>
+          <button
+            type="button"
+            className="welcome-action"
+            onClick={() => useUIStore.getState().openWorkspaceConnect()}
+          >
+            <span className="welcome-action-icon" aria-hidden="true">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+              </svg>
+            </span>
+            <strong>Workspace</strong>
+            <span>Chat with your code</span>
+          </button>
+          <button
+            type="button"
+            className="welcome-action"
+            onClick={() => useUIStore.getState().openSettings('skills')}
+          >
+            <span className="welcome-action-icon" aria-hidden="true">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+              </svg>
+            </span>
+            <strong>Skills</strong>
+            <span>Commands and automations</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 };
