@@ -226,7 +226,7 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
         return true;
       }
       case 'theme': {
-        const validThemes: ThemeKey[] = ['auto', 'dark', 'light', 'dark-high-contrast', 'light-high-contrast', 'dark-daltonized', 'light-daltonized', 'dark-taw', 'light-taw'];
+        const validThemes: ThemeKey[] = ['auto', 'light', 'dark'];
         if (arg && (validThemes as string[]).includes(arg)) {
           // Drive the in-tab theme setter (same one the Settings/Header picker
           // uses). It updates ThemeProvider's React state — so it re-renders and
@@ -267,9 +267,9 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
               : [];
 
             const sIcon = status === 'ok' ? '✓' : status === 'warn' ? '⚠' : '✗';
-            const sColor = status === 'ok' ? '#5dba6e' : status === 'warn' ? '#ffa657' : '#e06060';
+            const sColor = status === 'ok' ? 'var(--success)' : status === 'warn' ? 'var(--warning)' : 'var(--danger)';
 
-            const dotColor = (s: string) => s === 'ok' ? '#5dba6e' : s === 'warn' ? '#ffa657' : '#e06060';
+            const dotColor = (s: string) => s === 'ok' ? 'var(--success)' : s === 'warn' ? 'var(--warning)' : 'var(--danger)';
             const rowStyle: React.CSSProperties = { display: 'flex', alignItems: 'flex-start', gap: 10, padding: '7px 12px', borderBottom: '1px solid var(--border)' };
             const dotStyle = (c: string): React.CSSProperties => ({ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, marginTop: 3, background: c });
 
@@ -289,7 +289,7 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
                   const detail = typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v);
                   return (
                     <div key={k} style={rowStyle}>
-                      <span style={dotStyle('#5dba6e')} />
+                      <span style={dotStyle('var(--success)')} />
                       <span style={{ fontWeight: 500, minWidth: 120, flexShrink: 0 }}>{k}</span>
                       <span style={{ color: 'var(--text-muted)', wordBreak: 'break-all' }}>{detail}</span>
                     </div>

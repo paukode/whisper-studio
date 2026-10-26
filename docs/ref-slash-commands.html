@@ -58,7 +58,7 @@
         <tr><td><code>/clear</code></td><td>Empty this session's chat (the next save persists it empty).</td></tr>
         <tr><td><code>/rename &lt;title&gt;</code></td><td>Rename the current session.</td></tr>
         <tr><td><code>/workspace</code></td><td>Open the Connect Workspace dialog.</td></tr>
-        <tr><td><code>/theme &lt;name&gt;</code></td><td>Switch the app theme.</td></tr>
+        <tr><td><code>/theme &lt;mode&gt;</code></td><td>Switch between light, dark, and system mode.</td></tr>
         <tr><td><code>/notify</code></td><td>Request or check browser notification permission.</td></tr>
         <tr><td><code>/settings</code></td><td>Open the Settings panel.</td></tr>
         <tr><td><code>/doctor</code></td><td>Run environment and AWS-access diagnostics.</td></tr>
@@ -273,12 +273,9 @@
     <p>App-level helpers that do not touch the model.</p>
 
     <h3 id="theme">/theme</h3>
-    <p><code>/theme &lt;name&gt;</code> switches the interface theme immediately and remembers your
-      choice. The accepted values are <code>auto</code>, <code>dark</code>, <code>light</code>, the
-      accessibility variants <code>dark-high-contrast</code>, <code>light-high-contrast</code>,
-      <code>dark-daltonized</code>, and <code>light-daltonized</code>, and the alternate looks
-      <code>dark-taw</code> and <code>light-taw</code>. <code>auto</code> follows your
-      system's light or dark preference.</p>
+    <p><code>/theme &lt;mode&gt;</code> sets the interface mode immediately and remembers your
+      choice. The accepted values are <code>auto</code>, <code>light</code>, and <code>dark</code>.
+      <code>auto</code> follows the light or dark setting of your Mac (the header menu calls it System).</p>
 
     <h3 id="notify">/notify</h3>
     <p><code>/notify</code> requests browser notification permission (or tells you the current state if

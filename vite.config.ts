@@ -34,6 +34,7 @@ export default defineConfig(({ command }) => {
       '/api': backendHttp,
       '/static/modules': backendHttp,
       '/static/style.css': backendHttp,
+      '/static/fonts': backendHttp,
       '/ws': {
         target: backendWs,
         ws: true,

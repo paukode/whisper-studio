@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { renderHook } from '@testing-library/react';
 
 vi.mock('@/providers/ThemeProvider', () => ({
-  useTheme: () => ({ setTheme: vi.fn(), themeKey: 'light-taw', resolvedTheme: 'light-taw', themes: [] }),
+  useTheme: () => ({ setTheme: vi.fn(), themeKey: 'light', resolvedTheme: 'light', themes: [] }),
 }));
 
 import { useSlashCommands, type UseSlashCommandsOptions } from './useSlashCommands';

@@ -1,75 +1,223 @@
 /* ================================================================
-   Whisper Studio — Theme Definitions
-   All theme variable blocks + picker styles
+   Whisper Studio: theme tokens
+   One theme in two modes (light, dark), after the Doku docs theme:
+   near-black or warm off-white canvas, hairline borders, small radii,
+   DM Sans for text and DM Mono for headings, labels and code, and one
+   green accent. The picker offers Light, Dark and System; System
+   resolves to one of these two blocks.
    ================================================================ */
 
-/* ---- Dark theme ---- */
-[data-theme="dark"] {
-    --bg-primary: #111113;
-    --bg-surface: #19191d;
-    --bg-elevated: #222228;
-    --bg-secondary: #222228;
-    --bg-hover: #2a2a32;
-    --bg-inset: #0d0d0f;
-    --border: rgba(255,255,255,0.07);
-    --border-strong: rgba(255,255,255,0.12);
-    --text-primary: #e4e2de;
-    --text-secondary: #9b9a97;
-    --text-muted: #5e5d5a;
-    --accent: #e2a336;
-    --accent-dim: rgba(226,163,54,0.15);
-    --accent-hover: #eab34d;
-    --link: #58a6ff;
-    --link-hover: #79c0ff;
-    --accent-record: #e5453a;
-    --accent-record-dim: rgba(229,69,58,0.12);
-    --accent-live: #34c77b;
-    --accent-send: #e2a336;
-    --accent-send-hover: #d4922a;
-    --chat-user-bg: #2c2924;
-    --chat-user-border: rgba(226,163,54,0.25);
-    --chat-assistant-bg: #1e1e22;
-    --shadow-sm: 0 1px 3px rgba(0,0,0,0.4);
-    --shadow-md: 0 4px 16px rgba(0,0,0,0.5);
-    --noise: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
-    --speaker-1: #34c77b;
-    --speaker-2: #e2a336;
+/* ---- Fonts (bundled, SIL Open Font License, see static/fonts) ---- */
+@font-face {
+    font-family: 'DM Sans';
+    font-style: normal;
+    font-display: swap;
+    font-weight: 100 1000;
+    src: url('/static/fonts/dm-sans-latin-ext-wght-normal.woff2') format('woff2-variations');
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+    font-family: 'DM Sans';
+    font-style: normal;
+    font-display: swap;
+    font-weight: 100 1000;
+    src: url('/static/fonts/dm-sans-latin-wght-normal.woff2') format('woff2-variations');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+    font-family: 'DM Sans';
+    font-style: italic;
+    font-display: swap;
+    font-weight: 100 1000;
+    src: url('/static/fonts/dm-sans-latin-ext-wght-italic.woff2') format('woff2-variations');
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+    font-family: 'DM Sans';
+    font-style: italic;
+    font-display: swap;
+    font-weight: 100 1000;
+    src: url('/static/fonts/dm-sans-latin-wght-italic.woff2') format('woff2-variations');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+    font-family: 'DM Mono';
+    font-style: normal;
+    font-display: swap;
+    font-weight: 400;
+    src: url('/static/fonts/dm-mono-latin-ext-400-normal.woff2') format('woff2');
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+    font-family: 'DM Mono';
+    font-style: normal;
+    font-display: swap;
+    font-weight: 400;
+    src: url('/static/fonts/dm-mono-latin-400-normal.woff2') format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+    font-family: 'DM Mono';
+    font-style: normal;
+    font-display: swap;
+    font-weight: 500 700;
+    src: url('/static/fonts/dm-mono-latin-ext-500-normal.woff2') format('woff2');
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+    font-family: 'DM Mono';
+    font-style: normal;
+    font-display: swap;
+    font-weight: 500 700;
+    src: url('/static/fonts/dm-mono-latin-500-normal.woff2') format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* ---- Dark ---- */
+:root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg-primary: #0d0d0d;
+    --bg-surface: #111111;
+    --bg-elevated: #161616;
+    --bg-secondary: #161616;
+    --bg-hover: #1c1c1c;
+    --bg-inset: #0a0a0a;
+    --bg-code: #111111;
+    --border: #1e1e1e;
+    --border-strong: #2a2a2a;
+    --text-primary: #d4d4d4;
+    --text-heading: #f0f0f0;
+    --text-secondary: #a8a8a8;
+    --text-muted: #888888;
+    --accent: #3dd68c;
+    --accent-dim: rgba(61, 214, 140, 0.13);
+    --accent-hover: #62e0a4;
+    --on-accent: #0d0d0d;
+    --link: #3dd68c;
+    --link-hover: #62e0a4;
+    --accent-record: #f87171;
+    --accent-record-dim: rgba(248, 113, 113, 0.12);
+    --accent-live: #3dd68c;
+    --accent-send: #3dd68c;
+    --accent-send-hover: #62e0a4;
+    --chat-user-bg: #121212;
+    --chat-user-border: #2a2a2a;
+    --chat-assistant-bg: #0d0d0d;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+    --shadow-md: 0 4px 20px rgba(0, 0, 0, 0.7);
+    --shadow-lg: 0 10px 40px rgba(0, 0, 0, 0.8);
+    --noise: none;
+    --on-success: #0d0d0d;
+    --warning: #ffb74c;
+    --warning-dim: rgba(255, 183, 76, 0.08);
+    --warning-border: rgba(255, 183, 76, 0.3);
+    --danger-dim: rgba(239, 68, 68, 0.10);
+    --danger-border: rgba(239, 68, 68, 0.4);
+    --info: #818cf8;
+    --info-dim: rgba(99, 102, 241, 0.10);
+    --info-border: rgba(99, 102, 241, 0.4);
+    --success-border: rgba(61, 214, 140, 0.3);
+    --risk-warn: #ffb74c;
+    --risk-warn-dim: rgba(255, 183, 76, 0.12);
+    --mark-bg: #4a3a14;
+    --tone-blue: #82aaff;
+    --tone-orange: #ffb74c;
+    --tone-violet: #c792ea;
+    --tone-gold: #ffcb6b;
+    --kbd-bg: #1a1a1a;
+    --scrollbar: #2a2a2a;
+    --hl-keyword:  #c792ea;
+    --hl-string:   #3dd68c;
+    --hl-number:   #ffcb6b;
+    --hl-literal:  #89ddff;
+    --hl-comment:  #6a6a6a;
+    --hl-function: #82aaff;
+    --hl-class:    #ffcb6b;
+    --hl-builtin:  #89ddff;
+    --hl-attr:     #f78c6c;
+    --hl-tag:      #f07178;
+    --hl-variable: #f07178;
+    --hl-meta:     #888888;
+    --hl-addition: #3dd68c;
+    --hl-deletion: #f87171;
+    --hl-punct:    #a8a8a8;
+    --speaker-1: #3dd68c;
+    --speaker-2: #ffb74c;
     --speaker-3: #a78bfa;
     --speaker-4: #f472b6;
     --speaker-5: #38bdf8;
     --speaker-6: #fb923c;
 }
 
-/* ---- Light theme ---- */
-[data-theme="light"] {
-    --bg-primary: #f5f3ef;
+/* ---- Light ---- */
+:root[data-theme="light"] {
+    color-scheme: light;
+    --bg-primary: #f6f6f4;
     --bg-surface: #ffffff;
-    --bg-elevated: #f0ede8;
-    --bg-secondary: #f0ede8;
-    --bg-hover: #e8e5df;
-    --bg-inset: #eae7e1;
-    --border: rgba(0,0,0,0.08);
-    --border-strong: rgba(0,0,0,0.14);
-    --text-primary: #1a1918;
-    --text-secondary: #6b6966;
-    --text-muted: #a09d99;
-    --accent: #c4841d;
-    --accent-dim: rgba(196,132,29,0.1);
-    --accent-hover: #b3760f;
-    --link: #0969da;
-    --link-hover: #0550ae;
-    --accent-record: #dc3529;
-    --accent-record-dim: rgba(220,53,41,0.08);
-    --accent-live: #16a34a;
-    --accent-send: #c4841d;
-    --accent-send-hover: #a86e0f;
-    --chat-user-bg: #fdf6ec;
-    --chat-user-border: rgba(196,132,29,0.2);
-    --chat-assistant-bg: #f7f5f1;
-    --shadow-sm: 0 1px 3px rgba(0,0,0,0.06);
-    --shadow-md: 0 4px 16px rgba(0,0,0,0.08);
+    --bg-elevated: #ffffff;
+    --bg-secondary: #f0f0ee;
+    --bg-hover: #ebebe8;
+    --bg-inset: #efefed;
+    --bg-code: #f3f3f1;
+    --border: #e0e0dc;
+    --border-strong: #cccccc;
+    --text-primary: #1a1a1a;
+    --text-heading: #0a0a0a;
+    --text-secondary: #4f4f4f;
+    --text-muted: #6a6a6a;
+    --accent: #0f7a4a;
+    --accent-dim: rgba(15, 122, 74, 0.10);
+    --accent-hover: #0b6640;
+    --on-accent: #ffffff;
+    --link: #0f7a4a;
+    --link-hover: #0b6640;
+    --accent-record: #cf222e;
+    --accent-record-dim: rgba(207, 34, 46, 0.08);
+    --accent-live: #0f7a4a;
+    --accent-send: #0f7a4a;
+    --accent-send-hover: #0b6640;
+    --chat-user-bg: #ffffff;
+    --chat-user-border: #e0e0dc;
+    --chat-assistant-bg: #f6f6f4;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+    --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.08);
+    --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.14);
     --noise: none;
-    --speaker-1: #0d9488;
+    --on-success: #ffffff;
+    --warning: #8f5a00;
+    --warning-dim: rgba(180, 100, 0, 0.06);
+    --warning-border: rgba(180, 100, 0, 0.25);
+    --danger-dim: rgba(239, 68, 68, 0.06);
+    --danger-border: rgba(239, 68, 68, 0.25);
+    --info: #4f46e5;
+    --info-dim: rgba(99, 102, 241, 0.06);
+    --info-border: rgba(99, 102, 241, 0.25);
+    --success-border: rgba(15, 122, 74, 0.25);
+    --risk-warn: #8f5a00;
+    --risk-warn-dim: rgba(180, 100, 0, 0.10);
+    --mark-bg: #fcefc2;
+    --tone-blue: #1d4ed8;
+    --tone-orange: #b45309;
+    --tone-violet: #7c3aed;
+    --tone-gold: #8f5a00;
+    --kbd-bg: #eeeeee;
+    --scrollbar: #d6d6d2;
+    --hl-keyword:  #7c3aed;
+    --hl-string:   #0f7a4a;
+    --hl-number:   #b45309;
+    --hl-literal:  #0e7490;
+    --hl-comment:  #8a8a8a;
+    --hl-function: #1d4ed8;
+    --hl-class:    #b45309;
+    --hl-builtin:  #0e7490;
+    --hl-attr:     #c2410c;
+    --hl-tag:      #cf222e;
+    --hl-variable: #c2410c;
+    --hl-meta:     #6a6a6a;
+    --hl-addition: #1a7f37;
+    --hl-deletion: #cf222e;
+    --hl-punct:    #4f4f4f;
+    --speaker-1: #0f7a4a;
     --speaker-2: #b45309;
     --speaker-3: #7c3aed;
     --speaker-4: #db2777;
@@ -77,258 +225,11 @@
     --speaker-6: #ea580c;
 }
 
-/* ---- Dark High Contrast ---- */
-[data-theme="dark-high-contrast"] {
-    --bg-primary: #000000;
-    --bg-surface: #0a0a0c;
-    --bg-elevated: #1a1a1e;
-    --bg-secondary: #1a1a1e;
-    --bg-hover: #252529;
-    --bg-inset: #000000;
-    --border: rgba(255,255,255,0.2);
-    --border-strong: rgba(255,255,255,0.35);
-    --text-primary: #ffffff;
-    --text-secondary: #c0c0c0;
-    --text-muted: #808080;
-    --accent: #ffb830;
-    --accent-dim: rgba(255,184,48,0.2);
-    --accent-hover: #ffc84d;
-    --link: #6cb6ff;
-    --link-hover: #91cbff;
-    --accent-record: #ff4d4d;
-    --accent-record-dim: rgba(255,77,77,0.15);
-    --accent-live: #4ade80;
-    --accent-send: #ffb830;
-    --accent-send-hover: #e6a52b;
-    --chat-user-bg: #1a1508;
-    --chat-user-border: rgba(255,184,48,0.35);
-    --chat-assistant-bg: #0e0e12;
-    --shadow-sm: 0 1px 3px rgba(0,0,0,0.6);
-    --shadow-md: 0 4px 16px rgba(0,0,0,0.7);
-    --noise: none;
-    --speaker-1: #4ade80;
-    --speaker-2: #ffb830;
-    --speaker-3: #c4b5fd;
-    --speaker-4: #f9a8d4;
-    --speaker-5: #7dd3fc;
-    --speaker-6: #fdba74;
-}
-
-/* ---- Light High Contrast ---- */
-[data-theme="light-high-contrast"] {
-    --bg-primary: #ffffff;
-    --bg-surface: #ffffff;
-    --bg-elevated: #f0f0f0;
-    --bg-secondary: #f0f0f0;
-    --bg-hover: #e0e0e0;
-    --bg-inset: #e8e8e8;
-    --border: rgba(0,0,0,0.2);
-    --border-strong: rgba(0,0,0,0.35);
-    --text-primary: #000000;
-    --text-secondary: #333333;
-    --text-muted: #666666;
-    --accent: #9a5f00;
-    --accent-dim: rgba(154,95,0,0.12);
-    --accent-hover: #7a4b00;
-    --link: #0043ce;
-    --link-hover: #002d9c;
-    --accent-record: #cc0000;
-    --accent-record-dim: rgba(204,0,0,0.1);
-    --accent-live: #0a7c3e;
-    --accent-send: #9a5f00;
-    --accent-send-hover: #7a4b00;
-    --chat-user-bg: #fff5e0;
-    --chat-user-border: rgba(154,95,0,0.3);
-    --chat-assistant-bg: #f5f5f5;
-    --shadow-sm: 0 1px 3px rgba(0,0,0,0.12);
-    --shadow-md: 0 4px 16px rgba(0,0,0,0.15);
-    --noise: none;
-    --speaker-1: #0a7c3e;
-    --speaker-2: #9a5f00;
-    --speaker-3: #5b21b6;
-    --speaker-4: #be185d;
-    --speaker-5: #0369a1;
-    --speaker-6: #c2410c;
-}
-
-/* ---- Dark Daltonized (color-blind friendly) ---- */
-[data-theme="dark-daltonized"] {
-    --bg-primary: #111113;
-    --bg-surface: #19191d;
-    --bg-elevated: #222228;
-    --bg-secondary: #222228;
-    --bg-hover: #2a2a32;
-    --bg-inset: #0d0d0f;
-    --border: rgba(255,255,255,0.07);
-    --border-strong: rgba(255,255,255,0.12);
-    --text-primary: #e4e2de;
-    --text-secondary: #9b9a97;
-    --text-muted: #5e5d5a;
-    --accent: #e2a336;
-    --accent-dim: rgba(226,163,54,0.15);
-    --accent-hover: #eab34d;
-    --link: #58a6ff;
-    --link-hover: #79c0ff;
-    --accent-record: #3b82f6;       /* blue instead of red */
-    --accent-record-dim: rgba(59,130,246,0.12);
-    --accent-live: #f59e0b;         /* amber instead of green */
-    --accent-send: #e2a336;
-    --accent-send-hover: #d4922a;
-    --chat-user-bg: #2c2924;
-    --chat-user-border: rgba(226,163,54,0.25);
-    --chat-assistant-bg: #1e1e22;
-    --shadow-sm: 0 1px 3px rgba(0,0,0,0.4);
-    --shadow-md: 0 4px 16px rgba(0,0,0,0.5);
-    --noise: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
-    --speaker-1: #3b82f6;           /* blue */
-    --speaker-2: #f59e0b;           /* amber */
-    --speaker-3: #a78bfa;           /* purple */
-    --speaker-4: #ec4899;           /* pink */
-    --speaker-5: #06b6d4;           /* cyan */
-    --speaker-6: #8b5cf6;           /* violet */
-}
-
-/* ---- Light Daltonized (color-blind friendly) ---- */
-[data-theme="light-daltonized"] {
-    --bg-primary: #f5f3ef;
-    --bg-surface: #ffffff;
-    --bg-elevated: #f0ede8;
-    --bg-secondary: #f0ede8;
-    --bg-hover: #e8e5df;
-    --bg-inset: #eae7e1;
-    --border: rgba(0,0,0,0.08);
-    --border-strong: rgba(0,0,0,0.14);
-    --text-primary: #1a1918;
-    --text-secondary: #6b6966;
-    --text-muted: #a09d99;
-    --accent: #c4841d;
-    --accent-dim: rgba(196,132,29,0.1);
-    --accent-hover: #b3760f;
-    --link: #0969da;
-    --link-hover: #0550ae;
-    --accent-record: #2563eb;       /* blue instead of red */
-    --accent-record-dim: rgba(37,99,235,0.08);
-    --accent-live: #d97706;         /* amber instead of green */
-    --accent-send: #c4841d;
-    --accent-send-hover: #a86e0f;
-    --chat-user-bg: #fdf6ec;
-    --chat-user-border: rgba(196,132,29,0.2);
-    --chat-assistant-bg: #f7f5f1;
-    --shadow-sm: 0 1px 3px rgba(0,0,0,0.06);
-    --shadow-md: 0 4px 16px rgba(0,0,0,0.08);
-    --noise: none;
-    --speaker-1: #2563eb;           /* blue */
-    --speaker-2: #d97706;           /* amber */
-    --speaker-3: #7c3aed;           /* purple */
-    --speaker-4: #db2777;           /* pink */
-    --speaker-5: #0891b2;           /* cyan */
-    --speaker-6: #6d28d9;           /* violet */
-}
-
-/* ---- Taw Dark (Claude blue on warm charcoal) ---- */
-[data-theme="dark-taw"] {
-    --bg-primary: #1f1e1d;
-    --bg-surface: #262624;
-    --bg-elevated: #30302e;
-    --bg-secondary: #30302e;
-    --bg-hover: #3a3936;
-    --bg-inset: #1a1917;
-    --border: rgba(255,255,255,0.08);
-    --border-strong: rgba(255,255,255,0.14);
-    --text-primary: #f5f4ee;
-    --text-secondary: #b0aea6;
-    --text-muted: #78756e;
-    --accent: #4f94d8;
-    --accent-dim: rgba(85,150,220,0.16);
-    --accent-hover: #6faae2;
-    --link: #85b7eb;
-    --link-hover: #b5d4f4;
-    --accent-record: #e5453a;
-    --accent-record-dim: rgba(229,69,58,0.12);
-    --accent-live: #34c77b;
-    --accent-send: #4f94d8;
-    --accent-send-hover: #3f82c4;
-    --chat-user-bg: #283039;
-    --chat-user-border: rgba(85,150,220,0.28);
-    --chat-assistant-bg: #262624;
-    --shadow-sm: 0 1px 3px rgba(0,0,0,0.4);
-    --shadow-md: 0 4px 16px rgba(0,0,0,0.5);
-    --noise: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
-    --speaker-1: #d97757;
-    --speaker-2: #6cba7f;
-    --speaker-3: #a78bfa;
-    --speaker-4: #e0a458;
-    --speaker-5: #5fa8d3;
-    --speaker-6: #d98cae;
-}
-
-/* ---- Taw Light (Claude blue on warm ivory) ---- */
-[data-theme="light-taw"] {
-    --bg-primary: #faf9f5;
-    --bg-surface: #ffffff;
-    --bg-elevated: #f0eee6;
-    --bg-secondary: #f0eee6;
-    --bg-hover: #ebe8df;
-    --bg-inset: #eeece4;
-    --border: rgba(0,0,0,0.08);
-    --border-strong: rgba(0,0,0,0.14);
-    --text-primary: #1f1e1d;
-    --text-secondary: #6b6862;
-    --text-muted: #a3a097;
-    --accent: #1d6ec2;
-    --accent-dim: rgba(29,110,194,0.12);
-    --accent-hover: #185fa5;
-    --link: #1d6ec2;
-    --link-hover: #185fa5;
-    --accent-record: #d33b30;
-    --accent-record-dim: rgba(211,59,48,0.08);
-    --accent-live: #2f9e51;
-    --accent-send: #1d6ec2;
-    --accent-send-hover: #185fa5;
-    --chat-user-bg: #ecf3fb;
-    --chat-user-border: rgba(29,110,194,0.22);
-    --chat-assistant-bg: #f4f2ea;
-    --shadow-sm: 0 1px 3px rgba(60,50,40,0.06);
-    --shadow-md: 0 4px 16px rgba(60,50,40,0.08);
-    --noise: none;
-    --speaker-1: #c65f3f;
-    --speaker-2: #2f8f56;
-    --speaker-3: #7c3aed;
-    --speaker-4: #b45309;
-    --speaker-5: #2b6cb0;
-    --speaker-6: #c13d80;
-}
-
-/* ---- Theme toggle icons (prefix matching for all variants) ---- */
-[data-theme^="dark"] .icon-moon { display: none; }
-[data-theme^="dark"] .icon-sun  { display: block; }
-[data-theme^="light"] .icon-sun  { display: none; }
-[data-theme^="light"] .icon-moon { display: block; }
-
-/* Risk-warn caution orange: the :root default is dark-tuned; light surfaces
-   need a deeper stop to clear AA at caption size (also avoids colliding with
-   light-daltonized --accent-live, which is exactly #d97706). Written with
-   :root so it outranks the :root default below, which comes later. */
-:root[data-theme^="light"] {
-    --risk-warn: #92400e;
-    --risk-warn-dim: rgba(146, 64, 14, 0.12);
-}
-/* The dark themes' --success fills are bright (light green, amber): white
-   on them fell under 2.2:1, so their text is dark. */
-:root[data-theme^="dark"] {
-    --on-success: #0a0a0c;
-}
-/* The daltonized themes draw done (--success, their --accent-live) in amber
-   and failed in blue, so a caution or still-running mark in any orange reads
-   as done: violet keeps the three apart. */
-:root[data-theme="dark-daltonized"] {
-    --risk-warn: #a78bfa;
-    --risk-warn-dim: rgba(167, 139, 250, 0.14);
-}
-:root[data-theme="light-daltonized"] {
-    --risk-warn: #6d28d9;
-    --risk-warn-dim: rgba(109, 40, 217, 0.1);
-}
+/* ---- Theme toggle icons ---- */
+[data-theme="dark"] .icon-moon { display: none; }
+[data-theme="dark"] .icon-sun  { display: block; }
+[data-theme="light"] .icon-sun  { display: none; }
+[data-theme="light"] .icon-moon { display: block; }
 
 /* ---- Theme picker dropdown ---- */
 .theme-picker-wrap {
@@ -409,16 +310,15 @@
 }
 
 /* ════════════════════════════════════════════════════════════════
-   Foundation tokens (UI modernization Phase 1)
-   Defined once in :root. Anything theme-dependent resolves through
-   the theme-scoped accent variables, so the daltonized themes'
-   deliberate remaps (record=blue, live=amber) carry through.
+   Foundation tokens
+   Defined once in :root. Anything mode-dependent lives in the two
+   theme blocks above and is reached through them.
    ════════════════════════════════════════════════════════════════ */
 :root {
-    /* Radius scale — matches the premium dialog recipe (20px card) */
-    --radius-sm: 8px;
-    --radius-md: 12px;
-    --radius-lg: 20px;
+    /* Radius scale: small, flat corners */
+    --radius-sm: 4px;
+    --radius-md: 6px;
+    --radius-lg: 8px;
 
     /* Spacing scale */
     --space-1: 4px;
@@ -441,28 +341,13 @@
     --z-toast: 2000;
     --z-ctx: 9999;
 
-    /* Semantic status colors, resolved through theme accents. Status marks
-       (goal verdicts, CI and workflow run state) use these: --success for
-       done, --risk-warn for still running, --danger for failed. */
+    /* Semantic status colors. Status marks (goal verdicts, CI and
+       workflow run state) use these: --success for done, --risk-warn for
+       still running, --danger for failed. --warning, --info, --on-success
+       and --risk-warn are set per mode above. */
     --success: var(--accent-live);
-    /* Text on a --success fill (the approval card's Yes): white on the
-       deep greens of the light themes; the dark themes' bright fills take
-       dark text, set above. */
-    --on-success: #fff;
-    --warning: var(--accent);
     --danger: var(--accent-record);
     --error: var(--accent-record);
-    --info: #3b82f6;
-
-    /* Risk tints for permission modes and the caution of a status mark.
-       A true orange, deliberately NOT --warning: that aliases to the gold
-       brand accent and would not read as caution next to it. Light themes
-       and the daltonized ones override it above with :root[data-theme]
-       (this default is tuned for dark surfaces); danger reuses
-       --danger/--accent-record-dim so the daltonized red-to-blue remap
-       carries through. */
-    --risk-warn: #d97706;
-    --risk-warn-dim: rgba(217, 119, 6, 0.12);
 
     /* Legacy aliases. These names are used across style.css but were
        never defined anywhere, so every usage silently fell back to
@@ -473,8 +358,16 @@
     --fg: var(--text-primary);
     --text: var(--text-primary);
     --muted: var(--text-muted);
+    --surface-0: var(--bg-primary);
     --surface-1: var(--bg-surface);
     --surface-2: var(--bg-elevated);
-    --font-sans: 'Outfit', system-ui, -apple-system, sans-serif;
-    --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    --bg-tertiary: var(--bg-secondary);
+    --bg-accent: var(--accent-dim);
+    --bg-success: var(--accent-dim);
+    --text-accent: var(--accent);
+    --text-success: var(--success);
+    --text-warning: var(--warning);
+    --radius: var(--radius-md);
+    --font-sans: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-mono: 'DM Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 }

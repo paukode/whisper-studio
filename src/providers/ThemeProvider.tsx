@@ -6,33 +6,31 @@ import { STORAGE_KEYS } from '@/utils/storageKeys';
  * All supported theme options with human-readable labels.
  */
 const THEME_OPTIONS: readonly ThemeOption[] = [
-  { key: 'auto', label: 'Auto (System)' },
-  { key: 'dark', label: 'Dark' },
+  { key: 'auto', label: 'System' },
   { key: 'light', label: 'Light' },
-  { key: 'dark-high-contrast', label: 'Dark High Contrast' },
-  { key: 'light-high-contrast', label: 'Light High Contrast' },
-  { key: 'dark-daltonized', label: 'Dark (Color-blind)' },
-  { key: 'light-daltonized', label: 'Light (Color-blind)' },
-  { key: 'dark-taw', label: 'Taw Dark' },
-  { key: 'light-taw', label: 'Taw Light' },
+  { key: 'dark', label: 'Dark' },
 ] as const;
 
-const VALID_THEME_KEYS = new Set<string>(THEME_OPTIONS.map((t) => t.key));
-
 /**
- * Reads the persisted theme key from localStorage.
- * Falls back to the Taw Light theme if the stored value is missing or invalid.
+ * Maps a stored value to a theme key. A key saved before the themes were
+ * merged into one keeps its mode: any 'dark-*' value is dark, any
+ * 'light-*' value is light. Anything else follows the system.
  */
+export function toThemeKey(stored: string | null): ThemeKey {
+  if (!stored) return 'auto';
+  if (stored.startsWith('dark')) return 'dark';
+  if (stored.startsWith('light')) return 'light';
+  return 'auto';
+}
+
+/** Reads the persisted theme key from localStorage. */
 function readStoredThemeKey(): ThemeKey {
   try {
-    const stored = localStorage.getItem(STORAGE_KEYS.THEME);
-    if (stored && VALID_THEME_KEYS.has(stored)) {
-      return stored as ThemeKey;
-    }
+    return toThemeKey(localStorage.getItem(STORAGE_KEYS.THEME));
   } catch {
     // localStorage may be unavailable (e.g. in some test environments)
   }
-  return 'light-taw';
+  return 'auto';
 }
 
 /**
@@ -50,7 +48,7 @@ function getSystemTheme(): 'light' | 'dark' {
  * Resolves the actual theme string to apply.
  * When the key is 'auto', it resolves to the system preference.
  */
-function resolveTheme(key: ThemeKey, systemTheme: 'light' | 'dark'): string {
+function resolveTheme(key: ThemeKey, systemTheme: 'light' | 'dark'): 'light' | 'dark' {
   return key === 'auto' ? systemTheme : key;
 }
 

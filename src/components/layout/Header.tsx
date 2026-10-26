@@ -28,15 +28,9 @@ import { useVoiceClock } from '@/hooks/useVoiceClock';
 // as a single input. See README → "Capturing system audio (macOS)".
 
 const THEME_SWATCHES: Record<ThemeKey, string> = {
-  auto: 'linear-gradient(135deg, #111113 50%, #f5f3ef 50%)',
-  dark: '#111113',
-  light: '#f5f3ef',
-  'dark-high-contrast': '#000000',
-  'light-high-contrast': '#ffffff',
-  'dark-daltonized': 'linear-gradient(135deg, #111113 50%, #3b82f6 50%)',
-  'light-daltonized': 'linear-gradient(135deg, #f5f3ef 50%, #2563eb 50%)',
-  'dark-taw': 'linear-gradient(135deg, #262624 50%, #4f94d8 50%)',
-  'light-taw': 'linear-gradient(135deg, #faf9f5 50%, #1d6ec2 50%)',
+  auto: 'linear-gradient(135deg, #f6f6f4 50%, #0d0d0d 50%)',
+  light: '#f6f6f4',
+  dark: '#0d0d0d',
 };
 
 export const Header: React.FC = () => {
@@ -335,7 +329,6 @@ export const Header: React.FC = () => {
           <div className={`theme-picker${pickerOpen ? ' open' : ''}`}>
             {themes.map((t) => {
               const swatch = THEME_SWATCHES[t.key];
-              const isGradient = swatch.includes('gradient');
               return (
                 <button
                   key={t.key}
@@ -343,13 +336,7 @@ export const Header: React.FC = () => {
                   onClick={() => handleSelectTheme(t.key)}
                   type="button"
                 >
-                  <span
-                    className="theme-picker-swatch"
-                    style={{
-                      background: isGradient ? swatch : swatch,
-                      backgroundColor: isGradient ? undefined : swatch,
-                    }}
-                  />
+                  <span className="theme-picker-swatch" style={{ background: swatch }} />
                   {t.label}
                   <span className="theme-picker-check">✓</span>
                 </button>

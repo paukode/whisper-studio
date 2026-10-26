@@ -67,21 +67,27 @@ describe('theme overrides of the foundation tokens', () => {
   const foundation = new Set(rules.filter((r) => r.selector === ':root').flatMap((r) => [...r.props.keys()]));
 
   it('outrank the :root block, which comes after the theme blocks', () => {
-    // [data-theme^="light"] and :root are equally specific, so the later
-    // :root value won: the light themes' deeper caution orange never applied.
+    // [data-theme="light"] and :root are equally specific, so a later
+    // :root value would win over a mode block written without :root.
     const losing = rules
       .filter((r) => r.selector.includes('[data-theme') && !r.selector.startsWith(':root['))
       .flatMap((r) => [...r.props.keys()].filter((p) => foundation.has(p)).map((p) => `${r.selector} ${p}`));
     expect(losing).toEqual([]);
   });
 
-  it('keep caution apart from done in the daltonized themes', () => {
-    for (const theme of ['dark-daltonized', 'light-daltonized']) {
-      const accentLive = rules.find((r) => r.selector === `[data-theme="${theme}"]`)?.props.get('--accent-live');
-      const riskWarn = rules.find((r) => r.selector === `:root[data-theme="${theme}"]`)?.props.get('--risk-warn');
-      expect(accentLive, theme).toBeTruthy();
-      expect(riskWarn, theme).toBeTruthy();
-      expect(riskWarn).not.toBe(accentLive);
+  it('keep caution apart from done in both modes', () => {
+    for (const mode of ['light', 'dark']) {
+      const block = rules.find((r) => r.selector === `:root[data-theme="${mode}"]`)?.props;
+      expect(block?.get('--accent-live'), mode).toBeTruthy();
+      expect(block?.get('--risk-warn'), mode).toBeTruthy();
+      expect(block?.get('--risk-warn')).not.toBe(block?.get('--accent-live'));
     }
+  });
+
+  it('define every mode token in both modes', () => {
+    const light = rules.find((r) => r.selector === ':root[data-theme="light"]')?.props;
+    const dark = rules.find((r) => r.selector === ':root[data-theme="dark"]')?.props;
+    expect(light && dark).toBeTruthy();
+    expect([...light!.keys()].sort()).toEqual([...dark!.keys()].sort());
   });
 });

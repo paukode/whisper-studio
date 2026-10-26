@@ -1,12 +1,20 @@
 <!doctype html>
-<html lang="en" data-theme="light-taw">
+<html lang="en" data-theme="light">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Whisper Studio</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script>
+      // Set the mode before the stylesheets paint, so the page never flashes
+      // the wrong mode. ThemeProvider takes over once React mounts.
+      (function () {
+        var mode = 'auto';
+        try { mode = localStorage.getItem('whisper_theme') || 'auto'; } catch (e) {}
+        var dark = mode.indexOf('dark') === 0 ||
+          (mode.indexOf('light') !== 0 && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+      })();
+    </script>
     <link rel="stylesheet" href="/static/modules/themes.css">
     <link rel="stylesheet" href="/static/modules/toast.css">
     <link rel="stylesheet" href="/static/modules/dialog.css">
