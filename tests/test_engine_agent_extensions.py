@@ -12,6 +12,7 @@ import json
 import pytest
 
 from server.approval import registry as approval_registry
+from server.approval.markers import approval_request
 from server.approval.spec import ApprovalOutcome, ApprovalSpec
 from server.chat.engine.events import RoundResult, TextDelta, ToolCall, ToolCallStart, Usage
 from server.chat.engine.pause import paused_sessions
@@ -108,7 +109,7 @@ def test_unattended_ws_approval_executes_inline_with_agent_stamp(monkeypatch):
     async def fake_route_tool(tool_name, tool_input, **kw):
         dispatched_inputs.append(dict(tool_input))
         sentinel = json.dumps({"action": "test_unattended_write", "path": "x.txt"})
-        return f"[WS_APPROVAL]{sentinel}", []
+        return approval_request(sentinel), []
 
     # tool_executor.py imports route_tool at module level (`from
     # server.tool_router import ... route_tool`) — patch ITS binding, not

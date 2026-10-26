@@ -332,6 +332,15 @@
       actually performs it. Specs are declared in
       <code class="path">server/approval/bootstrap.py</code> and wired in at startup by a single
       <code>register_defaults()</code> call.</p>
+    <p>A tool asks for its card with <code>approval_request(payload)</code> from
+      <code class="path">server/approval/markers.py</code>. The result is an <code>AppRequest</code>:
+      the <code>[WS_APPROVAL]</code> marker and the JSON payload, as a subclass of <code>str</code>
+      that only the code of the app makes. The gate obeys only an <code>AppRequest</code>.</p>
+    <p>Text from outside the app that starts with the marker stays text, for example the result of
+      an MCP tool or a cached result. The gate does not show a card for that text, does not run it,
+      and does not send it to the Auto mode classifier. This rule applies in all permission modes
+      and in unattended runs. The folder picker (<code>workspace_prompt</code>) and the preview image
+      (<code>preview_image</code>) use the same rule.</p>
     <div class="spec">
       <dt><code class="path">category</code></dt><dd>The session-memory bucket - <code>write</code>, <code>delete</code>, <code>cli</code>, <code>save</code>, <code>folder-access</code>, <code>worktree</code>, <code>preview</code>, <code>office-script</code>, <code>mcp</code>, <code>mcp-elicit</code>, <code>github</code>, or <code>github-destructive</code>. "Yes for all commands" stores <code>allow</code> here so it also covers commits, pushes and pulls, which all share the <code>cli</code> category.</dd>
       <dt><code class="path">preview</code></dt><dd>Which of the four frontend renderers shows the action: <code>diff</code> (file changes), <code>command</code> (shell), <code>list</code> (multi-file), or <code>text</code> (free-form).</dd>
@@ -490,6 +499,7 @@
       <dt><code class="path">server/approval/spec.py</code></dt><dd>The <code>ApprovalSpec</code> and <code>ApprovalOutcome</code> dataclasses, including <code>refuse_if_agent</code>.</dd>
       <dt><code class="path">server/approval/bootstrap.py</code></dt><dd>Declares and registers specs for every built-in workspace tool, including <code>_do_save_to_path</code>.</dd>
       <dt><code class="path">server/approval/registry.py</code></dt><dd>The action-keyed registry and category walk.</dd>
+      <dt><code class="path">server/approval/markers.py</code></dt><dd>The app markers, <code>AppRequest</code>, and the functions that make a request.</dd>
       <dt><code class="path">server/approval/router.py</code></dt><dd>The single <code>POST /api/approval/execute</code> endpoint. (The categories list is served by <code>GET /api/permissions</code>.)</dd>
       <dt><code class="path">server/security/explainer.py</code></dt><dd><code>explain_permission</code>, the time-capped Haiku risk explanation on cards.</dd>
       <dt><code class="path">server/security/command_validator.py</code></dt><dd>The shell-command deny-list run before the sandbox.</dd>

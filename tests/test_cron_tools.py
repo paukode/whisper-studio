@@ -12,6 +12,7 @@ import asyncio
 import json
 
 import server.cron_scheduler as C
+from server.approval.markers import approval_request
 from tests.golden_harness import FakeBedrockClient, msg_end, msg_start, text_block, tool_use_block
 
 
@@ -156,7 +157,7 @@ def test_approval_gated_tool_auto_executes_unattended(monkeypatch):
     monkeypatch.setattr(approval_registry, "get", lambda action: fake_spec)
 
     async def fake_route_tool(name, tool_input, **kwargs):
-        return ('[WS_APPROVAL]{"action": "terminal_run", "command": "echo hi"}', [])
+        return (approval_request('{"action": "terminal_run", "command": "echo hi"}'), [])
 
     recorded: dict = {}
     _run_cron_job(monkeypatch, job, fake_stream, fake_route_tool, recorded)

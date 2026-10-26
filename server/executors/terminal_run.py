@@ -26,6 +26,7 @@ import logging
 import os
 import re
 
+from server.approval.markers import approval_request
 from server.executors import register_executor
 
 log = logging.getLogger("whisper-studio")
@@ -530,14 +531,14 @@ def _exec_terminal_send(tool_input, transcript, current_attachments):
             "session_id": session_id,
         }
     )
-    return f"[WS_APPROVAL]{payload}"
+    return approval_request(payload)
 
 
 @register_executor("terminal_close", read_only=False, concurrent_safe=False)
 def _exec_terminal_close(tool_input, transcript, current_attachments):
     session_id = tool_input.pop("__session_id__", "")
     payload = json.dumps({"action": "terminal_close", "session_id": session_id})
-    return f"[WS_APPROVAL]{payload}"
+    return approval_request(payload)
 
 
 @register_executor("terminal_run", read_only=False, concurrent_safe=False)
@@ -564,4 +565,4 @@ def _exec_terminal_run(tool_input, transcript, current_attachments):
             "session_id": session_id,
         }
     )
-    return f"[WS_APPROVAL]{payload}"
+    return approval_request(payload)

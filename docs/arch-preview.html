@@ -130,12 +130,16 @@
       computed styles exactly, so it is the honest way to confirm a color or a spacing value.</p>
 
     <h2 id="screenshots">Screenshots the model can actually see</h2>
-    <p>A screenshot is not returned as a base64 blob buried in JSON text. <code class="path">server/preview/screenshot.py</code>
-      captures the page as a PNG, downscales it so the long edge is at most 1280px, re-encodes it as a
-      quality-70 JPEG, and returns a <code>[WS_PREVIEW_IMAGE]</code> sentinel carrying the payload and a
-      caption. The <a href="arch-chat-pipeline.html">tool executor</a> detects that sentinel and rewrites
-      it into a real Anthropic <code>image</code> content block, so the model sees actual pixels in the
-      tool result.</p>
+    <p>The preview tools do not return a screenshot as base64 text in JSON.
+      <code class="path">server/preview/screenshot.py</code> makes a PNG image of the page and scales
+      it to a long edge of at most 1280px. Then it encodes the image again as a quality-70 JPEG. It
+      returns a <code>[WS_PREVIEW_IMAGE]</code> sentinel with the payload and a caption. The sentinel
+      is an <code>AppRequest</code> from <code>preview_image()</code>
+      (<code class="path">server/approval/markers.py</code>). Text from outside the app with the same
+      marker is not an image.</p>
+    <p>The <a href="arch-chat-pipeline.html">tool executor</a> finds that sentinel and changes it into
+      an Anthropic <code>image</code> content block. The model receives the pixels of the image in
+      the tool result, not base64 text.</p>
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
       <div class="callout__body"><p>The tool description nudges the model to prefer <code>preview_console_logs</code>,

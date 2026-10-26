@@ -20,8 +20,7 @@ the one later used to drive them.
 
 from __future__ import annotations
 
-import json
-
+from server.approval.markers import approval_request
 from server.preview.start_policy import PREVIEW_START, pin_launch_config
 from server.preview.tools import APPROVAL_GATED_TOOLS
 
@@ -44,7 +43,7 @@ async def execute_preview_tool(tool_name: str, tool_input: dict) -> str:
             # What launch.json resolves to now is what gets decided, shown on
             # the card and run (server/preview/start_policy.py).
             pin_launch_config(payload)
-        return f"[WS_APPROVAL]{json.dumps(payload)}"
+        return approval_request(payload)
 
     if tool_name == "preview_list":
         return m.list_preview_sessions(session_id)

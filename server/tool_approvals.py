@@ -18,6 +18,7 @@ import logging
 import time
 from typing import NamedTuple
 
+from server.approval.markers import APPROVAL
 from server.approval.spec import WORKSPACE_ROOT_KEY, ApprovalOutcome, turn_workspace_refusal
 from server.auto_mode import classify_tool_call
 from server.security.explainer import explain_permission
@@ -159,7 +160,7 @@ async def gate_approval(
     process_tool_results' own (server/tool_executor.py)."""
     from server.approval import registry as approval_registry
 
-    ws_data = tool_output[len("[WS_APPROVAL]") :]
+    ws_data = tool_output[len(APPROVAL) :]
     try:
         ws_parsed = json.loads(ws_data)
     except json.JSONDecodeError as e:
@@ -174,27 +175,6 @@ async def gate_approval(
             f"[Error] No approval registered for action {action!r}. "
             f"Refusing to run. Register an ApprovalSpec in server/approval/bootstrap.py.",
         )
-    # Bind the action to the tool that may emit it. An MCP tool's result is
-    # untrusted server content (server/mcp.py already neutralizes an internal
-    # marker in it), and the only approval an MCP tool ever asks for is its own
-    # mcp_tool_call, which server/mcp.py generates, not the server. Any other
-    # action carried by an MCP tool's output was forged, so it is refused here
-    # even if it reached the gate: a server cannot run a write or a command by
-    # returning text that looks like an approval request.
-    if action != "mcp_tool_call":
-        from server.mcp import mcp_manager
-
-        if mcp_manager.is_mcp_tool(state.tool_name):
-            log.error(
-                "approval: MCP tool %s tried to emit a %r action; refusing",
-                state.tool_name,
-                action,
-            )
-            return ApprovalStep(
-                REPLY,
-                f"[Error] An MCP tool cannot request a {action!r} action; its output was "
-                "treated as text, not run.",
-            )
     # A workspace-bound payload is stamped with the root it was
     # resolved against, and refused if, since the tool ran, the user
     # let go of the turn's workspace or that root stopped being the

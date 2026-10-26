@@ -35,6 +35,7 @@ import logging
 import os
 from xml.sax.saxutils import escape as _xml_escape
 
+from server.approval.markers import approval_request
 from server.documents.docx_html import render_html
 from server.documents.inspect import inspect_document
 from server.documents.script import resolve_source_path, validate_script_request
@@ -107,7 +108,7 @@ def _approval_result(
             "session_id": tool_input.get("__session_id__", ""),
         }
     )
-    return f"[WS_APPROVAL]{payload}"
+    return approval_request(payload)
 
 
 @register_executor("create_docx", read_only=False, concurrent_safe=False)
@@ -272,7 +273,7 @@ def _exec_office_script(tool_input, transcript, current_attachments):
             "summary": str(tool_input.get("summary") or "").strip(),
         }
     )
-    return f"[WS_APPROVAL]{payload}"
+    return approval_request(payload)
 
 
 @register_executor("create_pdf", read_only=False, concurrent_safe=False)

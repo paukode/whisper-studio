@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from server.approval.bootstrap import register_defaults
+from server.approval.markers import approval_request
 from server.security.permissions import (
     MODE_DEFAULT,
     approval_floor,
@@ -42,7 +43,7 @@ class _State:
     def __init__(self, tool_id, tool_name, payload):
         self.tool_id = tool_id
         self.tool_name = tool_name
-        self.output = f"[WS_APPROVAL]{json.dumps(payload)}"
+        self.output = approval_request(payload)
         self.side_effects = []
         self.status = "pending"
 

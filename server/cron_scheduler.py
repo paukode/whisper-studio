@@ -32,6 +32,8 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter
 
+from server.approval.markers import approval_request
+
 # The run loop lives in cron_run.py (kept out of this file for the size
 # budget) — an asyncio coroutine over the shared chat/engine turn loop,
 # scheduled as a tracked task via _spawn_cron_run below. Re-exported here so
@@ -757,7 +759,7 @@ def execute_cron_tool(
             "session_id": session_id,
         }
         if gate:
-            return "[WS_APPROVAL]" + json.dumps(payload)
+            return approval_request(payload)
         return _cron_create_apply(payload)
 
     if tool_name == "cron_update":
@@ -799,7 +801,7 @@ def execute_cron_tool(
             "session_id": session_id,
         }
         if gate:
-            return "[WS_APPROVAL]" + json.dumps(payload)
+            return approval_request(payload)
         return _cron_update_apply(payload)
 
     if tool_name == "cron_run":
@@ -816,7 +818,7 @@ def execute_cron_tool(
             "session_id": session_id,
         }
         if gate:
-            return "[WS_APPROVAL]" + json.dumps(payload)
+            return approval_request(payload)
         return _cron_run_apply(payload)
 
     if tool_name == "cron_list":

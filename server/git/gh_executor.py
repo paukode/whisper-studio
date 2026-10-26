@@ -12,6 +12,7 @@ import json
 import os
 import tempfile
 
+from server.approval.markers import approval_request
 from server.approval.spec import refuse_if_agent
 from server.executors import register_executor
 from server.git.gh_classify import (
@@ -98,7 +99,7 @@ def _exec_github(tool_input, transcript, current_attachments):
         rc, out = run_gh(_read_hygiene(args), cwd=cwd, timeout=_timeout(tool_input, args))
         return out if rc == 0 else f"Error: {out}"
     action = "github_destructive" if v.kind == DANGER else "github"
-    return "[WS_APPROVAL]" + json.dumps({"action": action, "args": args, "session_id": session_id})
+    return approval_request({"action": action, "args": args, "session_id": session_id})
 
 
 def do_github(payload: dict) -> tuple[bool, str]:
@@ -235,7 +236,7 @@ def _exec_github_api_write(tool_input, transcript, current_attachments):
     if v.is_read:
         return "Error: this looks like a read; use github_api."
     action = "github_api_write_destructive" if v.kind == DANGER else "github_api_write"
-    return "[WS_APPROVAL]" + json.dumps(
+    return approval_request(
         {
             "action": action,
             "endpoint": endpoint,

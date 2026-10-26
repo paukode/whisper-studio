@@ -9,6 +9,7 @@ import tempfile
 
 import boto3
 
+from server.approval.markers import approval_request
 from server.executors import register_executor
 from server.sandbox import run_sandboxed
 from server.security.command_validator import validate_command
@@ -262,7 +263,7 @@ def exec_run_python(tool_input, transcript, current_attachments):
             "session_id": tool_input.get("__session_id__", ""),
         }
     )
-    return f"[WS_APPROVAL]{payload}"
+    return approval_request(payload)
 
 
 @register_executor("aws_boto3", read_only=True, concurrent_safe=True)
@@ -384,4 +385,4 @@ def exec_aws_cli(tool_input, transcript, current_attachments):
             "session_id": tool_input.get("__session_id__", ""),
         }
     )
-    return f"[WS_APPROVAL]{payload}"
+    return approval_request(payload)

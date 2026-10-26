@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 
 from server import tool_executor as te
+from server.approval.markers import approval_request, workspace_prompt
 from server.chat import loop_guard as lg
 from server.chat.engine import events as EV
 from server.tool_executor import ToolOutcome, tool_outcome
@@ -265,7 +266,7 @@ def test_outcome_is_read_from_the_full_output_not_the_preview():
 def test_sibling_emitted_before_a_pause_carries_id_and_outcome():
     # A workspace prompt pauses the batch; the sibling that already ran is
     # still reported, with the same frame shape as the normal path.
-    prompt = _State("tu_p", "ws_write_file", '[WS_WORKSPACE_PROMPT]{"path": "a.txt"}')
+    prompt = _State("tu_p", "ws_write_file", workspace_prompt('{"path": "a.txt"}'))
     sibling = _State("tu_s", "ws_run_command", "built\n(exit code 1)")
     sibling.status = "completed"
     _results, sse_events, pending, _question = _run([prompt, sibling])
@@ -278,7 +279,7 @@ def test_the_call_a_folder_card_waits_on_says_it_did_not_run():
     # Its row must not read as done ("Wrote a.txt"), and its frame goes out
     # before the card's, which commits the rows above the card on the client;
     # so do the frames of the siblings it canceled.
-    prompt = _State("tu_p", "ws_write_file", '[WS_WORKSPACE_PROMPT]{"path": "a.txt"}')
+    prompt = _State("tu_p", "ws_write_file", workspace_prompt('{"path": "a.txt"}'))
     later = _State("tu_l", "ws_read_file", "")
     results, sse_events, pending, _question = _run([prompt, later])
     assert pending is True
@@ -297,7 +298,7 @@ def test_the_call_a_folder_card_waits_on_says_it_did_not_run():
 
 def _approval_state(tool_id: str, path: str) -> _State:
     payload = json.dumps({"action": "write", "path": path, "content": "hi", "original": ""})
-    return _State(tool_id, "ws_write_file", f"[WS_APPROVAL]{payload}")
+    return _State(tool_id, "ws_write_file", approval_request(payload))
 
 
 def _gate(monkeypatch, states, session_approvals):

@@ -9,12 +9,11 @@ from __future__ import annotations
 
 import base64
 import io
-import json
+
+from server.approval.markers import preview_image
 
 _MAX_LONG_EDGE = 1280
 _JPEG_QUALITY = 70
-
-SENTINEL_PREFIX = "[WS_PREVIEW_IMAGE]"
 
 
 async def take_screenshot(session_id: str, page) -> str:
@@ -43,4 +42,4 @@ async def take_screenshot(session_id: str, page) -> str:
             f"({img.size[0]}x{img.size[1]}, {len(jpeg_bytes)} bytes JPEG)"
         ),
     }
-    return f"{SENTINEL_PREFIX}{json.dumps(payload)}"
+    return preview_image(payload)

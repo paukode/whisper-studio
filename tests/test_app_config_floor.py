@@ -26,6 +26,7 @@ import pytest
 
 from server import sandbox
 from server.approval.bootstrap import register_defaults
+from server.approval.markers import APPROVAL, approval_request, is_app_request
 from server.infrastructure.paths import app_config_dirs, app_config_paths
 from server.security.permissions import (
     MODE_ACCEPT_EDITS,
@@ -153,7 +154,7 @@ class _State:
     def __init__(self, payload):
         self.tool_id = "tu_1"
         self.tool_name = "save_file"
-        self.output = f"[WS_APPROVAL]{json.dumps(payload)}"
+        self.output = approval_request(payload)
         self.side_effects = []
         self.status = "pending"
         self.duration_ms = 0
@@ -245,7 +246,8 @@ def test_config_set_gates_only_sensitive_keys(monkeypatch, tmp_path):
     from server.agent_tools.config_tools import execute_config_set
 
     sensitive = execute_config_set({"updates": {"data_dir": "/x"}})
-    assert sensitive.startswith("[WS_APPROVAL]")
+    # The app's own request, not a plain str: the gate acts on it.
+    assert is_app_request(sensitive, APPROVAL)
     assert json.loads(sensitive[len("[WS_APPROVAL]") :])["action"] == "config_set"
     # A harmless key writes straight away (no card).
     plain = execute_config_set({"updates": {"whisper_language": "pl"}})
@@ -260,15 +262,27 @@ def test_cron_create_follows_the_mode(monkeypatch, tmp_path):
     monkeypatch.setattr(
         "server.security.permissions.load_permissions", lambda: {"mode": "default", "rules": []}
     )
+    import server.cron_scheduler as cron
     from server.cron_scheduler import execute_cron_tool
 
+    # This test's own job store: the module froze its path at import.
+    monkeypatch.setattr(cron, "DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(cron, "CRON_PATH", str(tmp_path / "cron_jobs.json"))
     out = execute_cron_tool(
         "cron_create",
         {"name": "j", "prompt": "do x", "schedule": {"type": "interval", "seconds": 1800}},
         session_id="sess1",
     )
-    assert out.startswith("[WS_APPROVAL]")
+    assert is_app_request(out, APPROVAL)
     assert json.loads(out[len("[WS_APPROVAL]") :])["action"] == "cron_create"
+    # cron_update and cron_run on a saved job are the app's own requests too.
+    from server.cron_scheduler import _cron_create_apply
+
+    _cron_create_apply(json.loads(out[len(APPROVAL) :]))
+    for name, extra in (("cron_update", {"prompt": "do y"}), ("cron_run", {})):
+        gated = execute_cron_tool(name, {"name": "j", **extra}, session_id="sess1")
+        assert is_app_request(gated, APPROVAL), (name, gated)
+        assert json.loads(gated[len(APPROVAL) :])["action"] == name
     for mode in MODES:
         decision = resolve_static_decision("cron_create", {"name": "j"}, "cron", {}, mode)
         assert decision == TABLE[mode], mode

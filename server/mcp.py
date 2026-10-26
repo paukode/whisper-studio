@@ -17,6 +17,7 @@ import shutil
 import tempfile
 import uuid
 
+from server.approval.markers import approval_request
 from server.infrastructure.async_tasks import spawn
 from server.infrastructure.binaries import login_shell_env
 from server.infrastructure.paths import data_root
@@ -818,7 +819,7 @@ class MCPManager:
                 }
                 if arguments.get("__agent__"):
                     payload["__agent__"] = True
-                return "[WS_APPROVAL]" + json.dumps(payload)
+                return approval_request(payload)
 
         return await self.execute_approved_tool_call(tool_key, arguments)
 
@@ -904,11 +905,7 @@ class MCPManager:
                     parts.append(f"[Binary data: {len(content.data)} bytes]")
                 else:
                     parts.append(str(content))
-            # Untrusted server text: never let it pose as an internal control
-            # sentinel (an approval to run, a folder picker, an image block).
-            from server.mcp_output import neutralize_internal_sentinels
-
-            output = neutralize_internal_sentinels("\n".join(parts))
+            output = "\n".join(parts)
             if result.isError:
                 output = f"[MCP Error] {output}"
             return output

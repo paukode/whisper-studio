@@ -12,6 +12,8 @@ import threading
 from contextvars import ContextVar as _ContextVar
 from dataclasses import dataclass
 
+from server.approval.markers import workspace_prompt
+
 from .paths import (
     RECENT_WORKSPACES_PATH,
     SAVE_LOCATIONS_PATH,
@@ -297,7 +299,7 @@ def _workspace_prompt_payload(tool_name: str, tool_input: dict) -> str:
             "recent": recent,
         }
     )
-    return f"[WS_WORKSPACE_PROMPT]{payload}"
+    return workspace_prompt(payload)
 
 
 # Appended to every successful file-creating approval outcome. The moment the

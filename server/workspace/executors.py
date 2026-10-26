@@ -22,6 +22,7 @@ import subprocess
 from dataclasses import dataclass
 
 from server import file_state
+from server.approval.markers import approval_request
 from server.executors import register_executor
 
 from .commands import (
@@ -258,7 +259,7 @@ def execute_ws_open_folder(tool_input: dict) -> str:
                 "connect": True,
             }
         )
-        return f"[WS_APPROVAL]{payload}"
+        return approval_request(payload)
     return open_folder_now(path)
 
 
@@ -408,7 +409,7 @@ def _exec_ws_write_file(tool_input, transcript, current_attachments):
             "session_id": session_id,
         }
     )
-    return f"[WS_APPROVAL]{payload}"
+    return approval_request(payload)
 
 
 # ── Quote normalization for ws_edit_file ──────────────────────────────
@@ -520,7 +521,7 @@ def _exec_ws_edit_file(tool_input, transcript, current_attachments):
     if used_normalization:
         payload_data["matched_via_normalization"] = True
     payload = json.dumps(payload_data)
-    return f"[WS_APPROVAL]{payload}"
+    return approval_request(payload)
 
 
 def _replace_with_normalization(
@@ -583,7 +584,7 @@ def _stage_and_request_save(dest: str, filename: str, data: bytes) -> str:
             "size": len(data),
         }
     )
-    return f"[WS_APPROVAL]{payload}"
+    return approval_request(payload)
 
 
 @register_executor("ws_create_file", read_only=False, concurrent_safe=False)
@@ -614,7 +615,7 @@ def _exec_ws_create_file(tool_input, transcript, current_attachments):
             "session_id": tool_input.get("__session_id__", ""),
         }
     )
-    return f"[WS_APPROVAL]{payload}"
+    return approval_request(payload)
 
 
 @register_executor("save_file", read_only=False, concurrent_safe=False)
@@ -680,7 +681,7 @@ def _exec_ws_delete_file(tool_input, transcript, current_attachments):
     payload = json.dumps(
         {"action": "delete", "path": path, "original": original, "session_id": session_id}
     )
-    return f"[WS_APPROVAL]{payload}"
+    return approval_request(payload)
 
 
 @register_executor("ws_run_command", read_only=False, concurrent_safe=False)
@@ -728,7 +729,7 @@ def _exec_ws_run_command(tool_input, transcript, current_attachments):
             "run_in_background": run_in_background,
         }
     )
-    return f"[WS_APPROVAL]{payload}"
+    return approval_request(payload)
 
 
 _AUTO_BACKGROUND_SECONDS = 30

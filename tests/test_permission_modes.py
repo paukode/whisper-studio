@@ -18,6 +18,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from server.approval.bootstrap import register_defaults
+from server.approval.markers import approval_request
 from server.approval.spec import ApprovalOutcome
 from server.security.permissions import (
     MODE_ACCEPT_EDITS,
@@ -193,7 +194,7 @@ def _budget_passthrough(_name, output):
 
 def _write_approval_state():
     payload = '{"action": "ws_write_file", "path": "foo.txt", "content": "hi", "original": ""}'
-    return _State(tool_id="tu_1", tool_name="ws_write_file", output=f"[WS_APPROVAL]{payload}")
+    return _State(tool_id="tu_1", tool_name="ws_write_file", output=approval_request(payload))
 
 
 def test_classifier_allow_skips_the_approval_banner(monkeypatch):
