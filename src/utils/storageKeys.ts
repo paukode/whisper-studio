@@ -6,6 +6,11 @@
 export const STORAGE_KEYS = {
   /** Selected theme key */
   THEME: 'whisper_theme',
+  /** Selected color palette id (Settings > Appearance) */
+  PALETTE: 'whisper_palette',
+  /** The selected palette's stylesheet, so index.html can apply it before
+   *  the first paint. Empty for the default palette. */
+  PALETTE_CSS: 'whisper_palette_css',
   /** Sidebar collapsed boolean */
   SIDEBAR_COLLAPSED: 'whisper_sidebar_collapsed',
   /** Workspace connect dialog size + position (resizable popup) */

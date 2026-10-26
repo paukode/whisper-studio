@@ -258,7 +258,7 @@ export function useTerminal(options: UseTerminalOptions): UseTerminalReturn {
           });
           themeObserver.observe(document.documentElement, {
             attributes: true,
-            attributeFilter: ['data-theme'],
+            attributeFilter: ['data-theme', 'data-palette'],
           });
           themeObserverRef.current = themeObserver;
 

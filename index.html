@@ -13,6 +13,19 @@
         var dark = mode.indexOf('dark') === 0 ||
           (mode.indexOf('light') !== 0 && window.matchMedia('(prefers-color-scheme: dark)').matches);
         document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+        // The saved color palette (Settings > Appearance), cached as a
+        // stylesheet by ThemeProvider. Its selectors outrank themes.css.
+        try {
+          var css = localStorage.getItem('whisper_palette_css');
+          var palette = localStorage.getItem('whisper_palette');
+          if (css) {
+            var style = document.createElement('style');
+            style.id = 'ws-palette';
+            style.textContent = css;
+            document.head.appendChild(style);
+          }
+          if (palette) document.documentElement.setAttribute('data-palette', palette);
+        } catch (e) {}
       })();
     </script>
     <link rel="stylesheet" href="/static/modules/themes.css">

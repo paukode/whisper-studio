@@ -26,14 +26,14 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
   language = 'plaintext',
   filePath,
 }) => {
-  const { resolvedTheme } = useTheme();
+  const { resolvedTheme, paletteId } = useTheme();
 
   const handleMount: DiffOnMount = useCallback(
     (_editor, monaco) => {
       registerWhisperThemes(monaco);
-      monaco.editor.setTheme(getMonacoTheme(resolvedTheme));
+      monaco.editor.setTheme(getMonacoTheme(resolvedTheme, paletteId));
     },
-    [resolvedTheme],
+    [resolvedTheme, paletteId],
   );
 
   return (
@@ -47,7 +47,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
         original={original}
         modified={modified}
         language={language}
-        theme={getMonacoTheme(resolvedTheme)}
+        theme={getMonacoTheme(resolvedTheme, paletteId)}
         onMount={handleMount}
         options={{
           readOnly: true,

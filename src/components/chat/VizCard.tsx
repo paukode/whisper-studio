@@ -45,14 +45,14 @@ function readThemeTokens(): ThemeTokens {
   };
 }
 
-/** Watch `data-theme` on <html> and re-read tokens when it changes. */
+/** Watch `data-theme` and `data-palette` on <html> and re-read tokens when either changes. */
 function useThemeTokens(): ThemeTokens {
   const [tokens, setTokens] = useState(readThemeTokens);
   useEffect(() => {
     const observer = new MutationObserver(() => setTokens(readThemeTokens()));
     observer.observe(document.documentElement, {
       attributes: true,
-      attributeFilter: ['data-theme'],
+      attributeFilter: ['data-theme', 'data-palette'],
     });
     return () => observer.disconnect();
   }, []);

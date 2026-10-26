@@ -1,7 +1,8 @@
 import { render, screen, act, fireEvent } from '@testing-library/react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { ThemeProvider, useTheme } from './ThemeProvider';
+import { PALETTE_STYLE_ID, ThemeProvider, useTheme } from './ThemeProvider';
 import { STORAGE_KEYS } from '@/utils/storageKeys';
+import { DEFAULT_PALETTE_ID } from '@/utils/palettes';
 
 /** Helper component that exposes theme context values for testing. */
 function ThemeConsumer() {
@@ -237,5 +238,58 @@ describe('useTheme', () => {
     );
 
     consoleSpy.mockRestore();
+  });
+});
+
+describe('ThemeProvider palettes', () => {
+  function PaletteConsumer() {
+    const { paletteId, setPalette } = useTheme();
+    return (
+      <div>
+        <span data-testid="palette">{paletteId}</span>
+        <button data-testid="set-nord" onClick={() => setPalette('nord')}>Nord</button>
+        <button data-testid="set-default" onClick={() => setPalette(DEFAULT_PALETTE_ID)}>Default</button>
+      </div>
+    );
+  }
+
+  const paletteStyle = () => document.getElementById(PALETTE_STYLE_ID)?.textContent ?? '';
+
+  beforeEach(() => {
+    localStorage.clear();
+    document.getElementById(PALETTE_STYLE_ID)?.remove();
+    document.documentElement.removeAttribute('data-palette');
+  });
+
+  it('starts on the default palette, which adds no stylesheet', () => {
+    render(<ThemeProvider><PaletteConsumer /></ThemeProvider>);
+    expect(screen.getByTestId('palette').textContent).toBe(DEFAULT_PALETTE_ID);
+    expect(document.documentElement.getAttribute('data-palette')).toBe(DEFAULT_PALETTE_ID);
+    expect(paletteStyle()).toBe('');
+  });
+
+  it('applies a palette, saves it and its stylesheet for the next first paint', () => {
+    render(<ThemeProvider><PaletteConsumer /></ThemeProvider>);
+    fireEvent.click(screen.getByTestId('set-nord'));
+
+    expect(document.documentElement.getAttribute('data-palette')).toBe('nord');
+    expect(paletteStyle()).toContain('html:root[data-theme="dark"]');
+    expect(localStorage.getItem(STORAGE_KEYS.PALETTE)).toBe('nord');
+    expect(localStorage.getItem(STORAGE_KEYS.PALETTE_CSS)).toBe(paletteStyle());
+
+    fireEvent.click(screen.getByTestId('set-default'));
+    expect(paletteStyle()).toBe('');
+    expect(localStorage.getItem(STORAGE_KEYS.PALETTE_CSS)).toBe('');
+  });
+
+  it('restores a saved palette and drops an unknown one', () => {
+    localStorage.setItem(STORAGE_KEYS.PALETTE, 'gruvbox');
+    const { unmount } = render(<ThemeProvider><PaletteConsumer /></ThemeProvider>);
+    expect(screen.getByTestId('palette').textContent).toBe('gruvbox');
+    unmount();
+
+    localStorage.setItem(STORAGE_KEYS.PALETTE, 'retired-palette');
+    render(<ThemeProvider><PaletteConsumer /></ThemeProvider>);
+    expect(screen.getByTestId('palette').textContent).toBe(DEFAULT_PALETTE_ID);
   });
 });
