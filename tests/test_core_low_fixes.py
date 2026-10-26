@@ -24,6 +24,7 @@ import pytest
 import server.tasks_tracker as tt
 import server.terminal as T
 from server.approval.bootstrap import register_defaults
+from server.approval.markers import approval_request
 from server.security.permissions import MODE_DEFAULT
 from server.tool_executor import process_tool_results
 
@@ -59,7 +60,7 @@ def _patch_rules(monkeypatch, rules):
 def test_completed_sibling_keeps_real_output_on_pause(monkeypatch):
     _patch_rules(monkeypatch, [])
     payload = '{"action": "ws_write_file", "path": "foo.txt", "content": "hi", "original": ""}'
-    approval = _State("tu_write", "ws_write_file", f"[WS_APPROVAL]{payload}", status="completed")
+    approval = _State("tu_write", "ws_write_file", approval_request(payload), status="completed")
     real_output = "print('hello world')  # already read"
     completed = _State("tu_read", "ws_read_file", real_output, status="completed")
     pending = _State("tu_pending", "ws_read_file", "", status="pending")

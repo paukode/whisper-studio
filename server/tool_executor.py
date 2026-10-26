@@ -23,6 +23,13 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import NamedTuple
 
+from server.approval.markers import (
+    APPROVAL,
+    PREVIEW_IMAGE,
+    WORKSPACE_PROMPT,
+    as_plain_text,
+    is_app_request,
+)
 from server.hooks import run_hooks
 from server.preview.start_policy import never_prompts
 from server.security.permissions import MODE_BYPASS
@@ -489,8 +496,11 @@ async def execute_tool_batch(
                 state.duration_ms = int(_elapsed * 1000)
                 if _waits:
                     tool_scope.waited(_elapsed)
-            output = _explain_lost_workspace(output)
-            if isinstance(output, str) and output.startswith("[WS_APPROVAL]"):
+            # Text from outside the app (an MCP server's reply, a file, a
+            # cached result) that starts with an app marker stays text: only
+            # an AppRequest the app made is a request (server/approval/markers.py).
+            output = as_plain_text(_explain_lost_workspace(output))
+            if is_app_request(output, APPROVAL):
                 from server.workspace.state import load_workspace_config
 
                 state.ws_root = load_workspace_config().get("path")
@@ -727,7 +737,7 @@ async def _process_tool_results(
         # Workspace-prompt detection: a write-type tool fired without a
         # workspace to resolve its relative path against. Show a folder
         # picker to the user; stream resumes on continuation turn.
-        if isinstance(tool_output, str) and tool_output.startswith("[WS_WORKSPACE_PROMPT]"):
+        if is_app_request(tool_output, WORKSPACE_PROMPT):
             if unattended:
                 # No human to show a folder picker to — refuse and keep going.
                 _reply(
@@ -739,7 +749,7 @@ async def _process_tool_results(
                     sse_events,
                 )
                 continue
-            prompt_data = tool_output[len("[WS_WORKSPACE_PROMPT]") :]
+            prompt_data = tool_output[len(WORKSPACE_PROMPT) :]
             try:
                 prompt_parsed = json.loads(prompt_data)
             except json.JSONDecodeError as e:
@@ -759,10 +769,11 @@ async def _process_tool_results(
             break
 
         # Workspace approval detection. Tools signal "needs approval" by
-        # returning a string with the [WS_APPROVAL] prefix containing JSON;
+        # returning an AppRequest: the [WS_APPROVAL] marker and a JSON payload
+        # (server/approval/markers.py approval_request);
         # server/tool_approvals.py refuses it, runs it inline, denies it, or
         # emits the approval card the turn pauses on.
-        if isinstance(tool_output, str) and tool_output.startswith("[WS_APPROVAL]"):
+        if is_app_request(tool_output, APPROVAL):
             step = await gate_approval(
                 state,
                 tool_output,
@@ -796,8 +807,8 @@ async def _process_tool_results(
         # user-uploaded image attachments (server/chat/routes.py). Placed
         # before budget_fn below: truncating a base64 payload would corrupt
         # the image.
-        if isinstance(tool_output, str) and tool_output.startswith("[WS_PREVIEW_IMAGE]"):
-            img_data = tool_output[len("[WS_PREVIEW_IMAGE]") :]
+        if is_app_request(tool_output, PREVIEW_IMAGE):
+            img_data = tool_output[len(PREVIEW_IMAGE) :]
             try:
                 img_parsed = json.loads(img_data)
             except json.JSONDecodeError as e:
@@ -892,7 +903,9 @@ async def _process_tool_results(
             # sentinel as its output and hasn't truly run — its real result
             # arrives on the continuation turn once the user approves. Keep the
             # not-executed placeholder for it.
-            awaiting_approval = out.startswith(("[WS_APPROVAL]", "[WS_WORKSPACE_PROMPT]"))
+            awaiting_approval = is_app_request(out, APPROVAL) or is_app_request(
+                out, WORKSPACE_PROMPT
+            )
             if state.status == "completed" and not awaiting_approval:
                 # This sibling already executed with a real result before the
                 # pause. Preserve its actual output so the model doesn't

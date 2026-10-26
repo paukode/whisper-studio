@@ -6,6 +6,7 @@ AnthropicAdapter, fake route_tool stands in for execution."""
 import asyncio
 import json
 
+from server.approval.markers import approval_request
 from server.chat.engine.pause import paused_sessions
 from server.exec.headless import run_headless_turn
 from tests.golden_harness import FakeBedrockClient, msg_end, msg_start, text_block, tool_use_block
@@ -104,7 +105,7 @@ def test_attended_run_pauses_on_approval_and_resumes(monkeypatch):
 
     async def fake_route_tool(tool_name, tool_input, **kw):
         payload = json.dumps({"action": "command", "command": tool_input["command"], "cwd": "/tmp"})
-        return f"[WS_APPROVAL]{payload}", []
+        return approval_request(payload), []
 
     monkeypatch.setattr("server.tool_executor.route_tool", fake_route_tool)
 

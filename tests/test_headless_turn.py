@@ -12,6 +12,7 @@ is nothing to inject), and a fake `route_tool` stands in for tool execution
 import asyncio
 import json
 
+from server.approval.markers import approval_request
 from server.exec.headless import run_headless_turn
 from tests.golden_harness import FakeBedrockClient, msg_end, msg_start, text_block, tool_use_block
 
@@ -386,7 +387,7 @@ def test_headless_context_is_unattended_and_ws_approval_executes_inline(monkeypa
     async def fake_route_tool(tool_name, tool_input, **kw):
         dispatched_inputs.append(dict(tool_input))
         sentinel = json.dumps({"action": "test_headless_write", "path": "x.txt"})
-        return f"[WS_APPROVAL]{sentinel}", []
+        return approval_request(sentinel), []
 
     monkeypatch.setattr("server.tool_executor.route_tool", fake_route_tool)
 

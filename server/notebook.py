@@ -8,6 +8,7 @@ import logging
 import os
 import uuid
 
+from server.approval.markers import approval_request
 from server.workspace import _ws_validate_path, get_workspace_path
 
 log = logging.getLogger("whisper-studio")
@@ -225,6 +226,6 @@ def execute_notebook_tool(tool_name: str, tool_input: dict) -> str:
                 "original": original,
             }
         )
-        return f"[WS_APPROVAL]{payload}"
+        return approval_request(payload)
 
     return json.dumps({"error": f"Unknown notebook tool: {tool_name}"})

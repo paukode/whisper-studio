@@ -24,6 +24,7 @@ import json
 import logging
 import uuid
 
+from server.approval.markers import approval_request
 from server.executors import register_executor
 
 log = logging.getLogger("whisper-studio")
@@ -108,4 +109,4 @@ def _exec_run_tool_script(tool_input, transcript, current_attachments):
     if not code:
         return "Error: code is required."
     payload = json.dumps({"action": "run_tool_script", "code": code, "session_id": session_id})
-    return f"[WS_APPROVAL]{payload}"
+    return approval_request(payload)

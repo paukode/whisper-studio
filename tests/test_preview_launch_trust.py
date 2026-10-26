@@ -26,6 +26,7 @@ from server import tool_approvals
 from server import tool_executor as te
 from server.approval import registry as approval_registry
 from server.approval.bootstrap import register_defaults
+from server.approval.markers import approval_request
 from server.approval.router import router as approval_router
 from server.preview import launch_trust
 from server.preview.router import execute_preview_tool
@@ -124,7 +125,7 @@ class _State:
 
 def _process(parsed: dict, mode: str, session_approvals=None, *, unattended=False):
     """One preview_start through process_tool_results: (content, approval_request)."""
-    sentinel = "[WS_APPROVAL]" + json.dumps(parsed)
+    sentinel = approval_request(parsed)
     results, sse_events, _pending, _q = asyncio.run(
         te.process_tool_results(
             [_State(sentinel)],

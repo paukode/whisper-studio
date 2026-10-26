@@ -20,13 +20,14 @@ import json
 from unittest.mock import AsyncMock
 
 from server.agents.runtime import run_agent
+from server.approval.markers import approval_request
 from server.approval.spec import ApprovalOutcome
 from tests.golden_harness import FakeBedrockClient, msg_end, msg_start, text_block, tool_use_block
 
 
 def test_ws_approval_sentinel_is_executed_not_left_as_coroutine(monkeypatch):
     ws_payload = {"action": "ws_write_file", "path": "foo.txt", "content": "hi", "original": ""}
-    sentinel = "[WS_APPROVAL]" + json.dumps(ws_payload)
+    sentinel = approval_request(ws_payload)
 
     # process_tool_results only takes the unattended "auto-approve inline"
     # branch once an ApprovalSpec is actually registered for the action (the

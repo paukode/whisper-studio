@@ -9,6 +9,7 @@ and returns formatted results for the AI assistant.
 import os
 import subprocess
 
+from server.approval.markers import approval_request
 from server.executors import register_executor
 from server.git.core import (
     _run_git,
@@ -358,7 +359,7 @@ def _exec_git_clone(tool_input, transcript, current_attachments):
             "open": tool_input.get("open", True),
         }
     )
-    return f"[WS_APPROVAL]{payload}"
+    return approval_request(payload)
 
 
 def do_git_add_commit(payload: dict) -> tuple[bool, str]:
@@ -424,7 +425,7 @@ def _exec_git_add_commit(tool_input, transcript, current_attachments):
             "session_id": session_id,
         }
     )
-    return f"[WS_APPROVAL]{payload}"
+    return approval_request(payload)
 
 
 def do_git_push(payload: dict) -> tuple[bool, str]:
@@ -459,7 +460,7 @@ def _exec_git_push(tool_input, transcript, current_attachments):
             "session_id": session_id,
         }
     )
-    return f"[WS_APPROVAL]{payload}"
+    return approval_request(payload)
 
 
 @register_executor("git_fetch", read_only=True, concurrent_safe=False)
@@ -523,7 +524,7 @@ def _exec_git_pull(tool_input, transcript, current_attachments):
             "session_id": session_id,
         }
     )
-    return f"[WS_APPROVAL]{payload}"
+    return approval_request(payload)
 
 
 def do_git_create_branch(payload: dict) -> tuple[bool, str]:
@@ -560,7 +561,7 @@ def _exec_git_create_branch(tool_input, transcript, current_attachments):
             "session_id": session_id,
         }
     )
-    return f"[WS_APPROVAL]{payload}"
+    return approval_request(payload)
 
 
 def do_git_push_pr(payload: dict) -> tuple[bool, str]:
@@ -638,7 +639,7 @@ def _exec_git_push_pr(tool_input, transcript, current_attachments):
             "session_id": session_id,
         }
     )
-    return f"[WS_APPROVAL]{payload}"
+    return approval_request(payload)
 
 
 def do_git_checkout(payload: dict) -> tuple[bool, str]:
@@ -663,7 +664,7 @@ def _exec_git_checkout(tool_input, transcript, current_attachments):
     if not branch:
         return "Error: branch name is required."
     payload = json.dumps({"action": "git_checkout", "branch": branch, "session_id": session_id})
-    return f"[WS_APPROVAL]{payload}"
+    return approval_request(payload)
 
 
 def do_git_delete_branch(payload: dict) -> tuple[bool, str]:
@@ -698,7 +699,7 @@ def _exec_git_delete_branch(tool_input, transcript, current_attachments):
             "session_id": session_id,
         }
     )
-    return f"[WS_APPROVAL]{payload}"
+    return approval_request(payload)
 
 
 def do_git_merge(payload: dict) -> tuple[bool, str]:
@@ -736,7 +737,7 @@ def _exec_git_merge(tool_input, transcript, current_attachments):
             "session_id": session_id,
         }
     )
-    return f"[WS_APPROVAL]{payload}"
+    return approval_request(payload)
 
 
 def do_git_stash(payload: dict) -> tuple[bool, str]:
@@ -778,4 +779,4 @@ def _exec_git_stash(tool_input, transcript, current_attachments):
             "session_id": session_id,
         }
     )
-    return f"[WS_APPROVAL]{payload}"
+    return approval_request(payload)

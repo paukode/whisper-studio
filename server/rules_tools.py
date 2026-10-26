@@ -21,10 +21,10 @@ its own belongs to memory, never here.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 
+from server.approval.markers import approval_request
 from server.executors import register_executor
 from server.prompts.rules import (
     RULES_FILENAME,
@@ -235,7 +235,7 @@ def execute_rules_write(tool_input: dict, transcript: str = "", attachments=None
             "content": plan["content"],
             "added": plan["added"],
         }
-        return f"[WS_APPROVAL]{json.dumps(payload)}"
+        return approval_request(payload)
     return _write(plan["path"], plan["content"], plan["target"], plan["mode"], plan["added"])
 
 

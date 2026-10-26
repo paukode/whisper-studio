@@ -8,6 +8,7 @@ AnthropicAdapter, a fake route_tool stands in for execution."""
 import asyncio
 import json
 
+from server.approval.markers import approval_request
 from server.chat.engine.pause import paused_sessions
 from server.exec.headless import run_headless_turn
 from tests.golden_harness import FakeBedrockClient, msg_end, msg_start, text_block, tool_use_block
@@ -238,7 +239,7 @@ def test_scope_id_keys_the_pause_slot_while_session_id_drives_the_context(monkey
     async def fake_route_tool(tool_name, tool_input, **kw):
         dispatched_session_ids.append(kw["session_id"])
         payload = json.dumps({"action": "command", "command": tool_input["command"], "cwd": "/tmp"})
-        return f"[WS_APPROVAL]{payload}", []
+        return approval_request(payload), []
 
     monkeypatch.setattr("server.tool_executor.route_tool", fake_route_tool)
 
@@ -340,7 +341,7 @@ def test_two_runs_on_one_session_pause_independently(monkeypatch):
 
     async def fake_route_tool(tool_name, tool_input, **kw):
         payload = json.dumps({"action": "command", "command": tool_input["command"], "cwd": "/tmp"})
-        return f"[WS_APPROVAL]{payload}", []
+        return approval_request(payload), []
 
     monkeypatch.setattr("server.tool_executor.route_tool", fake_route_tool)
 

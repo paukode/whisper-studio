@@ -17,6 +17,7 @@ import shutil
 import tempfile
 import uuid
 
+from server.approval.markers import approval_request
 from server.infrastructure.async_tasks import spawn
 from server.infrastructure.binaries import login_shell_env
 from server.infrastructure.paths import data_root
@@ -818,7 +819,7 @@ class MCPManager:
                 }
                 if arguments.get("__agent__"):
                     payload["__agent__"] = True
-                return "[WS_APPROVAL]" + json.dumps(payload)
+                return approval_request(payload)
 
         return await self.execute_approved_tool_call(tool_key, arguments)
 

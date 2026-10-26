@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 from server import file_state, tool_approvals
 from server import tool_executor as te
 from server.approval import registry
+from server.approval.markers import approval_request, preview_image
 from server.approval.router import router as approval_router
 from server.approval.spec import ApprovalOutcome, ApprovalSpec
 from server.chat.budget import TOOL_RESULT_BUDGET_BYTES, make_budget_tool_result
@@ -71,7 +72,7 @@ def test_every_key_is_present_null_when_unknown():
 def test_the_preview_image_frame_carries_a_meta_too():
     payload = json.dumps({"caption": "Screen", "media_type": "image/jpeg", "data": "AAAA"})
     _results, sse_events, _p, _q = _run(
-        [_State("tu_i", "preview_screenshot", f"[WS_PREVIEW_IMAGE]{payload}")]
+        [_State("tu_i", "preview_screenshot", preview_image(payload))]
     )
     (frame,) = _frames(sse_events, "skill_result")
     assert tuple(frame["meta"]) == META_KEYS
@@ -244,7 +245,7 @@ def test_a_call_that_never_ran_has_no_duration(monkeypatch):
 
 def _write_sentinel(action="test_meta_write"):
     payload = json.dumps({"action": action, "path": "a.py", "content": "x\n"})
-    return f"[WS_APPROVAL]{payload}"
+    return approval_request(payload)
 
 
 def _register(captured: list[dict], stats: dict | None, action="test_meta_write"):
@@ -300,7 +301,7 @@ def test_an_inline_run_counts_in_the_duration():
     )
     payload = json.dumps({"action": "test_meta_slow", "command": "x"})
     for unattended, approvals in ((False, {"test-meta": "allow"}), (True, {})):
-        state = _State("toolu_slow", "ws_run_command", f"[WS_APPROVAL]{payload}")
+        state = _State("toolu_slow", "ws_run_command", approval_request(payload))
         state.duration_ms = 5  # what route_tool took to return the sentinel
         _results, sse_events, _p, _q = asyncio.run(
             te.process_tool_results(

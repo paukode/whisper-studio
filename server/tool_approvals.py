@@ -18,6 +18,7 @@ import logging
 import time
 from typing import NamedTuple
 
+from server.approval.markers import APPROVAL
 from server.approval.spec import WORKSPACE_ROOT_KEY, ApprovalOutcome, turn_workspace_refusal
 from server.auto_mode import classify_tool_call
 from server.security.explainer import explain_permission
@@ -159,7 +160,7 @@ async def gate_approval(
     process_tool_results' own (server/tool_executor.py)."""
     from server.approval import registry as approval_registry
 
-    ws_data = tool_output[len("[WS_APPROVAL]") :]
+    ws_data = tool_output[len(APPROVAL) :]
     try:
         ws_parsed = json.loads(ws_data)
     except json.JSONDecodeError as e:
