@@ -60,7 +60,7 @@ docs/
     nav.js              Single source-of-truth navigation model
     diagram.js          Interactive click-to-glow diagram engine
     diagrams/*.js       Per-page diagram configs (grid layout)
-    fonts/*.woff2       Self-hosted Outfit + IBM Plex Mono
+    fonts/*.woff2       Self-hosted DM Sans + DM Mono
 ```
 
 ## Authoring

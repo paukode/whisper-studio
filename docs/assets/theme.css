@@ -1,117 +1,134 @@
 /* ================================================================
    Whisper Studio Docs - Theme & design tokens
-   Ported 1:1 from the app (static/modules/themes.css) + doc tokens.
+   Same values as the app (static/modules/themes.css) + doc tokens.
    Self-hosted fonts, zero external requests.
    ================================================================ */
 
-/* ---- Fonts (self-hosted, air-gap safe) ---- */
+/* ---- Fonts (self-hosted, air-gap safe; SIL Open Font License) ---- */
 @font-face {
-  font-family: "Outfit";
+  font-family: "DM Sans";
   font-style: normal;
-  font-weight: 100 900;           /* variable */
+  font-weight: 100 1000;           /* variable */
   font-display: swap;
-  src: url("fonts/outfit-var.woff2") format("woff2");
+  src: url("fonts/dm-sans-var.woff2") format("woff2");
 }
 @font-face {
-  font-family: "IBM Plex Mono";
+  font-family: "DM Sans";
+  font-style: italic;
+  font-weight: 100 1000;
+  font-display: swap;
+  src: url("fonts/dm-sans-var-italic.woff2") format("woff2");
+}
+@font-face {
+  font-family: "DM Mono";
   font-style: normal;
   font-weight: 400;
   font-display: swap;
-  src: url("fonts/ibmplexmono-400.woff2") format("woff2");
+  src: url("fonts/dm-mono-400.woff2") format("woff2");
 }
 @font-face {
-  font-family: "IBM Plex Mono";
+  font-family: "DM Mono";
   font-style: normal;
-  font-weight: 500;
+  font-weight: 500 700;
   font-display: swap;
-  src: url("fonts/ibmplexmono-500.woff2") format("woff2");
+  src: url("fonts/dm-mono-500.woff2") format("woff2");
 }
 
 /* ---- Light theme (default) ---- */
 :root,
 [data-theme="light"] {
-  --bg-primary: #f5f3ef;
+  --bg-primary: #f6f6f4;
   --bg-surface: #ffffff;
-  --bg-elevated: #f0ede8;
-  --bg-secondary: #f0ede8;
-  --bg-hover: #e8e5df;
-  --bg-inset: #eae7e1;
-  --border: rgba(0, 0, 0, 0.08);
-  --border-strong: rgba(0, 0, 0, 0.14);
-  --text-primary: #1a1918;
-  --text-secondary: #6b6966;
-  --text-muted: #a09d99;
-  --accent: #c4841d;
-  --accent-dim: rgba(196, 132, 29, 0.1);
-  --accent-hover: #b3760f;
-  --accent-soft: rgba(196, 132, 29, 0.16);
-  --link: #b3760f;
-  --link-hover: #8a5a08;
-  --accent-record: #dc3529;
-  --accent-live: #16a34a;
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
+  --bg-elevated: #f0f0ee;
+  --bg-secondary: #f0f0ee;
+  --bg-hover: #ebebe8;
+  --bg-inset: #efefed;
+  --border: #e0e0dc;
+  --border-strong: #cccccc;
+  --text-primary: #1a1a1a;
+  --text-heading: #0a0a0a;
+  --text-secondary: #4f4f4f;
+  --text-muted: #6a6a6a;
+  --accent: #0f7a4a;
+  --accent-dim: rgba(15, 122, 74, 0.10);
+  --accent-hover: #0b6640;
+  --accent-soft: rgba(15, 122, 74, 0.13);
+  --on-accent: #ffffff;
+  --link: #0f7a4a;
+  --link-hover: #0b6640;
+  --accent-record: #cf222e;
+  --accent-live: #0f7a4a;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
   --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.08);
-  --shadow-lg: 0 18px 48px rgba(60, 40, 10, 0.12);
-  --hero-wash: radial-gradient(120% 140% at 15% 0%, rgba(196, 132, 29, 0.16), transparent 55%),
-               radial-gradient(120% 120% at 100% 0%, rgba(196, 132, 29, 0.08), transparent 45%);
-  --code-bg: #f6f2ea;
-  --code-border: rgba(0, 0, 0, 0.07);
-  --note-bg: rgba(196, 132, 29, 0.07);
-  --tip-bg: rgba(22, 163, 74, 0.08);
-  --tip-accent: #16a34a;
-  --warn-bg: rgba(220, 53, 41, 0.07);
-  --warn-accent: #c0392b;
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.14);
+  --hero-wash: none;
+  --code-bg: #f3f3f1;
+  --code-border: #e0e0dc;
+  --note-bg: rgba(15, 122, 74, 0.06);
+  --tip-bg: rgba(16, 185, 129, 0.06);
+  --tip-accent: #047857;
+  --warn-bg: rgba(180, 100, 0, 0.06);
+  --warn-accent: #8f5a00;
   --grid-line: rgba(0, 0, 0, 0.04);
+  --tok-string: #0f7a4a;
+  --tok-keyword: #7c3aed;
+  --tok-function: #1d4ed8;
+  --tok-number: #b45309;
   color-scheme: light;
 }
 
 /* ---- Dark theme ---- */
 [data-theme="dark"] {
-  --bg-primary: #111113;
-  --bg-surface: #19191d;
-  --bg-elevated: #222228;
-  --bg-secondary: #222228;
-  --bg-hover: #2a2a32;
-  --bg-inset: #0d0d0f;
-  --border: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.14);
-  --text-primary: #e4e2de;
-  --text-secondary: #9b9a97;
-  --text-muted: #6b6a67;
-  --accent: #e2a336;
-  --accent-dim: rgba(226, 163, 54, 0.15);
-  --accent-hover: #eab34d;
-  --accent-soft: rgba(226, 163, 54, 0.2);
-  --link: #eab34d;
-  --link-hover: #f2c56a;
-  --accent-record: #e5453a;
-  --accent-live: #34c77b;
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
-  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.5);
-  --shadow-lg: 0 22px 60px rgba(0, 0, 0, 0.6);
-  --hero-wash: radial-gradient(120% 140% at 15% 0%, rgba(226, 163, 54, 0.14), transparent 55%),
-               radial-gradient(120% 120% at 100% 0%, rgba(226, 163, 54, 0.06), transparent 45%);
-  --code-bg: #0f0f12;
-  --code-border: rgba(255, 255, 255, 0.07);
-  --note-bg: rgba(226, 163, 54, 0.09);
-  --tip-bg: rgba(52, 199, 123, 0.1);
-  --tip-accent: #34c77b;
-  --warn-bg: rgba(229, 69, 58, 0.1);
-  --warn-accent: #f0736a;
-  --grid-line: rgba(255, 255, 255, 0.04);
+  --bg-primary: #0d0d0d;
+  --bg-surface: #111111;
+  --bg-elevated: #161616;
+  --bg-secondary: #161616;
+  --bg-hover: #1c1c1c;
+  --bg-inset: #0a0a0a;
+  --border: #1e1e1e;
+  --border-strong: #2a2a2a;
+  --text-primary: #d4d4d4;
+  --text-heading: #f0f0f0;
+  --text-secondary: #a8a8a8;
+  --text-muted: #888888;
+  --accent: #3dd68c;
+  --accent-dim: rgba(61, 214, 140, 0.13);
+  --accent-hover: #62e0a4;
+  --accent-soft: rgba(61, 214, 140, 0.15);
+  --on-accent: #0d0d0d;
+  --link: #3dd68c;
+  --link-hover: #62e0a4;
+  --accent-record: #f87171;
+  --accent-live: #3dd68c;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 4px 20px rgba(0, 0, 0, 0.7);
+  --shadow-lg: 0 10px 40px rgba(0, 0, 0, 0.8);
+  --hero-wash: none;
+  --code-bg: #111111;
+  --code-border: #1e1e1e;
+  --note-bg: rgba(61, 214, 140, 0.08);
+  --tip-bg: rgba(16, 185, 129, 0.10);
+  --tip-accent: #34d399;
+  --warn-bg: rgba(255, 183, 76, 0.08);
+  --warn-accent: #ffb74c;
+  --grid-line: rgba(255, 255, 255, 0.03);
+  --tok-string: #3dd68c;
+  --tok-keyword: #c792ea;
+  --tok-function: #82aaff;
+  --tok-number: #ffcb6b;
   color-scheme: dark;
 }
 
 /* ---- Shared metrics ---- */
 :root {
-  --font-ui: "Outfit", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  --font-ui: "DM Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "DM Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
   --sidebar-w: 264px;
   --toc-w: 208px;
   --header-h: 60px;
   --content-max: 820px;
-  --radius: 14px;
-  --radius-sm: 9px;
+  --radius: 8px;
+  --radius-sm: 6px;
   --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 
@@ -149,5 +166,5 @@ img { max-width: 100%; height: auto; }
 /* Scrollbars */
 * { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
 *::-webkit-scrollbar { width: 10px; height: 10px; }
-*::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 8px; border: 3px solid transparent; background-clip: content-box; }
+*::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: var(--radius); border: 3px solid transparent; background-clip: content-box; }
 *::-webkit-scrollbar-track { background: transparent; }

@@ -26,7 +26,7 @@
 .diagram__reset {
   font: inherit; font-size: 12.5px; color: var(--text-secondary);
   background: var(--bg-surface); border: 1px solid var(--border);
-  border-radius: 8px; padding: 4px 11px; cursor: pointer;
+  border-radius: var(--radius); padding: 4px 11px; cursor: pointer;
   display: inline-flex; align-items: center; gap: 6px;
   transition: color 0.14s, border-color 0.14s, opacity 0.2s;
   opacity: 0; pointer-events: none;
@@ -97,14 +97,14 @@
   position: absolute; z-index: 5; pointer-events: none;
   max-width: 260px; padding: 8px 11px;
   background: var(--text-primary); color: var(--bg-surface);
-  border-radius: 9px; font-size: 12.5px; line-height: 1.45;
+  border-radius: var(--radius); font-size: 12.5px; line-height: 1.45;
   box-shadow: var(--shadow-md);
   opacity: 0; transform: translateY(3px); transition: opacity 0.14s, transform 0.14s;
 }
 .diagram__tip.show { opacity: 1; transform: translateY(0); }
 .diagram__tip b { color: var(--bg-surface); font-weight: 600; }
-[data-theme="dark"] .diagram__tip { background: #eae7e1; color: #1a1918; }
-[data-theme="dark"] .diagram__tip b { color: #1a1918; }
+[data-theme="dark"] .diagram__tip { background: #f0f0ee; color: #1a1a1a; }
+[data-theme="dark"] .diagram__tip b { color: #1a1a1a; }
 
 /* Figure caption for diagrams */
 .diagram-figure { margin: 24px 0 28px; max-width: 100%; }
@@ -135,7 +135,7 @@ html, body { overflow-x: clip; }
 .diagram__expand {
   font: inherit; font-size: 12.5px; color: var(--text-secondary);
   background: var(--bg-surface); border: 1px solid var(--border);
-  border-radius: 8px; padding: 4px 11px; cursor: pointer; margin-left: 8px;
+  border-radius: var(--radius); padding: 4px 11px; cursor: pointer; margin-left: 8px;
   display: inline-flex; align-items: center; gap: 6px;
   transition: color 0.14s, border-color 0.14s;
 }
@@ -161,7 +161,7 @@ html, body { overflow-x: clip; }
 .diagram-modal__btn {
   width: 36px; height: 36px; display: grid; place-items: center;
   border: 1px solid var(--border); background: var(--bg-surface);
-  border-radius: 9px; color: var(--text-secondary); cursor: pointer;
+  border-radius: var(--radius); color: var(--text-secondary); cursor: pointer;
   transition: background 0.14s, color 0.14s, border-color 0.14s;
 }
 .diagram-modal__btn:hover { background: var(--bg-hover); color: var(--text-primary); border-color: var(--border-strong); }
