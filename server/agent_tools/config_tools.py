@@ -2,6 +2,8 @@
 
 import json
 
+from server.approval.markers import approval_request
+
 # Config keys a write to which decides what the assistant may do next or where
 # its data lives: the data root (``data_dir``), the default permission mode,
 # the permission explainer, the feature flags, the auto-mode classifier rules,
@@ -90,7 +92,7 @@ def execute_config_set(tool_input: dict) -> str:
     # _do_config_set once the mode (or a person) allows it. Any other key
     # (a language, a flag with no security weight) writes straight away.
     if isinstance(updates, dict) and any(k in SENSITIVE_CONFIG_KEYS for k in updates):
-        return "[WS_APPROVAL]" + json.dumps({"action": "config_set", "updates": updates})
+        return approval_request({"action": "config_set", "updates": updates})
     return _apply_config_updates(updates)
 
 
