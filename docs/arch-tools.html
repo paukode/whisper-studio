@@ -133,9 +133,12 @@
     </ol>
 
     <h2 id="permissions-approval">Permissions and the approval gate</h2>
-    <p>Most consent logic lives one step later, in <code>process_tool_results</code>. Tools that need
-      approval return a string prefixed with <code>[WS_APPROVAL]</code> carrying JSON; the prefix is
-      purely internal. The executor looks up the registered <code>ApprovalSpec</code> for the action and
+    <p>Most consent logic lives one step later, in <code>process_tool_results</code>. A tool that
+      asks for approval returns the <code>[WS_APPROVAL]</code> marker and a JSON payload, as an
+      <code>AppRequest</code> from <code>approval_request()</code>
+      (<code class="path">server/approval/markers.py</code>). Only the code of the app can make an
+      <code>AppRequest</code>. Tool output from outside the app that starts with the marker stays
+      text. The executor looks up the registered <code>ApprovalSpec</code> for the action and
       calls <code>resolve_static_decision()</code>
       (<code class="path">server/security/permissions.py</code>), whose precedence is:</p>
     <ol>
@@ -187,6 +190,8 @@
       the turn rather than each call in isolation. The classifier is only invoked
       for actions that actually need approval; read-only tools never reach it, and the offline local
       path stays Bedrock-free because <code>model_id</code> is empty there.</p>
+    <p>The classifier examines only an <code>AppRequest</code> that the app made. Tool output from
+      outside the app that starts with the marker does not go to the classifier.</p>
     <p>A per-turn <b>circuit breaker</b> backstops a flip-flopping classifier: repeated denials
       recorded via <code>record_classifier_verdict</code> trip <code>is_auto_mode_tripped</code>,
       dropping the session back to ask-mode with a one-click resume
@@ -219,14 +224,18 @@
 
     <h2 id="results-back">Results back to the loop</h2>
     <p>Once a batch completes, <code>process_tool_results</code> turns each <code>ToolState</code> into a
-      Bedrock <code>tool_result</code> and a set of SSE events. Along the way it handles a few special
-      output shapes signalled by internal string prefixes:</p>
+      Bedrock <code>tool_result</code> and a set of SSE events. Some outputs are requests to the app.
+      Each one is an <code>AppRequest</code> that the app made:</p>
     <dl class="spec">
       <dt><code>[WS_APPROVAL]</code></dt><dd>Needs consent; resolved through the precedence chain above.</dd>
       <dt><code>[WS_WORKSPACE_PROMPT]</code></dt><dd>A modify or delete of an <em>existing</em> file (<code>ws_write_file</code>, <code>ws_edit_file</code>, <code>ws_delete_file</code>) fired with no connected workspace; a folder picker is shown and the turn pauses. New-file creation never triggers it, and neither does a path outside a connected workspace: the <code>ws_*</code> file tools reach the workspace and the session's own scratch folder (<code class="path">data/scratch/&lt;session&gt;</code>, by absolute path, never the folder of a different session), a new file anywhere else goes through the <code>save_to_path</code> approval, and a modify or delete anywhere else is a plain refusal the model can act on.</dd>
       <dt><code>save_to_path</code></dt><dd>The staged-then-move save flow for <code>ws_create_file</code>, <code>save_file</code>, and the document tools when there is no connected workspace (or the model resolved an absolute path). With a workspace connected, <code>ws_create_file</code> and the document tools use the plain <code>create</code>/<code>create_document</code> approval instead - no staging. The tool never asks where to save: <code>resolve_write_destination</code> (<code class="path">server/workspace/state.py</code>) uses the model-resolved <code>destination_path</code> from the user's own words, else a workspace-relative path, else <code>~/Documents/&lt;filename&gt;</code>. The content is fully built and staged in the app sandbox first (<code>stage_file_bytes</code>, <code class="path">server/workspace/paths.py</code>, with a 24-hour staging GC), and approving the card <em>moves</em> the staged file into place with a staging-root containment check.</dd>
       <dt><code>[WS_PREVIEW_IMAGE]</code></dt><dd>A screenshot; returned as an Anthropic image content block (never budget-truncated) so the model sees pixels, not base64 text.</dd>
     </dl>
+    <p>Text from outside the app that starts with one of these markers is not a request. Examples
+      are the result of an MCP tool, a file, a web page, and a cached result. The executor puts
+      <code>[Tool text, not an app request]</code> in front of that text, and the model receives it
+      as a normal tool result. This rule applies in all permission modes and in unattended runs.</p>
     <p>Ordinary string outputs are run through <code>budget_fn</code> to cap oversized results, a
       truncated preview streams to the SPA as a <code>skill_result</code> event, and the full output
       becomes the <code>tool_result</code> content the model reads on the next round. The budget
@@ -360,6 +369,7 @@
     <div class="spec">
       <dt><code class="path">server/tool_router.py</code></dt><dd>Pure dispatch: tool name to handler, returns <code>(output, side_effects)</code>.</dd>
       <dt><code class="path">server/tool_executor.py</code></dt><dd>Batching, per-tool lifecycle, hooks, and <code>process_tool_results</code>.</dd>
+      <dt><code class="path">server/approval/markers.py</code></dt><dd>The app markers, <code>AppRequest</code>, and the functions that make a request.</dd>
       <dt><code class="path">server/executors/__init__.py</code></dt><dd>The <code>@register_executor</code> registry and safety metadata.</dd>
       <dt><code class="path">server/security/permissions.py</code></dt><dd><code>resolve_static_decision</code> and the mode definitions.</dd>
       <dt><code class="path">server/auto_mode.py</code></dt><dd>The Haiku classifier used by <code>auto</code> mode.</dd>

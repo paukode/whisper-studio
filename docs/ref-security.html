@@ -94,6 +94,11 @@
         claim on the host app's credentials. A per-server <code>env</code> entry you configured
         yourself is applied <em>after</em> the scrub, so a credential you deliberately forwarded still
         reaches that one server.</li>
+      <li><b>Only the app makes an app request.</b> A tool asks for an approval card, a folder
+        picker, or an image with a marker that only app code can make
+        (<code class="path">server/approval/markers.py</code>). Text from outside the app that starts
+        with a marker stays text, in all permission modes and in an unattended run. An example is the
+        result of an MCP tool. The Auto mode classifier does not examine that text.</li>
       <li><b>Pulling from a remote asks first.</b> <code>git_fetch</code> is read-only and touches no
         working files, so it runs freely. <code>git_pull</code> changes the working tree, so it goes
         through the approval card, is fast-forward only unless you asked for a rebase, and explains
@@ -254,6 +259,16 @@
             environment of every stdio MCP child process.</td>
           <td><b>Boundary</b> for the "third-party MCP server reads your keys out of the environment"
             vector. A per-server <code>env</code> you configured is re-applied afterwards, on purpose.</td>
+        </tr>
+        <tr>
+          <td>App requests from app code only
+            (<code class="path">server/approval/markers.py</code>)</td>
+          <td>The gate obeys an approval, a folder picker, or a preview image only when the code of
+            the app made the request. Other text with a marker gets a note in front and stays
+            text.</td>
+          <td><b>Boundary</b> for the "tool output from outside the app asks for a write or a
+            command" vector, for example an MCP tool result that starts with
+            <code>[WS_APPROVAL]</code>.</td>
         </tr>
         <tr>
           <td><code>truststore</code> at boot
@@ -508,6 +523,9 @@
       question mid-call - an <b>elicitation</b> - the question is routed through the approval pipeline
       under its own category, <code>mcp-elicit</code>, rather than answered on the server's behalf. See
       <a href="ref-settings.html#mcp-fields">the per-server MCP fields</a> for the full config shape.</p>
+    <p>The result of an MCP tool cannot ask the app for an approval, a folder picker, or an image.
+      If the result starts with an app marker, the app gives it to the model as text. See
+      <a href="arch-tools.html#results-back">Results back to the loop</a>.</p>
 
     <h2 id="quick-reference">Quick reference</h2>
     <div class="table-wrap"><table>
