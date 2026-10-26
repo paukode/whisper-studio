@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -192,15 +193,20 @@ def do_run_python(payload: dict) -> tuple[bool, str]:
     cwd = get_workspace_path() or "/tmp"
     if not os.path.isdir(cwd):
         cwd = "/tmp"
-    fd, script_path = tempfile.mkstemp(suffix=".py", prefix="whisper_run_", dir="/tmp")
+    # A fresh private directory, not shared /tmp: nobody can pre-plant a sibling
+    # module next to the script. And run with -P so the script's own directory
+    # is never prepended to sys.path, so even a planted module there cannot
+    # shadow the standard library on import (e.g. `import json`).
+    script_dir = tempfile.mkdtemp(prefix="whisper_run_")
+    script_path = os.path.join(script_dir, "script.py")
     try:
-        with os.fdopen(fd, "w") as f:
+        with open(script_path, "w") as f:
             f.write(guarded_code)
         # The app's own interpreter (the bundled Python in the Mac app, the
         # venv in dev), never the machine's python3: it is the one that has
         # pandas, openpyxl, python-docx, python-pptx and friends installed.
         result = run_sandboxed(
-            f"{shlex.quote(_interpreter())} {shlex.quote(script_path)} < /dev/null",
+            f"{shlex.quote(_interpreter())} -P {shlex.quote(script_path)} < /dev/null",
             cwd=cwd,
             timeout=RUN_PYTHON_TIMEOUT_S,
             allow_paths=_CLOUD_CRED_PATHS,
@@ -213,10 +219,7 @@ def do_run_python(payload: dict) -> tuple[bool, str]:
     except Exception as e:
         return False, str(e)
     finally:
-        try:
-            os.unlink(script_path)
-        except OSError:
-            pass
+        shutil.rmtree(script_dir, ignore_errors=True)
     output = ""
     if result.stdout:
         output += result.stdout

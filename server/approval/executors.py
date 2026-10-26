@@ -666,6 +666,12 @@ async def _do_mcp_tool_call(payload: dict) -> ApprovalOutcome:
     "mcp" category so server.security.permissions.resolve_static_decision's
     dedicated tier (and the per-server approval_mode/tool_overrides config
     in mcp_servers.json) governs it like any other approval-gated tool."""
+    # Only a tool whose tier is not "auto" reaches here (call_tool runs an
+    # auto tool directly). The user marked that server/tool as one needing
+    # approval, so it is never run unattended with no person to ask.
+    refusal = refuse_if_agent(payload, what="Running an MCP tool that needs approval")
+    if refusal:
+        return refusal
     from server.mcp import mcp_manager
 
     tool_key = payload.get("tool_key", "")

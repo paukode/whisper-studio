@@ -566,6 +566,7 @@ def _delete_session_sync(session_id: str) -> None:
     function-local to avoid import cycles (same pattern as get_session).
     """
     from server import cwd_tracker, diarization, file_state, shell_snapshot
+    from server.agents import journal as agent_journal
     from server.infrastructure.config import unlatch_session
     from server.memory import extract as memory_extract
     from server.memory import session_memory
@@ -630,6 +631,7 @@ def _delete_session_sync(session_id: str) -> None:
         session_memory.drop_session,  # drops the update-cadence state
         memory_extract.drop_session,  # drops extraction cursor/throttle state
         drop_session_grants,  # drops per-session workflow approval grants
+        agent_journal.drop_session,  # removes the session's agent journals on disk
     ):
         try:
             fn(session_id)
