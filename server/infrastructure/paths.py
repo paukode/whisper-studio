@@ -146,6 +146,55 @@ def app_storage_roots() -> list[str]:
     ]
 
 
+# The app's own grant and config files. Each one decides what the assistant
+# may do next (the permission rules, the MCP servers, the hooks and their
+# trust, the trusted skills, the folder grants, the connected workspace, the
+# enabled plugins, the scheduled jobs, the trusted preview commands), so the
+# app storage rule above does not cover them: a tool write to one follows the
+# permission mode instead (server/security/permissions.py, the app-config
+# table), never the no-card allow the rest of the app's folder gets, and a
+# command that no person reviewed cannot write one through the OS sandbox
+# (server/sandbox.py). These live in the data root.
+APP_CONFIG_FILES = (
+    "permissions.json",
+    "mcp_servers.json",
+    "hooks.json",
+    "hooks_trust.json",
+    "skills_config.json",
+    "folder_grants.json",
+    "workspace_config.json",
+    "plugins_config.json",
+    "cron_jobs.json",
+    "launch_trust.json",
+)
+
+# The user config layer (config.user.json, with the legacy config.json): the
+# ``data_dir`` key moves the whole data root and ``permission_mode`` sets the
+# default mode, so it carries the same power. It lives in the user root.
+_USER_ROOT_CONFIG_FILES = (
+    "config.user.json",
+    "config.json",
+)
+
+
+def app_config_paths() -> list[str]:
+    """The absolute paths of the app's own grant and config files, across the
+    data root (APP_CONFIG_FILES) and the user root (_USER_ROOT_CONFIG_FILES)."""
+    data = data_root()
+    user = user_root()
+    paths = [os.path.join(data, name) for name in APP_CONFIG_FILES]
+    paths += [os.path.join(user, name) for name in _USER_ROOT_CONFIG_FILES]
+    return paths
+
+
+def app_config_dirs() -> list[str]:
+    """Directories whose contents are app code or agent types the assistant
+    must not rewrite without a person: the installed plugin modules (they load
+    into the server process with no sandbox) and the user's custom agent types
+    (each one can grant a running agent its own tools)."""
+    return [plugins_root(), os.path.join(user_root(), "agents")]
+
+
 def _seed_file(src: str, dst: str) -> None:
     """Copy ``src`` to ``dst`` unless ``dst`` already exists. Best-effort: a
     missing template or an unwritable target logs instead of crashing boot."""

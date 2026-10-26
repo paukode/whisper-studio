@@ -98,5 +98,9 @@ def test_cron_create_refuses_exactly_in_local_mode(monkeypatch, mode):
         out = json.loads(C.execute_cron_tool("cron_create", args, session_id="s"))
         assert "Local mode" in out["error"]
     else:
-        with pytest.raises(_Reached):
-            C.execute_cron_tool("cron_create", args, session_id="s")
+        # Cloud/hybrid: validation passes and the create goes to the approval
+        # gate (category "cron", the app-config table) instead of running
+        # inline, so _create_job is never reached here.
+        out = C.execute_cron_tool("cron_create", args, session_id="s")
+        assert out.startswith("[WS_APPROVAL]")
+        assert json.loads(out[len("[WS_APPROVAL]") :])["action"] == "cron_create"

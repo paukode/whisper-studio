@@ -253,6 +253,15 @@ LATCHED_FIELDS = frozenset(
 
 # Keys allowed in project-level .whisper/settings.json
 # (subset of DEFAULTS — exclude global-only keys like API keys)
+#
+# The permission mode and the auto-mode classifier rules are deliberately NOT
+# here: a workspace is untrusted input (a cloned repo, a folder a tool wrote
+# with no card in acceptEdits or bypass), so a project file must not be able
+# to put an attended run into bypass (server/exec/headless.py reads
+# permission_mode from the merged config) or neuter the auto classifier
+# (server/auto_mode.py reads the auto_mode_* rules from it). Those stay a
+# user-level decision only. permission_explainer_enabled only toggles an
+# advisory explanation, so it is harmless to keep.
 PROJECT_SETTINGS_KEYS = frozenset(
     {
         "bedrock_region",
@@ -261,11 +270,7 @@ PROJECT_SETTINGS_KEYS = frozenset(
         "default_chat_model",
         "effort_level",
         "brief_mode",
-        "permission_mode",
         "permission_explainer_enabled",
-        "auto_mode_allow",
-        "auto_mode_soft_deny",
-        "auto_mode_environment",
         "max_session_cost_usd",
         "max_daily_cost_usd",
         "model_fallback_enabled",

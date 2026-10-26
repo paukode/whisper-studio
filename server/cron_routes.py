@@ -90,7 +90,9 @@ async def create_cron_job(request: Request):
             session_id = ensure_cron_inbox()
         except Exception:
             pass
-    result = json.loads(execute_cron_tool("cron_create", body, session_id=session_id))
+    # The person in Settings IS the approval here, so the create applies inline
+    # (gate=False); only the model's cron_create tool goes through the gate.
+    result = json.loads(execute_cron_tool("cron_create", body, session_id=session_id, gate=False))
     if "error" in result:
         return Response(content=json.dumps(result), status_code=400, media_type="application/json")
     return result

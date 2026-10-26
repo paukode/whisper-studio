@@ -21,7 +21,12 @@ from typing import NamedTuple
 from server.approval.spec import WORKSPACE_ROOT_KEY, ApprovalOutcome, turn_workspace_refusal
 from server.auto_mode import classify_tool_call
 from server.security.explainer import explain_permission
-from server.security.permissions import approval_floor, resolve_static_decision
+from server.security.permissions import (
+    FILE_WRITE_CATEGORIES,
+    approval_floor,
+    resolve_static_decision,
+    targets_app_config,
+)
 from server.utils import ndjson_dumps
 
 log = logging.getLogger("whisper-studio")
@@ -179,6 +184,16 @@ async def gate_approval(
     if refusal:
         return ApprovalStep(OUTPUT, refusal)
     if unattended:
+        # A write to the app's own grant or config files follows the permission
+        # mode (the app-config table), so a person decides it. An unattended
+        # run has none, so it is refused rather than auto-approved.
+        if spec.category in FILE_WRITE_CATEGORIES and targets_app_config(ws_parsed):
+            return ApprovalStep(
+                OUTPUT,
+                "[Error] A write to the app's own grant or config files needs a "
+                "person's approval, and this run has no person to ask. Ask the "
+                "top-level session, where a person can approve it, to make this change.",
+            )
         # Unattended (agent) turns auto-approve unconditionally: no
         # human, no classifier, no category gate. Mirrors the
         # pre-migration server/agents/runtime.py inline handling
@@ -326,8 +341,13 @@ async def gate_approval(
             "explanation": explanation,
             # A hard floor asks every time, whatever the
             # session remembers, so the card must not offer
-            # "Yes, all" / "Block" for it.
-            "always_asks": approval_floor(state.tool_name, ws_parsed, category) is not None,
+            # "Yes, all" / "Block" for it. A write to the app's own
+            # grant or config files is the same: it never falls under a
+            # blanket "yes for all writes", so the card must not offer it.
+            "always_asks": (
+                approval_floor(state.tool_name, ws_parsed, category) is not None
+                or (category in FILE_WRITE_CATEGORIES and targets_app_config(ws_parsed))
+            ),
         }
     }
     sse_events.append(ndjson_dumps(event))

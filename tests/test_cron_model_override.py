@@ -1,5 +1,6 @@
 """Per-job model override validation."""
 
+import asyncio
 import json
 
 import pytest
@@ -48,20 +49,25 @@ def test_validate_job_model_rejects_non_anthropic(fake_models):
 
 
 def test_cron_create_tool_carries_model(fake_models):
-    out = json.loads(
-        cs.execute_cron_tool(
-            "cron_create",
-            {
-                "name": "modeled",
-                "prompt": "do it",
-                "schedule": {"type": "interval", "every_minutes": 60},
-                "model": "opus4.8",
-            },
-            session_id="s1",
-        )
+    # cron_create now goes through the approval gate (category "cron"): the
+    # validated model rides in the [WS_APPROVAL] payload, and the executor
+    # creates the job with it once the mode (or a person) allows it.
+    out = cs.execute_cron_tool(
+        "cron_create",
+        {
+            "name": "modeled",
+            "prompt": "do it",
+            "schedule": {"type": "interval", "every_minutes": 60},
+            "model": "opus4.8",
+        },
+        session_id="s1",
     )
-    assert out.get("created") is True
-    assert out["job"]["model"] == "opus4.8"
+    assert out.startswith("[WS_APPROVAL]")
+    payload = json.loads(out[len("[WS_APPROVAL]") :])
+    assert payload["action"] == "cron_create" and payload["model"] == "opus4.8"
+    outcome = asyncio.run(cs._do_cron_create(payload))
+    assert outcome.ok
+    assert json.loads(outcome.output)["job"]["model"] == "opus4.8"
 
 
 def test_cron_create_tool_rejects_bad_model(fake_models):

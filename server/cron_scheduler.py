@@ -708,7 +708,14 @@ def _create_job(name, prompt, schedule, session_id, model: str = "") -> dict:
     return job
 
 
-def execute_cron_tool(tool_name: str, tool_input: dict, session_id: str = "") -> str:
+def execute_cron_tool(
+    tool_name: str, tool_input: dict, session_id: str = "", gate: bool = True
+) -> str:
+    """Run a cron tool. ``gate`` True (the model's tool call, via tool_router)
+    routes the mutations (create/update/run) through the approval gate so they
+    follow the permission mode (category "cron"); the HTTP routes, where the
+    person in Settings IS the approval, pass gate=False to apply the change
+    inline. Reads (list) and a delete are never gated."""
     if tool_name == "cron_create":
         from server.cron_run import SCHEDULED_RUNS
         from server.infrastructure.cloud_guard import cloud_refusal
@@ -737,15 +744,21 @@ def execute_cron_tool(tool_name: str, tool_input: dict, session_id: str = "") ->
             model = _validate_job_model(tool_input.get("model"))
         except ValueError as e:
             return json.dumps({"error": str(e)})
-        job = _create_job(name, prompt, schedule, session_id, model=model)
-        return json.dumps(
-            {
-                "created": True,
-                "job": _job_public(job),
-                "schedule_label": schedule_label(schedule),
-                "next_run": _next_run_iso(job),
-            }
-        )
+        # Validated. The model's tool call follows the permission mode
+        # (category "cron"): the gate asks in every mode but bypass, denies in
+        # dontAsk, and refuses an unattended run; _do_cron_create makes the job
+        # once allowed. The HTTP route (a person in Settings) applies it inline.
+        payload = {
+            "action": "cron_create",
+            "name": name,
+            "prompt": prompt,
+            "schedule": schedule,
+            "model": model,
+            "session_id": session_id,
+        }
+        if gate:
+            return "[WS_APPROVAL]" + json.dumps(payload)
+        return _cron_create_apply(payload)
 
     if tool_name == "cron_update":
         name = tool_input.get("name", "").strip()
@@ -776,26 +789,35 @@ def execute_cron_tool(tool_name: str, tool_input: dict, session_id: str = "") ->
                 patch["model"] = _validate_job_model(tool_input.get("model"))
             except ValueError as e:
                 return json.dumps({"error": str(e)})
-        updated = _apply_job_update(job["id"], patch)
-        if not updated:
-            return json.dumps({"error": "update failed"})
-        if session_id:
-            _emit_cron_event(
-                session_id,
-                event_type="cron_updated",
-                cron_id=updated["id"],
-                cron_name=updated.get("name", name),
-                schedule_label_str=schedule_label(updated.get("schedule")),
-                next_run=_next_run_iso(updated),
-            )
-        return json.dumps({"updated": True, "job": _job_public(updated)})
+        # Validated. The update follows the permission mode (category "cron")
+        # for the model; the HTTP route applies it inline.
+        payload = {
+            "action": "cron_update",
+            "job_id": job["id"],
+            "patch": patch,
+            "name": name,
+            "session_id": session_id,
+        }
+        if gate:
+            return "[WS_APPROVAL]" + json.dumps(payload)
+        return _cron_update_apply(payload)
 
     if tool_name == "cron_run":
         name = tool_input.get("name", "").strip()
         job = next((j for j in load_cron_jobs() if j.get("name") == name), None)
         if not job:
             return json.dumps({"error": f"No cron job named '{name}'"})
-        return json.dumps(run_job_now(job["id"]))
+        # Triggering an unattended run now follows the permission mode
+        # (category "cron") for the model; the HTTP route fires it inline.
+        payload = {
+            "action": "cron_run",
+            "job_id": job["id"],
+            "name": name,
+            "session_id": session_id,
+        }
+        if gate:
+            return "[WS_APPROVAL]" + json.dumps(payload)
+        return _cron_run_apply(payload)
 
     if tool_name == "cron_list":
         return json.dumps(
@@ -871,6 +893,128 @@ def _delete_jobs(pred) -> list[dict]:
         except Exception as exc:
             log.warning("cron: failed to purge run history for deleted jobs: %s", exc)
     return deleted
+
+
+# ── Approval executors for the cron tools ────────────────────────────────────
+# cron_create/cron_update/cron_run follow the permission mode (category
+# "cron"): the gate asks in every mode but bypass, denies in dontAsk, and lets
+# the auto classifier decide. execute_cron_tool validates the input and returns
+# a [WS_APPROVAL] payload; these executors do the mutation once the mode (or a
+# person) allows it, and refuse an unattended run with no person to ask.
+
+
+def _cron_create_apply(payload: dict) -> str:
+    """Make the job and return the result JSON. Shared by the HTTP route
+    (execute_cron_tool gate=False) and the approval executor below."""
+    job = _create_job(
+        payload.get("name", ""),
+        payload.get("prompt", ""),
+        payload.get("schedule"),
+        payload.get("session_id", ""),
+        model=payload.get("model"),
+    )
+    return json.dumps(
+        {
+            "created": True,
+            "job": _job_public(job),
+            "schedule_label": schedule_label(payload.get("schedule")),
+            "next_run": _next_run_iso(job),
+        }
+    )
+
+
+def _cron_update_apply(payload: dict) -> str:
+    updated = _apply_job_update(payload.get("job_id", ""), payload.get("patch") or {})
+    if not updated:
+        return json.dumps({"error": "update failed"})
+    session_id = payload.get("session_id") or ""
+    if session_id:
+        _emit_cron_event(
+            session_id,
+            event_type="cron_updated",
+            cron_id=updated["id"],
+            cron_name=updated.get("name", payload.get("name", "")),
+            schedule_label_str=schedule_label(updated.get("schedule")),
+            next_run=_next_run_iso(updated),
+        )
+    return json.dumps({"updated": True, "job": _job_public(updated)})
+
+
+def _cron_run_apply(payload: dict) -> str:
+    return json.dumps(run_job_now(payload.get("job_id", "")))
+
+
+async def _do_cron_create(payload: dict):
+    from server.approval.spec import ApprovalOutcome, refuse_if_agent
+
+    refusal = refuse_if_agent(payload, what="Scheduling a job")
+    if refusal:
+        return refusal
+    return ApprovalOutcome(ok=True, output=_cron_create_apply(payload))
+
+
+async def _do_cron_update(payload: dict):
+    from server.approval.spec import ApprovalOutcome, refuse_if_agent
+
+    refusal = refuse_if_agent(payload, what="Changing a scheduled job")
+    if refusal:
+        return refusal
+    result = json.loads(_cron_update_apply(payload))
+    if "error" in result:
+        return ApprovalOutcome(ok=False, error=result["error"])
+    return ApprovalOutcome(ok=True, output=json.dumps(result))
+
+
+async def _do_cron_run(payload: dict):
+    from server.approval.spec import ApprovalOutcome, refuse_if_agent
+
+    refusal = refuse_if_agent(payload, what="Running a scheduled job now")
+    if refusal:
+        return refusal
+    return ApprovalOutcome(ok=True, output=_cron_run_apply(payload))
+
+
+def register_cron_approval() -> None:
+    """ApprovalSpecs for the cron mutation tools (category "cron"), called from
+    server/approval/bootstrap.py's register_defaults()."""
+    from server.approval.registry import register
+    from server.approval.spec import ApprovalSpec
+
+    register(
+        "cron_create",
+        ApprovalSpec(
+            category="cron",
+            preview="text",
+            summary=lambda p: (
+                f"Schedule job '{p.get('name', '?')}' ({schedule_label(p.get('schedule'))})"
+            ),
+            executor=_do_cron_create,
+            risk_hint="high",
+            payload_fields=["name", "prompt", "schedule", "model", "session_id"],
+        ),
+    )
+    register(
+        "cron_update",
+        ApprovalSpec(
+            category="cron",
+            preview="text",
+            summary=lambda p: f"Update scheduled job '{p.get('name', '?')}'",
+            executor=_do_cron_update,
+            risk_hint="medium",
+            payload_fields=["job_id", "patch", "name", "session_id"],
+        ),
+    )
+    register(
+        "cron_run",
+        ApprovalSpec(
+            category="cron",
+            preview="text",
+            summary=lambda p: f"Run scheduled job '{p.get('name', '?')}' now",
+            executor=_do_cron_run,
+            risk_hint="medium",
+            payload_fields=["job_id", "name", "session_id"],
+        ),
+    )
 
 
 # HTTP handlers live in the sibling cron_routes module; importing it registers
