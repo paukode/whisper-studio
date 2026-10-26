@@ -33,15 +33,15 @@ function readThemeTokens(): ThemeTokens {
   const v = (name: string, fallback: string) => s.getPropertyValue(name).trim() || fallback;
   return {
     bg: v('--bg-surface', '#ffffff'),
-    textPrimary: v('--text-primary', '#1f1e1d'),
-    textSecondary: v('--text-secondary', '#6b6862'),
-    textMuted: v('--text-muted', '#a3a097'),
-    grid: v('--border', 'rgba(0,0,0,0.08)'),
-    danger: v('--accent-record', '#d33b30'),
+    textPrimary: v('--text-primary', '#1a1a1a'),
+    textSecondary: v('--text-secondary', '#4f4f4f'),
+    textMuted: v('--text-muted', '#6a6a6a'),
+    grid: v('--border', '#e0e0dc'),
+    danger: v('--accent-record', '#cf222e'),
     category: [1, 2, 3, 4, 5, 6].map((i) => v(`--speaker-${i}`, '#888888')),
     // Sequential ramp runs from the page surface to the accent, so it reads
     // correctly light-on-dark and dark-on-light without a second palette.
-    ramp: [v('--bg-elevated', '#f0eee6'), v('--accent', '#1d6ec2')],
+    ramp: [v('--bg-elevated', '#f0f0ee'), v('--accent', '#0f7a4a')],
   };
 }
 

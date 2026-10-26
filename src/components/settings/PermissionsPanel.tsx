@@ -581,7 +581,7 @@ export const PermissionsPanel: React.FC = () => {
               id="ruleTestInput"
               type="text"
               className="settings-input"
-              style={{ fontFamily: 'var(--font-mono, monospace)' }}
+              style={{ fontFamily: 'var(--font-mono)' }}
               placeholder={DEFAULT_TEST_INPUT}
               value={testInput}
               onChange={(e) => setTestInput(e.target.value)}

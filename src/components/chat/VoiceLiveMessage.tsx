@@ -146,9 +146,9 @@ const VoiceRequestCard: React.FC<{ request: NonNullable<ReturnType<typeof useVoi
         : 'Folder needed';
   const resolve = (decision: string) => voiceController.resolveRequest(decision);
   return (
-    <div className="ws-approval-card voice-request" data-testid="voice-request">
+    <div className="ws-approval-card ws-callout-warning voice-request" data-testid="voice-request">
       <div className="voice-request-head">
-        <span>{title}</span>
+        <span className="ws-callout-label">{title}</span>
         {request.riskHint && <span className={`risk-badge risk-${request.riskHint}`}>{request.riskHint}</span>}
       </div>
       <div className="voice-request-summary">{request.summary || request.question}</div>

@@ -63,7 +63,7 @@ export const SkillFileTree: React.FC<{ skillName: string }> = ({ skillName }) =>
                 cursor: 'pointer',
                 textAlign: 'left',
                 color: 'inherit',
-                fontFamily: 'var(--font-mono, monospace)',
+                fontFamily: 'var(--font-mono)',
               }}
             >
               <span>{f.path}</span>
@@ -76,7 +76,7 @@ export const SkillFileTree: React.FC<{ skillName: string }> = ({ skillName }) =>
                   padding: '8px',
                   maxHeight: '280px',
                   overflow: 'auto',
-                  background: 'var(--surface-0, rgba(127,127,127,0.08))',
+                  background: 'var(--surface-0)',
                   borderRadius: '6px',
                   fontSize: '12px',
                   whiteSpace: 'pre-wrap',

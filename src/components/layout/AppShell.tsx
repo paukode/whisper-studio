@@ -447,12 +447,12 @@ const AppShell: React.FC = () => {
             position: 'fixed', left: 16, bottom: 16, zIndex: 50,
             display: 'flex', alignItems: 'center', gap: 6,
             padding: '8px 12px', borderRadius: 999,
-            background: 'var(--bg-secondary, #222)', color: 'var(--text-primary, #fff)',
-            border: '1px solid var(--border, #444)', cursor: 'pointer',
-            boxShadow: '0 4px 14px rgba(0,0,0,0.25)', fontSize: 13,
+            background: 'var(--bg-secondary)', color: 'var(--text-primary)',
+            border: '1px solid var(--border)', cursor: 'pointer',
+            boxShadow: 'var(--shadow-md)', fontSize: 13,
           }}
         >
-          <span style={{ width: 8, height: 8, borderRadius: 999, background: 'var(--accent-live, #e5484d)' }} />
+          <span style={{ width: 8, height: 8, borderRadius: 999, background: 'var(--accent-live)' }} />
           Live preview
         </button>
       )}

@@ -48,8 +48,7 @@
     font-weight: 600;
 }
 /* A finished run: the done colour on the chip's text and rim, so it stays
-   apart from the filled New chip in every theme (the daltonized ones draw
-   done in amber, next to a gold accent). */
+   apart from the filled New chip (done and the accent share the green). */
 .agent-report-card .activity-chip.done {
     color: var(--success);
     border-color: color-mix(in srgb, var(--success) 40%, var(--border));
@@ -117,7 +116,7 @@
 .agent-report-text .markdown-content strong { color: var(--accent); }
 .agent-report-text .markdown-content :not(pre) > code {
     padding: 2px 5px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     font-size: var(--fs-caption);
 }
 

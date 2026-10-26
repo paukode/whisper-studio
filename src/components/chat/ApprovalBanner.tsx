@@ -125,15 +125,13 @@ export function ApprovalBanner() {
 
   return (
     <div className="chat-msg-wrap assistant-wrap">
-      <div className="ws-approval-card" style={{ border: '1px solid var(--accent)', padding: '12px 16px' }}>
+      <div className="ws-approval-card ws-callout-warning" style={{ padding: '12px 16px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-          <span style={{ fontSize: '0.85em', color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <span className="ws-callout-label">
             {ICON.lock}Approval needed
           </span>
           {riskLabel && (
-            <span className={`risk-badge risk-${riskLabel}`} style={{
-              fontSize: '0.75em', padding: '2px 6px', borderRadius: 4, textTransform: 'uppercase',
-            }}>{riskLabel}</span>
+            <span className={`risk-badge risk-${riskLabel}`} style={{ fontSize: '0.75em', padding: '2px 6px' }}>{riskLabel}</span>
           )}
           {approvalQueue.length > 0 && (
             <span style={{ fontSize: '0.75em', color: 'var(--text-muted)', marginLeft: 'auto' }}>

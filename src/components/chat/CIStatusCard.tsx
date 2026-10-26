@@ -151,7 +151,7 @@ export const CIStatusCard: React.FC<{ taskId: string; branch?: string }> = ({ ta
         <ul className="ci-jobs">
           {jobs.map((j, i) => (
             <li key={i} className="ci-job">
-              <span className="ci-job-dot" style={{ background: COLOR[j.conclusion || ''] ?? 'var(--text-secondary, gray)' }} />
+              <span className="ci-job-dot" style={{ background: COLOR[j.conclusion || ''] ?? 'var(--text-secondary)' }} />
               {j.name}
             </li>
           ))}

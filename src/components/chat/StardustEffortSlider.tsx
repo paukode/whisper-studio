@@ -5,13 +5,17 @@ import { StardustSlider, parseColor, mix, type RGB } from '@/components/chat/Sta
 
 /**
  * The effort control's track: the shared {@link StardustSlider} driven by the
- * effort tiers. Each tier maps to a hue read from the live theme — the fixed
- * blue/amber/violet for low/high/extra, --text-muted for medium/none, --accent
+ * effort tiers. Each tier maps to a hue read from the live theme: the
+ * --tone-blue/orange/violet tokens for low/high/extra, --text-muted for medium/none, --accent
  * for max, and a lightened accent for ultracode (which also gets the extra orb
  * glow via `boostIndex`). Interaction writes the level to the same store the
  * chip / `/effort` / palette use.
  */
-const FIXED: Record<string, string> = { low: '#6ea8fe', high: '#ffa657', extra: '#c4a7ff' };
+const TONES: Record<string, [string, string]> = {
+  low: ['--tone-blue', '#82aaff'],
+  high: ['--tone-orange', '#ffb74c'],
+  extra: ['--tone-violet', '#c792ea'],
+};
 
 interface Props {
   levels: string[];
@@ -34,10 +38,10 @@ export const StardustEffortSlider: React.FC<Props> = ({
   const readColors = useCallback((): RGB[] => {
     const cs = getComputedStyle(document.documentElement);
     const v = (n: string, f: string) => cs.getPropertyValue(n).trim() || f;
-    const accent = parseColor(v('--accent', '#e2a336'));
+    const accent = parseColor(v('--accent', '#3dd68c'));
     return levels.map((lv) => {
-      if (FIXED[lv]) return parseColor(FIXED[lv]);
-      if (lv === 'medium' || lv === 'none') return parseColor(v('--text-muted', '#9a9992'));
+      if (TONES[lv]) return parseColor(v(...TONES[lv]));
+      if (lv === 'medium' || lv === 'none') return parseColor(v('--text-muted', '#888888'));
       if (lv === 'max') return accent;
       if (lv === 'ultracode') return mix(accent, [255, 255, 255], 0.32);
       return accent;

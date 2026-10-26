@@ -90,11 +90,11 @@ function readXtermTheme(): {
   const tokens = getComputedStyle(document.documentElement);
   const t = (name: string, fallback: string) => tokens.getPropertyValue(name).trim() || fallback;
   return {
-    background: t('--bg-inset', '#0d0d0f'),
-    foreground: t('--text-primary', '#e4e2de'),
-    cursor: t('--accent', '#e2a336'),
-    cursorAccent: t('--bg-inset', '#0d0d0f'),
-    selectionBackground: t('--accent-dim', 'rgba(226,163,54,0.15)'),
+    background: t('--bg-inset', '#0a0a0a'),
+    foreground: t('--text-primary', '#d4d4d4'),
+    cursor: t('--accent', '#3dd68c'),
+    cursorAccent: t('--bg-inset', '#0a0a0a'),
+    selectionBackground: t('--accent-dim', 'rgba(61,214,140,0.13)'),
   };
 }
 
@@ -342,7 +342,7 @@ export function useTerminal(options: UseTerminalOptions): UseTerminalReturn {
             const box = document.createElement('div');
             box.setAttribute('role', 'alert');
             box.style.cssText =
-              'padding:12px;font:13px/1.5 ui-monospace,monospace;color:var(--text-muted,#999);white-space:pre-wrap;';
+              'padding:12px;font:13px/1.5 ui-monospace,monospace;color:var(--text-muted);white-space:pre-wrap;';
             box.textContent =
               `Terminal failed to load: ${msg}\n\n` +
               'This usually means a stale or incomplete frontend build. ' +

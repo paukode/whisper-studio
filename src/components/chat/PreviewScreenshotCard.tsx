@@ -50,7 +50,7 @@ export const PreviewScreenshotCard: React.FC<PreviewScreenshotCardProps> = ({
             padding: '6px 10px',
             fontSize: '0.8em',
             color: 'var(--text-muted)',
-            background: 'var(--surface-1, transparent)',
+            background: 'var(--surface-1)',
             borderBottom: '1px solid var(--border)',
           }}
         >

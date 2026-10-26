@@ -128,7 +128,7 @@ export const UserQuestionCard: React.FC<{
                 borderRadius: 6,
                 border: '1px solid var(--border)',
                 background: isSelected ? 'var(--accent)' : 'var(--bg-secondary)',
-                color: isSelected ? '#fff' : 'var(--text-primary)',
+                color: isSelected ? 'var(--on-accent)' : 'var(--text-primary)',
                 cursor: isAnswered ? 'default' : 'pointer',
                 opacity: isAnswered && !isSelected ? 0.5 : 1,
                 fontSize: '0.85em',
@@ -194,7 +194,7 @@ export const UserQuestionCard: React.FC<{
                 borderRadius: 6,
                 border: '1px solid var(--accent)',
                 background: 'var(--accent)',
-                color: '#fff',
+                color: 'var(--on-accent)',
                 cursor: 'pointer',
                 fontSize: '0.85em',
               }}

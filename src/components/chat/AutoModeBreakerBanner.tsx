@@ -58,12 +58,12 @@ export function AutoModeBreakerBanner() {
   return (
     <div className="chat-msg-wrap assistant-wrap">
       <div
-        className="ws-approval-card"
-        style={{ border: '1px solid var(--risk-warn)', padding: '12px 16px' }}
+        className="ws-approval-card ws-callout-warning"
+        style={{ padding: '12px 16px' }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-          <span style={{ fontSize: '0.85em', color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ display: 'inline-flex', color: 'var(--risk-warn)' }}>{ICON.alert}</span>
+          <span className="ws-callout-label">
+            {ICON.alert}
             Auto mode paused
           </span>
         </div>

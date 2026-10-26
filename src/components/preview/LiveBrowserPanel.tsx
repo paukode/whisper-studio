@@ -85,12 +85,12 @@ function errorText(err: unknown): string {
 const iconBtn: React.CSSProperties = {
   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
   width: 26, height: 26, padding: 0, flex: '0 0 auto',
-  background: 'transparent', border: '1px solid var(--border, #ddd)', borderRadius: 6,
-  color: 'var(--text-secondary, #555)', cursor: 'pointer',
+  background: 'transparent', border: '1px solid var(--border)', borderRadius: 6,
+  color: 'var(--text-secondary)', cursor: 'pointer',
 };
 const txtBtn: React.CSSProperties = {
   font: 'inherit', fontSize: 12, cursor: 'pointer', borderRadius: 6, padding: '4px 10px',
-  border: '1px solid var(--border-strong, #ccc)', background: 'transparent', color: 'var(--text-secondary, #555)', flex: '0 0 auto',
+  border: '1px solid var(--border-strong)', background: 'transparent', color: 'var(--text-secondary)', flex: '0 0 auto',
 };
 
 function I({ d }: { d: string }) {
@@ -105,7 +105,7 @@ function I({ d }: { d: string }) {
 // component.
 function Spinner() {
   return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted, #888)" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
       <path d="M12 3a9 9 0 1 0 9 9">
         <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.9s" repeatCount="indefinite" />
       </path>
@@ -264,8 +264,8 @@ export const LiveBrowserPanel: React.FC<{
   //    offering to restart that chat's server from here. ──
   if (stopped) {
     return (
-      <div style={{ flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, padding: 16, background: 'var(--bg-inset, #0d0d0d)' }}>
-        <div style={{ color: 'var(--text-muted, #888)', fontSize: 13 }}>
+      <div style={{ flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, padding: 16, background: 'var(--bg-inset)' }}>
+        <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>
           {canRestart ? 'Preview server stopped' : 'No preview is running in this chat'}
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
@@ -283,7 +283,7 @@ export const LiveBrowserPanel: React.FC<{
   return (
     <div style={{ flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       {/* Browser chrome */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', borderBottom: '1px solid var(--border, #333)', background: 'var(--bg-secondary, #222)', flex: '0 0 auto' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', borderBottom: '1px solid var(--border)', background: 'var(--bg-secondary)', flex: '0 0 auto' }}>
         <button type="button" style={{ ...iconBtn, opacity: histIndex > 0 ? 1 : 0.4 }} onClick={back} disabled={histIndex <= 0} title="Back" aria-label="Back"><I d="M15 18l-6-6 6-6" /></button>
         <button type="button" style={{ ...iconBtn, opacity: histIndex < stack.length - 1 ? 1 : 0.4 }} onClick={forward} disabled={histIndex >= stack.length - 1} title="Forward" aria-label="Forward"><I d="M9 18l6-6-6-6" /></button>
         <button type="button" style={iconBtn} onClick={refresh} title="Refresh" aria-label="Refresh"><I d="M23 4v6h-6M1 20v-6h6M3.5 9a9 9 0 0 1 14.9-3.4L23 10M1 14l4.6 4.4A9 9 0 0 0 20.5 15" /></button>
@@ -293,7 +293,7 @@ export const LiveBrowserPanel: React.FC<{
           onKeyDown={(e) => { if (e.key === 'Enter') navigate(inputValue); }}
           spellCheck={false}
           aria-label="Preview URL"
-          style={{ flex: 1, minWidth: 0, font: 'inherit', fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border, #ddd)', background: 'var(--bg-primary, #1a1a1a)', color: 'var(--text-primary, #eee)' }}
+          style={{ flex: 1, minWidth: 0, font: 'inherit', fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-primary)', color: 'var(--text-primary)' }}
         />
         {running && (
           <button type="button" style={{ ...txtBtn, ...(mode === 'watch' ? { background: 'var(--bg-accent)', color: 'var(--text-accent)' } : {}) }} onClick={() => setMode(mode === 'interact' ? 'watch' : 'interact')} title={mode === 'interact' ? 'Watch the assistant drive (read-only)' : 'Interact with the site'}>
@@ -318,13 +318,13 @@ export const LiveBrowserPanel: React.FC<{
           style={{ flex: '1 1 auto', width: '100%', border: 'none', background: '#fff', minHeight: 0 }}
         />
       ) : (
-        <div style={{ flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, padding: 16, background: 'var(--bg-inset, #0d0d0d)', textAlign: 'center' }}>
+        <div style={{ flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, padding: 16, background: 'var(--bg-inset)', textAlign: 'center' }}>
           <Spinner />
-          <div style={{ color: 'var(--text-secondary, #aaa)', fontSize: 13 }}>Waiting for the dev server…</div>
-          <div style={{ color: 'var(--text-muted, #777)', fontSize: 11, fontFamily: 'var(--font-mono, ui-monospace, monospace)', wordBreak: 'break-all', maxWidth: 340 }}>{shownUrl}</div>
+          <div style={{ color: 'var(--text-secondary)', fontSize: 13 }}>Waiting for the dev server…</div>
+          <div style={{ color: 'var(--text-muted)', fontSize: 11, fontFamily: 'var(--font-mono)', wordBreak: 'break-all', maxWidth: 340 }}>{shownUrl}</div>
           {slow && (
             <>
-              <div style={{ color: 'var(--text-muted, #777)', fontSize: 11, maxWidth: 340, lineHeight: 1.5 }}>
+              <div style={{ color: 'var(--text-muted)', fontSize: 11, maxWidth: 340, lineHeight: 1.5 }}>
                 Taking longer than usual — the server may still be booting or failed to start. Check the terminal or preview logs.
               </div>
               <div style={{ display: 'flex', gap: 8 }}>

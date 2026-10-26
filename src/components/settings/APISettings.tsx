@@ -333,7 +333,7 @@ export const APISettings: React.FC = () => {
           className="settings-hint"
           role="alert"
           aria-live="assertive"
-          style={{ color: 'var(--error, #f87171)' }}
+          style={{ color: 'var(--error)' }}
         >
           {regionError}
         </span>

@@ -166,15 +166,14 @@ export const WorkspacePromptCard: React.FC<WorkspacePromptCardProps> = ({
   const recentPaths = recent.filter(p => p !== suggested);
 
   return (
-    <div className="ws-approval-card" style={{
-      border: '1px solid var(--accent)',
-      padding: '12px 16px',
-    }}>
+    <div className="ws-approval-card ws-callout-info" style={{ padding: '12px 16px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round">
-          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-        </svg>
-        <span style={{ fontSize: '0.85em', fontWeight: 600 }}>Workspace needed</span>
+        <span className="ws-callout-label">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+          </svg>
+          Workspace needed
+        </span>
       </div>
 
       <div style={{

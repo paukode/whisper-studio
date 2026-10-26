@@ -146,7 +146,7 @@ export function ContextReportPanel({ report }: { report: ContextReport }) {
                 {d.tool}
                 <span style={MUTED}>({d.words} words)</span>
               </span>
-              <span style={{ ...MUTED, fontFamily: 'var(--font-mono, monospace)' }}>{d.phrase}</span>
+              <span style={{ ...MUTED, fontFamily: 'var(--font-mono)' }}>{d.phrase}</span>
             </div>
           ))}
         </div>
@@ -161,7 +161,7 @@ export function ContextReportPanel({ report }: { report: ContextReport }) {
           {missing.map((m, i) => (
             <div key={i} style={ROW}>
               <span style={{ fontWeight: 500, minWidth: 150 }}>{m.section}</span>
-              <span style={{ fontFamily: 'var(--font-mono, monospace)' }}>{m.tool}</span>
+              <span style={{ fontFamily: 'var(--font-mono)' }}>{m.tool}</span>
             </div>
           ))}
         </div>

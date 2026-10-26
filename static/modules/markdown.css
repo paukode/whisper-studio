@@ -30,9 +30,10 @@
 .markdown-content h6 {
     margin: 1.4em 0 0.55em;
     line-height: 1.3;
-    font-weight: 600;
-    letter-spacing: -0.01em;
-    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    color: var(--text-heading);
 }
 .markdown-content h1 {
     font-size: 1.5em;
@@ -67,7 +68,7 @@
 .markdown-content li { margin: 0.25em 0; }
 .markdown-content li > ul,
 .markdown-content li > ol { margin: 0.2em 0; }
-.markdown-content strong { font-weight: 600; }
+.markdown-content strong { font-weight: 600; color: var(--text-heading); }
 .markdown-content em { font-style: italic; }
 .markdown-content hr {
     border: none;
@@ -78,16 +79,19 @@
     color: var(--link);
     text-decoration: underline;
     text-decoration-color: color-mix(in srgb, var(--link) 40%, transparent);
-    text-underline-offset: 2px;
+    text-underline-offset: 3px;
 }
 .markdown-content a:hover { color: var(--link-hover); text-decoration-color: currentColor; }
-.markdown-content img { max-width: 100%; height: auto; border-radius: 6px; }
+.markdown-content img { max-width: 100%; height: auto; border-radius: var(--radius-md); }
 
 .markdown-content blockquote {
     margin: 0.8em 0;
-    padding: 0.2em 0 0.2em 1em;
-    border-left: 3px solid var(--border-strong);
-    color: var(--text-secondary);
+    padding: 0.7em 1em;
+    border: 1px solid var(--success-border);
+    border-left: 3px solid var(--accent);
+    border-radius: 0;
+    background: var(--accent-dim);
+    color: var(--text-primary);
 }
 .markdown-content blockquote > *:first-child { margin-top: 0; }
 .markdown-content blockquote > *:last-child { margin-bottom: 0; }
@@ -104,6 +108,8 @@
     overflow-y: hidden;
     margin: 1em 0;
     font-size: 0.95em;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
     /* Keeps the handles' z-index inside the frame. */
     isolation: isolate;
 }
@@ -135,11 +141,18 @@
     overflow-wrap: break-word;
 }
 .markdown-content th {
-    font-weight: 600;
-    background: var(--bg-elevated);
-    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 0.82em;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    background: var(--bg-secondary);
+    color: var(--text-muted);
 }
-.markdown-content tr:nth-child(2n) td { background: var(--bg-inset); }
+.markdown-content th,
+.markdown-content td {
+    border-width: 0 0 1px 0;
+}
 .markdown-content .md-th-label { display: block; }
 
 /* Chat bubbles and agent reports (AgentReportCard.tsx): a compact table at
@@ -151,8 +164,8 @@
 :is(.chat-msg.assistant, .agent-report-text) .markdown-content blockquote > .md-table-wrap:last-child { margin-bottom: 0; }
 :is(.chat-msg.assistant, .agent-report-text) .markdown-content table { font-size: var(--fs-small); }
 :is(.chat-msg.assistant, .agent-report-text) .markdown-content th {
-    padding: 6px 10px;
-    border-bottom: 2px solid var(--border);
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--border-strong);
 }
 :is(.chat-msg.assistant, .agent-report-text) .markdown-content td {
     padding: 5px 10px;
@@ -217,13 +230,13 @@
 
 /* ---- Inline code (not inside a code block) ---- */
 .markdown-content :not(pre) > code {
-    font-family: var(--font-mono, 'IBM Plex Mono', monospace);
-    font-size: 0.88em;
-    padding: 0.15em 0.4em;
-    border-radius: 5px;
-    background: var(--bg-inset);
-    border: 1px solid var(--border);
-    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 0.86em;
+    padding: 0.1em 0.4em;
+    border-radius: var(--radius-sm);
+    background: var(--bg-code);
+    border: 1px solid var(--border-strong);
+    color: var(--accent);
     word-break: break-word;
 }
 /* In a table cell a path or an identifier stays whole, and its column is as
@@ -248,9 +261,9 @@
 .markdown-content .code-block-wrap pre {
     margin: 0;
     padding: 12px 14px;
-    background: var(--bg-inset);
+    background: var(--bg-code);
     color: var(--text-primary);
-    font-family: var(--font-mono, 'IBM Plex Mono', monospace);
+    font-family: var(--font-mono);
     font-size: 0.86em;
     line-height: 1.55;
     white-space: pre;
@@ -265,47 +278,8 @@
 }
 .markdown-content code.hljs { display: block; }
 
-/* ─────────────────────────────────────────────────────────────────────────
-   Syntax highlighting theme. highlight.js emits `.hljs-*` token spans; we
-   color them through CSS variables so a single mapping serves every theme.
-   Dark palette (One-Dark-inspired) is the default; light themes override the
-   variables below. All eight app themes start with "dark" or "light".
-   ───────────────────────────────────────────────────────────────────────── */
-.markdown-content {
-    --hl-keyword:  #c678dd;
-    --hl-string:   #98c379;
-    --hl-number:   #d19a66;
-    --hl-literal:  #56b6c2;
-    --hl-comment:  #7d8590;
-    --hl-function: #61afef;
-    --hl-class:    #e5c07b;
-    --hl-builtin:  #56b6c2;
-    --hl-attr:     #d19a66;
-    --hl-tag:      #e06c75;
-    --hl-variable: #e06c75;
-    --hl-meta:     #7d8590;
-    --hl-addition: #98c379;
-    --hl-deletion: #e06c75;
-    --hl-punct:    var(--text-secondary);
-}
-[data-theme^="light"] .markdown-content {
-    --hl-keyword:  #cf222e;
-    --hl-string:   #0a3069;
-    --hl-number:   #0550ae;
-    --hl-literal:  #0550ae;
-    --hl-comment:  #6e7781;
-    --hl-function: #8250df;
-    --hl-class:    #953800;
-    --hl-builtin:  #0550ae;
-    --hl-attr:     #0550ae;
-    --hl-tag:      #116329;
-    --hl-variable: #953800;
-    --hl-meta:     #6e7781;
-    --hl-addition: #116329;
-    --hl-deletion: #cf222e;
-    --hl-punct:    var(--text-secondary);
-}
-
+/* Syntax highlighting. highlight.js emits `.hljs-*` token spans; they are
+   colored through the --hl-* tokens, which each mode sets in themes.css. */
 .markdown-content .hljs-comment,
 .markdown-content .hljs-quote { color: var(--hl-comment); font-style: italic; }
 
