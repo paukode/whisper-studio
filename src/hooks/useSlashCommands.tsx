@@ -298,8 +298,8 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
             }
 
             const body = (
-              <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden', fontSize: 12 }}>
-                <div style={{ padding: '8px 12px', background: 'var(--bg-elevated)', borderBottom: '1px solid var(--border)', fontWeight: 600, fontSize: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden', fontSize: 13 }}>
+                <div style={{ padding: '8px 12px', background: 'var(--bg-elevated)', borderBottom: '1px solid var(--border)', fontWeight: 600, fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span style={{ color: sColor }}>{sIcon}</span> Diagnostics: {status}
                 </div>
                 {rows}

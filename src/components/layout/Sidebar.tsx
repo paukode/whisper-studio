@@ -122,7 +122,7 @@ const SessionCronBadge: React.FC<{ sessionId: string }> = ({ sessionId }) => {
         display: 'inline-flex',
         alignItems: 'center',
         gap: 3,
-        fontSize: 10,
+        fontSize: 11,
         fontFamily: 'var(--font-mono)',
         fontWeight: 700,
         padding: '1px 7px',

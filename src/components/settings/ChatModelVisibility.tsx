@@ -107,7 +107,7 @@ export const ChatModelVisibility: React.FC = () => {
                 {m.disabled && (
                   <span
                     style={{
-                      fontSize: 11,
+                      fontSize: 12,
                       fontWeight: 600,
                       padding: '2px 8px',
                       borderRadius: 999,

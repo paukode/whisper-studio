@@ -10,7 +10,7 @@ import { ExpandableText } from './ExpandableText';
 
 const badgeStyle: React.CSSProperties = {
   marginLeft: '6px',
-  fontSize: '10px',
+  fontSize: '11px',
   padding: '1px 6px',
   borderRadius: 'var(--radius-lg)',
   background: 'var(--surface-0)',

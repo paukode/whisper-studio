@@ -360,7 +360,7 @@ plutil -lint -s "$CONTENTS_DIR/Info.plist" || die "generated Info.plist is inval
 cp "$BUILD_DIR/shell/WhisperStudio" "$CONTENTS_DIR/MacOS/WhisperStudio"
 
 # f.3: app icon. The real icon lives in the repo (macapp/icon/AppIcon.icns,
-# built from icon.svg: the "W." monogram on the dark canvas); the generated solid-colour
+# built from icon.svg: the "W." monogram on the navy canvas); the generated solid-colour
 # placeholder below is only the fallback if it is ever removed.
 if [[ -f "$MACAPP_DIR/icon/AppIcon.icns" ]]; then
     cp "$MACAPP_DIR/icon/AppIcon.icns" "$RES_DIR/AppIcon.icns"

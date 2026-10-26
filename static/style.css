@@ -12,25 +12,25 @@ button, input, select, textarea { font-family: inherit; }
    FONT-SIZE SCALE  (single source of truth for typography)
    ----------------------------------------------------------------
    Every font size flows through these seven tokens — no literal px
-   sizes remain in the stylesheets. The scale is anchored at a 16px
-   reading body (the web standard, comfortable on Retina laptops).
+   sizes remain in the stylesheets. The scale is anchored at a 17px
+   reading body, one step above the web default, for comfortable reading.
    Never introduce a literal px size; always reach for a token.
 
-     --fs-caption   12px   timestamps · badges · chips · sub-meta
-     --fs-small     13px   secondary chrome — toolbar, dropdowns, meta
-     --fs-body      14px   default chrome/UI — sidebar items, form labels, menus
-     --fs-content   16px   reading — chat messages, editor, terminal
-     --fs-title     18px   section titles / assistant H1
-     --fs-h1        24px   modal & dialog headings
+     --fs-caption   13px   timestamps · badges · chips · sub-meta
+     --fs-small     14px   secondary chrome — toolbar, dropdowns, meta
+     --fs-body      15px   default chrome/UI — sidebar items, form labels, menus
+     --fs-content   17px   reading — chat messages, editor, terminal
+     --fs-title     19px   section titles / assistant H1
+     --fs-h1        25px   modal & dialog headings
      --fs-hero      44px   one-of-a-kind welcome banner only
    ================================================================ */
 :root {
-    --fs-caption: 12px;
-    --fs-small: 13px;
-    --fs-body: 14px;
-    --fs-content: 16px;
-    --fs-title: 18px;
-    --fs-h1: 24px;
+    --fs-caption: 13px;
+    --fs-small: 14px;
+    --fs-body: 15px;
+    --fs-content: 17px;
+    --fs-title: 19px;
+    --fs-h1: 25px;
     --fs-hero: 44px;
 }
 
@@ -114,7 +114,7 @@ body {
 }
 .new-session-btn:hover { background: var(--accent-hover); }
 .sidebar-header h2 {
-    font-family: var(--font-mono); font-size: 11px; font-weight: 400;
+    font-family: var(--font-mono); font-size: 12px; font-weight: 400;
     text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted);
 }
 .session-list { flex: 1; overflow-y: auto; padding: 8px; }
@@ -739,7 +739,7 @@ body.ws-embed-drag embed {
     border-left: 2px solid var(--accent-dim);
 }
 .segment-translation-badge {
-    flex-shrink: 0; font-size: 10px; font-weight: 600; letter-spacing: 0.6px;
+    flex-shrink: 0; font-size: 11px; font-weight: 600; letter-spacing: 0.6px;
     color: var(--accent); background: var(--accent-dim);
     border-radius: var(--radius-sm); padding: 1px 5px;
 }
@@ -755,7 +755,7 @@ body.ws-embed-drag embed {
  * is a caveat, not an error. */
 .segment-overlap-badge {
     float: left; margin: 2px 6px 0 0;
-    font-size: 10px; line-height: 1;
+    font-size: 11px; line-height: 1;
     color: var(--text-muted); cursor: help;
 }
 /* Translate dropdown in the transcript panel header: shares the engine
@@ -1214,7 +1214,7 @@ input.segment-speaker {
 .code-block-header {
     display: flex; align-items: center; justify-content: space-between;
     padding: 5px 10px; background: var(--bg-secondary);
-    font-family: var(--font-mono); font-size: 11px; font-weight: 400;
+    font-family: var(--font-mono); font-size: 12px; font-weight: 400;
     letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted);
     border-bottom: 1px solid var(--border);
 }
@@ -1276,13 +1276,13 @@ input.segment-speaker {
 .workflow-card {
     border: 1px solid var(--border); border-radius: var(--radius-sm);
     padding: 12px 14px; margin: 8px 0; background: var(--bg-surface);
-    font-size: 13px; max-width: 640px;
+    font-size: 14px; max-width: 640px;
 }
 .workflow-card-head { display: flex; align-items: center; gap: 8px; }
 .workflow-card-icon { display: inline-flex; flex-shrink: 0; color: var(--text-muted); }
 .workflow-card-title { font-weight: 600; }
 .workflow-card-badge {
-    margin-left: auto; font-size: 11px; padding: 1px 8px; border-radius: var(--radius-lg);
+    margin-left: auto; font-size: 12px; padding: 1px 8px; border-radius: var(--radius-lg);
     background: var(--bg-inset); text-transform: lowercase;
 }
 .workflow-card-desc { color: var(--text-secondary, inherit); margin: 6px 0; }
@@ -1292,19 +1292,19 @@ input.segment-speaker {
 }
 .workflow-step {
     counter-increment: wf; background: var(--bg-inset); padding: 3px 9px;
-    border-radius: var(--radius-lg); font-size: 12px;
+    border-radius: var(--radius-lg); font-size: 13px;
 }
 .workflow-step::before { content: counter(wf) ". "; opacity: 0.6; }
 .workflow-script-toggle {
     display: inline-flex; align-items: center; gap: 4px;
     background: none; border: none; color: var(--accent, inherit); cursor: pointer;
-    padding: 2px 0; font-size: 12px;
+    padding: 2px 0; font-size: 13px;
 }
 .workflow-script {
     background: var(--bg-inset); border-radius: var(--radius-md); padding: 8px 10px;
-    max-height: 260px; overflow: auto; font-size: 12px; margin: 6px 0;
+    max-height: 260px; overflow: auto; font-size: 13px; margin: 6px 0;
 }
-.workflow-card-meta { color: var(--text-secondary, inherit); font-size: 12px; margin-top: 6px; }
+.workflow-card-meta { color: var(--text-secondary, inherit); font-size: 13px; margin-top: 6px; }
 /* The agent rows inside a workflow run card (one .agent-row each). */
 .workflow-card-agents {
     display: flex; flex-direction: column; gap: 6px;
@@ -1318,14 +1318,14 @@ input.segment-speaker {
 /* CI watch + autofix cards (WS-J) reuse .workflow-card for the frame. */
 .ci-jobs { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
 .ci-job {
-    display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
+    display: inline-flex; align-items: center; gap: 6px; font-size: 13px;
     background: var(--bg-inset); padding: 3px 9px; border-radius: var(--radius-lg);
 }
 .ci-job-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .ci-findings { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-.ci-finding { font-size: 12px; line-height: 1.4; }
+.ci-finding { font-size: 13px; line-height: 1.4; }
 .ci-finding-cat {
-    display: inline-block; margin-right: 6px; font-size: 10px; text-transform: uppercase;
+    display: inline-block; margin-right: 6px; font-size: 11px; text-transform: uppercase;
     letter-spacing: 0.03em; padding: 1px 6px; border-radius: var(--radius-lg);
     background: var(--bg-inset); color: var(--text-secondary, inherit);
 }
@@ -1338,7 +1338,7 @@ input.segment-speaker {
     margin: 0 16px; padding: 6px 10px;
     background: var(--bg-inset); border: 1px solid var(--border);
     border-bottom: none; border-radius: 8px 8px 0 0;
-    font-size: 12px; color: var(--text-secondary, inherit);
+    font-size: 13px; color: var(--text-secondary, inherit);
 }
 .goal-banner-icon { flex-shrink: 0; display: inline-flex; color: var(--text-muted); }
 .goal-banner-text {
@@ -1355,7 +1355,7 @@ input.segment-speaker {
 .goal-banner-clear {
     flex-shrink: 0; display: inline-flex; align-items: center;
     background: none; border: none; cursor: pointer;
-    color: var(--text-secondary, inherit); font-size: 13px; line-height: 1;
+    color: var(--text-secondary, inherit); font-size: 14px; line-height: 1;
     padding: 2px 4px; border-radius: var(--radius-sm);
 }
 .goal-banner-clear:hover { background: var(--bg-hover); }
@@ -1538,19 +1538,21 @@ input.segment-speaker {
  * with one chip per step. Heavier than an activity row, since it
  * represents a unit of delegated work, not just one call. */
 .agent-card {
-    border: 1px solid var(--accent);
-    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--agent);
+    border-radius: 0 var(--radius-md) var(--radius-md) 0;
     margin: 6px 0;
     overflow: hidden;
-    transition: border-color 0.3s, box-shadow 0.3s;
+    transition: border-color 0.3s;
     background: var(--bg-elevated);
 }
 .agent-card.running {
-    box-shadow: 0 0 0 1px var(--accent);
+    border-color: color-mix(in srgb, var(--agent) 45%, transparent);
+    border-left-color: var(--agent);
 }
 .agent-card.done {
     border-color: var(--border-strong);
-    box-shadow: none;
+    border-left-color: var(--agent);
 }
 .agent-card.errored {
     border-color: var(--danger);
@@ -1569,7 +1571,7 @@ input.segment-speaker {
 .agent-card-header::-webkit-details-marker { display: none; }
 .agent-card-header::marker { display: none; content: ""; }
 .agent-card-header:hover { background: var(--bg-hover); }
-.agent-card-icon { display: inline-flex; align-items: center; flex-shrink: 0; color: var(--text-secondary); }
+.agent-card-icon { display: inline-flex; align-items: center; flex-shrink: 0; color: var(--agent); }
 .agent-card-title {
     flex: 1;
     overflow: hidden;
@@ -2212,7 +2214,7 @@ input.segment-speaker {
 }
 .settings-group { display: flex; flex-direction: column; gap: 2px; }
 .settings-group-title {
-    font-family: var(--font-mono); font-size: 10.5px; font-weight: 400;
+    font-family: var(--font-mono); font-size: 12px; font-weight: 400;
     text-transform: uppercase; letter-spacing: 0.1em;
     color: var(--text-muted); padding: 0 10px 3px;
 }
@@ -2460,7 +2462,7 @@ input.segment-speaker {
     padding: 14px;
 }
 .settings-form label {
-    display: block; font-family: var(--font-mono); font-size: 11px; font-weight: 400;
+    display: block; font-family: var(--font-mono); font-size: 12px; font-weight: 400;
     color: var(--text-muted); margin: 12px 0 5px;
     text-transform: uppercase; letter-spacing: 0.08em;
 }
@@ -3031,7 +3033,7 @@ button.effort-badge { font: inherit; font-size: 0.7em; font-weight: 700;
     width: 15px; height: 15px; flex-shrink: 0; border-radius: 50%;
     border: 1px solid var(--border-strong); background: none; padding: 0; margin: 0;
     font-family: inherit; color: var(--text-muted);
-    font-size: 10px; font-weight: 600; line-height: 1; cursor: help; user-select: none;
+    font-size: 11px; font-weight: 600; line-height: 1; cursor: help; user-select: none;
 }
 .help-tip:hover, .help-tip:focus { color: var(--text-secondary); border-color: var(--text-muted); outline: none; }
 .help-tip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -3233,7 +3235,7 @@ button.effort-badge { font: inherit; font-size: 0.7em; font-weight: 700;
 .ws-callout-info { --callout: var(--info); }
 .ws-callout-label {
     display: inline-flex; align-items: center; gap: 6px;
-    font-family: var(--font-mono); font-size: 11px; font-weight: 500;
+    font-family: var(--font-mono); font-size: 12px; font-weight: 500;
     text-transform: uppercase; letter-spacing: 0.08em;
     color: var(--callout);
 }
@@ -3569,14 +3571,14 @@ button.effort-badge { font: inherit; font-size: 0.7em; font-weight: 700;
 .xpl-ego svg { width: 100%; height: auto; }
 .xpl-ego figcaption { font-size: var(--fs-caption); color: var(--text-muted); text-align: center; margin-top: 4px; }
 .xpl-ego-lines line { stroke: var(--border-strong); stroke-width: 1.4; }
-.xpl-ego-captions text { fill: var(--text-muted); font-size: 10.5px; font-style: italic; }
+.xpl-ego-captions text { fill: var(--text-muted); font-size: 12px; font-style: italic; }
 .xpl-ego-node { cursor: pointer; }
 .xpl-ego-node circle { fill: var(--accent-dim); stroke: var(--accent); stroke-width: 1.2; }
 .xpl-ego-node:hover circle, .xpl-ego-node:focus circle { fill: var(--accent); }
-.xpl-ego-node text { fill: var(--text-secondary); font-family: var(--font-mono); font-size: 10px; }
+.xpl-ego-node text { fill: var(--text-secondary); font-family: var(--font-mono); font-size: 11px; }
 .xpl-ego-node:hover text { fill: var(--text-primary); }
 .xpl-ego-center circle { fill: var(--accent); }
-.xpl-ego-center text { fill: var(--text-primary); font-family: var(--font-mono); font-size: 10px; font-weight: 600; }
+.xpl-ego-center text { fill: var(--text-primary); font-family: var(--font-mono); font-size: 11px; font-weight: 600; }
 
 @media (max-width: 900px) {
     /* The search box filters the browse pane, so the two hide together. */
@@ -4979,7 +4981,7 @@ button.ws-git-status-badge:hover {
     gap: 6px;
     width: 100%;
     padding: var(--space-4) var(--space-3) var(--space-2);
-    font-size: 10.5px;
+    font-size: 12px;
     font-weight: 400;
     text-transform: uppercase;
     letter-spacing: 0.1em;
@@ -5747,7 +5749,7 @@ button.ws-git-status-badge:hover {
     border-radius: var(--radius-lg);
     background: var(--accent);
     color: var(--bg-primary);
-    font-size: 10px;
+    font-size: 11px;
     font-weight: 700;
     line-height: 15px;
     text-align: center;
@@ -5851,7 +5853,7 @@ button.ws-git-status-badge:hover {
     border-top: 1px solid var(--border);
 }
 .notif-source {
-    font-size: 10px;
+    font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.05em;
     color: var(--text-secondary);

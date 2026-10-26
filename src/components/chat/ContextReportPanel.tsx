@@ -41,7 +41,7 @@ const CARD: React.CSSProperties = {
   border: '1px solid var(--border)',
   borderRadius: 8,
   overflow: 'hidden',
-  fontSize: 12,
+  fontSize: 13,
 };
 
 const HEAD: React.CSSProperties = {

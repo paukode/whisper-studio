@@ -45,7 +45,7 @@ export const ConfirmDialog: React.FC<{
         }}
       >
         <strong>{title}</strong>
-        <div style={{ fontSize: '14px', lineHeight: 1.5, opacity: 0.9 }}>{message}</div>
+        <div style={{ fontSize: '15px', lineHeight: 1.5, opacity: 0.9 }}>{message}</div>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
           <button className="btn btn-sm" onClick={onCancel} type="button">
             Cancel

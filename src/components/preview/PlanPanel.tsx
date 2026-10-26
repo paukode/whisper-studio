@@ -36,9 +36,9 @@ export const PlanPanel: React.FC<{ planId: string }> = ({ planId }) => {
   return (
     <div style={{ flex: '1 1 auto', minHeight: 0, overflow: 'auto', padding: 12 }}>
       {error ? (
-        <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>{error}</div>
+        <div style={{ color: 'var(--text-muted)', fontSize: 14 }}>{error}</div>
       ) : markdown == null ? (
-        <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>Loading plan…</div>
+        <div style={{ color: 'var(--text-muted)', fontSize: 14 }}>Loading plan…</div>
       ) : (
         <MarkdownRenderer content={markdown} />
       )}

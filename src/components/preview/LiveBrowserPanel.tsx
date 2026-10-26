@@ -89,7 +89,7 @@ const iconBtn: React.CSSProperties = {
   color: 'var(--text-secondary)', cursor: 'pointer',
 };
 const txtBtn: React.CSSProperties = {
-  font: 'inherit', fontSize: 12, cursor: 'pointer', borderRadius: 6, padding: '4px 10px',
+  font: 'inherit', fontSize: 13, cursor: 'pointer', borderRadius: 6, padding: '4px 10px',
   border: '1px solid var(--border-strong)', background: 'transparent', color: 'var(--text-secondary)', flex: '0 0 auto',
 };
 
@@ -265,7 +265,7 @@ export const LiveBrowserPanel: React.FC<{
   if (stopped) {
     return (
       <div style={{ flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, padding: 16, background: 'var(--bg-inset)' }}>
-        <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>
+        <div style={{ color: 'var(--text-muted)', fontSize: 14 }}>
           {canRestart ? 'Preview server stopped' : 'No preview is running in this chat'}
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
@@ -293,7 +293,7 @@ export const LiveBrowserPanel: React.FC<{
           onKeyDown={(e) => { if (e.key === 'Enter') navigate(inputValue); }}
           spellCheck={false}
           aria-label="Preview URL"
-          style={{ flex: 1, minWidth: 0, font: 'inherit', fontSize: 12, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-primary)', color: 'var(--text-primary)' }}
+          style={{ flex: 1, minWidth: 0, font: 'inherit', fontSize: 13, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-primary)', color: 'var(--text-primary)' }}
         />
         {running && (
           <button type="button" style={{ ...txtBtn, ...(mode === 'watch' ? { background: 'var(--bg-accent)', color: 'var(--text-accent)' } : {}) }} onClick={() => setMode(mode === 'interact' ? 'watch' : 'interact')} title={mode === 'interact' ? 'Watch the assistant drive (read-only)' : 'Interact with the site'}>
@@ -320,11 +320,11 @@ export const LiveBrowserPanel: React.FC<{
       ) : (
         <div style={{ flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, padding: 16, background: 'var(--bg-inset)', textAlign: 'center' }}>
           <Spinner />
-          <div style={{ color: 'var(--text-secondary)', fontSize: 13 }}>Waiting for the dev server…</div>
-          <div style={{ color: 'var(--text-muted)', fontSize: 11, fontFamily: 'var(--font-mono)', wordBreak: 'break-all', maxWidth: 340 }}>{shownUrl}</div>
+          <div style={{ color: 'var(--text-secondary)', fontSize: 14 }}>Waiting for the dev server…</div>
+          <div style={{ color: 'var(--text-muted)', fontSize: 12, fontFamily: 'var(--font-mono)', wordBreak: 'break-all', maxWidth: 340 }}>{shownUrl}</div>
           {slow && (
             <>
-              <div style={{ color: 'var(--text-muted)', fontSize: 11, maxWidth: 340, lineHeight: 1.5 }}>
+              <div style={{ color: 'var(--text-muted)', fontSize: 12, maxWidth: 340, lineHeight: 1.5 }}>
                 Taking longer than usual — the server may still be booting or failed to start. Check the terminal or preview logs.
               </div>
               <div style={{ display: 'flex', gap: 8 }}>

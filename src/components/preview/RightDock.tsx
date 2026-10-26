@@ -104,7 +104,7 @@ export const RightDock: React.FC = () => {
               }}
             >
               <span style={{ width: 8, height: 8, borderRadius: 999, background: KIND_COLOR[p.kind], flex: '0 0 auto' }} />
-              <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <span style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {p.title}
               </span>
               <span style={{ flex: 1 }} />

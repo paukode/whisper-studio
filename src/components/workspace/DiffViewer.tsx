@@ -53,7 +53,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
           readOnly: true,
           renderSideBySide: true,
           minimap: { enabled: false },
-          fontSize: 13,
+          fontSize: 14,
           lineNumbers: 'on',
           scrollBeyondLastLine: false,
           automaticLayout: true,

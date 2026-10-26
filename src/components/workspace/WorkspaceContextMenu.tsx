@@ -40,7 +40,7 @@ let _compareSelection: string | null = null;
  *  Find File References and the in-folder search. */
 function renderRefList(results: Array<{ path: string; line: number; text: string }>): React.ReactNode {
   return (
-    <div style={{ maxHeight: '50vh', overflow: 'auto', fontSize: 12 }}>
+    <div style={{ maxHeight: '50vh', overflow: 'auto', fontSize: 13 }}>
       {results.map((r, i) => (
         <div key={`${r.path}:${r.line}:${i}`} style={{ padding: '4px 0', borderBottom: '1px solid var(--border)' }}>
           <code style={{ color: 'var(--accent)' }}>{r.path}:{r.line}</code>{' '}
@@ -242,7 +242,7 @@ export const WorkspaceContextMenu: React.FC<WorkspaceContextMenuProps> = ({
           title: fileName,
           size: 'lg',
           body: (
-            <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: '70vh', overflow: 'auto', fontSize: 12 }}>
+            <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: '70vh', overflow: 'auto', fontSize: 13 }}>
               {content}
             </pre>
           ),
@@ -344,7 +344,7 @@ export const WorkspaceContextMenu: React.FC<WorkspaceContextMenuProps> = ({
         return;
       }
       const body = (
-        <div style={{ maxHeight: '50vh', overflow: 'auto', fontSize: 12 }}>
+        <div style={{ maxHeight: '50vh', overflow: 'auto', fontSize: 13 }}>
           {history.map((h) => (
             <div
               key={h.hash}
@@ -353,11 +353,11 @@ export const WorkspaceContextMenu: React.FC<WorkspaceContextMenuProps> = ({
               <div>
                 <span style={{ fontWeight: 500 }}>{h.message}</span>
                 <br />
-                <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
                   {h.hash.slice(0, 8)} · {h.author}
                 </span>
               </div>
-              <span style={{ color: 'var(--text-muted)', fontSize: 11, whiteSpace: 'nowrap', marginLeft: 12 }}>
+              <span style={{ color: 'var(--text-muted)', fontSize: 12, whiteSpace: 'nowrap', marginLeft: 12 }}>
                 {h.date}
               </span>
             </div>
@@ -556,7 +556,7 @@ export const WorkspaceContextMenu: React.FC<WorkspaceContextMenuProps> = ({
         className="ws-context-menu"
         style={{ position: 'fixed', left: state.x, top: state.y }}
       >
-        <div style={{ padding: '6px 12px 2px 8px', fontSize: '11px', color: 'var(--text-muted)' }}>{label}</div>
+        <div style={{ padding: '6px 12px 2px 8px', fontSize: '12px', color: 'var(--text-muted)' }}>{label}</div>
         <div className="ws-inline-input-row">
           <input
             ref={inputRef}

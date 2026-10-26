@@ -18,7 +18,8 @@
     padding: 10px 14px;
     background: var(--bg-surface);
     border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
+    border-left: 3px solid var(--agent);
+    border-radius: 0 var(--radius-md) var(--radius-md) 0;
     color: var(--text-primary);
     font-size: var(--fs-body);
     line-height: 1.5;

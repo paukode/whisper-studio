@@ -105,19 +105,19 @@ export const PreviewSettings: React.FC = () => {
               : 'Downloads Playwright and a ~150-300MB Chromium browser, and lets the assistant control it.'}
           </div>
           {status.error && (
-            <div style={{ color: 'var(--accent-record)', fontSize: '13px', marginTop: '6px' }}>
+            <div style={{ color: 'var(--accent-record)', fontSize: '14px', marginTop: '6px' }}>
               {status.error}
             </div>
           )}
           {status.installing && (
             <div style={{ marginTop: '8px' }}>
-              <div style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+              <div style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '4px' }}>
                 {status.stage ?? 'Installing…'}
               </div>
               {status.log_tail.length > 0 && (
                 <pre
                   style={{
-                    fontSize: '11px',
+                    fontSize: '12px',
                     maxHeight: '120px',
                     overflow: 'auto',
                     background: 'var(--surface-2)',
@@ -136,7 +136,7 @@ export const PreviewSettings: React.FC = () => {
             <>
               <span
                 style={{
-                  fontSize: '12px',
+                  fontSize: '13px',
                   padding: '4px 10px',
                   borderRadius: 'var(--radius)',
                   background: 'var(--bg-success)',
@@ -159,7 +159,7 @@ export const PreviewSettings: React.FC = () => {
 
       {status.flag_enabled && (
         <div style={{ marginTop: '16px' }}>
-          <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '8px' }}>
+          <div style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '8px' }}>
             Running sessions
           </div>
           {sessions.length === 0 ? (

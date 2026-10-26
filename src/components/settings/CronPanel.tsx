@@ -91,7 +91,7 @@ const StatusChip: React.FC<{ job: CronJob }> = ({ job }) => {
     <span
       style={{
         display: 'inline-flex', alignItems: 'center', gap: 5,
-        fontSize: 10.5, fontWeight: 700, letterSpacing: '0.04em',
+        fontSize: 12, fontWeight: 700, letterSpacing: '0.04em',
         textTransform: 'uppercase', padding: '2px 9px', borderRadius: 'var(--radius-lg)',
         color: c.fg, background: c.bg,
       }}
@@ -300,7 +300,7 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({ initial, systemTz, saving, 
       )}
 
       <div style={{
-        padding: '10px 12px', borderRadius: 'var(--radius-lg)', fontSize: 12.5,
+        padding: '10px 12px', borderRadius: 'var(--radius-lg)', fontSize: 13.5,
         border: '1px dashed', borderColor: preview.error ? 'var(--danger-border)' : 'var(--success-border)',
         background: preview.error ? 'var(--danger-dim)' : 'var(--accent-dim)',
         color: preview.error ? 'var(--danger)' : 'var(--text-secondary)',
@@ -349,7 +349,7 @@ const HistoryDrawer: React.FC<{ jobId: string; now: number; onRetry: () => void 
 
   return (
     <div style={{ marginTop: 10, border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
-      <div style={{ padding: '8px 12px', fontSize: 12, fontWeight: 700, borderBottom: '1px solid var(--border)' }}>
+      <div style={{ padding: '8px 12px', fontSize: 13, fontWeight: 700, borderBottom: '1px solid var(--border)' }}>
         Run history <span className="settings-hint">· last {runs.length}</span>
       </div>
       {isLoading && <div className="settings-hint" style={{ padding: 12 }}>Loading…</div>}
@@ -362,7 +362,7 @@ const HistoryDrawer: React.FC<{ jobId: string; now: number; onRetry: () => void 
         const firstLine = (r.text || '').split('\n').find((l) => l.trim()) || (running ? 'running…' : '(no output)');
         return (
           <div key={r.run_id} style={{ borderBottom: '1px solid var(--border)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', fontSize: 12.5, cursor: 'pointer' }}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', fontSize: 13.5, cursor: 'pointer' }}
               onClick={() => setExpanded(open ? null : r.run_id)}>
               <span style={{ width: 8, height: 8, borderRadius: '50%', background: dot, flex: '0 0 auto' }} />
               <span style={{ fontVariantNumeric: 'tabular-nums', opacity: 0.7, flex: '0 0 auto' }}>{formatAgo(r.started_at, now)}</span>
@@ -374,7 +374,7 @@ const HistoryDrawer: React.FC<{ jobId: string; now: number; onRetry: () => void 
               )}
             </div>
             {open && r.text && (
-              <div style={{ padding: '4px 12px 12px 30px', fontSize: 12.5 }}>
+              <div style={{ padding: '4px 12px 12px 30px', fontSize: 13.5 }}>
                 <MarkdownRenderer content={r.text} />
               </div>
             )}
@@ -439,7 +439,7 @@ const JobCard: React.FC<JobCardProps> = ({
         )}
       </div>
 
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 18px', fontSize: 12.5 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 18px', fontSize: 13.5 }}>
         <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--accent)' }}>
           🗓 {job.schedule_label || '—'}
         </span>
@@ -466,7 +466,7 @@ const JobCard: React.FC<JobCardProps> = ({
       {isLegacyInterval && job.schedule.type === 'interval' && (
         <div style={{
           display: 'flex', alignItems: 'center', gap: 8, padding: '8px 11px', borderRadius: 'var(--radius-lg)',
-          fontSize: 12, background: 'var(--warning-dim)', border: '1px solid var(--warning-border)', color: '#c9862a',
+          fontSize: 13, background: 'var(--warning-dim)', border: '1px solid var(--warning-border)', color: '#c9862a',
         }}>
           <span>⚡ This runs on a fixed interval, not a set time.</span>
           <button type="button" className="btn btn-sm" style={{ marginLeft: 'auto' }} onClick={onEdit}>Switch to a daily time →</button>

@@ -25,16 +25,16 @@ const viewStateCache = new Map<string, editor.ICodeEditorViewState>();
  */
 const MONACO_PALETTES = {
   dark: {
-    base: 'vs-dark', bg: '#111111', fg: '#d4d4d4', lineNo: '#5a5a5a', lineNoActive: '#a8a8a8',
-    accent: '#3dd68c', selection: '#3dd68c2e', lineHighlight: '#ffffff08', border: '#1e1e1e',
-    keyword: 'c792ea', string: '3dd68c', number: 'ffcb6b', comment: '6a6a6a', fn: '82aaff',
-    type: 'ffcb6b', variable: 'f07178', tag: 'f07178', attr: 'f78c6c',
+    base: 'vs-dark', bg: '#052536', fg: '#e6eef3', lineNo: '#4f6b7a', lineNoActive: '#b6c8d2',
+    accent: '#8ecae6', selection: '#219ebc40', lineHighlight: '#ffffff08', border: '#0a3043',
+    keyword: 'ffb703', string: 'a6d98c', number: 'fb8500', comment: '6f8a99', fn: '8ecae6',
+    type: 'c9a7ff', variable: 'b6c8d2', tag: 'ff6b6b', attr: 'ffd166',
   },
   light: {
-    base: 'vs', bg: '#f3f3f1', fg: '#1a1a1a', lineNo: '#a3a3a0', lineNoActive: '#4f4f4f',
-    accent: '#0f7a4a', selection: '#0f7a4a24', lineHighlight: '#00000006', border: '#e0e0dc',
-    keyword: '7c3aed', string: '0f7a4a', number: 'b45309', comment: '8a8a8a', fn: '1d4ed8',
-    type: 'b45309', variable: 'c2410c', tag: 'cf222e', attr: 'c2410c',
+    base: 'vs', bg: '#edf3f7', fg: '#023047', lineNo: '#8fa3b0', lineNoActive: '#3a5262',
+    accent: '#166e8c', selection: '#219ebc2e', lineHighlight: '#02304708', border: '#dde7ee',
+    keyword: 'a84f00', string: '2f7d32', number: 'a34a07', comment: '667c88', fn: '1b6fa8',
+    type: '7b4bb5', variable: '3a5262', tag: 'c0262d', attr: '8a6400',
   },
 } as const;
 
@@ -290,7 +290,7 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
         onMount={handleMount}
         options={{
           readOnly,
-          fontSize: 13,
+          fontSize: 14,
           fontFamily: "'DM Mono', ui-monospace, Menlo, monospace",
           lineNumbers: 'on',
           minimap: { enabled: false },

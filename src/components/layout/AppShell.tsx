@@ -449,7 +449,7 @@ const AppShell: React.FC = () => {
             padding: '8px 12px', borderRadius: 999,
             background: 'var(--bg-secondary)', color: 'var(--text-primary)',
             border: '1px solid var(--border)', cursor: 'pointer',
-            boxShadow: 'var(--shadow-md)', fontSize: 13,
+            boxShadow: 'var(--shadow-md)', fontSize: 14,
           }}
         >
           <span style={{ width: 8, height: 8, borderRadius: 999, background: 'var(--accent-live)' }} />

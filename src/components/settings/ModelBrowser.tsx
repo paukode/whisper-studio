@@ -50,7 +50,7 @@ const FitWarning: React.FC<{
     <p
       role="alert"
       style={{
-        fontSize: 11,
+        fontSize: 12,
         color:
           fit === 'too_big' ? 'var(--accent-record)' : 'var(--risk-warn)',
         margin: '4px 0 0',
@@ -114,7 +114,7 @@ const DownloadingChip: React.FC = () => (
  *  Informational rather than an error: the download is allowed and the model
  *  works fine as a chat model, it just won't be given the tool pool. */
 const ToolCapabilityNote: React.FC<{ minParamsB?: number | null }> = ({ minParamsB }) => (
-  <p style={{ fontSize: 11, color: 'var(--text-secondary)', margin: '4px 0 0' }}>
+  <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: '4px 0 0' }}>
     Under {minParamsB ?? DEFAULT_AGENTIC_MIN_B}B, so it installs with tool calling off. Models this
     small answer with a raw tool-call blob instead of running the tool, so they get no tools, no
     workspace access and a much smaller prompt. Fine for chat and quick code.
@@ -253,7 +253,7 @@ const RepoRow: React.FC<{ result: BrowseResult }> = ({ result }) => {
             <span className="model-local-badge">{result.author}</span>
             {result.official && <OfficialChip />}
             {result.param_size && (
-              <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+              <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
                 {result.param_size}
               </span>
             )}
@@ -274,7 +274,7 @@ const RepoRow: React.FC<{ result: BrowseResult }> = ({ result }) => {
             // One repo = one quant: show size + fit as text once the lazy
             // detail lands (hovering the button triggers it), no picker.
             selectedQuant && (
-              <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+              <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
                 {selectedQuant.quant} · {humanSize(selectedQuant.size_bytes)}
                 {fitSuffix(selectedQuant.fit)}
               </span>
@@ -397,7 +397,7 @@ const RecommendedRow: React.FC<{ model: RecommendedModel }> = ({ model }) => {
           {model.label}
           <span className="model-local-badge">{model.author}</span>
           {model.param_size && (
-            <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
               {model.param_size}
             </span>
           )}
@@ -423,7 +423,7 @@ const RecommendedRow: React.FC<{ model: RecommendedModel }> = ({ model }) => {
       </div>
       <div className="settings-item-actions" style={{ gap: 8 }}>
         {model.downloaded ? (
-          <span className="model-installed-badge" style={{ fontSize: 12, color: 'var(--accent-live)' }}>
+          <span className="model-installed-badge" style={{ fontSize: 13, color: 'var(--accent-live)' }}>
             Installed
           </span>
         ) : (
@@ -462,7 +462,7 @@ const RecommendedSection: React.FC = () => {
   if (query.isLoading || models.length === 0) return null;
   return (
     <div style={{ marginBottom: 20 }}>
-      <h5 className="models-section-title" style={{ fontSize: 13 }}>
+      <h5 className="models-section-title" style={{ fontSize: 14 }}>
         Recommended
       </h5>
       <p className="models-section-desc">
@@ -521,7 +521,7 @@ export const ModelBrowser: React.FC = () => {
 
       <RecommendedSection />
 
-      <h5 className="models-section-title" style={{ fontSize: 13 }}>
+      <h5 className="models-section-title" style={{ fontSize: 14 }}>
         Search Hugging Face
       </h5>
       <form onSubmit={onSubmit} style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>

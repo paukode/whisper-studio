@@ -1,12 +1,12 @@
 <svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
-  <!-- macOS rounded square: 824x824 content on the 1024 grid. Flat Doku
-       dark canvas with a hairline edge, as in static/modules/themes.css. -->
+  <!-- macOS rounded square: 824x824 content on the 1024 grid. Flat navy
+       canvas with a hairline edge, as in static/modules/themes.css. -->
   <rect x="100" y="100" width="824" height="824" rx="186"
-        fill="#0d0d0d" stroke="#2a2a2a" stroke-width="6"/>
-  <!-- W monogram in the dark accent -->
+        fill="#023047" stroke="#15405a" stroke-width="6"/>
+  <!-- W monogram in the dark-mode sky accent -->
   <polyline points="254,352 366,672 488,392 610,672 722,352"
-            fill="none" stroke="#3dd68c" stroke-width="86"
+            fill="none" stroke="#8ecae6" stroke-width="86"
             stroke-linecap="round" stroke-linejoin="round"/>
-  <!-- record dot as the period of "W.", baseline-aligned -->
-  <circle cx="794" cy="671" r="44" fill="#f87171"/>
+  <!-- amber dot as the period of "W.", baseline-aligned -->
+  <circle cx="794" cy="671" r="44" fill="#ffb703"/>
 </svg>

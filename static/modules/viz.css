@@ -130,13 +130,13 @@
 
 .viz-svg text {
     font-family: inherit;
-    font-size: 14px;
+    font-size: 15px;
     fill: var(--text-primary);
 }
 
-.viz-svg .t  { font-size: 14px; fill: var(--text-primary); }
-.viz-svg .th { font-size: 14px; font-weight: 500; fill: var(--text-primary); }
-.viz-svg .ts { font-size: 12px; fill: var(--text-secondary); }
+.viz-svg .t  { font-size: 15px; fill: var(--text-primary); }
+.viz-svg .th { font-size: 15px; font-weight: 500; fill: var(--text-primary); }
+.viz-svg .ts { font-size: 13px; fill: var(--text-secondary); }
 
 .viz-svg .box {
     fill: var(--bg-elevated);

@@ -8,7 +8,7 @@ import { useDockStore } from '@/stores/dockStore';
  * event that ChatInput turns into an implementation turn.
  */
 const btn: React.CSSProperties = {
-  font: 'inherit', fontSize: 12, cursor: 'pointer', borderRadius: 6,
+  font: 'inherit', fontSize: 13, cursor: 'pointer', borderRadius: 6,
   padding: '4px 10px', border: '1px solid var(--border-strong)',
   background: 'transparent', color: 'var(--text-secondary)', flex: '0 0 auto',
 };
@@ -32,8 +32,8 @@ export const PlanCard: React.FC<{ plan: { id: string; title: string; summary: st
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flex: '0 0 auto' }}>
         <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="9" y1="13" x2="15" y2="13" /><line x1="9" y1="17" x2="15" y2="17" />
       </svg>
-      <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-muted)', flex: '0 0 auto' }}>Plan</span>
-      <span style={{ fontSize: 13, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={plan.title}>
+      <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-muted)', flex: '0 0 auto' }}>Plan</span>
+      <span style={{ fontSize: 14, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={plan.title}>
         {plan.title}
       </span>
       <span style={{ flex: 1 }} />

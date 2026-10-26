@@ -60,7 +60,7 @@ export function measureCellGrid(el: HTMLElement | null): { cols: number; rows: n
   if (!el) return { cols: 80, rows: 24 };
   const probe = document.createElement('span');
   probe.style.cssText =
-    'position:absolute;top:-9999px;visibility:hidden;white-space:pre;font-size:14px;line-height:normal;';
+    'position:absolute;top:-9999px;visibility:hidden;white-space:pre;font-size:15px;line-height:normal;';
   probe.style.fontFamily =
     getComputedStyle(document.documentElement).getPropertyValue('--font-mono').trim() ||
     'Menlo, Monaco, "Courier New", monospace';
@@ -90,11 +90,11 @@ function readXtermTheme(): {
   const tokens = getComputedStyle(document.documentElement);
   const t = (name: string, fallback: string) => tokens.getPropertyValue(name).trim() || fallback;
   return {
-    background: t('--bg-inset', '#0a0a0a'),
-    foreground: t('--text-primary', '#d4d4d4'),
-    cursor: t('--accent', '#3dd68c'),
-    cursorAccent: t('--bg-inset', '#0a0a0a'),
-    selectionBackground: t('--accent-dim', 'rgba(61,214,140,0.13)'),
+    background: t('--bg-inset', '#011420'),
+    foreground: t('--text-primary', '#e6eef3'),
+    cursor: t('--accent', '#219ebc'),
+    cursorAccent: t('--bg-inset', '#011420'),
+    selectionBackground: t('--accent-dim', 'rgba(33,158,188,0.16)'),
   };
 }
 
@@ -236,7 +236,7 @@ export function useTerminal(options: UseTerminalOptions): UseTerminalReturn {
           // below corrects the estimate against xterm's measured cells.
           const terminal = new Terminal({
             cursorBlink: true,
-            fontSize: 14,
+            fontSize: 15,
             fontFamily,
             cols: initialCols,
             rows: initialRows,

@@ -37,7 +37,7 @@ const GROUPS: { id: ManagedModelGroup; label: string; hint: string }[] = [
 ];
 
 const chipStyle = (fg: string, bg: string): React.CSSProperties => ({
-  fontSize: 11,
+  fontSize: 12,
   fontWeight: 600,
   padding: '2px 8px',
   borderRadius: 999,

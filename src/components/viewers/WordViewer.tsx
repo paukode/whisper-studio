@@ -70,7 +70,7 @@ export const WordViewer: React.FC<WordViewerProps> = ({ filePath, onEdit, rawUrl
           <button className="btn btn-sm" onClick={onEdit} type="button">Edit</button>
         )}
         <span style={{ flex: 1 }} />
-        <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{fileName}</span>
+        <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{fileName}</span>
       </div>
       <WordHtmlContent html={html} />
     </div>
