@@ -221,7 +221,7 @@ body { min-height: 100vh; }
 }
 .btn:hover { border-color: var(--accent); color: var(--text-primary); }
 .btn svg { width: 16px; height: 16px; }
-.btn--primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.btn--primary { background: linear-gradient(51deg, var(--accent) 45%, #3f7fd9); border-color: transparent; color: var(--on-accent); box-shadow: var(--shadow-sm); }
 .btn--primary:hover { color: var(--on-accent); background: var(--accent-hover); }
 .btn--ghost { background: transparent; }
 

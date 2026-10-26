@@ -2,23 +2,23 @@
    Whisper Studio Docs - Prose / content typography
    ================================================================ */
 
-.doc h1, .doc h2, .doc h3, .doc h4 { font-family: var(--font-mono); color: var(--text-heading); }
+.doc h1, .doc h2, .doc h3, .doc h4 { color: var(--text-heading); }
 .doc h1 {
   font-size: clamp(26px, 4vw, 34px); line-height: 1.15; letter-spacing: -0.03em;
-  font-weight: 500; margin: 0 0 10px;
+  font-weight: 800; margin: 0 0 10px;
 }
 .doc .subtitle { font-size: 18px; color: var(--text-secondary); margin: 0 0 28px; line-height: 1.5; }
 
 .doc h2 {
-  font-size: 22px; line-height: 1.25; letter-spacing: -0.02em; font-weight: 500;
+  font-size: 22px; line-height: 1.25; letter-spacing: -0.02em; font-weight: 700;
   margin: 52px 0 14px; padding-top: 8px;
   scroll-margin-top: calc(var(--header-h) + 18px);
 }
 .doc h3 {
-  font-size: 18px; font-weight: 500; letter-spacing: -0.01em;
+  font-size: 18px; font-weight: 700; letter-spacing: -0.01em;
   margin: 32px 0 10px; scroll-margin-top: calc(var(--header-h) + 18px);
 }
-.doc h4 { font-size: 15px; font-weight: 500; margin: 22px 0 8px; }
+.doc h4 { font-size: 15px; font-weight: 700; margin: 22px 0 8px; }
 
 /* anchor links on headings */
 .doc h2, .doc h3 { position: relative; }

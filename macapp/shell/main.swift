@@ -393,12 +393,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         splashWindow = window
     }
 
-    /// The app's page canvas in each system appearance: light #f6f9fb,
-    /// dark #021a29 (keep in step with --bg-primary in themes.css).
+    /// The app's page canvas in each system appearance: light #eef0f7,
+    /// dark #14132a (keep in step with --bg-primary in themes.css).
     private static let pageCanvasColor = NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(srgbRed: 0x02 / 255, green: 0x1a / 255, blue: 0x29 / 255, alpha: 1)
-            : NSColor(srgbRed: 0xf6 / 255, green: 0xf9 / 255, blue: 0xfb / 255, alpha: 1)
+            ? NSColor(srgbRed: 0x14 / 255, green: 0x13 / 255, blue: 0x2a / 255, alpha: 1)
+            : NSColor(srgbRed: 0xee / 255, green: 0xf0 / 255, blue: 0xf7 / 255, alpha: 1)
     }
 
     /// Clears WebKit's HTTP caches once after the app changes (an update or
