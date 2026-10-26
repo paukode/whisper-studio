@@ -393,12 +393,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         splashWindow = window
     }
 
-    /// The app's page canvas in each system appearance: light #f6f6f4,
-    /// dark #0d0d0d (keep in step with --bg-primary in themes.css).
+    /// The app's page canvas in each system appearance: light #f6f9fb,
+    /// dark #021a29 (keep in step with --bg-primary in themes.css).
     private static let pageCanvasColor = NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(srgbRed: 0x0d / 255, green: 0x0d / 255, blue: 0x0d / 255, alpha: 1)
-            : NSColor(srgbRed: 0xf6 / 255, green: 0xf6 / 255, blue: 0xf4 / 255, alpha: 1)
+            ? NSColor(srgbRed: 0x02 / 255, green: 0x1a / 255, blue: 0x29 / 255, alpha: 1)
+            : NSColor(srgbRed: 0xf6 / 255, green: 0xf9 / 255, blue: 0xfb / 255, alpha: 1)
+    }
+
+    /// Clears WebKit's HTTP caches once after the app changes (an update or
+    /// a rebuild), then calls `done`. The page keeps one origin across
+    /// launches (sticky port), so a cache written by the previous build
+    /// could serve its page and stylesheets. Local storage (the chosen
+    /// theme, layout) is kept.
+    private func clearWebCacheIfAppChanged(_ done: @escaping () -> Void) {
+        let key = "WebCacheBuildStamp"
+        let info = Bundle.main.infoDictionary
+        let version = (info?["CFBundleShortVersionString"] as? String ?? "")
+            + "+" + (info?["CFBundleVersion"] as? String ?? "")
+        let plist = Bundle.main.bundleURL.appendingPathComponent("Contents/Info.plist")
+        let modified = (try? FileManager.default.attributesOfItem(atPath: plist.path))?[
+            .modificationDate] as? Date
+        let build = "\(version)@\(Int(modified?.timeIntervalSince1970 ?? 0))"
+        guard UserDefaults.standard.string(forKey: key) != build else {
+            done()
+            return
+        }
+        let caches: Set<String> = [
+            WKWebsiteDataTypeDiskCache, WKWebsiteDataTypeMemoryCache, WKWebsiteDataTypeFetchCache,
+        ]
+        WKWebsiteDataStore.default().removeData(ofTypes: caches, modifiedSince: .distantPast) {
+            UserDefaults.standard.set(build, forKey: key)
+            done()
+        }
     }
 
     private func showMainWindow() {
@@ -441,7 +468,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         window.center()
         window.setFrameAutosaveName("WhisperStudioMainWindow")
 
-        view.load(URLRequest(url: baseURL))
+        clearWebCacheIfAppChanged { view.load(URLRequest(url: baseURL)) }
 
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
