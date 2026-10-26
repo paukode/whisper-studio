@@ -17,6 +17,7 @@ import { ModelModePanel } from './ModelModePanel';
 import { ModelsPanel } from './ModelsPanel';
 import { FeatureFlagsPanel } from './FeatureFlagsPanel';
 import { PreviewSettings } from './PreviewSettings';
+import { AppearancePanel } from './AppearancePanel';
 
 /** The flat tab ids. Each is a valid `settingsTab` value: every
  *  `openSettings(<id>)` caller (ChatPanel, MoreMenu, the command palette,
@@ -37,7 +38,8 @@ export type SettingsTabId =
   | 'cron'
   | 'plugins'
   | 'costs'
-  | 'preview';
+  | 'preview'
+  | 'appearance';
 
 interface SettingsTab {
   id: SettingsTabId;
@@ -62,6 +64,7 @@ export const SETTINGS_TABS: SettingsTab[] = [
   { id: 'plugins', label: 'Plugins' },
   { id: 'costs', label: 'Costs' },
   { id: 'preview', label: 'Live preview' },
+  { id: 'appearance', label: 'Appearance' },
 ];
 
 /* ────────────────────────────────────────────────────────────────────────
@@ -80,7 +83,8 @@ type RailItemId =
   | 'skills-plugins'
   | 'workflows-tasks'
   | 'keys-permissions'
-  | 'usage-advanced';
+  | 'usage-advanced'
+  | 'appearance';
 
 interface SubTab {
   /** A `settingsTab` value: deep-linking to this id opens this exact sub-tab. */
@@ -203,6 +207,17 @@ const RAIL_GROUPS: RailGroup[] = [
           { id: 'feature-flags', label: 'Feature flags', render: () => <FeatureFlagsPanel /> },
           { id: 'preview', label: 'Live preview', render: () => <PreviewSettings /> },
         ],
+      },
+    ],
+  },
+  {
+    label: 'Look and feel',
+    items: [
+      {
+        id: 'appearance',
+        label: 'Appearance',
+        icon: icon(<><circle cx="13.5" cy="6.5" r="1.5" /><circle cx="17.5" cy="10.5" r="1.5" /><circle cx="8.5" cy="7.5" r="1.5" /><circle cx="6.5" cy="12.5" r="1.5" /><path d="M12 2a10 10 0 0 0 0 20c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.3 0-1.1.9-2 2-2h2.3A5.7 5.7 0 0 0 22 9.7C22 5.4 17.5 2 12 2z" /></>),
+        subTabs: [{ id: 'appearance', label: 'Appearance', render: () => <AppearancePanel /> }],
       },
     ],
   },

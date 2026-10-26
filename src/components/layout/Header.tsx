@@ -27,11 +27,12 @@ import { useVoiceClock } from '@/hooks/useVoiceClock';
 // with the mic into one Aggregate Device, which getUserMedia() then picks up
 // as a single input. See README → "Capturing system audio (macOS)".
 
-const THEME_SWATCHES: Record<ThemeKey, string> = {
-  auto: 'linear-gradient(135deg, #eef0f7 50%, #14132a 50%)',
-  light: '#eef0f7',
-  dark: '#14132a',
-};
+/** The menu's mode swatches, drawn in the active palette's canvas colors. */
+function themeSwatch(key: ThemeKey, light: string, dark: string): string {
+  if (key === 'light') return light;
+  if (key === 'dark') return dark;
+  return `linear-gradient(135deg, ${light} 50%, ${dark} 50%)`;
+}
 
 export const Header: React.FC = () => {
   const createSession = useSessionStore((s) => s.createSession);
@@ -55,7 +56,8 @@ export const Header: React.FC = () => {
   const setTaskPanelOpen = useBackgroundTaskStore((s) => s.setPanelOpen);
   // Rows the list holds: running tasks plus the finished ones still lingering.
   const taskRowCount = Object.keys(backgroundTasks).length;
-  const { themeKey, setTheme, themes } = useTheme();
+  const { themeKey, setTheme, themes, paletteId, palettes } = useTheme();
+  const palette = palettes.find((p) => p.id === paletteId) ?? palettes[0];
   const voiceStatus = useVoiceStore((s) => s.status);
   const { elapsed: voiceElapsed } = useVoiceClock();
 
@@ -84,6 +86,7 @@ export const Header: React.FC = () => {
 
   const handleTogglePicker = useCallback(() => setPickerOpen((p) => !p), []);
   const handleSelectTheme = useCallback((key: ThemeKey) => { setTheme(key); setPickerOpen(false); }, [setTheme]);
+  const handleMoreThemes = useCallback(() => { setPickerOpen(false); openSettings('appearance'); }, [openSettings]);
   const handleNewSession = useCallback(() => createSession(), [createSession]);
   const handleToggleSidebar = useCallback(() => toggleSidebar(), [toggleSidebar]);
   const handleOpenSettings = useCallback(() => openSettings(), [openSettings]);
@@ -328,7 +331,7 @@ export const Header: React.FC = () => {
 
           <div className={`theme-picker${pickerOpen ? ' open' : ''}`}>
             {themes.map((t) => {
-              const swatch = THEME_SWATCHES[t.key];
+              const swatch = themeSwatch(t.key, palette.light.bg, palette.dark.bg);
               return (
                 <button
                   key={t.key}
@@ -342,6 +345,19 @@ export const Header: React.FC = () => {
                 </button>
               );
             })}
+            <div className="theme-picker-separator" />
+            <button
+              className="theme-picker-item theme-picker-more"
+              onClick={handleMoreThemes}
+              type="button"
+            >
+              <span
+                className="theme-picker-swatch"
+                style={{ background: `linear-gradient(135deg, ${palette.light.accent} 50%, ${palette.dark.accent} 50%)` }}
+              />
+              More themes…
+              <span className="theme-picker-current">{palette.name}</span>
+            </button>
           </div>
         </div>
       </div>

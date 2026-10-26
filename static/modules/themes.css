@@ -235,7 +235,7 @@
     top: calc(100% + 6px);
     right: 0;
     z-index: 900;
-    min-width: 220px;
+    min-width: 260px;
     background: var(--bg-elevated);
     border: 1px solid var(--border-strong);
     border-radius: 10px;
@@ -266,6 +266,7 @@
     font-size: 0.85em;
     cursor: pointer;
     text-align: left;
+    white-space: nowrap;
     transition: background 0.12s;
 }
 
@@ -294,6 +295,14 @@
 
 .theme-picker-item.active .theme-picker-check {
     opacity: 1;
+}
+
+.theme-picker-current {
+    margin-left: auto;
+    padding-left: 12px;
+    color: var(--text-muted);
+    font-size: 0.9em;
+    font-weight: 400;
 }
 
 .theme-picker-separator {
