@@ -21,7 +21,12 @@ from typing import NamedTuple
 from server.approval.spec import WORKSPACE_ROOT_KEY, ApprovalOutcome, turn_workspace_refusal
 from server.auto_mode import classify_tool_call
 from server.security.explainer import explain_permission
-from server.security.permissions import approval_floor, resolve_static_decision
+from server.security.permissions import (
+    FILE_WRITE_CATEGORIES,
+    approval_floor,
+    resolve_static_decision,
+    targets_app_config,
+)
 from server.utils import ndjson_dumps
 
 log = logging.getLogger("whisper-studio")
@@ -169,6 +174,27 @@ async def gate_approval(
             f"[Error] No approval registered for action {action!r}. "
             f"Refusing to run. Register an ApprovalSpec in server/approval/bootstrap.py.",
         )
+    # Bind the action to the tool that may emit it. An MCP tool's result is
+    # untrusted server content (server/mcp.py already neutralizes an internal
+    # marker in it), and the only approval an MCP tool ever asks for is its own
+    # mcp_tool_call, which server/mcp.py generates, not the server. Any other
+    # action carried by an MCP tool's output was forged, so it is refused here
+    # even if it reached the gate: a server cannot run a write or a command by
+    # returning text that looks like an approval request.
+    if action != "mcp_tool_call":
+        from server.mcp import mcp_manager
+
+        if mcp_manager.is_mcp_tool(state.tool_name):
+            log.error(
+                "approval: MCP tool %s tried to emit a %r action; refusing",
+                state.tool_name,
+                action,
+            )
+            return ApprovalStep(
+                REPLY,
+                f"[Error] An MCP tool cannot request a {action!r} action; its output was "
+                "treated as text, not run.",
+            )
     # A workspace-bound payload is stamped with the root it was
     # resolved against, and refused if, since the tool ran, the user
     # let go of the turn's workspace or that root stopped being the
@@ -179,6 +205,16 @@ async def gate_approval(
     if refusal:
         return ApprovalStep(OUTPUT, refusal)
     if unattended:
+        # A write to the app's own grant or config files follows the permission
+        # mode (the app-config table), so a person decides it. An unattended
+        # run has none, so it is refused rather than auto-approved.
+        if spec.category in FILE_WRITE_CATEGORIES and targets_app_config(ws_parsed):
+            return ApprovalStep(
+                OUTPUT,
+                "[Error] A write to the app's own grant or config files needs a "
+                "person's approval, and this run has no person to ask. Ask the "
+                "top-level session, where a person can approve it, to make this change.",
+            )
         # Unattended (agent) turns auto-approve unconditionally: no
         # human, no classifier, no category gate. Mirrors the
         # pre-migration server/agents/runtime.py inline handling
@@ -326,8 +362,13 @@ async def gate_approval(
             "explanation": explanation,
             # A hard floor asks every time, whatever the
             # session remembers, so the card must not offer
-            # "Yes, all" / "Block" for it.
-            "always_asks": approval_floor(state.tool_name, ws_parsed, category) is not None,
+            # "Yes, all" / "Block" for it. A write to the app's own
+            # grant or config files is the same: it never falls under a
+            # blanket "yes for all writes", so the card must not offer it.
+            "always_asks": (
+                approval_floor(state.tool_name, ws_parsed, category) is not None
+                or (category in FILE_WRITE_CATEGORIES and targets_app_config(ws_parsed))
+            ),
         }
     }
     sse_events.append(ndjson_dumps(event))

@@ -155,6 +155,16 @@ def register_defaults() -> None:
 
     register_rules_approval()
 
+    # config_set (sensitive keys) and the cron tools follow the permission mode
+    # (category "config"/"cron"): a person decides a change to the data root,
+    # the permission mode or a scheduled job in every mode but bypass. Their
+    # specs live with their executors to keep this file under the size budget.
+    from server.agent_tools.config_tools import register_config_approval
+    from server.cron_scheduler import register_cron_approval
+
+    register_config_approval()
+    register_cron_approval()
+
     # Folder access — its own category so it is never covered by "Yes for all
     # writes"/"all commands". Granting the app reach into a NEW folder outside
     # the connected workspace is a distinct, durable decision (it persists

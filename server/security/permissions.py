@@ -41,7 +41,12 @@ anywhere on the machine; a change outside the workspace asks even in bypass
 deletes outside it, a command asking to write outside the sandbox); a
 destructive remote action always asks; the app's own folder (~/.whisper) is
 written without asking in every mode but plan, and a delete there follows the
-mode, silent in bypass only.
+mode, silent in bypass only. The app's own grant and config files in it
+(server.infrastructure.paths.app_config_paths / app_config_dirs) are the
+exception: a write, save or delete of one follows the permission mode instead
+of the no-card allow, per the user's table (bypassPermissions allows, dontAsk
+denies, auto lets the classifier decide, every other mode asks), and an
+unattended run with no person to ask is refused (server/tool_approvals.py).
 
 A preview_start that names a .whisper/launch.json config whose command a person
 has approved once starts in every mode (server/preview/start_policy.py); a new
@@ -432,6 +437,83 @@ def targets_app_storage(tool_input: dict) -> bool:
     return False
 
 
+# Approval categories whose payload "path" (or "destination_path") names the
+# file the action writes, saves or deletes. Only these carry a file target
+# that can land on one of the app's own config files.
+FILE_WRITE_CATEGORIES = frozenset({"write", "delete", "save", "office-script"})
+
+
+def targets_app_config(tool_input: dict) -> bool:
+    """Whether the call's file target is one of the app's own grant and config
+    files (server.infrastructure.paths.app_config_paths), a folder that holds
+    one, or the plugin/agent-type directories (app_config_dirs).
+
+    The real paths are compared without case, since the Mac disk ignores case,
+    and an existing target is also compared by inode, so a symlink, a hard link
+    and another spelling of the name are the same file. A relative path
+    resolves against the connected workspace, as the write executors resolve
+    it."""
+    raws = [
+        os.path.expanduser(raw.strip())
+        for raw in (tool_input.get("path"), tool_input.get("destination_path"))
+        if isinstance(raw, str) and raw.strip()
+    ]
+    if not raws:
+        return False
+    from server.infrastructure.paths import app_config_dirs, app_config_paths
+
+    configs = [os.path.realpath(p) for p in app_config_paths()]
+    dirs = [os.path.realpath(d).casefold() for d in app_config_dirs()]
+    inodes = set()
+    for config in configs:
+        try:
+            st = os.stat(config)
+        except OSError:
+            continue
+        inodes.add((st.st_dev, st.st_ino))
+    for raw in raws:
+        if not os.path.isabs(raw):
+            from server.workspace.state import get_workspace_path
+
+            ws = get_workspace_path()
+            if not ws:
+                continue
+            raw = os.path.join(ws, raw)
+        real = os.path.realpath(raw)
+        lower = real.casefold()
+        folder = real.rstrip(os.sep).casefold() + os.sep
+        for config in configs:
+            name = config.casefold()
+            if name == lower or name.startswith(folder):
+                return True
+        for directory in dirs:
+            if lower == directory or lower.startswith(directory + os.sep):
+                return True
+        try:
+            st = os.stat(real)
+        except OSError:
+            continue
+        if (st.st_dev, st.st_ino) in inodes:
+            return True
+    return False
+
+
+def _app_config_decision(mode: str) -> str | None:
+    """How a write to one of the app's own config files behaves per mode (the
+    user's table): bypassPermissions allows with no card, dontAsk denies, auto
+    lets the classifier decide (None defers to it), and every other mode
+    (default, acceptEdits, plan) asks. These files never get the no-card allow
+    that the rest of the app's folder gets, and a blanket "yes for all writes"
+    never covers them (this is resolved before the session-approval step)."""
+    if mode == MODE_BYPASS:
+        return "allow"
+    if mode == MODE_DONT_ASK:
+        return "deny"
+    if mode == MODE_AUTO:
+        return None
+    return "ask"
+
+
 def resolve_static_decision(
     tool_name: str,
     tool_input: dict,
@@ -460,6 +542,16 @@ def resolve_static_decision(
     """
     if approval_floor(tool_name, tool_input, category) is not None:
         return "ask"
+
+    # The app's own grant and config files (server.infrastructure.paths.
+    # app_config_paths / app_config_dirs): a write, save or delete of one
+    # decides what the assistant may do next, so it follows the permission mode
+    # (the user's table: bypass allow, dontAsk deny, auto classifier, every
+    # other mode ask) instead of the no-card allow the rest of the folder gets.
+    # Checked before the app storage rule below and before the session-approval
+    # step, so a blanket "yes for all writes" never covers these files.
+    if category in FILE_WRITE_CATEGORIES and targets_app_config(tool_input):
+        return _app_config_decision(mode)
 
     # The app's own folders (~/.whisper: rules, profile, scratch, memory,
     # data) are where these writes belong, so no mode asks for them. Checked

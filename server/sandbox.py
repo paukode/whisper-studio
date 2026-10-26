@@ -173,6 +173,46 @@ def _scratch_env(write_mode: str, scratch_dir: str | None) -> dict[str, str]:
     return scratch_cache_env(scratch_dir)
 
 
+def _control_port_deny_rules() -> list[str]:
+    """Deny a CONFINED command the app's own control API port on loopback.
+
+    A command that no person reviewed runs write-confined, but the OS sandbox
+    does not restrict the network by default, so it could reach
+    http://127.0.0.1:<port>/api/approval/execute and run another command with
+    OPEN writes (escaping its own confinement), or flip the permission mode.
+    Denying the one loopback port the backend listens on closes that, while any
+    other local port (a dev server, a database) stays reachable. The port comes
+    from the environment (``PORT``, the app's own default 8000). Open
+    (human-approved) commands are exempt: a person read that exact command.
+    macOS only; the Linux bwrap path cannot deny a single port."""
+    port = (os.environ.get("PORT") or "8000").strip()
+    if not port.isdigit():
+        return []
+    return [f'(deny network-outbound (remote ip "localhost:{port}"))']
+
+
+def _app_config_targets() -> tuple[list[str], list[str]]:
+    """The app's own grant and config files and directories (server.
+    infrastructure.paths.app_config_paths / app_config_dirs), each as written
+    and as resolved, so a write-confined command (the kind that no person
+    reviewed) never changes them even when its tree holds the data root or the
+    user root. A file tool's write to one follows the permission mode instead
+    (server/security/permissions.py, the app-config table)."""
+    from server.infrastructure.paths import app_config_dirs, app_config_paths
+
+    def _both(path: str) -> list[str]:
+        real = os.path.realpath(path)
+        return [path, real] if real != path else [path]
+
+    files: list[str] = []
+    for path in app_config_paths():
+        files.extend(_both(path))
+    dirs: list[str] = []
+    for path in app_config_dirs():
+        dirs.extend(_both(path))
+    return list(dict.fromkeys(files)), list(dict.fromkeys(dirs))
+
+
 def _generate_macos_profile(
     workspace: str | None,
     allow_paths: list[str] | None = None,
@@ -222,11 +262,25 @@ def _generate_macos_profile(
             escaped = root.replace('"', '\\"')
             write_allows.append(f'(allow file-write* (subpath "{escaped}"))')
         write_allow_block = "\n".join(write_allows)
+        # After the allows, and so overriding them: a workspace that holds the
+        # data root or the user root cannot re-allow the app's own grant and
+        # config files (_app_config_targets). A file tool's write to one still
+        # follows the permission mode; this only stops a confined command.
+        cfg_files, cfg_dirs = _app_config_targets()
+        config_rules = [
+            f'(deny file-write* (literal "{p.replace(chr(34), chr(92) + chr(34))}"))'
+            for p in cfg_files
+        ] + [
+            f'(deny file-write* (subpath "{p.replace(chr(34), chr(92) + chr(34))}"))'
+            for p in cfg_dirs
+        ]
+        config_denies = "\n".join(config_rules)
         profile = f"""\
 (version 1)
 (allow default)
 (deny file-write*)
 {write_allow_block}
+{config_denies}
 {deny_block}
 """
     elif write_mode == "readonly":
@@ -248,6 +302,14 @@ def _generate_macos_profile(
         credential_rules = _credential_write_rules(allow_paths, write_paths)
         if credential_rules:
             profile += "\n".join(credential_rules) + "\n"
+
+    # A confined command (one no person reviewed) cannot reach the app's own
+    # control API port, so it cannot drive an approval to escape its
+    # confinement. Open (human-approved) commands keep full loopback access.
+    if write_mode != "open":
+        control_denies = _control_port_deny_rules()
+        if control_denies:
+            profile += "\n".join(control_denies) + "\n"
 
     network_rules = _macos_network_restriction_rules()
     if network_rules:
@@ -694,6 +756,18 @@ def _bwrap_argv(
     for path in _effective_denied_paths(allow_paths):
         if os.path.exists(path):
             argv.extend(_bwrap_deny_args(path))
+    # The app's own grant and config files stay readable and are never written
+    # by a confined command (_app_config_targets). bwrap binds a file read-only
+    # over its own writable bind; one that does not exist yet is outside every
+    # writable bind unless the tree holds the data root or the user root.
+    if write_mode == "workspace":
+        cfg_files, cfg_dirs = _app_config_targets()
+        for path in cfg_files:
+            if os.path.isfile(path):
+                argv.extend(["--ro-bind", path, path])
+        for path in cfg_dirs:
+            if os.path.isdir(path):
+                argv.extend(["--ro-bind", path, path])
     argv.extend(["--chdir", cwd, "/bin/sh", "-c", command])
     return argv
 

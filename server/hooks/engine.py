@@ -52,7 +52,9 @@ def _apply_control(control: dict, outcome: HookOutcome, *, allow_rewrite: bool) 
     return False
 
 
-def _run_shell_hook(hook: HookDef, payload: dict, cwd: str) -> tuple[int, str, str]:
+def _run_shell_hook(
+    hook: HookDef, payload: dict, cwd: str, write_root: str | None
+) -> tuple[int, str, str]:
     from server.sandbox import run_sandboxed
 
     # Legacy convenience vars (the full payload is also on stdin). Passed via the
@@ -67,12 +69,20 @@ def _run_shell_hook(hook: HookDef, payload: dict, cwd: str) -> tuple[int, str, s
         "WHISPER_OUTPUT": str(payload.get("tool_output", ""))[:500],
         "WHISPER_SESSION": payload.get("session_id", ""),
     }
+    # A hook runs automatically on every matched tool call with no card, so it
+    # must not write the app's own data or config, or anything outside the
+    # connected workspace (the user's permission contract: no silent change
+    # outside the workspace). Confine its writes to ``write_root`` (the
+    # workspace, or temp only when there is none). A hook that needs to read
+    # anywhere still can; only writes are bounded.
     result = run_sandboxed(
         hook.command,
         cwd=cwd,
         timeout=hook.timeout,
         input_data=json.dumps(payload),
         env_extra=env_extra,
+        write_mode="workspace",
+        write_root=write_root,
     )
     return result.returncode, (result.stdout or ""), (result.stderr or "")
 
@@ -109,7 +119,7 @@ async def run_hooks(
             hook_payload = {**payload, "tool_input": outcome.updated_input}
         try:
             code, stdout, stderr = await loop.run_in_executor(
-                None, _run_shell_hook, hook, hook_payload, cwd
+                None, _run_shell_hook, hook, hook_payload, cwd, ws
             )
         except Exception as e:  # timeout / spawn failure = infra error
             if hook.on_error == "block":
@@ -189,11 +199,16 @@ def dry_run(
     from server.sandbox import run_sandboxed
 
     try:
+        # Confine the test run the same way production hooks run (writes bound
+        # to the connected workspace, temp only when there is none), so the
+        # Test button shows the behavior the hook will actually have.
         result = run_sandboxed(
             command,
             cwd=cwd or data_root(),
             timeout=max(1, min(int(timeout), 60)),
             input_data=json.dumps(sample_payload),
+            write_mode="workspace",
+            write_root=_current_workspace(),
         )
         return {
             "exit_code": result.returncode,

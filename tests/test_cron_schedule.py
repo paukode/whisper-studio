@@ -155,6 +155,18 @@ def temp_cron(monkeypatch):
 
     monkeypatch.setattr(S, "get_session_meta", lambda sid: None)
     monkeypatch.setattr(S, "ensure_cron_inbox", lambda: "__cron_inbox__")
+    # These tests exercise the scheduling logic, not the approval gate (that is
+    # covered by test_app_config_floor.py and the cron mode tests). Default the
+    # cron tool to the inline path (gate=False, what the Settings UI uses) so a
+    # create/update/run applies at once, the way it did before gating.
+    _orig_exec = C.execute_cron_tool
+    monkeypatch.setattr(
+        C,
+        "execute_cron_tool",
+        lambda tool, args, session_id="", gate=False: _orig_exec(
+            tool, args, session_id=session_id, gate=gate
+        ),
+    )
     return d
 
 

@@ -77,6 +77,22 @@ def _safe(part: str) -> str:
     return _SAFE.sub("_", part or "").strip("_") or "no-session"
 
 
+def drop_session(session_id: str) -> None:
+    """Remove a session's agent journals (the events, message checkpoints and
+    reports of every agent and team it ran). Called when the session is
+    deleted, so the on-disk record does not outlive the session it belongs to.
+    Best-effort: a failure is logged, not raised."""
+    import shutil
+
+    directory = os.path.join(agents_root(), _safe(session_id))
+    if not os.path.isdir(directory):
+        return
+    try:
+        shutil.rmtree(directory)
+    except OSError as e:  # noqa: BLE001
+        log.warning("agent journal cleanup failed for session %s: %s", session_id, e)
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 

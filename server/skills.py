@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import shlex
 
 from fastapi import APIRouter
 
@@ -159,16 +160,33 @@ def command_runs_trusted_skill(command: str) -> bool:
     agenthub skill is trusted). Used to auto-approve a trusted skill running its
     own bundled scripts, without opening a hole for arbitrary commands: the
     match is scoped to the skill's own directory, and validate_command still
-    applies. Untrusted skills always fall through to the approval card."""
+    applies. Untrusted skills always fall through to the approval card.
+
+    A command TOKEN must resolve to a path inside a trusted skill's directory,
+    not merely contain the directory string somewhere (which a crafted command
+    could carry in an unrelated argument). A command that does not match falls
+    through to the normal approval card, so tightening this only ever asks more,
+    never runs more."""
     if not command:
         return False
     trusted = set(load_skills_config().get("trusted", []))
     if not trusted:
         return False
+    dirs = []
     for name in trusted:
         skill = SKILLS.get(name)
         skill_dir = skill.get("skill_dir") if skill else None
-        if skill_dir and (skill_dir.rstrip(os.sep) + os.sep) in command:
+        if skill_dir:
+            dirs.append(os.path.realpath(skill_dir).rstrip(os.sep) + os.sep)
+    if not dirs:
+        return False
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return False
+    for token in tokens:
+        real = os.path.realpath(os.path.expanduser(token))
+        if any(real.startswith(d) for d in dirs):
             return True
     return False
 

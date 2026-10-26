@@ -311,6 +311,26 @@ def _delete(name: str) -> str:
     return _ok(action="delete", name=name)
 
 
+def _require_agent_created(name: str) -> str | None:
+    """A change from chat is allowed only on a skill the assistant created
+    (created_by: agent). A user-written skill (folder or flat) is edited in
+    Settings, never from chat: a prompt injection must not rewrite a skill the
+    user trusts, whose bundled scripts a trusted skill can auto-run with no
+    card (server/skills.py::command_runs_trusted_skill)."""
+    skill_dir = _skill_dir_for(name)
+    if skill_dir:
+        md = _skill_md(skill_dir)
+        if md and _agent_created(md):
+            return None
+        return _err(
+            f"'{name}' was not created by the assistant, so it cannot be changed from "
+            "chat; edit it in Settings > Skills."
+        )
+    if _flat_skill_file(name):
+        return _err(f"'{name}' was written by the user; edit it in Settings > Skills.")
+    return None
+
+
 def execute_skill_manage(tool_input: dict, session_id: str = "") -> str:
     if not _enabled():
         return _err("skill_manage is disabled (feature flag skill_self_improvement is off)")
@@ -318,6 +338,12 @@ def execute_skill_manage(tool_input: dict, session_id: str = "") -> str:
     name = str(tool_input.get("name") or "").strip()
     if not name:
         return _err("name is required")
+    # A mutation of an existing skill is allowed only on one the assistant
+    # created; delete has its own equivalent check already.
+    if action in ("patch", "append", "write_file", "remove_file"):
+        guard = _require_agent_created(name)
+        if guard:
+            return guard
     if action == "view":
         return _view(name)
     if action == "create":

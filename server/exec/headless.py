@@ -450,6 +450,7 @@ async def run_headless_turn(
         from server.chat.engine.policy import TurnPolicy
         from server.chat.engine.runner import TurnContext, run_turn
         from server.infrastructure.run_limits import round_limit, time_limit_seconds
+        from server.security.permissions import get_mode
 
         rounds = max_rounds or round_limit()
         deadline = None if attended else time_limit_seconds()
@@ -476,8 +477,12 @@ async def run_headless_turn(
             memory_hooks=lambda msgs: None,
             # Attended runs (voice) follow the user's permission mode and pause
             # for decisions like interactive chat; unattended ones auto-resolve.
+            # The mode is read from permissions.json (get_mode), the same source
+            # the chat gate and the UI mode selector use, not config
+            # permission_mode (which the UI never writes, so plan/dontAsk/bypass
+            # chosen there would not have reached voice).
             unattended=not attended,
-            mode=str(cfg.get("permission_mode") or "default") if attended else "default",
+            mode=get_mode() if attended else "default",
             session_approvals=dict(session_approvals or {}) if attended else {},
             session_config=cfg if attended else {},
             turn_scope_id=turn_scope_id,

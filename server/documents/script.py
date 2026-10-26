@@ -160,11 +160,17 @@ def run_office_script(
         # sys.executable, not "python3": the Office libraries live in the
         # app's venv, and the system interpreter has none of them.
         try:
+            # Confined to the work dir (the model-written code only needs to
+            # read its input there and save the document to WS_OFFICE_OUTPUT
+            # there; the approval executor then moves it to the destination).
+            # workspace-write keeps the script from writing anywhere else, the
+            # app's own config files included.
             result = run_sandboxed(
                 f"{shlex.quote(sys.executable)} {shlex.quote(script_path)} < /dev/null",
                 cwd=work_dir,
                 timeout=OFFICE_SCRIPT_TIMEOUT_S,
                 env_extra=env,
+                write_mode="workspace",
             )
         except subprocess.TimeoutExpired:
             return False, f"Error: the script timed out ({OFFICE_SCRIPT_TIMEOUT_S}s limit).", b""

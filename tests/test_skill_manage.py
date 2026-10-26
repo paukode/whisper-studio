@@ -118,16 +118,19 @@ def test_delete_only_for_agent_created_skills(_skills_dir):
     assert not (_skills_dir / "mine").exists() and "mine" not in _sk.SKILLS
 
 
-def test_flat_skill_can_be_viewed_and_patched_but_not_deleted(_skills_dir):
+def test_flat_skill_can_be_viewed_but_changed_only_in_settings(_skills_dir):
     flat = _skills_dir / "quick-note.md"
     flat.write_text("---\nname: quick_note\ndescription: flat skill\n---\nDo the thing.\n")
     _sk.SKILLS = _sk.load_skills()
     view = _call(action="view", name="quick_note")
     assert view["kind"] == "file" and "Do the thing" in view["content"]
-    assert _call(
+    # A user-written skill is changed in Settings, not from chat: a prompt
+    # injection must not rewrite a skill the user wrote and may trust.
+    patched = _call(
         action="patch", name="quick_note", old_text="Do the thing.", new_text="Do it well."
-    )["ok"]
-    assert "Do it well." in flat.read_text()
+    )
+    assert "Settings" in patched["error"]
+    assert flat.read_text().endswith("Do the thing.\n")  # unchanged
     assert "Settings" in _call(action="delete", name="quick_note")["error"]
 
 
