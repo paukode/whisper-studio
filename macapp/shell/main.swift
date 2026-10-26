@@ -393,6 +393,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         splashWindow = window
     }
 
+    /// The app's page canvas in each system appearance: light #f6f6f4,
+    /// dark #0d0d0d (keep in step with --bg-primary in themes.css).
+    private static let pageCanvasColor = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 0x0d / 255, green: 0x0d / 255, blue: 0x0d / 255, alpha: 1)
+            : NSColor(srgbRed: 0xf6 / 255, green: 0xf6 / 255, blue: 0xf4 / 255, alpha: 1)
+    }
+
     private func showMainWindow() {
         guard mainWindow == nil, let baseURL = baseURL else { return }
 
@@ -415,6 +423,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         view.uiDelegate = self
         view.navigationDelegate = self
         view.allowsBackForwardNavigationGestures = true
+        // The page canvas color (--bg-primary in static/modules/themes.css),
+        // shown before the first paint and past the page edges, so opening
+        // the window never flashes white in dark mode.
+        view.underPageBackgroundColor = Self.pageCanvasColor
 
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1440, height: 900),
@@ -424,6 +436,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         window.isReleasedWhenClosed = false
         window.title = "Whisper Studio"
         window.contentMinSize = NSSize(width: 1000, height: 700)
+        window.backgroundColor = Self.pageCanvasColor
         window.contentView = view
         window.center()
         window.setFrameAutosaveName("WhisperStudioMainWindow")
