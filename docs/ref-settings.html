@@ -206,7 +206,7 @@
             <code>auto</code> value is coerced back to a real level.</td>
         </tr>
         <tr>
-          <td><b>Response length</b> pill</td>
+          <td><b>Answers</b> in the "How it thinks" group</td>
           <td><code>brief_mode</code></td>
           <td>Brief, Normal or Detailed. On a model with native verbosity (the GPT models) the choice
             is sent as the provider's own <code>verbosity</code> value; on every other model only the
@@ -244,7 +244,7 @@
         <tr><td><code>backends</code></td><td>object</td><td><code>{}</code>; a fresh install is seeded <code>{"embed":"qwen3","rerank":"qwen3","ner":"gliner","index_llm":"haiku"}</code></td><td>Model mode (hybrid only)</td></tr>
         <tr><td><code>local_mode</code></td><td>boolean</td><td><code>false</code></td><td>No field. Legacy key, read only as a fallback when no <code>model_mode</code> is set</td></tr>
         <tr><td><code>effort_level</code></td><td>string</td><td><code>"high"</code> code fallback; shipped value <code>"max"</code></td><td>Effort pill (per session)</td></tr>
-        <tr><td><code>brief_mode</code></td><td>boolean</td><td><code>false</code></td><td>Response length pill (per session)</td></tr>
+        <tr><td><code>brief_mode</code></td><td>boolean</td><td><code>false</code></td><td>Answers setting in the "How it thinks" group (per session)</td></tr>
         <tr><td><code>auxiliary_models</code></td><td>object</td><td><code>{}</code></td><td>No field. See <a href="#auxiliary">Auxiliary models</a></td></tr>
         <tr><td><code>model_fallback_enabled</code></td><td>boolean</td><td><code>false</code></td><td>Costs &gt; Enable model fallback. Steps the model down a cheaper chain once spend reaches 80 percent of a cost cap</td></tr>
         <tr><td><code>max_session_cost_usd</code></td><td>number</td><td><code>0.0</code> (unlimited)</td><td>Costs &gt; Max Session Cost</td></tr>

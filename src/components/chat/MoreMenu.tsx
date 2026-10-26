@@ -4,6 +4,7 @@ import { useUIStore } from '@/stores/uiStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import { post } from '@/api/client';
 import type { IndexInfo } from '@/api/workspace';
+import { TokenCounter } from './TokenCounter';
 
 export type MoreSection = 'skills' | 'index' | null;
 
@@ -32,13 +33,13 @@ function prettySkillName(name: string): string {
 }
 
 /**
- * "+ More" overflow popover holding the less-frequent toolbar controls (brief,
- * auto memory, skills, index search, project memory) so the chat toolbar keeps
- * to its four primary controls. MCP servers are enabled/disabled in Settings →
- * MCP, not here. The dot lights up when a hidden
- * toggle is active — including a narrowed index selection — so nothing important
- * is silently buried. Extracted from ChatInput to keep that file under budget;
- * it self-subscribes to the same stores rather than threading ~10 props.
+ * The composer's round "More" button and its popover: the less-frequent
+ * controls (usage, auto memory, skills, index search, project memory) so the
+ * composer row keeps to its two groups. MCP servers are enabled/disabled in
+ * Settings → MCP, not here. A count badge says how many hidden settings are
+ * switched on (auto memory, a narrowed index selection), so nothing important
+ * is silently buried. It self-subscribes to the same stores rather than
+ * threading ~10 props.
  */
 export const MoreMenu: React.FC<MoreMenuProps> = ({
   open, section, setSection, onToggle, onClose,
@@ -65,28 +66,31 @@ export const MoreMenu: React.FC<MoreMenuProps> = ({
     }
   }, [currentSessionId, addToast, onClose]);
 
+  const activeCount = (autoMemory ? 1 : 0)
+    + (indexes.length > 0 && selectedIndexes.length < indexes.length ? 1 : 0);
+
   return (
     <div className="toolbar-dropdown-wrap">
       <button
         type="button"
-        className={`toolbar-btn more-btn${open ? ' active' : ''}`}
+        className={`more-btn${open ? ' active' : ''}`}
         id="moreBtn"
-        title="More controls"
-        aria-label="More controls"
+        title="More: usage, memory, skills, search indexes"
+        aria-label={`More controls${activeCount ? `, ${activeCount} on` : ''}`}
         aria-expanded={open}
         aria-controls="moreMenu"
         onClick={onToggle}
       >
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-          <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" />
         </svg>
-        More
-        {(autoMemory
-          || (indexes.length > 0 && selectedIndexes.length < indexes.length)) && (
-          <span className="more-dot" aria-hidden="true" />
-        )}
+        {activeCount > 0 && <span className="more-badge" data-testid="more-badge">{activeCount}</span>}
       </button>
       <div className="toolbar-dropdown more-pop" id="moreMenu" role="group" aria-label="More controls" style={{ display: open ? 'block' : 'none' }}>
+        {/* This chat's tokens, context and cost (renders nothing before the
+         *  first turn). */}
+        <div className="more-usage"><TokenCounter /></div>
+
         <button
           type="button"
           className={`more-row${autoMemory ? ' on' : ''}`}

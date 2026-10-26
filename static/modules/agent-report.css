@@ -9,7 +9,7 @@
 
 /* One width with an assistant turn that holds activity rows, so the chip
    columns of the report and the turns line up. */
-.chat-msg-wrap.assistant-wrap.agent-report-wrap { width: 66.67%; }
+.chat-msg-wrap.assistant-wrap.agent-report-wrap { width: 100%; }
 /* The timestamp under the card starts where the card's text does. */
 .agent-report-wrap > .msg-timestamp { padding-left: 15px; }
 

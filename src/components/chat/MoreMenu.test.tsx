@@ -40,3 +40,31 @@ describe('MoreMenu Memory row', () => {
     expect(row.getAttribute('title')).toContain(note);
   });
 });
+
+describe('MoreMenu count badge', () => {
+  it('counts the hidden settings that are switched on', () => {
+    useSettingsStore.setState({ autoMemory: true, autoMemoryNote: null });
+    render(
+      <MoreMenu
+        open={false}
+        section={null}
+        setSection={() => {}}
+        onToggle={() => {}}
+        onClose={() => {}}
+        indexes={[{ path: '/a', name: 'a', files: 1, chunks: 1 }, { path: '/b', name: 'b', files: 1, chunks: 1 }] as never}
+        selectedIndexes={['/a']}
+        toggleIndex={() => {}}
+        wsConnected={false}
+        onInsertSkill={() => {}}
+      />,
+    );
+    expect(screen.getByTestId('more-badge')).toHaveTextContent('2');
+    expect(screen.getByRole('button', { name: /More controls, 2 on/ })).toBeTruthy();
+  });
+
+  it('shows no badge when nothing hidden is on', () => {
+    useSettingsStore.setState({ autoMemory: false, autoMemoryNote: null });
+    renderMenu();
+    expect(screen.queryByTestId('more-badge')).toBeNull();
+  });
+});

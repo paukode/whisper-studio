@@ -19,12 +19,7 @@ import { useQuery } from '@tanstack/react-query';
 import { listIndexes, type IndexInfo } from '@/api/workspace';
 import { useIndexSearchStore } from '@/stores/indexSearchStore';
 import { toError } from '@/utils/toError';
-import { EffortPicker } from './EffortPicker';
-import { ResponseLengthPicker } from './ResponseLengthPicker';
-import { LocalContextWindowSlider } from './LocalContextWindowSlider';
-import { ModeDropdown } from './ModeDropdown';
-import { ModelDropdown } from './ModelDropdown';
-import { WorkspaceDropdown } from './WorkspaceDropdown';
+import { ThinkGroup, WorkGroup } from './ComposerGroups';
 import {
   BASE_SLASH_COMMANDS,
   parseSkillMention,
@@ -32,7 +27,6 @@ import {
   VOICE_SUBMIT_TRIGGERS,
   type SlashCommand,
 } from './chatInputConstants';
-import { TokenCounter } from './TokenCounter';
 import { MoreMenu, type MoreSection } from './MoreMenu';
 import { useVoiceStore } from '@/stores/voiceStore';
 import { voiceController } from '@/services/voiceController';
@@ -59,10 +53,12 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
     removeAttachment,
     waitForUploads,
   } = useComposerAttachments(sessionId);
-  const [modeOpen, setModeOpen] = useState(false);
+  // The composer's two group panels ("How it thinks", "Where it works"), the
+  // model list inside the first, and the More popover: one open at a time.
+  const [thinkOpen, setThinkOpen] = useState(false);
+  const [workOpen, setWorkOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
-  const [wsDropdownOpen, setWsDropdownOpen] = useState(false);
-  // "+ More" overflow popover and which section inside it is expanded.
+  // More popover and which section inside it is expanded.
   const [moreOpen, setMoreOpen] = useState(false);
   const [moreSection, setMoreSection] = useState<MoreSection>(null);
 
@@ -109,7 +105,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
   // so background events appear inline without a page refresh.
 
   /* ── Workspace dropdown helpers ── */
-  const recentPaths = useRecentWorkspaces(wsDropdownOpen).slice(0, 5);
+  const recentPaths = useRecentWorkspaces(workOpen).slice(0, 5);
 
   const connectToWorkspace = useCallback(async (wsPath: string) => {
     try {
@@ -130,7 +126,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
       // workspace root, and an unexpanded "~/..." never matches it.
       const connectedPath = data?.path || wsPath;
       useUIStore.getState().setWsConnected(true, connectedPath);
-      setWsDropdownOpen(false);
+      setWorkOpen(false);
       const name = connectedPath.split('/').pop();
       if (data?.writable === false) {
         useUIStore.getState().addToast({
@@ -150,13 +146,13 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
     }
   }, []);
 
-  // Close all toolbar dropdowns on click outside.
+  // Close the composer's panels and popovers on a click outside all of them.
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
-      if (!target.closest('.toolbar-dropdown-wrap')) {
-        setWsDropdownOpen(false);
-        setModeOpen(false);
+      if (!target.closest('.toolbar-dropdown-wrap, .cg-wrap')) {
+        setThinkOpen(false);
+        setWorkOpen(false);
         setModelOpen(false);
         setMoreOpen(false);
       }
@@ -165,23 +161,23 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  // Close toolbar dropdowns on Escape (matches EffortPicker's own dismiss).
+  // Close the composer's panels and popovers on Escape.
   // Acts — and consumes the key via preventDefault — only when a dropdown is
   // actually open, so an idle ESC still reaches global shortcuts (the stream
   // kill switch). Open flags are deps so the handler sees current state.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
-      if (!(wsDropdownOpen || modeOpen || modelOpen || moreOpen)) return;
+      if (!(thinkOpen || workOpen || modelOpen || moreOpen)) return;
       e.preventDefault();
-      setWsDropdownOpen(false);
-      setModeOpen(false);
+      setThinkOpen(false);
+      setWorkOpen(false);
       setModelOpen(false);
       setMoreOpen(false);
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [wsDropdownOpen, modeOpen, modelOpen, moreOpen]);
+  }, [thinkOpen, workOpen, modelOpen, moreOpen]);
 
   // Approve a saved plan: read its markdown, leave plan mode so writes are
   // allowed, and send an implementation turn. The full plan goes to the model;
@@ -268,6 +264,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
   const isStreaming = useActiveChatStore((s) => s.isStreaming);
 
   const wsConnected = useUIStore((s) => s.wsConnected);
+  const wsPath = useUIStore((s) => s.wsPath);
 
   // Other sessions mentionable via @<slug> for the autocomplete popup. The
   // actual context injection is resolved server-side (cross_session.py);
@@ -312,14 +309,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
 
   const models = useSettingsStore((s) => s.models);
   const selectedModel = useSettingsStore((s) => s.selectedModel);
-  const loadedLocalModel = useSettingsStore((s) => s.loadedLocalModel);
-  // On-device model selected? The response-length control is cloud-only; the
-  // effort chip becomes the Thinking chip on a local model that can think.
-  const isLocalModel = !!models.find((m) => m.key === selectedModel)?.is_local;
-  // An on-device model whose chat template has a thinking mode gets the
-  // Thinking chip (its levels come from the backend like the cloud ladders).
-  const localCanThink =
-    isLocalModel && (models.find((m) => m.key === selectedModel)?.effort_levels ?? []).length > 0;
 
   // Hydrate the slash-command list with the live model keys so /model
   // autocompletes against whatever's defined in config.json.
@@ -357,7 +346,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
   // sorting, and a native-picker fallback inside it). The `handleNativeBrowse`
   // name is what the /browse slash-command wiring binds to.
   const handleNativeBrowse = useCallback(() => {
-    setWsDropdownOpen(false);
+    setWorkOpen(false);
     openWorkspaceConnect();
   }, [openWorkspaceConnect]);
 
@@ -373,12 +362,12 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
     }
   }, [planMode, setPlanMode, updateConfig]);
 
-  /** Switch the permission mode from the toolbar Mode dropdown. Same write
+  /** Switch the permission mode from the "Where it works" panel. Same write
    *  path as the Settings panel — store, config, then PUT /api/permissions/mode
    *  so the backend session_approvals view stays in sync. The Plan-mode flag
    *  is mirrored so any code that still reads `planMode` keeps working. */
   const handleSelectMode = useCallback(async (target: string) => {
-    setModeOpen(false);
+    setWorkOpen(false);
     if (target === permissionMode) return;
     setPlanMode(target === 'plan');
     updateConfig({ permissionMode: target });
@@ -832,86 +821,38 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
               </svg>
             </button>
           )}
-          {/* Chat toolbar */}
+          {/* Composer controls: two groups (each opens its labeled panel)
+           *  and the round More button, left-aligned on one row. */}
           <div className="chat-toolbar" id="chatToolbar">
-            {/* Model dropdown — premium replacement for the native select.
-             *  Every selection routes through requestModelChange so Mythos-class
-             *  models (Fable 5) always pass the data-retention consent gate. */}
-            <ModelDropdown
-              models={models}
-              selectedModel={selectedModel}
-              loadedLocalModel={loadedLocalModel}
-              open={modelOpen}
+            <ThinkGroup
+              open={thinkOpen}
               onToggle={() => {
-                setModelOpen((p) => !p);
-                setWsDropdownOpen(false);
-                setModeOpen(false);
-                setMoreOpen(false);
+                setThinkOpen((p) => !p);
+                setWorkOpen(false); setMoreOpen(false); setModelOpen(false);
               }}
-              onSelect={(key) => { setModelOpen(false); void requestModelChange(key); }}
+              onClose={() => { setThinkOpen(false); setModelOpen(false); }}
+              modelOpen={modelOpen}
+              onToggleModel={() => setModelOpen((p) => !p)}
+              onSelectModel={(key) => { setModelOpen(false); void requestModelChange(key); }}
             />
 
-            <span className="toolbar-sep"></span>
-
-            {/* Effort chip + slider — beside the model. On an on-device model that
-             *  can think it is the Thinking chip (Off to Max); the response-length
-             *  picker stays cloud-only. Single-open: opening closes the rest. */}
-            {(!isLocalModel || localCanThink) && (
-              <>
-                <EffortPicker
-                  onOpen={() => {
-                    setModelOpen(false); setWsDropdownOpen(false);
-                    setModeOpen(false); setMoreOpen(false);
-                  }}
-                />
-                {!isLocalModel && (
-                  <ResponseLengthPicker
-                    onOpen={() => {
-                      setModelOpen(false); setWsDropdownOpen(false);
-                      setModeOpen(false); setMoreOpen(false);
-                    }}
-                  />
-                )}
-                <span className="toolbar-sep"></span>
-              </>
-            )}
-
-            {/* Workspace dropdown */}
-            <WorkspaceDropdown
+            <WorkGroup
+              open={workOpen}
+              onToggle={() => {
+                setWorkOpen((p) => !p);
+                setThinkOpen(false); setMoreOpen(false); setModelOpen(false);
+              }}
+              onClose={() => setWorkOpen(false)}
               connected={wsConnected}
-              open={wsDropdownOpen}
+              wsPath={wsPath}
               recentPaths={recentPaths}
-              onToggle={() => { setWsDropdownOpen(!wsDropdownOpen); setModeOpen(false); setModelOpen(false); setMoreOpen(false); }}
               onBrowse={() => handleNativeBrowse()}
               onConnect={(p) => void connectToWorkspace(p)}
-            />
-
-            <span className="toolbar-sep"></span>
-
-            {/* Mode dropdown — switch permission mode without leaving the chat.
-             *  Same write path as Settings → Permissions. */}
-            <ModeDropdown
               permissionMode={permissionMode}
-              open={modeOpen}
-              onToggle={() => {
-                setModeOpen((p) => !p);
-                setWsDropdownOpen(false); setModelOpen(false); setMoreOpen(false);
-              }}
-              onSelect={handleSelectMode}
-              onManage={() => { setModeOpen(false); openSettings('permissions'); }}
+              onSelectMode={handleSelectMode}
+              onManage={() => { setWorkOpen(false); openSettings('permissions'); }}
             />
 
-            {/* Local-model controls — render only for on-device models. Thinking
-                and tools have no toggles: capable models always think and always
-                get the full tool pool, like the cloud models. */}
-            <LocalContextWindowSlider
-              onOpen={() => {
-                setModelOpen(false); setWsDropdownOpen(false);
-                setModeOpen(false); setMoreOpen(false);
-              }}
-            />
-
-            {/* + More — overflow for the less-frequent toolbar controls. */}
             <MoreMenu
               open={moreOpen}
               section={moreSection}
@@ -919,7 +860,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
               onToggle={() => {
                 setMoreOpen((p) => {
                   const next = !p;
-                  if (next) { setModelOpen(false); setWsDropdownOpen(false); setModeOpen(false); }
+                  if (next) { setThinkOpen(false); setWorkOpen(false); setModelOpen(false); }
                   return next;
                 });
               }}
@@ -937,7 +878,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
 
             {voiceWorking && (
               <>
-                <span className="toolbar-sep"></span>
                 <span className="toolbar-btn voice-chip voice-working-chip" title="The assistant is still finishing the work you started by voice. Type to continue, or press Stop.">
                   <span className="pulse voice-request-dot" aria-hidden="true" />
                   Working in background
@@ -946,7 +886,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
             )}
             {voiceOn && (
               <>
-                <span className="toolbar-sep"></span>
                 <button
                   type="button"
                   className="toolbar-btn active voice-chip"
@@ -960,8 +899,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
               </>
             )}
 
-            {/* Token counter — reads from chatStore instead of DOM */}
-            <TokenCounter />
           </div>
           {!(voiceOn && !voiceTyping) && (
             <div className="composer-actions">

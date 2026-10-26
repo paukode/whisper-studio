@@ -227,7 +227,6 @@ body {
     color: var(--accent); font-weight: 700;
 }
 
-
 .connection-status {
     display: flex; align-items: center; gap: 6px;
     font-size: var(--fs-caption); color: var(--text-muted); font-weight: 400;
@@ -569,7 +568,9 @@ body {
    tiles, centred as one column. The composer and the tile row share one
    width (--welcome-width plus the same 24px side padding), so their edges
    line up. */
-#chatPanelWrap { --welcome-width: 760px; }
+/* The chat reads as one centred page: messages and the composer share one
+   column width, answers on its left edge, the user's messages on its right. */
+#chatPanelWrap { --welcome-width: 760px; --page-width: 860px; }
 #chatPanelWrap:not(.chat-panel-active) .chat-input-area {
     background: transparent;
     max-width: calc(var(--welcome-width) + 48px); width: 100%; margin: 0 auto;
@@ -885,7 +886,8 @@ input.segment-speaker {
    CHAT
    ================================================================ */
 .chat-messages {
-    padding: 16px 18px; display: flex; flex-direction: column; gap: 10px;
+    padding: 16px max(24px, calc((100% - var(--page-width, 860px)) / 2));
+    display: flex; flex-direction: column; gap: 10px;
     /* useFollowBottom keeps the reader's place when heights above change.
      * WebKit has no scroll anchoring of its own; Chromium's would move the
      * view a second time. */
@@ -929,7 +931,7 @@ input.segment-speaker {
     padding: 10px 14px; border-radius: var(--radius-lg);
     font-size: var(--fs-content); line-height: 1.6;
     word-wrap: break-word;
-    /* Flex item inside .chat-msg-wrap (which caps width at 66.67%). Without
+    /* Flex item inside .chat-msg-wrap (which caps the width). Without
      * min-width:0 a wide child (artifact card, tool-trace chip, long <pre>)
      * keeps its intrinsic min-content width and overflows the cap. */
     min-width: 0; max-width: 100%;
@@ -1011,13 +1013,13 @@ input.segment-speaker {
      * whole history collapses into the viewport. */
     flex-shrink: 0;
 }
-.chat-msg-wrap.user-wrap { align-self: flex-end; align-items: flex-end; }
-.chat-msg-wrap.assistant-wrap { align-self: flex-start; max-width: 66.67%; }
+.chat-msg-wrap.user-wrap { align-self: flex-end; align-items: flex-end; max-width: 75%; }
+.chat-msg-wrap.assistant-wrap { align-self: flex-start; max-width: 100%; }
 /* An assistant turn that holds activity rows (TurnBubble, and the live reply
- * that starts one) keeps one width while it streams, as the approved mockup
- * draws it: shrink-wrapped, the bubble widened with each paragraph and moved
- * the chip column of every row above it. A plain reply stays shrink-wrapped. */
-.chat-msg-wrap.assistant-wrap.turn:has(.activity-row) { width: 66.67%; }
+ * that starts one) fills the page column while it streams: shrink-wrapped,
+ * the bubble widened with each paragraph and moved the chip column of every
+ * row above it. A plain reply stays shrink-wrapped. */
+.chat-msg-wrap.assistant-wrap.turn:has(.activity-row) { width: 100%; }
 .chat-msg-wrap.assistant-wrap.turn:has(.activity-row) > .chat-msg.assistant { align-self: stretch; }
 .msg-actions {
     display: flex; gap: 2px;
@@ -1257,14 +1259,15 @@ input.segment-speaker {
    single row of controls (attach, chips, dictation, voice, send). */
 .composer-box {
     display: flex; flex-direction: column; gap: 8px;
-    width: 100%; max-width: 860px; margin: 0 auto;
+    width: 100%; max-width: var(--page-width, 860px); margin: 0 auto;
     padding: 14px 14px 10px;
     background: var(--bg-surface);
     border-radius: var(--radius-xl);
     box-shadow: var(--shadow-md);
     transition: box-shadow 0.2s;
 }
-.composer-box:focus-within { box-shadow: var(--shadow-md), 0 0 0 2px var(--accent-dim); }
+/* Typing changes nothing about the box: no focus ring on it or the field. */
+.chat-input:focus, .chat-input:focus-visible { outline: none; }
 .composer-bar { display: flex; align-items: center; gap: 6px; }
 .composer-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-shrink: 0; }
 
@@ -2024,7 +2027,6 @@ input.segment-speaker {
     overflow-x: hidden; white-space: pre-wrap; overflow-wrap: anywhere;
     transition: border-color 0.2s, box-shadow 0.2s, max-height 0.25s ease;
 }
-.chat-input:focus { box-shadow: none; }
 .chat-input::placeholder { color: var(--text-muted); }
 
 /* ---- Chat Toolbar ---- */
@@ -2034,9 +2036,142 @@ input.segment-speaker {
 }
 /* Pills separate themselves; the old dividers are not drawn. */
 .toolbar-sep { display: none; }
-/* One pill spec for every composer control (toolbar buttons and the
-   effort/verbosity chips): same capsule, same border, same height, so the
-   row reads as a single family. Colour varies per control, shape never. */
+
+/* ---- Composer groups (src/components/chat/ComposerGroups.tsx) ----
+   One row, never two: the groups shrink in a set order as the composer
+   narrows (container queries on .composer-box), and every segment keeps
+   its icon and a title with the full name. */
+.composer-box { container: composer / inline-size; position: relative; }
+.composer-bar { flex-wrap: nowrap; min-width: 0; }
+.chat-toolbar { flex-wrap: nowrap; gap: 8px; }
+/* Static, so each panel anchors to the composer box and opens above it. */
+.cg-wrap { position: static; min-width: 0; flex: 0 1 auto; display: flex; }
+.cg-group {
+    display: inline-flex; align-items: center; min-width: 0; max-width: 100%;
+    padding: 2px; border: none; border-radius: var(--radius-pill);
+    background: var(--chip); color: var(--text-secondary);
+    font-family: inherit; cursor: pointer; overflow: hidden;
+    transition: background 0.12s, box-shadow 0.12s;
+}
+.cg-group:hover { background: var(--bg-hover); }
+.cg-group.open { background: var(--accent-dim); box-shadow: 0 0 0 2px var(--accent-dim); }
+.cg-seg {
+    display: inline-flex; align-items: center; gap: 6px; min-width: 0;
+    padding: 5px 10px; border-radius: var(--radius-pill);
+    font-size: var(--fs-caption); font-weight: 600; white-space: nowrap;
+}
+.cg-seg svg { flex-shrink: 0; }
+.cg-t { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.cg-dv { width: 1px; height: 16px; background: var(--border-strong); flex-shrink: 0; }
+.cg-model { color: var(--text-heading); }
+.cg-model .cg-t { max-width: 180px; }
+.cg-think { color: var(--accent); }
+.cg-ws .cg-t { max-width: 150px; }
+.cg-ws.on { color: var(--text-heading); }
+.cg-perm.tone-safe { color: var(--success); }
+.cg-perm.tone-calm { color: var(--text-secondary); }
+.cg-perm.tone-warn { color: var(--risk-warn); }
+.cg-perm.tone-danger { color: var(--danger); }
+
+@container composer (max-width: 700px) {
+    .cg-ans .cg-t { display: none; }
+}
+@container composer (max-width: 600px) {
+    .cg-ws .cg-t { max-width: 70px; }
+    .cg-think .cg-t { display: none; }
+}
+@container composer (max-width: 480px) {
+    .cg-ws .cg-t, .cg-perm .cg-t { display: none; }
+    .cg-model .cg-t { max-width: 64px; }
+}
+
+.cg-panel {
+    position: absolute; bottom: calc(100% + 10px); left: 14px; z-index: var(--z-dropdown);
+    width: 440px; max-width: calc(100vw - 32px);
+    max-height: calc(100vh - 240px); overflow-y: auto;
+    padding: 14px 16px;
+    background: var(--bg-elevated); border: 1px solid var(--border);
+    border-radius: var(--radius-lg); box-shadow: var(--shadow-lg);
+    animation: menuIn 0.16s ease-out;
+}
+.cg-panel-title {
+    font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--text-muted); margin-bottom: 4px;
+}
+.cg-row {
+    display: grid; grid-template-columns: 112px minmax(0, 1fr); align-items: center;
+    gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border);
+}
+.cg-row:last-child { border-bottom: none; }
+.cg-row-stack { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.cg-row-label b { display: block; font-size: var(--fs-small); color: var(--text-heading); }
+.cg-row-label small { font-size: var(--fs-caption); color: var(--text-muted); }
+.cg-row .toolbar-dropdown-wrap { justify-self: start; }
+.cg-segctl {
+    display: flex; gap: 2px; padding: 3px; min-width: 0;
+    background: var(--chip); border-radius: var(--radius-pill);
+}
+.cg-segctl button {
+    flex: 1 1 0; min-width: 0; padding: 6px 8px;
+    border: none; border-radius: var(--radius-pill); background: transparent;
+    font: 600 var(--fs-caption) var(--font-sans); color: var(--text-muted);
+    cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.cg-segctl button:hover { color: var(--text-heading); }
+.cg-segctl button.on { background: var(--bg-surface); color: var(--accent); box-shadow: var(--shadow-sm); }
+.cg-note, .cg-muted { font-size: var(--fs-caption); color: var(--text-muted); line-height: 1.45; }
+.cg-ws-current {
+    font-family: var(--font-mono); font-size: var(--fs-caption); color: var(--text-secondary);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cg-ws-list, .cg-modes { display: flex; flex-direction: column; gap: 2px; }
+.cg-opt {
+    display: flex; align-items: flex-start; gap: 10px; width: 100%;
+    padding: 7px 9px; border: none; border-radius: var(--radius-md);
+    background: transparent; text-align: left; cursor: pointer;
+    font-family: inherit; color: var(--text-primary);
+}
+.cg-opt:hover { background: var(--bg-hover); }
+.cg-opt.on { background: var(--accent-dim); }
+.cg-opt b { display: block; font-size: var(--fs-small); color: var(--text-heading); }
+.cg-opt small {
+    display: block; font-size: var(--fs-caption); color: var(--text-muted); line-height: 1.4;
+    overflow: hidden; text-overflow: ellipsis;
+}
+.cg-ws-list .cg-opt { flex-direction: column; gap: 0; }
+.cg-ws-list .cg-opt small { white-space: nowrap; max-width: 100%; }
+.cg-mode-icon { display: inline-flex; margin-top: 2px; }
+.cg-mode.tone-safe .cg-mode-icon { color: var(--success); }
+.cg-mode.tone-calm .cg-mode-icon { color: var(--text-muted); }
+.cg-mode.tone-warn .cg-mode-icon { color: var(--risk-warn); }
+.cg-mode.tone-danger .cg-mode-icon { color: var(--danger); }
+.cg-link {
+    justify-self: start; border: none; background: none; padding: 2px 9px; cursor: pointer;
+    font: 600 var(--fs-caption) var(--font-sans); color: var(--link);
+}
+
+/* The round More button and its count badge (MoreMenu.tsx). */
+.more-btn {
+    position: relative; flex-shrink: 0;
+    width: 34px; height: 34px; border: none; border-radius: var(--radius-pill);
+    display: inline-flex; align-items: center; justify-content: center;
+    background: var(--chip); color: var(--text-secondary); cursor: pointer;
+}
+.more-btn:hover { background: var(--bg-hover); color: var(--text-heading); }
+.more-btn.active { background: var(--accent-dim); color: var(--accent); }
+.more-badge {
+    position: absolute; top: -3px; right: -3px;
+    min-width: 16px; height: 16px; padding: 0 4px; border-radius: var(--radius-pill);
+    background: var(--accent); color: var(--on-accent);
+    font-size: 10px; font-weight: 700; line-height: 16px; text-align: center;
+}
+.more-usage:empty { display: none; }
+.more-usage { padding: 4px 6px 8px; }
+.more-usage .token-counter { width: 100%; }
+
+/* One pill spec for the remaining toolbar buttons (the model chip in the
+   "How it thinks" panel, the voice chips): same capsule, same height.
+   Colour varies per control, shape never. */
 .toolbar-btn {
     display: flex; align-items: center; gap: 5px;
     background: var(--chip); border: 1px solid transparent;
@@ -2573,7 +2708,6 @@ input.segment-speaker {
     background: var(--accent);
 }
 
-
 .ws-tree-pane .ws-file-tree { flex: 1; overflow-y: auto; }
 
 /* Editor pane */
@@ -2885,20 +3019,6 @@ input.segment-speaker {
     overflow-wrap: anywhere; max-height: 4.5em; overflow: hidden;
 }
 
-/* /effort indicator in toolbar */
-.effort-badge {
-    font-size: 0.7em; font-weight: 700; text-transform: uppercase;
-    letter-spacing: 0.06em; padding: 2px 9px; border-radius: var(--radius-sm);
-    border: 1px solid var(--border); color: var(--text-muted);
-    background: var(--bg-secondary); cursor: default; white-space: nowrap;
-}
-/* The badge is a button when the model supports effort — match the span. */
-button.effort-badge { font: inherit; font-size: 0.7em; font-weight: 700;
-    text-transform: uppercase; letter-spacing: 0.06em; cursor: pointer; line-height: 1.4; }
-/* Per-level colours live on .effort-chip now; .effort-badge is only the
-   no-effort (Haiku) pill, so it keeps just the base + .effort-none rules. */
-.effort-badge.effort-none      { opacity: 0.55; }
-
 /* Local-model context-window badge — styled like the effort badge (it reuses
    the .effort-pop* popover), in the accent color. Turns amber above 16K
    to echo the memory warning shown in the popover. */
@@ -2941,74 +3061,11 @@ button.effort-badge { font: inherit; font-size: 0.7em; font-weight: 700;
     line-height: 1.5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     min-height: 1.5em; }
 
-/* Effort chip — label-only pill (matching the mode and verbosity pills) in
-   the level's own colour; the popover slider carries the adjustability cue. */
-.effort-chip {
-    display: inline-flex; align-items: center; gap: 5px;
-    font-family: inherit; font-size: var(--fs-caption); font-weight: 600;
-    line-height: 1.4; white-space: nowrap; cursor: pointer;
-    padding: 6px 12px; border-radius: var(--radius-pill);
-    border: 1px solid transparent; background: var(--chip);
-    color: var(--text-muted);
-}
-.effort-chip:hover { background: var(--bg-hover); }
-.effort-chip-name { font-weight: 500; }
-.effort-chip.effort-low       { color: var(--tone-blue); background: color-mix(in srgb, var(--tone-blue) 12%, var(--chip)); }
-.effort-chip.effort-medium    { color: var(--text-muted); }
-.effort-chip.effort-high      { color: var(--tone-orange); background: color-mix(in srgb, var(--tone-orange) 12%, var(--chip)); }
-.effort-chip.effort-extra     { color: var(--tone-violet); background: color-mix(in srgb, var(--tone-violet) 12%, var(--chip)); }
-.effort-chip.effort-max       { color: var(--accent); background: var(--accent-dim); }
-.effort-chip.effort-ultracode { color: var(--tone-gold); background: color-mix(in srgb, var(--tone-gold) 14%, var(--chip)); }
-
-/* Verbosity chip: label only, neutral colour (the per-level effort tints
-   stay reserved for the effort control so the two don't read alike). */
-.verbosity-chip { color: var(--text-secondary); }
-
-/* Current tier name in the effort popover header, in the tier's slider
-   colour (the --tone-* tokens carry a deeper stop in light mode). */
-.effort-val {
-    display: inline-flex; align-items: center; gap: 6px;
-    font-size: var(--fs-caption); font-weight: 600; color: var(--text-primary);
-}
-.effort-val.effort-low       { color: var(--tone-blue); }
-.effort-val.effort-medium    { color: var(--text-secondary); }
-.effort-val.effort-high      { color: var(--tone-orange); }
-.effort-val.effort-extra     { color: var(--tone-violet); }
-.effort-val.effort-max       { color: var(--accent); }
-.effort-val.effort-ultracode { color: var(--accent-hover); }
-
 /* Popovers that host "?" tips must not clip them (the base .toolbar-dropdown
    scrolls). Their option lists are short, so no scrolling is lost. */
-.mode-pop, .verbosity-pop, .effort-pop { overflow: visible; max-height: none; }
+.effort-pop { overflow: visible; max-height: none; }
 
-/* Shared row shape for option lists: a real button (keyboard-selectable)
-   fills the row, indicators + "?" sit to its right. */
-.opt-row { flex-direction: row; align-items: center; gap: 8px; }
-.opt-row-main {
-    display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0;
-    background: none; border: none; padding: 0; margin: 0;
-    font: inherit; color: inherit; text-align: left; cursor: pointer;
-}
-.opt-row-main:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-sm); }
-.opt-row-main .toolbar-dropdown-item-name { flex: 1; min-width: 0; }
-.opt-side { display: inline-flex; align-items: center; gap: 7px; flex-shrink: 0; }
 .toolbar-dropdown-sep { border-top: 1px solid var(--border); margin: 4px 6px; }
-/* The manage link sits at the bottom of the mode popover (under our own
-   separator); neutralize the border-bottom the shared class carries for its
-   top-slot use in MoreMenu, and reset the button chrome. */
-.mode-manage { border: none; margin-bottom: 0; width: 100%; background: none; border-radius: var(--radius-md); font: inherit; text-align: left; }
-
-/* Permission-mode pill: label only; risky modes recolour the shared capsule
-   with a caution tint so the active mode is glanceable. */
-.toolbar-btn.mode-warn,
-.toolbar-btn.mode-warn:hover { color: var(--risk-warn); border-color: var(--risk-warn); background: var(--risk-warn-dim); }
-.toolbar-btn.mode-danger,
-.toolbar-btn.mode-danger:hover { color: var(--danger); border-color: var(--danger); background: var(--accent-record-dim); }
-.mode-name-warn { color: var(--risk-warn); }
-.mode-name-danger { color: var(--danger); }
-.mode-risk-icon { flex-shrink: 0; }
-.mode-risk-icon.mode-risk-warn { color: var(--risk-warn); }
-.mode-risk-icon.mode-risk-danger { color: var(--danger); }
 
 /* "?" help tip: hover, keyboard focus, or touch (tap focuses the button)
    shows the bubble. The bubble inverts the surface (dark-on-light themes and
@@ -3036,10 +3093,7 @@ button.effort-badge { font: inherit; font-size: 0.7em; font-weight: 700;
 
 /* "+ More" overflow popover — the bar's less-frequent controls live here. */
 .more-btn { position: relative; }
-.more-dot {
-    width: 6px; height: 6px; border-radius: 50%;
-    background: var(--accent); flex-shrink: 0; margin-left: 1px;
-}
+
 .more-pop { min-width: 232px; max-width: 300px; }
 /* Skill/MCP descriptions inside an expanded section wrap to two lines and clamp,
    so a long description can't stretch the popover sideways. */
@@ -3259,7 +3313,6 @@ button.effort-badge { font: inherit; font-size: 0.7em; font-weight: 700;
 /* Build progress */
 
 /* Apply All bar */
-
 
 /* Recent workspaces */
 .ws-recent { margin-top: 12px; display: flex; flex-direction: column; min-height: 0; }
@@ -3753,7 +3806,6 @@ button.effort-badge { font: inherit; font-size: 0.7em; font-weight: 700;
 /* Feature 7: Tasks panel */
 
 /* Task items */
-
 
 /* Feature 18: Memory button pulse when WHISPER.md exists */
 
@@ -4337,7 +4389,6 @@ button.ws-git-status-badge:hover {
     color: var(--text-muted);
 }
 
-
 /* ════════════════════════════════════════════════════════════════
    UI modernization Phase 2 — premium polish layer
    Additive-only: these rules restyle existing classes from the end
@@ -4377,7 +4428,6 @@ button.ws-git-status-badge:hover {
     box-shadow: var(--shadow-md);
     animation: menuIn 0.18s var(--ease-spring);
 }
-
 
 /* ---- Toasts: flat, hairline-bordered ---- */
 .whisper-toast {
@@ -5422,7 +5472,6 @@ button.ws-git-status-badge:hover {
     border-color: var(--border-strong);
 }
 
-
 /* Cited-line highlight for #wsfile citations opened in the dock (Monaco). The
    accent-tinted whole-line band + gutter marker show which lines a source link
    pointed at; it persists while the panel is open (subtle, not a timed flash). */
@@ -6074,7 +6123,6 @@ button.ws-git-status-badge:hover {
 .voice-draining-note { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 0.85em; color: var(--text-muted); }
 .voice-draining-note .voice-draining-stop { margin-left: auto; }
 .voice-working-chip { cursor: default; }
-
 
 /* The wake turn's answer to agent reports: an assistant bubble with a label. */
 .agent-answer-label {

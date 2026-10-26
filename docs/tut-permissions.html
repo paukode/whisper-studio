@@ -55,7 +55,7 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Mode</th><th>Behaviour</th></tr></thead>
       <tbody>
-        <tr><td><b>Default</b> (<code>default</code>)</td><td>Reads are allowed. Every file write and command asks first. The everyday setting.</td></tr>
+        <tr><td><b>Asks first</b> (<code>default</code>)</td><td>Reads are allowed. Every file write and command asks first. The everyday setting.</td></tr>
         <tr><td><b>Auto</b> (<code>auto</code>)</td><td>Reads are allowed. A classifier approves or asks for each write and command, per call. Its allow and soft-deny lists live in the <code>auto_mode_allow</code>, <code>auto_mode_soft_deny</code> and <code>auto_mode_environment</code> config keys, which you can edit by asking in chat.</td></tr>
         <tr><td><b>Plan</b> (<code>plan</code>)</td><td>Read only. File edits and commands are blocked; changes come back as a proposal.</td></tr>
         <tr><td><b>Accept edits</b> (<code>acceptEdits</code>)</td><td>File writes and creates run without asking. Deletes and commands still ask. Good for a focused editing session.</td></tr>

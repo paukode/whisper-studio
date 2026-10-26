@@ -14,7 +14,7 @@ export interface PermissionModeInfo {
 }
 
 export const PERMISSION_MODES: PermissionModeInfo[] = [
-  { value: 'default', label: 'Default',
+  { value: 'default', label: 'Asks first',
     help: 'Reads are allowed. Every file write and command asks first.' },
   { value: 'auto', label: 'Auto',
     help: 'Reads are allowed. An AI classifier approves or asks for each write and command.' },
