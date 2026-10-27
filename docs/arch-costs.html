@@ -119,8 +119,8 @@
         <tr><td><code>global.cohere.embed-v4:0</code></td><td>$0.12</td><td>n/a</td><td>n/a</td><td>n/a</td></tr>
       </tbody>
     </table></div>
-    <p>The table lists only the models in the catalog. The rates of retired models stay in
-      <code class="path">pricing.example.json</code>, so past spend on them keeps its cost.</p>
+    <p>The table lists only the models in the catalog. A model that leaves the catalog leaves
+      <code class="path">pricing.example.json</code> too, so recorded calls to it show as unpriced.</p>
     <p>Claude cache writes are priced at the TTL the app actually sends. Every Claude model in the
       catalog gets a 1-hour TTL (<code class="path">server/chat/caching.py</code>), which Bedrock
       bills at 2x input. The GPT rows are the Bedrock model cards' In-Region rates (bedrock-mantle
