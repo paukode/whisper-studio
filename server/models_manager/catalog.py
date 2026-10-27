@@ -143,6 +143,7 @@ def _static_entries() -> tuple[ModelEntry, ...]:
             key="redimnet_speaker",
             label="ReDimNet2 Speaker Encoder",
             group=GROUP_TRANSCRIPTION,
+            bundled=True,
             repo_id=speaker_embedder.REDIMNET_HUB,
             dir_name=rel(speaker_embedder.REDIMNET_CACHE_DIR, speaker_embedder.MODELS_DIR),
             # Mirrors embedder._ensure_redimnet_files: torch.hub drops the

@@ -483,8 +483,8 @@ rsync -a --delete "$BUNDLED_MODELS_CACHE/" "$RES_DIR/backend/models-bundled/"
 # a Hub snapshot, so it is fetched with the bundled interpreter into its own
 # staging home and copied next to the snapshots as models-bundled/torch-hub;
 # server/main.py::_seed_bundled_models seeds it on first launch like the rest.
-# A hub hiccup must not fail the build: the encoder then downloads on first
-# use exactly as it does in a source checkout.
+# It is the default speaker encoder and always ships: a build that cannot fetch
+# it stops here rather than packaging an app that downloads it on first use.
 substep "bundled speaker encoder (ReDimNet2 via torch.hub)"
 REDIMNET_HOME="$BUILD_DIR/downloads/redimnet-home"
 mkdir -p "$REDIMNET_HOME"
@@ -498,7 +498,7 @@ then
     mkdir -p "$RES_DIR/backend/models-bundled/torch-hub"
     rsync -a --delete "$REDIMNET_HOME/models/torch-hub/" "$RES_DIR/backend/models-bundled/torch-hub/"
 else
-    echo "    warning: ReDimNet2 not bundled (it downloads on first use)"
+    die "could not fetch ReDimNet2 (the default speaker encoder); check the network and rerun"
 fi
 
 # f.6: helper binaries. node also runs the workspace's own ESLint for the
