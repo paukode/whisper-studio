@@ -86,9 +86,9 @@
     --accent-live: #7fd3a0;
     --accent-send: #9a82ff;
     --accent-send-hover: #b3a3ff;
-    --chat-user-bg: #22214a;
-    --chat-user-border: transparent;
-    --chat-assistant-bg: #1d1c3a;
+    --chat-user-bg: rgba(154, 130, 255, 0.14);
+    --chat-user-border: rgba(154, 130, 255, 0.30);
+    --chat-assistant-bg: transparent;
     --shadow-sm: 0 2px 10px rgba(0, 0, 0, 0.30);
     --shadow-md: 0 8px 30px rgba(0, 0, 0, 0.35);
     --shadow-lg: 0 14px 48px rgba(0, 0, 0, 0.45);
@@ -166,9 +166,9 @@
     --accent-live: #24774d;
     --accent-send: #6a45e8;
     --accent-send-hover: #5a36d6;
-    --chat-user-bg: #f8f9fc;
-    --chat-user-border: transparent;
-    --chat-assistant-bg: #f8f9fc;
+    --chat-user-bg: rgba(106, 69, 232, 0.10);
+    --chat-user-border: rgba(106, 69, 232, 0.22);
+    --chat-assistant-bg: transparent;
     --shadow-sm: 0 2px 10px rgba(60, 65, 124, 0.08);
     --shadow-md: 0 6px 28px rgba(60, 65, 124, 0.10);
     --shadow-lg: 0 12px 44px rgba(60, 65, 124, 0.16);

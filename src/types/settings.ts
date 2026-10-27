@@ -33,6 +33,9 @@ export interface ModelEntry {
   requires_data_retention?: boolean;
   /** On-device model: runs via the local runtime, not Bedrock. */
   is_local?: boolean;
+  /** Who runs it: Claude on Bedrock, OpenAI on Bedrock, or on this Mac.
+   *  Groups the composer's model menu. */
+  provider?: 'anthropic' | 'openai' | 'local';
   /** Whether this local model has a toggleable thinking/reasoning mode. */
   supports_thinking?: boolean;
   /** Whether this local model can use tools (local agentic loop). */

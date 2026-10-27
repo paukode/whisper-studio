@@ -115,7 +115,7 @@ export const ThinkGroup: React.FC<ThinkGroupProps> = ({
         )}
       </button>
       {open && (
-        <div className="cg-panel" role="group" aria-label="How it thinks" data-testid="think-panel">
+        <div className="cg-panel cg-panel-think" role="group" aria-label="How it thinks" data-testid="think-panel">
           <div className="cg-panel-title">How it thinks</div>
           <div className="cg-row">
             <div className="cg-row-label"><b>Model</b><small>who answers</small></div>

@@ -24,6 +24,8 @@ export const ModelsResponseSchema = z.object({
     requires_data_retention: z.boolean().optional().default(false),
     // On-device model — runs via the local runtime, not Bedrock.
     is_local: z.boolean().optional().default(false),
+    // Who runs it (groups the composer's model menu).
+    provider: z.enum(['anthropic', 'openai', 'local']).optional(),
     // Whether this local model has a toggleable thinking/reasoning mode.
     supports_thinking: z.boolean().optional().default(false),
     // Whether this local model can use tools (local agentic loop).

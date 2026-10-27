@@ -936,13 +936,17 @@ input.segment-speaker {
      * keeps its intrinsic min-content width and overflows the cap. */
     min-width: 0; max-width: 100%;
 }
+/* The user's message stands out as a tinted bubble with its corner toward
+   the right edge; the answer is plain text on the page (below). */
 .chat-msg.user {
     background: var(--chat-user-bg);
-    color: var(--text-primary);
+    color: var(--text-heading);
+    font-weight: 500;
     align-self: flex-end;
     white-space: pre-wrap;
-    border: none;
-    box-shadow: var(--shadow-sm);
+    border: 1px solid var(--chat-user-border);
+    border-radius: 18px 18px 6px 18px;
+    box-shadow: none;
     position: relative;
 }
 
@@ -1126,7 +1130,8 @@ input.segment-speaker {
     color: var(--text-primary);
     align-self: flex-start;
     border: none;
-    box-shadow: var(--shadow-sm);
+    box-shadow: none;
+    padding-left: 2px; padding-right: 2px;
 }
 /* Ephemeral slash-command toast */
 
@@ -2107,12 +2112,56 @@ input.segment-speaker {
 .cg-row-label b { display: block; font-size: var(--fs-small); color: var(--text-heading); }
 .cg-row-label small { font-size: var(--fs-caption); color: var(--text-muted); }
 .cg-row .toolbar-dropdown-wrap { justify-self: start; min-width: 0; max-width: 100%; }
-/* Inside a panel the model list opens in place, under its chip, so the
-   panel's own scrolling never hides it. */
-.cg-panel .toolbar-dropdown {
-    position: static; margin-top: 6px; width: 100%; min-width: 0; max-width: none;
-    max-height: 240px; box-shadow: none; animation: none;
-    background: var(--bg-surface);
+/* The "How it thinks" panel is short, so it never scrolls: the model menu
+   floats over it instead of being clipped. */
+.cg-panel.cg-panel-think { overflow: visible; max-height: none; }
+
+/* ---- Model picker (ModelDropdown.tsx): a full-width button with an arrow,
+   and a menu grouped by who runs the model. ---- */
+.cg-row .model-picker { justify-self: stretch; }
+.model-picker-btn {
+    display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0;
+    padding: 8px 12px; border-radius: var(--radius-md);
+    background: var(--chip); border: 1px solid transparent; cursor: pointer;
+    font: 600 var(--fs-small) var(--font-sans); color: var(--text-heading);
+    transition: border-color 0.12s, background 0.12s;
+}
+.model-picker-btn:hover { background: var(--bg-hover); }
+.model-picker-btn.open { border-color: var(--accent); background: var(--bg-surface); }
+.model-picker-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.model-picker-note { font-weight: 500; color: var(--text-muted); white-space: nowrap; }
+.model-picker-chev { margin-left: auto; flex-shrink: 0; color: var(--text-muted); transition: transform 0.15s; }
+.model-picker-btn.open .model-picker-chev { transform: rotate(180deg); color: var(--accent); }
+.model-menu {
+    position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 5;
+    min-width: 240px; padding: 6px;
+    /* Only the models switched on in Settings > Chat model visibility are
+       listed; ModelDropdown opens the menu toward the roomier side and caps
+       it there, so a very long list scrolls rather than leaving the window. */
+    overflow-y: auto;
+    background: var(--bg-elevated); border: 1px solid var(--border);
+    border-radius: var(--radius-md); box-shadow: var(--shadow-lg);
+    animation: menuIn 0.14s ease-out;
+}
+.model-menu.up { top: auto; bottom: calc(100% + 6px); }
+.model-menu-header {
+    padding: 8px 10px 4px;
+    font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--text-muted);
+}
+.model-menu-item {
+    display: flex; align-items: center; gap: 8px; padding: 7px 10px;
+    border-radius: var(--radius-sm); cursor: pointer; color: var(--text-heading);
+}
+.model-menu-item:hover { background: var(--bg-hover); }
+.model-menu-item.on { background: var(--accent-dim); color: var(--accent); }
+.model-menu-item > svg { margin-left: auto; flex-shrink: 0; }
+.model-menu-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.model-menu-name { font-size: var(--fs-small); font-weight: 600; }
+.model-menu-desc { font-size: var(--fs-caption); color: var(--text-muted); }
+.model-loaded-dot {
+    display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent); margin-left: 6px; vertical-align: middle;
 }
 /* This chat's usage closes the "How it thinks" panel; with no turn yet the
    readout renders nothing and the section hides. */

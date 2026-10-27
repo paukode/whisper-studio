@@ -447,6 +447,15 @@ async def models_endpoint():
                 # On-device model: runs via the local runtime, not Bedrock. The UI
                 # badges it and routes selection through the local load flow.
                 "is_local": m.get("is_local", False),
+                # Who runs it, for grouping the composer's model menu: the same
+                # rule the turn uses (on-device, OpenAI on Bedrock, else Claude).
+                "provider": (
+                    "local"
+                    if m.get("is_local")
+                    else "openai"
+                    if m.get("provider") == "openai_bedrock"
+                    else "anthropic"
+                ),
                 # Whether this local model can think: its chat template has a
                 # thinking mode (server/local/thinking.py).
                 "supports_thinking": bool(levels) if m.get("is_local") else False,

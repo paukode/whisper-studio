@@ -174,9 +174,10 @@ export function paletteTokens(seed: ModeSeed, mode: Mode): Record<string, string
     '--accent-live': green,
     '--accent-send': accent,
     '--accent-send-hover': accentHover,
-    '--chat-user-bg': dark ? elevated : surface,
-    '--chat-user-border': 'transparent',
-    '--chat-assistant-bg': surface,
+    // The user's message is a tinted bubble; the answer sits on the page.
+    '--chat-user-bg': rgba(accent, dark ? 0.14 : 0.1),
+    '--chat-user-border': rgba(accent, dark ? 0.3 : 0.22),
+    '--chat-assistant-bg': 'transparent',
     '--shadow-sm': `0 2px 10px ${rgba(shadowInk, dark ? 0.3 : 0.08)}`,
     '--shadow-md': `0 8px 30px ${rgba(shadowInk, dark ? 0.35 : 0.1)}`,
     '--shadow-lg': `0 14px 48px ${rgba(shadowInk, dark ? 0.45 : 0.16)}`,
