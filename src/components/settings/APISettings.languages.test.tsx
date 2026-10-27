@@ -57,7 +57,8 @@ function renderWith(whisperLanguage: string, languages: Info) {
 }
 
 const field = () => screen.getByLabelText('Transcription Languages');
-const inUse = async () => (await screen.findByText(/^In use:/)).textContent ?? '';
+// The "In use" summary lives in the "?" tip beside the label.
+const inUse = async () => (await screen.findByText(/In use:/)).textContent ?? '';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -112,6 +113,16 @@ describe('APISettings transcription languages', () => {
     expect(text).toContain('Canary cannot transcribe ja, so it will not transcribe');
     expect(text).not.toContain('Canary uses');
     expect(text).toContain('Whisper uses Japanese');
+    // The one state that needs action also shows on the panel.
+    expect(document.getElementById('cfgWhisperLangWarn')).toHaveTextContent('Canary cannot transcribe ja');
+  });
+
+  it('shows no language summary on the panel itself', async () => {
+    renderWith('', info({}));
+    await waitFor(() => expect(field()).toHaveAttribute('placeholder', 'Auto: English, Polish'));
+    expect(document.getElementById('cfgWhisperLangWarn')).toBeNull();
+    const hints = [...document.querySelectorAll('.settings-hint')].map((h) => h.textContent ?? '');
+    expect(hints.some((h) => /In use|Canary uses/.test(h))).toBe(false);
   });
 
   it('saves the typed value verbatim under the historical key', async () => {

@@ -10,6 +10,7 @@ import {
   translatorOptions,
 } from '@/components/transcription/TranscriptionPanel';
 import { isNativeTranslationAvailable } from '@/services/nativeTranslation';
+import { HelpTip } from '@/components/common/HelpTip';
 
 /** Read-only view of what the transcription language setting resolves to
  *  (server/asr/languages.py::summary, GET /api/config). */
@@ -59,6 +60,15 @@ function nameList(codes: string[]): string {
 }
 
 /** The languages each engine uses for the SAVED value, in words. */
+/** The long explanation behind the "?" next to Transcription Languages. */
+const LANGUAGES_HELP =
+  "Canary: blank means English plus your Mac's preferred languages (System Settings > General > " +
+  'Language & Region). Whisper: blank lets Whisper detect the language itself. One code pins the ' +
+  'language; a comma list such as pl,en limits detection to those, so a short utterance is never ' +
+  'decoded, or translated, as a language nobody speaks. When Canary translates a Parakeet line, it ' +
+  'detects the spoken language within a typed list, or among all its languages when the field is ' +
+  'blank. Parakeet and chat dictation have no language setting.';
+
 function languagesInUse(info: TranscriptionLanguages, saved: string): string {
   const parts: string[] = [];
   const typed = saved.trim() !== '';
@@ -197,6 +207,10 @@ export const APISettings: React.FC = () => {
   }, [tavilyKey, whisperLang, bedrockRegion, modelValue, translateMode, translateTarget, queryClient]);
 
   const languageInfo = configData?._transcription_languages;
+  // The one language state that needs action shows on the panel: a typed
+  // value Canary cannot transcribe at all. Everything else is in the "?" tip.
+  const canaryRefuses =
+    !!languageInfo && (configData?.whisper_language ?? '').trim() !== '' && languageInfo.canary.length === 0;
 
   return (
     <div className="settings-form" style={{ maxWidth: 480 }}>
@@ -211,33 +225,30 @@ export const APISettings: React.FC = () => {
       />
       <span className="settings-hint" id="cfgTavilyHint">{tavilyHint}</span>
 
-      <label htmlFor="cfgWhisperLang">Transcription Languages</label>
+      <div className="settings-label-row">
+        <label htmlFor="cfgWhisperLang">Transcription Languages</label>
+        <HelpTip text={`${LANGUAGES_HELP}${languageInfo ? ` In use: ${languagesInUse(languageInfo, configData?.whisper_language ?? '')}` : ''}`} />
+      </div>
       <input
         type="text"
         className="settings-input"
         id="cfgWhisperLang"
         placeholder={languageInfo ? `Auto: ${nameList(languageInfo.auto)}` : 'e.g. pl, or pl,en'}
-        aria-describedby={languageInfo ? 'cfgWhisperLangInUse' : undefined}
+        aria-describedby={canaryRefuses ? 'cfgWhisperLangWarn' : undefined}
         value={whisperLang}
         onChange={(e) => setWhisperLang(e.target.value)}
       />
-      {languageInfo && (
-        <span className="settings-hint" id="cfgWhisperLangInUse" role="status">
-          In use: {languagesInUse(languageInfo, configData?.whisper_language ?? '')}
+      {canaryRefuses && (
+        <span className="settings-hint settings-hint--warn" id="cfgWhisperLangWarn" role="status">
+          Canary cannot transcribe {languageInfo?.dropped.canary.join(', ')}. Add a language it knows, or clear the field.
         </span>
       )}
-      <span className="settings-hint">
-        Canary: blank means English plus your Mac&apos;s preferred languages
-        (System Settings &gt; General &gt; Language &amp; Region). Whisper: blank
-        lets Whisper detect the language itself. For both, one code pins the
-        language and a comma list such as pl,en limits detection to those, so a
-        short utterance is never decoded, or translated, as a language nobody
-        speaks. When Canary translates a Parakeet line, it detects the spoken
-        language within a typed list, or among all its languages when the
-        field is blank. Parakeet and chat dictation have no language setting.
-      </span>
+      <span className="settings-hint">Blank detects the language. Codes like pl,en limit it.</span>
 
-      <label htmlFor="cfgTranscriptionModel">Transcription Model</label>
+      <div className="settings-label-row">
+        <label htmlFor="cfgTranscriptionModel">Transcription Model</label>
+        <HelpTip text="Same selector as the transcript header; applies live. Whisper Large v3: most accurate, 99 languages. Canary: fastest, best translation, 25 European languages, detects the language per sentence among the Transcription Languages above. Parakeet: words appear live as you speak, lowest latency." />
+      </div>
       <select
         className="settings-input"
         id="cfgTranscriptionModel"
@@ -248,15 +259,12 @@ export const APISettings: React.FC = () => {
           <option key={o.value} value={o.value}>{o.label}</option>
         ))}
       </select>
-      <span className="settings-hint">
-        Same selector as the transcript header; applies live. Whisper Large
-        v3: most accurate, 99 languages. Canary: fastest, best translation,
-        25 European languages, detects the language per sentence among the
-        Transcription Languages above. Parakeet: words appear live as you
-        speak, lowest latency.
-      </span>
+      <span className="settings-hint">Parakeet is live, Canary is fastest, Whisper is most accurate.</span>
 
-      <label htmlFor="cfgTranslateMode">Translation Model</label>
+      <div className="settings-label-row">
+        <label htmlFor="cfgTranslateMode">Translation Model</label>
+        <HelpTip text="Shows a translation line under speech in other languages, whichever model is transcribing. Canary translates between its 25 European languages and English (either direction, English always on one side) and detects the spoken language per sentence. Apple translates between any two of its ~20 languages, on-device and free, in the Mac app only." />
+      </div>
       <select
         className="settings-input"
         id="cfgTranslateMode"
@@ -283,18 +291,14 @@ export const APISettings: React.FC = () => {
           {TRANSLATOR_UNAVAILABLE_NOTICE}
         </span>
       )}
-      <span className="settings-hint">
-        Shows a translation line under speech in other languages, whichever
-        model is transcribing. Canary translates between its 25 European
-        languages and English (either direction, English always on one side)
-        and detects the spoken language per sentence. Apple translates
-        between any two of its ~20 languages, on-device and free, in the Mac
-        app only.
-      </span>
+      <span className="settings-hint">Adds a translated line under speech in other languages.</span>
 
       {translateMode !== 'off' && (
         <>
-          <label htmlFor="cfgTranslateTarget">Translate To</label>
+          <div className="settings-label-row">
+            <label htmlFor="cfgTranslateTarget">Translate To</label>
+            <HelpTip text="Language of the translation line. Canary reaches non-English targets from English speech only (English is always one side of its pair); Apple reaches any of its languages from anything." />
+          </div>
           <select
             className="settings-input"
             id="cfgTranslateTarget"
@@ -305,11 +309,6 @@ export const APISettings: React.FC = () => {
               <option key={t.code} value={t.code}>{t.name}</option>
             ))}
           </select>
-          <span className="settings-hint">
-            Language of the translation line. Canary reaches non-English
-            targets from English speech only (English is always one side of
-            its pair); Apple reaches any of its languages from anything.
-          </span>
         </>
       )}
 

@@ -2655,6 +2655,10 @@ input.segment-speaker {
     text-transform: uppercase; letter-spacing: 0.08em;
 }
 .settings-form label:first-child { margin-top: 0; }
+/* A label with a "?" tip beside it: the long explanation lives in the tip,
+   the field keeps one short hint line. */
+.settings-form .settings-label-row { display: flex; align-items: center; gap: 6px; margin: 12px 0 5px; }
+.settings-form .settings-label-row label { margin: 0; }
 .settings-input {
     width: 100%; background: var(--bg-primary); border: 1px solid var(--border);
     color: var(--text-primary); font-family: var(--font-mono);
