@@ -222,15 +222,31 @@ def test_a_tilde_path_reads_the_home_folder(roots, tmp_path, monkeypatch):
     assert "home" in executors._exec_ws_read_file({"path": "~/home-note.txt"}, [], [])
 
 
-def test_credential_stores_and_system_paths_are_never_read(roots, tmp_path, monkeypatch):
+def test_credential_stores_ask_outside_bypass_and_system_paths_are_never_read(
+    roots, tmp_path, monkeypatch
+):
+    """A secret path is read in Bypass (tool_executor's stamp) and otherwise
+    becomes a secret_read card (server/security/secret_reads.py); the kernel
+    pseudo-filesystems are never read."""
+    from server.approval.markers import APPROVAL, is_app_request
+    from server.security.secret_reads import SECRET_READ_ACTION, SECRET_READS_KEY
+
     monkeypatch.setenv("HOME", str(tmp_path))
     ssh = tmp_path / ".ssh"
     ssh.mkdir()
     (ssh / "id_rsa").write_text("secret")
-    out = executors._exec_ws_read_file({"path": str(ssh / "id_rsa")}, [], [])
-    assert out.startswith("Error:") and "secret" not in out
-    out = executors._exec_ws_list_dir({"path": str(ssh)}, [], [])
-    assert out.startswith("Error:") and "id_rsa" not in out
+    for out, tool in (
+        (executors._exec_ws_read_file({"path": str(ssh / "id_rsa")}, [], []), "ws_read_file"),
+        (executors._exec_ws_list_dir({"path": str(ssh)}, [], []), "ws_list_directory"),
+    ):
+        assert is_app_request(out, APPROVAL)
+        request = json.loads(out[len(APPROVAL) :])
+        assert request["action"] == SECRET_READ_ACTION and request["tool"] == tool
+        assert "secret" not in out.replace(SECRET_READ_ACTION, "")
+    stamped = {"path": str(ssh / "id_rsa"), SECRET_READS_KEY: True}
+    assert "secret" in executors._exec_ws_read_file(stamped, [], [])
+    stamped = {"path": str(ssh), SECRET_READS_KEY: True}
+    assert "id_rsa" in executors._exec_ws_list_dir(stamped, [], [])
     assert executors._exec_ws_read_file({"path": "/dev/null"}, [], []).startswith("Error:")
 
 

@@ -229,6 +229,7 @@ def _create_pty_session(
     write_mode: str = "open",
     scratch_dir: str | None = None,
     write_root: str | None = None,
+    secret_reads: bool = False,
 ) -> _PtySession:
     """Spawn a new PTY session running the user's shell.
 
@@ -301,7 +302,11 @@ def _create_pty_session(
         from server.sandbox import build_pty_sandbox_wrap
 
         shell_cmd, profile_path = build_pty_sandbox_wrap(
-            shell_cmd, write_root, write_mode=write_mode, scratch_dir=scratch_dir
+            shell_cmd,
+            write_root,
+            write_mode=write_mode,
+            scratch_dir=scratch_dir,
+            secret_reads=secret_reads,
         )
 
     process = subprocess.Popen(
@@ -729,20 +734,27 @@ async def run_in_sandbox(
     write_mode: str = "open",
     scratch_dir: str | None = None,
     write_root: str | None = None,
+    secret_reads: bool = False,
 ) -> dict:
     """Spawn a fresh hidden PTY session, run `command`, kill the session.
     Use for the default (sandbox) mode of terminal_run. The session is
     invisible to the user and removed from `_sessions` on completion.
     ``write_mode="workspace"`` confines writes to ``write_root`` (the
     workspace, not cwd) + the chat session's own ``scratch_dir`` + temp (see
-    server/sandbox.py)."""
+    server/sandbox.py). ``secret_reads`` lets it read the credential stores
+    (server/security/secret_reads.py)."""
     if not cwd:
         cwd = os.path.expanduser("~")
     if not os.path.isdir(cwd):
         return {"output": f"cwd not found: {cwd}", "exit_code": -1, "timed_out": False}
 
     session = _create_pty_session(
-        cwd, hidden=True, write_mode=write_mode, scratch_dir=scratch_dir, write_root=write_root
+        cwd,
+        hidden=True,
+        write_mode=write_mode,
+        scratch_dir=scratch_dir,
+        write_root=write_root,
+        secret_reads=secret_reads,
     )
     try:
         # Give the shell a moment to print its banner / first prompt so

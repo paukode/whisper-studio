@@ -629,7 +629,10 @@ async def _do_command(payload: dict) -> ApprovalOutcome:
     # Same validation gate as /api/workspace/shell: the sandbox alone does not
     # stop an approved command from e.g. reading ~/.ssh, so the dangerous-pattern
     # and sensitive-path checks run here too.
-    warning = workspace._validate_command(command)
+    # The gate settled secret_access: set in Bypass, else only on a card a
+    # person approved (server/security/secret_reads.py).
+    secret = payload.get("secret_access") is True
+    warning = workspace._validate_command(command, secret_reads=secret)
     if warning:
         return ApprovalOutcome(ok=False, error=warning)
     try:
@@ -640,6 +643,7 @@ async def _do_command(payload: dict) -> ApprovalOutcome:
             session_id=str(payload.get("session_id") or ""),
             run_in_background=bool(payload.get("run_in_background")),
             write_mode="open" if reviewed_by_human(payload) else "workspace",
+            secret_reads=secret,
         )
     except Exception as e:
         return ApprovalOutcome(ok=False, error=str(e))

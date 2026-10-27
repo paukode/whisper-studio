@@ -78,6 +78,16 @@
         rule, the Auto classifier) is workspace-write confined by the OS like an agent's; only a
         command approved on its card runs with open writes. A command that the assistant types into
         your visible terminal has no OS confinement, so it raises a card in every mode.</li>
+      <li><b>Reads of credential stores follow the mode.</b> The credential stores are the deny-list
+        in <code class="path">server/security/sensitive_paths.py</code> (the login Keychain,
+        <code class="path">~/.ssh</code>, <code class="path">~/.aws</code>, git credentials, browser
+        profiles, shell histories, password managers, and more). In <code>bypassPermissions</code>,
+        every read tool and every command reads them with no card. In <code>dontAsk</code>, a read is
+        refused. In every other mode, a person approves each read, every time: the Auto classifier
+        never decides it, and a remembered "yes to all" for commands never covers it. A command asks
+        with the tool input <code>secret_access: true</code>. Unattended runs (subagents, cron jobs)
+        outside bypass are refused. Writes to the stores are denied in every mode
+        (<code class="path">server/security/secret_reads.py</code>).</li>
       <li><b>Unattended agents write only inside their own tree.</b> A shell command or Python script
         run by an agent, with no human reading each call, gets a sandbox profile that denies all
         writes and allows them back only under the command's working tree, the git directories a
@@ -308,8 +318,9 @@
             hidden <code>terminal_run</code> PTY, in one of three write modes (see
             <a href="#write-modes">Write modes</a>).</td>
           <td><b>Boundary</b> - the strongest layer. Even if everything above is bypassed, code runs
-            with the secret-store deny-list applied, and in workspace-write or read-only mode with the
-            write deny applied too.</td>
+            with the secret-store deny-list applied (writes always; reads unless the mode is bypass or
+            a person approved the read), and in workspace-write or read-only mode with the write deny
+            applied too.</td>
         </tr>
         <tr>
           <td>Workflow-launch category mode
@@ -358,17 +369,21 @@
     </table></div>
 
     <h2 id="sandbox-enforces">What the sandbox actually enforces</h2>
-    <p>Two independent things: a <b>path deny-list</b> that is always on, and a <b>write mode</b> that
-      decides how much of the filesystem is writable at all.</p>
+    <p>Two independent things: a <b>path deny-list</b> whose write denial is always on, and a
+      <b>write mode</b> that decides how much of the filesystem is writable at all.</p>
     <dl class="spec">
       <dt><code class="path">server/security/sensitive_paths.py</code> - the shared deny-list</dt>
-      <dd>Read and write denial of a curated secret-store list: SSH and GPG keys, cloud credentials for
+      <dd>Denial of a curated secret-store list: SSH and GPG keys, cloud credentials for
         AWS, Google Cloud, Azure, Docker and Kubernetes
         (<code class="path">~/.aws</code> is denied for generic commands but re-allowed per-call, read-only,
         for the AWS tools), git credentials and <code class="path">.netrc</code>, npm and PyPI tokens, and,
         for the sandbox only, browser cookies and keychains, shell history and password-manager stores.
         One module feeds both consumers, as expanded paths for the OS sandbox profile and as regexes
-        for the command validator, so the two layers cannot drift on the shared core.</dd>
+        for the command validator, so the two layers cannot drift on the shared core. Writes are
+        denied in every mode. Reads are denied unless the mode is <code>bypassPermissions</code> or a
+        person approved the read (see <a href="#headlines">the headlines</a>). For a run that may read
+        secrets, the command validator skips its sensitive-path check, and the sandbox keeps only the
+        write deny.</dd>
       <dt><code class="path">server/sandbox.py</code> - <code>_SANDBOX_ENV_DENYLIST</code></dt>
       <dd>Strips <code>GH_TOKEN</code>, <code>GITHUB_TOKEN</code>, and <code>GH_ENTERPRISE_TOKEN</code>
         from the environment handed to every sandboxed child, so a GitHub token your shell happens to

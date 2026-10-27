@@ -13,6 +13,7 @@ from server.approval.markers import approval_request
 from server.executors import register_executor
 from server.sandbox import run_sandboxed
 from server.security.command_validator import validate_command
+from server.security.secret_reads import requested
 
 log = logging.getLogger("whisper-studio")
 
@@ -184,6 +185,7 @@ def do_run_python(payload: dict) -> tuple[bool, str]:
     if perm_error:
         return False, perm_error
     guarded_code = _AWS_READONLY_GUARD + "\n" + code
+    secret = payload.get("secret_access") is True
     # run_sandboxed runs `/bin/sh -c <str>`, so the code goes to a temp file and
     # we invoke it by path. ~/.aws is allowed so boto3 can authenticate. The
     # cwd is the workspace when one is connected so workspace-write confinement
@@ -214,6 +216,8 @@ def do_run_python(payload: dict) -> tuple[bool, str]:
             write_paths=_aws_cache_paths(),
             write_mode=write_mode,
             scratch_dir=own_scratch_dir(payload.get("session_id")),
+            # Settled by the approval gate (server/security/secret_reads.py).
+            secret_reads=secret,
         )
     except subprocess.TimeoutExpired:
         return False, f"execution timed out ({RUN_PYTHON_TIMEOUT_S}s limit)"
@@ -235,6 +239,12 @@ def do_run_python(payload: dict) -> tuple[bool, str]:
         from server.sandbox import classify_sandbox_denial
 
         hint = classify_sandbox_denial(output, write_mode)
+        if hint:
+            output = f"{output}\n{hint}"
+    if result.returncode not in (0, None) and not secret:
+        from server.security.secret_reads import denial_hint
+
+        hint = denial_hint(code, output)
         if hint:
             output = f"{output}\n{hint}"
     return True, output
@@ -261,6 +271,8 @@ def exec_run_python(tool_input, transcript, current_attachments):
             "sandbox_permissions": (tool_input.get("sandbox_permissions") or "").strip(),
             "justification": (tool_input.get("justification") or "").strip(),
             "session_id": tool_input.get("__session_id__", ""),
+            # Kept or dropped by the approval gate (server/security/secret_reads.py).
+            "secret_access": requested(tool_input),
         }
     )
     return approval_request(payload)

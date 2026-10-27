@@ -125,7 +125,7 @@
         <tr><td>DOMPurify on every <code>dangerouslySetInnerHTML</code> site</td><td>Strips <code>&lt;script&gt;</code>, inline handlers, and <code>javascript:</code> URLs from any HTML reaching the React DOM</td><td><b>Boundary</b> for the chat/Markdown render path - without it a prompt-injected page fetched via <code>web_fetch</code> could run JS in the SPA origin</td></tr>
         <tr><td>Approval router with a server-held pause</td><td>Real consent flow for risky commands</td><td><b>Boundary</b> - the server stashes the paused turn and re-validates the payload itself; the client can't fabricate approval</td></tr>
         <tr><td><code>validate_command</code> (regex deny-list)</td><td>Catches <code>rm -rf /</code>, <code>mkfs</code>, <code>dd of=/dev/…</code>, reads of sensitive paths</td><td><b>Defence-in-depth</b> in front of the sandbox on every command path; regex-based and bypassable alone</td></tr>
-        <tr><td><code>sandbox-exec(5)</code> / <code>bwrap</code></td><td>macOS/Linux sandbox profile around every shell + code execution path (including the terminal PTY)</td><td><b>Boundary</b> - the strongest layer; even if everything above is bypassed, code runs with the secret-store deny-list applied</td></tr>
+        <tr><td><code>sandbox-exec(5)</code> / <code>bwrap</code></td><td>macOS/Linux sandbox profile around every shell + code execution path (including the terminal PTY)</td><td><b>Boundary</b> - the strongest layer; even if everything above is bypassed, code runs with the secret-store deny-list applied (writes always; reads unless the mode is Bypass or a person approved the read)</td></tr>
         <tr><td><code>_AWS_READONLY_GUARD</code> in <code>executors/code.py</code></td><td>Monkey-patches <code>botocore</code> to reject non-read AWS calls</td><td><b>Defence-in-depth only</b> - user code in the same process can <code>del</code> the patch; the real container is <code>sandbox-exec</code></td></tr>
         <tr><td>Plugin loader (<code>enabled</code> allow-list)</td><td>Dropping a <code>.py</code> into <code>plugins/</code> does nothing until explicitly enabled</td><td><b>Boundary</b> for the drive-by-plugin vector</td></tr>
         <tr><td>Credential environment denylist (<code class="path">server/security/sensitive_env.py</code>)</td><td>Strips GitHub tokens from sandboxed shells, and GitHub tokens plus cloud and API keys from every local MCP child process</td><td><b>Defence-in-depth</b> - exact variable names only, and the background-task shell path inherits the parent environment unscrubbed</td></tr>
@@ -138,10 +138,14 @@
       (sourced from <code>expanded_sandbox_paths()</code> in
       <code class="path">server/security/sensitive_paths.py</code>, consumed as
       <code>_DENIED_PATHS</code> in <code>server/sandbox.py</code>), and the Linux bwrap setup
-      <code>--ro-bind</code>s the filesystem read-only and masks the same paths. It denies read/write
-      of SSH/GPG keys, cloud credentials (<code>~/.aws</code> is denied for generic commands but
-      re-allowed per-call, read-only, for the AWS tools), git credentials, browser cookies/keychains, shell
-      history, and password-manager stores.</p>
+      <code>--ro-bind</code>s the filesystem read-only and masks the same paths. It denies writes
+      to SSH/GPG keys, cloud credentials, git credentials, browser cookies/keychains, shell
+      history, and password-manager stores in every mode. Reads of these credential stores depend on
+      the permission mode (<code class="path">server/security/secret_reads.py</code>): Bypass reads
+      them with no card, Don't ask refuses, and every other mode asks a person for each read.
+      Unattended runs outside Bypass are refused. <code>~/.aws</code> is also re-allowed per-call,
+      read-only, for the AWS tools. See
+      <a href="arch-sandbox.html#secret-reads">Secret reads by permission mode</a>.</p>
     <p>A second dimension sits on top of that deny-list: how much the command may <b>write</b>. Three
       modes exist - write anywhere, write only inside the workspace and the temp directories, or
       write nothing. The assistant picks between them with a <code>sandbox_permissions</code>

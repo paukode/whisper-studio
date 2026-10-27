@@ -161,9 +161,11 @@ def register_defaults() -> None:
     # specs live with their executors to keep this file under the size budget.
     from server.agent_tools.config_tools import register_config_approval
     from server.cron_scheduler import register_cron_approval
+    from server.security.secret_reads import register_secret_read_approval
 
     register_config_approval()
     register_cron_approval()
+    register_secret_read_approval()
 
     # Folder access — its own category so it is never covered by "Yes for all
     # writes"/"all commands". Granting the app reach into a NEW folder outside

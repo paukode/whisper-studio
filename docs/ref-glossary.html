@@ -572,7 +572,8 @@
           <td>The macOS kernel-level sandbox (<code>sandbox-exec(5)</code>) that wraps every shell and
             code-execution path, including the terminal PTY. It is the security boundary the project
             trusts last and most; a curated deny-list masks secret stores (SSH/GPG keys, cloud and git
-            credentials, browser cookies, shell history). On Linux the equivalent is <code>bwrap</code>.
+            credentials, browser cookies, shell history). Writes to them are denied in every mode;
+            reads are allowed only in Bypass or after a person approves the read. On Linux the equivalent is <code>bwrap</code>.
             See <a href="arch-sandbox.html">Sandbox &amp; security</a>.</td>
         </tr>
         <tr>

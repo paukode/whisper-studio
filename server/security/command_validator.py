@@ -400,8 +400,11 @@ _VALIDATORS: list[callable] = [
 ]
 
 
-def validate_command(command: str) -> str | None:
+def validate_command(command: str, secret_reads: bool = False) -> str | None:
     """Validate a command by splitting into subcommands and running all validators.
+
+    ``secret_reads`` (a run allowed to read the credential stores, see
+    server/security/secret_reads.py) skips the sensitive-path check.
 
     Returns the first warning found, or None if the command passes all checks.
     """
@@ -420,6 +423,8 @@ def validate_command(command: str) -> str | None:
         for validator in _VALIDATORS:
             if validator is check_subcommand_cap:
                 continue  # Already checked on the full command
+            if secret_reads and validator is check_sensitive_paths:
+                continue
             warning = validator(sub)
             if warning:
                 return warning

@@ -28,6 +28,7 @@ import re
 
 from server.approval.markers import approval_request
 from server.executors import register_executor
+from server.security.secret_reads import requested
 
 log = logging.getLogger("whisper-studio")
 
@@ -311,7 +312,10 @@ async def do_terminal_run(payload: dict) -> tuple[bool, str]:
     # can't type a dangerous command into the user's visible terminal either.
     from server.security.command_validator import validate_command
 
-    warning = validate_command(command)
+    # The gate settled secret_access: set in Bypass, else only on a card a
+    # person approved (server/security/secret_reads.py).
+    secret = payload.get("secret_access") is True
+    warning = validate_command(command, secret_reads=secret)
     if warning:
         return False, warning
 
@@ -386,6 +390,7 @@ async def do_terminal_run(payload: dict) -> tuple[bool, str]:
             write_mode=write_mode,
             scratch_dir=own_scratch_dir(payload.get("session_id")),
             write_root=ws,
+            secret_reads=secret,
         )
     else:
         session = latest_visible_session()
@@ -425,6 +430,12 @@ async def do_terminal_run(payload: dict) -> tuple[bool, str]:
         hint = classify_sandbox_denial(output, write_mode)
         if hint:
             denial_hint = f"\n{hint}"
+    if mode == "sandbox" and not secret and result.get("exit_code") not in (0, None):
+        from server.security.secret_reads import denial_hint as secret_hint
+
+        hint = secret_hint(command, output)
+        if hint:
+            denial_hint += f"\n{hint}"
 
     return True, f"{preamble}{summary}\n---\n{output}{denial_hint}"
 
@@ -563,6 +574,8 @@ def _exec_terminal_run(tool_input, transcript, current_attachments):
             "sandbox_permissions": (tool_input.get("sandbox_permissions") or "").strip(),
             "justification": (tool_input.get("justification") or "").strip(),
             "session_id": session_id,
+            # Kept or dropped by the approval gate (server/security/secret_reads.py).
+            "secret_access": requested(tool_input),
         }
     )
     return approval_request(payload)

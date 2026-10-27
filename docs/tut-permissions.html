@@ -72,6 +72,8 @@
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
       <div class="callout__body"><p><b>Reads never prompt, in any mode.</b> Listing files, reading a
         file, grep, and glob are treated as read-safe and always run (even under <code>dontAsk</code>).
+        The one exception is a credential store, such as the Keychain or <code class="path">~/.ssh</code>
+        (see <a href="#credential-stores">Credential stores</a>).
         The distinction that actually matters is <em>read vs write</em>: a "write" is anything that
         changes files, runs a command, or alters Git or config state. That category is what each mode
         loosens or tightens.</p></div>
@@ -96,6 +98,26 @@
       turn. The breaker is turn-scoped and in-memory; it never changes your saved mode, and every new
       turn starts fresh.</p>
 
+    <h3 id="credential-stores">Credential stores</h3>
+    <p>Credential stores are the places that hold your secrets: the login Keychain,
+      <code class="path">~/.ssh</code>, <code class="path">~/.aws</code>, <code class="path">~/.gnupg</code>,
+      git credentials, browser profiles and cookies, shell histories, password managers, and similar.
+      A read of a credential store follows its own rule:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Mode</th><th>Read of a credential store</th></tr></thead>
+      <tbody>
+        <tr><td><b>Bypass</b></td><td>Every read tool and every command reads them with no card.</td></tr>
+        <tr><td><b>Don't ask</b></td><td>Refused.</td></tr>
+        <tr><td><b>Asks first</b>, <b>Accept edits</b>, <b>Plan</b>, <b>Auto</b></td><td>You approve each read, every time. Auto mode never decides it, and a "Yes, all" for commands never covers it.</td></tr>
+      </tbody>
+    </table></div>
+    <p>A command that must read a store (for example <code>security find-identity</code>,
+      <code>codesign</code>, or <code>notarytool</code>, which use the login Keychain) asks with a card
+      whose summary starts with "READS THE KEYCHAIN AND CREDENTIAL STORES:". This card never offers to
+      remember your answer for the session. Sub-agents and scheduled jobs cannot read the stores
+      outside Bypass, because no person can answer the card. No mode lets a tool write to a credential
+      store.</p>
+
     <h2 id="category-modes">Per-category modes</h2>
     <p>The global mode is one dial for everything. When you want different latitude for different
       <em>kinds</em> of action, set a <b>per-category mode</b> under <b>Settings &rsaquo;
@@ -109,7 +131,7 @@
         <tr><td>File deletes</td><td>Deleting a file.</td></tr>
         <tr><td>Shell commands</td><td>Commands, Python runs, the terminal, the AWS CLI, and the git tools that write: commit, push, pull, checkout, merge, branch and stash.</td></tr>
         <tr><td>Saving files outside the workspace</td><td>The "save this to my Documents" flow. Its own category, so a blanket yes to workspace writes never covers it.</td></tr>
-        <tr><td>Folder access</td><td>Opening a folder outside the connected workspace as the workspace, or pinning a workflow to one. You are asked once per folder and the grant covers everything inside it. Reading a file or folder anywhere on your Mac never asks.</td></tr>
+        <tr><td>Folder access</td><td>Opening a folder outside the connected workspace as the workspace, or pinning a workflow to one. You are asked once per folder and the grant covers everything inside it. Reading a file or folder anywhere on your Mac never asks, apart from credential stores.</td></tr>
         <tr><td>Worktrees</td><td>Entering and leaving an isolated git worktree.</td></tr>
         <tr><td>Live preview</td><td>Starting, driving and stopping a dev-server preview session. Starting a named config from <code class="path">.whisper/launch.json</code> whose command you have approved once never waits on this row; see <a href="#preview-named-configs">below</a>.</td></tr>
         <tr><td>Word/Excel/PowerPoint scripts</td><td>The <code>office_script</code> tool, which writes real Python against your documents.</td></tr>
@@ -322,12 +344,14 @@
           <code>$(...)</code> or backticks. These are denied regardless of mode.</p>
       </div>
     </div>
-    <p>The validator also refuses access to sensitive paths and files, strips control characters and
+    <p>The validator also refuses access to sensitive paths and files (except in a run that may
+      <a href="#credential-stores">read credential stores</a>), strips control characters and
       deceptive Unicode whitespace, and caps how many commands you can chain in one call. It is
       defence-in-depth: it catches the easy cases without being what stops a determined attacker. That
       job belongs to <code>sandbox-exec</code>. And of course, reads never prompt because they cannot
       change anything: <code>ws_read_file</code> and <code>ws_list_directory</code> read any file
-      or folder on your Mac by absolute path, with or without a workspace connected.</p>
+      or folder on your Mac by absolute path, with or without a workspace connected. The exception
+      is a <a href="#credential-stores">credential store</a>.</p>
     <p>Three things always stop for a click, whatever the dial says. A command that <b>deletes
       outside the workspace</b> - <code>rm</code>, <code>rmdir</code>, <code>shred</code>,
       <code>find -delete</code>, and the same commands hidden behind <code>sudo</code> or
@@ -362,7 +386,8 @@
       the target of the link.</p>
     <p>The line that holds in every mode is the workspace boundary. Reading never asks, anywhere
       on your Mac, apart from credential stores such as <code class="path">~/.ssh</code> and
-      <code class="path">~/.aws</code>, which no tool reads. Changing anything outside the
+      <code class="path">~/.aws</code> (see <a href="#credential-stores">Credential stores</a>).
+      Changing anything outside the
       workspace asks even in <code>bypassPermissions</code>: a file saved to a path you named, a
       folder opened as a new workspace, a delete that reaches out of the tree, or a command
       escaping the sandbox. A command that Bypass, a "yes to all", a rule or Auto mode let run
