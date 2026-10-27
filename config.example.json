@@ -1,6 +1,5 @@
 {
   "tavily_api_key": "",
-  "whisper_language": "",
   "transcription_backend": "streaming",
   "speaker_embedder": "redimnet",
   "speaker_split_turns": true,

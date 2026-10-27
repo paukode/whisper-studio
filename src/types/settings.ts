@@ -8,8 +8,7 @@ export interface AppConfig {
   effortLevel: string;
   briefMode: boolean;
   permissionMode: string;
-  /** Live ASR engine: 'whisper' (utterance), 'streaming' (Parakeet), or
-   *  'canary' (25 EU languages + native translation). */
+  /** Live ASR engine: 'whisper' (utterance) or 'streaming' (Parakeet). */
   transcriptionBackend: string;
   /** Translate dropdown: 'off' | 'canary' | 'apple' (legacy stored
    *  'auto'/'model' values are normalized to 'canary' on load). */

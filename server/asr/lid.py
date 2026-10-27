@@ -6,10 +6,9 @@ token), so this small classifier supplies it: ~80 MB, 107 languages, and
 contended by the ASR models and the index embedder, and at this size CPU is
 faster than paying the transfer.
 
-``detect`` always picks among the caller's candidates (the transcription
-languages the engine decodes, see server/asr/languages.py), the same trick
-the Whisper backend uses for its own detection: the model still scores all
-107 languages, we just never pick one the session can't use. There is no
+``detect`` always picks among the caller's candidates (the languages Canary
+translates, see server/asr/canary_translator.py): the model still scores
+all 107 languages, we just never pick one Canary can't use. There is no
 "all languages" mode: an empty candidate set, or one the classifier has no
 label for, is a programming error and raises.
 """
@@ -38,8 +37,8 @@ _lock = threading.Lock()
 
 # A failed load (model missing and not downloadable, a speechbrain import
 # error) is remembered for this long. Its callers sit on Canary's single
-# decode thread, once per final and per long draft, so without this every
-# one of them would retry the load, download attempt included, and log it.
+# decode thread, once per translated line, so without this every one of
+# them would retry the load, download attempt included, and log it.
 _LOAD_RETRY_SECONDS = 60.0
 _clock = time.monotonic
 _load_failure: tuple[float, str] | None = None  # (when, why) of the last failed load

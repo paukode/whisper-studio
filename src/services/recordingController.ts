@@ -212,8 +212,8 @@ let liveSwitchActive = false;
  *  until the next load starts or finishes. */
 let loadModelBannerDismissed = false;
 
-const engineOf = (backend: string): 'whisper' | 'parakeet' | 'canary' =>
-  backend === 'whisper' ? 'whisper' : backend === 'canary' ? 'canary' : 'parakeet';
+const engineOf = (backend: string): 'whisper' | 'parakeet' =>
+  backend === 'whisper' ? 'whisper' : 'parakeet';
 /** Buffers native (shell-captured) samples between mic worklet frames in
  *  mixed mode. Null in mic-only and native-only modes. */
 let nativeMixer: NativeAudioMixer | null = null;
@@ -978,7 +978,7 @@ function stop(): void {
   rec.releaseTabAudio();
 
   // Settle the transcript before closing the socket. On stop the server
-  // decodes the in-flight utterance (Canary and Whisper take hundreds of ms
+  // decodes the in-flight utterance (Whisper takes hundreds of ms
   // for a long tail, plus the speaker embed), drains queued translations,
   // then answers `session_ended` and closes. Quiet on the socket proves
   // nothing while that runs, so the take waits for the answer itself (or

@@ -200,17 +200,56 @@ class Model(nn.Module):
                 "Tokenizer not loaded. Use post_load_hook or set _tokenizer."
             )
 
-        generated_tokens, avg_logprob = self._decode_tokens(
-            enc_out,
-            enc_mask,
+        prompt_tokens = self._tokenizer.build_prompt_tokens(
             source_lang=source_lang,
             target_lang=target_lang,
             use_pnc=use_pnc,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            verbose=verbose,
         )
-        prompt_tokens = self._prompt_tokens(source_lang, target_lang, use_pnc)
+
+        if verbose:
+            print(f"Prompt tokens ({len(prompt_tokens)}): {prompt_tokens}")
+
+        eos_id = self._tokenizer.eos_id
+        generated_tokens = []
+        cache = None
+
+        prompt_ids = mx.array([prompt_tokens], dtype=mx.int32)
+        logits, cache = self.decoder(
+            prompt_ids, enc_out, encoder_mask=enc_mask, cache=cache, start_pos=0
+        )
+        mx.eval(logits)
+
+        if temperature > 0:
+            next_token = int(mx.random.categorical(logits[:, -1, :] / temperature))
+        else:
+            next_token = int(logits[:, -1, :].argmax())
+
+        if next_token == eos_id:
+            generated_tokens = []
+        else:
+            generated_tokens.append(next_token)
+
+            for step in range(max_tokens - 1):
+                token_ids = mx.array([[next_token]], dtype=mx.int32)
+                logits, cache = self.decoder(
+                    token_ids,
+                    enc_out,
+                    encoder_mask=enc_mask,
+                    cache=cache,
+                    start_pos=len(prompt_tokens) + step,
+                )
+                mx.eval(logits)
+
+                if temperature > 0:
+                    next_token = int(
+                        mx.random.categorical(logits[:, -1, :] / temperature)
+                    )
+                else:
+                    next_token = int(logits[:, -1, :].argmax())
+
+                if next_token == eos_id:
+                    break
+                generated_tokens.append(next_token)
 
         text = self._tokenizer.decode(generated_tokens)
 
@@ -231,119 +270,7 @@ class Model(nn.Module):
             total_time=total_time,
             prompt_tps=len(prompt_tokens) / total_time if total_time > 0 else 0,
             generation_tps=len(generated_tokens) / total_time if total_time > 0 else 0,
-            avg_logprob=avg_logprob,
         )
-
-    def _prompt_tokens(self, source_lang: str, target_lang: str, use_pnc: bool) -> list:
-        if self._tokenizer is None:
-            raise RuntimeError(
-                "Tokenizer not loaded. Use post_load_hook or set _tokenizer."
-            )
-        return self._tokenizer.build_prompt_tokens(
-            source_lang=source_lang,
-            target_lang=target_lang,
-            use_pnc=use_pnc,
-        )
-
-    def _decode_tokens(
-        self,
-        enc_out: mx.array,
-        enc_mask: mx.array,
-        *,
-        source_lang: str,
-        target_lang: str,
-        use_pnc: bool = True,
-        max_tokens: int = 200,
-        temperature: float = 0.0,
-        verbose: bool = False,
-    ) -> Tuple[List[int], float]:
-        """Decode one prompt against an encoded clip. Returns the generated
-        tokens and their mean log-probability (end of text included)."""
-        prompt_tokens = self._prompt_tokens(source_lang, target_lang, use_pnc)
-        if verbose:
-            print(f"Prompt tokens ({len(prompt_tokens)}): {prompt_tokens}")
-
-        eos_id = self._tokenizer.eos_id
-        generated_tokens: List[int] = []
-        logprob_sum = 0.0
-        scored = 0
-
-        def pick(logits: mx.array) -> int:
-            nonlocal logprob_sum, scored
-            last = logits[:, -1, :].astype(mx.float32)
-            if temperature > 0:
-                token = int(mx.random.categorical(last / temperature))
-            else:
-                token = int(last.argmax())
-            logprob_sum += float((last[0, token] - mx.logsumexp(last[0])).item())
-            scored += 1
-            return token
-
-        prompt_ids = mx.array([prompt_tokens], dtype=mx.int32)
-        logits, cache = self.decoder(
-            prompt_ids, enc_out, encoder_mask=enc_mask, cache=None, start_pos=0
-        )
-        mx.eval(logits)
-        next_token = pick(logits)
-
-        if next_token != eos_id:
-            generated_tokens.append(next_token)
-            for step in range(max_tokens - 1):
-                token_ids = mx.array([[next_token]], dtype=mx.int32)
-                logits, cache = self.decoder(
-                    token_ids,
-                    enc_out,
-                    encoder_mask=enc_mask,
-                    cache=cache,
-                    start_pos=len(prompt_tokens) + step,
-                )
-                mx.eval(logits)
-                next_token = pick(logits)
-                if next_token == eos_id:
-                    break
-                generated_tokens.append(next_token)
-
-        return generated_tokens, (logprob_sum / scored if scored else float("-inf"))
-
-    def generate_best(
-        self,
-        audio,
-        languages: List[str],
-        *,
-        max_tokens: int = 200,
-        use_pnc: bool = True,
-        dtype: mx.Dtype = mx.bfloat16,
-    ) -> Tuple[str, str, Dict[str, float]]:
-        """Transcribe one clip in each of ``languages`` from a single encoder
-        pass and keep the decode the model is most confident in.
-
-        Returns (language, text, {language: mean token log-probability}).
-        Canary must be told the spoken language, and a wrong one comes out
-        as a fluent translation, so when language ID is unsure the decoder's
-        own confidence is the tie-breaker: transcribing English as English
-        scores higher than "transcribing" it as Polish.
-        """
-        mel = self._preprocess_audio(audio)
-        if mel.dtype != dtype:
-            mel = mel.astype(dtype)
-        enc_out, _enc_len, enc_mask = self._encode_audio(mel)
-        best: Tuple[str, str] | None = None
-        scores: Dict[str, float] = {}
-        for language in languages:
-            tokens, score = self._decode_tokens(
-                enc_out,
-                enc_mask,
-                source_lang=language,
-                target_lang=language,
-                use_pnc=use_pnc,
-                max_tokens=max_tokens,
-            )
-            scores[language] = score
-            if best is None or score > scores[best[0]]:
-                best = (language, self._tokenizer.decode(tokens).strip())
-        if best is None:
-            raise ValueError("generate_best needs at least one language")
-        return best[0], best[1], scores
 
     def sanitize(self, weights: Dict[str, mx.array]) -> Dict[str, mx.array]:
         """Map checkpoint weight names to this model's MLX parameter names.

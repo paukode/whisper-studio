@@ -64,7 +64,7 @@ def _static_entries() -> tuple[ModelEntry, ...]:
     variables inside the ensure functions, so their basenames are mirrored here
     with a pointer to the source.
     """
-    from server.asr import canary_backend, parakeet_backend, whisper_backend
+    from server.asr import canary_translator, parakeet_backend, whisper_backend
     from server.diarization import embedder as speaker_embedder
     from server.index import config as ic
 
@@ -93,18 +93,16 @@ def _static_entries() -> tuple[ModelEntry, ...]:
             key="canary",
             label="Canary 1B v2",
             group=GROUP_TRANSCRIPTION,
-            repo_id=canary_backend.CANARY_REPO_ID,
-            dir_name=rel(canary_backend.CANARY_MODEL_DIR, canary_backend.MODELS_DIR),
-            # Mirrors canary_backend._ensure_model's weight_file check.
+            repo_id=canary_translator.CANARY_REPO_ID,
+            dir_name=rel(canary_translator.CANARY_MODEL_DIR, canary_translator.MODELS_DIR),
+            # Mirrors canary_translator._ensure_model's weight_file check.
             sentinel_rel="model.safetensors",
-            ensure_module="server.asr.canary_backend",
+            ensure_module="server.asr.canary_translator",
             ensure_func="_ensure_model",
             note=(
-                "Fastest transcription and the best translation for 25 "
-                "European languages, with per-sentence language detection "
-                "(via the Language ID model). Also the translator behind "
-                "the transcript's Canary translate option, whichever model "
-                "is transcribing."
+                "The translator behind the transcript's Canary translate "
+                "option: 25 European languages to and from English, "
+                "whichever model is transcribing. It does not transcribe."
             ),
         ),
         ModelEntry(
@@ -120,8 +118,8 @@ def _static_entries() -> tuple[ModelEntry, ...]:
             ensure_func="_ensure_model",
             note=(
                 "Tiny classifier that detects the spoken language of each "
-                "sentence (107 languages). Gives Canary automatic language "
-                "detection for transcription and translation."
+                "sentence (107 languages). Tells Canary which language a "
+                "Parakeet line is in before it translates it."
             ),
         ),
         ModelEntry(

@@ -17,7 +17,6 @@ import importlib
 BACKENDS = {
     "whisper": "server.asr.whisper_backend",
     "parakeet": "server.asr.parakeet_backend",
-    "canary": "server.asr.canary_backend",
 }
 
 _ALIASES = {

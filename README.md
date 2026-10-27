@@ -60,7 +60,7 @@ Deploy setup is in [`docs/README.md`](docs/README.md).
   and the React SPA on one local port. No CORS, no separate frontend host,
   no remote backend.
 - **Local transcription with speaker attribution.** Two on-device engines
-  (Parakeet streaming, Whisper batch) plus Canary, word-level timings,
+  (Parakeet streaming, Whisper batch) plus Canary translation, word-level timings,
   turns split where one speaker takes over, and voiceprints that recognise
   a named speaker in later recordings.
 - **Talk to it.** Voice mode holds a spoken conversation: Amazon Nova Sonic

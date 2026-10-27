@@ -209,24 +209,7 @@ def test_startup_warms_nothing_when_engine_is_whisper(monkeypatch):
     assert _warm_calls(monkeypatch, "whisper") == []
 
 
-# ── language allowlist + relaxed rescue pass ─────────────────────────────────
-
-
-def test_parse_languages():
-    assert whisper_backend._parse_languages(None) == []
-    assert whisper_backend._parse_languages("") == []
-    assert whisper_backend._parse_languages("pl") == ["pl"]
-    assert whisper_backend._parse_languages(" PL , en ,") == ["pl", "en"]
-
-
-def test_configured_languages_drops_unknown_codes(monkeypatch):
-    monkeypatch.setattr(whisper_backend, "config_get", lambda k: "pl,nope,en")
-    assert whisper_backend._configured_languages() == ["pl", "en"]
-
-
-def test_pick_language_ignores_disallowed():
-    probs = {"ru": 0.5, "pl": 0.3, "en": 0.2}
-    assert whisper_backend._pick_language(probs, ["pl", "en"]) == "pl"
+# ── relaxed rescue pass ─────────────────────────────────
 
 
 def _speech_pcm() -> bytes:
@@ -243,7 +226,6 @@ def test_decode_retries_relaxed_when_strict_pass_is_empty(monkeypatch):
         return ("prawdziwy tekst" if relaxed else "", language, [])
 
     monkeypatch.setattr(whisper_backend, "_transcribe", fake_transcribe)
-    monkeypatch.setattr(whisper_backend, "_configured_languages", lambda: [])
     text, _, _, _ = whisper_backend._decode_utterance(_speech_pcm())
     assert text == "prawdziwy tekst"
     assert calls == [(None, False), (None, True)]
@@ -259,24 +241,8 @@ def test_decode_rescue_is_still_hallucination_filtered(monkeypatch):
             [],
         ),
     )
-    monkeypatch.setattr(whisper_backend, "_configured_languages", lambda: [])
     text, _, _, _ = whisper_backend._decode_utterance(_speech_pcm())
     assert text == ""
-
-
-def test_decode_uses_constrained_detection_for_allowlist(monkeypatch):
-    seen = {}
-    monkeypatch.setattr(whisper_backend, "_configured_languages", lambda: ["pl", "en"])
-    monkeypatch.setattr(whisper_backend, "_detect_language", lambda audio, allowed: "pl")
-
-    def fake_transcribe(audio, language=None, relaxed=False):
-        seen["language"] = language
-        return "dzień dobry wszystkim", language, []
-
-    monkeypatch.setattr(whisper_backend, "_transcribe", fake_transcribe)
-    text, _, _, _ = whisper_backend._decode_utterance(_speech_pcm())
-    assert text == "dzień dobry wszystkim"
-    assert seen["language"] == "pl"
 
 
 # ── translate-to-English companion pass ──────────────────────────────────────
@@ -286,43 +252,23 @@ def test_translate_utterance_keeps_short_phrases_and_drops_loops(monkeypatch):
     """The source already passed its engine's transcript filter, so a short
     translation that happens to be an English filler phrase ("Dziekuje." ->
     "Thank you.") is real; only a runaway loop is dropped."""
-    from server.asr import canary_backend
+    from server.asr import canary_translator
 
     audio = np.zeros(16000, dtype=np.float32)
     monkeypatch.setattr(
-        canary_backend, "_generate", lambda a, source_lang, target_lang: "Thank you."
+        canary_translator, "_generate", lambda a, source_lang, target_lang: "Thank you."
     )
-    assert canary_backend.translate_utterance(audio, "pl") == "Thank you."
+    assert canary_translator.translate_utterance(audio, "pl") == "Thank you."
     loop = "thank you thank you thank you thank you thank you thank you"
-    monkeypatch.setattr(canary_backend, "_generate", lambda a, source_lang, target_lang: loop)
-    assert canary_backend.translate_utterance(audio, "pl") == ""
+    monkeypatch.setattr(canary_translator, "_generate", lambda a, source_lang, target_lang: loop)
+    assert canary_translator.translate_utterance(audio, "pl") == ""
 
 
-# ── canary backend + whisper variant ─────────────────────────────────────────
-
-
-def test_resolve_name_canary():
-    assert asr.resolve_name("canary") == "canary"
-
-
-def test_canary_session_emits_final_with_language(monkeypatch):
-    from server.asr import canary_backend
-
-    monkeypatch.setattr(
-        canary_backend,
-        "_decode_utterance",
-        lambda pcm, tracker: ("dzień dobry", np.zeros(16000, dtype=np.float32), "pl"),
-    )
-    session = canary_backend.create_session()
-    session._buf = _StubBuffer([b"\x00" * 32000])
-    events = session.process(b"\x00" * 960)
-    assert [(e["kind"], e["text"], e["language"]) for e in events] == [
-        ("final", "dzień dobry", "pl")
-    ]
+# ── canary translator ─────────────────────────────────────────
 
 
 def test_canary_translate_language_pairs(monkeypatch):
-    from server.asr import canary_backend
+    from server.asr import canary_translator
 
     calls = []
 
@@ -330,14 +276,14 @@ def test_canary_translate_language_pairs(monkeypatch):
         calls.append((source_lang, target_lang))
         return "good morning"
 
-    monkeypatch.setattr(canary_backend, "_generate", fake_generate)
+    monkeypatch.setattr(canary_translator, "_generate", fake_generate)
     audio = np.zeros(16000, dtype=np.float32)
-    assert canary_backend.translate_utterance(audio, "pl") == "good morning"
-    assert canary_backend.translate_utterance(audio, "en", target="pl") == "good morning"
+    assert canary_translator.translate_utterance(audio, "pl") == "good morning"
+    assert canary_translator.translate_utterance(audio, "en", target="pl") == "good morning"
     # Same language: skipped (clears the pending slot without a bogus line).
-    assert canary_backend.translate_utterance(audio, "en", target="en") == ""
+    assert canary_translator.translate_utterance(audio, "en", target="en") == ""
     # X -> Y with both non-English is unsupported: skipped, no decode.
-    assert canary_backend.translate_utterance(audio, "pl", target="de") == ""
+    assert canary_translator.translate_utterance(audio, "pl", target="de") == ""
     assert calls == [("pl", "en"), ("en", "pl")]
 
 
@@ -410,64 +356,6 @@ def test_lid_detect_reports_classifier_failure_but_raises_on_no_candidates(monke
     assert "Language detection failed" in caplog.text
     with pytest.raises(ValueError):
         lid.detect(audio, ())
-
-
-def test_canary_session_emits_interim_drafts(monkeypatch):
-    from server.asr import canary_backend
-
-    monkeypatch.setattr(
-        canary_backend, "_generate", lambda a, source_lang, target_lang: "dzień dob"
-    )
-    session = canary_backend.create_session()
-    # No completed utterance, 1 s of pending audio: a draft is emitted once.
-    session._buf = _StubBuffer([], tail=None)
-    session._buf.pending = lambda: b"\x00" * 32000
-    events = session.process(b"\x00" * 960)
-    assert events == [{"kind": "interim", "text": "dzień dob"}]
-    # The same draft again is suppressed (no flicker).
-    assert session.process(b"\x00" * 960) == []
-    # Below the minimum window, no draft.
-    session2 = canary_backend.create_session()
-    session2._buf = _StubBuffer([], tail=None)
-    session2._buf.pending = lambda: b"\x00" * 8000
-    assert session2.process(b"\x00" * 960) == []
-
-
-def test_canary_drafts_yield_to_translations(monkeypatch):
-    from server.asr import canary_backend
-
-    monkeypatch.setattr(canary_backend, "_generate", lambda a, source_lang, target_lang: "draft")
-    monkeypatch.setattr(canary_backend, "_pending_translations", 0)
-    session = canary_backend.create_session()
-    session._buf = _StubBuffer([], tail=None)
-    session._buf.pending = lambda: b"\x00" * 32000
-    # A queued translation suppresses the draft entirely.
-    canary_backend.note_translation_queued()
-    assert session.process(b"\x00" * 960) == []
-    # Once the translation runs (decrements on entry), drafts resume.
-    monkeypatch.setattr(canary_backend, "_generate", lambda a, source_lang, target_lang: "text")
-    canary_backend.translate_utterance(np.zeros(16000, dtype=np.float32), "pl")
-    monkeypatch.setattr(canary_backend, "_generate", lambda a, source_lang, target_lang: "draft")
-    assert session.process(b"\x00" * 960) == [{"kind": "interim", "text": "draft"}]
-
-
-def test_canary_draft_cadence_backs_off(monkeypatch):
-    from server.asr import canary_backend
-
-    monkeypatch.setattr(canary_backend, "_pending_translations", 0)
-    session = canary_backend.create_session()
-    # Immediately after a draft, another is NOT due; after the base interval
-    # it is; long windows require the relaxed interval.
-    import time as _time
-
-    session._last_interim_at = _time.monotonic()
-    assert not session._draft_due(32000)  # 1 s window, 0 s since last
-    session._last_interim_at = _time.monotonic() - 1.0
-    assert session._draft_due(32000)  # 1 s window, 1 s since last
-    session._last_interim_at = _time.monotonic() - 1.0
-    assert not session._draft_due(2 * 16000 * 6)  # 6 s window needs 2 s gap
-    session._last_interim_at = _time.monotonic() - 2.1
-    assert session._draft_due(2 * 16000 * 6)
 
 
 # ── word timings (what lets the orchestrator split a turn) ───────────────────

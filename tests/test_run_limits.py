@@ -77,14 +77,22 @@ def test_a_saved_config_loses_the_retired_keys_once(tmp_path, monkeypatch):
             {
                 "agent_limits": {"default": {"max_turns": 120, "deadline_seconds": 900}},
                 "cron_max_rounds": 50,
+                "whisper_language": "pl,en",
+                "transcription_backend": "canary",
                 "bedrock_region": "us-east-1",
             }
         )
     )
     monkeypatch.setattr(config_mod, "_active_user_config_path", lambda: str(path))
 
-    assert sorted(config_mod.retire_user_config_keys()) == sorted(config_mod.RETIRED_USER_KEYS)
-    assert json.loads(path.read_text()) == {"bedrock_region": "us-east-1"}
+    assert sorted(config_mod.retire_user_config_keys()) == sorted(
+        [*config_mod.RETIRED_USER_KEYS, "transcription_backend"]
+    )
+    # Canary only translates now: its saved transcription choice is Parakeet.
+    assert json.loads(path.read_text()) == {
+        "transcription_backend": "streaming",
+        "bedrock_region": "us-east-1",
+    }
     assert config_mod.retire_user_config_keys() == []
 
 

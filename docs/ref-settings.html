@@ -65,20 +65,9 @@
             <a href="#tavily">Tavily key</a>).</td>
         </tr>
         <tr>
-          <td><b>Transcription Languages</b></td>
-          <td>API keys</td>
-          <td>Language list for the Canary and Whisper engines: one code
-            (<code>pl</code>) pins the language, a comma list (<code>pl,en</code>) keeps detection but
-            constrains it to those candidates - the fix for short accented utterances landing on a
-            neighbor language. Blank means English plus your Mac's preferred languages for Canary,
-            and Whisper's own detection for Whisper; the field shows the set in use. A value Canary
-            cannot transcribe at all (such as <code>ja</code>) stops Canary transcribing instead of
-            falling back to other languages.</td>
-        </tr>
-        <tr>
           <td><b>Transcription Model</b></td>
           <td>API keys</td>
-          <td>The meeting-recorder engine: <b>Whisper Large v3</b>, <b>Canary</b>, or
+          <td>The meeting-recorder engine: <b>Whisper Large v3</b> or
             <b>Parakeet (live)</b> (the default). Mirrors the dropdown in the transcript panel header;
             saving here updates a live recording immediately. See
             <a href="tut-voice.html#engine-and-speakers">Voice &amp; meetings</a>.</td>
@@ -282,12 +271,11 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Key</th><th>Type</th><th>Default</th><th>Written by</th></tr></thead>
       <tbody>
-        <tr><td><code>transcription_backend</code></td><td>string</td><td><code>"streaming"</code> (Parakeet)</td><td>Transcription Model, and the transcript panel header (<code>whisper</code> / <code>canary</code> / <code>streaming</code>)</td></tr>
-        <tr><td><code>whisper_language</code></td><td>string or null</td><td><code>null</code> (Canary: English plus the Mac's languages; Whisper: auto-detect)</td><td>Transcription Languages (one code pins, a comma list constrains detection)</td></tr>
+        <tr><td><code>transcription_backend</code></td><td>string</td><td><code>"streaming"</code> (Parakeet)</td><td>Transcription Model, and the transcript panel header (<code>whisper</code> / <code>streaming</code>). A saved <code>"canary"</code> is rewritten to <code>"streaming"</code> once at startup</td></tr>
         <tr><td><code>translate_mode</code></td><td>string</td><td><code>"off"</code></td><td>Translation Model (<code>off</code> / <code>canary</code> / <code>apple</code>; legacy <code>auto</code> and <code>model</code> read as <code>canary</code>)</td></tr>
         <tr><td><code>translate_target</code></td><td>string</td><td><code>"en"</code></td><td>Translate To</td></tr>
         <tr><td><code>speaker_embedder</code></td><td>string</td><td><code>"redimnet"</code></td><td>No field. The speaker encoder behind "Speaker N": <code>redimnet</code> (ReDimNet2-B2) or <code>ecapa</code>. ReDimNet2 downloads on first use and falls back to ECAPA if it cannot. Changing it hides stored voiceprints, which are filed per encoder, because vectors from different encoders are not comparable</td></tr>
-        <tr><td><code>speaker_split_turns</code></td><td>boolean</td><td><code>true</code></td><td>No field. Cut one utterance at a speaker handover instead of labelling the whole thing as one speaker. Needs word timestamps, which Whisper and Parakeet report and Canary does not</td></tr>
+        <tr><td><code>speaker_split_turns</code></td><td>boolean</td><td><code>true</code></td><td>No field. Cut one utterance at a speaker handover instead of labelling the whole thing as one speaker. Needs word timestamps, which Whisper and Parakeet both report</td></tr>
         <tr><td><code>speaker_voiceprints</code></td><td>boolean</td><td><code>true</code></td><td>No field. Remember named speakers across recordings, so renaming "Speaker 2" to a name once gets that person their name back in later sessions</td></tr>
         <tr><td><code>voice</code></td><td>object</td><td><code>{"enabled": true, "model_id": "amazon.nova-2-sonic-v1:0", "region": "", "voice_id": "tiffany", "endpointing": "MEDIUM"}</code></td><td>No field. See <a href="#voice">Voice-mode keys</a></td></tr>
       </tbody>

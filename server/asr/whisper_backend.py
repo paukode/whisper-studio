@@ -5,7 +5,7 @@ hallucination filters all live here. Decodes only settled utterances at
 silence boundaries (no interim drafts); the latency-focused alternative is
 the Parakeet backend. Runs the FULL large-v3 checkpoint: best multilingual
 accuracy (translation is Canary's or Apple's
-job — see server/asr/canary_backend.py).
+job, see server/asr/canary_translator.py).
 
 Model load is lazy (first session), so importing this module is cheap.
 """
@@ -21,7 +21,6 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 
 from server.audio_buffer import UtteranceBuffer
-from server.infrastructure.config import get as config_get
 from server.infrastructure.paths import models_root
 
 log = logging.getLogger("whisper-studio")
@@ -287,69 +286,6 @@ def unload() -> None:
     log.info("Whisper model unloaded.")
 
 
-def _parse_languages(raw: str | None) -> list[str]:
-    """``whisper_language`` config values: '' -> auto-detect, 'pl' -> pinned,
-    'pl,en' -> constrain per-utterance detection to that allowlist."""
-    if not raw:
-        return []
-    return [code.strip().lower() for code in str(raw).split(",") if code.strip()]
-
-
-# Whisper's language inventory (mlx_whisper.tokenizer.LANGUAGES, the
-# openai/whisper large-v3 set, 100 codes). Vendored so allowlist validation is
-# deterministic everywhere: mlx_whisper is a Darwin-only dependency, and the
-# old import-or-skip fallback silently accepted junk codes on Linux.
-_KNOWN_WHISPER_LANGUAGES = frozenset(
-    """af am ar as az ba be bg bn bo br bs ca cs cy da de el en es et eu fa fi
-    fo fr gl gu ha haw he hi hr ht hu hy id is it ja jw ka kk km kn ko la lb
-    ln lo lt lv mg mi mk ml mn mr ms mt my ne nl nn no oc pa pl ps pt ro ru
-    sa sd si sk sl sn so sq sr su sv sw ta te tg th tk tl tr tt uk ur uz vi
-    yi yo yue zh""".split()
-)
-
-
-def _configured_languages() -> list[str]:
-    """The validated ``whisper_language`` allowlist (unknown codes dropped)."""
-    langs = _parse_languages(config_get("whisper_language"))
-    if not langs:
-        return []
-    known = _KNOWN_WHISPER_LANGUAGES
-    bad = [code for code in langs if code not in known]
-    if bad:
-        log.warning("whisper_language: ignoring unknown code(s): %s", ", ".join(bad))
-    return [code for code in langs if code in known]
-
-
-def _pick_language(probs: dict, allowed: list[str]) -> str:
-    """Argmax over the allowlist only, ignoring every other language."""
-    return max(allowed, key=lambda code: probs.get(code, 0.0))
-
-
-def _detect_language(audio_data: np.ndarray, allowed: list[str]) -> str:
-    """Constrained language ID for one utterance.
-
-    Whisper's built-in detection argmaxes over all 99 languages, and on
-    short accented utterances it routinely lands on a neighbor language —
-    which either garbles the text or silently *translates* it (a Polish
-    utterance decoded with an ``en`` token comes out as English). Detecting
-    ourselves and argmaxing over the user's allowlist removes both failure
-    modes. Cost-neutral: passing ``language`` to transcribe skips its own
-    internal detection pass.
-    """
-    import mlx.core as mx
-    from mlx_whisper import audio as whisper_audio
-
-    model = _model_holder().get_model(_ensure_model(), mx.float16)
-    mel = whisper_audio.log_mel_spectrogram(
-        audio_data, n_mels=model.dims.n_mels, padding=whisper_audio.N_SAMPLES
-    )
-    mel = whisper_audio.pad_or_trim(mel, whisper_audio.N_FRAMES, axis=-2).astype(mx.float16)
-    _, probs = model.detect_language(mel)
-    if isinstance(probs, list):
-        probs = probs[0]
-    return _pick_language(probs, allowed)
-
-
 def _words_from_segments(result: dict) -> list[dict]:
     """mlx-whisper segments -> flat [{text, start, end}] word list.
 
@@ -440,11 +376,8 @@ def _decode_utterance(utterance_pcm: bytes) -> tuple[str, np.ndarray, str | None
     language = None
     words: list[dict] = []
     try:
-        langs = _configured_languages()
-        language = langs[0] if len(langs) == 1 else None
-        if len(langs) > 1:
-            language = _detect_language(audio, langs)
-        text, language, words = _transcribe(audio, language=language)
+        # Whisper detects the language itself, over every language it knows.
+        text, language, words = _transcribe(audio)
         if text and _is_junk(text):
             log.debug("Whisper: hallucination filter dropped %r", text[:80])
             text = ""
