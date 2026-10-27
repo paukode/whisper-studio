@@ -3137,8 +3137,9 @@ input.segment-speaker {
 .toolbar-dropdown-sep { border-top: 1px solid var(--border); margin: 4px 6px; }
 
 /* "?" help tip: hover, keyboard focus, or touch (tap focuses the button)
-   shows the bubble. The bubble inverts the surface (dark-on-light themes and
-   vice versa) via text/bg swap. When shown it accepts the pointer so the
+   shows the bubble: a solid card in the theme's colors, below and to the
+   right of the "?", so it is never cut off by the edge above it. When
+   shown it accepts the pointer so the
    cursor can move onto it (WCAG 1.4.13 hoverable); Escape dismisses via
    blur in HelpTip.tsx. */
 .help-tip {
@@ -3151,10 +3152,12 @@ input.segment-speaker {
 .help-tip:hover, .help-tip:focus { color: var(--text-secondary); border-color: var(--text-muted); outline: none; }
 .help-tip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .help-tip-bubble {
-    position: absolute; right: -6px; bottom: calc(100% + 7px); width: 200px;
-    background: var(--text-primary); color: var(--bg-primary);
-    font-size: var(--fs-caption); font-weight: 400; line-height: 1.5; text-align: left;
-    padding: 7px 10px; border-radius: var(--radius-md); box-shadow: var(--shadow-md);
+    position: absolute; left: -8px; top: calc(100% + 8px); width: 320px; max-width: 70vw;
+    background: var(--bg-elevated); color: var(--text-primary);
+    border: 1px solid var(--border-strong);
+    font-family: var(--font-sans); font-size: var(--fs-small); font-weight: 400;
+    line-height: 1.55; text-align: left;
+    padding: 10px 12px; border-radius: var(--radius-md); box-shadow: var(--shadow-lg);
     opacity: 0; pointer-events: none; transition: opacity 0.12s ease; z-index: 60;
     white-space: normal; text-transform: none; letter-spacing: normal;
 }
