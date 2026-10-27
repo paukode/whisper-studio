@@ -2102,11 +2102,30 @@ input.segment-speaker {
     display: grid; grid-template-columns: 112px minmax(0, 1fr); align-items: center;
     gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border);
 }
-.cg-row:last-child { border-bottom: none; }
+.cg-row:last-child, .cg-row:has(+ .cg-usage) { border-bottom: none; }
 .cg-row-stack { grid-template-columns: minmax(0, 1fr); gap: 8px; }
 .cg-row-label b { display: block; font-size: var(--fs-small); color: var(--text-heading); }
 .cg-row-label small { font-size: var(--fs-caption); color: var(--text-muted); }
-.cg-row .toolbar-dropdown-wrap { justify-self: start; }
+.cg-row .toolbar-dropdown-wrap { justify-self: start; min-width: 0; max-width: 100%; }
+/* Inside a panel the model list opens in place, under its chip, so the
+   panel's own scrolling never hides it. */
+.cg-panel .toolbar-dropdown {
+    position: static; margin-top: 6px; width: 100%; min-width: 0; max-width: none;
+    max-height: 240px; box-shadow: none; animation: none;
+    background: var(--bg-surface);
+}
+/* This chat's usage closes the "How it thinks" panel; with no turn yet the
+   readout renders nothing and the section hides. */
+.cg-usage {
+    display: grid; grid-template-columns: 112px minmax(0, 1fr); align-items: center;
+    gap: 12px; padding-top: 10px; margin-top: 2px; border-top: 1px solid var(--border);
+}
+.cg-usage:not(:has(.token-counter)) { display: none; }
+.cg-usage .token-counter {
+    justify-self: start; max-width: 100%;
+    white-space: normal; flex-wrap: wrap; row-gap: 2px; line-height: 1.5;
+    border-radius: var(--radius-md);
+}
 .cg-segctl {
     display: flex; gap: 2px; padding: 3px; min-width: 0;
     background: var(--chip); border-radius: var(--radius-pill);
@@ -2165,9 +2184,6 @@ input.segment-speaker {
     background: var(--accent); color: var(--on-accent);
     font-size: 10px; font-weight: 700; line-height: 16px; text-align: center;
 }
-.more-usage:empty { display: none; }
-.more-usage { padding: 4px 6px 8px; }
-.more-usage .token-counter { width: 100%; }
 
 /* One pill spec for the remaining toolbar buttons (the model chip in the
    "How it thinks" panel, the voice chips): same capsule, same height.
@@ -3756,8 +3772,8 @@ input.segment-speaker {
 /* Session token/cost readout in the composer toolbar — the app's single
    tokens/cost/context surface (the bottom status strip used to repeat it). */
 .token-counter {
-    /* Same capsule as .toolbar-btn — it shares that row, so it follows the
-       one-pill spec; only the mono/tabular numerals differ. */
+    /* The usage readout at the foot of the "How it thinks" panel (and the
+       Costs tiles); mono, tabular numerals. */
     display: inline-flex;
     align-items: center;
     gap: 5px;

@@ -19,7 +19,7 @@ import { useQuery } from '@tanstack/react-query';
 import { listIndexes, type IndexInfo } from '@/api/workspace';
 import { useIndexSearchStore } from '@/stores/indexSearchStore';
 import { toError } from '@/utils/toError';
-import { ThinkGroup, WorkGroup } from './ComposerGroups';
+import { PermissionGroup, ThinkGroup, WorkspaceGroup } from './ComposerGroups';
 import {
   BASE_SLASH_COMMANDS,
   parseSkillMention,
@@ -53,9 +53,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
     removeAttachment,
     waitForUploads,
   } = useComposerAttachments(sessionId);
-  // The composer's two group panels ("How it thinks", "Where it works"), the
+  // The composer's panels ("How it thinks", permissions, workspace), the
   // model list inside the first, and the More popover: one open at a time.
   const [thinkOpen, setThinkOpen] = useState(false);
+  const [permOpen, setPermOpen] = useState(false);
   const [workOpen, setWorkOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
   // More popover and which section inside it is expanded.
@@ -152,6 +153,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
       const target = e.target as HTMLElement;
       if (!target.closest('.toolbar-dropdown-wrap, .cg-wrap')) {
         setThinkOpen(false);
+        setPermOpen(false);
         setWorkOpen(false);
         setModelOpen(false);
         setMoreOpen(false);
@@ -168,16 +170,17 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
-      if (!(thinkOpen || workOpen || modelOpen || moreOpen)) return;
+      if (!(thinkOpen || permOpen || workOpen || modelOpen || moreOpen)) return;
       e.preventDefault();
       setThinkOpen(false);
+      setPermOpen(false);
       setWorkOpen(false);
       setModelOpen(false);
       setMoreOpen(false);
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [thinkOpen, workOpen, modelOpen, moreOpen]);
+  }, [thinkOpen, permOpen, workOpen, modelOpen, moreOpen]);
 
   // Approve a saved plan: read its markdown, leave plan mode so writes are
   // allowed, and send an implementation turn. The full plan goes to the model;
@@ -362,12 +365,12 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
     }
   }, [planMode, setPlanMode, updateConfig]);
 
-  /** Switch the permission mode from the "Where it works" panel. Same write
+  /** Switch the permission mode from the permissions panel. Same write
    *  path as the Settings panel — store, config, then PUT /api/permissions/mode
    *  so the backend session_approvals view stays in sync. The Plan-mode flag
    *  is mirrored so any code that still reads `planMode` keeps working. */
   const handleSelectMode = useCallback(async (target: string) => {
-    setWorkOpen(false);
+    setPermOpen(false);
     if (target === permissionMode) return;
     setPlanMode(target === 'plan');
     updateConfig({ permissionMode: target });
@@ -821,14 +824,15 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
               </svg>
             </button>
           )}
-          {/* Composer controls: two groups (each opens its labeled panel)
-           *  and the round More button, left-aligned on one row. */}
+          {/* Composer controls: How it thinks, permissions, workspace (each
+           *  opens its labeled panel) and the round More button, left-aligned
+           *  on one row. */}
           <div className="chat-toolbar" id="chatToolbar">
             <ThinkGroup
               open={thinkOpen}
               onToggle={() => {
                 setThinkOpen((p) => !p);
-                setWorkOpen(false); setMoreOpen(false); setModelOpen(false);
+                setPermOpen(false); setWorkOpen(false); setMoreOpen(false); setModelOpen(false);
               }}
               onClose={() => { setThinkOpen(false); setModelOpen(false); }}
               modelOpen={modelOpen}
@@ -836,11 +840,23 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
               onSelectModel={(key) => { setModelOpen(false); void requestModelChange(key); }}
             />
 
-            <WorkGroup
+            <PermissionGroup
+              open={permOpen}
+              onToggle={() => {
+                setPermOpen((p) => !p);
+                setThinkOpen(false); setWorkOpen(false); setMoreOpen(false); setModelOpen(false);
+              }}
+              onClose={() => setPermOpen(false)}
+              permissionMode={permissionMode}
+              onSelectMode={handleSelectMode}
+              onManage={() => { setPermOpen(false); openSettings('permissions'); }}
+            />
+
+            <WorkspaceGroup
               open={workOpen}
               onToggle={() => {
                 setWorkOpen((p) => !p);
-                setThinkOpen(false); setMoreOpen(false); setModelOpen(false);
+                setThinkOpen(false); setPermOpen(false); setMoreOpen(false); setModelOpen(false);
               }}
               onClose={() => setWorkOpen(false)}
               connected={wsConnected}
@@ -848,9 +864,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
               recentPaths={recentPaths}
               onBrowse={() => handleNativeBrowse()}
               onConnect={(p) => void connectToWorkspace(p)}
-              permissionMode={permissionMode}
-              onSelectMode={handleSelectMode}
-              onManage={() => { setWorkOpen(false); openSettings('permissions'); }}
             />
 
             <MoreMenu
@@ -860,7 +873,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
               onToggle={() => {
                 setMoreOpen((p) => {
                   const next = !p;
-                  if (next) { setThinkOpen(false); setWorkOpen(false); setModelOpen(false); }
+                  if (next) { setThinkOpen(false); setPermOpen(false); setWorkOpen(false); setModelOpen(false); }
                   return next;
                 });
               }}

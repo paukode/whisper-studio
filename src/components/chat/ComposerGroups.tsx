@@ -6,13 +6,14 @@ import { EFFORT_NOTES, THINKING_NOTES } from '@/utils/effortNotes';
 import { PERMISSION_MODES } from '@/utils/permissionModes';
 import { ModelDropdown } from './ModelDropdown';
 import { LocalContextWindowSlider } from './LocalContextWindowSlider';
+import { TokenCounter } from './TokenCounter';
 
 /**
- * The composer's two control groups. Collapsed, each is one capsule of short
- * segments ("How it thinks": model, thinking, answers; "Where it works":
- * workspace, permissions). A click opens the group's labeled panel above the
- * composer, where every setting is named and explained. The parent owns which
- * panel is open, so opening one closes the other and the More menu.
+ * The composer's controls. Collapsed, each is a capsule: "How it thinks"
+ * (model, thinking, answers in short segments), then permissions, then the
+ * workspace. A click opens the capsule's labeled panel above the composer,
+ * where every setting is named and explained. The parent owns which panel is
+ * open, so opening one closes the others and the More menu.
  */
 
 // Stored as GPT-5.x's native `verbosity` (low/medium/high); how each model
@@ -179,71 +180,54 @@ export const ThinkGroup: React.FC<ThinkGroupProps> = ({
               <LocalContextWindowSlider />
             </div>
           )}
+          {/* This chat's tokens, context and cost (renders nothing before the
+           *  first turn, and the section hides with it). */}
+          <div className="cg-usage">
+            <div className="cg-row-label"><b>This chat</b><small>tokens and cost so far</small></div>
+            <TokenCounter />
+          </div>
         </div>
       )}
     </div>
   );
 };
 
-interface WorkGroupProps {
+const baseName = (p: string): string => p.split('/').filter(Boolean).pop() || p;
+
+interface PermissionGroupProps {
   open: boolean;
   onToggle: () => void;
   onClose: () => void;
-  connected: boolean;
-  wsPath: string;
-  recentPaths: string[];
-  onBrowse: () => void;
-  onConnect: (path: string) => void;
   permissionMode: string;
   onSelectMode: (mode: string) => void;
   onManage: () => void;
 }
 
-const baseName = (p: string): string => p.split('/').filter(Boolean).pop() || p;
-
-export const WorkGroup: React.FC<WorkGroupProps> = ({
-  open, onToggle, onClose, connected, wsPath, recentPaths, onBrowse, onConnect,
-  permissionMode, onSelectMode, onManage,
+export const PermissionGroup: React.FC<PermissionGroupProps> = ({
+  open, onToggle, onClose, permissionMode, onSelectMode, onManage,
 }) => {
   const ref = useRef<HTMLDivElement>(null);
   useDismiss(ref, onClose, { enabled: open });
   const current = PERMISSION_MODES.find((m) => m.value === permissionMode);
   const modeLabel = current?.label ?? permissionMode;
-  const wsName = connected && wsPath ? baseName(wsPath) : 'No workspace';
 
   return (
     <div className="cg-wrap" ref={ref}>
       <button
         type="button"
         className={`cg-group${open ? ' open' : ''}`}
-        id="workGroup"
+        id="permGroup"
         aria-expanded={open}
-        aria-label={`Where it works: ${wsName}, permissions ${modeLabel}`}
+        aria-label={`Permissions: ${modeLabel}`}
         onClick={onToggle}
       >
-        <span className={`cg-seg cg-ws${connected ? ' on' : ''}`} title={connected ? wsPath : 'No workspace connected'}>{Icon.folder}<span className="cg-t">{wsName}</span></span>
-        <span className="cg-dv" aria-hidden="true" />
         <span className={`cg-seg cg-perm tone-${modeTone(permissionMode)}`} title={`Permission mode: ${modeLabel}`}>{Icon.shield}<span className="cg-t">{modeLabel}</span></span>
       </button>
       {open && (
-        <div className="cg-panel" role="group" aria-label="Where it works" data-testid="work-panel">
-          <div className="cg-panel-title">Where it works</div>
+        <div className="cg-panel" role="group" aria-label="Permissions" data-testid="perm-panel">
+          <div className="cg-panel-title">Permissions</div>
           <div className="cg-row cg-row-stack">
-            <div className="cg-row-label"><b>Workspace</b><small>files it can see</small></div>
-            <div className="cg-ws-current" title={connected ? wsPath : undefined}>{connected ? wsPath : 'No workspace connected'}</div>
-            <div className="cg-ws-list">
-              <button type="button" className="cg-opt" data-testid="workspace-option-browse" onClick={onBrowse}>
-                <b>Browse…</b><small>Folder browser with recents and sorting</small>
-              </button>
-              {recentPaths.filter((p) => p !== wsPath).map((p) => (
-                <button type="button" key={p} className="cg-opt" title={p} data-testid={`workspace-option-${p}`} onClick={() => onConnect(p)}>
-                  <b>{baseName(p)}</b><small>{p}</small>
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="cg-row cg-row-stack">
-            <div className="cg-row-label"><b>Permissions</b><small>what runs without asking</small></div>
+            <div className="cg-row-label"><b>What runs without asking</b><small>applies to every chat</small></div>
             <div className="cg-modes">
               {PERMISSION_MODES.map((m) => (
                 <button
@@ -260,6 +244,59 @@ export const WorkGroup: React.FC<WorkGroupProps> = ({
               ))}
             </div>
             <button type="button" className="cg-link" data-testid="mode-option-manage" onClick={onManage}>Manage rules…</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+interface WorkspaceGroupProps {
+  open: boolean;
+  onToggle: () => void;
+  onClose: () => void;
+  connected: boolean;
+  wsPath: string;
+  recentPaths: string[];
+  onBrowse: () => void;
+  onConnect: (path: string) => void;
+}
+
+export const WorkspaceGroup: React.FC<WorkspaceGroupProps> = ({
+  open, onToggle, onClose, connected, wsPath, recentPaths, onBrowse, onConnect,
+}) => {
+  const ref = useRef<HTMLDivElement>(null);
+  useDismiss(ref, onClose, { enabled: open });
+  const wsName = connected && wsPath ? baseName(wsPath) : 'No workspace';
+
+  return (
+    <div className="cg-wrap" ref={ref}>
+      <button
+        type="button"
+        className={`cg-group${open ? ' open' : ''}`}
+        id="workspaceGroup"
+        aria-expanded={open}
+        aria-label={`Workspace: ${wsName}`}
+        onClick={onToggle}
+      >
+        <span className={`cg-seg cg-ws${connected ? ' on' : ''}`} title={connected ? wsPath : 'No workspace connected'}>{Icon.folder}<span className="cg-t">{wsName}</span></span>
+      </button>
+      {open && (
+        <div className="cg-panel" role="group" aria-label="Workspace" data-testid="workspace-panel">
+          <div className="cg-panel-title">Workspace</div>
+          <div className="cg-row cg-row-stack">
+            <div className="cg-row-label"><b>Files it can see</b><small>{connected ? 'connected folder' : 'no folder connected'}</small></div>
+            {connected && <div className="cg-ws-current" title={wsPath}>{wsPath}</div>}
+            <div className="cg-ws-list">
+              <button type="button" className="cg-opt" data-testid="workspace-option-browse" onClick={onBrowse}>
+                <b>Browse…</b><small>Folder browser with recents and sorting</small>
+              </button>
+              {recentPaths.filter((p) => p !== wsPath).map((p) => (
+                <button type="button" key={p} className="cg-opt" title={p} data-testid={`workspace-option-${p}`} onClick={() => onConnect(p)}>
+                  <b>{baseName(p)}</b><small>{p}</small>
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       )}

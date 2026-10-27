@@ -4,7 +4,6 @@ import { useUIStore } from '@/stores/uiStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import { post } from '@/api/client';
 import type { IndexInfo } from '@/api/workspace';
-import { TokenCounter } from './TokenCounter';
 
 export type MoreSection = 'skills' | 'index' | null;
 
@@ -34,8 +33,8 @@ function prettySkillName(name: string): string {
 
 /**
  * The composer's round "More" button and its popover: the less-frequent
- * controls (usage, auto memory, skills, index search, project memory) so the
- * composer row keeps to its two groups. MCP servers are enabled/disabled in
+ * controls (auto memory, skills, index search, project memory) so the
+ * composer row keeps to its main controls. MCP servers are enabled/disabled in
  * Settings → MCP, not here. A count badge says how many hidden settings are
  * switched on (auto memory, a narrowed index selection), so nothing important
  * is silently buried. It self-subscribes to the same stores rather than
@@ -75,7 +74,7 @@ export const MoreMenu: React.FC<MoreMenuProps> = ({
         type="button"
         className={`more-btn${open ? ' active' : ''}`}
         id="moreBtn"
-        title="More: usage, memory, skills, search indexes"
+        title="More: memory, skills, search indexes"
         aria-label={`More controls${activeCount ? `, ${activeCount} on` : ''}`}
         aria-expanded={open}
         aria-controls="moreMenu"
@@ -87,9 +86,6 @@ export const MoreMenu: React.FC<MoreMenuProps> = ({
         {activeCount > 0 && <span className="more-badge" data-testid="more-badge">{activeCount}</span>}
       </button>
       <div className="toolbar-dropdown more-pop" id="moreMenu" role="group" aria-label="More controls" style={{ display: open ? 'block' : 'none' }}>
-        {/* This chat's tokens, context and cost (renders nothing before the
-         *  first turn). */}
-        <div className="more-usage"><TokenCounter /></div>
 
         <button
           type="button"
