@@ -5,7 +5,7 @@
   WS   /ws/voice?session_id=...
 
 The socket protocol, browser -> server:
-  text  {"type":"start","history":[{role,content}],"model_key":"opus5.0","voice_id":"tiffany",
+  text  {"type":"start","history":[{role,content}],"model_key":"opus5.5","voice_id":"tiffany",
          "session_approvals":{...}}
         must be the first message; opens the Sonic stream
   bytes raw PCM16 mono 16 kHz microphone audio (frames of ~32 ms)

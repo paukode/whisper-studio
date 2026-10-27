@@ -75,9 +75,9 @@
     <h3 id="model">/model</h3>
     <p><code>/model &lt;name&gt;</code> switches the model for every subsequent turn in this session. The
       valid names are the keys in your configured model list, so they track whatever you have enabled:
-      <code>haiku</code>, <code>sonnet</code>, <code>sonnet5</code>, <code>sonnet5.5</code>, <code>opus4.8</code>,
-      <code>opus5.0</code>, <code>fable5.1</code>, <code>gpt6-astra</code>, and the rest. On success you
-      get a toast confirming the version label ("Model set to Sonnet 4.6"), not the raw key. Pass an
+      <code>haiku</code>, <code>sonnet5.5</code>, <code>opus5.5</code>, <code>fable5.1</code>,
+      <code>gpt6.1-sol</code>, <code>gpt6-astra</code>, <code>gpt6-luna</code>, and any on-device model you installed. On success you
+      get a toast confirming the version label ("Model set to Sonnet 5.5"), not the raw key. Pass an
       unknown name and the composer replies with the usage string listing the models you can pick.</p>
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg></span>
@@ -91,10 +91,9 @@
     <p><code>/effort &lt;level&gt;</code> sets thinking depth for models that expose it, which is every
       cloud model except Haiku. The palette offers <code>low</code>, <code>medium</code>,
       <code>high</code>, <code>extra</code>, <code>max</code>, and <code>ultracode</code>; the raw API
-      name <code>xhigh</code> is accepted as an alias for <code>extra</code>, and the GPT-5.x models
-      also take <code>none</code>. Which rungs a model actually has depends on its ladder:
-      <code>extra</code> exists on Opus 4.8 and up and on Fable, while Sonnet and the older Opus
-      versions go straight from <code>high</code> to <code>max</code>. <code>ultracode</code> is the
+      name <code>xhigh</code> is accepted as an alias for <code>extra</code>. Which rungs a model actually has depends on its ladder:
+      <code>extra</code> exists on Opus 5.5, Sonnet 5.5 and Fable 5.1, while the GPT models go
+      straight from <code>high</code> to <code>max</code>. <code>ultracode</code> is the
       top mode: it pairs the model's highest reasoning rung with dynamic-workflow orchestration (see
       <a href="arch-ultracode.html">The ultracode workflow runtime</a>), and it is offered only on
       models that can drive a workflow. Because each model advertises its own set, the validator is

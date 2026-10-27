@@ -107,36 +107,26 @@
       <thead><tr><th>Model key</th><th>Input</th><th>Output</th><th>Cache read</th><th>Cache write</th></tr></thead>
       <tbody>
         <tr><td><code>haiku</code></td><td>$1.00</td><td>$5.00</td><td>$0.10</td><td>$2.00</td></tr>
-        <tr><td><code>sonnet</code></td><td>$3.00</td><td>$15.00</td><td>$0.30</td><td>$3.75</td></tr>
-        <tr><td><code>sonnet5</code> / <code>sonnet5.5</code></td><td>$2.00</td><td>$10.00</td><td>$0.20</td><td>$4.00</td></tr>
+        <tr><td><code>sonnet5.5</code></td><td>$2.00</td><td>$10.00</td><td>$0.20</td><td>$4.00</td></tr>
         <tr><td><code>opus5.5</code></td><td>$4.00</td><td>$20.00</td><td>$0.20</td><td>$8.00</td></tr>
-        <tr><td><code>opus4.7</code> / <code>opus4.8</code> / <code>opus5.0</code></td><td>$5.00</td><td>$25.00</td><td>$0.50</td><td>$10.00</td></tr>
-        <tr><td><code>opus4.6</code></td><td>$5.00</td><td>$25.00</td><td>$0.50</td><td>$6.25</td></tr>
-        <tr><td><code>fable5.0</code></td><td>$10.00</td><td>$50.00</td><td>$1.00</td><td>$20.00</td></tr>
         <tr><td><code>fable5.1</code></td><td>$10.00</td><td>$50.00</td><td>$0.25</td><td>$20.00</td></tr>
         <tr><td><code>gpt6.1-sol</code></td><td>$2.20</td><td>$11.00</td><td>$0.11</td><td>$2.75</td></tr>
         <tr><td><code>gpt6-astra</code></td><td>$11.00</td><td>$55.00</td><td>$1.10</td><td>$13.75</td></tr>
-        <tr><td><code>gpt6-sol</code></td><td>$2.20</td><td>$11.00</td><td>$0.22</td><td>$2.75</td></tr>
         <tr><td><code>gpt6-luna</code></td><td>$0.11</td><td>$0.55</td><td>$0.011</td><td>$0.1375</td></tr>
-        <tr><td><code>gpt5.6-sol</code></td><td>$4.40</td><td>$22.00</td><td>$0.44</td><td>$5.50</td></tr>
-        <tr><td><code>gpt5.6-terra</code></td><td>$2.20</td><td>$13.20</td><td>$0.22</td><td>$2.75</td></tr>
-        <tr><td><code>gpt5.6-luna</code></td><td>$0.22</td><td>$1.32</td><td>$0.022</td><td>$0.275</td></tr>
-        <tr><td><code>gpt5.5</code></td><td>$5.50</td><td>$33.00</td><td>$0.55</td><td>$5.50</td></tr>
-        <tr><td><code>gpt5.4</code></td><td>$2.75</td><td>$16.50</td><td>$0.275</td><td>$2.75</td></tr>
         <tr><td><code>amazon.nova-2-sonic-v1:0:speech</code></td><td>$3.00</td><td>$12.00</td><td>n/a</td><td>n/a</td></tr>
         <tr><td><code>amazon.nova-2-sonic-v1:0:text</code></td><td>$0.33</td><td>$2.75</td><td>n/a</td><td>n/a</td></tr>
         <tr><td><code>cohere.embed-v4:0</code></td><td>$0.12</td><td>n/a</td><td>n/a</td><td>n/a</td></tr>
         <tr><td><code>global.cohere.embed-v4:0</code></td><td>$0.12</td><td>n/a</td><td>n/a</td><td>n/a</td></tr>
       </tbody>
     </table></div>
-    <p>Claude cache writes are priced at the TTL the app actually sends. Every Claude model except
-      Opus 4.6 and Sonnet 4.6 gets a 1-hour TTL (<code class="path">server/chat/caching.py</code>),
-      which Bedrock bills at 2x input; the two 5-minute models carry the 1.25x rate. The GPT rows are
-      the Bedrock model cards' In-Region rates (bedrock-mantle serves In-Region only). GPT-5.6 and
-      GPT-6 bill their 30-minute cache writes at 1.25x input, with or without a cache key: Cost
-      Explorer bills almost all of their uncached prompt that way. The GPT-5.5 and 5.4 cards price
-      no cache write, so their cache-write rate equals input and a reported write costs what plain
-      input does.</p>
+    <p>The table lists only the models in the catalog. The rates of retired models stay in
+      <code class="path">pricing.example.json</code>, so past spend on them keeps its cost.</p>
+    <p>Claude cache writes are priced at the TTL the app actually sends. Every Claude model in the
+      catalog gets a 1-hour TTL (<code class="path">server/chat/caching.py</code>), which Bedrock
+      bills at 2x input. The GPT rows are the Bedrock model cards' In-Region rates (bedrock-mantle
+      serves In-Region only). GPT-6 and GPT-6.1 bill their 30-minute cache writes at 1.25x input,
+      with or without a cache key: Cost Explorer bills almost all of their uncached prompt that
+      way.</p>
 
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>

@@ -144,9 +144,9 @@ def _default_model_key() -> str:
         key = cfg.get("default_chat_model")
         if key and key in (cfg.get("chat_models") or {}):
             return key
-        return next(iter(cfg.get("chat_models") or {}), "sonnet")
+        return next(iter(cfg.get("chat_models") or {}), "sonnet5.5")
     except Exception:
-        return "sonnet"
+        return "sonnet5.5"
 
 
 def _preview(

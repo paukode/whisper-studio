@@ -344,7 +344,7 @@ async def buddy_fact():
         chat_models = config.get("chat_models", DEFAULTS["chat_models"])
         model = (
             chat_models.get("haiku")
-            or chat_models.get("sonnet")
+            or chat_models.get("sonnet5.5")
             or next(iter(chat_models.values()))
         )
         region = config.get("bedrock_region", "us-east-1")

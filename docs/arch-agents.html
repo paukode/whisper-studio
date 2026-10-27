@@ -83,7 +83,7 @@
         <code>sonnet*</code>), and an override that still cannot be honoured falls back to the session
         model with a <code>model_warning</code> on the tool result rather than failing silently
         (<code class="path">server/agents/model_resolve.py</code>). With no override at all it falls
-        back to your configured default chat model (then <code>sonnet</code>, then the first configured
+        back to your configured default chat model (then <code>sonnet5.5</code>, then the first configured
         model). <b>On-device models are first-class here when they support tool calling</b>: those run
         through the same <code>LocalAdapter</code> interactive chat uses, served with
         <code>mark_busy</code> so a model switch cannot stop the server mid-run. A chat-only local model

@@ -1,6 +1,7 @@
 {
   "_notes": {
-    "units": "USD per 1M tokens. Keyed by chat_models KEY (e.g. opus5.0), not the Bedrock model id.",
+    "units": "USD per 1M tokens. Keyed by chat_models KEY (e.g. opus5.5), not the Bedrock model id.",
+    "retired": "fable5.0, opus5.0, opus4.8, opus4.7, opus4.6, sonnet5, sonnet, gpt6-sol, gpt5.6-sol, gpt5.6-terra, gpt5.6-luna, gpt5.5 and gpt5.4 left the catalog on 2026-10-27. Their rates stay: the Costs panel and the budget checks price recorded tokens at read time, so past spend on them keeps its cost. The budget downgrade only picks models still in the catalog.",
     "cache_read": "prompt-cache read (Anthropic) / cached input (OpenAI).",
     "cache_write": "prompt-cache write, at the rate of the TTL the app actually sends. Anthropic: the app sends a 1-hour TTL to every Claude model except Opus 4.6 and Sonnet 4.6 (server/chat/caching.py), and Bedrock bills a 1-hour write at 2x input (a 5-minute write is 1.25x), so those rows carry the 1-hour rate and opus4.6 and sonnet the 5-minute one. OpenAI: mantle reports cache_write_tokens inside input_tokens, and GPT-5.6 and GPT-6 bill those 30-minute writes at 1.25x input (Cost Explorer bills almost all of their uncached prompt this way, with or without a cache key); the GPT-5.5/5.4 cards price no cache write, so their cache_write equals input and a reported write costs what plain input does.",
     "cached_in_input": "true for OpenAI-on-Bedrock: input_tokens already INCLUDES the cached and the cache-written input, so each portion is billed once (at cache_read and cache_write), never also at the input rate.",

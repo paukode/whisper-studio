@@ -305,7 +305,7 @@ def _resolve_agent_model(model_id_override: str | None, config: AgentConfig) -> 
     default_key = cfg.get("default_chat_model")
     candidates = [
         chat_models.get(default_key) if default_key else None,
-        chat_models.get("sonnet"),
+        chat_models.get("sonnet5.5"),
         *chat_models.values(),
     ]
     for candidate in candidates:

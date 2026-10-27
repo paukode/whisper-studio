@@ -47,12 +47,12 @@ def _default_model():
             return key, models.get(key, "")
         model_id = (
             (models.get(key) if key else None)
-            or models.get("sonnet")
+            or models.get("sonnet5.5")
             or next(iter(models.values()), "")
         )
-        return key or "sonnet", model_id
+        return key or "sonnet5.5", model_id
     except Exception:
-        return "sonnet", ""
+        return "sonnet5.5", ""
 
 
 @router.get("/runs/{run_id}")
