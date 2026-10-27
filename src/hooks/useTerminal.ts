@@ -60,7 +60,7 @@ export function measureCellGrid(el: HTMLElement | null): { cols: number; rows: n
   if (!el) return { cols: 80, rows: 24 };
   const probe = document.createElement('span');
   probe.style.cssText =
-    'position:absolute;top:-9999px;visibility:hidden;white-space:pre;font-size:14px;line-height:normal;';
+    'position:absolute;top:-9999px;visibility:hidden;white-space:pre;font-size:15px;line-height:normal;';
   probe.style.fontFamily =
     getComputedStyle(document.documentElement).getPropertyValue('--font-mono').trim() ||
     'Menlo, Monaco, "Courier New", monospace';
@@ -90,11 +90,11 @@ function readXtermTheme(): {
   const tokens = getComputedStyle(document.documentElement);
   const t = (name: string, fallback: string) => tokens.getPropertyValue(name).trim() || fallback;
   return {
-    background: t('--bg-inset', '#0d0d0f'),
-    foreground: t('--text-primary', '#e4e2de'),
-    cursor: t('--accent', '#e2a336'),
-    cursorAccent: t('--bg-inset', '#0d0d0f'),
-    selectionBackground: t('--accent-dim', 'rgba(226,163,54,0.15)'),
+    background: t('--bg-inset', '#100f22'),
+    foreground: t('--text-primary', '#c9c8e0'),
+    cursor: t('--accent', '#9a82ff'),
+    cursorAccent: t('--bg-inset', '#100f22'),
+    selectionBackground: t('--accent-dim', 'rgba(154,130,255,0.14)'),
   };
 }
 
@@ -236,7 +236,7 @@ export function useTerminal(options: UseTerminalOptions): UseTerminalReturn {
           // below corrects the estimate against xterm's measured cells.
           const terminal = new Terminal({
             cursorBlink: true,
-            fontSize: 14,
+            fontSize: 15,
             fontFamily,
             cols: initialCols,
             rows: initialRows,
@@ -258,7 +258,7 @@ export function useTerminal(options: UseTerminalOptions): UseTerminalReturn {
           });
           themeObserver.observe(document.documentElement, {
             attributes: true,
-            attributeFilter: ['data-theme'],
+            attributeFilter: ['data-theme', 'data-palette'],
           });
           themeObserverRef.current = themeObserver;
 
@@ -342,7 +342,7 @@ export function useTerminal(options: UseTerminalOptions): UseTerminalReturn {
             const box = document.createElement('div');
             box.setAttribute('role', 'alert');
             box.style.cssText =
-              'padding:12px;font:13px/1.5 ui-monospace,monospace;color:var(--text-muted,#999);white-space:pre-wrap;';
+              'padding:12px;font:13px/1.5 ui-monospace,monospace;color:var(--text-muted);white-space:pre-wrap;';
             box.textContent =
               `Terminal failed to load: ${msg}\n\n` +
               'This usually means a stale or incomplete frontend build. ' +

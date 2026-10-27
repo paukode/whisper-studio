@@ -1,117 +1,127 @@
 /* ================================================================
    Whisper Studio Docs - Theme & design tokens
-   Ported 1:1 from the app (static/modules/themes.css) + doc tokens.
+   Same values as the app (static/modules/themes.css) + doc tokens.
    Self-hosted fonts, zero external requests.
    ================================================================ */
 
-/* ---- Fonts (self-hosted, air-gap safe) ---- */
+/* ---- Fonts (self-hosted, air-gap safe; SIL Open Font License) ---- */
 @font-face {
-  font-family: "Outfit";
+  font-family: "Manrope";
   font-style: normal;
-  font-weight: 100 900;           /* variable */
+  font-weight: 200 800;           /* variable */
   font-display: swap;
-  src: url("fonts/outfit-var.woff2") format("woff2");
+  src: url("fonts/manrope-var.woff2") format("woff2");
 }
 @font-face {
-  font-family: "IBM Plex Mono";
+  font-family: "DM Mono";
   font-style: normal;
   font-weight: 400;
   font-display: swap;
-  src: url("fonts/ibmplexmono-400.woff2") format("woff2");
+  src: url("fonts/dm-mono-400.woff2") format("woff2");
 }
 @font-face {
-  font-family: "IBM Plex Mono";
+  font-family: "DM Mono";
   font-style: normal;
-  font-weight: 500;
+  font-weight: 500 700;
   font-display: swap;
-  src: url("fonts/ibmplexmono-500.woff2") format("woff2");
+  src: url("fonts/dm-mono-500.woff2") format("woff2");
 }
 
 /* ---- Light theme (default) ---- */
 :root,
 [data-theme="light"] {
-  --bg-primary: #f5f3ef;
-  --bg-surface: #ffffff;
-  --bg-elevated: #f0ede8;
-  --bg-secondary: #f0ede8;
-  --bg-hover: #e8e5df;
-  --bg-inset: #eae7e1;
-  --border: rgba(0, 0, 0, 0.08);
-  --border-strong: rgba(0, 0, 0, 0.14);
-  --text-primary: #1a1918;
-  --text-secondary: #6b6966;
-  --text-muted: #a09d99;
-  --accent: #c4841d;
-  --accent-dim: rgba(196, 132, 29, 0.1);
-  --accent-hover: #b3760f;
-  --accent-soft: rgba(196, 132, 29, 0.16);
-  --link: #b3760f;
-  --link-hover: #8a5a08;
-  --accent-record: #dc3529;
-  --accent-live: #16a34a;
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
-  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.08);
-  --shadow-lg: 0 18px 48px rgba(60, 40, 10, 0.12);
-  --hero-wash: radial-gradient(120% 140% at 15% 0%, rgba(196, 132, 29, 0.16), transparent 55%),
-               radial-gradient(120% 120% at 100% 0%, rgba(196, 132, 29, 0.08), transparent 45%);
-  --code-bg: #f6f2ea;
-  --code-border: rgba(0, 0, 0, 0.07);
-  --note-bg: rgba(196, 132, 29, 0.07);
-  --tip-bg: rgba(22, 163, 74, 0.08);
-  --tip-accent: #16a34a;
-  --warn-bg: rgba(220, 53, 41, 0.07);
-  --warn-accent: #c0392b;
-  --grid-line: rgba(0, 0, 0, 0.04);
+  --bg-primary: #eef0f7;
+  --bg-surface: #f8f9fc;
+  --bg-elevated: #f3f4f9;
+  --bg-secondary: #f3f4f9;
+  --bg-hover: #e6e8f2;
+  --bg-inset: #e9ebf4;
+  --border: #e1e3ee;
+  --border-strong: #d0d3e3;
+  --text-primary: #46445e;
+  --text-heading: #1c1a4a;
+  --text-secondary: #5d5b78;
+  --text-muted: #64637f;
+  --accent: #6a45e8;
+  --accent-dim: rgba(106, 69, 232, 0.10);
+  --accent-hover: #5a36d6;
+  --accent-soft: rgba(106, 69, 232, 0.12);
+  --on-accent: #ffffff;
+  --link: #5b3fd6;
+  --link-hover: #4a2fc0;
+  --accent-record: #c23a40;
+  --accent-live: #24774d;
+  --shadow-sm: 0 2px 10px rgba(60, 65, 124, 0.08);
+  --shadow-md: 0 6px 28px rgba(60, 65, 124, 0.10);
+  --shadow-lg: 0 12px 44px rgba(60, 65, 124, 0.16);
+  --hero-wash: none;
+  --code-bg: #f3f4f9;
+  --code-border: #e1e3ee;
+  --note-bg: rgba(106, 69, 232, 0.07);
+  --tip-bg: rgba(36, 119, 77, 0.07);
+  --tip-accent: #24774d;
+  --warn-bg: rgba(243, 181, 74, 0.12);
+  --warn-accent: #8f5600;
+  --grid-line: rgba(28, 26, 74, 0.04);
+  --tok-string: #24774d;
+  --tok-keyword: #6a45e8;
+  --tok-function: #2b62c4;
+  --tok-number: #a8510a;
   color-scheme: light;
 }
 
 /* ---- Dark theme ---- */
 [data-theme="dark"] {
-  --bg-primary: #111113;
-  --bg-surface: #19191d;
-  --bg-elevated: #222228;
-  --bg-secondary: #222228;
-  --bg-hover: #2a2a32;
-  --bg-inset: #0d0d0f;
-  --border: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.14);
-  --text-primary: #e4e2de;
-  --text-secondary: #9b9a97;
-  --text-muted: #6b6a67;
-  --accent: #e2a336;
-  --accent-dim: rgba(226, 163, 54, 0.15);
-  --accent-hover: #eab34d;
-  --accent-soft: rgba(226, 163, 54, 0.2);
-  --link: #eab34d;
-  --link-hover: #f2c56a;
-  --accent-record: #e5453a;
-  --accent-live: #34c77b;
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
-  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.5);
-  --shadow-lg: 0 22px 60px rgba(0, 0, 0, 0.6);
-  --hero-wash: radial-gradient(120% 140% at 15% 0%, rgba(226, 163, 54, 0.14), transparent 55%),
-               radial-gradient(120% 120% at 100% 0%, rgba(226, 163, 54, 0.06), transparent 45%);
-  --code-bg: #0f0f12;
-  --code-border: rgba(255, 255, 255, 0.07);
-  --note-bg: rgba(226, 163, 54, 0.09);
-  --tip-bg: rgba(52, 199, 123, 0.1);
-  --tip-accent: #34c77b;
-  --warn-bg: rgba(229, 69, 58, 0.1);
-  --warn-accent: #f0736a;
-  --grid-line: rgba(255, 255, 255, 0.04);
+  --bg-primary: #14132a;
+  --bg-surface: #1d1c3a;
+  --bg-elevated: #22214a;
+  --bg-secondary: #1a1934;
+  --bg-hover: #272650;
+  --bg-inset: #100f22;
+  --border: #2a2950;
+  --border-strong: #37366a;
+  --text-primary: #c9c8e0;
+  --text-heading: #f1f0ff;
+  --text-secondary: #aeadc8;
+  --text-muted: #8c8bab;
+  --accent: #9a82ff;
+  --accent-dim: rgba(154, 130, 255, 0.14);
+  --accent-hover: #b3a3ff;
+  --accent-soft: rgba(154, 130, 255, 0.16);
+  --on-accent: #14132a;
+  --link: #b3a3ff;
+  --link-hover: #cdc2ff;
+  --accent-record: #ff7a7a;
+  --accent-live: #7fd3a0;
+  --shadow-sm: 0 2px 10px rgba(0, 0, 0, 0.30);
+  --shadow-md: 0 8px 30px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 14px 48px rgba(0, 0, 0, 0.45);
+  --hero-wash: none;
+  --code-bg: #1a1934;
+  --code-border: #2a2950;
+  --note-bg: rgba(154, 130, 255, 0.08);
+  --tip-bg: rgba(127, 211, 160, 0.10);
+  --tip-accent: #7fd3a0;
+  --warn-bg: rgba(243, 181, 74, 0.08);
+  --warn-accent: #f3b54a;
+  --grid-line: rgba(255, 255, 255, 0.03);
+  --tok-string: #8fdcae;
+  --tok-keyword: #b49cff;
+  --tok-function: #7cb7f0;
+  --tok-number: #f5a25d;
   color-scheme: dark;
 }
 
 /* ---- Shared metrics ---- */
 :root {
-  --font-ui: "Outfit", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  --font-ui: "Manrope", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "DM Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
   --sidebar-w: 264px;
   --toc-w: 208px;
   --header-h: 60px;
   --content-max: 820px;
-  --radius: 14px;
-  --radius-sm: 9px;
+  --radius: 20px;
+  --radius-sm: 12px;
   --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 
@@ -125,7 +135,7 @@ html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
 body {
   margin: 0;
   font-family: var(--font-ui);
-  font-size: 16px;
+  font-size: 17px;
   line-height: 1.6;
   color: var(--text-primary);
   background: var(--bg-primary);
@@ -149,5 +159,5 @@ img { max-width: 100%; height: auto; }
 /* Scrollbars */
 * { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
 *::-webkit-scrollbar { width: 10px; height: 10px; }
-*::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 8px; border: 3px solid transparent; background-clip: content-box; }
+*::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: var(--radius); border: 3px solid transparent; background-clip: content-box; }
 *::-webkit-scrollbar-track { background: transparent; }

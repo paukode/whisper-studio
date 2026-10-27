@@ -191,7 +191,7 @@ async def _execute_cron_prompt(job_id: str) -> None:
                     job.get("name"),
                     job_model,
                 )
-            for candidate in ("haiku", "sonnet"):
+            for candidate in ("haiku", "sonnet5.5"):
                 if chat_models.get(candidate):
                     model_key = candidate
                     model_id = chat_models[candidate]

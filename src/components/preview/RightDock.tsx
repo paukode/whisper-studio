@@ -11,12 +11,12 @@ import { TasksPanel } from '@/components/tasks/TasksPanel';
 const MIN_FRAC = 0.12;
 
 const KIND_COLOR: Record<DockKind, string> = {
-  live: 'var(--accent-live, #e5484d)',
-  plan: 'var(--text-warning, #d08b00)',
-  tasks: 'var(--text-success, #2a9d5c)',
-  file: 'var(--text-secondary, #888)',
-  docs: 'var(--accent, #2563eb)',
-  agent: 'var(--accent-live, #34c77b)',
+  live: 'var(--accent-live)',
+  plan: 'var(--text-warning)',
+  tasks: 'var(--text-success)',
+  file: 'var(--text-secondary)',
+  docs: 'var(--accent)',
+  agent: 'var(--accent-live)',
 };
 
 function CloseIcon() {
@@ -88,8 +88,8 @@ export const RightDock: React.FC = () => {
       style={{
         display: 'flex', flexDirection: 'column', flex: '1 1 auto',
         minWidth: 0, minHeight: 0,
-        background: 'var(--bg-primary, #1a1a1a)',
-        borderLeft: '1px solid var(--border, #333)',
+        background: 'var(--bg-primary)',
+        borderLeft: '1px solid var(--border)',
       }}
     >
       {panels.map((p, i) => (
@@ -99,12 +99,12 @@ export const RightDock: React.FC = () => {
               style={{
                 display: 'flex', alignItems: 'center', gap: 8,
                 padding: '7px 10px', flex: '0 0 auto',
-                borderBottom: '1px solid var(--border, #333)',
-                background: 'var(--bg-secondary, #222)',
+                borderBottom: '1px solid var(--border)',
+                background: 'var(--bg-secondary)',
               }}
             >
               <span style={{ width: 8, height: 8, borderRadius: 999, background: KIND_COLOR[p.kind], flex: '0 0 auto' }} />
-              <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary, #eee)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <span style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {p.title}
               </span>
               <span style={{ flex: 1 }} />
@@ -114,7 +114,7 @@ export const RightDock: React.FC = () => {
                 onClick={() => (p.kind === 'live' ? closeLive() : closePanel(p.id))}
                 aria-label={`Close ${p.title}`}
                 title="Close"
-                style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-muted, #999)', display: 'flex', padding: 2 }}
+                style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--text-muted)', display: 'flex', padding: 2 }}
               >
                 <CloseIcon />
               </button>
@@ -150,7 +150,7 @@ export const RightDock: React.FC = () => {
           {i < panels.length - 1 && (
             <div
               onMouseDown={onHandleDown(i)}
-              style={{ height: 6, cursor: 'row-resize', background: 'var(--border-strong, #444)', flex: '0 0 auto' }}
+              style={{ height: 6, cursor: 'row-resize', background: 'var(--border-strong)', flex: '0 0 auto' }}
             />
           )}
         </React.Fragment>

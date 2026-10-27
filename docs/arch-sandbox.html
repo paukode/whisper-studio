@@ -116,7 +116,9 @@
       <code>(allow default)</code> followed by a block of <code>deny</code> rules; the Linux setup
       binds everything read-only and then masks the same paths (directories with an empty tmpfs, files
       with <code>/dev/null</code>). What it enforces, therefore, is a single thing done well:
-      <b>read/write denial of a curated secret-store list</b>.</p>
+      <b>denial of a curated secret-store list</b>. Writes to that list are denied in every mode.
+      Reads are denied by default, but the permission mode can open them (see
+      <a href="#secret-reads">Secret reads by permission mode</a>).</p>
     <p>That list is <code>_DENIED_PATHS</code>, built from the canonical definitions in
       <code class="path">server/security/sensitive_paths.py</code> so the OS sandbox and the command
       validator can never drift on the shared core. It covers:</p>
@@ -141,6 +143,39 @@
       validator but is <em>not</em> sandbox-denied, because NSS reads it on every user and group
       lookup - denying it in the kernel would break ordinary commands. A command that mentions it
       explicitly is still suspicious, so the validator keeps watching for it.</p>
+
+    <h3 id="secret-reads">Secret reads by permission mode</h3>
+    <p>The credential stores are the paths on the list above. The policy for reads of these stores
+      is in <code class="path">server/security/secret_reads.py</code>. It applies to the file read
+      tools (<code>ws_read_file</code>, <code>ws_list_directory</code>) and to commands
+      (<code>run_python</code>, <code>terminal_run</code>, <code>ws_run_command</code>):</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Permission mode</th><th>Read of a credential store</th></tr></thead>
+      <tbody>
+        <tr><td>Bypass (<code>bypassPermissions</code>)</td><td>Every read tool and every command reads the stores with no card. The sandbox keeps a write-only deny on them, so nothing writes them.</td></tr>
+        <tr><td>Don't ask (<code>dontAsk</code>)</td><td>Refused.</td></tr>
+        <tr><td>Asks first, Accept edits, Plan, Auto</td><td>A person approves each read, every time. The Auto classifier never decides it, and a remembered "Yes, all" for commands never covers it.</td></tr>
+        <tr><td>Unattended runs (subagents, scheduled cron jobs), outside Bypass</td><td>Refused, because no person can answer the card. Agents and cron run in default mode, so in practice they never read secrets.</td></tr>
+      </tbody>
+    </table></div>
+    <p>A file read of a credential store shows a <code>secret_read</code> approval card (category
+      <code>secret-read</code>). A command asks with the tool input <code>secret_access: true</code>.
+      Its card summary starts with "READS THE KEYCHAIN AND CREDENTIAL STORES:" and never offers to
+      remember the choice for the session. On Yes, the command runs with the stores readable. Writes
+      to them stay denied.</p>
+    <p>The executor marks every call with whether it runs in Bypass (<code>__secret_reads__</code>).
+      It always overwrites the value that the model sent. The approval gate
+      (<code class="path">server/tool_approvals.py</code>) is the one place that decides the
+      <code>secret_access</code> of a command. The command validator skips its sensitive-path check
+      for a run that is allowed to read secrets.</p>
+    <p>A command that runs without secret access can fail because the sandbox hid a credential store
+      (a Keychain error, or "Operation not permitted" on a path on the list). Then the tool result
+      adds a hint that tells the model to run the command again with
+      <code>secret_access=true</code>. This lets tools such as <code>security find-identity</code>,
+      <code>codesign</code>, and <code>notarytool</code> find the login Keychain after approval.</p>
+    <p>Two shells do not follow this table. Your own visible terminal panel is not sandboxed. The
+      interactive hidden shell of <code>terminal_send</code> keeps the full read and write
+      deny-list.</p>
     <h3 id="env-scrub">The credential denylist</h3>
     <p>Denying a file does nothing if the same secret is sitting in an environment variable. The
       denylist lives in <code class="path">server/security/sensitive_env.py</code> as two named sets:
@@ -187,7 +222,8 @@
       <code>aws_boto3</code> needs no such re-allow: it calls the boto3 SDK directly in-process, never
       through <code>run_sandboxed</code> at all, so it is restricted instead by a read-only prefix
       check rather than the filesystem sandbox. The re-allow itself is scoped to the sandboxed AWS
-      calls; a generic shell command never sees <code class="path">~/.aws</code>.</p>
+      calls; a generic shell command does not see <code class="path">~/.aws</code>, unless the
+      permission mode lets it <a href="#secret-reads">read the credential stores</a>.</p>
     <p>The re-allow is read-only. The AWS CLI and boto3 run programs that files in
       <code class="path">~/.aws</code> name: <code>credential_process</code> in the configuration
       file, CLI aliases that start with <code>!</code>, and CLI plugins. A write to
@@ -219,7 +255,8 @@
     <p>Flipping to a deny-default filesystem profile is still out of scope: it would break the tools
       above. This is the trade-off that makes the sandbox
       the boundary you trust <em>last</em>: it does not try to be a jail, it guarantees the
-      high-value secret stores stay unreadable even if every layer in front of it is defeated.</p>
+      high-value secret stores stay unwritable even if every layer in front of it is defeated. They
+      also stay unreadable, unless the session is in Bypass or a person approved the read.</p>
 
     <h2 id="egress-policy">The network egress policy (opt-in)</h2>
     <p>Since the sandbox itself leaves the network open, an opt-in egress policy
@@ -340,7 +377,7 @@
         <tr><td>Approval pause</td><td>Server-side turn pause; only registered executors run on an explicit client confirm</td><td><span class="badge">Boundary</span> enforced server-side</td></tr>
         <tr><td>Network egress policy (opt-in)</td><td>SNI-filtering proxy plus profile deny rules for outbound traffic</td><td><span class="badge">Boundary</span> on macOS when enabled; Linux degrades to <code>--unshare-net</code></td></tr>
         <tr><td><code>validate_command</code></td><td>Regex deny-list on every command path</td><td><span class="badge badge--muted">Defence-in-depth</span> bypassable alone</td></tr>
-        <tr><td><code>run_sandboxed</code> via <code>sandbox-exec</code> / <code>bwrap</code></td><td>Secret-store deny-list around every shell + code path</td><td><span class="badge">Boundary</span> the strongest layer</td></tr>
+        <tr><td><code>run_sandboxed</code> via <code>sandbox-exec</code> / <code>bwrap</code></td><td>Secret-store deny-list around every shell + code path (writes always; reads unless Bypass or an approved read)</td><td><span class="badge">Boundary</span> the strongest layer</td></tr>
         <tr><td><code>_AWS_READONLY_GUARD</code></td><td>Monkey-patches botocore to reject AWS writes</td><td><span class="badge badge--muted">Defence-in-depth</span> user code can <code>del</code> it</td></tr>
         <tr><td>Plugin loader allow-list</td><td>A dropped-in <code>.py</code> does nothing until enabled</td><td><span class="badge">Boundary</span> for drive-by plugins</td></tr>
       </tbody>
@@ -383,6 +420,7 @@
       <dt><code class="path">server/security/sensitive_env.py</code></dt><dd>The credential environment denylist shared by sandboxed shells and MCP child processes.</dd>
       <dt><code class="path">server/security/egress_policy.py</code></dt><dd>The opt-in network egress tiers and the SNI-filtering local proxy.</dd>
       <dt><code class="path">server/security/sensitive_paths.py</code></dt><dd>The single source of truth for the secret-path deny-list, shaped for both consumers.</dd>
+      <dt><code class="path">server/security/secret_reads.py</code></dt><dd>The policy for reads of the credential stores, per permission mode.</dd>
       <dt><code class="path">server/security/command_validator.py</code></dt><dd>The regex validators and <code>validate_command()</code>.</dd>
       <dt><code class="path">server/executors/code.py</code></dt><dd>The AWS read-only guard and the sandboxed <code>run_python</code> / <code>aws_cli</code> executors.</dd>
       <dt><code class="path">server/workspace/paths.py</code></dt><dd><code>_ws_validate_path</code>, atomic writes for workspace file ops, and the save-flow staging area.</dd>

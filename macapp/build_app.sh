@@ -360,7 +360,7 @@ plutil -lint -s "$CONTENTS_DIR/Info.plist" || die "generated Info.plist is inval
 cp "$BUILD_DIR/shell/WhisperStudio" "$CONTENTS_DIR/MacOS/WhisperStudio"
 
 # f.3: app icon. The real icon lives in the repo (macapp/icon/AppIcon.icns,
-# built from icon.svg — Taw Light "W." monogram); the generated solid-colour
+# built from icon.svg: the "W." monogram on deep indigo); the generated solid-colour
 # placeholder below is only the fallback if it is ever removed.
 if [[ -f "$MACAPP_DIR/icon/AppIcon.icns" ]]; then
     cp "$MACAPP_DIR/icon/AppIcon.icns" "$RES_DIR/AppIcon.icns"
@@ -483,8 +483,8 @@ rsync -a --delete "$BUNDLED_MODELS_CACHE/" "$RES_DIR/backend/models-bundled/"
 # a Hub snapshot, so it is fetched with the bundled interpreter into its own
 # staging home and copied next to the snapshots as models-bundled/torch-hub;
 # server/main.py::_seed_bundled_models seeds it on first launch like the rest.
-# A hub hiccup must not fail the build: the encoder then downloads on first
-# use exactly as it does in a source checkout.
+# It is the default speaker encoder and always ships: a build that cannot fetch
+# it stops here rather than packaging an app that downloads it on first use.
 substep "bundled speaker encoder (ReDimNet2 via torch.hub)"
 REDIMNET_HOME="$BUILD_DIR/downloads/redimnet-home"
 mkdir -p "$REDIMNET_HOME"
@@ -498,7 +498,7 @@ then
     mkdir -p "$RES_DIR/backend/models-bundled/torch-hub"
     rsync -a --delete "$REDIMNET_HOME/models/torch-hub/" "$RES_DIR/backend/models-bundled/torch-hub/"
 else
-    echo "    warning: ReDimNet2 not bundled (it downloads on first use)"
+    die "could not fetch ReDimNet2 (the default speaker encoder); check the network and rerun"
 fi
 
 # f.6: helper binaries. node also runs the workspace's own ESLint for the

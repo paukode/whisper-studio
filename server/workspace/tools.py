@@ -12,6 +12,8 @@ survives the flip (register always, refuse at execution):
 - get_worktree_tools(): executors refuse when the workspace is not a git repo.
 """
 
+from server.executors.tools import SECRET_ACCESS_SCHEMA
+
 
 def get_global_workspace_tools() -> list[dict]:
     """Tools always available regardless of whether a workspace is connected."""
@@ -445,6 +447,7 @@ def _run_command_tool() -> list[dict]:
                         "type": "boolean",
                         "description": "Start the command in background immediately. Use for commands you know will take a long time (builds, large tests). Default false.",
                     },
+                    "secret_access": SECRET_ACCESS_SCHEMA,
                 },
                 "required": ["command"],
             },

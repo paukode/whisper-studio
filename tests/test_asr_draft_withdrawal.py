@@ -1,6 +1,6 @@
 """A live draft whose utterance closes without a final is withdrawn.
 
-Canary and Parakeet show a volatile draft of the in-flight utterance. When
+Parakeet shows a volatile draft of the in-flight utterance. When
 that utterance closes and produces no final (the junk filter dropped it, the
 decode was empty, or the VAD found too little voiced audio), nothing would
 replace the draft: it stayed on screen and Stop saved it as a segment. The
@@ -16,9 +16,8 @@ words that left the screen and the reason the backend had no final.
 
 import numpy as np
 
-from server.asr import canary_backend, parakeet_backend
+from server.asr import parakeet_backend
 from server.audio_buffer import FRAME_BYTES, FRAME_MS, MIN_UTTERANCE_MS, UtteranceBuffer
-from server.infrastructure import config as config_mod
 
 _DRAFT = "no no no"
 _NO_WORDS = {"draft": _DRAFT, "reason": "no words in the final decode", "decoded": [""]}
@@ -53,25 +52,6 @@ class _Buffer:
         return tail
 
 
-def _canary(monkeypatch, final_text: str):
-    """Canary pinned to Polish (no language ID runs). The in-flight window
-    decodes as the draft; a closed utterance as ``final_text``."""
-    monkeypatch.setattr(
-        config_mod,
-        "get",
-        lambda key, default=None: "pl" if key == "whisper_language" else default,
-    )
-    monkeypatch.setattr(canary_backend, "_pending_translations", 0)
-    monkeypatch.setattr(
-        canary_backend,
-        "_generate",
-        lambda audio, source_lang, target_lang: _DRAFT if len(audio) == 16000 else final_text,
-    )
-    session = canary_backend.create_session()
-    session._buf = _Buffer()
-    return session
-
-
 def _parakeet(final_text: str):
     session = parakeet_backend.ParakeetSession.__new__(parakeet_backend.ParakeetSession)
     session._buf = _Buffer()
@@ -95,8 +75,8 @@ def _why_withdrawn(events: list[dict]) -> dict:
     return events[0]["withdrawn"]
 
 
-def test_canary_withdraws_a_draft_whose_utterance_had_no_final(monkeypatch):
-    session = _canary(monkeypatch, final_text="")
+def test_parakeet_withdraws_a_draft_whose_utterance_had_no_final():
+    session = _parakeet(final_text="")
     _show_draft(session)
     session._buf.closes = [_CLOSED]
     assert _why_withdrawn(session.process(b"\x00" * 960)) == _NO_WORDS
@@ -105,32 +85,12 @@ def test_canary_withdraws_a_draft_whose_utterance_had_no_final(monkeypatch):
     assert session.process(b"\x00" * 960) == []
 
 
-def test_canary_final_replaces_its_draft_without_a_withdrawal(monkeypatch):
-    session = _canary(monkeypatch, final_text="dzień dobry")
+def test_parakeet_final_replaces_its_draft_without_a_withdrawal():
+    session = _parakeet(final_text="dzień dobry")
     _show_draft(session)
     session._buf.closes = [_CLOSED]
     events = session.process(b"\x00" * 960)
     assert [(e["kind"], e["text"]) for e in events] == [("final", "dzień dobry")]
-
-
-def test_canary_stop_withdraws_a_draft_the_tail_cannot_finalize(monkeypatch):
-    session = _canary(monkeypatch, final_text="")
-    _show_draft(session)
-    # Stop with the tail below the VAD minimum: flush() returns None.
-    session._buf.discard = dict(_VAD_AT_STOP)
-    assert _why_withdrawn(session.finish()) == {
-        "draft": _DRAFT,
-        "reason": "too little speech for the VAD",
-        **_VAD_AT_STOP,
-    }
-    assert session.finish() == []
-
-
-def test_parakeet_withdraws_a_draft_whose_utterance_had_no_final():
-    session = _parakeet(final_text="")
-    _show_draft(session)
-    session._buf.closes = [_CLOSED]
-    assert _why_withdrawn(session.process(b"\x00" * 960)) == _NO_WORDS
 
 
 def test_parakeet_stop_keeps_a_real_tail_and_withdraws_a_lost_one():
@@ -167,22 +127,6 @@ def _short_utterance(buf: UtteranceBuffer) -> None:
     VAD keeps), then a pause long enough to close it."""
     voiced_ms = MIN_UTTERANCE_MS - 100
     buf._vad = _ScriptedVad([True] * (voiced_ms // FRAME_MS) + [False] * (600 // FRAME_MS))
-
-
-def test_canary_withdraws_a_draft_the_vad_discards(monkeypatch):
-    session = _canary(monkeypatch, final_text="")
-    monkeypatch.setattr(canary_backend, "_generate", lambda audio, source_lang, target_lang: "Tak.")
-    session._buf = UtteranceBuffer()
-    _short_utterance(session._buf)
-    # Voicing plus the start of the pause: long enough for a draft.
-    assert session.process(_frames(510)) == [{"kind": "interim", "text": "Tak."}]
-    # The pause closes the utterance and the VAD discards it: no final.
-    why = _why_withdrawn(session.process(_frames(390)))
-    assert why["draft"] == "Tak."
-    assert why["reason"] == "too little speech for the VAD"
-    assert why["voiced_ms"] < MIN_UTTERANCE_MS
-    assert why["at"] == "pause"
-    assert session._last_interim == ""
 
 
 def test_parakeet_withdraws_a_draft_the_vad_discards():

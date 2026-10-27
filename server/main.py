@@ -555,14 +555,22 @@ register_approval_defaults()
 
 
 # Static files. Vite emits content-hashed filenames under dist/assets, so those
-# are safe to cache immutably for a year (a new build = a new filename). Other
-# static files (index.html, favicon) keep the default heuristic caching so a
-# rebuild is picked up promptly.
+# are safe to cache immutably for a year (a new build = a new filename). Every
+# other file keeps its name across builds (static/style.css, static/modules,
+# fonts), so it is revalidated on each load: the Mac app keeps one origin
+# across launches (sticky port), and heuristic caching let WebKit show the
+# previous version's stylesheets and page after an update.
+_NO_CACHE = "no-cache"
+
+
 class _CachedStatic(StaticFiles):
     async def get_response(self, path, scope):
         resp = await super().get_response(path, scope)
-        if "assets/" in path and resp.status_code == 200:
-            resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        if resp.status_code == 200:
+            if "assets/" in path:
+                resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+            else:
+                resp.headers["Cache-Control"] = _NO_CACHE
         return resp
 
 
@@ -581,7 +589,8 @@ if _docs:
 def _spa_index_response() -> Response:
     react_index = os.path.join(BASE_DIR, "static", "dist", "index.html")
     if os.path.exists(react_index):
-        return FileResponse(react_index)
+        # The page names the hashed bundles, so it must never be served stale.
+        return FileResponse(react_index, headers={"Cache-Control": _NO_CACHE})
     return Response(
         content="Frontend build missing. Run: npm install && npm run build",
         status_code=503,

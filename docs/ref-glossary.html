@@ -71,7 +71,7 @@
         <tr>
           <td><code>ASR</code></td>
           <td>Automatic Speech Recognition. The task of turning audio into text. Whisper Studio runs ASR
-            entirely on-device (Whisper, Parakeet, or Canary) in every model mode, so recorded audio
+            entirely on-device (Whisper or Parakeet) in every model mode, so recorded audio
             never leaves your machine. <b>Voice mode</b> is the exception and is a different feature.
             See <a href="arch-transcription.html">Transcription &amp; diarization</a>.</td>
         </tr>
@@ -123,12 +123,11 @@
       <tbody>
         <tr>
           <td>Canary</td>
-          <td>One of the three on-device speech-recognition engines (Canary 1B v2, a vendored MLX
-            port). The fastest of the accurate engines and the app's universal model translator:
-            transcribes 25 European languages with live word-by-word drafts, and translates between
-            any of them and English whichever engine is transcribing. Having no language head of its
-            own, it pairs with the VoxLingua107 <b>language ID</b> classifier. It does not report word
-            timestamps, so <b>speaker turn splitting</b> does not run on Canary audio. See
+          <td>The app's on-device model translator (Canary 1B v2, a vendored MLX port). It does not
+            transcribe. It translates between its 25 European languages and English, with English
+            always on one side, whichever engine transcribed the line. It has no language head of its
+            own, so for a Parakeet line it uses the VoxLingua107 <b>language ID</b> classifier to find
+            the source language. See
             <a href="arch-transcription.html">Transcription &amp; diarization</a>.</td>
         </tr>
         <tr>
@@ -340,9 +339,9 @@
           <td>language ID</td>
           <td>Deciding which language an utterance is in, as a separate step from transcribing it.
             Whisper Studio uses VoxLingua107 ECAPA, one of the three speech models that ship bundled
-            with the app. Whisper has its own language head and does not need it; Canary has none, so
-            it pairs with this classifier. Constrain what it may choose with the
-            <b>Transcription Languages</b> setting. See
+            with the app. It is used only to find the source language of a Parakeet line before
+            Canary translates it. It picks among all 25 Canary languages, English first. If the
+            classifier is down, the source is English. Whisper lines carry Whisper's own language. See
             <a href="arch-transcription.html">Transcription &amp; diarization</a>.</td>
         </tr>
         <tr>
@@ -471,11 +470,11 @@
       <tbody>
         <tr>
           <td>Parakeet</td>
-          <td>One of the three on-device speech-recognition engines (the others are Whisper and
-            Canary), and the default. Lowest latency: words appear live as you speak, in 25 European
+          <td>One of the two on-device speech-recognition engines (the other is Whisper), and the
+            default. Lowest latency: words appear live as you speak, in 25 European
             languages. It cannot translate on its own, but Canary can translate whatever Parakeet
             transcribes. It reports word timestamps, so <b>speaker turn splitting</b> works with it.
-            All three engines keep recorded audio local. See
+            Both engines keep recorded audio local. See
             <a href="arch-transcription.html">Transcription &amp; diarization</a>.</td>
         </tr>
                 <tr>
@@ -573,7 +572,8 @@
           <td>The macOS kernel-level sandbox (<code>sandbox-exec(5)</code>) that wraps every shell and
             code-execution path, including the terminal PTY. It is the security boundary the project
             trusts last and most; a curated deny-list masks secret stores (SSH/GPG keys, cloud and git
-            credentials, browser cookies, shell history). On Linux the equivalent is <code>bwrap</code>.
+            credentials, browser cookies, shell history). Writes to them are denied in every mode;
+            reads are allowed only in Bypass or after a person approves the read. On Linux the equivalent is <code>bwrap</code>.
             See <a href="arch-sandbox.html">Sandbox &amp; security</a>.</td>
         </tr>
         <tr>
@@ -622,7 +622,7 @@
             "...that's my point." / "Right, but" lands in a single utterance. The splitter slides a
             1.25 second window across it, compares each side of every candidate cut, keeps the strongest
             peaks and snaps each to a word boundary. It needs word timestamps, which Whisper and
-            Parakeet report and Canary does not. The word or two that genuinely overlap are marked as
+            Parakeet both report. The word or two that genuinely overlap are marked as
             overlapping rather than given a pretend-precise cut. Controlled by
             <code>speaker_split_turns</code>, on by default.</td>
         </tr>
@@ -795,7 +795,7 @@
           <td>Whisper</td>
           <td>The on-device speech-recognition model that gives the app its name (Whisper Studio runs
             the full large-v3 checkpoint via mlx-whisper). The most accurate engine, with 99 languages
-            and per-utterance language detection; Parakeet and Canary are the alternatives. See
+            and per-utterance language detection; Parakeet is the alternative. See
             <a href="arch-transcription.html">Transcription &amp; diarization</a>.</td>
         </tr>
         <tr>

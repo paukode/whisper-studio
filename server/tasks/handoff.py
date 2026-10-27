@@ -85,6 +85,7 @@ def run_with_handoff(
     write_mode: str = "open",
     write_root: str | None = None,
     scratch_dir: str | None = None,
+    secret_reads: bool = False,
 ) -> HandoffResult:
     """Run ``exec_command`` foreground-first with a single spawn.
 
@@ -102,7 +103,7 @@ def run_with_handoff(
     Stopped by the session's Stop while still in the foreground: returns
     inline with whatever it printed, and is never handed off.
 
-    ``write_mode``, ``write_root`` and ``scratch_dir`` are the sandbox's (see
+    ``write_mode``, ``write_root``, ``scratch_dir`` and ``secret_reads`` are the sandbox's (see
     ``popen_sandboxed``); a handed-off process keeps the sandbox it started in.
     """
     from server.process_utils import wait_group_gone
@@ -122,6 +123,7 @@ def run_with_handoff(
             write_mode=write_mode,
             write_root=write_root,
             scratch_dir=scratch_dir,
+            secret_reads=secret_reads,
         )
     finally:
         if not out_file.closed:

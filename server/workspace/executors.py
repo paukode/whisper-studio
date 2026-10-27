@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from server import file_state
 from server.approval.markers import approval_request
 from server.executors import register_executor
+from server.security import secret_reads as secret_reads_policy
 
 from .commands import (
     _apply_stdin_redirect,
@@ -92,17 +93,25 @@ def other_scratch_error(path: str, session_id: str) -> str:
     )
 
 
-def resolve_read_path(path: str, ws: str | None, session_id: str) -> tuple[str | None, str | None]:
+# resolve_read_path's refusal for a secret path the call may not read without
+# a person's yes: the read tool turns it into a secret_read card.
+SECRET_READ_NEEDED = "secret read needs approval"
+
+
+def resolve_read_path(
+    path: str, ws: str | None, session_id: str, secret_reads: bool = False
+) -> tuple[str | None, str | None]:
     """Where a ws_* read tool reads from: ``(full path, refusal)``.
 
     Reading never asks and is allowed anywhere on this machine (the user's
     rule), so an absolute path may point outside the connected workspace and
     the scratch folder, with or without a workspace connected; a relative
     path needs the workspace to resolve against. The exceptions are other
-    sessions' scratch folders (a session works only in its own), the
-    credential stores the OS sandbox denies to every command
-    (server/security/sensitive_paths.py) and the kernel pseudo-filesystems,
-    refused with a plain error."""
+    sessions' scratch folders (a session works only in its own) and the kernel
+    pseudo-filesystems, refused with a plain error, and the credential stores
+    (server/security/sensitive_paths.py): read with ``secret_reads`` (Bypass,
+    or a person's yes), else refused with SECRET_READ_NEEDED so the tool asks
+    (server/security/secret_reads.py)."""
     raw = os.path.expanduser((path or "").strip())
     if os.path.isabs(raw):
         full = raw
@@ -118,11 +127,8 @@ def resolve_read_path(path: str, ws: str | None, session_id: str) -> tuple[str |
         return None, f"Error: {path} is not a readable location."
     from server.security.sensitive_paths import is_sensitive_path
 
-    if is_sensitive_path(full):
-        return None, (
-            f"Error: {path} is a protected location (credentials, keychains or browser "
-            "data) and is never read."
-        )
+    if is_sensitive_path(full) and not secret_reads:
+        return None, SECRET_READ_NEEDED
     return full, None
 
 
@@ -278,7 +284,11 @@ def _exec_ws_read_file(tool_input, transcript, current_attachments):
     ws = get_workspace_path()
     session_id = tool_input.pop("__session_id__", "")
     path = tool_input.get("path", "")
-    full, refusal = resolve_read_path(path, ws, session_id)
+    full, refusal = resolve_read_path(
+        path, ws, session_id, secret_reads=secret_reads_policy.stamped(tool_input)
+    )
+    if refusal == SECRET_READ_NEEDED:
+        return secret_reads_policy.read_request("ws_read_file", tool_input, session_id)
     if refusal:
         return refusal
     if not os.path.isfile(full):
@@ -351,7 +361,11 @@ def _exec_ws_list_dir(tool_input, transcript, current_attachments):
     ws = get_workspace_path()
     session_id = tool_input.pop("__session_id__", "")
     path = tool_input.get("path", "").strip() or "."
-    full, refusal = resolve_read_path(path, ws, session_id)
+    full, refusal = resolve_read_path(
+        path, ws, session_id, secret_reads=secret_reads_policy.stamped(tool_input)
+    )
+    if refusal == SECRET_READ_NEEDED:
+        return secret_reads_policy.read_request("ws_list_directory", tool_input, session_id)
     if refusal:
         return refusal
     if not os.path.isdir(full):
@@ -694,11 +708,15 @@ def _exec_ws_run_command(tool_input, transcript, current_attachments):
         return "No command provided."
     session_id = tool_input.pop("__session_id__", "")
     run_in_background = bool(tool_input.get("run_in_background", False))
+    # Bypass reads the credential stores with no card; anywhere else a
+    # request for them goes to the approval gate (server/security/secret_reads.py).
+    bypass = secret_reads_policy.stamped(tool_input)
+    asked = secret_reads_policy.requested(tool_input)
 
     # Read-only commands execute directly, no approval needed. The read-only
     # sandbox refuses any write the classifier missed.
-    if _is_read_only_command(command):
-        warning = _validate_command(command)
+    if _is_read_only_command(command) and (bypass or not asked):
+        warning = _validate_command(command, secret_reads=bypass)
         if warning:
             return f"Error: {warning}"
         try:
@@ -708,6 +726,7 @@ def _exec_ws_run_command(tool_input, transcript, current_attachments):
                 session_id=session_id,
                 run_in_background=run_in_background,
                 write_mode="readonly",
+                secret_reads=bypass,
             ).text
         except Exception as e:
             return f"Error: {e}"
@@ -720,16 +739,16 @@ def _exec_ws_run_command(tool_input, transcript, current_attachments):
     # resolves a relative delete where it lands.
     from server.cwd_tracker import get_cwd
 
-    payload = json.dumps(
-        {
-            "action": "command",
-            "command": command,
-            "cwd": get_cwd(session_id, ws) if session_id else ws,
-            "session_id": session_id,
-            "run_in_background": run_in_background,
-        }
-    )
-    return approval_request(payload)
+    request = {
+        "action": "command",
+        "command": command,
+        "cwd": get_cwd(session_id, ws) if session_id else ws,
+        "session_id": session_id,
+        "run_in_background": run_in_background,
+    }
+    if asked:
+        request[secret_reads_policy.SECRET_ACCESS_KEY] = True
+    return approval_request(json.dumps(request))
 
 
 _AUTO_BACKGROUND_SECONDS = 30
@@ -753,6 +772,7 @@ def run_workspace_command(
     session_id: str = "",
     run_in_background: bool = False,
     write_mode: str = "open",
+    secret_reads: bool = False,
 ) -> CommandRun:
     """The one execution path for ws_run_command, read-only and approved alike.
 
@@ -768,6 +788,9 @@ def run_workspace_command(
     confined to the workspace itself, not to the tracked cwd, so a session
     that cd'd out of the workspace still cannot write there; the session's own
     scratch folder is writable beside it, and holds its package caches.
+    ``secret_reads`` lets it read the credential stores (server/security/
+    secret_reads.py); without it, a failure that looks like the sandbox hid
+    one says how to ask.
     """
     from server.cwd_tracker import (
         extract_cwd_from_output,
@@ -795,6 +818,7 @@ def run_workspace_command(
             write_mode,
             write_root=ws,
             scratch_dir=scratch_dir,
+            secret_reads=secret_reads,
         )
         return CommandRun(text=text, background=True)
 
@@ -807,6 +831,7 @@ def run_workspace_command(
         write_mode=write_mode,
         write_root=ws,
         scratch_dir=scratch_dir,
+        secret_reads=secret_reads,
     )
     if result.background:
         text = _background_started_message(command, result.task_id, result.output_path)
@@ -836,6 +861,10 @@ def run_workspace_command(
         hint = classify_sandbox_denial(output, write_mode)
         if hint:
             output += "\n" + hint
+    if not secret_reads and result.returncode not in (0, None):
+        hint = secret_reads_policy.denial_hint(command, output)
+        if hint:
+            output += "\n" + hint
     if result.task_id:
         output += "\n" + _left_running_message(result.task_id, result.output_path)
     return CommandRun(text=output, returncode=result.returncode, stopped=result.stopped)
@@ -859,6 +888,7 @@ def _start_background_command(
     *,
     write_root: str | None = None,
     scratch_dir: str | None = None,
+    secret_reads: bool = False,
 ) -> str:
     """Start a command in the background and return a status message."""
     from server.tasks.shell import start_shell_task
@@ -871,6 +901,7 @@ def _start_background_command(
         write_mode=write_mode,
         write_root=write_root,
         scratch_dir=scratch_dir,
+        secret_reads=secret_reads,
     )
     return _background_started_message(command, task_info["task_id"], task_info["output_path"])
 

@@ -31,7 +31,7 @@ export interface UseMonacoReturn {
  *
  * The actual Monaco editor instance is managed by `@monaco-editor/react`.
  * This hook provides helpers for registering Whisper Studio themes
- * (whisper-dark, whisper-light, high-contrast variants) and switching
+ * (whisper-dark, whisper-light) and switching
  * between them at runtime.
  */
 export function useMonaco(): UseMonacoReturn {

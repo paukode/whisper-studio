@@ -8,8 +8,7 @@ export interface AppConfig {
   effortLevel: string;
   briefMode: boolean;
   permissionMode: string;
-  /** Live ASR engine: 'whisper' (utterance), 'streaming' (Parakeet), or
-   *  'canary' (25 EU languages + native translation). */
+  /** Live ASR engine: 'whisper' (utterance) or 'streaming' (Parakeet). */
   transcriptionBackend: string;
   /** Translate dropdown: 'off' | 'canary' | 'apple' (legacy stored
    *  'auto'/'model' values are normalized to 'canary' on load). */
@@ -33,6 +32,9 @@ export interface ModelEntry {
   requires_data_retention?: boolean;
   /** On-device model: runs via the local runtime, not Bedrock. */
   is_local?: boolean;
+  /** Who runs it: Claude on Bedrock, OpenAI on Bedrock, or on this Mac.
+   *  Groups the composer's model menu. */
+  provider?: 'anthropic' | 'openai' | 'local';
   /** Whether this local model has a toggleable thinking/reasoning mode. */
   supports_thinking?: boolean;
   /** Whether this local model can use tools (local agentic loop). */

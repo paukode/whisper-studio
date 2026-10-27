@@ -393,6 +393,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         splashWindow = window
     }
 
+    /// The app's page canvas in each system appearance: light #eef0f7,
+    /// dark #14132a (keep in step with --bg-primary in themes.css).
+    private static let pageCanvasColor = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 0x14 / 255, green: 0x13 / 255, blue: 0x2a / 255, alpha: 1)
+            : NSColor(srgbRed: 0xee / 255, green: 0xf0 / 255, blue: 0xf7 / 255, alpha: 1)
+    }
+
+    /// Clears WebKit's HTTP caches once after the app changes (an update or
+    /// a rebuild), then calls `done`. The page keeps one origin across
+    /// launches (sticky port), so a cache written by the previous build
+    /// could serve its page and stylesheets. Local storage (the chosen
+    /// theme, layout) is kept.
+    private func clearWebCacheIfAppChanged(_ done: @escaping () -> Void) {
+        let key = "WebCacheBuildStamp"
+        let info = Bundle.main.infoDictionary
+        let version = (info?["CFBundleShortVersionString"] as? String ?? "")
+            + "+" + (info?["CFBundleVersion"] as? String ?? "")
+        let plist = Bundle.main.bundleURL.appendingPathComponent("Contents/Info.plist")
+        let modified = (try? FileManager.default.attributesOfItem(atPath: plist.path))?[
+            .modificationDate] as? Date
+        let build = "\(version)@\(Int(modified?.timeIntervalSince1970 ?? 0))"
+        guard UserDefaults.standard.string(forKey: key) != build else {
+            done()
+            return
+        }
+        let caches: Set<String> = [
+            WKWebsiteDataTypeDiskCache, WKWebsiteDataTypeMemoryCache, WKWebsiteDataTypeFetchCache,
+        ]
+        WKWebsiteDataStore.default().removeData(ofTypes: caches, modifiedSince: .distantPast) {
+            UserDefaults.standard.set(build, forKey: key)
+            done()
+        }
+    }
+
     private func showMainWindow() {
         guard mainWindow == nil, let baseURL = baseURL else { return }
 
@@ -415,6 +450,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         view.uiDelegate = self
         view.navigationDelegate = self
         view.allowsBackForwardNavigationGestures = true
+        // The page canvas color (--bg-primary in static/modules/themes.css),
+        // shown before the first paint and past the page edges, so opening
+        // the window never flashes white in dark mode.
+        view.underPageBackgroundColor = Self.pageCanvasColor
 
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1440, height: 900),
@@ -424,11 +463,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         window.isReleasedWhenClosed = false
         window.title = "Whisper Studio"
         window.contentMinSize = NSSize(width: 1000, height: 700)
+        window.backgroundColor = Self.pageCanvasColor
         window.contentView = view
         window.center()
         window.setFrameAutosaveName("WhisperStudioMainWindow")
 
-        view.load(URLRequest(url: baseURL))
+        clearWebCacheIfAppChanged { view.load(URLRequest(url: baseURL)) }
 
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)

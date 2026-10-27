@@ -21,9 +21,11 @@ from typing import NamedTuple
 from server.approval.markers import APPROVAL
 from server.approval.spec import WORKSPACE_ROOT_KEY, ApprovalOutcome, turn_workspace_refusal
 from server.auto_mode import classify_tool_call
+from server.security import secret_reads
 from server.security.explainer import explain_permission
 from server.security.permissions import (
     FILE_WRITE_CATEGORIES,
+    MODE_BYPASS,
     approval_floor,
     resolve_static_decision,
     targets_app_config,
@@ -137,6 +139,25 @@ def _bind_to_workspace(spec, state, ws_parsed: dict) -> str | None:
     return turn_workspace_refusal(spec, ws_parsed)
 
 
+def _settle_secret_access(spec, ws_parsed: dict, mode: str) -> str | None:
+    """Settle the payload's credential-store read for ``mode``: None when the
+    call asks for none, else "allow" | "ask" | "deny" (secret_reads.decision).
+    In bypassPermissions every action runs with them readable, asked or not
+    (executors that start no command ignore the key). Anywhere else the
+    request is kept only for a person to approve on the card."""
+    key = secret_reads.SECRET_ACCESS_KEY
+    asked = spec.category == secret_reads.SECRET_READ_CATEGORY or secret_reads.requested(ws_parsed)
+    ws_parsed.pop(secret_reads.SECRET_READS_KEY, None)
+    if mode == MODE_BYPASS:
+        ws_parsed[key] = True
+        return "allow" if asked else None
+    if not asked:
+        ws_parsed.pop(key, None)
+        return None
+    ws_parsed[key] = True
+    return secret_reads.decision(mode)
+
+
 async def gate_approval(
     state,
     tool_output: str,
@@ -184,6 +205,15 @@ async def gate_approval(
     refusal = _bind_to_workspace(spec, state, ws_parsed)
     if refusal:
         return ApprovalStep(OUTPUT, refusal)
+    # Reading the credential stores (server/security/secret_reads.py): the
+    # one place a command's secret_access is settled. Bypass reads them with
+    # no card; anywhere else the request asks a person every time, Don't ask
+    # refuses it, and so does a run with no person to ask.
+    secret = _settle_secret_access(spec, ws_parsed, mode)
+    if secret == "deny":
+        return ApprovalStep(OUTPUT, secret_reads.REFUSED_DONT_ASK)
+    if secret == "ask" and unattended:
+        return ApprovalStep(OUTPUT, secret_reads.REFUSED_UNATTENDED)
     if unattended:
         # A write to the app's own grant or config files follows the permission
         # mode (the app-config table), so a person decides it. An unattended
@@ -230,14 +260,18 @@ async def gate_approval(
     # custom rules, approved
     # launch.json preview (allow), dontAsk, acceptEdits, auto (classifier),
     # ask. See server.security.permissions.resolve_static_decision.
-    decision = resolve_static_decision(
-        state.tool_name,
-        ws_parsed,
-        category,
-        session_approvals,
-        mode,
-        auto_allow_trusted,
-    )
+    if secret == "ask":
+        # Not the classifier, a session approval or a rule: a person, each time.
+        decision = "ask"
+    else:
+        decision = resolve_static_decision(
+            state.tool_name,
+            ws_parsed,
+            category,
+            session_approvals,
+            mode,
+            auto_allow_trusted,
+        )
     if decision is None:
         # mode == "auto" and nothing else resolved it: selecting the
         # Auto permission mode IS the opt-in, so the classifier runs
@@ -330,6 +364,8 @@ async def gate_approval(
     # and picks one of four renderers (diff/command/list/text).
     payload = spec.build_payload(ws_parsed)
     summary = spec.render_summary(ws_parsed)
+    if secret == "ask" and spec.category != secret_reads.SECRET_READ_CATEGORY:
+        summary = f"READS THE KEYCHAIN AND CREDENTIAL STORES: {summary}"
     event = {
         "approval_request": {
             "tool_use_id": state.tool_id,
@@ -346,7 +382,8 @@ async def gate_approval(
             # grant or config files is the same: it never falls under a
             # blanket "yes for all writes", so the card must not offer it.
             "always_asks": (
-                approval_floor(state.tool_name, ws_parsed, category) is not None
+                secret == "ask"
+                or approval_floor(state.tool_name, ws_parsed, category) is not None
                 or (category in FILE_WRITE_CATEGORIES and targets_app_config(ws_parsed))
             ),
         }

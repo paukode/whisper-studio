@@ -68,6 +68,9 @@ def test_the_history_is_the_tagged_releases_plus_the_current_template():
             released |= _entries(json.loads(shown.stdout))
     with open(tracker.PRICING_EXAMPLE_PATH) as f:
         current = _entries(json.load(f))
+    # A model that left the template leaves the history with it.
+    current_keys = {key for key, _ in current}
+    released = {(key, entry) for key, entry in released if key in current_keys}
     history = {
         (key, json.dumps(entry, sort_keys=True))
         for key, entries in SHIPPED_RATES.items()
@@ -91,14 +94,14 @@ def test_a_seeded_copy_of_an_old_template_does_not_shadow_the_current_rates(tmp_
 
 
 def test_a_stale_entry_yields_to_a_corrected_default(tmp_path, monkeypatch):
-    stale = SHIPPED_RATES["sonnet5"][0]
-    corrected = SHIPPED_RATES["sonnet5"][-1]
+    stale = SHIPPED_RATES["haiku"][0]
+    corrected = SHIPPED_RATES["haiku"][-1]
     assert stale != corrected
-    example = _write(tmp_path / "pricing.example.json", {"sonnet5": corrected})
-    override = _write(tmp_path / "pricing.json", {"sonnet5": stale})
+    example = _write(tmp_path / "pricing.example.json", {"haiku": corrected})
+    override = _write(tmp_path / "pricing.json", {"haiku": stale})
     monkeypatch.setattr(tracker, "PRICING_EXAMPLE_PATH", example)
     monkeypatch.setattr(tracker, "PRICING_PATH", override)
-    assert tracker._load_pricing()["sonnet5"] == _entry(corrected)
+    assert tracker._load_pricing()["haiku"] == _entry(corrected)
 
 
 def test_a_genuine_override_still_wins(tmp_path, monkeypatch):

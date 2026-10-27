@@ -10,10 +10,10 @@ import { ExpandableText } from './ExpandableText';
 
 const badgeStyle: React.CSSProperties = {
   marginLeft: '6px',
-  fontSize: '10px',
+  fontSize: '11px',
   padding: '1px 6px',
-  borderRadius: '10px',
-  background: 'var(--surface-0, rgba(127,127,127,0.15))',
+  borderRadius: 'var(--radius-lg)',
+  background: 'var(--surface-0)',
   opacity: 0.8,
   verticalAlign: 'middle',
 };
@@ -286,7 +286,7 @@ export const SkillsPanel: React.FC = () => {
                     className="btn btn-sm"
                     title="Trusted skills run their own bundled scripts without an approval prompt"
                     onClick={() => (skill.trusted ? void handleTrust(skill.name) : setTrustConfirm(skill.name))}
-                    style={skill.trusted ? { color: 'var(--text-accent, #c8862a)', fontWeight: 500 } : undefined}
+                    style={skill.trusted ? { color: 'var(--text-accent)', fontWeight: 500 } : undefined}
                   >
                     {skill.trusted ? 'Trusted ✓' : 'Trust'}
                   </button>

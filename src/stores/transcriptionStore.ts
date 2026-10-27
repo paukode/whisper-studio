@@ -4,7 +4,7 @@ import type { TranscriptSegment } from '@/types/session';
 export interface TranscriptionState {
   segments: TranscriptSegment[];
   speakerNames: Record<string, string>;
-  // The streaming backends' (Parakeet and Canary) volatile in-progress draft:
+  // The streaming backend's (Parakeet) volatile in-progress draft:
   // the live, word-by-word transcript of the utterance currently being spoken,
   // before it settles into a committed segment at the next pause. Empty when
   // there's no draft (e.g. the Whisper backend, between utterances, or right

@@ -122,14 +122,14 @@ const SessionCronBadge: React.FC<{ sessionId: string }> = ({ sessionId }) => {
         display: 'inline-flex',
         alignItems: 'center',
         gap: 3,
-        fontSize: 10,
-        fontFamily: 'var(--font-mono, ui-monospace, monospace)',
+        fontSize: 11,
+        fontFamily: 'var(--font-mono)',
         fontWeight: 700,
         padding: '1px 7px',
         borderRadius: 20,
         lineHeight: 1.7,
-        color: '#fff',
-        background: hasFailure ? 'var(--accent-record, #d1495b)' : 'var(--accent, #0d8a93)',
+        color: hasFailure ? '#fff' : 'var(--on-accent)',
+        background: hasFailure ? 'var(--accent-record)' : 'var(--accent)',
       }}
     >
       ⏱ {count}

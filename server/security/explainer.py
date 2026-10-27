@@ -108,7 +108,7 @@ async def _call_explainer(
 
     haiku = aux_model_id(
         "permission_explainer",
-        fallback_id=chat_models.get("sonnet") or next(iter(chat_models.values())),
+        fallback_id=chat_models.get("sonnet5.5") or next(iter(chat_models.values())),
         models=chat_models,
         config=config,
     )

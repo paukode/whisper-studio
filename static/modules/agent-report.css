@@ -9,7 +9,7 @@
 
 /* One width with an assistant turn that holds activity rows, so the chip
    columns of the report and the turns line up. */
-.chat-msg-wrap.assistant-wrap.agent-report-wrap { width: 66.67%; }
+.chat-msg-wrap.assistant-wrap.agent-report-wrap { width: 100%; }
 /* The timestamp under the card starts where the card's text does. */
 .agent-report-wrap > .msg-timestamp { padding-left: 15px; }
 
@@ -17,8 +17,9 @@
     min-width: 0;
     padding: 10px 14px;
     background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
+    border: 1px solid color-mix(in srgb, var(--agent) 28%, transparent);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-sm);
     color: var(--text-primary);
     font-size: var(--fs-body);
     line-height: 1.5;
@@ -48,8 +49,7 @@
     font-weight: 600;
 }
 /* A finished run: the done colour on the chip's text and rim, so it stays
-   apart from the filled New chip in every theme (the daltonized ones draw
-   done in amber, next to a gold accent). */
+   apart from the filled New chip (done and the accent share the green). */
 .agent-report-card .activity-chip.done {
     color: var(--success);
     border-color: color-mix(in srgb, var(--success) 40%, var(--border));
@@ -117,7 +117,7 @@
 .agent-report-text .markdown-content strong { color: var(--accent); }
 .agent-report-text .markdown-content :not(pre) > code {
     padding: 2px 5px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     font-size: var(--fs-caption);
 }
 

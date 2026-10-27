@@ -33,7 +33,7 @@ DB_PATH = os.path.join(STORAGE_DIR, "sessions.db")
 # them PER KEY. Adding or repricing a model is a JSON edit, no code change.
 # Loaded once at import; changes apply on server restart.
 #
-# Keyed by chat_models KEY (e.g. "opus5.0"), not the Bedrock model id. Every
+# Keyed by chat_models KEY (e.g. "opus5.5"), not the Bedrock model id. Every
 # rate is explicit and there is NO fallback bucket: a model with no entry bills
 # $0 and logs loudly (see get_model_pricing) rather than inheriting another
 # model's rate. Entry shape:

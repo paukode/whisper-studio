@@ -348,7 +348,7 @@ def test_chat_route_measures_the_turn_that_reads_the_transcript(monkeypatch):
         {"role": "assistant", "content": "y" * 8_000},
     ]
     turn(longer)
-    assert [kw["chat_model_key"] for kw in seen] == ["opus5.0", "opus5.0"]
+    assert [kw["chat_model_key"] for kw in seen] == ["opus5.5", "opus5.5"]
     assert 0 < seen[0]["turn_tokens"] < seen[1]["turn_tokens"]
     last_user = first["messages"][-1]["content"]
     text = last_user if isinstance(last_user, str) else json.dumps(last_user)

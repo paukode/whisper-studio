@@ -9,8 +9,6 @@
     inset: 0;
     z-index: 1500;
     background: rgba(0,0,0,0.62);
-    backdrop-filter: blur(14px) saturate(1.15);
-    -webkit-backdrop-filter: blur(14px) saturate(1.15);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -34,24 +32,20 @@
 /* ---- Dialog container ---- */
 .whisper-dialog {
     position: relative;
-    background:
-        linear-gradient(var(--bg-surface), var(--bg-surface)) padding-box,
-        linear-gradient(165deg, rgba(255,255,255,0.16), rgba(255,255,255,0.04) 40%) border-box;
-    border: 1px solid transparent;
-    border-radius: 20px;
-    box-shadow:
-        0 32px 80px rgba(0,0,0,0.55),
-        0 4px 16px rgba(0,0,0,0.35);
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-lg);
     width: 90vw;
     max-height: 84vh;
     display: flex;
     flex-direction: column;
-    animation: wdDialogIn 0.34s cubic-bezier(0.34, 1.3, 0.64, 1);
+    animation: wdDialogIn 0.2s ease-out;
     overflow: hidden;
 }
 
 @keyframes wdDialogIn {
-    from { opacity: 0; transform: scale(0.92) translateY(18px); }
+    from { opacity: 0; transform: translateY(8px); }
     to   { opacity: 1; transform: scale(1) translateY(0); }
 }
 
@@ -128,7 +122,7 @@
 
 .whisper-dialog__footer .btn {
     padding: 9px 20px;
-    border-radius: 10px;
+    border-radius: var(--radius-lg);
     font-size: 0.88em;
     font-weight: 600;
     cursor: pointer;
@@ -140,7 +134,6 @@
 
 .whisper-dialog__footer .btn:hover {
     background: var(--bg-hover);
-    transform: translateY(-1px);
 }
 
 .whisper-dialog__footer .btn:active {
@@ -148,23 +141,21 @@
 }
 
 .whisper-dialog__footer .btn-primary {
-    background: linear-gradient(180deg, var(--accent-hover), var(--accent));
-    color: #1a1206;
-    border-color: transparent;
-    box-shadow: 0 2px 12px var(--accent-dim);
+    background: var(--accent);
+    color: var(--on-accent);
+    border-color: var(--accent);
 }
 
 .whisper-dialog__footer .btn-primary:hover {
-    background: linear-gradient(180deg, var(--accent-hover), var(--accent-hover));
-    box-shadow: 0 4px 18px var(--accent-dim);
+    background: var(--accent-hover);
+    border-color: var(--accent-hover);
 }
 
 /* Danger variant */
 .whisper-dialog--danger .btn-primary {
-    background: linear-gradient(180deg, #ef5a4e, var(--accent-record));
+    background: var(--accent-record);
     color: #fff;
-    border-color: transparent;
-    box-shadow: 0 2px 12px var(--accent-record-dim);
+    border-color: var(--accent-record);
 }
 
 .whisper-dialog--danger .btn-primary:hover {
@@ -192,7 +183,7 @@
     width: 100%;
     padding: 9px 13px;
     border: 1px solid var(--border-strong);
-    border-radius: 10px;
+    border-radius: var(--radius-lg);
     background: var(--bg-inset);
     color: var(--text-primary);
     font-size: 0.9em;
@@ -216,7 +207,7 @@
     width: 100%;
     padding: 9px 13px;
     border: 1px solid var(--border-strong);
-    border-radius: 10px;
+    border-radius: var(--radius-lg);
     background: var(--bg-inset);
     color: var(--text-primary);
     font-size: 0.9em;
@@ -256,18 +247,8 @@
     gap: 10px;
     padding: 24px;
     overflow: hidden;
-    background:
-        radial-gradient(120% 90% at 15% 0%, rgba(167,139,250,0.32), transparent 55%),
-        radial-gradient(130% 100% at 85% 100%, rgba(226,163,54,0.30), transparent 60%),
-        linear-gradient(160deg, #17141f 0%, #0d0c12 100%);
-}
-
-.wd-split__brand::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background-image: var(--noise);
-    pointer-events: none;
+    background: var(--bg-secondary);
+    border-right: 1px solid var(--border);
 }
 
 /* Oversized ghost glyph behind the text */
@@ -278,7 +259,8 @@
     font-size: 9.5em;
     font-weight: 800;
     letter-spacing: -0.05em;
-    color: rgba(255,255,255,0.045);
+    font-family: var(--font-mono);
+    color: var(--border);
     user-select: none;
     pointer-events: none;
     line-height: 1;
@@ -290,24 +272,26 @@
     font-weight: 700;
     letter-spacing: 0.14em;
     text-transform: uppercase;
-    color: #d8c9ff;
-    background: rgba(167,139,250,0.14);
-    border: 1px solid rgba(167,139,250,0.35);
-    border-radius: 999px;
-    padding: 4px 10px;
+    font-family: var(--font-mono);
+    color: var(--accent);
+    background: var(--accent-dim);
+    border: 1px solid var(--success-border);
+    border-radius: var(--radius-sm);
+    padding: 3px 8px;
 }
 
 .wd-split__model {
-    font-size: 1.9em;
-    font-weight: 750;
+    font-family: var(--font-mono);
+    font-size: 1.7em;
+    font-weight: 500;
     letter-spacing: -0.02em;
-    color: #f5f2ec;
+    color: var(--text-heading);
     line-height: 1.1;
 }
 
 .wd-split__tagline {
     font-size: 0.78em;
-    color: rgba(245,242,236,0.55);
+    color: var(--text-muted);
     line-height: 1.45;
 }
 
@@ -356,7 +340,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    border-radius: 9px;
+    border-radius: var(--radius-lg);
     background: var(--bg-elevated);
     border: 1px solid var(--border);
     color: var(--accent);
@@ -386,7 +370,7 @@
     color: var(--text-muted);
     margin: 0 0 18px;
     padding: 9px 12px;
-    border-radius: 10px;
+    border-radius: var(--radius-lg);
     background: var(--bg-inset);
     border: 1px dashed var(--border-strong);
 }
@@ -418,12 +402,11 @@
     border: none;
     cursor: pointer;
     padding: 11px 22px;
-    border-radius: 11px;
+    border-radius: var(--radius-lg);
     font-size: 0.9em;
     font-weight: 650;
-    color: #1a1206;
-    background: linear-gradient(180deg, var(--accent-hover), var(--accent));
-    box-shadow: 0 2px 14px var(--accent-dim);
+    color: var(--on-accent);
+    background: var(--accent);
     transition: transform 0.15s, box-shadow 0.15s, filter 0.15s;
 }
 

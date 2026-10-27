@@ -59,7 +59,7 @@ export const BASE_SLASH_COMMANDS: SlashCommand[] = [
   { cmd: 'settings ', icon: '⚙️', desc: 'Open settings', category: 'settings' },
   { cmd: 'skills:', icon: '⚡', desc: 'Browse available skills', submenu: true, category: 'workspace' },
   { cmd: 'subagent ', icon: '🤖', desc: 'Spawn a focused subagent for a one-shot task', category: 'ai' },
-  { cmd: 'theme ', icon: '🎨', desc: 'Switch theme', options: ['auto', 'dark', 'light', 'dark-high-contrast', 'light-high-contrast', 'dark-daltonized', 'light-daltonized'], category: 'settings' },
+  { cmd: 'theme ', icon: '🎨', desc: 'Switch theme', options: ['auto', 'light', 'dark'], category: 'settings' },
   { cmd: 'verbosity ', icon: '📏', desc: 'Set response length', options: ['brief', 'normal', 'detailed'], category: 'ai' },
   { cmd: 'workflow ', icon: '⚙️', desc: 'Run a saved workflow by name', category: 'ai' },
   { cmd: 'ci ', icon: '🧪', desc: 'Watch CI for a branch, or `ci autofix` a failing run', category: 'ai' },

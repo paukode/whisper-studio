@@ -119,7 +119,7 @@ export const ConfigEditorDialog: React.FC<{ onClose: () => void }> = ({ onClose 
       onClick={() => setTab(id)}
       className="btn btn-sm"
       style={{
-        background: tab === id ? 'var(--surface-2, #333)' : 'transparent',
+        background: tab === id ? 'var(--surface-2)' : 'transparent',
         borderBottom: tab === id ? '2px solid var(--accent)' : '2px solid transparent',
         borderRadius: 0,
       }}
@@ -131,7 +131,7 @@ export const ConfigEditorDialog: React.FC<{ onClose: () => void }> = ({ onClose 
   const boxStyle: React.CSSProperties = {
     height: 340,
     width: '100%',
-    fontFamily: 'var(--font-mono, monospace)',
+    fontFamily: 'var(--font-mono)',
     fontSize: '0.85em',
     lineHeight: 1.5,
     background: 'var(--bg-secondary)',
@@ -167,9 +167,9 @@ export const ConfigEditorDialog: React.FC<{ onClose: () => void }> = ({ onClose 
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          background: 'var(--surface-1, #1e1e1e)',
-          color: 'var(--text-primary, #eee)',
-          borderRadius: 12,
+          background: 'var(--surface-1)',
+          color: 'var(--text-primary)',
+          borderRadius: 'var(--radius-lg)',
           width: 'min(680px, 94vw)',
           padding: 18,
           display: 'flex',
@@ -185,11 +185,11 @@ export const ConfigEditorDialog: React.FC<{ onClose: () => void }> = ({ onClose 
           <code>dir</code>; hide a shipped model by adding its key to{' '}
           <code>chat_models_disabled</code>. Saving validates and applies immediately.
         </p>
-        <div style={{ fontSize: '0.8em', color: 'var(--text-secondary, #aaa)' }}>
+        <div style={{ fontSize: '0.8em', color: 'var(--text-secondary)' }}>
           {data?.path ?? 'Loading…'}
         </div>
         {isError && (
-          <p role="alert" style={{ color: 'var(--accent-record, #e5484d)', margin: 0 }}>
+          <p role="alert" style={{ color: 'var(--accent-record)', margin: 0 }}>
             Could not load your config.
           </p>
         )}
@@ -234,10 +234,10 @@ export const ConfigEditorDialog: React.FC<{ onClose: () => void }> = ({ onClose 
             style={{
               margin: 0,
               paddingLeft: 18,
-              fontFamily: 'var(--font-mono, monospace)',
+              fontFamily: 'var(--font-mono)',
               fontSize: '0.8em',
               lineHeight: 1.6,
-              color: 'var(--accent-record, #e5484d)',
+              color: 'var(--accent-record)',
               maxHeight: 120,
               overflowY: 'auto',
             }}

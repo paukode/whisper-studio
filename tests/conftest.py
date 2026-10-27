@@ -284,29 +284,6 @@ def _no_live_activity_labels(monkeypatch):
     monkeypatch.setattr(activity_labels, "_in_thread", {})
 
 
-@pytest.fixture(scope="session")
-def _english_only_mac_prefs(tmp_path_factory):
-    """A Mac preferences plist that lists English only."""
-    import plistlib
-
-    path = tmp_path_factory.mktemp("mac-prefs") / "GlobalPreferences.plist"
-    with open(path, "wb") as f:
-        plistlib.dump({"AppleLanguages": ["en-US"]}, f)
-    return str(path)
-
-
-@pytest.fixture(autouse=True)
-def _pin_mac_languages(monkeypatch, _english_only_mac_prefs):
-    """Never read the developer's real Mac language list: a blank
-    transcription-language setting resolves through it (server/asr/languages.py).
-    English only by default, which pins Canary to English so no test loads the
-    language-ID model by accident; tests that need other languages point
-    _MAC_GLOBAL_PREFS at their own plist."""
-    from server.asr import languages
-
-    monkeypatch.setattr(languages, "_MAC_GLOBAL_PREFS", _english_only_mac_prefs)
-
-
 @pytest.fixture(autouse=True)
 def _isolate_aws_dir(tmp_path_factory, monkeypatch):
     """Never create folders in the developer's real ~/.aws: aws_cli and

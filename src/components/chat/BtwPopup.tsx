@@ -37,13 +37,13 @@ export const BtwPopup: React.FC<BtwPopupProps> = ({ question, answer, onClose })
         style={{
           background: 'var(--bg-primary)',
           border: '1px solid var(--border)',
-          borderRadius: 12,
+          borderRadius: 'var(--radius-lg)',
           padding: '20px 24px',
           maxWidth: 520,
           width: '90%',
           maxHeight: '70vh',
           overflow: 'auto',
-          boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
+          boxShadow: 'var(--shadow-md)',
           position: 'relative',
         }}
       >

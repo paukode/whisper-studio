@@ -7,7 +7,7 @@ import { renderHook, waitFor } from '@testing-library/react';
 // session itself its answer lives only in memory and is lost on reload or
 // eviction.
 vi.mock('@/providers/ThemeProvider', () => ({
-  useTheme: () => ({ setTheme: vi.fn(), themeKey: 'light-taw', resolvedTheme: 'light-taw', themes: [] }),
+  useTheme: () => ({ setTheme: vi.fn(), themeKey: 'light', resolvedTheme: 'light', themes: [] }),
 }));
 
 import { useSlashCommands, type UseSlashCommandsOptions } from './useSlashCommands';

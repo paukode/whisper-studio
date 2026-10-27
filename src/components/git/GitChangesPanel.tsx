@@ -128,7 +128,7 @@ export const GitChangesPanel: React.FC<GitChangesPanelProps> = ({ onFileOpen }) 
         <span className={`file-tree-chevron${expanded ? ' file-tree-chevron-expanded' : ''}`} style={{ fontSize: '8px', marginRight: 4 }}>
           ▶
         </span>
-        <span style={{ fontWeight: 600, fontSize: '11px' }}>Git Changes</span>
+        <span style={{ fontWeight: 600, fontSize: '12px' }}>Git Changes</span>
         {branch && (
           <span className="ws-git-branch" title={branch}>
             {branch}
@@ -163,7 +163,7 @@ export const GitChangesPanel: React.FC<GitChangesPanelProps> = ({ onFileOpen }) 
         )}
 
         {!isLoading && files.length === 0 && (
-          <div style={{ padding: '8px 14px', fontSize: '11px', color: 'var(--text-muted)' }}>No changes</div>
+          <div style={{ padding: '8px 14px', fontSize: '12px', color: 'var(--text-muted)' }}>No changes</div>
         )}
 
         {stagedFiles.length > 0 && (

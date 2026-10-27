@@ -44,7 +44,7 @@
       Indexing sub-tabs), <b>Tools and automation</b> (MCP servers; Import project; Code tools; Skills and plugins;
       Tasks and hooks, holding Scheduled tasks and Hooks), and <b>Access and usage</b> (Keys and
       permissions, holding API keys and Permissions; Usage and advanced, holding Costs, Feature flags
-      and Live preview). Each row below is one control:</p>
+      and Live preview), and <b>Look and feel</b> (Appearance). Each row below is one control:</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Setting</th><th>Panel</th><th>What it does</th></tr></thead>
       <tbody>
@@ -65,20 +65,9 @@
             <a href="#tavily">Tavily key</a>).</td>
         </tr>
         <tr>
-          <td><b>Transcription Languages</b></td>
-          <td>API keys</td>
-          <td>Language list for the Canary and Whisper engines: one code
-            (<code>pl</code>) pins the language, a comma list (<code>pl,en</code>) keeps detection but
-            constrains it to those candidates - the fix for short accented utterances landing on a
-            neighbor language. Blank means English plus your Mac's preferred languages for Canary,
-            and Whisper's own detection for Whisper; the field shows the set in use. A value Canary
-            cannot transcribe at all (such as <code>ja</code>) stops Canary transcribing instead of
-            falling back to other languages.</td>
-        </tr>
-        <tr>
           <td><b>Transcription Model</b></td>
           <td>API keys</td>
-          <td>The meeting-recorder engine: <b>Whisper Large v3</b>, <b>Canary</b>, or
+          <td>The meeting-recorder engine: <b>Whisper Large v3</b> or
             <b>Parakeet (live)</b> (the default). Mirrors the dropdown in the transcript panel header;
             saving here updates a live recording immediately. See
             <a href="tut-voice.html#engine-and-speakers">Voice &amp; meetings</a>.</td>
@@ -167,6 +156,15 @@
             <code class="path">.mcp.json</code> translates into MCP server config. Never overwrites a
             file that already exists, and nothing it imports is executed as part of the import.</td>
         </tr>
+        <tr>
+          <td><b>Appearance</b></td>
+          <td>Appearance</td>
+          <td>Sets the mode (System, Light or Dark) and the color palette. There are 20 palettes, and
+            each palette has a light mode and a dark mode. All palettes keep text readable and do not
+            use a pure white or pure black background. The change applies immediately. To open this
+            panel from the top bar, click the theme icon and then click <b>More themes</b>. The choice
+            is stored in this browser view, not in your config file.</td>
+        </tr>
       </tbody>
     </table></div>
 
@@ -179,14 +177,13 @@
         <tr>
           <td><b>Model</b> dropdown</td>
           <td><code>default_chat_model</code></td>
-          <td>The model this session runs on: Haiku 4.5, Sonnet 4.6 / 5 / 5.5, Opus 4.6 / 4.7 / 4.8,
-            Opus 5 / 5.5, Fable 5.0 / 5.1, GPT-5.4 / 5.5, GPT-5.6 Sol / Terra / Luna, GPT-6 Astra /
-            Sol / Luna, GPT-6.1 Sol, or an
+          <td>The model this session runs on: Haiku 4.5, Sonnet 5.5, Opus 5.5,
+            Fable 5.1, GPT-6 Astra / Luna, GPT-6.1 Sol, or an
             on-device model you installed. The picker only shows models valid for the current model
             mode. The shipped default is <code>gpt6-luna</code> (set in
             <code class="path">config.example.json</code>, the SYSTEM layer every install reads);
             the code-level fallback used if that file is unreadable is the same key.
-            Fable 5.0 / 5.1 require the data-retention consent flow before they can be selected.
+            Fable 5.1 requires the data-retention consent flow before they can be selected.
             Full catalog on <a href="arch-backends.html">Model backends</a>.</td>
         </tr>
         <tr>
@@ -196,9 +193,9 @@
             <code>low</code>, <code>medium</code>, <code>high</code>, <code>extra</code> (sent to
             Bedrock as <code>xhigh</code>), <code>max</code>, and <code>ultracode</code>. Higher effort
             trades latency and cost for deeper thinking. The levels a model exposes depend on its tier:
-            Opus and Fable expose the full ladder <code>low</code> to <code>max</code>; Sonnet and the
-            standard tier skip <code>extra</code>; GPT-5.4 / 5.5 / 5.6 run <code>none</code> to
-            <code>max</code>, GPT-6 Astra / Sol / Luna and GPT-6.1 Sol <code>low</code> to <code>max</code>; Haiku and the local
+            Opus 5.5, Sonnet 5.5 and Fable 5.1 expose the full ladder <code>low</code> to <code>max</code>;
+            GPT-6 Astra / Luna and GPT-6.1 Sol run <code>low</code> to <code>max</code> and skip
+            <code>extra</code>; Haiku and the local
             models have no effort control. <code>ultracode</code> is appended for any model that can
             orchestrate a workflow, and is a session mode rather than a plain level: it sends the
             model's own top reasoning rung plus dynamic-workflow orchestration. The value is clamped to
@@ -206,7 +203,7 @@
             <code>auto</code> value is coerced back to a real level.</td>
         </tr>
         <tr>
-          <td><b>Response length</b> pill</td>
+          <td><b>Answers</b> in the "How it thinks" group</td>
           <td><code>brief_mode</code></td>
           <td>Brief, Normal or Detailed. On a model with native verbosity (the GPT models) the choice
             is sent as the provider's own <code>verbosity</code> value; on every other model only the
@@ -244,7 +241,7 @@
         <tr><td><code>backends</code></td><td>object</td><td><code>{}</code>; a fresh install is seeded <code>{"embed":"qwen3","rerank":"qwen3","ner":"gliner","index_llm":"haiku"}</code></td><td>Model mode (hybrid only)</td></tr>
         <tr><td><code>local_mode</code></td><td>boolean</td><td><code>false</code></td><td>No field. Legacy key, read only as a fallback when no <code>model_mode</code> is set</td></tr>
         <tr><td><code>effort_level</code></td><td>string</td><td><code>"high"</code> code fallback; shipped value <code>"max"</code></td><td>Effort pill (per session)</td></tr>
-        <tr><td><code>brief_mode</code></td><td>boolean</td><td><code>false</code></td><td>Response length pill (per session)</td></tr>
+        <tr><td><code>brief_mode</code></td><td>boolean</td><td><code>false</code></td><td>Answers setting in the "How it thinks" group (per session)</td></tr>
         <tr><td><code>auxiliary_models</code></td><td>object</td><td><code>{}</code></td><td>No field. See <a href="#auxiliary">Auxiliary models</a></td></tr>
         <tr><td><code>model_fallback_enabled</code></td><td>boolean</td><td><code>false</code></td><td>Costs &gt; Enable model fallback. Steps the model down a cheaper chain once spend reaches 80 percent of a cost cap</td></tr>
         <tr><td><code>max_session_cost_usd</code></td><td>number</td><td><code>0.0</code> (unlimited)</td><td>Costs &gt; Max Session Cost</td></tr>
@@ -274,12 +271,11 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Key</th><th>Type</th><th>Default</th><th>Written by</th></tr></thead>
       <tbody>
-        <tr><td><code>transcription_backend</code></td><td>string</td><td><code>"streaming"</code> (Parakeet)</td><td>Transcription Model, and the transcript panel header (<code>whisper</code> / <code>canary</code> / <code>streaming</code>)</td></tr>
-        <tr><td><code>whisper_language</code></td><td>string or null</td><td><code>null</code> (Canary: English plus the Mac's languages; Whisper: auto-detect)</td><td>Transcription Languages (one code pins, a comma list constrains detection)</td></tr>
+        <tr><td><code>transcription_backend</code></td><td>string</td><td><code>"streaming"</code> (Parakeet)</td><td>Transcription Model, and the transcript panel header (<code>whisper</code> / <code>streaming</code>). A saved <code>"canary"</code> is rewritten to <code>"streaming"</code> once at startup</td></tr>
         <tr><td><code>translate_mode</code></td><td>string</td><td><code>"off"</code></td><td>Translation Model (<code>off</code> / <code>canary</code> / <code>apple</code>; legacy <code>auto</code> and <code>model</code> read as <code>canary</code>)</td></tr>
         <tr><td><code>translate_target</code></td><td>string</td><td><code>"en"</code></td><td>Translate To</td></tr>
         <tr><td><code>speaker_embedder</code></td><td>string</td><td><code>"redimnet"</code></td><td>No field. The speaker encoder behind "Speaker N": <code>redimnet</code> (ReDimNet2-B2) or <code>ecapa</code>. ReDimNet2 downloads on first use and falls back to ECAPA if it cannot. Changing it hides stored voiceprints, which are filed per encoder, because vectors from different encoders are not comparable</td></tr>
-        <tr><td><code>speaker_split_turns</code></td><td>boolean</td><td><code>true</code></td><td>No field. Cut one utterance at a speaker handover instead of labelling the whole thing as one speaker. Needs word timestamps, which Whisper and Parakeet report and Canary does not</td></tr>
+        <tr><td><code>speaker_split_turns</code></td><td>boolean</td><td><code>true</code></td><td>No field. Cut one utterance at a speaker handover instead of labelling the whole thing as one speaker. Needs word timestamps, which Whisper and Parakeet both report</td></tr>
         <tr><td><code>speaker_voiceprints</code></td><td>boolean</td><td><code>true</code></td><td>No field. Remember named speakers across recordings, so renaming "Speaker 2" to a name once gets that person their name back in later sessions</td></tr>
         <tr><td><code>voice</code></td><td>object</td><td><code>{"enabled": true, "model_id": "amazon.nova-2-sonic-v1:0", "region": "", "voice_id": "tiffany", "endpointing": "MEDIUM"}</code></td><td>No field. See <a href="#voice">Voice-mode keys</a></td></tr>
       </tbody>

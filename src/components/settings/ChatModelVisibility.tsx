@@ -107,13 +107,13 @@ export const ChatModelVisibility: React.FC = () => {
                 {m.disabled && (
                   <span
                     style={{
-                      fontSize: 11,
+                      fontSize: 12,
                       fontWeight: 600,
                       padding: '2px 8px',
                       borderRadius: 999,
                       whiteSpace: 'nowrap',
-                      color: 'var(--text-secondary, #888)',
-                      background: 'rgba(128,128,128,0.12)',
+                      color: 'var(--text-secondary)',
+                      background: 'var(--bg-hover)',
                     }}
                   >
                     Hidden from picker

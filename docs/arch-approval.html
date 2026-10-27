@@ -42,8 +42,9 @@
       <code class="path">server/security/permissions.py</code>. It is a single dial that sets the
       baseline for every tool call in a turn. Read-only tools (reading files, listing directories,
       searching) run without approval in every mode - custom rules only apply to approval-gated
-      tools, so a rule cannot gate a read. The modes differ in how they treat <em>write</em> and
-      <em>command</em> tools.</p>
+      tools, so a rule cannot gate a read. The one exception is a read of a credential store (see
+      <a href="#secret-reads">Reads of credential stores</a>). The modes differ in how they treat
+      <em>write</em> and <em>command</em> tools.</p>
 
     <div class="table-wrap"><table>
       <thead><tr><th>Mode</th><th>Reads</th><th>Writes &amp; commands</th></tr></thead>
@@ -93,8 +94,37 @@
         <code>bypassPermissions</code> runs every action with no prompt, and <code>dontAsk</code>
         silently drops every gated action. Both are deliberate opt-ins for trusted or hands-off sessions;
         neither should be the default for exploratory work. The sandbox still applies under
-        <code>bypassPermissions</code> - it removes the <em>prompt</em>, not the OS boundary.</p></div>
+        <code>bypassPermissions</code> - it removes the <em>prompt</em>, not the OS boundary. In
+        bypass, the sandbox lets commands read the credential stores, but it still denies writes to
+        them.</p></div>
     </div>
+
+    <h3 id="secret-reads">Reads of credential stores</h3>
+    <p>The credential stores are the deny-list in
+      <code class="path">server/security/sensitive_paths.py</code>: <code class="path">~/Library/Keychains</code>,
+      <code class="path">~/.ssh</code>, <code class="path">~/.aws</code>, <code class="path">~/.gnupg</code>,
+      git credentials, browser profiles and cookies, shell histories, password managers,
+      <code class="path">/etc/shadow</code>, and more. The policy for reads of these paths is in
+      <code class="path">server/security/secret_reads.py</code>. It applies to every read tool and to
+      <code>run_python</code>, <code>terminal_run</code>, and <code>ws_run_command</code>:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Mode</th><th>Read of a credential store</th></tr></thead>
+      <tbody>
+        <tr><td><code>bypassPermissions</code></td><td>Allowed with no card. Writes to the stores stay denied by the sandbox.</td></tr>
+        <tr><td><code>dontAsk</code></td><td>Refused.</td></tr>
+        <tr><td><code>default</code>, <code>acceptEdits</code>, <code>plan</code>, <code>auto</code></td><td>A person approves each read, every time. The classifier never decides it, and a remembered "Yes for all" for commands never covers it.</td></tr>
+        <tr><td>Unattended runs (subagents, cron jobs), outside bypass</td><td>Refused, because no person can answer. Agents and cron run in default mode, so in practice they never read secrets.</td></tr>
+      </tbody>
+    </table></div>
+    <p>A file read of a credential store raises a <code>secret_read</code> card (category
+      <code>secret-read</code>, preview "Read &lt;path&gt;, a credential store ..."). A command asks
+      with the tool input <code>secret_access: true</code>. Its card summary starts with "READS THE
+      KEYCHAIN AND CREDENTIAL STORES:" and never offers to remember the choice for the session. On
+      Yes, the command runs with the stores readable, and writes to them stay denied.</p>
+    <p>The executor stamps every call with whether it runs in bypass (<code>__secret_reads__</code>)
+      and always overwrites the value that the model sent. <code class="path">server/tool_approvals.py</code>
+      is the one place that settles the <code>secret_access</code> of a command. See
+      <a href="arch-sandbox.html#secret-reads">the sandbox page</a> for the sandbox side.</p>
 
     <h3 id="plan-mode">What plan mode hard-blocks</h3>
     <p>Plan mode is stricter than "ask" for the most consequential tools: it refuses them
@@ -485,7 +515,9 @@
         on the running process - lives in the <a href="arch-sandbox.html">sandbox</a>. The approved
         command path in <code>bootstrap.py</code> runs this same
         <code>_validate_command</code> gate before sandboxing, so an approved command still cannot,
-        for example, read <code>~/.ssh</code>.</p></div>
+        for example, read <code>~/.ssh</code>, unless the run is allowed to
+        <a href="#secret-reads">read the credential stores</a>. For such a run, the validator skips
+        its sensitive-path check.</p></div>
     </div>
 
     <h2 id="key-files">Key files</h2>

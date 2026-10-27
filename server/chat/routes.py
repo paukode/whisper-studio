@@ -111,7 +111,7 @@ async def _rewrite_query_for_retrieval(
         from server.infrastructure.auxiliary import aux_model_id
 
         models = _get_chat_models()
-        model_id = aux_model_id("query_rewrite", fallback_id=models.get("sonnet"), models=models)
+        model_id = aux_model_id("query_rewrite", fallback_id=models.get("sonnet5.5"), models=models)
         if not model_id:
             return None
         from server.index.pipeline import message_text
@@ -447,6 +447,15 @@ async def models_endpoint():
                 # On-device model: runs via the local runtime, not Bedrock. The UI
                 # badges it and routes selection through the local load flow.
                 "is_local": m.get("is_local", False),
+                # Who runs it, for grouping the composer's model menu: the same
+                # rule the turn uses (on-device, OpenAI on Bedrock, else Claude).
+                "provider": (
+                    "local"
+                    if m.get("is_local")
+                    else "openai"
+                    if m.get("provider") == "openai_bedrock"
+                    else "anthropic"
+                ),
                 # Whether this local model can think: its chat template has a
                 # thinking mode (server/local/thinking.py).
                 "supports_thinking": bool(levels) if m.get("is_local") else False,
@@ -911,8 +920,8 @@ async def generate_title_endpoint(request: Request):
     model_id = aux_model_id(
         "title",
         fallback_id=(
-            chat_models.get("sonnet")
-            or chat_models.get("opus4.6")
+            chat_models.get("sonnet5.5")
+            or chat_models.get("opus5.5")
             or next(iter(chat_models.values()))
         ),
         models=chat_models,
@@ -999,7 +1008,9 @@ async def subagent_stream_endpoint(request: Request):
         return refused
     chat_models = _get_chat_models()
     model_id = (
-        chat_models.get(model_key) or chat_models.get("sonnet") or next(iter(chat_models.values()))
+        chat_models.get(model_key)
+        or chat_models.get("sonnet5.5")
+        or next(iter(chat_models.values()))
     )
 
     # The frontend supplies a stable team_id up front so its Stop button can
@@ -1182,7 +1193,9 @@ async def btw_endpoint(request: Request):
     model_key = body.get("model", _get_default_model())
     chat_models = _get_chat_models()
     model_id = (
-        chat_models.get(model_key) or chat_models.get("sonnet") or next(iter(chat_models.values()))
+        chat_models.get(model_key)
+        or chat_models.get("sonnet5.5")
+        or next(iter(chat_models.values()))
     )
 
     from server.prompts.rules import append_rules

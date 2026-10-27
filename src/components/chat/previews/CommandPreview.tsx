@@ -11,12 +11,12 @@ export function CommandPreview({ command, cwd }: CommandPreviewProps) {
   return (
     <div>
       <pre style={{
-        fontSize: 12, fontFamily: 'Menlo, monospace',
+        fontSize: 13, fontFamily: 'Menlo, monospace',
         background: 'var(--bg-inset)', padding: 10, borderRadius: 4,
         whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: 0,
       }}>$ {command}</pre>
       {cwd && (
-        <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
           in {cwd}
         </div>
       )}

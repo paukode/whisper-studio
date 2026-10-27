@@ -113,7 +113,7 @@ export const ModelModeNotice: React.FC = () => {
                 aria-current={m.mode === currentMode ? 'true' : undefined}
                 style={{
                   padding: '10px 14px',
-                  borderRadius: 10,
+                  borderRadius: 'var(--radius-lg)',
                   background: 'var(--bg-elevated)',
                   border: m.mode === currentMode ? '1px solid var(--accent)' : '1px solid var(--border)',
                 }}

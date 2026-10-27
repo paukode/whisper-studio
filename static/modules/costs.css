@@ -1,8 +1,8 @@
 /* ================================================================
    Settings > Usage and advanced > Costs
    src/components/settings/CostsPanel.tsx and settings/costs/*.tsx.
-   Chart colours reuse the per-theme categorical palette (--speaker-N),
-   which every theme, including the daltonized ones, defines.
+   Chart colours reuse the categorical palette (--speaker-N), which both
+   modes define.
    ================================================================ */
 
 /* A size container: the tiles, the chart height and the budget fields follow
@@ -36,16 +36,16 @@
 .usage-field {
     height: 30px; padding: 0 10px; box-sizing: border-box;
     background: var(--bg-primary); color: var(--text-primary);
-    border: 1px solid var(--border); border-radius: 8px; outline: none;
+    border: 1px solid var(--border); border-radius: var(--radius-lg); outline: none;
     font: inherit; font-size: var(--fs-small);
 }
 .usage-field:focus-visible { border-color: var(--accent); }
 .usage-segmented {
     display: inline-flex; gap: 2px; padding: 2px; height: 30px; box-sizing: border-box;
-    background: var(--bg-primary); border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg-primary); border: 1px solid var(--border); border-radius: var(--radius-lg);
 }
 .usage-segment {
-    background: transparent; border: 0; border-radius: 6px; cursor: pointer;
+    background: transparent; border: 0; border-radius: var(--radius-md); cursor: pointer;
     color: var(--text-secondary); font: inherit; font-size: var(--fs-small);
     padding: 0 11px; white-space: nowrap;
 }
@@ -66,7 +66,7 @@
 }
 .usage-tile-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .usage-tile {
-    min-width: 0; padding: 12px 14px; border-radius: 12px;
+    min-width: 0; padding: 12px 14px; border-radius: var(--radius-lg);
     background: var(--bg-elevated); border: 1px solid var(--border);
 }
 .usage-tile--hero { display: flex; flex-direction: column; justify-content: center; padding: 16px 18px; }
@@ -99,7 +99,7 @@
 
 /* ── Pricing notes, numbered; a table row carries its note's number ── */
 .usage-notes {
-    list-style: none; margin: 12px 0 0; padding: 9px 12px; border-radius: 10px;
+    list-style: none; margin: 12px 0 0; padding: 9px 12px; border-radius: var(--radius-lg);
     display: flex; flex-direction: column; gap: 4px;
     background: var(--risk-warn-dim); color: var(--text-secondary);
     font-size: var(--fs-caption); line-height: 1.45;
@@ -112,7 +112,7 @@
 
 /* ── Cards: the chart, the breakdown and the budgets ── */
 .usage-card {
-    margin-top: 16px; padding: 14px 16px 16px; border-radius: 12px;
+    margin-top: 16px; padding: 14px 16px 16px; border-radius: var(--radius-lg);
     background: var(--bg-elevated); border: 1px solid var(--border);
 }
 .usage-section-title {
@@ -143,7 +143,7 @@
     background-image: linear-gradient(to bottom, var(--border) 1px, transparent 1px);
     background-size: 100% 50%;
 }
-.usage-chart-plot:focus-visible { box-shadow: 0 0 0 2px var(--accent-dim); border-radius: 4px; }
+.usage-chart-plot:focus-visible { box-shadow: 0 0 0 2px var(--accent-dim); border-radius: var(--radius-sm); }
 .usage-chart-bars { display: flex; align-items: flex-end; gap: 2px; height: 100%; }
 /* Hundreds of buckets (All time by day): no gaps, and bars may go sub-pixel. */
 .usage-chart-bars.dense { gap: 0; }
@@ -170,7 +170,7 @@
 .usage-chart-tip {
     position: absolute; top: 4px; z-index: 2; transform: translateX(-50%);
     width: max-content; max-width: min(340px, 90%); padding: 8px 10px;
-    background: var(--bg-surface); border: 1px solid var(--border-strong); border-radius: 8px;
+    background: var(--bg-surface); border: 1px solid var(--border-strong); border-radius: var(--radius-lg);
     box-shadow: var(--shadow-md); color: var(--text-secondary);
     font-size: var(--fs-caption); line-height: 1.45; pointer-events: none;
 }
@@ -240,7 +240,7 @@
     font-weight: 400; color: var(--text-muted); overflow-wrap: anywhere;
 }
 .usage-badge {
-    display: inline-block; margin: 3px 0 0 18px; padding: 0 7px; border-radius: 999px;
+    display: inline-block; margin: 3px 0 0 18px; padding: 0 7px; border-radius: var(--radius-sm);
     background: var(--risk-warn-dim); color: var(--risk-warn);
     font-size: var(--fs-caption); font-weight: 500;
 }

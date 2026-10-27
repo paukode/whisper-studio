@@ -112,9 +112,9 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Family</th><th>Models</th><th>Reach for them when</th></tr></thead>
       <tbody>
-        <tr><td>Claude</td><td>Haiku 4.5, Sonnet 4.6, Sonnet 5, Sonnet 5.5, Opus 4.6, Opus 4.7, Opus 4.8, Opus 5, Opus 5.5</td><td>Haiku is fastest and cheapest for quick questions; Opus goes deepest on hard, multi-step work; Sonnet sits in between.</td></tr>
-        <tr><td>Fable</td><td>Fable 5.0, Fable 5.1</td><td>Same depth as Opus, behind a one-time data-retention consent screen.</td></tr>
-        <tr><td>GPT (on Amazon Bedrock)</td><td>GPT-5.4, GPT-5.5, GPT-5.6 Sol, GPT-5.6 Terra, GPT-5.6 Luna, GPT-6 Astra, GPT-6 Sol, GPT-6 Luna, GPT-6.1 Sol</td><td>A second opinion, or when you prefer their style. Routed through the OpenAI-on-Bedrock path. GPT-6 Luna is the shipped default.</td></tr>
+        <tr><td>Claude</td><td>Haiku 4.5, Sonnet 5.5, Opus 5.5</td><td>Haiku is fastest and cheapest for quick questions; Opus goes deepest on hard, multi-step work; Sonnet sits in between.</td></tr>
+        <tr><td>Fable</td><td>Fable 5.1</td><td>Same depth as Opus, behind a one-time data-retention consent screen.</td></tr>
+        <tr><td>GPT (on Amazon Bedrock)</td><td>GPT-6 Astra, GPT-6 Luna, GPT-6.1 Sol</td><td>A second opinion, or when you prefer their style. Routed through the OpenAI-on-Bedrock path. GPT-6 Luna is the shipped default.</td></tr>
         <tr><td>On-device</td><td>whatever you installed</td><td>Offline work and zero cost per turn. A fresh install ships none; add them from <b>Settings &rarr; Models &rarr; Discover</b>.</td></tr>
       </tbody>
     </table></div>
@@ -122,17 +122,17 @@
       your configuration exposes. If you would rather keep your hands on the keyboard, type a slash
       command instead:</p>
     <div class="code-block"><pre><code>/model haiku
-/model sonnet5
-/model opus5.0</code></pre></div>
+/model sonnet5.5
+/model opus5.5</code></pre></div>
     <p>Type <code>/model</code> and a space to autocomplete against whatever is available: the picker
-      shows the version label (for example <em>Sonnet 4.6</em>) while inserting the short key
-      (<code>sonnet</code>). See <a href="tut-model-modes.html">Model modes</a> for cloud, hybrid, and
+      shows the version label (for example <em>Sonnet 5.5</em>) while inserting the short key
+      (<code>sonnet5.5</code>). See <a href="tut-model-modes.html">Model modes</a> for cloud, hybrid, and
       on-device options, and <a href="arch-backends.html">Model backends &amp; modes</a> for how each
       one is routed.</p>
 
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
-      <div class="callout__body"><p>Models badged <b>Mythos</b> in the picker (Fable 5.0 and 5.1)
+      <div class="callout__body"><p>Models badged <b>Mythos</b> in the picker (Fable 5.1)
         require a one-time data-retention consent screen the first time you switch to them. Read it and
         confirm to continue, or cancel to stay on your current model.</p></div>
     </div>
@@ -147,9 +147,9 @@
 /effort max</code></pre></div>
     <p>The full ladder is <code>none</code>, <code>low</code>, <code>medium</code>, <code>high</code>,
       <code>extra</code>, <code>max</code>, <code>ultracode</code>, and the default is
-      <code>high</code>. Which rungs you actually get is per-model: the deepest models (Opus 4.8,
-      Opus 5, Opus 5.5, Sonnet 5.5, Fable) offer all of them, Sonnet 5 and the GPT-6 models skip <code>extra</code> but still
-      reach <code>ultracode</code>, Sonnet 4.6 and the older Opus models stop at <code>max</code>, and
+      <code>high</code>. Which rungs you actually get is per-model: the deepest models (Opus 5.5,
+      Sonnet 5.5, Fable 5.1) offer all of them, the GPT models skip <code>extra</code> but still
+      reach <code>ultracode</code>, and
       Haiku and on-device models have no effort tiers at all, so the Effort and Response-length chips
       are hidden while one of those is selected. Ask for a level the current model does not offer and
       Whisper Studio clamps to the nearest lower one and tells you what it settled on. The composer
@@ -215,13 +215,13 @@
 
     <h2 id="what-next">What next</h2>
     <p>You now have the core loop: type, send, stream, steer mid-turn, stop when you have seen enough,
-      follow up, and adjust the model and effort chips. From here, pick the workflow that fits what you
+      follow up, and adjust the "How it thinks" group (model, thinking, answers). From here, pick the workflow that fits what you
       are doing.</p>
     <div class="card-grid">
       <a class="card card--link" href="tut-goals.html"><h3>Give it a goal</h3><p>Set a goal and let it run to completion instead of nudging "keep going", and know when a plain prompt is better.</p><span class="card__meta">Goals &amp; autopilot →</span></a>
       <a class="card card--link" href="tut-voice-mode.html"><h3>Talk instead of type</h3><p>Hold a spoken conversation while the assistant uses the same tools as typed chat.</p><span class="card__meta">Voice conversations →</span></a>
       <a class="card card--link" href="tut-sessions.html"><h3>Find an old conversation</h3><p>Search every past session by content, not just by title, and jump to the exact message.</p><span class="card__meta">Sessions &amp; history →</span></a>
-      <a class="card card--link" href="tut-permissions.html"><h3>Control what it can do</h3><p>Understand the Mode chip and the approval cards before you let it act.</p><span class="card__meta">Permissions &amp; approvals →</span></a>
+      <a class="card card--link" href="tut-permissions.html"><h3>Control what it can do</h3><p>Understand the Permissions capsule in the composer and the approval cards before you let it act.</p><span class="card__meta">Permissions &amp; approvals →</span></a>
     </div>
 
     <div class="callout callout--tip">

@@ -190,7 +190,7 @@ async def classify_tool_call(
 
     haiku = aux_model_id(
         "auto_mode_classifier",
-        fallback_id=chat_models.get("sonnet") or next(iter(chat_models.values())),
+        fallback_id=chat_models.get("sonnet5.5") or next(iter(chat_models.values())),
         models=chat_models,
         config=cfg,
     )

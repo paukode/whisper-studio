@@ -12,6 +12,20 @@ names in code. Their model-facing schemas now ship here, next to their
 executors; /skills/ holds only user-authored prompt skills.
 """
 
+# The ``secret_access`` property of the command tools (run_python,
+# terminal_run, ws_run_command): one text, so the three never drift. The
+# policy behind it lives in server/security/secret_reads.py.
+SECRET_ACCESS_SCHEMA = {
+    "type": "boolean",
+    "description": (
+        "Set true only when the command must read the macOS Keychain or a "
+        "credential store (security, codesign, notarytool, ~/.ssh, ~/.aws and "
+        "similar). The sandbox hides them otherwise. In Bypass mode they are "
+        "readable anyway; in other modes the user approves this exact command "
+        "first, and Don't ask mode refuses it. Writes to them stay blocked."
+    ),
+}
+
 AWS_BOTO3_TOOL = {
     "name": "aws_boto3",
     "description": (
@@ -125,8 +139,9 @@ RUN_PYTHON_TOOL = {
         "when the script genuinely must "
         "write elsewhere, retry with sandbox_permissions='danger-full-access' plus a "
         "one-line justification, which always asks the user per call. Limits are a 90 "
-        "second timeout, no stdin, and no state between calls; secret paths like "
-        "~/.ssh are blocked while ~/.aws is allowed, and AWS write operations are "
+        "second timeout, no stdin, and no state between calls; credential stores "
+        "like the Keychain and ~/.ssh are hidden unless secret_access is set (~/.aws "
+        "is always readable), and AWS write operations are "
         "blocked in-process (only read-shaped boto3 calls pass). Results appear only "
         "if printed; bare expressions are not echoed. Do not use for shell commands "
         "(use terminal_run) or for read-only AWS queries (prefer aws_boto3, which "
@@ -162,6 +177,7 @@ RUN_PYTHON_TOOL = {
                     "verbatim on the user's approval card."
                 ),
             },
+            "secret_access": SECRET_ACCESS_SCHEMA,
         },
         "required": ["code"],
     },
@@ -251,6 +267,7 @@ TERMINAL_RUN_TOOL = {
                     "verbatim on the user's approval card."
                 ),
             },
+            "secret_access": SECRET_ACCESS_SCHEMA,
         },
         "required": ["command"],
     },

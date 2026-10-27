@@ -56,11 +56,11 @@ def _apply_stdin_redirect(command: str) -> str:
     return f"{command} < /dev/null"
 
 
-def _validate_command(command: str) -> str | None:
+def _validate_command(command: str, secret_reads: bool = False) -> str | None:
     """Validate command via command_validator module."""
     from server.security.command_validator import validate_command
 
-    return validate_command(command)
+    return validate_command(command, secret_reads=secret_reads)
 
 
 def _interpret_exit_code(command: str, exit_code: int) -> str | None:

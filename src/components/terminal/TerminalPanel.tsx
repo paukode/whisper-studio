@@ -525,7 +525,7 @@ export const TerminalPanel: React.FC = () => {
                 style={{
                   padding: '12px',
                   font: '13px/1.5 ui-monospace, monospace',
-                  color: 'var(--text-muted, #999)',
+                  color: 'var(--text-muted)',
                   whiteSpace: 'pre-wrap',
                 }}
               >

@@ -118,8 +118,8 @@ export const CommandPalette: React.FC = () => {
       }
     }
 
-    // Themes — keep keywords generic ("appearance") so the distinguishing
-    // word (Light/Dark/Contrast) comes from the label, not a shared keyword
+    // Themes: keep keywords generic ("appearance") so the distinguishing
+    // word (System/Light/Dark) comes from the label, not a shared keyword
     // that would make every theme match "light".
     for (const t of themes) {
       list.push({ id: `theme-${t.key}`, group: 'Theme', title: `Theme: ${t.label}`, keywords: 'appearance color',

@@ -33,6 +33,7 @@ from server.approval.markers import (
 from server.hooks import run_hooks
 from server.preview.start_policy import never_prompts
 from server.security.permissions import MODE_BYPASS
+from server.security.secret_reads import SECRET_READS_KEY
 from server.tool_approvals import PAUSE as APPROVAL_PAUSE
 from server.tool_approvals import REPLY as APPROVAL_REPLY
 from server.tool_approvals import gate_approval
@@ -357,6 +358,10 @@ async def execute_tool_batch(
         call_input["__session_id__"] = session_id
         if unattended:
             call_input["__agent__"] = True
+        # Whether this call may read the credential stores without a card
+        # (server/security/secret_reads.py): only in bypassPermissions, and
+        # always set, so a value the model sent never counts.
+        call_input[SECRET_READS_KEY] = mode == MODE_BYPASS
 
         # --- Pre-execution checks ---
 

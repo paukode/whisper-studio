@@ -72,13 +72,13 @@ def test_get_lists_full_catalog_all_enabled_by_default(client):
     keys = {m["key"] for m in body["models"]}
     # Cloud chat models from the SYSTEM catalog are all present. No local model
     # ships by default, so the visibility/hide-list is Bedrock-only now.
-    assert {"opus4.8", "haiku"} <= keys
+    assert {"opus5.5", "haiku"} <= keys
     assert "local_gemma" not in keys
     # … every one visible (all on by default), with usable labels + local flag.
     assert all(m["disabled"] is False for m in body["models"])
     by_key = {m["key"]: m for m in body["models"]}
-    assert by_key["opus4.8"]["is_local"] is False
-    assert by_key["opus4.8"]["label"]
+    assert by_key["opus5.5"]["is_local"] is False
+    assert by_key["opus5.5"]["label"]
 
 
 def test_get_includes_disabled_models_flagged(client, cfg_path):
@@ -134,31 +134,31 @@ def test_put_unknown_key_warns_but_saves(client, cfg_path, caplog):
 
 
 def test_put_persists_into_user_config_and_flags_the_row(client, cfg_path):
-    r = put_disabled(client, {"disabled": ["haiku", "sonnet"]})
+    r = put_disabled(client, {"disabled": ["haiku", "sonnet5.5"]})
     assert r.status_code == 200
     body = r.json()
     assert body["ok"] is True
-    assert body["disabled"] == ["haiku", "sonnet"]
+    assert body["disabled"] == ["haiku", "sonnet5.5"]
     by_key = {m["key"]: m for m in body["models"]}
     # The response is the POST-save list: hidden rows flagged, still present.
     assert by_key["haiku"]["disabled"] is True
-    assert by_key["sonnet"]["disabled"] is True
-    assert by_key["opus4.8"]["disabled"] is False
+    assert by_key["sonnet5.5"]["disabled"] is True
+    assert by_key["opus5.5"]["disabled"] is False
     # Persisted in the USER layer, other keys untouched.
     on_disk = user_cfg(cfg_path)
-    assert on_disk["chat_models_disabled"] == ["haiku", "sonnet"]
+    assert on_disk["chat_models_disabled"] == ["haiku", "sonnet5.5"]
     assert on_disk["model_mode"] == "cloud"
     # The effective catalog (what /api/models reads) drops them immediately.
     effective = config_mod.load_config()["chat_models"]
     assert "haiku" not in effective
-    assert "sonnet" not in effective
-    assert "opus4.8" in effective
+    assert "sonnet5.5" not in effective
+    assert "opus5.5" in effective
 
 
 def test_put_dedupes_preserving_order(client, cfg_path):
-    r = put_disabled(client, {"disabled": ["sonnet", "haiku", "sonnet"]})
+    r = put_disabled(client, {"disabled": ["sonnet5.5", "haiku", "sonnet5.5"]})
     assert r.status_code == 200
-    assert user_cfg(cfg_path)["chat_models_disabled"] == ["sonnet", "haiku"]
+    assert user_cfg(cfg_path)["chat_models_disabled"] == ["sonnet5.5", "haiku"]
 
 
 def test_put_empty_list_reenables_everything_and_drops_the_key(client, cfg_path):
@@ -179,12 +179,12 @@ def test_toggle_roundtrip_matches_raw_editor_key(client, cfg_path):
     editor's next read."""
     assert (
         client.put(
-            "/api/config/raw", json={"text": json.dumps({"chat_models_disabled": ["opus4.6"]})}
+            "/api/config/raw", json={"text": json.dumps({"chat_models_disabled": ["opus5.5"]})}
         ).status_code
         == 200
     )
     body = client.get("/api/config/models-disabled").json()
-    assert body["disabled"] == ["opus4.6"]
+    assert body["disabled"] == ["opus5.5"]
 
     assert put_disabled(client, {"disabled": []}).status_code == 200
     raw = client.get("/api/config/raw").json()

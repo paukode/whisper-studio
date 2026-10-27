@@ -73,7 +73,7 @@ def test_get_returns_user_text_path_and_effective(client, cfg_path):
     # UI can show shipped models next to the user's. A shipped model must appear.
     effective = json.loads(body["effective_text"])
     assert "chat_models" in effective
-    assert "opus4.8" in effective["chat_models"]  # from config.example.json (SYSTEM)
+    assert "opus5.5" in effective["chat_models"]  # from config.example.json (SYSTEM)
 
 
 def test_get_missing_file_returns_empty_object(client, cfg_path):
@@ -81,7 +81,7 @@ def test_get_missing_file_returns_empty_object(client, cfg_path):
     body = client.get("/api/config/raw").json()
     assert json.loads(body["user_text"]) == {}
     # The effective view still resolves (SYSTEM + DEFAULTS) with no user layer.
-    assert "opus4.8" in json.loads(body["effective_text"])["chat_models"]
+    assert "opus5.5" in json.loads(body["effective_text"])["chat_models"]
 
 
 # ── PUT: syntax validation ───────────────────────────────────────────────
@@ -204,9 +204,9 @@ def test_put_disabled_unknown_name_warns_but_saves(client):
 
 
 def test_put_disabled_known_system_name_saves(client):
-    # "opus4.8" ships in config.example.json (the SYSTEM catalog), so hiding it
+    # "opus5.5" ships in config.example.json (the SYSTEM catalog), so hiding it
     # is a known key and saves cleanly.
-    r = put_text(client, json.dumps({"chat_models_disabled": ["opus4.8"]}))
+    r = put_text(client, json.dumps({"chat_models_disabled": ["opus5.5"]}))
     assert r.status_code == 200
 
 

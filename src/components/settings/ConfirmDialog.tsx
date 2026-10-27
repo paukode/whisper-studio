@@ -34,9 +34,9 @@ export const ConfirmDialog: React.FC<{
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          background: 'var(--surface-1, #1e1e1e)',
-          color: 'var(--text-primary, #eee)',
-          borderRadius: '12px',
+          background: 'var(--surface-1)',
+          color: 'var(--text-primary)',
+          borderRadius: 'var(--radius-lg)',
           width: 'min(460px, 92vw)',
           padding: '18px',
           display: 'flex',
@@ -45,7 +45,7 @@ export const ConfirmDialog: React.FC<{
         }}
       >
         <strong>{title}</strong>
-        <div style={{ fontSize: '14px', lineHeight: 1.5, opacity: 0.9 }}>{message}</div>
+        <div style={{ fontSize: '15px', lineHeight: 1.5, opacity: 0.9 }}>{message}</div>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
           <button className="btn btn-sm" onClick={onCancel} type="button">
             Cancel

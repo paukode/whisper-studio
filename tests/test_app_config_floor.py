@@ -250,7 +250,7 @@ def test_config_set_gates_only_sensitive_keys(monkeypatch, tmp_path):
     assert is_app_request(sensitive, APPROVAL)
     assert json.loads(sensitive[len("[WS_APPROVAL]") :])["action"] == "config_set"
     # A harmless key writes straight away (no card).
-    plain = execute_config_set({"updates": {"whisper_language": "pl"}})
+    plain = execute_config_set({"updates": {"translate_target": "pl"}})
     assert not plain.startswith("[WS_APPROVAL]")
     for mode in MODES:
         decision = resolve_static_decision("config_set", {"updates": {}}, "config", {}, mode)

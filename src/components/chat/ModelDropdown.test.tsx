@@ -90,3 +90,31 @@ describe('ModelDropdown with nothing to offer', () => {
     expect(screen.queryByTestId('model-empty-hint')).toBeNull();
   });
 });
+
+describe('ModelDropdown — menu', () => {
+  const GROUPED = [
+    { key: 'gpt', name: 'GPT-6 Luna', provider: 'openai' as const },
+    { key: 'opus', name: 'Opus 5.5', provider: 'anthropic' as const },
+    { key: 'gemma', name: 'Gemma', is_local: true, provider: 'local' as const },
+  ];
+
+  it('stays closed until the arrow button opens it', () => {
+    renderDropdown({ models: GROUPED, selectedModel: 'gpt' });
+    expect(screen.getByRole('button', { name: /GPT-6 Luna/ })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('listbox')).toBeNull();
+  });
+
+  it('groups the models by who runs them, Claude first', () => {
+    renderDropdown({ models: GROUPED, selectedModel: 'gpt', open: true });
+    const groups = screen.getAllByRole('group').map((g) => g.getAttribute('aria-label'));
+    expect(groups).toEqual(['Claude', 'OpenAI', 'On this Mac']);
+    expect(screen.getByTestId('model-option-gpt')).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('calls onSelect with the key of the clicked row', () => {
+    const onSelect = vi.fn();
+    renderDropdown({ models: GROUPED, selectedModel: 'gpt', open: true, onSelect });
+    screen.getByTestId('model-option-opus').click();
+    expect(onSelect).toHaveBeenCalledWith('opus');
+  });
+});

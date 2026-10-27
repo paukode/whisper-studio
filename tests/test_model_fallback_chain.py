@@ -18,12 +18,12 @@ def _cost(key: str) -> float:
 
 
 def test_default_model_downgrades_to_cheaper_key():
-    # The catalog default (opus4.8) must yield a genuinely cheaper, valid key
-    # rather than None/ValueError.
-    nxt = mf.get_next_fallback("opus4.8")
+    # A flagship (opus5.5) must yield a genuinely cheaper, valid key rather
+    # than None/ValueError.
+    nxt = mf.get_next_fallback("opus5.5")
     assert nxt is not None
     assert nxt in _MODEL_PRICING
-    assert _cost(nxt) < _cost("opus4.8")
+    assert _cost(nxt) < _cost("opus5.5")
 
 
 def test_every_priced_model_except_cheapest_has_a_fallback():
@@ -68,7 +68,7 @@ def test_the_static_chain_lists_every_shipped_cloud_model():
 def test_fallback_chain_covers_catalog_keys():
     # The chain used to walk chat_models is derived from pricing, so it must
     # contain the current catalog keys (not the stale opus4.6-only list).
-    for key in ("opus4.8", "sonnet", "haiku"):
+    for key in ("opus5.5", "sonnet5.5", "haiku"):
         assert key in mf.FALLBACK_CHAIN
     # Ordered most-expensive first so resolve_model_with_fallback prefers the
     # most capable available model.

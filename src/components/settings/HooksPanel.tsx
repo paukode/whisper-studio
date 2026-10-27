@@ -206,7 +206,7 @@ export const HooksPanel: React.FC = () => {
                 <div className="settings-item-name">
                   {h.event}{h.matcher && h.matcher !== '*' ? ` · ${h.matcher}` : ''}
                 </div>
-                <div className="settings-item-desc" style={{ fontFamily: 'var(--font-mono, monospace)' }}>
+                <div className="settings-item-desc" style={{ fontFamily: 'var(--font-mono)' }}>
                   {h.command}
                 </div>
               </div>
@@ -234,7 +234,7 @@ export const HooksPanel: React.FC = () => {
                 <div className="settings-item-name">
                   {h.event}{h.matcher && h.matcher !== '*' ? ` · ${h.matcher}` : ''} · project
                 </div>
-                <div className="settings-item-desc" style={{ fontFamily: 'var(--font-mono, monospace)' }}>
+                <div className="settings-item-desc" style={{ fontFamily: 'var(--font-mono)' }}>
                   {h.command}
                 </div>
               </div>
@@ -263,7 +263,7 @@ export const HooksPanel: React.FC = () => {
                 {h.matcher && h.matcher !== '*' ? ` · ${h.matcher}` : ''}
                 {h.on_error === 'block' ? ' · fail-closed' : ''}
               </div>
-              <div className="settings-item-desc" style={{ fontFamily: 'var(--font-mono, monospace)' }}>
+              <div className="settings-item-desc" style={{ fontFamily: 'var(--font-mono)' }}>
                 {h.command}
               </div>
             </div>

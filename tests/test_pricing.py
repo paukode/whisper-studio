@@ -51,13 +51,16 @@ def test_no_fallback_for_unknown_or_legacy_key():
     assert estimate_cost("totally-unknown", 1_000_000, 500_000) == 0.0
 
 
-def test_versioned_opus_keys_bill_at_own_rate():
-    # Regression: opus4.7/opus4.8 used to fall through to a $15/$75 "opus"
-    # bucket. They must now bill at the real Opus rate of $5/$25.
-    for key in ("opus4.6", "opus4.7", "opus4.8"):
+def test_versioned_claude_keys_bill_at_own_rate():
+    # Regression: versioned keys used to fall through to a $15/$75 "opus"
+    # bucket. Each must bill at its own row; Opus 5.5 is $4/$20.
+    for key in ("opus5.5", "sonnet5.5", "fable5.1"):
+        rates = get_model_pricing(key)
         cost = estimate_cost(key, 2_160_997, 85_039)
-        assert cost == pytest.approx(2_160_997 / 1e6 * 5 + 85_039 / 1e6 * 25)
-        assert cost == pytest.approx(12.931, abs=1e-3)  # not the old $39.67
+        assert cost == pytest.approx(
+            2_160_997 / 1e6 * rates["input"] + 85_039 / 1e6 * rates["output"]
+        )
+    assert estimate_cost("opus5.5", 2_160_997, 85_039) == pytest.approx(10.345, abs=1e-3)
 
 
 def test_gpt_cached_input_not_double_counted():
@@ -65,10 +68,10 @@ def test_gpt_cached_input_not_double_counted():
     # cached_in_input flag bills the cached portion once at cache_read, never
     # also at the input rate, and no caller has to remember to pass it (the
     # agent rollup, the agent budget bar and the workflow ledger never did).
-    rates = get_model_pricing("gpt5.5")
+    rates = get_model_pricing("gpt6.1-sol")
     assert rates["cached_in_input"] is True
-    full = estimate_cost("gpt5.5", 1_000_000, 0)
-    partial = estimate_cost("gpt5.5", 1_000_000, 0, cache_read_tokens=400_000)
+    full = estimate_cost("gpt6.1-sol", 1_000_000, 0)
+    partial = estimate_cost("gpt6.1-sol", 1_000_000, 0, cache_read_tokens=400_000)
     assert partial == pytest.approx(0.6 * rates["input"] + 0.4 * rates["cache_read"])
     assert partial < full  # caching is a discount, not a surcharge
 
@@ -86,15 +89,6 @@ def test_gpt_cache_writes_are_billed_once_inside_input():
     assert cost > estimate_cost("gpt6-astra", inp, 0, read, 0)  # the write premium
     assert tracker.prompt_tokens_for("gpt6-astra", inp, read, write) == inp
     assert tracker.prompt_tokens_for("gpt6-astra", inp, read, 0) == inp
-
-
-def test_a_gpt_model_with_no_cache_write_price_bills_a_write_as_input():
-    # The GPT-5.5 and 5.4 cards price no cache write: a reported write costs
-    # what plain input does, never nothing.
-    for key in ("gpt5.5", "gpt5.4"):
-        assert estimate_cost(key, 1_000_000, 0, 0, 400_000) == pytest.approx(
-            estimate_cost(key, 1_000_000, 0)
-        ), key
 
 
 def test_the_agent_budget_bar_shows_the_engines_cost():
@@ -118,20 +112,20 @@ def test_the_agent_budget_bar_shows_the_engines_cost():
 
 
 def test_a_call_over_the_break_bills_all_its_tokens_at_the_long_context_rates():
-    rates = get_model_pricing("gpt5.6-sol")
+    rates = get_model_pricing("gpt6.1-sol")
     tier = rates["long_context"]
     above = tier["above"]
-    long_call = tracker.call_cost("gpt5.6-sol", above + 1, 1_000, above - 10_000)
+    long_call = tracker.call_cost("gpt6.1-sol", above + 1, 1_000, above - 10_000)
     assert long_call == pytest.approx(
         (10_001 * tier["input"] + 1_000 * tier["output"] + (above - 10_000) * tier["cache_read"])
         / 1e6
     )
-    at_break = tracker.call_cost("gpt5.6-sol", above, 1_000, above - 10_000)
+    at_break = tracker.call_cost("gpt6.1-sol", above, 1_000, above - 10_000)
     assert at_break == pytest.approx(
-        estimate_cost("gpt5.6-sol", above, 1_000, above - 10_000, long_context=False)
+        estimate_cost("gpt6.1-sol", above, 1_000, above - 10_000, long_context=False)
     )
-    assert tracker.is_long_context("gpt5.6-sol", above + 1)
-    assert not tracker.is_long_context("gpt5.6-sol", above)
+    assert tracker.is_long_context("gpt6.1-sol", above + 1)
+    assert not tracker.is_long_context("gpt6.1-sol", above)
 
 
 def test_a_running_total_prices_each_call_at_its_own_tier():
@@ -159,9 +153,9 @@ def test_every_gpt_card_has_its_long_context_tier():
 
 
 def test_a_claude_model_has_no_long_context_tier():
-    assert not tracker.is_long_context("opus5.0", 900_000, 50_000, 10_000)
-    assert tracker.call_cost("opus5.0", 900_000, 10) == pytest.approx(
-        estimate_cost("opus5.0", 900_000, 10)
+    assert not tracker.is_long_context("opus5.5", 900_000, 50_000, 10_000)
+    assert tracker.call_cost("opus5.5", 900_000, 10) == pytest.approx(
+        estimate_cost("opus5.5", 900_000, 10)
     )
 
 
@@ -190,9 +184,9 @@ def test_a_malformed_long_context_tier_rejects_the_entry():
 def test_anthropic_cache_buckets_are_additive():
     # Anthropic (cached_in_input=False): input, cache_read and cache_creation
     # are disjoint, so each adds on top — caching does not shrink input.
-    base = estimate_cost("sonnet", 1_000_000, 0)
-    with_read = estimate_cost("sonnet", 1_000_000, 0, cache_read_tokens=500_000)
-    assert with_read == pytest.approx(base + 500_000 / 1e6 * 0.30)
+    base = estimate_cost("sonnet5.5", 1_000_000, 0)
+    with_read = estimate_cost("sonnet5.5", 1_000_000, 0, cache_read_tokens=500_000)
+    assert with_read == pytest.approx(base + 500_000 / 1e6 * 0.20)
 
 
 def test_claude_cache_write_is_the_rate_of_the_ttl_the_app_sends():
@@ -245,8 +239,8 @@ def test_example_file_backs_the_live_table():
     # The committed defaults are what the imported table was loaded from, so a
     # representative rate must come straight from pricing.example.json.
     with open(tracker.PRICING_EXAMPLE_PATH) as f:
-        raw = json.load(f)["opus5.0"]
-    assert get_model_pricing("opus5.0") == tracker._coerce_pricing_entry(raw)
+        raw = json.load(f)["opus5.5"]
+    assert get_model_pricing("opus5.5") == tracker._coerce_pricing_entry(raw)
 
 
 def test_coerce_entry_normalizes_and_validates():

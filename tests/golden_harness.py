@@ -214,7 +214,7 @@ def run_chat_turn(monkeypatch, fake_client, body):
         # Deterministic: no index grounding, no attachments, cloud model.
         "selected_search_indexes": [],
         "attachment_ids": [],
-        "model": "opus5.0",
+        "model": "opus5.5",
         **body,
     }
     with client.stream("POST", "/api/chat", json=payload) as resp:

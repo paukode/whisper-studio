@@ -15,8 +15,8 @@ const STATUS_COLOR: Record<string, string> = {
   running: 'var(--risk-warn)',
   done: 'var(--success)',
   failed: 'var(--accent-record)',
-  stopped: 'var(--text-secondary, gray)',
-  stale: 'var(--text-secondary, gray)',
+  stopped: 'var(--text-secondary)',
+  stale: 'var(--text-secondary)',
 };
 
 export const WorkflowRunCard: React.FC<{ runId: string; name?: string }> = ({ runId, name }) => {

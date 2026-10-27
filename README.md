@@ -60,15 +60,14 @@ Deploy setup is in [`docs/README.md`](docs/README.md).
   and the React SPA on one local port. No CORS, no separate frontend host,
   no remote backend.
 - **Local transcription with speaker attribution.** Two on-device engines
-  (Parakeet streaming, Whisper batch) plus Canary, word-level timings,
+  (Parakeet streaming, Whisper batch) plus Canary translation, word-level timings,
   turns split where one speaker takes over, and voiceprints that recognise
   a named speaker in later recordings.
 - **Talk to it.** Voice mode holds a spoken conversation: Amazon Nova Sonic
   carries the voice while your session's model does the work through the
   same tools as typed chat, approvals included.
-- **Chat with Claude or GPT.** Fable 5.0/5.1, Opus 4.6/4.7/4.8/5/5.5,
-  Sonnet 4.6/5/5.5, Haiku 4.5, GPT-5.4/5.5, GPT-5.6 Sol/Terra/Luna, GPT-6
-  Astra/Sol/Luna and GPT-6.1 Sol, with streaming tokens, tool use, attachments
+- **Chat with Claude or GPT.** Fable 5.1, Opus 5.5, Sonnet 5.5, Haiku 4.5,
+  GPT-6.1 Sol and GPT-6 Astra/Luna, with streaming tokens, tool use, attachments
   and slash commands. Or run fully on-device in local mode.
 - **Full workspace IDE.** File tree, Monaco editor, xterm.js terminal, Git
   (status, diff, log, blame, branches, fetch, pull, PR), LSP for Python and

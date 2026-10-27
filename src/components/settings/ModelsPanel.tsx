@@ -37,7 +37,7 @@ const GROUPS: { id: ManagedModelGroup; label: string; hint: string }[] = [
 ];
 
 const chipStyle = (fg: string, bg: string): React.CSSProperties => ({
-  fontSize: 11,
+  fontSize: 12,
   fontWeight: 600,
   padding: '2px 8px',
   borderRadius: 999,
@@ -100,7 +100,7 @@ const ToolCheckLine: React.FC<{ check: ToolCheck }> = ({ check }) => {
 const StatusChip: React.FC<{ model: ManagedModel }> = ({ model }) => {
   if (model.state === 'queued') {
     return (
-      <span style={chipStyle('var(--text-secondary, #888)', 'rgba(128,128,128,0.12)')}>
+      <span style={chipStyle('var(--text-secondary)', 'var(--bg-hover)')}>
         Queued{model.queue_position != null ? ` (${ordinal(model.queue_position)})` : ''}
       </span>
     );
@@ -110,14 +110,14 @@ const StatusChip: React.FC<{ model: ManagedModel }> = ({ model }) => {
     // number the chat and recording banners render. Never recomputed here.
     const pct = model.progress !== null ? Math.round(model.progress * 100) : null;
     return (
-      <span style={chipStyle('var(--accent)', 'var(--accent-dim, rgba(99,102,241,0.15))')}>
+      <span style={chipStyle('var(--accent)', 'var(--accent-dim)')}>
         Downloading {pct !== null ? `${pct}%` : humanSize(model.bytes_on_disk)}
       </span>
     );
   }
   if (model.state === 'installed') {
     return (
-      <span style={chipStyle('var(--accent-live, #34c77b)', 'rgba(52,199,123,0.14)')}>
+      <span style={chipStyle('var(--accent-live)', 'var(--accent-dim)')}>
         Installed
       </span>
     );
@@ -125,7 +125,7 @@ const StatusChip: React.FC<{ model: ManagedModel }> = ({ model }) => {
   if (model.state === 'error') {
     return (
       <span
-        style={chipStyle('var(--accent-record, #e5484d)', 'rgba(229,72,77,0.12)')}
+        style={chipStyle('var(--accent-record)', 'var(--accent-record-dim)')}
         title={model.error ?? undefined}
       >
         Error
@@ -133,7 +133,7 @@ const StatusChip: React.FC<{ model: ManagedModel }> = ({ model }) => {
     );
   }
   return (
-    <span style={chipStyle('var(--text-secondary, #888)', 'rgba(128,128,128,0.12)')}>
+    <span style={chipStyle('var(--text-secondary)', 'var(--bg-hover)')}>
       Not downloaded
     </span>
   );
@@ -402,7 +402,7 @@ export const ModelsPanel: React.FC<{ section?: ModelSection }> = ({ section }) =
                       {m.state === 'error' && m.error && (
                         <div
                           className="settings-item-desc"
-                          style={{ color: 'var(--accent-record, #e5484d)', marginTop: 2 }}
+                          style={{ color: 'var(--accent-record)', marginTop: 2 }}
                           role="alert"
                         >
                           {m.error}
@@ -459,7 +459,7 @@ export const ModelsPanel: React.FC<{ section?: ModelSection }> = ({ section }) =
                           className="btn btn-sm"
                           type="button"
                           disabled={isBusy}
-                          style={{ color: 'var(--accent-record, #e5484d)' }}
+                          style={{ color: 'var(--accent-record)' }}
                           onClick={() => setConfirmDelete(m)}
                         >
                           Delete
@@ -485,7 +485,7 @@ export const ModelsPanel: React.FC<{ section?: ModelSection }> = ({ section }) =
                               className="btn btn-sm"
                               type="button"
                               disabled={isBusy}
-                              style={{ color: 'var(--accent-record, #e5484d)' }}
+                              style={{ color: 'var(--accent-record)' }}
                               onClick={() => setConfirmDelete(m)}
                             >
                               Delete

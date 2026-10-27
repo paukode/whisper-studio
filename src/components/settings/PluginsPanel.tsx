@@ -309,7 +309,7 @@ export const PluginsPanel: React.FC = () => {
                         padding: '1px 6px',
                         borderRadius: 4,
                         background: 'var(--accent)',
-                        color: '#fff',
+                        color: 'var(--on-accent)',
                         fontWeight: 600,
                         letterSpacing: 0.3,
                       }}
@@ -328,7 +328,7 @@ export const PluginsPanel: React.FC = () => {
                 {rowError && (
                   <div
                     className="settings-item-desc"
-                    style={{ color: 'var(--accent-record, #ef4444)', marginTop: 2 }}
+                    style={{ color: 'var(--accent-record)', marginTop: 2 }}
                     role="alert"
                   >
                     {rowError}

@@ -114,26 +114,20 @@ def test_cached_system_omits_empty_dynamic_block():
 
 
 def test_estimate_cost_cache_terms():
-    # Opus 4.6: input $5/1M, output $25/1M (version-keyed, no generic "opus")
-    base = estimate_cost("opus4.6", 1000, 500)
-    assert base == pytest.approx(1000 / 1e6 * 5 + 500 / 1e6 * 25)
+    # Opus 5.5: input $4/1M, output $20/1M (version-keyed, no generic "opus")
+    base = estimate_cost("opus5.5", 1000, 500)
+    assert base == pytest.approx(1000 / 1e6 * 4 + 500 / 1e6 * 20)
 
-    # cache read billed at the model's cache_read rate ($0.50/1M)
-    read = estimate_cost("opus4.6", 1000, 500, cache_read_tokens=8000)
-    assert read - base == pytest.approx(8000 / 1e6 * 0.50)
+    # cache read billed at the model's cache_read rate ($0.20/1M)
+    read = estimate_cost("opus5.5", 1000, 500, cache_read_tokens=8000)
+    assert read - base == pytest.approx(8000 / 1e6 * 0.20)
 
-    # cache write billed at the model's cache_write rate: $6.25/1M, the 5-minute
-    # rate, because Opus 4.6 only takes the 5-minute TTL
-    write = estimate_cost("opus4.6", 1000, 500, cache_creation_tokens=8000)
-    assert write - base == pytest.approx(8000 / 1e6 * 6.25)
-
-    # a 1-hour model bills its write at the 1-hour rate ($10/1M, 2x input)
-    base_1h = estimate_cost("opus4.8", 1000, 500)
-    write_1h = estimate_cost("opus4.8", 1000, 500, cache_creation_tokens=8000)
-    assert write_1h - base_1h == pytest.approx(8000 / 1e6 * 10.0)
+    # cache write billed at the 1-hour rate the app sends ($8/1M, 2x input)
+    write = estimate_cost("opus5.5", 1000, 500, cache_creation_tokens=8000)
+    assert write - base == pytest.approx(8000 / 1e6 * 8.0)
 
     # zero cache tokens => identical to the legacy 3-arg result
-    assert estimate_cost("opus4.6", 1000, 500, 0, 0) == base
+    assert estimate_cost("opus5.5", 1000, 500, 0, 0) == base
 
 
 # ── feature flag ──────────────────────────────────────────────────────────────

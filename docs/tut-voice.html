@@ -115,10 +115,10 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Control</th><th>Options</th><th>What it does</th></tr></thead>
       <tbody>
-        <tr><td>Model</td><td><b>Whisper Large v3</b> / <b>Canary</b> / <b>Parakeet (live)</b></td><td>Whisper
+        <tr><td>Model</td><td><b>Whisper Large v3</b> / <b>Parakeet (live)</b></td><td>Whisper
           is the most accurate and understands 99 languages, transcribing whole utterances at pauses.
-          Canary is the fastest of the accurate engines, covers 25 European languages, and streams a
-          live draft while you speak. Parakeet has the lowest latency, streaming words in real time.</td></tr>
+          Parakeet (the default) has the lowest latency, streaming words in real time, and covers 25
+          European languages.</td></tr>
         <tr><td>Translate</td><td><b>Off</b> / <b>Canary (25 langs &harr; EN)</b> / <b>Apple (any pair)</b>,
           plus a target-language picker</td><td>Translates every settled line under the original.
           Canary translates between its 25 languages and English (either direction), whichever model
@@ -131,16 +131,11 @@
     </table></div>
 
     <h3 id="languages">Mixed-language meetings</h3>
-    <p>By default the language is worked out for you, sentence by sentence: Whisper detects it with its
-      own head, Canary leans on a small on-device language classifier, and Parakeet simply transcribes
-      its 25 languages without deciding anything. Short or accented utterances are where automatic
-      detection goes wrong, and a wrong guess can quietly translate a line instead of transcribing
-      it.</p>
-    <p>The <b>Transcription Languages</b> field in Settings is the fix. Put one code in it
-      (<code>pl</code>) to pin the language outright, or list the languages actually spoken in the room
-      (<code>pl,en</code>) to keep detection but stop it wandering outside them. The same list
-      constrains Canary and Whisper. Left blank, Canary chooses among English plus your Mac's preferred
-      languages, and Whisper detects on its own; the field shows which set is in use.</p>
+    <p>There is no language setting. Whisper detects the language of each sentence itself.
+      Parakeet transcribes its 25 languages and does not decide which language it hears. When
+      Canary translates a Parakeet line, a small on-device language classifier finds the source
+      language among Canary's 25 languages. For a meeting in a language Parakeet does not cover,
+      use Whisper.</p>
 
     <h2 id="translation">Translate as you record</h2>
     <p>With a translator selected, each finalized segment grows a second line: the translation, tagged
@@ -182,8 +177,7 @@
       and gives each half its own speaker, so the second person's words are not filed under the first.
       A cut with no clean gap between the two voices is marked as an <b>overlapping turn</b> in the
       transcript: hover the marker and it says the first words may belong to either speaker. Splitting
-      needs word timings, which Whisper and Parakeet report and Canary does not, so a Canary recording
-      simply labels the whole utterance once. Set <code>speaker_split_turns</code> to <code>false</code>
+      needs word timings, which Whisper and Parakeet both report. Set <code>speaker_split_turns</code> to <code>false</code>
       to turn splitting off.</p>
 
     <div class="callout callout--tip">

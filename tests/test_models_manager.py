@@ -778,6 +778,7 @@ def test_bundled_infrastructure_models_flagged(client):
     models = client.get("/api/models/catalog").json()["models"]
     by_key = {m["key"]: m for m in models}
     assert by_key["voxlingua_lid"]["bundled"] is True
+    assert by_key["redimnet_speaker"]["bundled"] is True
     assert by_key["ecapa_speaker"]["bundled"] is True
     assert by_key["whisper_large_v3"]["bundled"] is False
     assert by_key["parakeet"]["bundled"] is False

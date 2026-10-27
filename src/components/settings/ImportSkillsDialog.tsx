@@ -184,11 +184,11 @@ export const ImportSkillsDialog: React.FC<{
   const tabStyle = (active: boolean): React.CSSProperties => ({
     padding: '5px 12px',
     borderRadius: '8px',
-    border: '1px solid var(--border, #333)',
-    background: active ? 'var(--accent, #47f)' : 'transparent',
-    color: active ? '#fff' : 'var(--text-primary, #eee)',
+    border: '1px solid var(--border)',
+    background: active ? 'var(--accent)' : 'transparent',
+    color: active ? 'var(--on-accent)' : 'var(--text-primary)',
     cursor: 'pointer',
-    fontSize: '13px',
+    fontSize: '14px',
   });
 
   return (
@@ -209,9 +209,9 @@ export const ImportSkillsDialog: React.FC<{
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          background: 'var(--surface-1, #1e1e1e)',
-          color: 'var(--text-primary, #eee)',
-          borderRadius: '12px',
+          background: 'var(--surface-1)',
+          color: 'var(--text-primary)',
+          borderRadius: 'var(--radius-lg)',
           width: 'min(680px, 92vw)',
           maxHeight: '86vh',
           display: 'flex',
@@ -282,8 +282,8 @@ export const ImportSkillsDialog: React.FC<{
               {loading && skills.length === 0 ? 'Scanning…' : 'Choose folder…'}
             </button>
             {folderLabel && (
-              <span style={{ fontSize: '12px', opacity: 0.7 }}>
-                <span style={{ fontFamily: 'var(--font-mono, monospace)' }}>{folderLabel}</span>
+              <span style={{ fontSize: '13px', opacity: 0.7 }}>
+                <span style={{ fontFamily: 'var(--font-mono)' }}>{folderLabel}</span>
               </span>
             )}
             <input
@@ -310,8 +310,8 @@ export const ImportSkillsDialog: React.FC<{
           </div>
         )}
 
-        {error && <div style={{ color: 'var(--accent-record, #e57)' }}>{error}</div>}
-        {summary && <div style={{ color: 'var(--text-success, #5c8)' }}>{summary}</div>}
+        {error && <div style={{ color: 'var(--accent-record)' }}>{error}</div>}
+        {summary && <div style={{ color: 'var(--text-success)' }}>{summary}</div>}
 
         {skills.length > 0 && (
           <>
@@ -324,12 +324,12 @@ export const ImportSkillsDialog: React.FC<{
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
               />
-              <label style={{ display: 'flex', gap: '6px', alignItems: 'center', fontSize: '13px', whiteSpace: 'nowrap' }}>
+              <label style={{ display: 'flex', gap: '6px', alignItems: 'center', fontSize: '14px', whiteSpace: 'nowrap' }}>
                 <input type="checkbox" checked={searchDesc} onChange={(e) => setSearchDesc(e.target.checked)} />
                 Search descriptions
               </label>
             </div>
-            <div style={{ overflow: 'auto', flex: 1, border: '1px solid var(--border, #333)', borderRadius: '8px' }}>
+            <div style={{ overflow: 'auto', flex: 1, border: '1px solid var(--border)', borderRadius: '8px' }}>
               {shown.map((s) => (
                 <label
                   key={s.subpath}
@@ -338,7 +338,7 @@ export const ImportSkillsDialog: React.FC<{
                     alignItems: 'center',
                     gap: '8px',
                     padding: '6px 10px',
-                    borderBottom: '1px solid var(--border, #2a2a2a)',
+                    borderBottom: '1px solid var(--border)',
                     cursor: 'pointer',
                   }}
                 >
@@ -349,9 +349,9 @@ export const ImportSkillsDialog: React.FC<{
                   />
                   <span style={{ flex: 1, minWidth: 0 }}>
                     <span>
-                      <span style={{ fontFamily: 'var(--font-mono, monospace)' }}>{s.subpath || s.name}</span>
+                      <span style={{ fontFamily: 'var(--font-mono)' }}>{s.subpath || s.name}</span>
                       {s.hasScripts && (
-                        <span style={{ marginLeft: '8px', fontSize: '11px', opacity: 0.7 }}>
+                        <span style={{ marginLeft: '8px', fontSize: '12px', opacity: 0.7 }}>
                           {s.scriptFiles.length} script{s.scriptFiles.length === 1 ? '' : 's'}
                         </span>
                       )}
@@ -360,7 +360,7 @@ export const ImportSkillsDialog: React.FC<{
                       <span
                         style={{
                           display: 'block',
-                          fontSize: '12px',
+                          fontSize: '13px',
                           opacity: 0.6,
                           overflow: 'hidden',
                           textOverflow: 'ellipsis',
@@ -375,7 +375,7 @@ export const ImportSkillsDialog: React.FC<{
               ))}
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <label style={{ display: 'flex', gap: '6px', alignItems: 'center', fontSize: '13px' }}>
+              <label style={{ display: 'flex', gap: '6px', alignItems: 'center', fontSize: '14px' }}>
                 <input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} />
                 Overwrite existing
               </label>
@@ -388,7 +388,7 @@ export const ImportSkillsDialog: React.FC<{
                 Import {selected.size > 0 ? `(${selected.size})` : ''}
               </button>
             </div>
-            <div style={{ fontSize: '12px', opacity: 0.6 }}>
+            <div style={{ fontSize: '13px', opacity: 0.6 }}>
               Imported scripts run through the normal approval prompt. Mark a skill trusted
               afterward to let it run its own scripts without prompting.
             </div>

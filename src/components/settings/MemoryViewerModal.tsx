@@ -235,7 +235,7 @@ export const MemoryViewerModal: React.FC<MemoryViewerModalProps> = ({ isOpen, on
                   marginBottom: 8,
                 }}
               >
-                <strong style={{ fontFamily: 'var(--font-mono, monospace)', fontSize: '0.9em' }}>
+                <strong style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9em' }}>
                   {selected}
                 </strong>
                 <button type="button" className="btn btn-secondary" onClick={closeFile}>
@@ -243,7 +243,7 @@ export const MemoryViewerModal: React.FC<MemoryViewerModalProps> = ({ isOpen, on
                 </button>
               </div>
               {fileError ? (
-                <p style={{ color: 'var(--danger, #d66)' }}>
+                <p style={{ color: 'var(--danger)' }}>
                   Could not load {selected}. It may have just been deleted or renamed by the
                   extraction agent. Go back and refresh the list.
                 </p>
@@ -261,7 +261,7 @@ export const MemoryViewerModal: React.FC<MemoryViewerModalProps> = ({ isOpen, on
                     style={{
                       width: '100%',
                       minHeight: 260,
-                      fontFamily: 'var(--font-mono, monospace)',
+                      fontFamily: 'var(--font-mono)',
                       fontSize: '0.85em',
                     }}
                   />

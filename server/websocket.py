@@ -21,7 +21,6 @@ utterances whose label changed.
 """
 
 import asyncio
-import functools
 import json
 import logging
 import threading
@@ -33,7 +32,7 @@ import numpy as np
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from server import diarization
-from server.asr import get_backend, languages, resolve_name
+from server.asr import get_backend, resolve_name
 from server.diarization.live import LiveLabeller, Pending
 from server.infrastructure.config import get as config_get
 from server.recording_timeline import RecordingTimeline
@@ -71,7 +70,7 @@ def resolve_translator(
     if mode == "apple":
         return "apple" if apple_available else None
     if mode == "canary":
-        from server.asr.canary_backend import CANARY_LANGUAGES
+        from server.asr.canary_translator import CANARY_LANGUAGES
 
         if target not in CANARY_LANGUAGES:
             return None
@@ -90,32 +89,12 @@ def resolve_translator(
 
 
 async def _translate_on_canary(audio, language: str | None, target: str) -> str:
-    """One translation decode on Canary's executor, counted in and out of the
-    draft scheduler exactly once.
+    """One translation decode on Canary's executor."""
+    from server.asr import canary_translator
 
-    note_translation_queued() makes every Canary session's live drafts yield
-    while the job waits; translate_utterance counts it out on entry. A job
-    cancelled while still queued (the socket closed without a stop) never
-    enters, so the done callback counts it out instead. Without that, the
-    process-wide count never returns to zero and no Canary recording shows a
-    live draft again until the backend restarts.
-    """
-    from server.asr import canary_backend
-
-    canary_backend.note_translation_queued()
-    try:
-        job = canary_backend.executor.submit(
-            canary_backend.translate_utterance, audio, language, target
-        )
-    except BaseException:
-        canary_backend._note_translation_done()
-        raise
-
-    def _count_out_if_never_ran(done) -> None:
-        if done.cancelled():
-            canary_backend._note_translation_done()
-
-    job.add_done_callback(_count_out_if_never_ran)
+    job = canary_translator.executor.submit(
+        canary_translator.translate_utterance, audio, language, target
+    )
     return await asyncio.wrap_future(job)
 
 
@@ -379,18 +358,18 @@ async def websocket_endpoint(
     # see switch_backend.
 
     def _backend_label(name: str) -> str:
-        return {"parakeet": "Parakeet", "canary": "Canary"}.get(resolve_name(name), "Whisper")
+        return {"parakeet": "Parakeet"}.get(resolve_name(name), "Whisper")
 
     # ?dictation=1 is the chat mic: its text goes straight into the composer.
     # It skips speaker-ID (dictation is single-user, so diarization is
     # pointless and its compute is wasted) and never translates (the mic
-    # renders no translation line, so a decode would only load Canary and
-    # stall a live recording's drafts for output nobody reads).
+    # renders no translation line, so a decode would only load Canary for
+    # output nobody reads).
     is_dictation = (dictation or "").strip().lower() in ("1", "true", "yes")
     skip_speaker = is_dictation
     speakers = None if skip_speaker else diarization.get_session(session_id)
     # Cut utterances at speaker handovers (needs word timestamps from the
-    # engine; Whisper and Parakeet report them, Canary does not). Read once
+    # engine; Whisper and Parakeet report them). Read once
     # per connection so a mid-recording config edit can't change the shape
     # of the stream the client is already rendering.
     split_setting = config_get("speaker_split_turns")
@@ -515,12 +494,11 @@ async def websocket_endpoint(
     async def _run_translation(chunk_id: int, audio, language: str | None, target: str) -> None:
         """Decode the utterance's translation via Canary and deliver it.
 
-        Always Canary, always on CANARY's executor — even when another engine
-        transcribed the audio (Canary is the universal model translator; it
-        loads lazily on the first translation behind the "Translating…"
-        placeholder). Queued decodes never run ahead of Canary's own live
-        transcript decodes. An empty translation is still sent — the client
-        uses it to clear the pending slot for this chunk.
+        Always Canary, on its own executor, whichever engine transcribed the
+        audio (Canary is the universal model translator; it loads lazily on
+        the first translation behind the "Translating..." placeholder). An
+        empty translation is still sent: the client uses it to clear the
+        pending slot for this chunk.
         """
         try:
             translated = await _translate_on_canary(audio, language, target)
@@ -549,7 +527,7 @@ async def websocket_endpoint(
         # Rough cold-load estimates; the bar fills toward 0.9 over this window
         # and snaps to 1.0 when the executor returns.
         resolved = resolve_name(backend_name)
-        est_s = {"parakeet": 2.5, "canary": 3.0}.get(resolved, 9.0)
+        est_s = {"parakeet": 2.5}.get(resolved, 9.0)
         done = asyncio.Event()
 
         async def ramp() -> None:
@@ -595,7 +573,7 @@ async def websocket_endpoint(
         if asr_session is None:
             # Commit the model to memory first, with a banner, in EVERY mode —
             # a silent multi-second stall on the first sentence reads as
-            # "nothing transcribes" (large-v3 and Canary load for seconds).
+            # "nothing transcribes" (large-v3 loads for seconds).
             load_s = None
             if hasattr(backend_mod, "is_loaded") and not backend_mod.is_loaded():
                 loading_since = time.monotonic()
@@ -605,15 +583,6 @@ async def websocket_endpoint(
             # warmup happen on the thread that will run every decode
             # (MLX streams are thread-local).
             factory = backend_mod.create_session
-            if backend_name == "canary":
-                # Canary keeps the settled language keyed by the chat session
-                # and the take, so a watchdog reconnect or a live switch back
-                # to Canary resumes it and a new take starts unsettled.
-                # Dictation shares the chat session id but is not part of the
-                # recording, so it stays private.
-                factory = functools.partial(
-                    backend_mod.create_session, None if skip_speaker else session_id, take_id
-                )
             building_since = time.monotonic()
             asr_session = await loop.run_in_executor(backend_mod.executor, factory)
             timeline.session_ready(load_s, time.monotonic() - building_since)
@@ -671,8 +640,8 @@ async def websocket_endpoint(
             except Exception:
                 pass
         asr_session = None
-        # Free the outgoing engine's weights in every mode — whisper and
-        # Canary are 2.4-3.1 GB each and stack up fast on small machines.
+        # Free the outgoing engine's weights in every mode: Whisper is
+        # 3.1 GB and stacks up fast on small machines.
         # Parakeet (0.6B) stays resident: it is the dictation mic's always-on
         # engine and may be serving another connection.
         if (
@@ -790,12 +759,6 @@ async def websocket_endpoint(
                     # clipped, then reset per-session state. The ack can race
                     # the client's close (the Header recorder closes the
                     # socket the instant it sends `stop`) — send_json guards.
-                    if not skip_speaker:
-                        # Forget the take's language before draining. The
-                        # live session keeps its own reference, so the flush
-                        # below still decodes with the settled language, and
-                        # a take that already opened keeps its own tracker.
-                        languages.forget_tracker(session_id, take_id)
                     await finish_session()
                     # Every sent sentence gets its final speaker label before
                     # the client saves the take.

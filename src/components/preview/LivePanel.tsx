@@ -49,7 +49,7 @@ export const LivePanel: React.FC<{ name: string }> = ({ name }) => {
       style={{
         flex: '1 1 auto', minHeight: 0, overflow: 'auto',
         display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
-        background: 'var(--bg-inset, #0d0d0d)', padding: 8,
+        background: 'var(--bg-inset)', padding: 8,
       }}
     >
       {frame ? (
@@ -59,7 +59,7 @@ export const LivePanel: React.FC<{ name: string }> = ({ name }) => {
           style={{ width: '100%', height: 'auto', display: 'block', borderRadius: 4 }}
         />
       ) : (
-        <div style={{ margin: 'auto', color: 'var(--text-muted, #888)', fontSize: 13, textAlign: 'center' }}>
+        <div style={{ margin: 'auto', color: 'var(--text-muted)', fontSize: 14, textAlign: 'center' }}>
           {status === 'closed'
             ? 'Reconnecting to the preview browser…'
             : 'Waiting for the preview browser…'}

@@ -50,14 +50,7 @@ const READY_BANNER_MS = 700;
  *  the transcript panel's live engine switch. */
 export function requiredRecordingModelKeys(): string[] {
   const { transcriptionBackend } = useSettingsStore.getState().config;
-  const engineKey =
-    transcriptionBackend === 'whisper'
-      ? 'whisper_large_v3'
-      : transcriptionBackend === 'canary'
-        ? 'canary'
-        : 'parakeet';
-  // Canary needs its language-ID companion (per-sentence source detection).
-  if (engineKey === 'canary') return ['canary', 'voxlingua_lid', 'ecapa_speaker'];
+  const engineKey = transcriptionBackend === 'whisper' ? 'whisper_large_v3' : 'parakeet';
   return [engineKey, 'ecapa_speaker'];
 }
 

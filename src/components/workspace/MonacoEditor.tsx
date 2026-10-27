@@ -6,6 +6,8 @@ import { useMonaco } from '@/hooks/useMonaco';
 import { useLsp } from '@/hooks/useLsp';
 import { useUIStore } from '@/stores/uiStore';
 import { LspStatusIndicator } from './LspStatusIndicator';
+import { DEFAULT_PALETTE_ID, findPalette } from '@/utils/palettes';
+import { mix, paletteTokens } from '@/utils/paletteTokens';
 
 /** Monaco namespace, as handed to onMount by @monaco-editor/react. */
 type MonacoNamespace = typeof import('monaco-editor');
@@ -19,89 +21,102 @@ type MonacoNamespace = typeof import('monaco-editor');
  */
 const viewStateCache = new Map<string, editor.ICodeEditorViewState>();
 
-/** Define custom Whisper themes once Monaco is loaded. */
-let themesRegistered = false;
-export function registerWhisperThemes(monaco: typeof import('monaco-editor')) {
-  if (themesRegistered) return;
-  themesRegistered = true;
+/**
+ * Editor colors per mode for the default palette. They mirror the theme
+ * tokens and the --hl-* syntax palette in static/modules/themes.css (Monaco
+ * needs literal hex). Other palettes are built from paletteTokens.
+ */
+const MONACO_PALETTES = {
+  dark: {
+    base: 'vs-dark', bg: '#1a1934', fg: '#c9c8e0', lineNo: '#5a5980', lineNoActive: '#aeadc8',
+    accent: '#9a82ff', selection: '#9a82ff38', lineHighlight: '#ffffff08', border: '#2a2950',
+    keyword: 'b49cff', string: '8fdcae', number: 'f5a25d', comment: '7d7c9e', fn: '7cb7f0',
+    type: 'f28cbc', variable: 'c9c8e0', tag: 'ff8a8a', attr: 'f3c86a',
+  },
+  light: {
+    base: 'vs', bg: '#f3f4f9', fg: '#46445e', lineNo: '#a3a2ba', lineNoActive: '#5d5b78',
+    accent: '#6a45e8', selection: '#6a45e824', lineHighlight: '#1c1a4a08', border: '#e1e3ee',
+    keyword: '6a45e8', string: '24774d', number: 'a8510a', comment: '72718c', fn: '2b62c4',
+    type: 'a8326a', variable: '46445e', tag: 'c23a40', attr: '8f5600',
+  },
+} as const;
 
-  monaco.editor.defineTheme('whisper-dark', {
-    base: 'vs-dark',
-    inherit: true,
-    rules: [],
-    colors: {
-      'editor.background': '#111113',
-      'editor.foreground': '#e4e2de',
-      'editorLineNumber.foreground': '#5e5d5a',
-      'editorCursor.foreground': '#e2a336',
-      'editor.selectionBackground': '#e2a33633',
-      'editor.lineHighlightBackground': '#ffffff08',
-    },
-  });
+type MonacoColors = { -readonly [K in keyof (typeof MONACO_PALETTES)['dark']]: string };
 
-  monaco.editor.defineTheme('whisper-light', {
-    base: 'vs',
-    inherit: true,
-    rules: [],
-    colors: {
-      'editor.background': '#f5f3ef',
-      'editor.foreground': '#1a1918',
-      'editorLineNumber.foreground': '#a09d99',
-      'editorCursor.foreground': '#c4841d',
-      'editor.selectionBackground': '#c4841d22',
-      'editor.lineHighlightBackground': '#00000008',
-    },
-  });
+/** The editor colors of any palette, read from its generated tokens. */
+function monacoColors(mode: 'light' | 'dark', paletteId: string): MonacoColors {
+  if (paletteId === DEFAULT_PALETTE_ID) return MONACO_PALETTES[mode];
+  const t = paletteTokens(findPalette(paletteId)[mode], mode);
+  const bare = (name: string) => t[name].replace('#', '');
+  return {
+    base: mode === 'light' ? 'vs' : 'vs-dark',
+    bg: t['--bg-code'],
+    fg: t['--text-primary'],
+    lineNo: mix(t['--text-muted'], t['--bg-code'], 0.35),
+    lineNoActive: t['--text-secondary'],
+    accent: t['--accent'],
+    selection: t['--accent'] + (mode === 'light' ? '24' : '38'),
+    lineHighlight: t['--text-heading'] + '08',
+    border: t['--border'],
+    keyword: bare('--hl-keyword'),
+    string: bare('--hl-string'),
+    number: bare('--hl-number'),
+    comment: bare('--hl-comment'),
+    fn: bare('--hl-function'),
+    type: bare('--hl-class'),
+    variable: bare('--hl-variable'),
+    tag: bare('--hl-tag'),
+    attr: bare('--hl-attr'),
+  };
+}
 
-  monaco.editor.defineTheme('taw-dark', {
-    base: 'vs-dark',
-    inherit: true,
-    rules: [],
-    colors: {
-      'editor.background': '#1f1e1d',
-      'editor.foreground': '#f5f4ee',
-      'editorLineNumber.foreground': '#78756e',
-      'editorCursor.foreground': '#d97757',
-      'editor.selectionBackground': '#d9775733',
-      'editor.lineHighlightBackground': '#ffffff08',
-    },
-  });
+/** Monaco, once loaded. Themes are defined on first use per palette. */
+let monacoNs: typeof import('monaco-editor') | null = null;
+const definedThemes = new Set<string>();
 
-  monaco.editor.defineTheme('taw-light', {
-    base: 'vs',
+function defineWhisperTheme(monaco: typeof import('monaco-editor'), name: string, p: MonacoColors) {
+  monaco.editor.defineTheme(name, {
+    base: p.base as 'vs' | 'vs-dark',
     inherit: true,
-    rules: [],
+    rules: [
+      { token: 'comment', foreground: p.comment, fontStyle: 'italic' },
+      { token: 'keyword', foreground: p.keyword },
+      { token: 'string', foreground: p.string },
+      { token: 'number', foreground: p.number },
+      { token: 'type', foreground: p.type },
+      { token: 'variable', foreground: p.variable },
+      { token: 'tag', foreground: p.tag },
+      { token: 'attribute.name', foreground: p.attr },
+      { token: 'function', foreground: p.fn },
+    ],
     colors: {
-      'editor.background': '#faf9f5',
-      'editor.foreground': '#1f1e1d',
-      'editorLineNumber.foreground': '#a3a097',
-      'editorCursor.foreground': '#cf6a48',
-      'editor.selectionBackground': '#d9775722',
-      'editor.lineHighlightBackground': '#00000006',
+      'editor.background': p.bg,
+      'editor.foreground': p.fg,
+      'editorLineNumber.foreground': p.lineNo,
+      'editorLineNumber.activeForeground': p.lineNoActive,
+      'editorCursor.foreground': p.accent,
+      'editor.selectionBackground': p.selection,
+      'editor.lineHighlightBackground': p.lineHighlight,
+      'editorWidget.border': p.border,
+      'editorIndentGuide.background1': p.border,
+      'focusBorder': p.accent,
     },
   });
 }
 
-/** Map resolved theme names to custom Whisper Monaco theme IDs. */
-export function getMonacoTheme(resolvedTheme: string): string {
-  switch (resolvedTheme) {
-    case 'light':
-    case 'light-daltonized':
-      return 'whisper-light';
-    case 'dark':
-    case 'dark-daltonized':
-      return 'whisper-dark';
-    case 'light-taw':
-      return 'taw-light';
-    case 'dark-taw':
-      return 'taw-dark';
-    case 'light-high-contrast':
-      return 'hc-light';
-    case 'dark-high-contrast':
-      return 'hc-black';
-    default:
-      return 'whisper-dark';
+/** Keep the loaded Monaco so getMonacoTheme can define palette themes. */
+export function registerWhisperThemes(monaco: typeof import('monaco-editor')) {
+  monacoNs = monaco;
+}
+
+/** The Whisper Monaco theme ID for a mode and palette, defined on first use. */
+export function getMonacoTheme(resolvedTheme: 'light' | 'dark', paletteId: string = DEFAULT_PALETTE_ID): string {
+  const name = paletteId === DEFAULT_PALETTE_ID ? `whisper-${resolvedTheme}` : `whisper-${paletteId}-${resolvedTheme}`;
+  if (monacoNs && !definedThemes.has(name)) {
+    defineWhisperTheme(monacoNs, name, monacoColors(resolvedTheme, paletteId));
+    definedThemes.add(name);
   }
+  return name;
 }
 
 export interface MonacoEditorProps {
@@ -129,7 +144,7 @@ export interface MonacoEditorProps {
 /**
  * Wraps @monaco-editor/react with Whisper Studio theme integration,
  * matching the original vanilla JS editor config exactly:
- *   IBM Plex Mono 13px, minimap off, wordWrap off, tabSize 4,
+ *   DM Mono 13px, minimap off, wordWrap off, tabSize 4,
  *   bracket colorization, smooth cursor, custom themes, Ctrl+S/W keybindings,
  *   cursor position tracking, and live theme switching.
  */
@@ -146,7 +161,7 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
   revealRev,
   workspaceRoot,
 }) => {
-  const { resolvedTheme } = useTheme();
+  const { resolvedTheme, paletteId } = useTheme();
   const { setEditorTheme } = useMonaco();
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof import('monaco-editor') | null>(null);
@@ -204,7 +219,7 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
     ]);
   }, [revealStart, revealEnd]);
 
-  const monacoTheme = getMonacoTheme(resolvedTheme);
+  const monacoTheme = getMonacoTheme(resolvedTheme, paletteId);
 
   // Persist Monaco view state (scroll + cursor + folds) across the per-tab
   // remount. WorkspacePanel keys this editor by path (`key={activeTab.path}`),
@@ -230,8 +245,8 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
   useEffect(() => {
     const m = monacoRef.current;
     if (!m) return;
-    setEditorTheme(getMonacoTheme(resolvedTheme));
-  }, [resolvedTheme, setEditorTheme]);
+    setEditorTheme(getMonacoTheme(resolvedTheme, paletteId));
+  }, [resolvedTheme, paletteId, setEditorTheme]);
 
   const handleMount: OnMount = useCallback(
     (ed, monaco) => {
@@ -243,7 +258,7 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
 
       // Register custom themes on first mount
       registerWhisperThemes(monaco);
-      monaco.editor.setTheme(getMonacoTheme(resolvedTheme));
+      monaco.editor.setTheme(getMonacoTheme(resolvedTheme, paletteId));
 
       // Ctrl+S — Save file
       ed.addAction({
@@ -282,7 +297,7 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
       revealCited();
       if (!revealRange) ed.focus();
     },
-    [filePath, onSave, onClose, onCursorChange, resolvedTheme, revealCited, revealRange],
+    [filePath, onSave, onClose, onCursorChange, resolvedTheme, paletteId, revealCited, revealRange],
   );
 
   // Re-reveal when the citation target changes or is re-clicked (revealRev bump).
@@ -314,8 +329,8 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
         onMount={handleMount}
         options={{
           readOnly,
-          fontSize: 13,
-          fontFamily: 'IBM Plex Mono, monospace',
+          fontSize: 14,
+          fontFamily: "'DM Mono', ui-monospace, Menlo, monospace",
           lineNumbers: 'on',
           minimap: { enabled: false },
           wordWrap: 'off',

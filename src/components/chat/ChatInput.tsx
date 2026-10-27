@@ -19,12 +19,7 @@ import { useQuery } from '@tanstack/react-query';
 import { listIndexes, type IndexInfo } from '@/api/workspace';
 import { useIndexSearchStore } from '@/stores/indexSearchStore';
 import { toError } from '@/utils/toError';
-import { EffortPicker } from './EffortPicker';
-import { ResponseLengthPicker } from './ResponseLengthPicker';
-import { LocalContextWindowSlider } from './LocalContextWindowSlider';
-import { ModeDropdown } from './ModeDropdown';
-import { ModelDropdown } from './ModelDropdown';
-import { WorkspaceDropdown } from './WorkspaceDropdown';
+import { PermissionGroup, ThinkGroup, WorkspaceGroup } from './ComposerGroups';
 import {
   BASE_SLASH_COMMANDS,
   parseSkillMention,
@@ -32,7 +27,6 @@ import {
   VOICE_SUBMIT_TRIGGERS,
   type SlashCommand,
 } from './chatInputConstants';
-import { TokenCounter } from './TokenCounter';
 import { MoreMenu, type MoreSection } from './MoreMenu';
 import { useVoiceStore } from '@/stores/voiceStore';
 import { voiceController } from '@/services/voiceController';
@@ -59,10 +53,13 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
     removeAttachment,
     waitForUploads,
   } = useComposerAttachments(sessionId);
-  const [modeOpen, setModeOpen] = useState(false);
+  // The composer's panels ("How it thinks", permissions, workspace), the
+  // model list inside the first, and the More popover: one open at a time.
+  const [thinkOpen, setThinkOpen] = useState(false);
+  const [permOpen, setPermOpen] = useState(false);
+  const [workOpen, setWorkOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
-  const [wsDropdownOpen, setWsDropdownOpen] = useState(false);
-  // "+ More" overflow popover and which section inside it is expanded.
+  // More popover and which section inside it is expanded.
   const [moreOpen, setMoreOpen] = useState(false);
   const [moreSection, setMoreSection] = useState<MoreSection>(null);
 
@@ -109,7 +106,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
   // so background events appear inline without a page refresh.
 
   /* ── Workspace dropdown helpers ── */
-  const recentPaths = useRecentWorkspaces(wsDropdownOpen).slice(0, 5);
+  const recentPaths = useRecentWorkspaces(workOpen).slice(0, 5);
 
   const connectToWorkspace = useCallback(async (wsPath: string) => {
     try {
@@ -130,7 +127,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
       // workspace root, and an unexpanded "~/..." never matches it.
       const connectedPath = data?.path || wsPath;
       useUIStore.getState().setWsConnected(true, connectedPath);
-      setWsDropdownOpen(false);
+      setWorkOpen(false);
       const name = connectedPath.split('/').pop();
       if (data?.writable === false) {
         useUIStore.getState().addToast({
@@ -150,13 +147,14 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
     }
   }, []);
 
-  // Close all toolbar dropdowns on click outside.
+  // Close the composer's panels and popovers on a click outside all of them.
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
-      if (!target.closest('.toolbar-dropdown-wrap')) {
-        setWsDropdownOpen(false);
-        setModeOpen(false);
+      if (!target.closest('.toolbar-dropdown-wrap, .cg-wrap')) {
+        setThinkOpen(false);
+        setPermOpen(false);
+        setWorkOpen(false);
         setModelOpen(false);
         setMoreOpen(false);
       }
@@ -165,23 +163,24 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  // Close toolbar dropdowns on Escape (matches EffortPicker's own dismiss).
+  // Close the composer's panels and popovers on Escape.
   // Acts — and consumes the key via preventDefault — only when a dropdown is
   // actually open, so an idle ESC still reaches global shortcuts (the stream
   // kill switch). Open flags are deps so the handler sees current state.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
-      if (!(wsDropdownOpen || modeOpen || modelOpen || moreOpen)) return;
+      if (!(thinkOpen || permOpen || workOpen || modelOpen || moreOpen)) return;
       e.preventDefault();
-      setWsDropdownOpen(false);
-      setModeOpen(false);
+      setThinkOpen(false);
+      setPermOpen(false);
+      setWorkOpen(false);
       setModelOpen(false);
       setMoreOpen(false);
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [wsDropdownOpen, modeOpen, modelOpen, moreOpen]);
+  }, [thinkOpen, permOpen, workOpen, modelOpen, moreOpen]);
 
   // Approve a saved plan: read its markdown, leave plan mode so writes are
   // allowed, and send an implementation turn. The full plan goes to the model;
@@ -268,6 +267,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
   const isStreaming = useActiveChatStore((s) => s.isStreaming);
 
   const wsConnected = useUIStore((s) => s.wsConnected);
+  const wsPath = useUIStore((s) => s.wsPath);
 
   // Other sessions mentionable via @<slug> for the autocomplete popup. The
   // actual context injection is resolved server-side (cross_session.py);
@@ -312,14 +312,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
 
   const models = useSettingsStore((s) => s.models);
   const selectedModel = useSettingsStore((s) => s.selectedModel);
-  const loadedLocalModel = useSettingsStore((s) => s.loadedLocalModel);
-  // On-device model selected? The response-length control is cloud-only; the
-  // effort chip becomes the Thinking chip on a local model that can think.
-  const isLocalModel = !!models.find((m) => m.key === selectedModel)?.is_local;
-  // An on-device model whose chat template has a thinking mode gets the
-  // Thinking chip (its levels come from the backend like the cloud ladders).
-  const localCanThink =
-    isLocalModel && (models.find((m) => m.key === selectedModel)?.effort_levels ?? []).length > 0;
 
   // Hydrate the slash-command list with the live model keys so /model
   // autocompletes against whatever's defined in config.json.
@@ -357,7 +349,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
   // sorting, and a native-picker fallback inside it). The `handleNativeBrowse`
   // name is what the /browse slash-command wiring binds to.
   const handleNativeBrowse = useCallback(() => {
-    setWsDropdownOpen(false);
+    setWorkOpen(false);
     openWorkspaceConnect();
   }, [openWorkspaceConnect]);
 
@@ -373,12 +365,12 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
     }
   }, [planMode, setPlanMode, updateConfig]);
 
-  /** Switch the permission mode from the toolbar Mode dropdown. Same write
+  /** Switch the permission mode from the permissions panel. Same write
    *  path as the Settings panel — store, config, then PUT /api/permissions/mode
    *  so the backend session_approvals view stays in sync. The Plan-mode flag
    *  is mirrored so any code that still reads `planMode` keeps working. */
   const handleSelectMode = useCallback(async (target: string) => {
-    setModeOpen(false);
+    setPermOpen(false);
     if (target === permissionMode) return;
     setPlanMode(target === 'plan');
     updateConfig({ permissionMode: target });
@@ -719,326 +711,295 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
         onChange={(e) => void handleFileSelect(e)}
       />
 
-      {/* Attachment preview. Chips grow with the filename but cap their
-       * inner label at a sane width — beyond that the name is ellipsized
-       * and the full text is revealed on hover via `title`. Removes the
-       * old rigid `max-width: 200px` overflow that pushed the × button
-       * outside the chip on long names. */}
-      <div className="attachment-preview" id="attachmentPreview" style={attachments.length > 0 ? { display: 'flex' } : undefined}>
-        {attachments.map((att, idx) => {
-          const uploading = att.id.startsWith('_uploading_');
-          return (
-            <div key={`${att.id}-${idx}`} className="attachment-chip" title={att.filename}>
-              <span className="attachment-name">{att.filename}</span>
-              {uploading && <span className="attachment-uploading">uploading…</span>}
-              <button
-                type="button"
-                className="attachment-remove"
-                aria-label={uploading ? `Cancel upload of ${att.filename}` : `Remove ${att.filename}`}
-                onClick={() => removeAttachment(idx)}
-              >
-                &#xD7;
-              </button>
-            </div>
-          );
-        })}
-      </div>
-
-      {voiceOn && !voiceTyping ? (
-        <VoiceBar />
-      ) : (
-      <div className="chat-input-row" style={{ position: 'relative' }}>
-        <textarea
-          ref={textareaRef}
-          className="chat-input"
-          id="chatInput"
-          aria-label="Chat message input"
-          aria-haspopup="listbox"
-          aria-expanded={acVisible && acItems.length > 0}
-          aria-activedescendant={acVisible && acItems.length > 0 ? `ac-item-${acIndex}` : undefined}
-          placeholder={isStreaming ? 'Add to the running turn...' : 'Fix a bug, build a feature, ask anything...'}
-          rows={2}
-          value={text}
-          onChange={handleTextChange}
-          onKeyDown={handleKeyDown}
-          onPaste={handlePaste}
-        />
-
-        {/* Autocomplete popup — uses vanilla skill-autocomplete CSS classes */}
-        {acVisible && acItems.length > 0 && acRect && (
-          <div
-            ref={acRef}
-            className="skill-autocomplete"
-            role="listbox"
-            aria-label="Autocomplete suggestions"
-            data-heading={acHeading}
-            style={{
-              position: 'fixed',
-              left: acRect.left,
-              bottom: acRect.bottom,
-              width: acRect.width,
-            }}
-          >
-            {acItems.map((item, i) => (
-              <div
-                key={`${item.name}-${i}`}
-                id={`ac-item-${i}`}
-                role="option"
-                aria-selected={i === acIndex}
-                className={`skill-ac-item${i === acIndex ? ' ac-active' : ''}`}
-                onMouseDown={(e) => { e.preventDefault(); selectAcItem(item); }}
-                onMouseEnter={() => setAcIndex(i)}
-              >
-                <div className="skill-ac-icon">{item.icon}</div>
-                <div className="skill-ac-text">
-                  <span className="skill-ac-name">{item.name}</span>
-                  <span className="skill-ac-desc">{item.desc}</span>
-                </div>
+      {/* The composer box: attachments, the message, and one row of every
+       *  control (attach, chips, dictation, voice, send) inside one card. */}
+      <div className="composer-box">
+        {/* Attachment preview. Chips grow with the filename but cap their
+         * inner label at a sane width — beyond that the name is ellipsized
+         * and the full text is revealed on hover via `title`. Removes the
+         * old rigid `max-width: 200px` overflow that pushed the × button
+         * outside the chip on long names. */}
+        <div className="attachment-preview" id="attachmentPreview" style={attachments.length > 0 ? { display: 'flex' } : undefined}>
+          {attachments.map((att, idx) => {
+            const uploading = att.id.startsWith('_uploading_');
+            return (
+              <div key={`${att.id}-${idx}`} className="attachment-chip" title={att.filename}>
+                <span className="attachment-name">{att.filename}</span>
+                {uploading && <span className="attachment-uploading">uploading…</span>}
+                <button
+                  type="button"
+                  className="attachment-remove"
+                  aria-label={uploading ? `Cancel upload of ${att.filename}` : `Remove ${att.filename}`}
+                  onClick={() => removeAttachment(idx)}
+                >
+                  &#xD7;
+                </button>
               </div>
-            ))}
+            );
+          })}
+        </div>
+
+        {voiceOn && !voiceTyping ? (
+          <VoiceBar />
+        ) : (
+        <div className="chat-input-row" style={{ position: 'relative' }}>
+          <textarea
+            ref={textareaRef}
+            className="chat-input"
+            id="chatInput"
+            aria-label="Chat message input"
+            aria-haspopup="listbox"
+            aria-expanded={acVisible && acItems.length > 0}
+            aria-activedescendant={acVisible && acItems.length > 0 ? `ac-item-${acIndex}` : undefined}
+            placeholder={isStreaming ? 'Add to the running turn...' : 'Fix a bug, build a feature, ask anything...'}
+            rows={2}
+            value={text}
+            onChange={handleTextChange}
+            onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
+          />
+
+          {/* Autocomplete popup — uses vanilla skill-autocomplete CSS classes */}
+          {acVisible && acItems.length > 0 && acRect && (
+            <div
+              ref={acRef}
+              className="skill-autocomplete"
+              role="listbox"
+              aria-label="Autocomplete suggestions"
+              data-heading={acHeading}
+              style={{
+                position: 'fixed',
+                left: acRect.left,
+                bottom: acRect.bottom,
+                width: acRect.width,
+              }}
+            >
+              {acItems.map((item, i) => (
+                <div
+                  key={`${item.name}-${i}`}
+                  id={`ac-item-${i}`}
+                  role="option"
+                  aria-selected={i === acIndex}
+                  className={`skill-ac-item${i === acIndex ? ' ac-active' : ''}`}
+                  onMouseDown={(e) => { e.preventDefault(); selectAcItem(item); }}
+                  onMouseEnter={() => setAcIndex(i)}
+                >
+                  <div className="skill-ac-icon">{item.icon}</div>
+                  <div className="skill-ac-text">
+                    <span className="skill-ac-name">{item.name}</span>
+                    <span className="skill-ac-desc">{item.desc}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        )}
+
+        {/* Dictation hint — only while recording. Surfaces the hands-free submit
+         *  phrases so users discover them in context, exactly when relevant. */}
+        {mic.isRecording && (
+          <div className="dictation-hint" role="status" aria-live="polite">
+            <span className="dictation-hint-dot" aria-hidden="true" />
+            <span className="dictation-hint-label">Listening. Finish your message with one of these to send:</span>
+            <span className="dictation-hint-chips">
+              {VOICE_SUBMIT_TRIGGERS.map((phrase) => (
+                <span className="dictation-hint-chip" key={phrase}>{phrase}</span>
+              ))}
+            </span>
           </div>
         )}
 
-        <button
-          type="button"
-          className="attach-btn"
-          id="attachBtn"
-          title={`Attach files. Supported: ${SUPPORTED_ATTACHMENT_SUMMARY}`}
-          onClick={() => fileInputRef.current?.click()}
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>
-          </svg>
-        </button>
-        {/* Mic dictation — speak instead of type, transcribed into the input */}
-        <button
-          type="button"
-          className={`mic-btn${mic.isRecording ? ' recording' : ''}${mic.isConnecting ? ' connecting' : ''}`}
-          id="chatMicBtn"
-          title={
-            mic.error
-              ? `Mic error: ${mic.error}`
-              : mic.isRecording
-                ? 'Stop recording'
-                : mic.isConnecting
-                  ? 'Connecting…'
-                  : "Dictate by voice. To send hands-free, finish by saying a phrase like 'okay send' or 'send now'."
-          }
-          aria-pressed={mic.isRecording}
-          aria-label={mic.isRecording ? 'Stop dictation' : 'Start dictation'}
-          onClick={handleMicClick}
-        >
-          {mic.isRecording ? (
-            // Stop square — solid fill, rounded, matches the streaming
-            // .btn-chat-stop indicator so "stop" reads consistently across
-            // the input bar.
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-              <rect x="3" y="3" width="10" height="10" rx="2" fill="currentColor"/>
-            </svg>
-          ) : (
-            // Modern microphone — matches the stroke weight and round-cap
-            // style of the attach (paperclip) and send (paper-plane) icons
-            // beside it. Capsule + stand bracket + base line.
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="9" y="3" width="6" height="11" rx="3"/>
-              <path d="M19 11a7 7 0 0 1-14 0"/>
-              <line x1="12" y1="18" x2="12" y2="22"/>
-            </svg>
-          )}
-        </button>
-        {/* Talk — hands-free voice conversation (Nova 2 Sonic). Between the
-         *  dictation mic and Send. Once a conversation is open this whole row
-         *  is replaced by the VoiceBar; when the user chose to type mid-call,
-         *  the button brings the bar back instead of starting a second call. */}
-        <button
-          type="button"
-          className={`mic-btn talk-btn${voiceOn ? ' on' : ''}`}
-          id="chatTalkBtn"
-          title={
-            voiceOn
-              ? 'Back to the voice bar'
-              : voiceAvailable === false
-                ? `Voice mode unavailable: ${voiceReason ?? 'not configured'}`
-                : 'Talk with the assistant hands-free. Your audio goes to Amazon Bedrock (Nova 2 Sonic) while this is on.'
-          }
-          aria-label={voiceOn ? 'Back to the voice bar' : 'Start voice conversation'}
-          disabled={!voiceOn && voiceAvailable === false}
-          onClick={() => {
-            if (voiceOn) useVoiceStore.getState().setTyping(false);
-            else void voiceController.start(sessionId);
-          }}
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="10" x2="4" y2="14"/><line x1="8" y1="7" x2="8" y2="17"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="16" y1="8" x2="16" y2="16"/><line x1="20" y1="11" x2="20" y2="13"/></svg>
-        </button>
-        {/* Item 5: Stop button during streaming (or while voice work is still
-         *  finishing after a hang-up), send button otherwise. One button, one
-         *  meaning. A message still goes into the running turn, by Enter; the
-         *  placeholder above says so. */}
-        {isStreaming || (voiceWorking && !text.trim()) ? (
-          <button
-            className="btn btn-chat-stop"
-            type="button"
-            title={isStreaming ? 'Stop' : 'Stop the background work'}
-            onClick={isStreaming ? handleAbort : () => voiceController.cancelRuns(sessionId)}
-          >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-              <rect x="3" y="3" width="10" height="10" rx="2" fill="currentColor"/>
-            </svg>
-          </button>
-        ) : (
-          <button className="btn btn-send" type="submit" id="chatSendBtn" aria-label="Send message" disabled={!text.trim()}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
-            </svg>
-          </button>
-        )}
-      </div>
-      )}
-
-      {/* Dictation hint — only while recording. Surfaces the hands-free submit
-       *  phrases so users discover them in context, exactly when relevant. */}
-      {mic.isRecording && (
-        <div className="dictation-hint" role="status" aria-live="polite">
-          <span className="dictation-hint-dot" aria-hidden="true" />
-          <span className="dictation-hint-label">Listening. Finish your message with one of these to send:</span>
-          <span className="dictation-hint-chips">
-            {VOICE_SUBMIT_TRIGGERS.map((phrase) => (
-              <span className="dictation-hint-chip" key={phrase}>{phrase}</span>
-            ))}
-          </span>
-        </div>
-      )}
-
-      {/* Chat toolbar */}
-      <div className="chat-toolbar" id="chatToolbar">
-        {/* Model dropdown — premium replacement for the native select.
-         *  Every selection routes through requestModelChange so Mythos-class
-         *  models (Fable 5) always pass the data-retention consent gate. */}
-        <ModelDropdown
-          models={models}
-          selectedModel={selectedModel}
-          loadedLocalModel={loadedLocalModel}
-          open={modelOpen}
-          onToggle={() => {
-            setModelOpen((p) => !p);
-            setWsDropdownOpen(false);
-            setModeOpen(false);
-            setMoreOpen(false);
-          }}
-          onSelect={(key) => { setModelOpen(false); void requestModelChange(key); }}
-        />
-
-        <span className="toolbar-sep"></span>
-
-        {/* Effort chip + slider — beside the model. On an on-device model that
-         *  can think it is the Thinking chip (Off to Max); the response-length
-         *  picker stays cloud-only. Single-open: opening closes the rest. */}
-        {(!isLocalModel || localCanThink) && (
-          <>
-            <EffortPicker
-              onOpen={() => {
-                setModelOpen(false); setWsDropdownOpen(false);
-                setModeOpen(false); setMoreOpen(false);
-              }}
-            />
-            {!isLocalModel && (
-              <ResponseLengthPicker
-                onOpen={() => {
-                  setModelOpen(false); setWsDropdownOpen(false);
-                  setModeOpen(false); setMoreOpen(false);
-                }}
-              />
-            )}
-            <span className="toolbar-sep"></span>
-          </>
-        )}
-
-        {/* Workspace dropdown */}
-        <WorkspaceDropdown
-          connected={wsConnected}
-          open={wsDropdownOpen}
-          recentPaths={recentPaths}
-          onToggle={() => { setWsDropdownOpen(!wsDropdownOpen); setModeOpen(false); setModelOpen(false); setMoreOpen(false); }}
-          onBrowse={() => handleNativeBrowse()}
-          onConnect={(p) => void connectToWorkspace(p)}
-        />
-
-        <span className="toolbar-sep"></span>
-
-        {/* Mode dropdown — switch permission mode without leaving the chat.
-         *  Same write path as Settings → Permissions. */}
-        <ModeDropdown
-          permissionMode={permissionMode}
-          open={modeOpen}
-          onToggle={() => {
-            setModeOpen((p) => !p);
-            setWsDropdownOpen(false); setModelOpen(false); setMoreOpen(false);
-          }}
-          onSelect={handleSelectMode}
-          onManage={() => { setModeOpen(false); openSettings('permissions'); }}
-        />
-
-        {/* Local-model controls — render only for on-device models. Thinking
-            and tools have no toggles: capable models always think and always
-            get the full tool pool, like the cloud models. */}
-        <LocalContextWindowSlider
-          onOpen={() => {
-            setModelOpen(false); setWsDropdownOpen(false);
-            setModeOpen(false); setMoreOpen(false);
-          }}
-        />
-
-        {/* + More — overflow for the less-frequent toolbar controls. */}
-        <MoreMenu
-          open={moreOpen}
-          section={moreSection}
-          setSection={setMoreSection}
-          onToggle={() => {
-            setMoreOpen((p) => {
-              const next = !p;
-              if (next) { setModelOpen(false); setWsDropdownOpen(false); setModeOpen(false); }
-              return next;
-            });
-          }}
-          onClose={() => setMoreOpen(false)}
-          indexes={indexes}
-          selectedIndexes={selectedIndexes}
-          toggleIndex={toggleIndex}
-          wsConnected={wsConnected}
-          onInsertSkill={(name) => {
-            setText((prev) => `@${name} ${prev}`);
-            setMoreOpen(false);
-            textareaRef.current?.focus();
-          }}
-        />
-
-        {voiceWorking && (
-          <>
-            <span className="toolbar-sep"></span>
-            <span className="toolbar-btn voice-chip voice-working-chip" title="The assistant is still finishing the work you started by voice. Type to continue, or press Stop.">
-              <span className="pulse voice-request-dot" aria-hidden="true" />
-              Working in background
-            </span>
-          </>
-        )}
-        {voiceOn && (
-          <>
-            <span className="toolbar-sep"></span>
+        <div className="composer-bar">
+          {!(voiceOn && !voiceTyping) && (
             <button
               type="button"
-              className="toolbar-btn active voice-chip"
-              id="voiceChip"
-              title={voiceTyping ? 'Back to the voice bar' : 'Voice conversation is on. Click to type instead.'}
-              onClick={() => useVoiceStore.getState().setTyping(!voiceTyping)}
+              className="attach-btn"
+              id="attachBtn"
+              title={`Attach files. Supported: ${SUPPORTED_ATTACHMENT_SUMMARY}`}
+              onClick={() => fileInputRef.current?.click()}
             >
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="10" x2="4" y2="14"/><line x1="8" y1="7" x2="8" y2="17"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="16" y1="8" x2="16" y2="16"/><line x1="20" y1="11" x2="20" y2="13"/></svg>
-              Voice on
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>
+              </svg>
             </button>
-          </>
-        )}
+          )}
+          {/* Composer controls: How it thinks, permissions, workspace (each
+           *  opens its labeled panel) and the round More button, left-aligned
+           *  on one row. */}
+          <div className="chat-toolbar" id="chatToolbar">
+            <ThinkGroup
+              open={thinkOpen}
+              onToggle={() => {
+                setThinkOpen((p) => !p);
+                setPermOpen(false); setWorkOpen(false); setMoreOpen(false); setModelOpen(false);
+              }}
+              onClose={() => { setThinkOpen(false); setModelOpen(false); }}
+              modelOpen={modelOpen}
+              onToggleModel={() => setModelOpen((p) => !p)}
+              onSelectModel={(key) => { setModelOpen(false); void requestModelChange(key); }}
+            />
 
-        {/* Token counter — reads from chatStore instead of DOM */}
-        <TokenCounter />
+            <PermissionGroup
+              open={permOpen}
+              onToggle={() => {
+                setPermOpen((p) => !p);
+                setThinkOpen(false); setWorkOpen(false); setMoreOpen(false); setModelOpen(false);
+              }}
+              onClose={() => setPermOpen(false)}
+              permissionMode={permissionMode}
+              onSelectMode={handleSelectMode}
+              onManage={() => { setPermOpen(false); openSettings('permissions'); }}
+            />
+
+            <WorkspaceGroup
+              open={workOpen}
+              onToggle={() => {
+                setWorkOpen((p) => !p);
+                setThinkOpen(false); setPermOpen(false); setMoreOpen(false); setModelOpen(false);
+              }}
+              onClose={() => setWorkOpen(false)}
+              connected={wsConnected}
+              wsPath={wsPath}
+              recentPaths={recentPaths}
+              onBrowse={() => handleNativeBrowse()}
+              onConnect={(p) => void connectToWorkspace(p)}
+            />
+
+            <MoreMenu
+              open={moreOpen}
+              section={moreSection}
+              setSection={setMoreSection}
+              onToggle={() => {
+                setMoreOpen((p) => {
+                  const next = !p;
+                  if (next) { setThinkOpen(false); setPermOpen(false); setWorkOpen(false); setModelOpen(false); }
+                  return next;
+                });
+              }}
+              onClose={() => setMoreOpen(false)}
+              indexes={indexes}
+              selectedIndexes={selectedIndexes}
+              toggleIndex={toggleIndex}
+              wsConnected={wsConnected}
+              onInsertSkill={(name) => {
+                setText((prev) => `@${name} ${prev}`);
+                setMoreOpen(false);
+                textareaRef.current?.focus();
+              }}
+            />
+
+            {voiceWorking && (
+              <>
+                <span className="toolbar-btn voice-chip voice-working-chip" title="The assistant is still finishing the work you started by voice. Type to continue, or press Stop.">
+                  <span className="pulse voice-request-dot" aria-hidden="true" />
+                  Working in background
+                </span>
+              </>
+            )}
+            {voiceOn && (
+              <>
+                <button
+                  type="button"
+                  className="toolbar-btn active voice-chip"
+                  id="voiceChip"
+                  title={voiceTyping ? 'Back to the voice bar' : 'Voice conversation is on. Click to type instead.'}
+                  onClick={() => useVoiceStore.getState().setTyping(!voiceTyping)}
+                >
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="10" x2="4" y2="14"/><line x1="8" y1="7" x2="8" y2="17"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="16" y1="8" x2="16" y2="16"/><line x1="20" y1="11" x2="20" y2="13"/></svg>
+                  Voice on
+                </button>
+              </>
+            )}
+
+          </div>
+          {!(voiceOn && !voiceTyping) && (
+            <div className="composer-actions">
+              {/* Mic dictation — speak instead of type, transcribed into the input */}
+              <button
+                type="button"
+                className={`mic-btn${mic.isRecording ? ' recording' : ''}${mic.isConnecting ? ' connecting' : ''}`}
+                id="chatMicBtn"
+                title={
+                  mic.error
+                    ? `Mic error: ${mic.error}`
+                    : mic.isRecording
+                      ? 'Stop recording'
+                      : mic.isConnecting
+                        ? 'Connecting…'
+                        : "Dictate by voice. To send hands-free, finish by saying a phrase like 'okay send' or 'send now'."
+                }
+                aria-pressed={mic.isRecording}
+                aria-label={mic.isRecording ? 'Stop dictation' : 'Start dictation'}
+                onClick={handleMicClick}
+              >
+                {mic.isRecording ? (
+                  // Stop square — solid fill, rounded, matches the streaming
+                  // .btn-chat-stop indicator so "stop" reads consistently across
+                  // the input bar.
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                    <rect x="3" y="3" width="10" height="10" rx="2" fill="currentColor"/>
+                  </svg>
+                ) : (
+                  // Modern microphone — matches the stroke weight and round-cap
+                  // style of the attach (paperclip) and send (paper-plane) icons
+                  // beside it. Capsule + stand bracket + base line.
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="9" y="3" width="6" height="11" rx="3"/>
+                    <path d="M19 11a7 7 0 0 1-14 0"/>
+                    <line x1="12" y1="18" x2="12" y2="22"/>
+                  </svg>
+                )}
+              </button>
+              {/* Talk — hands-free voice conversation (Nova 2 Sonic). Between the
+               *  dictation mic and Send. Once a conversation is open this whole row
+               *  is replaced by the VoiceBar; when the user chose to type mid-call,
+               *  the button brings the bar back instead of starting a second call. */}
+              <button
+                type="button"
+                className={`mic-btn talk-btn${voiceOn ? ' on' : ''}`}
+                id="chatTalkBtn"
+                title={
+                  voiceOn
+                    ? 'Back to the voice bar'
+                    : voiceAvailable === false
+                      ? `Voice mode unavailable: ${voiceReason ?? 'not configured'}`
+                      : 'Talk with the assistant hands-free. Your audio goes to Amazon Bedrock (Nova 2 Sonic) while this is on.'
+                }
+                aria-label={voiceOn ? 'Back to the voice bar' : 'Start voice conversation'}
+                disabled={!voiceOn && voiceAvailable === false}
+                onClick={() => {
+                  if (voiceOn) useVoiceStore.getState().setTyping(false);
+                  else void voiceController.start(sessionId);
+                }}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="10" x2="4" y2="14"/><line x1="8" y1="7" x2="8" y2="17"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="16" y1="8" x2="16" y2="16"/><line x1="20" y1="11" x2="20" y2="13"/></svg>
+              </button>
+              {/* Item 5: Stop button during streaming (or while voice work is still
+               *  finishing after a hang-up), send button otherwise. One button, one
+               *  meaning. A message still goes into the running turn, by Enter; the
+               *  placeholder above says so. */}
+              {isStreaming || (voiceWorking && !text.trim()) ? (
+                <button
+                  className="btn btn-chat-stop"
+                  type="button"
+                  title={isStreaming ? 'Stop' : 'Stop the background work'}
+                  onClick={isStreaming ? handleAbort : () => voiceController.cancelRuns(sessionId)}
+                >
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                    <rect x="3" y="3" width="10" height="10" rx="2" fill="currentColor"/>
+                  </svg>
+                </button>
+              ) : (
+                <button className="btn btn-send" type="submit" id="chatSendBtn" aria-label="Send message" disabled={!text.trim()}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                  </svg>
+                </button>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </form>
   );

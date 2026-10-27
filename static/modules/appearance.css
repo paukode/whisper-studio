@@ -1,0 +1,160 @@
+/* ================================================================
+   Settings > Appearance: the mode switch and the palette cards.
+   Card previews are drawn with inline colors from each palette; the
+   chrome around them uses the active theme tokens.
+   ================================================================ */
+
+.appearance-panel { display: flex; flex-direction: column; gap: var(--space-5); }
+
+.appearance-section { display: flex; flex-direction: column; gap: var(--space-2); }
+
+.appearance-heading-row { display: flex; align-items: baseline; gap: var(--space-3); }
+
+.appearance-heading {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.appearance-current {
+    font-size: var(--fs-small);
+    font-weight: 600;
+    color: var(--accent);
+}
+
+.appearance-modes {
+    display: inline-flex;
+    align-self: flex-start;
+    gap: 2px;
+    padding: 3px;
+    background: var(--bg-inset);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pill);
+}
+
+.appearance-mode {
+    padding: 6px 18px;
+    border: none;
+    border-radius: var(--radius-pill);
+    background: none;
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: var(--fs-small);
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+}
+
+.appearance-mode:hover { color: var(--text-primary); }
+
+.appearance-mode.active {
+    background: var(--bg-elevated);
+    color: var(--text-heading);
+    font-weight: 600;
+    box-shadow: var(--shadow-sm);
+}
+
+.appearance-filters { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-1); }
+
+.appearance-filter {
+    padding: 4px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pill);
+    background: none;
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: var(--fs-caption);
+    cursor: pointer;
+}
+
+.appearance-filter:hover { border-color: var(--border-strong); color: var(--text-primary); }
+
+.appearance-filter.active {
+    background: var(--accent-dim);
+    border-color: transparent;
+    color: var(--accent);
+    font-weight: 600;
+}
+
+.palette-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+    gap: var(--space-3);
+}
+
+.palette-card {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: border-color 0.12s, box-shadow 0.12s;
+}
+
+.palette-card:hover { border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
+
+.palette-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.palette-card.active {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent);
+}
+
+/* The two previews sit side by side; the active mode comes first. */
+.palette-previews { display: flex; gap: 4px; }
+.palette-previews.dark-first { flex-direction: row-reverse; }
+
+.palette-preview {
+    flex: 1;
+    min-width: 0;
+    padding: 8px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+}
+
+.palette-preview-card {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 7px;
+    border: 1px solid;
+    border-radius: 6px;
+}
+
+.palette-preview-line { display: block; height: 4px; width: 90%; border-radius: 2px; opacity: 0.9; }
+.palette-preview-line.is-heading { width: 60%; height: 5px; opacity: 1; }
+.palette-preview-line.is-short { width: 70%; }
+
+.palette-preview-row { display: flex; align-items: center; gap: 3px; margin-top: 3px; }
+.palette-preview-button { width: 22px; height: 8px; border-radius: var(--radius-pill); margin-right: auto; }
+.palette-preview-dot { width: 6px; height: 6px; border-radius: 50%; }
+
+.palette-card-meta { display: flex; align-items: center; gap: var(--space-2); padding: 0 2px; }
+
+.palette-card-name { font-size: var(--fs-small); font-weight: 600; color: var(--text-heading); }
+
+.palette-card-tone {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.palette-card-check { margin-left: auto; color: var(--accent); flex-shrink: 0; }
+
+.palette-card-note {
+    padding: 0 2px;
+    font-size: var(--fs-caption);
+    line-height: 1.35;
+    color: var(--text-muted);
+}

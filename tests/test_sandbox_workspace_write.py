@@ -163,13 +163,22 @@ def _capture_run(monkeypatch):
 
     seen = {}
 
-    def fake_run(command, ws, *, session_id="", run_in_background=False, write_mode="open"):
+    def fake_run(
+        command,
+        ws,
+        *,
+        session_id="",
+        run_in_background=False,
+        write_mode="open",
+        secret_reads=False,
+    ):
         seen["write_mode"] = write_mode
+        seen["secret_reads"] = secret_reads
         return executors.CommandRun(text="ok", returncode=0)
 
     monkeypatch.setattr("server.workspace.executors.run_workspace_command", fake_run)
     monkeypatch.setattr("server.workspace.get_workspace_path", lambda: "/tmp")
-    monkeypatch.setattr("server.workspace._validate_command", lambda c: None)
+    monkeypatch.setattr("server.workspace._validate_command", lambda c, secret_reads=False: None)
     return seen
 
 
@@ -257,6 +266,7 @@ def test_a_confined_ws_run_command_is_confined_to_the_workspace_not_the_cwd(monk
         write_mode="open",
         write_root=None,
         scratch_dir=None,
+        secret_reads=False,
     ):
         seen.update(cwd=cwd, write_mode=write_mode, write_root=write_root)
         return handoff.HandoffResult(background=False, output="", returncode=0)

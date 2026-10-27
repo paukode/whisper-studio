@@ -77,11 +77,11 @@ function chipFor(job: CronJob): { kind: ChipKind; label: string } {
 }
 
 const CHIP_COLORS: Record<ChipKind, { fg: string; bg: string }> = {
-  active: { fg: '#2f9e63', bg: 'rgba(47,158,99,0.14)' },
-  paused: { fg: '#8a95a7', bg: 'rgba(138,149,167,0.16)' },
-  running: { fg: '#3c86cf', bg: 'rgba(60,134,207,0.16)' },
-  error: { fg: '#d1495b', bg: 'rgba(209,73,91,0.16)' },
-  orphan: { fg: '#c9862a', bg: 'rgba(201,134,42,0.16)' },
+  active: { fg: 'var(--success)', bg: 'var(--accent-dim)' },
+  paused: { fg: 'var(--text-muted)', bg: 'var(--bg-hover)' },
+  running: { fg: 'var(--info)', bg: 'var(--info-dim)' },
+  error: { fg: 'var(--danger)', bg: 'var(--accent-record-dim)' },
+  orphan: { fg: 'var(--warning)', bg: 'var(--warning-dim)' },
 };
 
 const StatusChip: React.FC<{ job: CronJob }> = ({ job }) => {
@@ -91,8 +91,8 @@ const StatusChip: React.FC<{ job: CronJob }> = ({ job }) => {
     <span
       style={{
         display: 'inline-flex', alignItems: 'center', gap: 5,
-        fontSize: 10.5, fontWeight: 700, letterSpacing: '0.04em',
-        textTransform: 'uppercase', padding: '2px 9px', borderRadius: 20,
+        fontSize: 12, fontWeight: 700, letterSpacing: '0.04em',
+        textTransform: 'uppercase', padding: '2px 9px', borderRadius: 'var(--radius-lg)',
         color: c.fg, background: c.bg,
       }}
     >
@@ -231,14 +231,14 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({ initial, systemTz, saving, 
 
       <div>
         <label className="cron-lbl">Schedule</label>
-        <div style={{ display: 'inline-flex', gap: 4, background: 'var(--bg-tertiary, rgba(128,128,128,0.12))', padding: 3, borderRadius: 9 }}>
+        <div style={{ display: 'inline-flex', gap: 4, background: 'var(--bg-tertiary)', padding: 3, borderRadius: 'var(--radius-lg)' }}>
           {SEG_TYPES.map((seg) => (
             <button key={seg.id} type="button"
               onClick={() => patch({ type: seg.id })}
               className="btn btn-sm"
               style={{
-                background: form.type === seg.id ? 'var(--accent, #0d8a93)' : 'transparent',
-                color: form.type === seg.id ? '#fff' : 'var(--text-secondary, inherit)',
+                background: form.type === seg.id ? 'var(--accent)' : 'transparent',
+                color: form.type === seg.id ? 'var(--on-accent)' : 'var(--text-secondary)',
                 border: 'none',
               }}>
               {seg.label}
@@ -300,10 +300,10 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({ initial, systemTz, saving, 
       )}
 
       <div style={{
-        padding: '10px 12px', borderRadius: 9, fontSize: 12.5,
-        border: '1px dashed', borderColor: preview.error ? 'rgba(209,73,91,0.5)' : 'rgba(13,138,147,0.45)',
-        background: preview.error ? 'rgba(209,73,91,0.08)' : 'rgba(13,138,147,0.08)',
-        color: preview.error ? '#d1495b' : 'var(--text-secondary, inherit)',
+        padding: '10px 12px', borderRadius: 'var(--radius-lg)', fontSize: 13.5,
+        border: '1px dashed', borderColor: preview.error ? 'var(--danger-border)' : 'var(--success-border)',
+        background: preview.error ? 'var(--danger-dim)' : 'var(--accent-dim)',
+        color: preview.error ? 'var(--danger)' : 'var(--text-secondary)',
       }}>
         {preview.error ? `⚠ ${preview.error}`
           : preview.label
@@ -330,9 +330,9 @@ function clamp(v: string, lo: number, hi: number): number {
 
 function dayChipStyle(on: boolean): React.CSSProperties {
   return {
-    background: on ? 'rgba(13,138,147,0.18)' : 'transparent',
-    color: on ? 'var(--accent, #0d8a93)' : 'var(--text-secondary, inherit)',
-    borderColor: on ? 'var(--accent, #0d8a93)' : undefined,
+    background: on ? 'var(--accent-dim)' : 'transparent',
+    color: on ? 'var(--accent)' : 'var(--text-secondary)',
+    borderColor: on ? 'var(--accent)' : undefined,
   };
 }
 
@@ -348,8 +348,8 @@ const HistoryDrawer: React.FC<{ jobId: string; now: number; onRetry: () => void 
   const runs: CronRun[] = data?.runs ?? [];
 
   return (
-    <div style={{ marginTop: 10, border: '1px solid var(--border, rgba(128,128,128,0.2))', borderRadius: 10, overflow: 'hidden' }}>
-      <div style={{ padding: '8px 12px', fontSize: 12, fontWeight: 700, borderBottom: '1px solid var(--border, rgba(128,128,128,0.2))' }}>
+    <div style={{ marginTop: 10, border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
+      <div style={{ padding: '8px 12px', fontSize: 13, fontWeight: 700, borderBottom: '1px solid var(--border)' }}>
         Run history <span className="settings-hint">· last {runs.length}</span>
       </div>
       {isLoading && <div className="settings-hint" style={{ padding: 12 }}>Loading…</div>}
@@ -357,12 +357,12 @@ const HistoryDrawer: React.FC<{ jobId: string; now: number; onRetry: () => void 
       {runs.map((r) => {
         const failed = r.status === 'failed';
         const running = r.status === 'running';
-        const dot = failed ? '#d1495b' : running ? '#3c86cf' : '#2f9e63';
+        const dot = failed ? 'var(--danger)' : running ? 'var(--info)' : 'var(--success)';
         const open = expanded === r.run_id;
         const firstLine = (r.text || '').split('\n').find((l) => l.trim()) || (running ? 'running…' : '(no output)');
         return (
-          <div key={r.run_id} style={{ borderBottom: '1px solid var(--border, rgba(128,128,128,0.12))' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', fontSize: 12.5, cursor: 'pointer' }}
+          <div key={r.run_id} style={{ borderBottom: '1px solid var(--border)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', fontSize: 13.5, cursor: 'pointer' }}
               onClick={() => setExpanded(open ? null : r.run_id)}>
               <span style={{ width: 8, height: 8, borderRadius: '50%', background: dot, flex: '0 0 auto' }} />
               <span style={{ fontVariantNumeric: 'tabular-nums', opacity: 0.7, flex: '0 0 auto' }}>{formatAgo(r.started_at, now)}</span>
@@ -374,7 +374,7 @@ const HistoryDrawer: React.FC<{ jobId: string; now: number; onRetry: () => void 
               )}
             </div>
             {open && r.text && (
-              <div style={{ padding: '4px 12px 12px 30px', fontSize: 12.5 }}>
+              <div style={{ padding: '4px 12px 12px 30px', fontSize: 13.5 }}>
                 <MarkdownRenderer content={r.text} />
               </div>
             )}
@@ -429,7 +429,7 @@ const JobCard: React.FC<JobCardProps> = ({
             style={{
               width: 34, height: 19, borderRadius: 20, position: 'relative', flex: '0 0 auto',
               border: 'none', cursor: 'pointer', padding: 0,
-              background: job.enabled ? 'var(--accent, #0d8a93)' : 'rgba(128,128,128,0.4)',
+              background: job.enabled ? 'var(--accent)' : 'var(--border-strong)',
             }}>
             <span style={{
               position: 'absolute', top: 2, left: job.enabled ? 17 : 2, width: 15, height: 15,
@@ -439,8 +439,8 @@ const JobCard: React.FC<JobCardProps> = ({
         )}
       </div>
 
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 18px', fontSize: 12.5 }}>
-        <span style={{ fontFamily: 'var(--font-mono, ui-monospace, monospace)', color: 'var(--accent, #0d8a93)' }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 18px', fontSize: 13.5 }}>
+        <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--accent)' }}>
           🗓 {job.schedule_label || '—'}
         </span>
         <span style={{ opacity: 0.85 }}>
@@ -458,15 +458,15 @@ const JobCard: React.FC<JobCardProps> = ({
       </div>
 
       {job.prompt && (
-        <div className="settings-item-desc" style={{ borderTop: '1px solid var(--border, rgba(128,128,128,0.12))', paddingTop: 8 }}>
+        <div className="settings-item-desc" style={{ borderTop: '1px solid var(--border)', paddingTop: 8 }}>
           {job.prompt.slice(0, 140)}{job.prompt.length > 140 ? '…' : ''}
         </div>
       )}
 
       {isLegacyInterval && job.schedule.type === 'interval' && (
         <div style={{
-          display: 'flex', alignItems: 'center', gap: 8, padding: '8px 11px', borderRadius: 9,
-          fontSize: 12, background: 'rgba(201,134,42,0.1)', border: '1px solid rgba(201,134,42,0.3)', color: '#c9862a',
+          display: 'flex', alignItems: 'center', gap: 8, padding: '8px 11px', borderRadius: 'var(--radius-lg)',
+          fontSize: 13, background: 'var(--warning-dim)', border: '1px solid var(--warning-border)', color: '#c9862a',
         }}>
           <span>⚡ This runs on a fixed interval, not a set time.</span>
           <button type="button" className="btn btn-sm" style={{ marginLeft: 'auto' }} onClick={onEdit}>Switch to a daily time →</button>
@@ -478,7 +478,7 @@ const JobCard: React.FC<JobCardProps> = ({
           {job.session_exists === false
             ? <>Results land in <strong>Scheduled Reports</strong> until reassigned.</>
             : <>Results appear in <button type="button" className="cron-link" onClick={openOwningSession}
-                style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--accent, #0d8a93)', fontWeight: 600 }}>
+                style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--accent)', fontWeight: 600 }}>
                 {job.session_title}</button></>}
         </div>
       )}
@@ -490,7 +490,7 @@ const JobCard: React.FC<JobCardProps> = ({
           <>
             {job.run_state === 'running' ? (
               <button className="btn btn-sm" type="button" onClick={onStop} disabled={busy}
-                style={{ color: 'var(--accent-record, #d1495b)' }}>■ Stop</button>
+                style={{ color: 'var(--accent-record)' }}>■ Stop</button>
             ) : (
               <button className="btn btn-sm" type="button" onClick={onRun} disabled={busy}>▶ Run now</button>
             )}
@@ -499,7 +499,7 @@ const JobCard: React.FC<JobCardProps> = ({
         )}
         <button className="btn btn-sm" type="button" onClick={() => setShowHistory((v) => !v)}>🕘 History</button>
         <button className="btn btn-sm" type="button" onClick={onDelete} disabled={busy}
-          style={{ color: deleteArmed ? '#fff' : 'var(--accent-record, #d1495b)', background: deleteArmed ? 'var(--accent-record, #d1495b)' : undefined, marginLeft: 'auto' }}>
+          style={{ color: deleteArmed ? '#fff' : 'var(--accent-record)', background: deleteArmed ? 'var(--accent-record)' : undefined, marginLeft: 'auto' }}>
           {deleteArmed ? 'Confirm' : 'Delete'}
         </button>
       </div>

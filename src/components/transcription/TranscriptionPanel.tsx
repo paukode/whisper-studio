@@ -29,7 +29,6 @@ const SET_TRANSLATE_EVENT = 'whisper-set-translate';
  *  Settings (APISettings.tsx). value === the transcription_backend config. */
 export const MODEL_OPTIONS = [
   { value: 'whisper', label: 'Whisper Large v3', backend: 'whisper' },
-  { value: 'canary', label: 'Canary', backend: 'canary' },
   { value: 'streaming', label: 'Parakeet (live)', backend: 'streaming' },
 ] as const;
 
@@ -522,7 +521,7 @@ export const TranscriptionPanel = forwardRef<HTMLDivElement, TranscriptionPanelP
           <select
             className="transcript-engine-select"
             id="transcriptEngineSelect"
-            title="Transcription model, switches live, even mid-recording. Whisper Large v3: most accurate, 99 languages. Canary: fastest, best translation, detects the language per sentence. Parakeet: live words, lowest latency."
+            title="Transcription model, switches live, even mid-recording. Whisper Large v3: most accurate, 99 languages. Parakeet: live words, lowest latency."
             aria-label="Transcription model"
             value={transcriptionBackend}
             onChange={(e) => handleModelChange(e.target.value)}
@@ -670,7 +669,7 @@ export const TranscriptionPanel = forwardRef<HTMLDivElement, TranscriptionPanelP
               onSpeakerRename={handleSpeakerRename}
             />
           ))}
-          {/* Live, word-by-word draft from a streaming backend (Parakeet or Canary).
+          {/* Live, word-by-word draft from the streaming backend (Parakeet).
               Rendered as a real transcript row so it lines up under the speaker
               boxes exactly like committed segments — same timestamp/speaker/text
               grid. It updates in place as more speech arrives and is removed the

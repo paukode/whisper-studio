@@ -52,7 +52,7 @@ WSDiagram.mount("overview-diagram", {
     { id: "apprReg", group: "security", col: 6, row: 1, label: "approval registry", sub: "action to executor", desc: "Maps each approval action name to its ApprovalSpec and executor. The executor re-validates the payload at execute time, since the endpoint could in principle be POSTed directly." },
     { id: "sandbox", group: "security", col: 6, row: 2, label: "sandbox", sub: "sandbox-exec / bwrap", desc: "The OS jail around every shell and code path, with a secret-store deny-list and three write modes (anywhere, workspace only, nothing). The boundary trusted last and most." },
 
-    { id: "whisper", group: "local", col: 6, row: 3, label: "On-device ASR", sub: "3 engines", desc: "Whisper, Parakeet, or Canary transcribes on-device, with optional live translation. Audio bytes never leave the machine." },
+    { id: "whisper", group: "local", col: 6, row: 3, label: "On-device ASR", sub: "2 engines + Canary translate", desc: "Whisper or Parakeet transcribes on-device, with optional live translation (Canary or Apple). Audio bytes never leave the machine." },
     { id: "diarize", group: "local", col: 6, row: 4, label: "Speaker encoder", sub: "ReDimNet2 / ECAPA", desc: "Speaker embeddings and clustering on-device (server/diarization/embedder.py). ReDimNet2 is the default, ECAPA the fallback; named voices are remembered across sessions as voiceprints." },
     { id: "index", group: "index", col: 6, row: 5, label: "index + search", sub: "embeddings · GraphRAG", desc: "Workspace embeddings, reranking, entities, and retrieval grounding." },
     { id: "sched", group: "local", col: 6, row: 6, label: "APScheduler", sub: "cron jobs", desc: "Fires scheduled jobs, which run a chat turn in the background." },

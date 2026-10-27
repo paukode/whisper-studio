@@ -10,6 +10,12 @@ The sandbox denies read/write access to sensitive paths (SSH keys, cloud
 credentials, system secrets) while allowing access to the workspace and
 standard system directories.
 
+Secret reads: by default the deny-list blocks reading AND writing. A run
+with ``secret_reads=True`` (a Bypass-mode call, or one a person approved
+with ``secret_access``, see server/security/secret_reads.py) may read the
+credential stores (the Keychain for ``security`` and ``codesign``, ~/.ssh,
+~/.aws and the rest) but still never writes them.
+
 Two write modes:
   - "open" (default): today's behavior — writes allowed everywhere except the
     secret deny-list. Human-approved commands keep it: the approval card is
@@ -219,8 +225,12 @@ def _generate_macos_profile(
     write_mode: str = "open",
     scratch_dir: str | None = None,
     write_paths: list[str] | None = None,
+    secret_reads: bool = False,
 ) -> str:
     """Generate a macOS sandbox-exec profile that denies sensitive paths.
+
+    ``secret_reads`` turns every secret deny rule into a write-only deny: the
+    run reads the credential stores but never changes them.
 
     ``allow_paths`` re-allows deny-listed credential folders for READING;
     they stay read-only except ``write_paths`` beneath them, in "open" and
@@ -248,11 +258,12 @@ def _generate_macos_profile(
     no rules are appended in that case, not even an empty line.
     """
     deny_rules = []
+    denied = "file-write*" if secret_reads else "file-read* file-write*"
     for path in _effective_denied_paths(allow_paths):
         if os.path.exists(path) or os.path.isdir(os.path.dirname(path)):
             escaped = path.replace('"', '\\"')
-            deny_rules.append(f'(deny file-read* file-write* (subpath "{escaped}"))')
-            deny_rules.append(f'(deny file-read* file-write* (literal "{escaped}"))')
+            deny_rules.append(f'(deny {denied} (subpath "{escaped}"))')
+            deny_rules.append(f'(deny {denied} (literal "{escaped}"))')
 
     deny_block = "\n".join(deny_rules)
 
@@ -503,8 +514,12 @@ def run_sandboxed(
     scratch_dir: str | None = None,
     write_root: str | None | _Cwd = _CWD,
     write_paths: list[str] | None = None,
+    secret_reads: bool = False,
 ) -> subprocess.CompletedProcess:
     """Run a command with OS-level sandboxing if available.
+
+    ``secret_reads`` lets the run read the credential stores on the
+    deny-list, never write them (see the module docstring).
 
     ``allow_paths`` removes specific entries from the deny-list (e.g. ``~/.aws``
     for the AWS tools, which need their credentials to function); they stay
@@ -543,6 +558,7 @@ def run_sandboxed(
             scratch_dir=scratch_dir,
             write_root=tree,
             write_paths=write_paths,
+            secret_reads=secret_reads,
         )
     if _is_bwrap_available():
         return _run_bwrap_sandboxed(
@@ -558,6 +574,7 @@ def run_sandboxed(
             scratch_dir=scratch_dir,
             write_root=tree,
             write_paths=write_paths,
+            secret_reads=secret_reads,
         )
     # Fallback: no OS-level sandbox
     from server.process_utils import kill_process_group, new_process_group
@@ -595,6 +612,7 @@ def _run_macos_sandboxed(
     scratch_dir: str | None = None,
     write_root: str | None = None,
     write_paths: list[str] | None = None,
+    secret_reads: bool = False,
 ) -> subprocess.CompletedProcess:
     """Run command under macOS sandbox-exec. ``write_root`` is the resolved
     tree a "workspace" run may write in (None: no tree)."""
@@ -604,6 +622,7 @@ def _run_macos_sandboxed(
         write_mode=write_mode,
         scratch_dir=scratch_dir,
         write_paths=write_paths,
+        secret_reads=secret_reads,
     )
 
     # Write profile to temp file (sandbox-exec needs a file path)
@@ -659,6 +678,7 @@ def _run_bwrap_sandboxed(
     scratch_dir: str | None = None,
     write_root: str | None = None,
     write_paths: list[str] | None = None,
+    secret_reads: bool = False,
 ) -> subprocess.CompletedProcess:
     """Run command under bubblewrap (Linux).
 
@@ -682,6 +702,7 @@ def _run_bwrap_sandboxed(
         write_root=write_root,
         scratch_dir=scratch_dir,
         write_paths=write_paths,
+        secret_reads=secret_reads,
     )
 
     from server.process_utils import kill_process_group, new_process_group
@@ -712,6 +733,7 @@ def _bwrap_argv(
     write_root: str | None | _Cwd = _CWD,
     scratch_dir: str | None = None,
     write_paths: list[str] | None = None,
+    secret_reads: bool = False,
 ) -> list[str]:
     """The bwrap argv that runs ``command`` in ``cwd``. Only "readonly" changes
     the filesystem shape: no rw workspace bind, and /tmp a throwaway tmpfs.
@@ -752,10 +774,11 @@ def _bwrap_argv(
         "/proc",  # proc filesystem
         *_bwrap_network_restriction_args(),
     ]
-    # Deny sensitive paths by making them inaccessible
+    # Deny sensitive paths by making them inaccessible, or with secret_reads
+    # bind them read-only over any writable bind instead.
     for path in _effective_denied_paths(allow_paths):
         if os.path.exists(path):
-            argv.extend(_bwrap_deny_args(path))
+            argv.extend(["--ro-bind", path, path] if secret_reads else _bwrap_deny_args(path))
     # The app's own grant and config files stay readable and are never written
     # by a confined command (_app_config_targets). bwrap binds a file read-only
     # over its own writable bind; one that does not exist yet is outside every
@@ -780,6 +803,7 @@ def popen_sandboxed(
     write_mode: str = "open",
     write_root: str | None = None,
     scratch_dir: str | None = None,
+    secret_reads: bool = False,
 ) -> tuple[subprocess.Popen, str | None]:
     """Start a sandbox-wrapped process streaming combined stdout/stderr to a file.
 
@@ -808,7 +832,8 @@ def popen_sandboxed(
     ``cwd``. A ws_run_command passes the connected workspace, so a session
     that cd'd out of it (the cwd tracker follows a ``cd``) is still confined
     to the workspace, not to wherever it went. ``scratch_dir`` is the
-    session's own scratch folder, as in ``run_sandboxed``.
+    session's own scratch folder, and ``secret_reads`` the credential-store
+    reads, as in ``run_sandboxed``.
     The output file is opened here, outside the sandbox, so output still flows.
     """
     from server.process_utils import new_process_group
@@ -816,7 +841,10 @@ def popen_sandboxed(
     profile_path: str | None = None
     if _is_sandbox_exec_available():
         profile = _generate_macos_profile(
-            write_root or cwd, write_mode=write_mode, scratch_dir=scratch_dir
+            write_root or cwd,
+            write_mode=write_mode,
+            scratch_dir=scratch_dir,
+            secret_reads=secret_reads,
         )
         fd, profile_path = tempfile.mkstemp(suffix=".sb", prefix="whisper_bg_sandbox_")
         with os.fdopen(fd, "w") as f:
@@ -825,7 +853,13 @@ def popen_sandboxed(
         shell = False
     elif _is_bwrap_available():
         argv = _bwrap_argv(
-            command, cwd, None, write_mode, write_root=write_root or cwd, scratch_dir=scratch_dir
+            command,
+            cwd,
+            None,
+            write_mode,
+            write_root=write_root or cwd,
+            scratch_dir=scratch_dir,
+            secret_reads=secret_reads,
         )
         shell = False
     else:
@@ -857,6 +891,7 @@ def build_pty_sandbox_wrap(
     write_root: str | None,
     write_mode: str = "open",
     scratch_dir: str | None = None,
+    secret_reads: bool = False,
 ) -> tuple[list[str], str | None]:
     """Wrap an interactive shell command in macOS sandbox-exec so a long-lived
     PTY shell (terminal_run's hidden sandbox session) runs under the same
@@ -870,6 +905,7 @@ def build_pty_sandbox_wrap(
     ``write_root`` is the tree a "workspace" shell may write in, not the
     folder it starts in: a shell started outside the workspace still writes
     only inside it. None writes no tree, only the scratch folder and temp.
+    ``secret_reads`` lets the shell read the credential stores (never write).
 
     Returns ``(argv, profile_path)``. The caller MUST ``os.unlink(profile_path)``
     once the process exits (the profile file must outlive the shell, unlike the
@@ -881,7 +917,9 @@ def build_pty_sandbox_wrap(
     """
     if not _is_sandbox_exec_available():
         return shell_cmd, None
-    profile = _generate_macos_profile(write_root, write_mode=write_mode, scratch_dir=scratch_dir)
+    profile = _generate_macos_profile(
+        write_root, write_mode=write_mode, scratch_dir=scratch_dir, secret_reads=secret_reads
+    )
     fd, profile_path = tempfile.mkstemp(suffix=".sb", prefix="whisper_pty_sandbox_")
     with os.fdopen(fd, "w") as f:
         f.write(profile)

@@ -199,6 +199,13 @@ class ApprovalSpec:
         # of a workspace-bound action, and it must survive the whitelist.
         if WORKSPACE_ROOT_KEY in tool_input:
             payload[WORKSPACE_ROOT_KEY] = tool_input[WORKSPACE_ROOT_KEY]
+        # The same for a command's credential-store read, which the gate
+        # settles (server/security/secret_reads.py): the card shows it and a
+        # person's yes runs with it.
+        from server.security.secret_reads import SECRET_ACCESS_KEY
+
+        if tool_input.get(SECRET_ACCESS_KEY) is True:
+            payload[SECRET_ACCESS_KEY] = True
         return payload
 
 

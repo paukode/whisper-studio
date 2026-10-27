@@ -2,22 +2,23 @@
    Whisper Studio Docs - Prose / content typography
    ================================================================ */
 
+.doc h1, .doc h2, .doc h3, .doc h4 { color: var(--text-heading); }
 .doc h1 {
-  font-size: clamp(28px, 4vw, 38px); line-height: 1.12; letter-spacing: -0.025em;
-  font-weight: 600; margin: 0 0 10px;
+  font-size: clamp(26px, 4vw, 34px); line-height: 1.15; letter-spacing: -0.03em;
+  font-weight: 800; margin: 0 0 10px;
 }
 .doc .subtitle { font-size: 18px; color: var(--text-secondary); margin: 0 0 28px; line-height: 1.5; }
 
 .doc h2 {
-  font-size: 24px; line-height: 1.2; letter-spacing: -0.02em; font-weight: 600;
+  font-size: 22px; line-height: 1.25; letter-spacing: -0.02em; font-weight: 700;
   margin: 52px 0 14px; padding-top: 8px;
   scroll-margin-top: calc(var(--header-h) + 18px);
 }
 .doc h3 {
-  font-size: 18px; font-weight: 600; letter-spacing: -0.01em;
+  font-size: 18px; font-weight: 700; letter-spacing: -0.01em;
   margin: 32px 0 10px; scroll-margin-top: calc(var(--header-h) + 18px);
 }
-.doc h4 { font-size: 15px; font-weight: 600; margin: 22px 0 8px; color: var(--text-primary); }
+.doc h4 { font-size: 15px; font-weight: 700; margin: 22px 0 8px; }
 
 /* anchor links on headings */
 .doc h2, .doc h3 { position: relative; }
@@ -44,7 +45,7 @@
 .doc code {
   font-family: var(--font-mono); font-size: 0.86em;
   background: var(--code-bg); border: 1px solid var(--code-border);
-  padding: 0.12em 0.4em; border-radius: 6px;
+  padding: 0.12em 0.4em; border-radius: var(--radius-sm);
   color: var(--text-primary);
   word-break: break-word;
 }
@@ -74,7 +75,7 @@
   display: inline-flex; align-items: center; gap: 5px;
   font: inherit; font-size: 12px; color: var(--text-secondary);
   background: var(--bg-surface); border: 1px solid var(--border);
-  border-radius: 7px; padding: 4px 8px; cursor: pointer; opacity: 0;
+  border-radius: var(--radius); padding: 4px 8px; cursor: pointer; opacity: 0;
   transition: opacity 0.14s, color 0.14s, border-color 0.14s;
 }
 .code-block:hover .copy-btn, .doc pre:hover + .copy-btn { opacity: 1; }
@@ -83,13 +84,10 @@
 
 /* minimal token colors for pre.hljs-lite spans */
 .tok-c { color: var(--text-muted); font-style: italic; }
-.tok-s { color: #b3760f; }
-[data-theme="dark"] .tok-s { color: #e2a336; }
-.tok-k { color: #9a5f00; font-weight: 500; }
-[data-theme="dark"] .tok-k { color: #eab34d; }
-.tok-f { color: #0969da; }
-[data-theme="dark"] .tok-f { color: #79c0ff; }
-.tok-n { color: #16a34a; }
+.tok-s { color: var(--tok-string); }
+.tok-k { color: var(--tok-keyword); font-weight: 500; }
+.tok-f { color: var(--tok-function); }
+.tok-n { color: var(--tok-number); }
 
 /* Tables */
 .doc .table-wrap { overflow-x: auto; margin: 0 0 22px; border: 1px solid var(--border); border-radius: var(--radius); }
@@ -121,7 +119,7 @@
 kbd, .kbd {
   font-family: var(--font-mono); font-size: 0.8em;
   background: var(--bg-elevated); border: 1px solid var(--border-strong);
-  border-bottom-width: 2px; border-radius: 6px;
+  border-bottom-width: 2px; border-radius: var(--radius-sm);
   padding: 1px 6px; color: var(--text-primary); white-space: nowrap;
 }
 
@@ -173,7 +171,7 @@ kbd, .kbd {
 .doc figure.shot { margin: 0 0 26px; }
 .doc figure.shot img {
   display: block; width: 100%; height: auto;
-  border: 1px solid var(--border); border-radius: 10px;
+  border: 1px solid var(--border); border-radius: var(--radius);
   background: var(--bg-surface);
 }
 .doc figure.shot figcaption {

@@ -45,23 +45,23 @@ def test_resolve_backend_rejects_unknown_capability():
 
 def test_visibility_cloud_hides_local_models():
     meta = {
-        "opus4.8": {},
-        "gpt5.5": {"provider": "openai_bedrock"},
+        "opus5.5": {},
+        "gpt6.1-sol": {"provider": "openai_bedrock"},
         "local_gemma": {"is_local": True},
     }
-    keys = ["opus4.8", "gpt5.5", "local_gemma"]
-    assert mm.visible_chat_keys(keys, meta, "cloud") == ["opus4.8", "gpt5.5"]
+    keys = ["opus5.5", "gpt6.1-sol", "local_gemma"]
+    assert mm.visible_chat_keys(keys, meta, "cloud") == ["opus5.5", "gpt6.1-sol"]
 
 
 def test_visibility_local_shows_only_local_models():
-    meta = {"opus4.8": {}, "local_gemma": {"is_local": True}, "local_coder": {"is_local": True}}
-    keys = ["opus4.8", "local_gemma", "local_coder"]
+    meta = {"opus5.5": {}, "local_gemma": {"is_local": True}, "local_coder": {"is_local": True}}
+    keys = ["opus5.5", "local_gemma", "local_coder"]
     assert mm.visible_chat_keys(keys, meta, "local") == ["local_gemma", "local_coder"]
 
 
 def test_visibility_hybrid_shows_all():
-    meta = {"opus4.8": {}, "local_gemma": {"is_local": True}}
-    keys = ["opus4.8", "local_gemma"]
+    meta = {"opus5.5": {}, "local_gemma": {"is_local": True}}
+    keys = ["opus5.5", "local_gemma"]
     assert mm.visible_chat_keys(keys, meta, "hybrid") == keys
 
 
@@ -69,8 +69,8 @@ def test_visibility_local_with_no_on_device_model_offers_nothing():
     # Local mode promises nothing leaves this Mac, so a cloud-only catalog (every
     # fresh install, before a Discover download) offers no chat model at all
     # rather than falling back to the cloud models it promised not to use.
-    meta = {"opus4.8": {}, "gpt5.5": {"provider": "openai_bedrock"}}
-    keys = ["opus4.8", "gpt5.5"]
+    meta = {"opus5.5": {}, "gpt6.1-sol": {"provider": "openai_bedrock"}}
+    keys = ["opus5.5", "gpt6.1-sol"]
     assert mm.visible_chat_keys(keys, meta, "local") == []
 
 
@@ -80,24 +80,24 @@ def test_visibility_cloud_with_only_on_device_models_offers_nothing():
 
 
 def test_mode_default_follows_what_the_mode_offers():
-    meta = {"opus5.0": {}, "local_gemma": {"is_local": True}}
-    keys = ["opus5.0", "local_gemma"]
+    meta = {"opus5.5": {}, "local_gemma": {"is_local": True}}
+    keys = ["opus5.5", "local_gemma"]
     # The configured default wins whenever the mode offers it ...
-    assert mm.mode_default_model(keys, meta, "cloud", "opus5.0") == "opus5.0"
-    assert mm.mode_default_model(keys, meta, "hybrid", "opus5.0") == "opus5.0"
+    assert mm.mode_default_model(keys, meta, "cloud", "opus5.5") == "opus5.5"
+    assert mm.mode_default_model(keys, meta, "hybrid", "opus5.5") == "opus5.5"
     # ... otherwise the first offered model, never a hidden one ...
-    local_default = mm.mode_default_model(keys, meta, "local", "opus5.0")
+    local_default = mm.mode_default_model(keys, meta, "local", "opus5.5")
     assert local_default in mm.visible_chat_keys(keys, meta, "local")
     # ... and nothing at all when the mode offers nothing.
-    assert mm.mode_default_model(["opus5.0"], meta, "local", "opus5.0") == ""
+    assert mm.mode_default_model(["opus5.5"], meta, "local", "opus5.5") == ""
 
 
 def test_turn_refusal_blocks_cloud_models_only_in_local_mode():
-    reason = mm.turn_model_refusal("opus5.0", on_device=False, label="Opus 5", mode="local")
+    reason = mm.turn_model_refusal("opus5.5", on_device=False, label="Opus 5.5", mode="local")
     assert reason and "Opus 5" in reason and "Discover" in reason
     assert mm.turn_model_refusal("local_gemma", on_device=True, label="", mode="local") is None
     for mode in ("cloud", "hybrid"):
-        assert mm.turn_model_refusal("opus5.0", on_device=False, label="", mode=mode) is None
+        assert mm.turn_model_refusal("opus5.5", on_device=False, label="", mode=mode) is None
 
 
 def test_turn_refusal_with_no_model_says_why():
@@ -183,7 +183,7 @@ def test_user_chat_models_merge_additively_over_system(monkeypatch):
         c = cfg.load_config()
         ids, meta = c["chat_models"], c["chat_model_meta"]
         # Shipped models are still present …
-        assert "opus4.8" in ids and "sonnet" in ids and "haiku" in ids
+        assert "opus5.5" in ids and "sonnet5.5" in ids and "haiku" in ids
         # … the user's new model was added …
         assert ids["my_local"] == "local:my-local"
         # … and the per-field override applied without dropping the shipped id.
@@ -201,14 +201,14 @@ def test_chat_models_disabled_hides_a_system_model(monkeypatch):
     monkeypatch.setattr(
         cfg,
         "_load_user_config",
-        lambda: {"chat_models_disabled": ["haiku", "sonnet"]},
+        lambda: {"chat_models_disabled": ["haiku", "sonnet5.5"]},
     )
     cfg._invalidate_cache()
     try:
         ids = cfg.load_config()["chat_models"]
-        assert "haiku" not in ids and "sonnet" not in ids
+        assert "haiku" not in ids and "sonnet5.5" not in ids
         # Non-hidden shipped models remain.
-        assert "opus4.8" in ids
+        assert "opus5.5" in ids
     finally:
         cfg._invalidate_cache()
 
@@ -257,6 +257,6 @@ def test_defaults_catalog_used_only_when_config_omits_chat_models(monkeypatch):
     cfg._invalidate_cache()
     try:
         ids = cfg.load_config()["chat_models"]
-        assert "opus4.6" in ids and "haiku" in ids  # DEFAULTS catalog
+        assert "opus5.5" in ids and "haiku" in ids  # DEFAULTS catalog
     finally:
         cfg._invalidate_cache()

@@ -1,23 +1,19 @@
 import { render, screen, act, fireEvent } from '@testing-library/react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { ThemeProvider, useTheme } from './ThemeProvider';
+import { PALETTE_STYLE_ID, ThemeProvider, useTheme } from './ThemeProvider';
 import { STORAGE_KEYS } from '@/utils/storageKeys';
+import { DEFAULT_PALETTE_ID } from '@/utils/palettes';
 
 /** Helper component that exposes theme context values for testing. */
 function ThemeConsumer() {
-  const { themeKey, resolvedTheme, setTheme, themes } = useTheme();
+  const { themeKey, resolvedTheme, setTheme } = useTheme();
   return (
     <div>
       <span data-testid="theme-key">{themeKey}</span>
       <span data-testid="resolved-theme">{resolvedTheme}</span>
-      <span data-testid="theme-count">{themes.length}</span>
       <button data-testid="set-light" onClick={() => setTheme('light')}>Light</button>
       <button data-testid="set-dark" onClick={() => setTheme('dark')}>Dark</button>
       <button data-testid="set-auto" onClick={() => setTheme('auto')}>Auto</button>
-      <button data-testid="set-dhc" onClick={() => setTheme('dark-high-contrast')}>DHC</button>
-      <button data-testid="set-lhc" onClick={() => setTheme('light-high-contrast')}>LHC</button>
-      <button data-testid="set-dd" onClick={() => setTheme('dark-daltonized')}>DD</button>
-      <button data-testid="set-ld" onClick={() => setTheme('light-daltonized')}>LD</button>
     </div>
   );
 }
@@ -28,14 +24,14 @@ describe('ThemeProvider', () => {
     document.documentElement.removeAttribute('data-theme');
   });
 
-  it('defaults to the Taw Light theme when localStorage is empty', () => {
+  it('follows the system when localStorage is empty', () => {
     render(
       <ThemeProvider>
         <ThemeConsumer />
       </ThemeProvider>,
     );
 
-    expect(screen.getByTestId('theme-key').textContent).toBe('light-taw');
+    expect(screen.getByTestId('theme-key').textContent).toBe('auto');
   });
 
   it('resolves auto to dark when system prefers dark', () => {
@@ -64,7 +60,7 @@ describe('ThemeProvider', () => {
     expect(screen.getByTestId('resolved-theme').textContent).toBe('light');
   });
 
-  it('ignores invalid localStorage values and falls back to the default theme', () => {
+  it('ignores invalid localStorage values and follows the system', () => {
     localStorage.setItem(STORAGE_KEYS.THEME, 'neon-pink');
 
     render(
@@ -73,11 +69,18 @@ describe('ThemeProvider', () => {
       </ThemeProvider>,
     );
 
-    expect(screen.getByTestId('theme-key').textContent).toBe('light-taw');
+    expect(screen.getByTestId('theme-key').textContent).toBe('auto');
   });
 
-  it('sets data-theme attribute on document root', () => {
-    localStorage.setItem(STORAGE_KEYS.THEME, 'dark-high-contrast');
+  it.each([
+    ['dark-high-contrast', 'dark'],
+    ['dark-daltonized', 'dark'],
+    ['dark-taw', 'dark'],
+    ['light-high-contrast', 'light'],
+    ['light-daltonized', 'light'],
+    ['light-taw', 'light'],
+  ])('keeps the mode of a theme saved before the merge (%s)', (stored, mode) => {
+    localStorage.setItem(STORAGE_KEYS.THEME, stored);
 
     render(
       <ThemeProvider>
@@ -85,7 +88,8 @@ describe('ThemeProvider', () => {
       </ThemeProvider>,
     );
 
-    expect(document.documentElement.getAttribute('data-theme')).toBe('dark-high-contrast');
+    expect(screen.getByTestId('theme-key').textContent).toBe(mode);
+    expect(document.documentElement.getAttribute('data-theme')).toBe(mode);
   });
 
   it('persists theme to localStorage when setTheme is called', () => {
@@ -109,21 +113,36 @@ describe('ThemeProvider', () => {
       </ThemeProvider>,
     );
 
-    fireEvent.click(screen.getByTestId('set-dhc'));
-    expect(document.documentElement.getAttribute('data-theme')).toBe('dark-high-contrast');
+    fireEvent.click(screen.getByTestId('set-dark'));
+    expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
 
-    fireEvent.click(screen.getByTestId('set-ld'));
-    expect(document.documentElement.getAttribute('data-theme')).toBe('light-daltonized');
+    fireEvent.click(screen.getByTestId('set-light'));
+    expect(document.documentElement.getAttribute('data-theme')).toBe('light');
   });
 
-  it('exposes all 9 theme options', () => {
+  it('offers system, light and dark, and resolves every option to a mode', () => {
+    function Options() {
+      const { themes, setTheme, resolvedTheme } = useTheme();
+      return (
+        <div>
+          {themes.map((t) => (
+            <button key={t.key} data-testid={`opt-${t.key}`} onClick={() => setTheme(t.key)}>{t.label}</button>
+          ))}
+          <span data-testid="mode">{resolvedTheme}</span>
+        </div>
+      );
+    }
     render(
       <ThemeProvider>
-        <ThemeConsumer />
+        <Options />
       </ThemeProvider>,
     );
 
-    expect(screen.getByTestId('theme-count').textContent).toBe('9');
+    for (const key of ['auto', 'light', 'dark']) {
+      fireEvent.click(screen.getByTestId(`opt-${key}`));
+      expect(['light', 'dark']).toContain(screen.getByTestId('mode').textContent);
+      expect(document.documentElement.getAttribute('data-theme')).toBe(screen.getByTestId('mode').textContent);
+    }
   });
 
   it('resolves auto to system preference when matchMedia changes', () => {
@@ -219,5 +238,58 @@ describe('useTheme', () => {
     );
 
     consoleSpy.mockRestore();
+  });
+});
+
+describe('ThemeProvider palettes', () => {
+  function PaletteConsumer() {
+    const { paletteId, setPalette } = useTheme();
+    return (
+      <div>
+        <span data-testid="palette">{paletteId}</span>
+        <button data-testid="set-nord" onClick={() => setPalette('nord')}>Nord</button>
+        <button data-testid="set-default" onClick={() => setPalette(DEFAULT_PALETTE_ID)}>Default</button>
+      </div>
+    );
+  }
+
+  const paletteStyle = () => document.getElementById(PALETTE_STYLE_ID)?.textContent ?? '';
+
+  beforeEach(() => {
+    localStorage.clear();
+    document.getElementById(PALETTE_STYLE_ID)?.remove();
+    document.documentElement.removeAttribute('data-palette');
+  });
+
+  it('starts on the default palette, which adds no stylesheet', () => {
+    render(<ThemeProvider><PaletteConsumer /></ThemeProvider>);
+    expect(screen.getByTestId('palette').textContent).toBe(DEFAULT_PALETTE_ID);
+    expect(document.documentElement.getAttribute('data-palette')).toBe(DEFAULT_PALETTE_ID);
+    expect(paletteStyle()).toBe('');
+  });
+
+  it('applies a palette, saves it and its stylesheet for the next first paint', () => {
+    render(<ThemeProvider><PaletteConsumer /></ThemeProvider>);
+    fireEvent.click(screen.getByTestId('set-nord'));
+
+    expect(document.documentElement.getAttribute('data-palette')).toBe('nord');
+    expect(paletteStyle()).toContain('html:root[data-theme="dark"]');
+    expect(localStorage.getItem(STORAGE_KEYS.PALETTE)).toBe('nord');
+    expect(localStorage.getItem(STORAGE_KEYS.PALETTE_CSS)).toBe(paletteStyle());
+
+    fireEvent.click(screen.getByTestId('set-default'));
+    expect(paletteStyle()).toBe('');
+    expect(localStorage.getItem(STORAGE_KEYS.PALETTE_CSS)).toBe('');
+  });
+
+  it('restores a saved palette and drops an unknown one', () => {
+    localStorage.setItem(STORAGE_KEYS.PALETTE, 'gruvbox');
+    const { unmount } = render(<ThemeProvider><PaletteConsumer /></ThemeProvider>);
+    expect(screen.getByTestId('palette').textContent).toBe('gruvbox');
+    unmount();
+
+    localStorage.setItem(STORAGE_KEYS.PALETTE, 'retired-palette');
+    render(<ThemeProvider><PaletteConsumer /></ThemeProvider>);
+    expect(screen.getByTestId('palette').textContent).toBe(DEFAULT_PALETTE_ID);
   });
 });

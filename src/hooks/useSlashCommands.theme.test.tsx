@@ -63,12 +63,12 @@ describe('useSlashCommands – /theme', () => {
     expect(setThemeMock).toHaveBeenCalledWith('auto');
   });
 
-  it('accepts a variant theme key', () => {
+  it('refuses a removed theme name', () => {
     const { result } = renderHook(() => useSlashCommands(makeOpts()));
 
     result.current.handleSlashCommand('/theme dark-high-contrast');
 
-    expect(setThemeMock).toHaveBeenCalledWith('dark-high-contrast');
+    expect(setThemeMock).not.toHaveBeenCalled();
   });
 
   it('does not call setTheme for an invalid theme and shows usage', () => {

@@ -51,7 +51,7 @@ function extOf(path: string): string {
   return i >= 0 ? base.slice(i + 1).toLowerCase() : '';
 }
 
-const MUTED: React.CSSProperties = { color: 'var(--text-muted, #888)', fontSize: 13, padding: 12 };
+const MUTED: React.CSSProperties = { color: 'var(--text-muted)', fontSize: 14, padding: 12 };
 
 /** Size-guard wrapper: HEAD the raw URL first and refuse to hand a huge
  *  workbook to exceljs (indexed folders can hold spreadsheets far bigger than
@@ -144,7 +144,7 @@ const TextContent: React.FC<{ path: string; mode: TextMode; reveal?: LineTarget 
     );
   }
   return (
-    <pre style={{ margin: 0, padding: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'var(--font-mono, monospace)', fontSize: 12.5, color: 'var(--text-primary, #eee)' }}>
+    <pre style={{ margin: 0, padding: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'var(--font-mono)', fontSize: 13.5, color: 'var(--text-primary)' }}>
       {data.content}
     </pre>
   );
@@ -205,7 +205,7 @@ export const FilePanel: React.FC<{
         flex: '1 1 auto',
         minHeight: 0,
         overflow: 'auto',
-        boxShadow: flash ? 'inset 0 0 0 2px var(--accent, #e2a336)' : 'none',
+        boxShadow: flash ? 'inset 0 0 0 2px var(--accent)' : 'none',
         transition: 'box-shadow 200ms ease',
       }}
     >

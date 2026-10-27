@@ -75,8 +75,8 @@ async def _bedrock_check(model: str | None) -> dict:
         chat_models = _get_chat_models()
         ping_model = (
             (chat_models.get(model) if model else None)
-            or chat_models.get("sonnet")
-            or chat_models.get("opus4.6")
+            or chat_models.get("sonnet5.5")
+            or chat_models.get("opus5.5")
             or next(iter(chat_models.values()))
         )
 

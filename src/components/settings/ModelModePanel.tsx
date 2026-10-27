@@ -128,7 +128,7 @@ export const ModelModePanel: React.FC = () => {
             background: 'var(--accent-dim)', border: '1px solid var(--accent)',
           }}
         >
-          <span style={{ fontSize: 12, color: 'var(--text-primary)' }}>
+          <span style={{ fontSize: 13, color: 'var(--text-primary)' }}>
             Saved. The model picker already follows the new mode; reload the app to switch
             indexing and retrieval too.
           </span>

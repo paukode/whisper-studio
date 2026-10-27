@@ -20,7 +20,7 @@
       "total_cache_read": 0,
       "total_cache_creation": 0,
       "estimated_cost_usd": 0,
-      "model": "opus5.0",
+      "model": "opus5.5",
       "context_used": 100,
       "context_max": 872000
     }

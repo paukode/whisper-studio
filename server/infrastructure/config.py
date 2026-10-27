@@ -111,12 +111,6 @@ DEFAULTS = {
     # a stable location; see server/infrastructure/paths.py.
     "data_dir": "",
     "tavily_api_key": "",
-    # Transcription languages (the Settings field "Transcription Languages";
-    # the key keeps its historical name). "pl" pins one language, "pl,en"
-    # limits detection to that list. Blank/None means, for Canary, English
-    # plus the Mac's preferred languages it decodes (server/asr/languages.py),
-    # and for Whisper its own detection. Parakeet has no language input.
-    "whisper_language": None,
     # The transcript panel's Translate dropdown: "off", "canary" (Canary's
     # native translation, any engine's audio, 25 languages with English on
     # one side of the pair), or "apple" (macOS on-device translator via the
@@ -146,7 +140,7 @@ DEFAULTS = {
     "speaker_embedder": "redimnet",
     # Cut a VAD utterance at speaker handovers instead of labelling the
     # whole thing as one speaker. Needs word timestamps from the engine
-    # (Whisper and Parakeet report them; Canary does not).
+    # (Whisper and Parakeet both report them).
     "speaker_split_turns": True,
     # Remember named speakers across recordings. Renaming "Speaker 2" to a
     # name stores that cluster's voiceprint; later sessions recognise them.
@@ -875,24 +869,40 @@ def migrate_user_config() -> bool:
 
 # Keys the app no longer reads: the per-type agent budgets (agent_limits) and
 # the scheduled-run round cap (cron_max_rounds) gave way to the one round limit
-# and time limit every run takes (round_limit, time_limit_minutes).
-RETIRED_USER_KEYS = ("agent_limits", "cron_max_rounds")
+# and time limit every run takes (round_limit, time_limit_minutes); the
+# transcription languages (whisper_language) gave way to each engine's own
+# detection.
+RETIRED_USER_KEYS = ("agent_limits", "cron_max_rounds", "whisper_language")
+
+# Values the app no longer offers, and what replaces them: Canary only
+# translates now, so a saved Canary transcription model becomes Parakeet.
+RETIRED_USER_VALUES = {"transcription_backend": {"canary": "streaming"}}
 
 
 def retire_user_config_keys() -> list[str]:
     """One-time upgrade of the USER layer: drop the RETIRED_USER_KEYS a saved
-    config still carries, so none lingers as a setting that does nothing.
-    Returns the keys it removed."""
+    config still carries and replace its RETIRED_USER_VALUES, so none
+    lingers as a setting that does nothing. Returns the keys it changed."""
     with USER_CONFIG_LOCK:
         raw = _load_user_config()
         removed = [key for key in RETIRED_USER_KEYS if key in raw]
-        if not removed:
+        replaced = [
+            key
+            for key, values in RETIRED_USER_VALUES.items()
+            if isinstance(raw.get(key), str) and raw[key] in values
+        ]
+        if not removed and not replaced:
             return []
         for key in removed:
             raw.pop(key)
+        for key in replaced:
+            raw[key] = RETIRED_USER_VALUES[key][raw[key]]
         save_config(raw)
-    log.info("Removed retired config key(s) %s: runs take Settings > Costs > Budget.", removed)
-    return removed
+    if removed:
+        log.info("Removed retired config key(s) %s: the app no longer reads them.", removed)
+    for key in replaced:
+        log.info("Config %s now %r: the old value is no longer offered.", key, raw[key])
+    return removed + replaced
 
 
 def unfiltered_chat_models() -> tuple[dict, dict]:
@@ -1103,15 +1113,6 @@ async def get_config_endpoint():
         safe["_feature_flag_states"] = get_flag_states()
     except Exception:
         pass
-    # Read-only: what the transcription language setting resolves to per
-    # engine, so Settings can show the effective set (not a config key, so
-    # PUT ignores it).
-    try:
-        from server.asr.languages import summary
-
-        safe["_transcription_languages"] = summary()
-    except Exception as e:
-        log.warning("Transcription languages summary failed: %s", e)
     # Include config layer info
     safe["_has_project_config"] = bool(_load_project_config(ws))
     return safe

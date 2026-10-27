@@ -90,7 +90,7 @@ export const CronEventCard: React.FC<CronEventCardProps> = ({ event }) => {
         <MarkdownRenderer content={text} />
       </div>
       {nextRun && (
-        <div className="cron-event-foot" style={{ fontSize: 11, opacity: 0.7, marginTop: 6 }}>
+        <div className="cron-event-foot" style={{ fontSize: 12, opacity: 0.7, marginTop: 6 }}>
           Next run {nextRun}
         </div>
       )}

@@ -28,7 +28,7 @@ export const DocsPanel: React.FC<{ page: string; anchor?: string; navRev?: numbe
         minHeight: 0,
         // The docs site paints its own themed background; this only covers the
         // instant before it loads.
-        background: 'var(--bg-primary, #fff)',
+        background: 'var(--bg-primary)',
       }}
     />
   );

@@ -33,26 +33,26 @@ function readThemeTokens(): ThemeTokens {
   const v = (name: string, fallback: string) => s.getPropertyValue(name).trim() || fallback;
   return {
     bg: v('--bg-surface', '#ffffff'),
-    textPrimary: v('--text-primary', '#1f1e1d'),
-    textSecondary: v('--text-secondary', '#6b6862'),
-    textMuted: v('--text-muted', '#a3a097'),
-    grid: v('--border', 'rgba(0,0,0,0.08)'),
-    danger: v('--accent-record', '#d33b30'),
+    textPrimary: v('--text-primary', '#46445e'),
+    textSecondary: v('--text-secondary', '#5d5b78'),
+    textMuted: v('--text-muted', '#64637f'),
+    grid: v('--border', '#e1e3ee'),
+    danger: v('--accent-record', '#c23a40'),
     category: [1, 2, 3, 4, 5, 6].map((i) => v(`--speaker-${i}`, '#888888')),
     // Sequential ramp runs from the page surface to the accent, so it reads
     // correctly light-on-dark and dark-on-light without a second palette.
-    ramp: [v('--bg-elevated', '#f0eee6'), v('--accent', '#1d6ec2')],
+    ramp: [v('--bg-elevated', '#f3f4f9'), v('--accent', '#6a45e8')],
   };
 }
 
-/** Watch `data-theme` on <html> and re-read tokens when it changes. */
+/** Watch `data-theme` and `data-palette` on <html> and re-read tokens when either changes. */
 function useThemeTokens(): ThemeTokens {
   const [tokens, setTokens] = useState(readThemeTokens);
   useEffect(() => {
     const observer = new MutationObserver(() => setTokens(readThemeTokens()));
     observer.observe(document.documentElement, {
       attributes: true,
-      attributeFilter: ['data-theme'],
+      attributeFilter: ['data-theme', 'data-palette'],
     });
     return () => observer.disconnect();
   }, []);

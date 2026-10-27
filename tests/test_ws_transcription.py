@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 
 import server.websocket as ws_mod
 from server import diarization
-from server.asr import canary_backend
+from server.asr import canary_translator
 from server.diarization import speakers
 
 _PCM = b"\x00\x00" * 1600  # 0.1 s of PCM16 silence; the fake backend ignores it
@@ -85,8 +85,7 @@ def harness(monkeypatch):
     # No speaker encoder: every final takes the continuity label.
     monkeypatch.setattr(diarization, "embed", lambda audio: None)
     # Canary never loads: a translation decode returns a fixed line.
-    monkeypatch.setattr(canary_backend, "_generate", lambda a, source_lang, target_lang: "hello")
-    monkeypatch.setattr(canary_backend, "_pending_translations", 0)
+    monkeypatch.setattr(canary_translator, "_generate", lambda a, source_lang, target_lang: "hello")
     ws_mod._chunk_counters.clear()
     ws_mod._carryover.clear()
     app = FastAPI()
@@ -144,11 +143,11 @@ def test_dictation_never_schedules_a_translation(harness, monkeypatch):
     client, backend, conf = harness
     conf["translate_mode"] = "canary"
     queued: list[int] = []
-    real_queued = canary_backend.note_translation_queued
+    real_translate = canary_translator.translate_utterance
     monkeypatch.setattr(
-        canary_backend,
-        "note_translation_queued",
-        lambda: (queued.append(1), real_queued())[1],
+        canary_translator,
+        "translate_utterance",
+        lambda *a: (queued.append(1), real_translate(*a))[1],
     )
 
     backend.script = [[_final("dzień dobry")]]
@@ -174,37 +173,10 @@ def test_dictation_never_schedules_a_translation(harness, monkeypatch):
     assert queued == [1]
 
 
-# ── translation accounting across a dropped socket ───────────────────────
+# ── every translation reaches the client ─────────────────────────────────
 
 
-def test_translation_cancelled_in_the_queue_releases_the_draft_gate(harness):
-    """A socket that closes without a stop cancels its queued translations.
-    A job cancelled before it ran must still be counted out of Canary's draft
-    scheduler, or every Canary session in the process stops showing live
-    drafts until restart."""
-    client, backend, conf = harness
-    conf["translate_mode"] = "canary"
-    release = threading.Event()
-    # Occupy Canary's single decode thread so the translation stays queued.
-    blocker = canary_backend.executor.submit(release.wait, 10)
-    try:
-        backend.script = [[_final("dzień dobry")]]
-        with client.websocket_connect("/ws?session_id=ws-test-drop") as ws:
-            ws.send_bytes(_PCM)
-            (frame,) = _frames_until_pong(ws)
-            assert frame["translating"] is True
-            assert _wait_until(canary_backend._translations_waiting)
-        # Disconnected without a stop: the queued job was cancelled.
-    finally:
-        release.set()
-        blocker.result(timeout=5)
-    canary_backend.executor.submit(lambda: None).result(timeout=5)
-    assert not canary_backend._translations_waiting()
-
-
-def test_translation_that_runs_is_counted_out_once(harness):
-    """The ordinary path: the job runs, is counted out on entry, and the
-    count returns to zero rather than drifting either way."""
+def test_every_translation_reaches_the_client(harness):
     client, backend, conf = harness
     conf["translate_mode"] = "canary"
     backend.script = [[_final("dzień dobry")], [_final("do widzenia")]]
@@ -213,7 +185,6 @@ def test_translation_that_runs_is_counted_out_once(harness):
         ws.send_bytes(_PCM)
         frames = _frames_until_ended(ws)
     assert sorted(f["type"] for f in frames) == ["transcript"] * 2 + ["translation"] * 2
-    assert canary_backend._pending_translations == 0
 
 
 # ── draft withdrawal reaches the client ──────────────────────────────────

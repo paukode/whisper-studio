@@ -5,7 +5,7 @@ import { renderHook } from '@testing-library/react';
 // gate and the first message. Arming the gate alone left the composer empty
 // and nothing running, which read as a swallowed message.
 vi.mock('@/providers/ThemeProvider', () => ({
-  useTheme: () => ({ setTheme: vi.fn(), themeKey: 'light-taw', resolvedTheme: 'light-taw', themes: [] }),
+  useTheme: () => ({ setTheme: vi.fn(), themeKey: 'light', resolvedTheme: 'light', themes: [] }),
 }));
 
 import { useSlashCommands, type UseSlashCommandsOptions } from './useSlashCommands';
