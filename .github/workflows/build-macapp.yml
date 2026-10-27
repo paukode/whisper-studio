@@ -107,6 +107,11 @@ jobs:
           echo "SIGN_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
 
       - name: Build Whisper Studio.app
+        env:
+          # torch.hub checks the ReDimNet2 repo through the GitHub API; without
+          # a token the shared runner hits the anonymous rate limit and the
+          # build stops (ReDimNet2 always ships).
+          GITHUB_TOKEN: ${{ github.token }}
         run: bash macapp/build_app.sh   # ad-hoc unless SIGN_IDENTITY was set above
 
       - name: Notarize and staple
