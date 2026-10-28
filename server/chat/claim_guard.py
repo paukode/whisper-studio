@@ -64,7 +64,7 @@ from server.chat.engine.events import (
     TextDelta,
 )
 from server.goals import claims as c
-from server.goals.call_results import turn_calls
+from server.goals.call_results import turn_calls, woken_calls
 from server.goals.claim_text import Lines
 from server.goals.claims import _paths_only
 from server.goals.evidence import (
@@ -279,12 +279,15 @@ class ClaimGuard:
         if paused is not None and paused.prompt != last_user_prompt(ctx.messages):
             paused = None
         policy = getattr(ctx, "policy", None)
+        # A turn woken by finished background commands began, for its
+        # evidence, when the earliest of them did (server/tasks/wake.py).
+        _, woke_at = woken_calls(ctx.messages)
         return cls(
             workspace=ctx.ws_path or None,
             plan_mode=ctx.plan_mode,
             session_id=scope,
             enabled=ctx.cost_source != "memory" and _checking_claims(),
-            started_at=paused.started_at if paused else None,
+            started_at=paused.started_at if paused else woke_at,
             notes_at_round_end=policy is not None and not policy.completion_gate,
             receipts=getattr(ctx, "earlier_deliveries", None),
             paused=paused,
@@ -315,6 +318,10 @@ class ClaimGuard:
     def _evidence(self) -> Evidence:
         if self._before is None:
             self._before = before_of(self._messages, self.receipts, self._text_cache)
+        # Background commands whose results reached the turn without a call
+        # of its own count as its calls (call_results.woken_calls).
+        for x in woken_calls(self._messages)[0]:
+            self._calls.setdefault(x.id, x)
         return Evidence.of(
             self._messages,
             workspace=self.workspace,

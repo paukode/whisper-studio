@@ -86,6 +86,7 @@ def run_with_handoff(
     write_root: str | None = None,
     scratch_dir: str | None = None,
     secret_reads: bool = False,
+    wake_on_finish: bool = False,
 ) -> HandoffResult:
     """Run ``exec_command`` foreground-first with a single spawn.
 
@@ -105,6 +106,9 @@ def run_with_handoff(
 
     ``write_mode``, ``write_root``, ``scratch_dir`` and ``secret_reads`` are the sandbox's (see
     ``popen_sandboxed``); a handed-off process keeps the sandbox it started in.
+    ``wake_on_finish``: a chat turn started it, so a handed-off command reports
+    back to that chat when it finishes (server/tasks/wake.py). Work it left
+    running in its group never does.
     """
     from server.process_utils import wait_group_gone
     from server.sandbox import popen_sandboxed
@@ -136,7 +140,16 @@ def run_with_handoff(
             returncode = proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
             handed = _hand_off(
-                command, proc, session_id, cwd, task_id, out_path, profile_path, spawned_at, owner
+                command,
+                proc,
+                session_id,
+                cwd,
+                task_id,
+                out_path,
+                profile_path,
+                spawned_at,
+                owner,
+                wake_on_finish=wake_on_finish,
             )
             if handed is not None:
                 return handed
@@ -231,6 +244,7 @@ def _hand_off(
     owner: str,
     *,
     left_running: bool = False,
+    wake_on_finish: bool = False,
 ) -> HandoffResult | None:
     """Move a live foreground command into the task registry, or None when a
     Stop already claimed it. ``left_running``: the command itself finished and
@@ -241,6 +255,10 @@ def _hand_off(
         meta = {"cwd": cwd, "handoff": True, "spawned_at": spawned_at}
         if owner:
             meta["owner"] = owner
+        if wake_on_finish and not left_running:
+            from server.tasks.wake import WAKE_META_KEY
+
+            meta[WAKE_META_KEY] = True
         if left_running:
             meta["left_running"] = True
             log.info("Tracking work left running by: %s", command[:80])

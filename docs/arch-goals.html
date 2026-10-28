@@ -112,7 +112,9 @@
         reads whether each call finished: one that failed, was refused or denied, still waits for
         approval or for input, ran past its time limit, or still runs in the background did nothing
         yet; a background command counts once a later <code>task_status</code> or
-        <code>task_output</code> shows it finished with exit 0.</p>
+        <code>task_output</code> shows it finished with exit 0. A command whose result started the turn
+        (a <code>task_report</code> row) counts as a call of that turn. For the check, the turn
+        starts when that command started.</p>
         <p>A claim the turn did not back rests on earlier work only as a recap. The conversation must
         show it was done (a delivery an earlier reply verified, which the chat sends along with its
         history and never puts in the model's prompt, or an agent's report), the turn must not have

@@ -1316,6 +1316,14 @@ async def chat_endpoint(request: Request):
     # paused awaiting user approval. When set, this is a continuation
     # rather than a new user message — the LLM resumes where it paused.
     approved_tool_result = body.get("approved_tool_result")
+    # A turn the app started because background commands this chat ran have
+    # finished (server/tasks/wake.py): their results are task_report rows in
+    # the history, and the server words the request, not the client.
+    runtime_wake = bool(body.get("runtime_wake")) and approved_tool_result is None
+    if runtime_wake:
+        from server.tasks.wake import WAKE_PROMPT
+
+        question = WAKE_PROMPT
     # What the user typed, before mentions are inlined and the transcript,
     # attachments and grounding join it in one message: what the completion
     # gate reads as their ask. A continuation takes it back from the pause.
@@ -1367,6 +1375,13 @@ async def chat_endpoint(request: Request):
     _last_seen = stream_slot.heartbeats.get(session_id, _busy_since)
     _slot_live = stream_slot.is_live(session_id, _now)
     _turn_ending = False
+    if runtime_wake and _slot_live:
+        # A turn started meanwhile (another window, or the user): it carries
+        # the results in its history, and the wake text is no user message
+        # to fold into it.
+        return JSONResponse(
+            {"queued_into_running_turn": False, "error": "session_busy"}, status_code=409
+        )
     if is_new_turn and _slot_live:
         from server.chat.engine.midturn_inbox import push as _push_midturn
 

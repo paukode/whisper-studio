@@ -114,10 +114,14 @@ def _record_unfinished_round(ctx: "TurnContext", round_num: int) -> None:
 
 def _midturn_text(entry) -> str:
     """How an inbox entry reads to the model. Agent reports are agent output
-    (possibly quoting web pages or files), so they are framed as data and
-    never as something the user said."""
-    from server.chat.engine.midturn_inbox import AGENT_REPORT
+    (possibly quoting web pages or files) and a command result is command
+    output, so both are framed as data and never as something the user said."""
+    from server.chat.engine.midturn_inbox import AGENT_REPORT, TASK_REPORT
 
+    if entry.kind == TASK_REPORT:
+        from server.tasks.wake import MIDTURN_HEAD
+
+        return f"<system-reminder>{MIDTURN_HEAD}\n\n{entry.text}</system-reminder>"
     if entry.kind == AGENT_REPORT:
         return (
             "<system-reminder>Reports from agents launched in this conversation "

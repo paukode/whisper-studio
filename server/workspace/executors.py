@@ -727,6 +727,7 @@ def _exec_ws_run_command(tool_input, transcript, current_attachments):
                 run_in_background=run_in_background,
                 write_mode="readonly",
                 secret_reads=bypass,
+                wake_on_finish=not tool_input.get("__agent__"),
             ).text
         except Exception as e:
             return f"Error: {e}"
@@ -773,6 +774,7 @@ def run_workspace_command(
     run_in_background: bool = False,
     write_mode: str = "open",
     secret_reads: bool = False,
+    wake_on_finish: bool = False,
 ) -> CommandRun:
     """The one execution path for ws_run_command, read-only and approved alike.
 
@@ -790,7 +792,9 @@ def run_workspace_command(
     scratch folder is writable beside it, and holds its package caches.
     ``secret_reads`` lets it read the credential stores (server/security/
     secret_reads.py); without it, a failure that looks like the sandbox hid
-    one says how to ask.
+    one says how to ask. ``wake_on_finish``: a chat turn runs it (not an agent
+    or a cron job), so a command that ends up in the background reports back
+    to that chat when it finishes (server/tasks/wake.py).
     """
     from server.cwd_tracker import (
         extract_cwd_from_output,
@@ -819,6 +823,7 @@ def run_workspace_command(
             write_root=ws,
             scratch_dir=scratch_dir,
             secret_reads=secret_reads,
+            wake_on_finish=wake_on_finish,
         )
         return CommandRun(text=text, background=True)
 
@@ -832,9 +837,12 @@ def run_workspace_command(
         write_root=ws,
         scratch_dir=scratch_dir,
         secret_reads=secret_reads,
+        wake_on_finish=wake_on_finish,
     )
     if result.background:
-        text = _background_started_message(command, result.task_id, result.output_path)
+        text = _background_started_message(
+            command, result.task_id, result.output_path, reports_back=wake_on_finish
+        )
         return CommandRun(text=text, background=True)
     clean_output, new_cwd = extract_cwd_from_output(result.output.strip())
     if session_id and new_cwd and os.path.isdir(new_cwd):
@@ -889,6 +897,7 @@ def _start_background_command(
     write_root: str | None = None,
     scratch_dir: str | None = None,
     secret_reads: bool = False,
+    wake_on_finish: bool = False,
 ) -> str:
     """Start a command in the background and return a status message."""
     from server.tasks.shell import start_shell_task
@@ -902,18 +911,33 @@ def _start_background_command(
         write_root=write_root,
         scratch_dir=scratch_dir,
         secret_reads=secret_reads,
+        wake_on_finish=wake_on_finish,
     )
-    return _background_started_message(command, task_info["task_id"], task_info["output_path"])
+    return _background_started_message(
+        command, task_info["task_id"], task_info["output_path"], reports_back=wake_on_finish
+    )
 
 
-def _background_started_message(command: str, task_id: str, output_path: str) -> str:
-    return (
-        f"[Background Task Started] task_id={task_id}\n"
-        f"Command: {command[:200]}\n"
-        f"The command is running in the background; you will see a task event "
-        f"in this session when it finishes. Check on it with task_status "
+def _background_started_message(
+    command: str, task_id: str, output_path: str, *, reports_back: bool = False
+) -> str:
+    """What the model is told when a command moves to the background.
+    ``reports_back``: its result comes back to this chat on its own
+    (server/tasks/wake.py), so there is nothing to poll."""
+    head = f"[Background Task Started] task_id={task_id}\nCommand: {command[:200]}\n"
+    if reports_back:
+        return head + (
+            "The command is running in the background. When it finishes, its result "
+            "comes back to you in this conversation on its own (a new turn starts if "
+            "none is running), so do not poll it or wait for it with sleep: go on with "
+            "other work, or end your turn and say what is running. task_status and "
+            f"task_output {{'task_id': '{task_id}'}} read it earlier if you need to. "
+            f"Raw output file: {output_path}"
+        )
+    return head + (
+        "The command is running in the background. Check on it with task_status "
         f"{{'task_id': '{task_id}'}} and read its output with task_output "
-        f"{{'task_id': '{task_id}'}} — wait a while between checks (30s, then "
+        f"{{'task_id': '{task_id}'}}; wait a while between checks (30s, then "
         f"1-2 min) rather than polling immediately. Raw output file: {output_path}"
     )
 

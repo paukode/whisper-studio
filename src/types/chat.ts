@@ -98,7 +98,14 @@ export interface TurnModelSettings {
 }
 
 export interface ChatMessage {
-  role: 'user' | 'assistant' | 'cron_event' | 'session_message' | 'agent_report' | 'agent_answer';
+  role:
+    | 'user'
+    | 'assistant'
+    | 'cron_event'
+    | 'session_message'
+    | 'agent_report'
+    | 'agent_answer'
+    | 'task_report';
   content: string;
   timestamp: string;
   /** Populated when role === 'cron_event'. Renders as a CronEventCard
@@ -113,6 +120,10 @@ export interface ChatMessage {
    *  after agent reports landed with no turn running. Backend-owned row so
    *  it survives saves; rendered as an assistant bubble. */
   agentAnswer?: AgentAnswerPayload;
+  /** role='task_report' (UI-only in storage, relabeled as a user turn for the
+   *  model): the result of a background command this chat started, which
+   *  finished after the turn that started it (server/tasks/wake.py). */
+  taskReport?: TaskReportPayload;
   /** Populated when role === 'session_message'. Renders as a
    *  SessionMessageCard. */
   sessionMessage?: SessionMessagePayload;
@@ -377,6 +388,19 @@ export interface AgentAnswerPayload {
   team_id?: string;
   team_name?: string;
   model?: string | null;
+  timestamp?: string;
+}
+
+/** A finished background command's result (server/tasks/wake.py). */
+export interface TaskReportPayload {
+  task_id: string;
+  command: string;
+  /** completed | failed | stopped */
+  status: string;
+  exit_code?: number | null;
+  started_at?: string;
+  duration_ms?: number | null;
+  output_tail?: string;
   timestamp?: string;
 }
 

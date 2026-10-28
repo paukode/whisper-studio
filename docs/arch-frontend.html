@@ -289,6 +289,9 @@
       <tbody>
         <tr><td><code>agent_report</code></td><td>Agent work finished with no live turn to carry it (you pressed Stop, the app restarted, a detached or resumed agent ended). The reports are appended as an <code>AgentReportCard</code> row so the work is not lost twice.</td></tr>
         <tr><td><code>agent_answer</code></td><td>The answer a one-round wake turn wrote from those reports, appended as an assistant bubble labelled "Answered from the agents' reports".</td></tr>
+        <tr><td><code>task_report</code></td><td>A background command of this session stopped. The result is appended as a <code>TaskReportCard</code> row.</td></tr>
+        <tr><td><code>task_wake</code></td><td>No live turn read those results. <code>backgroundWake.ts</code> starts a chat turn for the session, now or when the session is free.</td></tr>
+        <tr><td><code>terminal_show</code></td><td>App-wide. The assistant runs a command in a visible terminal. The terminal panel opens on the tab of that terminal. If the panel has no tab for that terminal, it adds one.</td></tr>
       </tbody>
     </table></div>
     <p>Both are stored as real session rows (<code>role: 'agent_report'</code> and

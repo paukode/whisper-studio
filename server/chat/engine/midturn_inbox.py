@@ -8,12 +8,16 @@ extra context mid-run wants: they want the RUNNING turn to take it into
 account, the way Claude Code folds a message sent mid-turn into the turn
 that's already in flight instead of starting a separate one.
 
-Two producers push here:
+Three producers push here:
 
 - server/chat/routes.py, with the user's text (kind ``user``);
 - server/agents/wake.py, with agent reports that land while a chat turn is
-  live (kind ``agent_report``). The runner frames those as agent output, never
-  as something the user said.
+  live (kind ``agent_report``);
+- server/tasks/wake.py, with the result of a background command the chat
+  started (kind ``task_report``).
+
+The runner frames reports and results as data, never as something the user
+said.
 
 Exactly one consumer drains it: the user-facing chat turn that owns the
 session's busy slot (``TurnContext.midturn_inbox``). Subagents, cron, voice
@@ -30,8 +34,8 @@ Lifecycle, driven by the slot owner:
   ``close_and_take`` on every exit that reads no more), with no await in
   between, so a push that comes after it is refused and the caller starts
   the next turn instead of queueing text that nobody will read. What was
-  accepted but never read is handed on: agent reports get a wake turn, and a
-  user message is announced as unanswered. The activity captions' end-of-turn
+  accepted but never read is handed on: agent reports and command results
+  get a wake turn, and a user message is announced as unanswered. The activity captions' end-of-turn
   wait (activity_labels.LABEL_TIMEOUT_S) comes before the close, while the
   inbox is still open: after an answer before the round cap, a push in that
   window gets one more round of the turn; at any other end, it is handed on
@@ -48,13 +52,14 @@ from typing import NamedTuple
 
 USER = "user"
 AGENT_REPORT = "agent_report"
+TASK_REPORT = "task_report"
 
 
 class Entry(NamedTuple):
     kind: str
     text: str
-    # The report payload behind an agent_report entry, so reports the turn
-    # never read can still be handed to a wake turn.
+    # The payload behind an agent_report or task_report entry, so what the
+    # turn never read can still be handed to a wake turn.
     payload: dict | None = None
 
 
@@ -130,8 +135,9 @@ UNANSWERED = (
 
 def close_and_announce(session_id: str) -> list[str]:
     """Close the chat turn's inbox for good and hand on what it accepted but
-    never read: agent reports get a wake turn (server/agents/wake.py), the
-    same as a push the closed inbox refuses, and a message the user sent is
+    never read: agent reports get a wake turn (server/agents/wake.py) and
+    command results ask the app for one (server/tasks/wake.py), the same as a
+    push the closed inbox refuses, and a message the user sent is
     announced as unanswered, on the stream and in the notifications, instead
     of going quiet on the composer's promise. Returns the SSE frames to send
     before the turn's [DONE]. Synchronous on purpose: nothing may reach the
@@ -151,6 +157,12 @@ def close_and_announce(session_id: str) -> list[str]:
             log.info("Unread agent reports at turn end (session %s): %s", session_id, how)
         except Exception as e:  # noqa: BLE001 - the reports are rows in the chat already
             log.warning("Unread agent reports not handed on (session %s): %s", session_id, e)
+    results = [e.payload for e in left if e.kind == TASK_REPORT and e.payload]
+    if results:
+        from server.tasks import wake as task_wake
+
+        task_wake.deliver_unread(session_id, results)
+        log.info("Unread command results at turn end (session %s): wake asked", session_id)
     if not any(e.kind == USER for e in left):
         return []
     log.info("Mid-turn message left unanswered at turn end (session %s)", session_id)

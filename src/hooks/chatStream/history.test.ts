@@ -109,4 +109,18 @@ describe('buildHistoryPayload', () => {
     expect(rows).toHaveLength(40);
     expect(rows[0].content).toBe('m10');
   });
+
+  it('ships a finished background command as a model row', () => {
+    const report = { task_id: 't1', command: 'make', status: 'completed' };
+    const rows = buildHistoryPayload(
+      [
+        msg({}),
+        msg({ role: 'assistant', content: 'running' }),
+        msg({ role: 'task_report', content: '', taskReport: report }),
+        msg({ content: 'just sent' }),
+      ],
+      false,
+    );
+    expect(rows[rows.length - 1]).toEqual({ role: 'task_report', content: '', taskReport: report });
+  });
 });

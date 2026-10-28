@@ -644,6 +644,7 @@ async def _do_command(payload: dict) -> ApprovalOutcome:
             run_in_background=bool(payload.get("run_in_background")),
             write_mode="open" if reviewed_by_human(payload) else "workspace",
             secret_reads=secret,
+            wake_on_finish=not payload.get("__agent__"),
         )
     except Exception as e:
         return ApprovalOutcome(ok=False, error=str(e))

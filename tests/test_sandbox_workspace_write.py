@@ -171,9 +171,11 @@ def _capture_run(monkeypatch):
         run_in_background=False,
         write_mode="open",
         secret_reads=False,
+        wake_on_finish=False,
     ):
         seen["write_mode"] = write_mode
         seen["secret_reads"] = secret_reads
+        seen["wake_on_finish"] = wake_on_finish
         return executors.CommandRun(text="ok", returncode=0)
 
     monkeypatch.setattr("server.workspace.executors.run_workspace_command", fake_run)
@@ -197,8 +199,12 @@ def test_an_unreviewed_or_agent_command_runs_workspace_confined(monkeypatch):
     seen = _capture_run(monkeypatch)
     assert asyncio.run(_do_command({"command": "echo hi", UNREVIEWED_KEY: True})).ok
     assert seen["write_mode"] == "workspace"
+    # A chat's command reports back when it finishes in the background.
+    assert seen["wake_on_finish"] is True
     assert asyncio.run(_do_command({"command": "echo hi", "__agent__": True})).ok
     assert seen["write_mode"] == "workspace"
+    # An agent's command belongs to its own loop: it wakes no chat.
+    assert seen["wake_on_finish"] is False
 
 
 def test_the_inline_path_stamps_every_payload_unreviewed(monkeypatch):
@@ -267,6 +273,7 @@ def test_a_confined_ws_run_command_is_confined_to_the_workspace_not_the_cwd(monk
         write_root=None,
         scratch_dir=None,
         secret_reads=False,
+        wake_on_finish=False,
     ):
         seen.update(cwd=cwd, write_mode=write_mode, write_root=write_root)
         return handoff.HandoffResult(background=False, output="", returncode=0)
