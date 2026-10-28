@@ -405,6 +405,11 @@ substep "copying python runtime"
 rsync -a --delete --exclude '__pycache__/' --exclude '*.pyc' \
     "$PY_DIR/" "$RES_DIR/python/"
 rm -f "$RES_DIR/python/.requirements.sha256"
+# SpeechRecognition (pulled in by markitdown's audio extra) ships prebuilt
+# FLAC encoders for every platform. The app transcribes with its own engines
+# and never calls them, and Apple's notary service rejects the macOS one
+# (built against an SDK older than 10.9), so they stay out of the bundle.
+rm -f "$RES_DIR"/python/lib/python3*/site-packages/speech_recognition/flac-*
 
 # f.4b: Playwright browsers for Live Preview. The shell points the backend at
 # this directory via PLAYWRIGHT_BROWSERS_PATH, so the preview feature works
@@ -544,6 +549,20 @@ while IFS= read -r -d '' f; do
 done < <(find "$RES_DIR" -type f -print0)
 substep "signed $SIGNED Mach-O files"
 
+# Nested bundles (Chrome for Testing's .app, its .framework and its helper
+# apps) carry their own seal over their resources. Signing their binaries one
+# by one above breaks that seal, and the notary service rejects the browser,
+# so each bundle is signed again as a bundle, deepest first: a framework's
+# helper apps before the framework, the framework before its app.
+substep "signing nested bundles"
+NESTED=0
+while IFS=$'\t' read -r _ bundle; do
+    codesign "${SIGN_ARGS[@]}" "$bundle"
+    NESTED=$((NESTED + 1))
+done < <(find "$RES_DIR" -type d \( -name '*.app' -o -name '*.framework' -o -name '*.xpc' -o -name '*.appex' \) \
+    | awk -F/ '{ print NF "\t" $0 }' | sort -rn)
+substep "signed $NESTED nested bundles"
+
 substep "signing main executable"
 codesign "${SIGN_ARGS[@]}" "$CONTENTS_DIR/MacOS/WhisperStudio"
 
@@ -551,6 +570,10 @@ substep "signing app bundle"
 codesign "${SIGN_ARGS[@]}" "$APP_DIR"
 
 codesign --verify "$APP_DIR" || die "codesign verification failed"
+while IFS= read -r bundle; do
+    codesign --verify --deep --strict "$bundle" \
+        || die "nested bundle signature invalid: $bundle"
+done < <(find "$RES_DIR" -type d -name '*.app' -prune)
 
 log "Done: $APP_DIR"
 substep "launch:      open \"$APP_DIR\""
