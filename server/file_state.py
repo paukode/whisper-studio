@@ -1,7 +1,10 @@
 """
-Per-session file read tracking — dedup, staleness detection, write gate.
+Per-session file read tracking: dedup, staleness detection, write gate.
 
-Keyed by (session_id, relative_path). No dependencies on other server modules.
+Keyed by (session_id, the file's resolved absolute path), so a read through
+a relative path and a write through the absolute one (or the reverse) are
+the same file, and the same relative path in another workspace is not. No
+dependencies on other server modules.
 """
 
 import os
@@ -9,9 +12,12 @@ import os
 _read_state: dict[tuple[str, str], dict] = {}
 
 
+def _key(session_id: str, abs_path: str) -> tuple[str, str]:
+    return session_id, os.path.realpath(abs_path)
+
+
 def record_read(
     session_id: str,
-    rel_path: str,
     abs_path: str,
     offset: int | None,
     limit: int | None,
@@ -23,7 +29,7 @@ def record_read(
         mtime = os.path.getmtime(abs_path)
     except OSError:
         return
-    _read_state[(session_id, rel_path)] = {
+    _read_state[_key(session_id, abs_path)] = {
         "mtime": mtime,
         "offset": offset,
         "limit": limit,
@@ -32,10 +38,33 @@ def record_read(
     }
 
 
-def check_write_allowed(session_id: str, rel_path: str, abs_path: str) -> tuple[bool, str]:
+def record_write(session_id: str, abs_path: str):
+    """Record that the app just wrote ``abs_path`` for this session (a write,
+    an edit or a create, inline or approved on a card).
+
+    The session knows the whole file it wrote, so a second edit needs no
+    re-read; without this every second edit of a file failed as "modified
+    since last read", and an edit of a file the session created failed as
+    never read. Only the write itself counts: a formatter that changes the
+    file afterwards moves the mtime, and the next write asks for a re-read.
+    A later read still returns the content, never the dedup stub."""
+    try:
+        mtime = os.path.getmtime(abs_path)
+    except OSError:
+        return
+    _read_state[_key(session_id, abs_path)] = {
+        "mtime": mtime,
+        "offset": None,
+        "limit": None,
+        "full_read": True,
+        "line_count": None,
+        "written": True,
+    }
+
+
+def check_write_allowed(session_id: str, abs_path: str) -> tuple[bool, str]:
     """Check if write is allowed. Returns (allowed, reason)."""
-    key = (session_id, rel_path)
-    entry = _read_state.get(key)
+    entry = _read_state.get(_key(session_id, abs_path))
     if entry is None:
         return False, "Must read file before writing."
     if not entry["full_read"]:
@@ -51,15 +80,13 @@ def check_write_allowed(session_id: str, rel_path: str, abs_path: str) -> tuple[
 
 def check_dedup(
     session_id: str,
-    rel_path: str,
     abs_path: str,
     offset: int | None,
     limit: int | None,
 ) -> str | None:
     """Return stub string if file unchanged since last read with same params."""
-    key = (session_id, rel_path)
-    entry = _read_state.get(key)
-    if entry is None:
+    entry = _read_state.get(_key(session_id, abs_path))
+    if entry is None or entry.get("written"):
         return None
     if entry["offset"] != offset or entry["limit"] != limit:
         return None
@@ -69,18 +96,6 @@ def check_dedup(
     except OSError:
         return None
     return f"(file previously read — {entry['line_count']} lines, unchanged since last read)"
-
-
-def update_after_write(session_id: str, rel_path: str, abs_path: str):
-    """Update mtime after a successful write."""
-    key = (session_id, rel_path)
-    entry = _read_state.get(key)
-    if entry is None:
-        return
-    try:
-        entry["mtime"] = os.path.getmtime(abs_path)
-    except OSError:
-        pass
 
 
 def clear_session(session_id: str):
