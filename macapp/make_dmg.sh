@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Package dist-app/Whisper Studio.app into a compressed DMG with an
-# /Applications symlink. Run macapp/build_app.sh first.
+# /Applications symlink. Run macapp/build_app.sh first (and, for a release,
+# macapp/notarize.sh on the app). With SIGN_IDENTITY set to a Developer ID
+# the DMG is signed too, ready for macapp/notarize.sh.
 set -euo pipefail
 
 MACAPP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -34,10 +36,13 @@ mkdir -p "$STAGING"
 # Fall back to a plain copy if the volume cannot clone.
 cp -Rc "$APP_DIR" "$STAGING/" 2>/dev/null || cp -R "$APP_DIR" "$STAGING/"
 ln -s /Applications "$STAGING/Applications"
-# First-launch instructions for recipients of an ad-hoc / un-notarized build
-# (how to clear the Gatekeeper warning). Shipped inside the disk image.
+# First-launch instructions for recipients of an ad-hoc build (how to clear
+# the Gatekeeper warning). A Developer ID build opens without them.
+SIGN_IDENTITY="${SIGN_IDENTITY:--}"
 README_SRC="$MACAPP_DIR/dmg-readme.txt"
-[[ -f "$README_SRC" ]] && cp "$README_SRC" "$STAGING/Open me first.txt"
+if [[ "$SIGN_IDENTITY" == "-" && -f "$README_SRC" ]]; then
+    cp "$README_SRC" "$STAGING/Open me first.txt"
+fi
 
 echo "==> Creating $DMG_PATH"
 hdiutil create \
@@ -48,4 +53,10 @@ hdiutil create \
     "$DMG_PATH"
 
 rm -rf "$STAGING"
+
+if [[ "$SIGN_IDENTITY" != "-" ]]; then
+    echo "==> Signing the DMG ($SIGN_IDENTITY)"
+    codesign --force --timestamp --sign "$SIGN_IDENTITY" "$DMG_PATH"
+    codesign --verify --strict "$DMG_PATH"
+fi
 echo "==> Done: $DMG_PATH"
