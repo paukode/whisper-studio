@@ -94,6 +94,12 @@ _ERROR_PREFIXES = (
     "[Loop guard]",
     "[Not executed]",
 )
+# A finished ws_run_command run returns what the command printed, and that can
+# open with any word: a git hook's "Error opening log file" on a commit that
+# succeeded. Its executor and the gate say a run failed with "Error:" or a
+# bracketed marker in front, or with the exit code at the end, never with the
+# bare "Error " or "error:" an executor's own line uses elsewhere.
+_RUN_ERROR_PREFIXES = tuple(p for p in _ERROR_PREFIXES if p not in ("Error ", "error:"))
 # Where a command tool writes its own exit status, one fixed place each, so a
 # file, a diff or a log that merely mentions an exit code is never read as
 # one. ws_run_command (server/workspace/executors.py run_workspace_command)
@@ -142,7 +148,8 @@ def tool_outcome(tool_name: str, output) -> ToolOutcome:
     its content never makes it an error. The loop guard and the skill_result
     frame share this one rule."""
     text = output if isinstance(output, str) else str(output)
-    prefixed = text.startswith(_ERROR_PREFIXES)
+    markers = _RUN_ERROR_PREFIXES if tool_name == "ws_run_command" else _ERROR_PREFIXES
+    prefixed = text.startswith(markers)
     exit_code: int | None = None
     if tool_name == "ws_run_command":
         found = _RUN_EXIT_RE.search(_executor_text(text))

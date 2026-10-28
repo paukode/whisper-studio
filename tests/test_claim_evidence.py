@@ -288,3 +288,20 @@ def test_a_failed_workspace_command_says_its_exit_code(tmp_path):
     assert not succeeded("ws_run_command", failed.text)
     done = run_workspace_command("echo fine", str(tmp_path))
     assert "exit code" not in done.text and succeeded("ws_run_command", done.text)
+
+
+def test_a_commit_holds_when_a_hook_printed_error_text_first():
+    # The field case: a git hook's "Error opening log file" line opened the
+    # output of a commit that succeeded, and the reply was forced to say
+    # "Not committed".
+    out = (
+        "Error opening log file, skipping setup: open /Users/me/Library/Logs/x.log: "
+        "operation not permitted\n[fix/a 5c0e335] fix: keep details\n 27 files changed"
+    )
+    ran = _turn(("ws_run_command", {"command": "git add -A && git commit -m 'fix: keep'"}, out))
+    assert succeeded("ws_run_command", out)
+    assert check(Claim(c.COMMIT), Evidence.of(ran)).ok
+    failed = _turn(("ws_run_command", {"command": "git commit -m x"}, out + "\n(exit code 1)"))
+    assert not check(Claim(c.COMMIT), Evidence.of(failed)).ok
+    refused = _turn(("ws_run_command", {"command": "git commit -m x"}, "Error: Blocked: x"))
+    assert not check(Claim(c.COMMIT), Evidence.of(refused)).ok

@@ -462,3 +462,23 @@ def test_local_frames_carry_the_call_id(monkeypatch):
     assert start == {"skill": "ws_read_file", "input": {}, "tool_use_id": "c1", "round": 0}
     (call,) = [f for f in frames if "skill_input" in f]
     assert call["tool_use_id"] == "c1"
+
+
+# A git hook (CodeDefender) printed this in front of a commit that succeeded,
+# in a field session; the app marked the call failed and the claim check then
+# made the reply say "Not committed".
+_HOOK_NOISE = (
+    "Error opening log file, skipping setup: open /Users/me/Library/Logs/x.log: "
+    "operation not permitted\n"
+)
+
+
+def test_a_command_whose_output_opens_with_error_text_exited_zero():
+    out = _HOOK_NOISE + "[main 5c0e335] fix: keep details\n 2 files changed"
+    assert tool_outcome("ws_run_command", out) == ToolOutcome(False, 0)
+    assert tool_outcome("ws_run_command", "error: hint only\nDone.") == ToolOutcome(False, 0)
+    # The run's exit status still decides, and the executor's own line is one.
+    assert tool_outcome("ws_run_command", _HOOK_NOISE + "(exit code 1)") == ToolOutcome(True, 1)
+    assert tool_outcome("ws_run_command", "Error: Blocked: x") == ToolOutcome(True, None)
+    # Other tools keep the whole marker list.
+    assert tool_outcome("ws_read_file", _HOOK_NOISE) == ToolOutcome(True, None)
