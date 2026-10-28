@@ -133,6 +133,31 @@ def test_denial_classifier_names_mode_and_escalation(monkeypatch):
     assert sandbox.classify_sandbox_denial("No such file or directory", "workspace") is None
 
 
+@pytest.mark.skipif(
+    not os.path.exists("/bin/ps") or not os.stat("/bin/ps").st_mode & 0o4000,
+    reason="needs a setuid /bin/ps (macOS)",
+)
+def test_a_setuid_program_is_no_write_denial(monkeypatch):
+    """macOS never lets a sandboxed command start a setuid program such as ps.
+    A field session read the old write-denial hint, escalated every ps to a
+    visible terminal and asked the user each time. The hint now names the
+    cause and the tool that works (pgrep), and asks for no escalation."""
+    monkeypatch.setattr(sandbox, "sandbox_backend", lambda: "sandbox-exec")
+    for out in (
+        "/bin/sh: /bin/ps: Operation not permitted",
+        "sandbox-exec: execvp() of '/bin/ps' failed: Operation not permitted",
+    ):
+        hint = sandbox.classify_sandbox_denial(out, "readonly")
+        assert "setuid" in hint and "pgrep" in hint, out
+        assert "danger-full-access" not in hint, out
+    # A real write denial beside it keeps its own hint.
+    both = sandbox.classify_sandbox_denial(
+        "/bin/sh: /bin/ps: Operation not permitted\ntouch: /Users/x/y: Operation not permitted",
+        "workspace",
+    )
+    assert "pgrep" in both and "danger-full-access" in both
+
+
 def test_denial_signatures_are_per_backend(monkeypatch):
     """bwrap's EROFS text must not be attributed to the sandbox on macOS."""
     monkeypatch.setattr(sandbox, "sandbox_backend", lambda: "sandbox-exec")

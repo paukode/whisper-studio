@@ -176,6 +176,12 @@
     <p>Two shells do not follow this table. Your own visible terminal panel is not sandboxed. The
       interactive hidden shell of <code>terminal_send</code> keeps the full read and write
       deny-list.</p>
+    <p>macOS does not let a sandboxed command start a setuid program, for example
+      <code>/bin/ps</code> or <code>/usr/bin/top</code>. The kernel refuses it, and no profile or
+      permission mode changes this. When a confined command fails for this cause,
+      <code>classify_sandbox_denial</code> adds a hint that names the program. The hint tells the
+      model to use <code>pgrep -fl</code>, which runs in the sandbox. It does not tell the model to
+      ask for <code>danger-full-access</code>.</p>
     <h3 id="env-scrub">The credential denylist</h3>
     <p>Denying a file does nothing if the same secret is sitting in an environment variable. The
       denylist lives in <code class="path">server/security/sensitive_env.py</code> as two named sets:
