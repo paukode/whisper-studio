@@ -110,6 +110,20 @@ def test_the_exit_code_is_found_before_what_follows_it(tail):
     assert tool_outcome("ws_run_command", f"boom\n(exit code 1){tail}") == ToolOutcome(True, 1)
 
 
+@pytest.mark.parametrize(
+    "notes",
+    [
+        "\n[sandbox] This command ran under the read-only OS sandbox, and the failure above.",
+        "\n[cwd] This ran in /w/sub, where an earlier `cd` left this session's shell.",
+        "\n[sandbox] hidden stores.\n[cwd] This ran in /w/sub.\n[Left running] still going.",
+    ],
+)
+def test_the_runs_own_notes_after_the_exit_code_do_not_hide_it(notes):
+    # A failed run with a sandbox hint used to read as exit 0: no error chip,
+    # no failure count for the loop guard.
+    assert tool_outcome("ws_run_command", f"boom\n(exit code 1){notes}") == ToolOutcome(True, 1)
+
+
 def test_an_approved_command_that_failed_reports_its_exit_code():
     # The gate's inline run (tool_approvals.inline_result_text).
     out = "Error: exit code 1\n\nboom\n(exit code 1)"

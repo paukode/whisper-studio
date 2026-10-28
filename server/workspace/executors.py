@@ -865,9 +865,30 @@ def run_workspace_command(
         hint = secret_reads_policy.denial_hint(command, output)
         if hint:
             output += "\n" + hint
+    if result.returncode not in (0, None):
+        note = _moved_cwd_note(effective_cwd, ws)
+        if note:
+            output += "\n" + note
     if result.task_id:
         output += "\n" + _left_running_message(result.task_id, result.output_path)
     return CommandRun(text=output, returncode=result.returncode, stopped=result.stopped)
+
+
+def _moved_cwd_note(cwd: str, ws: str) -> str:
+    """For a failed run that started away from the workspace folder: where it
+    ran. An earlier `cd` moves the session's shell for later commands, while
+    the ws_* file tools keep resolving from the workspace folder; a field
+    session lost a dozen runs to `cd sub && ...` from inside sub already."""
+    try:
+        if os.path.realpath(cwd) == os.path.realpath(ws):
+            return ""
+    except OSError:
+        return ""
+    return (
+        f"[cwd] This ran in {cwd}, where an earlier `cd` left this session's shell, "
+        f"not in the workspace folder {ws}. Relative paths in the command resolved "
+        "from there."
+    )
 
 
 def _left_running_message(task_id: str, output_path: str | None) -> str:

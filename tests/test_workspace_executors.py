@@ -198,3 +198,25 @@ def test_create_file_outside_workspace_saves_there_after_approval(tmp_path, monk
     payload = _parse_ws_approval(out)
     assert payload["action"] == "save_to_path"
     assert payload["path"] == os.path.realpath(str(tmp_path / "outside.txt"))
+
+
+def test_a_failed_run_away_from_the_workspace_says_where_it_ran(tmp_path):
+    # A field session ran `cd app && ...` a dozen times from inside app
+    # already: an earlier `cd` moves the shell, the file tools do not move.
+    from server.cwd_tracker import clear_session
+    from server.tool_executor import tool_outcome
+
+    (tmp_path / "app").mkdir()
+    sid = "cwd-note-test"
+    try:
+        executors.run_workspace_command("cd app", str(tmp_path), session_id=sid)
+        failed = executors.run_workspace_command("cd app", str(tmp_path), session_id=sid)
+        assert "[cwd] This ran in " in failed.text and "/app, where an earlier `cd`" in failed.text
+        assert tool_outcome("ws_run_command", failed.text) == (True, 1)
+        passed = executors.run_workspace_command("true", str(tmp_path), session_id=sid)
+        assert "[cwd]" not in passed.text
+        at_root = executors.run_workspace_command("cd nowhere", str(tmp_path), session_id="other")
+        assert "[cwd]" not in at_root.text
+    finally:
+        clear_session(sid)
+        clear_session("other")

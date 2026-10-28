@@ -105,9 +105,12 @@ _RUN_ERROR_PREFIXES = tuple(p for p in _ERROR_PREFIXES if p not in ("Error ", "e
 # file, a diff or a log that merely mentions an exit code is never read as
 # one. ws_run_command (server/workspace/executors.py run_workspace_command)
 # ends a finished run that failed with "(exit code N)" or "(exit code N:
-# meaning)" on a line of its own, followed at most by the "[Left running]"
-# paragraph; a run that exited 0 says nothing.
-_RUN_EXIT_RE = re.compile(r"\n\(exit code (-?\d+)(?::[^\n]*)?\)(?:\n\[Left running\][^\n]*)?\Z")
+# meaning)" on a line of its own, followed at most by its one-line notes on
+# that run: a "[sandbox]" hint, the "[cwd]" folder it ran in, the "[Left
+# running]" paragraph. A run that exited 0 says nothing.
+_RUN_EXIT_RE = re.compile(
+    r"\n\(exit code (-?\d+)(?::[^\n]*)?\)(?:\n\[(?:sandbox|cwd|Left running)\][^\n]*)*\Z"
+)
 # A ws_run_command that never finished in the foreground has no exit status:
 # a background start or handoff, no workspace (or one the user let go of),
 # no command.
