@@ -67,6 +67,7 @@ const AppShell: React.FC = () => {
   const transcriptVisible = useUIStore((s) => s.transcriptVisible);
   const wsConnected = useUIStore((s) => s.wsConnected);
   const terminalLive = useUIStore((s) => s.terminalLive);
+  const terminalShown = useUIStore((s) => s.terminalShow !== null);
   const workspacePanelCollapsed = useUIStore((s) => s.workspacePanelCollapsed);
   const loadConfig = useSettingsStore((s) => s.loadConfig);
   const loadModels = useSettingsStore((s) => s.loadModels);
@@ -302,8 +303,9 @@ const AppShell: React.FC = () => {
       {/* Terminal panel below: shown with a workspace connected, and kept
         * after a disconnect for as long as it has open terminals. Unmounting
         * it closes every PTY, which would kill the dev servers and builds the
-        * session is running there. */}
-      {(wsConnected || terminalLive) && (
+        * session is running there. The assistant opening a terminal for a
+        * command mounts it too, workspace or not. */}
+      {(wsConnected || terminalLive || terminalShown) && (
         <ErrorBoundary label="Terminal">
           <TerminalPanel />
         </ErrorBoundary>

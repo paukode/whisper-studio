@@ -296,8 +296,8 @@
         <code>github-destructive</code>, any command that deletes outside the connected workspace
         (<code>rm</code> and its relatives, including <code>find -delete</code>, aimed at a path
         beyond the workspace and the app's own folder, or at one the command line cannot resolve),
-        any command asking to run outside the sandbox's write confinement, and any command typed
-        into your visible terminal - then an MCP server
+        any command asking to run outside the sandbox's write confinement, and, outside Bypass,
+        any command typed into your visible terminal - then an MCP server
         you marked as needing approval &rarr; the per-category mode, if set, replaces the global
         mode &rarr; <code>bypassPermissions</code>, which covers everything inside the workspace
         but not a save to a path outside it or access to a new folder &rarr; a trusted skill
@@ -362,10 +362,11 @@
       does not name that folder (<code>cd "$DIR"</code>, <code>cd -</code>, <code>pushd</code>, or
       <code>popd</code>), the delete always shows a card. So does a command that asks to run with
       <b>full disk write access</b> instead of the usual project-only confinement. A command that
-      the assistant types into your <b>visible terminal</b> also raises a card each time. That
-      terminal runs in its current folder, and the OS does not limit its writes. None of the three
-      can be waved through by a mode, a rule, or a "yes to all", and an unattended agent cannot run
-      any of them on your behalf.
+      the assistant types into your <b>visible terminal</b> also raises a card each time, outside
+      Bypass. That terminal runs in its current folder, and the OS does not limit its writes. In
+      Bypass, the terminal panel opens and the command runs with no card. A mode, a rule, or a
+      "yes to all" cannot remove the first two cards. A rule or a "yes to all" cannot remove the
+      third. An unattended agent cannot run any of them on your behalf.
       Inside the workspace the line is the mode's: Bypass runs <code>rm -rf dist</code> without a
       card, and every other mode treats it like any other command.</p>
     <p>The app also finds a delete in a <code>case</code> branch, a shell function, a

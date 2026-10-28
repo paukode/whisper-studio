@@ -8,7 +8,11 @@ Two modes:
                        session so the user can watch the command stream.
                        It runs in that shell's current folder (cwd is
                        ignored) with no write confinement, so every call
-                       asks a person (approval_floor's visible-terminal).
+                       asks a person outside bypassPermissions
+                       (approval_floor's visible-terminal). With no terminal
+                       open, or the open one busy with another program, it
+                       opens a new one (in cwd, else the workspace) and the
+                       panel shows it (a terminal_show frame).
 
 Every call goes through the [WS_APPROVAL] → approval_request pipeline.
 The approval card shows the literal command + mode.
@@ -203,12 +207,16 @@ def _confining_workspace() -> str | None:
 
 
 def _visible_busy(program: str) -> str:
+    """The note for a command run in a new terminal tab because the open one
+    is busy (typing there would feed that program's stdin)."""
     who = program or "a program"
     return (
-        f"The visible terminal is busy: {who} is running in its foreground, so a "
-        "command typed there would go to that program instead of the shell. Wait for it "
-        "to exit, use mode='sandbox', or drive a program of your own with terminal_send."
+        f"[terminal] The open terminal is busy ({who} is running in its foreground), "
+        "so this command ran in a new terminal tab.\n"
     )
+
+
+_OPENED_NOTE = "[terminal] No terminal was open, so a new one was opened for this command.\n"
 
 
 # Programs that hold the terminal's foreground while sitting at a prompt of
@@ -301,7 +309,13 @@ async def do_terminal_run(payload: dict) -> tuple[bool, str]:
     model needs to see non-zero exits as data, not approval errors). We
     only return ok=False for *system* failures (bad mode, no visible
     session, etc.) — those are conditions the model can correct."""
-    from server.terminal import latest_visible_session, run_in_sandbox, run_in_session
+    from server.terminal import (
+        latest_visible_session,
+        open_visible_session,
+        run_in_sandbox,
+        run_in_session,
+        show_visible_session,
+    )
 
     command = (payload.get("command") or "").strip()
     if not command:
@@ -395,16 +409,19 @@ async def do_terminal_run(payload: dict) -> tuple[bool, str]:
     else:
         session = latest_visible_session()
         if session is None:
-            return False, (
-                "No visible terminal session is open. Either open a terminal in the UI "
-                "first, or call this tool with mode='sandbox' to run invisibly."
-            )
-        program = await asyncio.to_thread(_foreground_program, session)
-        if program is not None:
-            # Typing now would feed the command to that program's stdin (a dev
-            # server another chat left running, say), and a Ctrl-C meant for
-            # this command would stop that program instead.
-            return False, _visible_busy(program)
+            preamble = _OPENED_NOTE
+        else:
+            program = await asyncio.to_thread(_foreground_program, session)
+            if program is not None:
+                # Typing there would feed the command to that program's stdin (a
+                # dev server another chat left running, say), and a Ctrl-C meant
+                # for this command would stop that program instead: a new tab.
+                preamble = _visible_busy(program)
+                session = None
+        opened = session is None
+        if session is None:
+            session = await open_visible_session(cwd)
+        show_visible_session(session, opened=opened)
         result = await run_in_session(session, command, timeout=timeout)
 
     # Format the result for the model: exit code on its own line, then
@@ -416,7 +433,7 @@ async def do_terminal_run(payload: dict) -> tuple[bool, str]:
         if mode == "visible":
             summary += (
                 "\nThe command may still be running in the foreground of the visible "
-                "terminal; further visible runs there are refused until it exits."
+                "terminal; a further visible run opens a new terminal tab until it exits."
             )
     output = result.get("output") or "(no output)"
 

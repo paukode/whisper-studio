@@ -12,7 +12,8 @@ Three holes this pins shut:
    used to resolve a relative delete against the workspace, so `rm -rf notes`
    ran in bypass with no card. Now a visible run has no known working
    directory (every relative delete is outside), and every visible run asks a
-   person in every mode (the visible-terminal floor).
+   person in every mode but Bypass (the visible-terminal floor; the user's
+   rule 2026-10-28: in Bypass the terminal opens and the command runs).
 2. A sandbox run's relative cwd was resolved against the server process's own
    folder, while the floor joined it to the workspace. Now one resolver
    (terminal_run.resolve_cwd) feeds both.
@@ -92,15 +93,34 @@ def test_the_field_report_a_relative_delete_after_cd_asks_in_bypass(workspace):
     assert approval_floor("terminal_run", payload, "cli") == "rm"
 
 
-def test_every_visible_run_asks_in_every_mode(workspace):
+def test_a_visible_run_asks_in_every_mode_but_bypass(workspace):
+    """Outside Bypass a person approves every visible run, and a "Yes, all
+    cli" or a trusted skill never stands in for them. In Bypass it runs."""
     for command in ("npm test", "ls", "touch ~/x", f"rm -rf {workspace / 'web'}"):
         payload = _run_payload(command, mode="visible")
-        assert approval_floor("terminal_run", payload, "cli") is not None, command
-        assert set(_decisions(payload)) == {"ask"}, command
+        for mode in (MODE_DEFAULT, MODE_ACCEPT_EDITS, MODE_DONT_ASK):
+            assert approval_floor("terminal_run", payload, "cli", mode) is not None, command
+            assert resolve_static_decision("terminal_run", payload, "cli", {}, mode) == "ask"
+
+        def decide(**kw):
+            return resolve_static_decision("terminal_run", payload, "cli", **kw)  # noqa: B023
+
+        assert decide(session_approvals={"cli": "allow"}, mode=MODE_DEFAULT) == "ask", command
+        assert decide(session_approvals={}, mode=MODE_DEFAULT, auto_allow_trusted=True) == "ask"
+        assert approval_floor("terminal_run", payload, "cli", MODE_BYPASS) is None, command
+        assert decide(session_approvals={}, mode=MODE_BYPASS) == "allow", command
     # An absolute delete inside the workspace is inside for the rm floor; the
-    # visible-terminal floor is what asks for it.
+    # visible-terminal floor is what asks for it outside Bypass.
     inside = _run_payload(f"rm -rf {workspace / 'web'}", mode=" visible ")
     assert approval_floor("terminal_run", inside, "cli") == "visible-terminal"
+
+
+def test_a_visible_delete_asks_even_in_bypass(workspace):
+    # The visible shell's folder is unknown, so a relative delete is outside
+    # the workspace for the rm floor, which no mode lifts.
+    payload = _run_payload("rm -rf dist", mode="visible")
+    assert approval_floor("terminal_run", payload, "cli", MODE_BYPASS) == "rm"
+    assert resolve_static_decision("terminal_run", payload, "cli", {}, MODE_BYPASS) == "ask"
 
 
 def test_a_sandbox_run_still_follows_the_mode(workspace):

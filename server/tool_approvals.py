@@ -383,7 +383,7 @@ async def gate_approval(
             # blanket "yes for all writes", so the card must not offer it.
             "always_asks": (
                 secret == "ask"
-                or approval_floor(state.tool_name, ws_parsed, category) is not None
+                or approval_floor(state.tool_name, ws_parsed, category, mode) is not None
                 or (category in FILE_WRITE_CATEGORIES and targets_app_config(ws_parsed))
             ),
         }
