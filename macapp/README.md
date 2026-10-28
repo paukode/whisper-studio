@@ -223,19 +223,42 @@ Default is ad-hoc signing (`SIGN_IDENTITY=-`): runs locally, but other Macs
 will refuse to open it without right-click > Open. Hardened runtime is
 deliberately skipped for ad-hoc builds (the combination breaks launch).
 
-With a Developer ID certificate:
+With a Developer ID certificate, once per Mac store the notary credentials
+in the keychain (it asks for the app-specific password from appleid.apple.com):
 
 ```bash
-SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" bash macapp/build_app.sh
-bash macapp/make_dmg.sh
-
-# Notarize + staple (requires an App Store Connect API key or app-specific
-# password configured as a notarytool keychain profile):
-xcrun notarytool submit dist-app/WhisperStudio-<version>.dmg \
-    --keychain-profile "notary" --wait
-xcrun stapler staple "dist-app/Whisper Studio.app"
-xcrun stapler staple dist-app/WhisperStudio-<version>.dmg
+xcrun notarytool store-credentials whisper-notary --apple-id YOU@EXAMPLE.COM --team-id TEAMID
 ```
+
+Then a signed and notarized build:
+
+```bash
+export SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
+export NOTARY_PROFILE=whisper-notary
+bash macapp/build_app.sh
+bash macapp/notarize.sh "dist-app/Whisper Studio.app"
+bash macapp/make_dmg.sh                                    # signs the DMG too
+bash macapp/notarize.sh dist-app/WhisperStudio-<version>.dmg
+```
+
+`notarize.sh` fails unless Apple answers "Accepted" and prints Apple's log
+otherwise, then staples the ticket and checks it with `spctl`.
+
+The release workflow (`.github/workflows/build-macapp.yml`) runs the same
+steps on every `v*` tag and refuses to build a release unless five repository
+values are set (Settings > Secrets and variables > Actions):
+
+| Name | Value |
+|---|---|
+| `MACOS_CERT_P12` | the exported Developer ID Application .p12, base64 encoded |
+| `MACOS_CERT_PASSWORD` | the password of that .p12 |
+| `APPLE_ID` | the Apple ID email of the developer account |
+| `APPLE_TEAM_ID` | the 10-character Team ID |
+| `APPLE_APP_PASSWORD` | an app-specific password from appleid.apple.com |
+
+A manual run (Actions > Build macOS app > Run workflow) notarizes too, as a
+trial that uploads the DMG as an artifact and makes no release. A main-branch
+push is signed when the certificate values exist, and never notarized.
 
 Real-identity builds sign with `--options runtime --timestamp` and
 `macapp/entitlements.plist` (allow-jit, allow-unsigned-executable-memory,
