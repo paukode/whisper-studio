@@ -211,7 +211,14 @@ def rg_raw(
         try:
             stdout, stderr = proc.communicate(timeout=_SIGKILL_DELAY)
             log.warning("rg process terminated via SIGTERM after %ds timeout", timeout)
-            return stdout or "", stderr or "", proc.returncode
+            # rg says nothing when it is stopped, which left the caller with a
+            # bare "Search error (exit -15): ". Say why, and what to change.
+            why = (
+                f"the search timed out after {timeout} s and was stopped. Narrow it: a "
+                "path or glob inside the project, not a whole parent folder or one that "
+                "holds node_modules or large data files"
+            )
+            return stdout or "", (stderr or "").strip() or why, proc.returncode
         except subprocess.TimeoutExpired:
             # Force kill if SIGTERM didn't work
             proc.kill()
