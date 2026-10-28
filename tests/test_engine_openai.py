@@ -439,6 +439,25 @@ def test_mantle_rejection_raises_prompt_too_long(monkeypatch):
     assert asyncio.run(run()) is True
 
 
+def test_a_request_that_cannot_connect_is_retryable(monkeypatch):
+    # A field turn ended on "OpenAI (Bedrock) request failed: Connection
+    # error." after one SDK retry; the engine never retried the round.
+    from server.chat.engine.events import RoundError
+
+    class APIConnectionError(Exception):
+        pass
+
+    a, _ = _adapter(monkeypatch, [APIConnectionError("Connection error.")])
+    out = asyncio.run(_collect(a.stream_round([{"role": "user", "content": "hi"}], [], None, 0, False)))
+    errors = [x for x in out if isinstance(x, RoundError)]
+    assert len(errors) == 1 and errors[0].retryable
+    assert "Connection error." in errors[0].message
+
+    b, _ = _adapter(monkeypatch, [Exception("403 AccessDeniedException: not authorized")])
+    out = asyncio.run(_collect(b.stream_round([{"role": "user", "content": "hi"}], [], None, 0, False)))
+    assert [x.retryable for x in out if isinstance(x, RoundError)] == [False]
+
+
 # ── end-to-end: GPT turn through the engine + chat route ─────────────────────
 
 
