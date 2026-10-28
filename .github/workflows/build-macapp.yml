@@ -49,7 +49,7 @@ jobs:
   build:
     name: Assemble .app + DMG (arm64)
     runs-on: macos-15
-    timeout-minutes: 60
+    timeout-minutes: 120
     env:
       # Secrets are not readable inside `if:` expressions on steps below, so
       # surface their presence as booleans once, here.
