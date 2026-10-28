@@ -205,6 +205,27 @@ def test_loop_guard_counts_a_failure_the_gate_rule_names(monkeypatch):
         lg.reset_for_turn(scope)
 
 
+def test_identical_commands_stay_approval_requests(monkeypatch):
+    # The field case: polling a build log twice with the same terminal_run
+    # gave two byte-identical approval requests; the guard appended its note
+    # to the second, which broke it, so the command never ran and the model
+    # read "Malformed approval payload". A request is not a result yet.
+    scope = "request-turn"
+    lg.reset_for_turn(scope)
+    monkeypatch.setattr(lg, "enabled", lambda: True)
+    monkeypatch.setattr(lg, "caps", lambda: dict(lg.DEFAULT_CAPS))
+    given = {"command": "tail -5 build.log"}
+    request = approval_request({"action": "terminal_run", **given})
+    try:
+        for _ in range(4):
+            state = _run_batch(monkeypatch, scope, "terminal_run", given, request)
+            assert state.output == request
+            assert te.is_app_request(state.output, te.APPROVAL)
+        assert lg._state(scope).calls == []
+    finally:
+        lg.reset_for_turn(scope)
+
+
 # ── The skill_result frame carries the id and the outcome ───────────────────
 
 

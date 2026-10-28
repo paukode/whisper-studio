@@ -27,6 +27,7 @@ from server.approval.markers import (
     APPROVAL,
     PREVIEW_IMAGE,
     WORKSPACE_PROMPT,
+    AppRequest,
     as_plain_text,
     is_app_request,
 )
@@ -521,7 +522,14 @@ async def execute_tool_batch(
             state.side_effects = side_effects
             state.status = "completed"
 
-            if guard_scope:
+            # An app request (an approval card, a folder picker, a screenshot)
+            # is not the call's result yet: two identical commands make two
+            # identical requests whatever they later print. Recorded as a
+            # result, the second one got the guard's note appended, which made
+            # it plain text, so the command never ran and the model read the
+            # raw request back. Neither the guard nor a hook writes onto one.
+            request = isinstance(state.output, AppRequest)
+            if guard_scope and not request:
                 from server.chat import loop_guard
 
                 _notice, _stub = loop_guard.after_call(
@@ -551,7 +559,8 @@ async def execute_tool_batch(
                 tool_name=tool_name,
                 allow_rewrite=False,
             )
-            _append_hook_context(state, post)
+            if not request:
+                _append_hook_context(state, post)
 
         except Exception as e:
             log.error("Tool execution error (%s): %s", tool_name, e, exc_info=True)
