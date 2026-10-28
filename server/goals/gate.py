@@ -53,6 +53,17 @@ def _flag_on(name: str, default: bool = True) -> bool:
         return default
 
 
+def _task_running(task_id: str) -> bool:
+    """True while the background task ``task_id`` still runs."""
+    try:
+        from server.tasks import registry
+
+        task = registry.get_task(task_id)
+    except Exception:  # noqa: BLE001 - an unreadable registry means not running
+        return False
+    return bool(task) and task.get("status") == "running"
+
+
 def _max_blocks(ctx: GateContext) -> int:
     try:
         from server.infrastructure import config
@@ -255,12 +266,17 @@ async def run_completion_gate(ctx: GateContext) -> GateDecision:
     # only found out by asking. One nudge per turn, since the ask is read out
     # of prose. Plan mode is exempt: the workspace writes are refused there by
     # design, and so is a model with no tools, which has no file tool to call.
+    # A file a background command of the turn is still writing is not owed.
     if ctx.tools_enabled and _flag_on("requested_file_check"):
         from server.goals.requested_files import requested_file_feedback
 
         try:
             file_feedback = requested_file_feedback(
-                messages, ctx.workspace, plan_mode=ctx.plan_mode, asked=ctx.asked
+                messages,
+                ctx.workspace,
+                plan_mode=ctx.plan_mode,
+                asked=ctx.asked,
+                running=_task_running,
             )
         except Exception as e:  # noqa: BLE001 - a checker bug must never abort a turn
             log.warning("requested-file check failed (%s); skipping", e)

@@ -141,6 +141,13 @@ def _json_failed(result: str) -> bool:
     return status in ("error", "failed", "failure") or (status.isdigit() and int(status) >= 400)
 
 
+def background_task_id(result: str) -> str | None:
+    """The task id a call's result gives when its command moved to the
+    background, or None."""
+    m = _TASK_ID_RE.search(result)
+    return m.group(1) if m else None
+
+
 def still_running(result: str) -> bool:
     """True when a call's result says it has not finished (see
     _PENDING_RE)."""
@@ -251,7 +258,7 @@ def turn_calls(rows: list, cache: dict | None = None) -> list[Call]:
 def _settle_background(calls: list[Call]) -> list[Call]:
     """Each background command a later call of the list reports finished,
     done (exit 0) or failed."""
-    started = {m.group(1): i for i, x in enumerate(calls) if (m := _TASK_ID_RE.search(x.result))}
+    started = {t: i for i, x in enumerate(calls) if (t := background_task_id(x.result))}
     if not started:
         return calls
     out = list(calls)
