@@ -173,3 +173,19 @@ def test_gate_allows_prose_edits_and_verified_turns(_gate_env):
     ]
     d2 = asyncio.run(_gate_env.run_completion_gate(GateContext(session_id="s", messages=verified)))
     assert d2.block is False
+
+
+def test_a_scratch_folder_helper_is_not_project_code():
+    # A field session was told to run a test suite for a one-off export script
+    # in its own scratch folder, after running that script five times.
+    import os
+
+    from server.workspace.paths import scratch_root
+
+    helper = os.path.join(scratch_root(), "sess-1", "export_finalize.py")
+    turn = [{"role": "user", "content": "go"}, _edit(helper)]
+    assert v.turn_evidence(turn).edited_paths == []
+    assert v.verify_on_stop_feedback(turn, None) is None
+    # Project code still counts, by absolute or relative path.
+    turn = [{"role": "user", "content": "go"}, _edit("/Users/me/app/server/x.py")]
+    assert v.turn_evidence(turn).edited_paths == ["/Users/me/app/server/x.py"]
