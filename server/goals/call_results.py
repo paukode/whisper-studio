@@ -147,6 +147,13 @@ def _json_failed(result: str) -> bool:
     return status in ("error", "failed", "failure") or (status.isdigit() and int(status) >= 400)
 
 
+def background_task_id(result: str) -> str | None:
+    """The task id a call's result gives when its command moved to the
+    background, or None."""
+    m = _TASK_ID_RE.search(result)
+    return m.group(1) if m else None
+
+
 def still_running(result: str) -> bool:
     """True when a call's result says it has not finished (see
     _PENDING_RE)."""
@@ -258,7 +265,7 @@ def turn_calls(rows: list, cache: dict | None = None) -> list[Call]:
 def _settle_background(calls: list[Call]) -> list[Call]:
     """Each background command a later call of the list reports finished,
     done (exit 0) or failed."""
-    started = {m.group(1): i for i, x in enumerate(calls) if (m := _TASK_ID_RE.search(x.result))}
+    started = {t: i for i, x in enumerate(calls) if (t := background_task_id(x.result))}
     if not started:
         return calls
     out = list(calls)
@@ -328,3 +335,68 @@ def report_texts(calls: list[Call], rows: list) -> list[str]:
                 if at >= 0:
                     texts.append(text[at:])
     return texts
+
+
+def _user_texts(m) -> list[str]:
+    if not isinstance(m, dict) or m.get("role") != "user":
+        return []
+    content = m.get("content")
+    blocks = [content] if isinstance(content, str) else content if isinstance(content, list) else []
+    return [
+        b if isinstance(b, str) else str(b.get("text", ""))
+        for b in blocks
+        if isinstance(b, (str, dict))
+    ]
+
+
+def woken_calls(messages: list) -> tuple[list[Call], float | None]:
+    """The background commands whose results reached this turn without a call
+    of its own (server/tasks/wake.py): a task_report row just before the
+    turn's prompt, or a result that arrived mid-turn. Each counts as a
+    finished ws_run_command of the turn, done when it exited 0, so a reply may
+    rest on what it did. Also returns when the earliest of them began (epoch
+    seconds), since a file the command wrote is work of this turn."""
+    from datetime import datetime
+
+    from server.goals.deliverables import _is_user_prompt
+    from server.tasks.wake import woken_reports
+
+    start = len(messages)
+    for i in range(len(messages) - 1, -1, -1):
+        if _is_user_prompt(messages[i]):
+            start = i
+            break
+    while (
+        start > 0
+        and isinstance(messages[start - 1], dict)
+        and messages[start - 1].get("role") == "user"
+    ):
+        start -= 1
+    calls: list[Call] = []
+    began: float | None = None
+    for m in messages[start:]:
+        for text in _user_texts(m):
+            for r in woken_reports(text):
+                given = {"command": r["command"]}
+                code = f"\n(exit code {r['exit_code']})" if r["exit_code"] is not None else ""
+                result = f"{r['output_tail']}{code}".strip()
+                ok = r["status"] == "completed" and r["exit_code"] in (0, None)
+                text_in = json.dumps(given, ensure_ascii=False)
+                calls.append(
+                    Call(
+                        id=f"task:{r['task_id']}",
+                        name="ws_run_command",
+                        input=given,
+                        text=text_in,
+                        result=result,
+                        ok=ok,
+                        acts=tuple(acts_of("ws_run_command", given, text_in, result)),
+                        writes=tuple(writes_of("ws_run_command", given)),
+                    )
+                )
+                try:
+                    at = datetime.fromisoformat(r["started_at"].replace("Z", "+00:00")).timestamp()
+                except ValueError:
+                    continue
+                began = at if began is None else min(began, at)
+    return calls, began

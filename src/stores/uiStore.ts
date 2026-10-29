@@ -119,6 +119,12 @@ export interface UIState {
    *  belong to the session, and unmounting the panel kills them. */
   terminalLive: boolean;
   setTerminalLive: (live: boolean) => void;
+  /** A terminal the assistant runs a command in (server/terminal.py,
+   *  terminal_show): the panel mounts, opens and shows its tab, adding one
+   *  when it has none. `seq` tells two requests for one terminal apart. */
+  terminalShow: { terminalId: string; cwd: string; seq: number } | null;
+  showTerminal: (terminalId: string, cwd: string) => void;
+  clearTerminalShow: (seq: number) => void;
 
   /* Workspace panel collapsed (still connected but hidden) */
   workspacePanelCollapsed: boolean;
@@ -272,6 +278,13 @@ export const useUIStore = create<UIState>()((set) => ({
   terminalLive: false,
   setTerminalLive: (live) => {
     set((s) => (s.terminalLive === live ? s : { terminalLive: live }));
+  },
+  terminalShow: null,
+  showTerminal: (terminalId, cwd) => {
+    set((s) => ({ terminalShow: { terminalId, cwd, seq: (s.terminalShow?.seq ?? 0) + 1 } }));
+  },
+  clearTerminalShow: (seq) => {
+    set((s) => (s.terminalShow?.seq === seq ? { terminalShow: null } : s));
   },
   workspacePanelCollapsed: false,
   memoryEditorOpen: false,

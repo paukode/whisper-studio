@@ -191,9 +191,11 @@
         a request to drop the sandbox's write confinement for one command, so it can never be covered
         by a mode, a rule, or a session approval.</p></li>
       <li><h4>A command in the visible terminal</h4><p>A <code>terminal_run</code> call with
-        <code>mode: "visible"</code> always returns ask. The command goes into the user's own shell.
-        That shell runs in its current folder, and the OS does not limit its writes. No mode, rule,
-        or session approval can cover it, and an unattended agent cannot use visible mode.</p></li>
+        <code>mode: "visible"</code> returns ask in every mode except <code>bypassPermissions</code>.
+        The command goes into the user's own shell, and the OS does not limit the writes of that
+        shell. No rule or session approval can cover it. In <code>bypassPermissions</code>, the
+        command runs with no card. A delete in that shell still returns ask, because the app does not
+        know its current folder. An unattended agent cannot use visible mode.</p></li>
       <li><h4>MCP approve tier</h4><p>An MCP tool whose server or tool is marked
         <code>approval_mode: "approve"</code> in <code>mcp_servers.json</code> always returns ask.
         Like the previous check, this is a hard floor: the user explicitly marked that server as one

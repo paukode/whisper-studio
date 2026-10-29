@@ -35,7 +35,9 @@ Two write modes:
 import logging
 import os
 import platform
+import re
 import shutil
+import stat
 import subprocess
 import tempfile
 
@@ -960,10 +962,56 @@ _DENIAL_SIGNATURES = {
 }
 
 
+# A shell or sandbox-exec saying it could not start a program: "/bin/sh:
+# /bin/ps: Operation not permitted", "zsh:1: operation not permitted: ps",
+# "sandbox-exec: execvp() of '/bin/ps' failed: Operation not permitted".
+_EXEC_DENIED_RE = re.compile(
+    r"^(?:[^\s:]+:(?: ?line \d+:| ?\d+:)? )(/[^\s:]+): Operation not permitted$"
+    r"|operation not permitted: (\S+)$"
+    r"|execvp\(\) of '([^']+)' failed: Operation not permitted",
+    re.MULTILINE | re.IGNORECASE,
+)
+
+
+def _setuid_programs(output: str) -> tuple[list[str], str]:
+    """The setuid or setgid programs a confined command could not start, and
+    the output without the lines that say so. macOS never lets a sandboxed
+    process exec one (the kernel refuses it, whatever the profile allows), so
+    no permission or escalation inside the sandbox changes this: /bin/ps and
+    /usr/bin/top are the usual ones."""
+    found: list[str] = []
+    rest = output
+    for m in _EXEC_DENIED_RE.finditer(output):
+        name = next(g for g in m.groups() if g)
+        path = name if os.path.isabs(name) else shutil.which(name) or ""
+        try:
+            mode = os.stat(path).st_mode if path else 0
+        except OSError:
+            continue
+        if mode & (stat.S_ISUID | stat.S_ISGID):
+            rest = rest.replace(m.group(0), "", 1)
+            if path not in found:
+                found.append(path)
+    return found, rest
+
+
+def _setuid_hint(programs: list[str]) -> str:
+    names = ", ".join(programs)
+    return (
+        f"[sandbox] {names} could not start: macOS never lets a sandboxed command "
+        "start a setuid program, whatever the permission mode, so retrying or "
+        "escalating does not help. To find processes use pgrep -fl <pattern> "
+        "(it runs here); for a background command use task_status or task_output."
+    )
+
+
 def classify_sandbox_denial(output: str, write_mode: str) -> str | None:
     """Best-effort classification: does a failed confined command's output look
     like the OS sandbox denying a write? Returns a model-facing hint naming the
     effective mode and the escalation path, or None.
+
+    A setuid program the sandbox could not start (``ps``) is no write denial:
+    it gets its own hint, which names the tool that works instead.
 
     Only meaningful for confined modes — under "open" the same strings are
     ordinary filesystem errors, so the caller must not pass those here."""
@@ -972,6 +1020,9 @@ def classify_sandbox_denial(output: str, write_mode: str) -> str | None:
     signatures = _DENIAL_SIGNATURES.get(sandbox_backend(), ())
     if not any(sig in output for sig in signatures):
         return None
+    setuid, rest = _setuid_programs(output) if sandbox_backend() == "sandbox-exec" else ([], "")
+    if setuid and not any(sig in rest for sig in signatures):
+        return _setuid_hint(setuid)
     mode_label = (
         "read-only (no writes anywhere)"
         if write_mode == "readonly"
@@ -980,7 +1031,7 @@ def classify_sandbox_denial(output: str, write_mode: str) -> str | None:
             "session's scratch folder, temp, and /dev)"
         )
     )
-    return (
+    write_hint = (
         f"[sandbox] This command ran under the {mode_label} OS sandbox, and the "
         "failure above looks like a sandbox write denial. If the blocked write is "
         "genuinely needed, retry the same command through terminal_run with "
@@ -988,3 +1039,4 @@ def classify_sandbox_denial(output: str, write_mode: str) -> str | None:
         "the user will be asked to approve that exact command before it runs "
         "unconfined."
     )
+    return f"{_setuid_hint(setuid)}\n{write_hint}" if setuid else write_hint

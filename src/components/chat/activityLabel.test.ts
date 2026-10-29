@@ -55,9 +55,8 @@ describe('terminal step summaries', () => {
 });
 
 describe('synthetic card summaries', () => {
-  it('names a held-back delivery claim, and keeps the generic hook label otherwise', () => {
-    expect(stepLabel(tool('stop_hook_block', { input: { source: 'deliverable' } }))).toBe('Checking a claimed delivery');
-    expect(stepLabel(tool('stop_hook_block', { input: { source: 'verify' } }))).toBe('Continuing (Stop hook)');
+  it('gives a Stop-hook card the generic hook label', () => {
+    expect(stepLabel(tool('stop_hook_block', { input: { reason: 'tests are red' } }))).toBe('Continuing (Stop hook)');
   });
 
   it('gives a goal verdict in words, with the attempt when there is one', () => {

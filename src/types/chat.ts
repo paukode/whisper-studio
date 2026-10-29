@@ -98,7 +98,14 @@ export interface TurnModelSettings {
 }
 
 export interface ChatMessage {
-  role: 'user' | 'assistant' | 'cron_event' | 'session_message' | 'agent_report' | 'agent_answer';
+  role:
+    | 'user'
+    | 'assistant'
+    | 'cron_event'
+    | 'session_message'
+    | 'agent_report'
+    | 'agent_answer'
+    | 'task_report';
   content: string;
   timestamp: string;
   /** Populated when role === 'cron_event'. Renders as a CronEventCard
@@ -113,6 +120,10 @@ export interface ChatMessage {
    *  after agent reports landed with no turn running. Backend-owned row so
    *  it survives saves; rendered as an assistant bubble. */
   agentAnswer?: AgentAnswerPayload;
+  /** role='task_report' (UI-only in storage, relabeled as a user turn for the
+   *  model): the result of a background command this chat started, which
+   *  finished after the turn that started it (server/tasks/wake.py). */
+  taskReport?: TaskReportPayload;
   /** Populated when role === 'session_message'. Renders as a
    *  SessionMessageCard. */
   sessionMessage?: SessionMessagePayload;
@@ -380,6 +391,19 @@ export interface AgentAnswerPayload {
   timestamp?: string;
 }
 
+/** A finished background command's result (server/tasks/wake.py). */
+export interface TaskReportPayload {
+  task_id: string;
+  command: string;
+  /** completed | failed | stopped */
+  status: string;
+  exit_code?: number | null;
+  started_at?: string;
+  duration_ms?: number | null;
+  output_tail?: string;
+  timestamp?: string;
+}
+
 export interface AgentReportPayload {
   team_id: string;
   team_name: string;
@@ -536,11 +560,7 @@ export interface SSEEventData {
    *  turn (server.security.permissions.record_classifier_verdict). */
   auto_mode_breaker?: { reason?: string };
   goal_eval?: { verdict?: GoalVerdict; feedback?: string; confidence?: number; attempt?: number; cap?: number };
-  /** `source` names the gate phase that refused to end the turn.
-   *  'deliverable': the reply claimed a delivery the server could not
-   *  verify, so it held that sentence back and sent the model back to
-   *  produce it or correct itself (the reason never repeats the claim). */
-  stop_hook_block?: { reason?: string; attempt?: number; source?: string };
+  stop_hook_block?: { reason?: string; attempt?: number };
   /** Claims the server verified in the reply so far, one frame per verified
    *  sentence. Merged into the current assistant message's `deliveries`. */
   deliveries?: { items: DeliveryFrameItem[] };

@@ -445,6 +445,66 @@ def test_calling_the_file_off_mid_turn_asks_for_nothing(report):
     assert rf.requested_file_feedback(msgs, None) is None
 
 
+# ── a file a background command is still writing ───────────────────────────
+# Live run: "start sleep 25 && echo build-done > build.txt in the background"
+# was sent back to write build.txt by hand while the command was making it.
+# Its result comes back to the chat when it finishes (server/tasks/wake.py).
+
+
+def _in_background(prompt: str, command: str, task_id: str = "t9") -> list:
+    return [
+        {"role": "user", "content": prompt},
+        _tool("ws_run_command", {"command": command, "run_in_background": True}),
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "t1",
+                    "content": f"[Background Task Started] task_id={task_id}\nCommand: {command}",
+                }
+            ],
+        },
+        {"role": "assistant", "content": "The command runs in the background."},
+    ]
+
+
+def _running(*task_ids: str):
+    return lambda task_id: task_id in task_ids
+
+
+def test_a_file_a_running_background_command_writes_is_on_its_way():
+    command = "sleep 25 && echo build-done > build.txt"
+    msgs = _in_background(f"run {command} in the background", command)
+    assert rf.requested_file_feedback(msgs, None, running=_running("t9")) is None
+    # Finished and still no file: owed as before.
+    assert rf.requested_file_feedback(msgs, None, running=_running()) is not None
+    assert rf.requested_file_feedback(msgs, None) is not None
+
+
+def test_a_running_command_that_names_another_file_does_not_answer():
+    msgs = _in_background("write notes.md and run the tests in the background", "pytest -q")
+    fb = rf.requested_file_feedback(msgs, None, running=_running("t9"))
+    assert fb and "notes.md" in fb
+
+
+def test_any_running_command_answers_a_file_asked_for_without_a_name():
+    msgs = _in_background(
+        "build the dmg and save it to Downloads", "make dmg && cp dist/*.dmg ~/Downloads/"
+    )
+    assert rf.requested_file_feedback(msgs, None, running=_running("t9")) is None
+
+
+def test_a_command_started_before_a_mid_turn_request_does_not_answer_it():
+    msgs = _late(
+        _in_background("start the build in the background", "make build"),
+        "also make a png chart of the totals",
+    )
+    msgs.append({"role": "assistant", "content": "Noted."})
+    fb = rf.requested_file_feedback(msgs, None, running=_running("t9"))
+    assert fb and "png chart" in fb
+
+
 # ── the gate phase ─────────────────────────────────────────────────────────
 
 
@@ -486,6 +546,22 @@ def test_gate_stays_out_of_plan_mode(_gate_env):
         _gate_env.run_completion_gate(GateContext(session_id="s", messages=msgs, plan_mode=True))
     )
     assert decision.block is False
+
+
+@pytest.mark.parametrize(("status", "blocks"), [("running", False), ("completed", True)])
+def test_gate_reads_the_task_registry_for_a_background_command(
+    _gate_env, monkeypatch, status, blocks
+):
+    from server.goals import GateContext
+    from server.tasks import registry
+
+    monkeypatch.setattr(registry, "get_task", lambda task_id: {"status": status})
+    command = "sleep 25 && echo build-done > build.txt"
+    msgs = _in_background(f"run {command} in the background", command)
+    decision = asyncio.run(
+        _gate_env.run_completion_gate(GateContext(session_id="s", messages=msgs))
+    )
+    assert decision.block is blocks
 
 
 # ── the engine ─────────────────────────────────────────────────────────────
@@ -578,5 +654,6 @@ def test_the_engine_asks_for_a_file_requested_mid_turn(_gate_env, monkeypatch, r
     nudge = adapter.calls[2][-1]
     assert nudge["content"].startswith(f"[completion gate] {rf.REQUEST_MARKER}")
     assert _LATER in nudge["content"] and _PROMPT not in nudge["content"]
-    assert out.count("stop_hook_block") == 1
+    # A quiet nudge: the chat shows no card.
+    assert "stop_hook_block" not in out
     assert midturn_inbox.has_pending(sid) is False

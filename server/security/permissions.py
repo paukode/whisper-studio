@@ -274,7 +274,9 @@ def evaluate_rules(tool_name: str, tool_input: dict, rules: list | None = None) 
     return rule.get("action", "ask") if rule is not None else None
 
 
-def approval_floor(tool_name: str, tool_input: dict, category: str) -> str | None:
+def approval_floor(
+    tool_name: str, tool_input: dict, category: str, mode: str | None = None
+) -> str | None:
     """The hard floor this call hits, or None.
 
     A floor always asks a human: no permission mode, category override,
@@ -283,6 +285,10 @@ def approval_floor(tool_name: str, tool_input: dict, category: str) -> str | Non
     "sandbox-escalation", "visible-terminal", "mcp-approve"). Any floor marks
     the approval card's request ``always_asks``, so the card never offers a
     remember-for-session choice that would then be ignored.
+
+    ``mode`` is the session's permission mode. One floor depends on it: the
+    visible terminal asks in every mode but bypassPermissions (the user's rule
+    2026-10-28: in Bypass the terminal opens and the command runs).
     """
     # Destructive GitHub mutations (repo/ref delete, PR merge, archive/rename,
     # API DELETE) ALWAYS require an explicit human approval — no bypass mode,
@@ -334,14 +340,14 @@ def approval_floor(tool_name: str, tool_input: dict, category: str) -> str | Non
     if str(tool_input.get("sandbox_permissions") or "").strip() == "danger-full-access":
         return "sandbox-escalation"
 
-    # A terminal_run typed into the user's visible terminal: the same absolute
-    # floor as sandbox escalation, for the same reason. That shell runs with no
-    # OS write confinement, so only a person reading the command keeps a write
-    # or delete outside the workspace from happening. Without this, bypass, a
-    # "Yes, all cli", a rule or the Auto classifier would run it unconfined
-    # with no card. The rm floor above cannot cover it alone: it sees only
-    # rm-like deletes, and the shell's working directory is unknown.
-    if _visible_terminal(tool_name, tool_input):
+    # A terminal_run typed into the user's visible terminal. That shell runs
+    # with no OS write confinement, so outside bypassPermissions only a person
+    # reading the command keeps a write outside the workspace from happening:
+    # a "Yes, all cli", a rule or the Auto classifier never runs it with no
+    # card. In bypassPermissions it runs (the user's rule 2026-10-28), and the
+    # rm floor above still asks for any delete there, since the shell's
+    # working directory is unknown.
+    if _visible_terminal(tool_name, tool_input) and mode != MODE_BYPASS:
         return "visible-terminal"
 
     # MCP tool calls: a dedicated tier on top of (not instead of) everything
@@ -529,8 +535,8 @@ def resolve_static_decision(
     else resolved it (the caller then falls back to the classifier).
 
     Evaluation order: hard floors (github-destructive, a delete outside the
-    workspace, sandbox escalation, a visible terminal run, MCP server marked
-    approve; see approval_floor) → app storage (a write under ~/.whisper is
+    workspace, sandbox escalation, a visible terminal run outside bypass, MCP
+    server marked approve; see approval_floor) → app storage (a write under ~/.whisper is
     allowed in every mode, a delete there only in bypassPermissions; see
     targets_app_storage) → category mode override → bypassPermissions
     (absolute inside the workspace; a save to a path outside it and reach into
@@ -540,7 +546,7 @@ def resolve_static_decision(
     config (allow) → dontAsk → acceptEdits (write category only) → auto
     (defer) → ask.
     """
-    if approval_floor(tool_name, tool_input, category) is not None:
+    if approval_floor(tool_name, tool_input, category, mode) is not None:
         return "ask"
 
     # The app's own grant and config files (server.infrastructure.paths.

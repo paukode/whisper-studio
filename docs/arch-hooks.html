@@ -160,10 +160,10 @@
       off too. Cron instead verifies its own runs with a separate <code>cron_verify</code> step; see
       <a href="arch-goals.html">The goal loop</a>.</p>
     <p>The completion gate calls the Stop hooks; it does not register one. That matters when you read the
-      transcript: the gate's own deliverable and verification checks emit the same
-      <code>stop_hook_block</code> frame, which renders as <b>Continuing (Stop hook)</b>, so a turn can
-      continue itself with no Stop hook configured at all. Which check spoke is carried on the decision's
-      <code>source</code> field.</p>
+      transcript. The verification check of the gate emits the same <code>stop_hook_block</code> frame,
+      which shows as <b>Continuing (Stop hook)</b>. Because of this, a turn can continue with no Stop
+      hook configured. The claim check and the requested-file check send the model back with no frame.
+      The <code>source</code> field of the decision tells which check blocked the turn.</p>
     <div class="spec">
       <dt><code class="path">server/hooks/engine.py</code></dt><dd><code>run_hooks(event, payload)</code>, the two-phase evaluator, <code>check_stop_hooks()</code>, and <code>dry_run()</code> for the Test button.</dd>
       <dt><code class="path">server/hooks/schema.py</code></dt><dd><code>HookDef</code> / <code>HookOutcome</code>, the event list and its <code>TurnEnd</code> alias, matcher semantics, the stdin envelope, and config normalization.</dd>

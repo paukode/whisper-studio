@@ -193,6 +193,18 @@ def _session_event_frame(ev: dict) -> dict | None:
         # The wake turn's reply to those reports. Same story: this is the
         # only live path to a session that is open but idle.
         return {"agent_answer": ev.get("agentAnswer") or {}}
+    if kind == "task_report":
+        # A background command the chat started finished
+        # (server/tasks/wake.py): the row the model reads, shown live.
+        return {"task_report": ev.get("taskReport") or {}}
+    if kind == "task_wake":
+        # Live only: asks the window that has the session open to start a
+        # turn for the finished commands it names.
+        return {"task_wake": ev.get("taskWake") or {}}
+    if kind == "terminal_show":
+        # App-wide: the assistant runs a command in a visible terminal
+        # (server/executors/terminal_run.py), so the panel opens on it.
+        return {"terminal_show": ev.get("terminalShow") or {}}
     if kind == "task_event":
         # Background-task lifecycle (the unified registry), the only live
         # feed of the header's task list: a row starts, finishes or stops here

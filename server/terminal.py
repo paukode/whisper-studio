@@ -727,6 +727,55 @@ def latest_visible_session() -> _PtySession | None:
     return live[-1]
 
 
+# A visible terminal the assistant opens for a command: the panel's size is
+# unknown until it attaches, so it starts at a common size and the panel
+# refits it. Its shell gets a bounded wait for its first prompt, so the command
+# is not typed while the shell still reads its rc files.
+_OPENED_COLS = 120
+_OPENED_ROWS = 30
+_SHELL_READY_TIMEOUT_S = 5.0
+_SHELL_READY_QUIET_S = 0.3
+
+
+async def open_visible_session(cwd: str) -> _PtySession:
+    """Open a visible terminal for terminal_run (mode="visible"), the same
+    kind the panel's + button opens, once its shell has printed its prompt or
+    the wait ran out. Call on the event loop: the reader task needs it."""
+    if not os.path.isdir(cwd):
+        cwd = os.path.expanduser("~")
+    _reap_dead_sessions()
+    session = _create_pty_session(cwd, _OPENED_COLS, _OPENED_ROWS)
+    deadline = time.monotonic() + _SHELL_READY_TIMEOUT_S
+    seen = 0
+    quiet_since = time.monotonic()
+    while time.monotonic() < deadline and session.alive:
+        await asyncio.sleep(0.05)
+        produced = session.bytes_produced
+        if produced != seen:
+            seen, quiet_since = produced, time.monotonic()
+        elif seen and time.monotonic() - quiet_since >= _SHELL_READY_QUIET_S:
+            break
+    return session
+
+
+def show_visible_session(session: _PtySession, *, opened: bool) -> None:
+    """Ask every window to show this terminal: a ``terminal_show`` frame on
+    the app-wide channel opens the panel and adds a tab for it (``opened``) or
+    switches to its tab."""
+    try:
+        from server.agents.event_bus import event_bus
+
+        event_bus.publish(
+            "",
+            {
+                "type": "terminal_show",
+                "terminalShow": {"terminal_id": session.id, "cwd": session.cwd, "opened": opened},
+            },
+        )
+    except Exception as e:  # noqa: BLE001 - the command still runs; the user can open the panel
+        log.warning("terminal_show for %s not published: %s", session.id, e)
+
+
 async def run_in_sandbox(
     command: str,
     cwd: str | None = None,

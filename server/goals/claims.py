@@ -14,7 +14,8 @@ supposition, an example, a negation or a question, and never code, quoted
 text or a draft the reply hands over (claim_text.Lines). Each carries the
 offsets of the clause that makes it, so the guard knows which sentence to
 hold. The words are in claim_text.py, the reading of paths in
-claim_paths.py and of acts in claim_acts.py.
+claim_paths.py, of files named by their name alone in claim_names.py, and of
+acts in claim_acts.py.
 
 The kinds: a file saved (``FILE``; ``deliverable`` marks a finished document
 such as a .docx or .pdf at an absolute or home path), a folder written to
@@ -39,6 +40,7 @@ from bisect import bisect_left, bisect_right
 from dataclasses import replace
 
 from server.goals.claim_acts import act_claims
+from server.goals.claim_names import name_claims
 from server.goals.claim_paths import (
     _file_table_rows,
     _Found,
@@ -186,9 +188,18 @@ def _clause_claims(
     # the fix for the Not Found case" is still a push.
     negated = bool(_NOT_MADE_RE.search(said))
     paths = _path_claims(lead, masked, said, found, prev, negated) if found else []
+    # A file named by its name alone ("I created `inside.txt`").
+    names = name_claims(
+        lead,
+        clause,
+        masked,
+        [f.span.path for f in found],
+        [(f.span.start, f.span.end, f.span.path) for f in found if f.folder],
+        negated,
+    )
     acts = act_claims(lead, clause, masked)
     after = (bool(paths), any(p.made for p in paths), any(p.firm for p in paths))
-    return paths + acts, after
+    return paths + names + acts, after
 
 
 def _sentence(text: str, start: int, end: int, breaks: list[int]) -> str:

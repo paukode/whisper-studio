@@ -203,6 +203,14 @@ async def run_tool_round(
         messages.append({"role": "user", "content": tool_results})
         for _frame in ctx.claims.after_tools(messages):
             yield _frame
+        # A claim the guard held back this round goes to the model with the
+        # results (an engine row's prefix, so the claim check counts it), and
+        # the model fixes or retracts it in its next round. No card shows it.
+        _claim_note = ctx.claims.send_back()
+        if _claim_note:
+            from server.chat.loop_hints import inject_reminder
+
+            inject_reminder(messages, f"[completion gate] {_claim_note}")
 
         # Proactive compaction: char estimate, supplemented by TOKEN truth
         # (the per-round usage crossed 80% of the window).

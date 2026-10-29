@@ -27,6 +27,7 @@ import type {
   ChatMessage,
   CronEventPayload,
   SessionMessagePayload,
+  TaskReportPayload,
   TeamProgressEvent, AgentReportPayload, AgentAnswerPayload } from '@/types/chat';
 import type { TaskEventPayload } from '@/types/backgroundTasks';
 import type { AgentProgressEvent } from './agentFeedStore';
@@ -173,6 +174,18 @@ function isChatBusy(sid: string, chat: ChatState): boolean {
   );
 }
 
+/** Whether this session's chat is busy (see isChatBusy); false for a session
+ *  with no runtime. */
+export function isSessionBusy(sessionId: string): boolean {
+  const entry = runtimes.get(sessionId);
+  return !!entry && isChatBusy(sessionId, entry.chat.getState());
+}
+
+/** Whether this session has a runtime holding the server's copy of it. */
+export function hasHydratedRuntime(sessionId: string): boolean {
+  return runtimes.get(sessionId)?.hydrated === true;
+}
+
 /** ACTIVE = a busy chat (see isChatBusy) or owning the recording. The user's
  *  3-session ceiling counts these; viewing idle sessions is never capped. */
 export function countActiveSessions(excluding?: string): number {
@@ -203,6 +216,11 @@ function attachRuntimeSubscriptions(sid: string, entry: RuntimeEntry): void {
           if (!runtimes.has(sid)) return; // evicted/deleted meanwhile
           useSessionStore.getState().syncChatHistory(sid, entry.chat.getState().messages);
         }, 200);
+      }
+      // Stream end: a finished background command may be waiting for this
+      // session to go idle, or for any session to free an active slot.
+      if (wasStreaming && !s.isStreaming) {
+        void import('@/hooks/chatStream/backgroundWake').then((m) => m.flushPendingWakes());
       }
       wasStreaming = s.isStreaming;
       // Any message-count change (user question lands immediately, cron
@@ -299,6 +317,9 @@ interface SessionEventFrame {
   agent_report?: AgentReportPayload;
   agent_answer?: AgentAnswerPayload;
   session_message?: SessionMessagePayload;
+  task_report?: TaskReportPayload;
+  task_wake?: { task_ids: string[] };
+  terminal_show?: { terminal_id: string; cwd: string; opened: boolean };
   team_progress?: TeamProgressEvent;
   ci_progress?: Record<string, unknown>;
   ci_result?: Record<string, unknown>;
@@ -339,6 +360,17 @@ export function openEventChannel(): void {
     if (parsed?.mcp_changed) {
       const { revision } = parsed.mcp_changed;
       void import('./mcpStore').then(({ useMcpStore }) => useMcpStore.getState().applyChange(revision));
+      return;
+    }
+    if (parsed?.terminal_show) {
+      // App-wide: the assistant runs a command in a visible terminal, so the
+      // panel opens on that terminal's tab (server/terminal.py).
+      const { terminal_id, cwd } = parsed.terminal_show;
+      if (terminal_id) {
+        void import('./uiStore').then(({ useUIStore }) =>
+          useUIStore.getState().showTerminal(terminal_id, cwd ?? ''),
+        );
+      }
       return;
     }
     if (parsed?.task_event) {
@@ -422,6 +454,26 @@ export function openEventChannel(): void {
         timestamp: payload.timestamp ?? new Date().toISOString(),
         agentReport: payload,
       });
+      return;
+    }
+    if (parsed?.task_report) {
+      // A background command this session started finished
+      // (server/tasks/wake.py). A backend-owned row the backend relabels
+      // for the model.
+      const payload = parsed.task_report;
+      entry.chat.getState().addMessage({
+        role: 'task_report',
+        content: '',
+        timestamp: payload.timestamp ?? new Date().toISOString(),
+        taskReport: payload,
+      });
+      return;
+    }
+    if (parsed?.task_wake) {
+      // No turn was running to read those results: start one here, now or
+      // as soon as this session is free (./backgroundWake).
+      const ids = parsed.task_wake.task_ids ?? [];
+      void import('@/hooks/chatStream/backgroundWake').then((m) => m.requestWake(sid, ids));
       return;
     }
     if (parsed?.cron_event) {

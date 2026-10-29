@@ -206,10 +206,10 @@ def test_the_engine_hands_the_typed_words_to_the_gate(_gate):
     typed = _Answers()
     out = _run(_ctx(typed, "summarize"))
     assert "stop_hook_block" not in out and typed.calls == 1
-    # Without them the meeting's words are read as the ask: one nudge.
+    # Without them the meeting's words are read as the ask: one quiet nudge.
     whole = _Answers()
     out = _run(_ctx(whole, None))
-    assert out.count("stop_hook_block") == 1 and whole.calls == 2
+    assert "stop_hook_block" not in out and whole.calls == 2
 
 
 def test_a_paused_turn_keeps_the_typed_words(monkeypatch):

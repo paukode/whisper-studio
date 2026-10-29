@@ -9,7 +9,8 @@
 import type { ChatMessage } from '@/types/chat';
 
 /** Backend-owned rows the model must read: agent reports that landed with no
- *  turn running, the wake turn's answer to them, and cross-session messages.
+ *  turn running, the wake turn's answer to them, the results of background
+ *  commands this chat started, and cross-session messages.
  *  The server relabels each as a user or assistant turn
  *  (visible_chat_history); the one UI-only row (cron_event) stays out of
  *  the prompt. */
@@ -17,6 +18,7 @@ const MODEL_ROWS: ReadonlySet<ChatMessage['role']> = new Set([
   'agent_report',
   'agent_answer',
   'session_message',
+  'task_report',
 ]);
 
 /** How many user and assistant rows travel. The backend rows between them
@@ -58,6 +60,7 @@ export function buildHistoryPayload(
     ...(m.agentReport ? { agentReport: m.agentReport } : {}),
     ...(m.agentAnswer ? { agentAnswer: m.agentAnswer } : {}),
     ...(m.sessionMessage ? { sessionMessage: m.sessionMessage } : {}),
+    ...(m.taskReport ? { taskReport: m.taskReport } : {}),
     // What the reply's chips verified: the server checks a recap of earlier
     // work against it, and keeps it out of the model's prompt.
     ...(m.role === 'assistant' && m.deliveries?.length ? { deliveries: m.deliveries } : {}),

@@ -14,29 +14,34 @@ it makes:
 
 - no claim, or every claim holds: the sentence is released, and a
   ``deliveries`` frame lists what was verified (the chat shows chips);
-- a claim does not hold: the sentence is not shown, nor what follows it. A
-  round that calls tools holds its tool calls' frames behind it too, until
-  the round's calls are known: a sentence none of them could make true is
-  dropped then, and the rest (tool cards included) released in order; one a
-  call could make true waits for the calls to run, with the tool cards sent
-  ahead of it, and comes after them as its own paragraph. In a round with no
-  calls the sentence is dropped at the round's end. The completion gate then
-  sends the model back (deliverables.check_claims). A sentence part of which
-  was already shown ends in "...".
+- a claim does not hold: the sentence is not shown, and the text after it
+  goes on at once. Once the round's calls are known, a sentence none of them
+  could make true is dropped; one a call could make true waits for the calls
+  to run and, if it holds then, comes after their cards as its own
+  paragraph. In a round with no calls the sentence is dropped at the round's
+  end. A sentence part of which was already shown ends in "...".
+
+The model is sent back over a dropped claim, and the chat shows no card for
+it: a tool round's claims go in with the round's results (``send_back``); a
+reply's claims go through the completion gate (deliverables.check_claims) or,
+where no gate reads the reply (subagents, scheduled and headless runs,
+on-device chat with no goal), through the runner (``take_send_back``). Each
+claim is sent back once, under the turn's shared claim nudges
+(deliverables.claim_nudge_allowed).
 
 Code, quoted text and a draft the reply hands over are not the assistant's
 own statements and flow through unread (claim_text.Lines), as the reader
 skips them. A cut at the output limit is no sentence end: the sentence runs
 on in the continuation (a retried continuation too), and is read whole.
 
-When the turn ends (at the end of its last round where no gate can send the
-model back: subagents, scheduled and headless runs), each dropped claim that
-still does not hold is stated in the server's own words ("Not saved:
-`~/a.docx` does not exist."), unless a later sentence corrected it, so a
-false claim is never shown as fact. A turn that stops for an approval hands
-its start time, its dropped claims and everything from its first held
-sentence on to the continuation, which checks them against the calls that ran
-meanwhile and shows them first, in order.
+When the turn ends (in a run's last round where no gate can send the model
+back: subagents, scheduled and headless runs), each dropped claim that still
+does not hold is stated in the server's own words ("Not saved: `~/a.docx`
+does not exist."), unless a later sentence corrected it, so a false claim is
+never shown as fact. A turn that stops for an approval hands its start time,
+its dropped claims and the sentences it still held to the continuation, which
+checks them against the calls that ran meanwhile and shows those that hold
+first, in order.
 
 The guard keeps every call of the turn as it first read it, so compaction or
 a salvage round cannot make a done act look undone (or a failed one done),
@@ -64,7 +69,7 @@ from server.chat.engine.events import (
     TextDelta,
 )
 from server.goals import claims as c
-from server.goals.call_results import turn_calls
+from server.goals.call_results import turn_calls, woken_calls
 from server.goals.claim_text import Lines
 from server.goals.claims import _paths_only
 from server.goals.evidence import (
@@ -116,7 +121,9 @@ _PAUSE_TTL_S = 3600.0
 @dataclass
 class _Held:
     """A sentence whose claims did not hold when it ended, the receipts of
-    those of its claims that did, and whether part of it was shown."""
+    those of its claims that did, whether part of it was shown, and how much
+    text the turn had shown when it was held (what follows it can correct
+    it)."""
 
     start: int
     end: int
@@ -124,31 +131,33 @@ class _Held:
     receipts: list[dict] = field(default_factory=list)
     partial: bool = False
     text: str = ""
+    shown_at: int = 0
 
 
 @dataclass
 class _Dropped:
-    """A claim the user was not shown, and how much text the turn had shown
-    by then (a later sentence that corrects it follows)."""
+    """A claim the user was not shown, how much text the turn had shown by
+    then (a later sentence that corrects it follows), and whether the model
+    was sent back over it."""
 
     claim: c.Claim
     verdict: Verdict
     shown_at: int
+    sent: bool = False
 
 
 @dataclass
 class _Paused:
     """What a turn paused for an approval hands its continuation: its start,
     its prompt (which the continuation must share), its dropped claims, and
-    the text from its first held sentence on with the sentences held in it
-    (offsets into that text) and the parts already dropped."""
+    the sentences it still held, end to end in ``text`` (``held`` offsets
+    into it)."""
 
     started_at: float
     prompt: str
     dropped: list[_Dropped]
     text: str = ""
     held: list[_Held] = field(default_factory=list)
-    drops: list[tuple[int, int, str]] = field(default_factory=list)
     stamp: float = field(default_factory=time.monotonic)
 
 
@@ -200,7 +209,10 @@ def _visible_text(buf: str, drops: list[tuple[int, int, str]], start: int, end: 
             continue
         if s > at:
             parts.append(buf[at:s])
-        parts.append(instead)
+        if s >= start:
+            # A span an earlier send entered (its trailing space came later)
+            # was marked there.
+            parts.append(instead)
         at = max(at, e)
     if at < end:
         parts.append(buf[at:end])
@@ -229,6 +241,7 @@ class ClaimGuard:
         enabled: bool = True,
         started_at: float | None = None,
         notes_at_round_end: bool = False,
+        end_check: bool = False,
         receipts: list | None = None,
         paused: _Paused | None = None,
     ):
@@ -240,6 +253,12 @@ class ClaimGuard:
         # No gate can send the model back (subagents, scheduled and headless
         # runs): the notes close the last round, where the run's report is.
         self.notes_at_round_end = notes_at_round_end
+        # No completion gate reads the reply (the runs above, on-device chat
+        # with no goal): the guard sends a claim it held back in the reply to
+        # the model itself (``take_send_back``).
+        self.end_check = end_check
+        self._send: str | None = None
+        self._last_round = False
         # The deliveries earlier replies verified (the chat's history).
         self.receipts = list(receipts or [])
         self._messages: list = []
@@ -279,13 +298,19 @@ class ClaimGuard:
         if paused is not None and paused.prompt != last_user_prompt(ctx.messages):
             paused = None
         policy = getattr(ctx, "policy", None)
+        # A turn woken by finished background commands began, for its
+        # evidence, when the earliest of them did (server/tasks/wake.py).
+        _, woke_at = woken_calls(ctx.messages)
+        # A model with no tools cannot make the file, so it is not sent back.
+        tools = getattr(getattr(ctx, "adapter", None), "tools_enabled", True)
         return cls(
             workspace=ctx.ws_path or None,
             plan_mode=ctx.plan_mode,
             session_id=scope,
             enabled=ctx.cost_source != "memory" and _checking_claims(),
-            started_at=paused.started_at if paused else None,
+            started_at=paused.started_at if paused else woke_at,
             notes_at_round_end=policy is not None and not policy.completion_gate,
+            end_check=bool(tools) and not _gate_reads_reply(policy, scope),
             receipts=getattr(ctx, "earlier_deliveries", None),
             paused=paused,
         )
@@ -306,15 +331,17 @@ class ClaimGuard:
         self._drops: list[tuple[int, int, str]] = []
         self._seen: set[tuple[int, str, str]] = set()
         self._receipts: list[tuple[int, dict]] = []
-        self._frames: list[tuple[int, object]] = []
         self._scanned = 0
         self._scan_at = 0
         self._hot = False
-        self._late = False
 
     def _evidence(self) -> Evidence:
         if self._before is None:
             self._before = before_of(self._messages, self.receipts, self._text_cache)
+        # Background commands whose results reached the turn without a call
+        # of its own count as its calls (call_results.woken_calls).
+        for x in woken_calls(self._messages)[0]:
+            self._calls.setdefault(x.id, x)
         return Evidence.of(
             self._messages,
             workspace=self.workspace,
@@ -332,20 +359,21 @@ class ClaimGuard:
 
     # ── the runner's calls ───────────────────────────────────────────────
 
-    async def wrap(self, events, messages: list):
+    async def wrap(self, events, messages: list, *, last_round: bool = False):
         """One round's provider events, with its text held as the module
-        notes say. A round attempt that fails after it said something shows
-        what it said before its error, as it did unguarded (that text counts
-        as streamed, so the round is not run again over it); one that failed
-        before saying anything leaves the guard as it was, for its retry."""
+        notes say; ``last_round`` when no round of the turn follows. A round
+        attempt that fails after it said something shows what it said before
+        its error, as it did unguarded (that text counts as streamed, so the
+        round is not run again over it); one that failed before saying
+        anything leaves the guard as it was, for its retry."""
         if not self.enabled:
             async for ev in events:
                 yield ev
             return
+        self._last_round = last_round
         for item in self._begin_round(messages):
             yield item
         fed_at = len(self._buf)
-        frames_at = len(self._frames)
         try:
             async for ev in events:
                 if isinstance(ev, TextDelta):
@@ -368,7 +396,6 @@ class ClaimGuard:
                 if isinstance(ev, RoundError):
                     if ev.retryable and len(self._buf) == fed_at:
                         # Nothing said yet: a retry starts from here.
-                        self._frames = self._frames[:frames_at]
                         self._retry = True
                     else:
                         for item in self._end_round(final=True, last=False):
@@ -382,16 +409,12 @@ class ClaimGuard:
                     yield ev
                     continue
                 # A tool call, thinking or the output cap: the text before it
-                # is complete. Behind a held sentence it waits its turn.
+                # is complete, and goes first.
                 for item in self._close_tail() + self._release(len(self._buf)):
                     yield item
-                if self._held or self._frames:
-                    self._frames.append((len(self._buf), ev))
-                else:
-                    yield ev
+                yield ev
         except Exception:
             if len(self._buf) == fed_at:
-                self._frames = self._frames[:frames_at]
                 self._retry = True
             else:
                 for item in self._end_round(final=True, last=False):
@@ -413,14 +436,37 @@ class ClaimGuard:
         self._messages = messages
         self._ev = self._evidence()
         items = self._settle(final=True)
-        if self._late:
-            self._late = False
-            if any(isinstance(i, TextDelta) for i in items) and not self._shown.endswith(
-                ("\n", " ")
-            ):
-                self._shown += "\n\n"
-                items.append(TextDelta(text="\n\n"))
+        if any(isinstance(i, TextDelta) for i in items) and not self._shown.endswith(("\n", " ")):
+            self._shown += "\n\n"
+            items.append(TextDelta(text="\n\n"))
         return _sse(items)
+
+    def send_back(self) -> str | None:
+        """The feedback that sends the model back over the claims it was not
+        shown and was not yet told about, or None: none is new, each one holds
+        by now or a later sentence corrected it, or the turn used its claim
+        nudges (deliverables.claim_nudge_allowed, which the gate's own claim
+        check counts too). A tool round's feedback goes in with its results,
+        so the model fixes or retracts the claim in its next round."""
+        fresh = [d for d in self._dropped if not d.sent]
+        if not self.enabled or not fresh:
+            return None
+        from server.goals.deliverables import claim_feedback, claim_nudge_allowed
+
+        if not claim_nudge_allowed(self._messages):
+            return None
+        _receipts, failed = self._unsettled(fresh)
+        for d in fresh:
+            d.sent = True
+        if not failed:
+            return None
+        return claim_feedback(failed, self._messages, self.workspace)
+
+    def take_send_back(self) -> str | None:
+        """The feedback for the claims the reply just ended on held back,
+        when the guard checks the reply itself (``end_check``), else None."""
+        note, self._send = self._send, None
+        return note
 
     def finish(self, *, paused: bool = False) -> list[str]:
         """The frames to send before the turn's [DONE]: the text still held,
@@ -434,18 +480,13 @@ class ClaimGuard:
 
             items += self._settle(final=False)
             hand = _Paused(self.started_at, last_user_prompt(self._messages), list(self._dropped))
-            if self._held:
-                first = self._held[0].start
-                items += self._release(first)
-                hand.text = self._buf[first:]
-                hand.held = [
-                    replace(h, start=h.start - first, end=h.end - first) for h in self._held
-                ]
-                hand.drops = [(s - first, e - first, i) for s, e, i in self._drops if s >= first]
-                self._held = []
-            else:
-                items += self._release(len(self._buf))
-            self._frames = []
+            at = 0
+            for h in self._held:
+                # The part of one that was shown is marked there already.
+                hand.held.append(replace(h, start=at, end=at + len(h.text), partial=False))
+                hand.text += h.text
+                at += len(h.text)
+            self._held = []
             _expire_paused()
             _PAUSED_STARTS[self.session_id] = hand
             self._dropped = []
@@ -495,12 +536,15 @@ class ClaimGuard:
             # The continuation of a cut, or a retry of an attempt that said
             # nothing: the sentence in progress goes on.
             self._carry = self._retry = False
-        elif self._round_done:
-            # A finished round whose calls never reported back.
-            items = self._settle(final=True)
-            self._new_round()
         else:
+            if self._round_done:
+                # A finished round whose calls never reported back.
+                items = self._settle(final=True)
             self._new_round()
+            if self._shown and not self._shown[-1].isspace():
+                # The chat keeps rounds apart (tool cards, a new answer), so
+                # a sentence read for a correction never runs across two.
+                self._shown += "\n"
         self._round_done = False
         self._holding = None
         self._messages = messages
@@ -514,7 +558,7 @@ class ClaimGuard:
         paused, self._paused_in = self._paused_in, None
         if paused is None:
             return []
-        drops = list(paused.drops)
+        drops: list[tuple[int, int, str]] = []
         receipts: list[dict] = []
         for h in paused.held:
             failures = []
@@ -605,6 +649,7 @@ class ClaimGuard:
                     receipts,
                     partial=self._out > start,
                     text=self._buf[text_start:end],
+                    shown_at=len(self._shown),
                 )
             )
             return self._release(end)
@@ -676,8 +721,6 @@ class ClaimGuard:
 
     def _release_tail(self) -> list:
         """Release what the sentence in progress cannot make a claim of."""
-        if self._held:
-            return []
         line_at = self._buf.rfind("\n") + 1
         if self._lines.kind(self._buf[line_at:]) != "prose":
             # Code, a quote or a draft: no claim of the assistant's own.
@@ -693,24 +736,17 @@ class ClaimGuard:
         return self._release(max(self._judged, len(self._buf) - _LOOKBACK))
 
     def _release(self, limit: int) -> list:
-        """Send the text up to ``limit`` (never past a held sentence), less
-        the dropped sentences, with each frame held behind it at its place,
-        then the receipts of what was sent."""
-        stop = min([h.start for h in self._held] + [limit])
+        """Send the text up to ``limit``, less the dropped sentences and the
+        held ones (the text after a held sentence goes on at once), then the
+        receipts of what was sent."""
         items: list = []
-        while True:
-            due = self._frames[0][0] if self._frames else None
-            upto = stop if due is None or due > stop else due
-            if upto > self._out:
-                text = _visible_text(self._buf, self._drops, self._out, upto)
-                self._out = upto
-                if text:
-                    self._shown += text
-                    items.append(TextDelta(text=text))
-            if due is not None and due <= stop and self._out >= due:
-                items.append(self._frames.pop(0)[1])
-                continue
-            break
+        if limit > self._out:
+            held = [_drop_span(self._buf, h) for h in self._held]
+            text = _visible_text(self._buf, self._drops + held, self._out, limit)
+            self._out = limit
+            if text:
+                self._shown += text
+                items.append(TextDelta(text=text))
         ready = [r for at, r in self._receipts if at <= self._out]
         self._receipts = [(at, r) for at, r in self._receipts if at > self._out]
         return items + self._announce(ready)
@@ -733,21 +769,13 @@ class ClaimGuard:
         if ev.stop_reason in ("max_tokens", "pause_turn"):
             # Not a sentence end: the continuation completes it.
             self._carry = True
-            items = self._release(self._judged)
-            items += [e for _at, e in self._frames]
-            self._frames = []
-            return items
+            return self._release(self._judged)
         if _calls_tools(ev.content):
+            # A held sentence a call may make true waits for the calls to
+            # run (after_tools), and follows their cards if it holds then.
             items = self._close_tail()
             pending = turn_calls([{"role": "assistant", "content": ev.content}])
             items += self._settle(final=True, only=lambda h: not self._reachable(h, pending))
-            items += self._release(len(self._buf))
-            if self._frames:
-                # A held sentence a call may make true: the calls' cards go
-                # first, and the sentence follows them once they ran.
-                self._late = True
-                items += [e for _at, e in self._frames]
-                self._frames = []
             self._round_done = True
             return items
         return self._end_round(final=True, last=True)
@@ -761,9 +789,11 @@ class ClaimGuard:
         if not final:
             return items + self._release(len(self._buf))
         items += self._settle(final=True)
-        items += [e for _at, e in self._frames]
-        self._frames = []
-        if last and self.notes_at_round_end:
+        if last and self.end_check and not self._last_round:
+            # The reply ended: what it claimed and did not hold goes back to
+            # the model (the runner takes it), and the note waits.
+            self._send = self.send_back()
+        if last and self.notes_at_round_end and self._send is None:
             # Where no gate can send the model back, the notes belong to the
             # run's last round: its report.
             items += self._note_items()
@@ -772,10 +802,13 @@ class ClaimGuard:
     def _settle(self, *, final: bool, only=None) -> list:
         """Check the held sentences again (a call may have made one true):
         release those that hold, and with ``final`` drop the others (those
-        ``only`` picks, when given) and release everything after them."""
+        ``only`` picks, when given). One that holds once the text after it
+        went out follows that text as a paragraph of its own."""
         if self._held:
             self._ev = self._evidence()
         still: list[_Held] = []
+        head: list = []
+        late: list[str] = []
         for h in self._held:
             failures: list[tuple[c.Claim, Verdict]] = []
             for claim, _was in h.failures:
@@ -787,6 +820,13 @@ class ClaimGuard:
                     failures.append((claim, verdict))
             if not failures:
                 self._receipts += [(h.end, r) for r in h.receipts]
+                s, e, _instead = _drop_span(self._buf, h)
+                if s < self._out <= e:
+                    # Nothing after it went out yet: it goes at its place.
+                    head.append(TextDelta(text=self._buf[s : self._out]))
+                    self._shown += self._buf[s : self._out]
+                elif self._out > e:
+                    late.append(h.text.strip())
                 continue
             h = replace(h, failures=failures)
             if not final or (only is not None and not only(h)):
@@ -794,7 +834,7 @@ class ClaimGuard:
                 continue
             self._drops.append(_drop_span(self._buf, h))
             self._receipts += [(h.end, r) for r in h.receipts]
-            self._dropped += [_Dropped(cl, v, len(self._shown)) for cl, v in failures]
+            self._dropped += [_Dropped(cl, v, h.shown_at) for cl, v in failures]
             self._dropped_texts.append(h.text)
             log.info(
                 "claim guard: held back %d claim(s) that did not hold: %s",
@@ -802,7 +842,15 @@ class ClaimGuard:
                 "; ".join(v.note for _cl, v in failures),
             )
         self._held = still
-        return self._release(len(self._buf) if final else self._judged)
+        items = head + self._release(len(self._buf) if final else self._judged)
+        late = [t for t in late if t]
+        if not late:
+            return items
+        text = " ".join(late)
+        if self._shown and not self._shown.endswith("\n"):
+            text = "\n\n" + text
+        self._shown += text
+        return items + [TextDelta(text=text)]
 
     async def _load_cards(self) -> None:
         self._wants_cards = False
@@ -824,11 +872,25 @@ class ClaimGuard:
         that still does not, unless text shown after the drop corrected it."""
         if not self._dropped:
             return []
+        receipts, failed = self._unsettled(self._dropped)
+        notes = [not_done(claim, verdict) for claim, verdict in failed]
+        self._dropped.clear()
+        items: list = self._announce(receipts)
+        if notes:
+            text = "\n\n*" + " ".join(notes) + "*"
+            self._shown += text
+            items.append(TextDelta(text=text))
+        return items
+
+    def _unsettled(self, dropped: list[_Dropped]):
+        """The receipts of the dropped claims that hold by now, and those
+        that still do not hold and no text shown after them corrected, one
+        of each kind and target."""
         self._ev = self._evidence()
         receipts: list[dict] = []
-        notes: list[str] = []
+        failed: list[tuple[c.Claim, Verdict]] = []
         seen: set[tuple[str, str]] = set()
-        for d in self._dropped:
+        for d in dropped:
             key = (d.claim.kind, d.claim.target)
             if key in seen:
                 continue
@@ -838,14 +900,26 @@ class ClaimGuard:
                 if verdict.receipt:
                     receipts.append(verdict.receipt)
             elif not mentions_as_correction(d.claim.target, self._shown[d.shown_at :]):
-                notes.append(not_done(d.claim, verdict))
-        self._dropped.clear()
-        items: list = self._announce(receipts)
-        if notes:
-            text = "\n\n*" + " ".join(notes) + "*"
-            self._shown += text
-            items.append(TextDelta(text=text))
-        return items
+                failed.append((d.claim, verdict))
+        return receipts, failed
+
+
+def _gate_reads_reply(policy, scope: str) -> bool:
+    """Whether the completion gate reads the turn's reply, so it sends a held
+    claim back itself: a chat turn's policy, or the on-device one while a
+    goal is in play. No policy is a chat turn."""
+    if policy is None:
+        return True
+    if not policy.completion_gate:
+        return False
+    if not policy.gate_requires_goal:
+        return True
+    from server.goals.gate import goal_in_play
+
+    try:
+        return goal_in_play(scope)
+    except Exception:  # noqa: BLE001 - an unreadable goal store means no goal
+        return False
 
 
 def _cut(text: str, drops: list[str]) -> str:

@@ -23,13 +23,24 @@ request, and neither are the transcript, attachments and inlined mentions
 that share the prompt's message (the gate reads what the user typed). Read
 that way, "summarize this" once came back as a saved .txt and a .docx.
 
+A file that a background command of the turn is still writing is on its way,
+not missing. A turn that started "sleep 25 && echo build-done > build.txt" in
+the background and ended was sent back to write build.txt while the command
+was making it; the command's result comes back to the chat when it finishes
+(server/tasks/wake.py). When the ask names the file, the command has to name
+it too, so "write notes.md" is still owed while the tests run in the
+background.
+
 Pure functions over the provider-neutral message list; no I/O beyond stat.
+The caller says which background tasks still run.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 
+from server.goals.call_results import background_task_id, turn_calls
 from server.goals.claims import asserted_paths
 from server.goals.deliverables import (
     OUTSIDE_WRITERS,
@@ -91,6 +102,9 @@ _FILE_EXTS = (
 )
 # ".png", "gitlab-ci.yml": an extension is the least ambiguous way to ask.
 _EXT_RE = re.compile(rf"\.(?:{_FILE_EXTS})\b", re.IGNORECASE)
+# A file by its name ("build.txt", "gitlab-ci.yml"). A bare ".png" is a kind
+# of file, not a name.
+_NAMED_FILE_RE = re.compile(rf"[\w-][\w.-]*\.(?:{_FILE_EXTS})\b", re.IGNORECASE)
 
 # The verb has to be about producing or handing something over. "read",
 # "check", "explain", "summarize" are deliberately absent: those are about a
@@ -237,6 +251,23 @@ def produced_a_file(
     )
 
 
+def on_its_way(
+    messages: list, clause: str, running: Callable[[str], bool], *, since: int = 0
+) -> bool:
+    """True when a command the turn moved to the background from row
+    ``since`` of the turn on still runs (``running`` says so by task id) and
+    may be writing the file ``clause`` asks for: one whose arguments name that
+    file when the clause names one, any one when it does not."""
+    names = {m.group(0).lower() for m in _NAMED_FILE_RE.finditer(clause)}
+    for call in turn_calls(turn_messages(messages)[since:]):
+        task_id = background_task_id(call.result)
+        if not task_id or (names and not any(n in call.text.lower() for n in names)):
+            continue
+        if running(task_id):
+            return True
+    return False
+
+
 def request_nudges_used(messages: list) -> int:
     """How many file nudges the gate already issued this turn."""
     n = 0
@@ -261,11 +292,14 @@ def requested_file_feedback(
     plan_mode: bool = False,
     max_attempts: int = MAX_REQUEST_NUDGES,
     asked: str | None = None,
+    running: Callable[[str], bool] | None = None,
 ) -> str | None:
     """Gate feedback when the user asked for a file this turn and none was
     produced, or None when there is nothing to ask for. Each request is
     checked against what came after it (``file_requests``), and the feedback
     names every one still owed. ``asked`` is what the user typed this turn.
+    ``running`` says whether a background task still runs: a file one of
+    them may be writing is not owed (``on_its_way``).
 
     Silent in plan mode: the workspace writes are refused there by design,
     so the turn is supposed to end with a plan and no file."""
@@ -273,10 +307,13 @@ def requested_file_feedback(
         return None
     owed: list[str] = []
     for clause, since in file_requests(messages, asked):
-        if clause not in owed and not produced_a_file(
+        if clause in owed or produced_a_file(
             messages, workspace, on_disk=wants_disk(clause), since=since
         ):
-            owed.append(clause)
+            continue
+        if running is not None and on_its_way(messages, clause, running, since=since):
+            continue
+        owed.append(clause)
     if not owed:
         return None
     listed = "; ".join(f'"{c}"' for c in owed[:3])
@@ -309,6 +346,7 @@ __all__ = [
     "MAX_REQUEST_NUDGES",
     "REQUEST_MARKER",
     "file_requests",
+    "on_its_way",
     "produced_a_file",
     "request_nudges_used",
     "requested_clauses",

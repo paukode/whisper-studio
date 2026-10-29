@@ -435,7 +435,8 @@ def test_gate_blocks_when_the_reply_claims_a_file_that_does_not_exist(tmp_path, 
     d = _run(gate.run_completion_gate(_ctx(sid, messages=msgs)))
     assert d.block and d.source == "deliverable"
     assert "report.docx" in d.feedback
-    assert d.frame and "stop_hook_block" in d.frame
+    # The model is sent back quietly: no card frame.
+    assert d.frame is None
 
 
 def test_gate_allows_when_the_claimed_file_exists(tmp_path, monkeypatch):

@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useRef, useLayoutEffect } from 'react';
 import type { ChatMessage as ChatMessageType } from '@/types/chat';
 import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer';
+import { TaskReportCard } from './TaskReportCard';
 import { AgentReportCard } from './AgentReportCard';
 import { CronEventCard } from '@/components/chat/CronEventCard';
 import { SessionMessageCard } from '@/components/chat/SessionMessageCard';
@@ -147,6 +148,20 @@ const ChatMessageView: React.FC<ChatMessageProps> = ({ message, index }) => {
     return (
       <div className="chat-msg-wrap assistant-wrap agent-report-wrap">
         <AgentReportCard report={report} />
+        {report.timestamp && <span className="msg-timestamp">{formatMessageTimestamp(report.timestamp)}</span>}
+      </div>
+    );
+  }
+
+  // The result of a background command this chat started, which finished
+  // after its turn ended. UI-only in storage; the model reads a relabeled
+  // copy (server/tasks/wake.py). Drawn like an agent report.
+  if (message.role === 'task_report') {
+    const report = message.taskReport;
+    if (!report) return null;
+    return (
+      <div className="chat-msg-wrap assistant-wrap agent-report-wrap">
+        <TaskReportCard report={report} />
         {report.timestamp && <span className="msg-timestamp">{formatMessageTimestamp(report.timestamp)}</span>}
       </div>
     );

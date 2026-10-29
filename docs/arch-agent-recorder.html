@@ -190,6 +190,31 @@
     <p><code>agent_answer</code> rows are capped per session at the same
       <code>MAX_AGENT_REPORTS_PER_SESSION</code> limit as the report rows.</p>
 
+    <h2 id="background-commands">Background commands report back</h2>
+    <p>A shell command can also stop after its turn ends. A chat turn starts a background command
+      with <code>ws_run_command</code> and <code>run_in_background</code>, or the app moves a command
+      to the background after 30 seconds. When that command stops,
+      <code class="path">server/tasks/wake.py</code> sends its result back to the chat:</p>
+    <ol class="steps">
+      <li><h4>The result becomes a row</h4><p>The app keeps a <code>task_report</code> row in the
+        chat. The row holds the command, the status, the exit code, the run time, and the last lines
+        of the output. The model reads the row as data in a user message, with a
+        <code>task_output</code> pointer to the full output.</p></li>
+      <li><h4>A turn is still live</h4><p>The result goes into the mid-turn inbox. The live turn
+        reads it at its next round.</p></li>
+      <li><h4>No turn is live</h4><p>The server sends a <code>task_wake</code> frame. The window
+        that shows the session starts a normal chat turn
+        (<code class="path">src/hooks/chatStream/backgroundWake.ts</code>). This turn streams into
+        the chat, uses tools, obeys the permission mode, and shows approval cards. It waits while
+        the session is busy and while three sessions are active.</p></li>
+    </ol>
+    <p>Only a command that a chat turn started reports back. A command of an agent or a cron job
+      does not report back. A command that you run does not report back, and work that a command
+      leaves in its process group does not report back. A command that you stop with Stop or
+      <code>task_cancel</code> does not report back. A command that the 2-hour runtime limit stops
+      reports back, so that the model gets the cause. If no window shows the session, the row stays
+      in the chat for your next message.</p>
+
     <h2 id="resume-and-extend">Resuming and extending</h2>
     <p>Because <code>messages.json</code> is checkpointed at every round start, a finished or interrupted
       agent can be picked up where it stopped.</p>

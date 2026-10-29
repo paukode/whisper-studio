@@ -273,6 +273,40 @@ export const TerminalPanel: React.FC = () => {
     };
   }, [refitActive]);
 
+  // The assistant runs a command in a terminal (uiStore.terminalShow, from
+  // the server's terminal_show frame): open the panel on that terminal's tab,
+  // adding a tab for a terminal this panel does not show yet. The server sized
+  // the shell at 120x30; the tab refits it once it is visible.
+  useEffect(() => {
+    const show = (req: NonNullable<ReturnType<typeof useUIStore.getState>['terminalShow']>) => {
+      const { terminalId, cwd, seq } = req;
+      if (!sessionsRef.current.some((s) => s.id === terminalId)) {
+        const session: SessionWithDims = {
+          id: terminalId,
+          label: `Terminal ${nextLabel++}`,
+          cwd,
+          isConnected: true,
+          cols: 120,
+          rows: 30,
+        };
+        setSessions((prev) => (prev.some((s) => s.id === terminalId) ? prev : [...prev, session]));
+        // Marked live before the request clears, so AppShell never unmounts
+        // the panel (and closes its shells) in between.
+        useUIStore.getState().setTerminalLive(true);
+      }
+      setActiveTabId(terminalId);
+      setCollapsed(false);
+      useUIStore.getState().clearTerminalShow(seq);
+    };
+    const unsubscribe = useUIStore.subscribe((state, prev) => {
+      if (state.terminalShow && state.terminalShow !== prev.terminalShow) show(state.terminalShow);
+    });
+    // The request that mounted this panel (AppShell shows it for one).
+    const atMount = useUIStore.getState().terminalShow;
+    if (atMount) queueMicrotask(() => show(atMount));
+    return unsubscribe;
+  }, []);
+
   // AppShell keeps this panel mounted while it has open terminals, even after
   // the workspace is disconnected, so the shells the session started (a dev
   // server, a build) are never killed by a disconnect.

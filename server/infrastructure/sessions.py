@@ -25,6 +25,9 @@ PROMPT_ROLES = frozenset({"user", "assistant"})
 # Agent report rows (reports delivered outside a live turn) kept per session;
 # the full records stay in the task registry and the on-disk journals.
 MAX_AGENT_REPORTS_PER_SESSION = 20
+# Background command results (server/tasks/wake.py) kept per session; the
+# whole output stays in the task registry and its output file.
+MAX_TASK_REPORTS_PER_SESSION = 50
 # Hard cap on inline cron_event rows kept in chat_history per session.
 # Older cron_events are dropped on append; the durable per-run record
 # lives in the cron_runs table (see server/cron_history.py), so the
@@ -271,6 +274,19 @@ def _agent_answer_prompt_view(msg: dict) -> dict:
     }
 
 
+def _task_report_prompt_view(msg: dict) -> dict:
+    """A task_report row is the result of a background command the chat
+    started, which finished after the turn that started it had ended: the
+    model reads it as data in a user turn (server/tasks/wake.py)."""
+    from server.tasks.wake import report_text
+
+    return {
+        "role": "user",
+        "content": report_text(msg.get("taskReport") or {}),
+        "timestamp": msg.get("timestamp"),
+    }
+
+
 def visible_chat_history(history: list[dict]) -> list[dict]:
     """Drop non-prompt roles before building a Bedrock request.
 
@@ -293,6 +309,8 @@ def visible_chat_history(history: list[dict]) -> list[dict]:
             out.append(_agent_report_prompt_view(m))
         elif role == "agent_answer":
             out.append(_agent_answer_prompt_view(m))
+        elif role == "task_report":
+            out.append(_task_report_prompt_view(m))
     return out
 
 
@@ -313,6 +331,7 @@ def _enforce_backend_row_caps(history: list[dict]) -> list[dict]:
     history = _enforce_row_cap(history, "cron_event", MAX_CRON_EVENTS_PER_SESSION)
     history = _enforce_row_cap(history, "agent_report", MAX_AGENT_REPORTS_PER_SESSION)
     history = _enforce_row_cap(history, "agent_answer", MAX_AGENT_REPORTS_PER_SESSION)
+    history = _enforce_row_cap(history, "task_report", MAX_TASK_REPORTS_PER_SESSION)
     history = _enforce_row_cap(history, "session_message", MAX_SESSION_MESSAGES_PER_SESSION)
     return history
 

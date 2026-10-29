@@ -46,7 +46,9 @@ class Claim:
     it says (server/goals/evidence.py). ``or_removed`` marks a file claim
     that also holds where the turn removed the file: a row of a table of
     files whose verb of removing takes an object ("| a.py | removed the dead
-    module |") may say the file lost a part or that it went."""
+    module |") may say the file lost a part or that it went. ``bare`` marks a
+    file named by its name alone with no place (claim_names.py): the check
+    looks for it where the turn wrote or looked."""
 
     kind: str
     target: str = ""
@@ -55,6 +57,7 @@ class Claim:
     deliverable: bool = False
     firm: bool = True
     or_removed: bool = False
+    bare: bool = False
     start: int = 0
     end: int = 0
     clause: str = ""

@@ -120,3 +120,37 @@ describe('workspace changes on the event channel', () => {
     expect(seen).toEqual([{ dirs: ['', 'app'], files: ['app/main.py'] }]);
   });
 });
+
+describe('background commands and the terminal on the event channel', () => {
+  it('adds a finished command as a task_report row and asks for a wake', async () => {
+    const requestWake = vi.fn();
+    vi.doMock('@/hooks/chatStream/backgroundWake', () => ({ requestWake, flushPendingWakes: vi.fn() }));
+    try {
+      const { runtimes } = await load();
+      runtimes.openEventChannel();
+      const chat = runtimes.getChatStore('sess-w');
+      const report = { task_id: 't1', command: 'make', status: 'completed', timestamp: '2026-10-28T17:00:00Z' };
+      FakeEventSource.instances[0].emit({ session_id: 'sess-w', task_report: report });
+      FakeEventSource.instances[0].emit({ session_id: 'sess-w', task_wake: { task_ids: ['t1'] } });
+      expect(chat.getState().messages).toEqual([
+        { role: 'task_report', content: '', timestamp: report.timestamp, taskReport: report },
+      ]);
+      await vi.waitFor(() => expect(requestWake).toHaveBeenCalledWith('sess-w', ['t1']));
+    } finally {
+      vi.doUnmock('@/hooks/chatStream/backgroundWake');
+    }
+  });
+
+  it('asks the UI to show the terminal a command runs in, with no session runtime', async () => {
+    const { runtimes } = await load();
+    const { useUIStore } = await import('./uiStore');
+    runtimes.openEventChannel();
+    FakeEventSource.instances[0].emit({
+      session_id: '',
+      terminal_show: { terminal_id: 'p1', cwd: '/w', opened: true },
+    });
+    await vi.waitFor(() =>
+      expect(useUIStore.getState().terminalShow).toMatchObject({ terminalId: 'p1', cwd: '/w' }),
+    );
+  });
+});

@@ -438,9 +438,11 @@ def _run_command_tool() -> list[dict]:
                 "task needs into a fresh .venv here. "
                 "Commands that take longer than 30s keep running as a background task (the "
                 "same process is handed off, not restarted). Set run_in_background=true to "
-                "start in background immediately for known long-running commands. Check "
-                "background tasks with task_status and read their output with task_output; "
-                "a task event also lands in the session when one finishes."
+                "start in background immediately for known long-running commands. In a "
+                "chat, a finished background command's result comes back to you on its own, "
+                "so do not poll it; task_status and task_output read a task earlier. ps "
+                "cannot run here (macOS refuses setuid programs in the sandbox): use "
+                "pgrep -fl <pattern> to find processes."
             ),
             "input_schema": {
                 "type": "object",

@@ -1,10 +1,11 @@
 """The stream guard keeps the reply in order (server/chat/claim_guard.py).
 
-A tool call's frames wait behind a held sentence only while one of the
-round's calls could make it true; a cut, a retried cut and a pause carry the
-sentence in progress whole and in order; the calls are kept as first read;
-a note is suppressed only by a correction; the memory hooks read the turn
-without the dropped sentences.
+The text and the tool cards after a held sentence go on at once, and a held
+sentence a call of the round makes true follows the call's cards; a cut and
+a retried cut carry the sentence in progress whole, and a pause hands its
+held sentences on in order; the calls are kept as first read; a note is
+suppressed only by a correction; the memory hooks read the turn without the
+dropped sentences.
 """
 
 import asyncio
@@ -100,7 +101,7 @@ def test_a_retry_after_a_cut_keeps_the_sentence_in_progress(tmp_path):
     assert f"Not saved: `{missing}` does not exist." in _sse_text(guard.finish())
 
 
-def test_a_pause_hands_everything_from_its_first_held_sentence_on_in_order():
+def test_a_pause_hands_its_held_sentences_to_the_continuation_in_order():
     ctx = type(
         "Ctx",
         (),
@@ -120,7 +121,7 @@ def test_a_pause_hands_everything_from_its_first_held_sentence_on_in_order():
             "Pushed the fix to `main`. The CI will pick it up.", "git_push", {"branch": "main"}
         ),
     )
-    assert "CI will pick it up" not in _text(out)
+    assert _text(out) == "The CI will pick it up."
     assert _sse_text(guard.finish(paused=True)) == ""
     approved = [
         *PROMPT,
@@ -146,9 +147,7 @@ def test_a_pause_hands_everything_from_its_first_held_sentence_on_in_order():
     out = _wrap(
         resumed, [TextDelta(text="The push went through."), RoundResult("end_turn", [])], approved
     )
-    assert (
-        _text(out) == "Pushed the fix to `main`. The CI will pick it up.\n\nThe push went through."
-    )
+    assert _text(out) == "Pushed the fix to `main`.\n\nThe push went through."
 
 
 def test_a_pause_carries_its_dropped_claims_to_the_continuations_notes():
@@ -223,7 +222,7 @@ def test_a_call_is_kept_as_first_read_when_compaction_shortens_its_result():
     assert not guard.ledger()[0].ok
 
 
-def test_an_output_cap_notice_waits_behind_a_held_sentence(tmp_path):
+def test_an_output_cap_notice_follows_the_text_before_it(tmp_path):
     missing = tmp_path / "q3.docx"
     guard = _guard()
     out = _wrap(
@@ -234,7 +233,7 @@ def test_an_output_cap_notice_waits_behind_a_held_sentence(tmp_path):
             RoundResult("end_turn", [{"type": "text", "text": "x"}]),
         ],
     )
-    # The notice comes once the held sentence is settled, never ahead of it.
+    # The notice comes after the text before it; the held sentence is not shown.
     order = [type(ev).__name__ for ev in out if isinstance(ev, (TextDelta, Incomplete))]
     assert order.index("Incomplete") > order.index("TextDelta")
     assert str(missing) not in _text(out)

@@ -77,7 +77,9 @@
         credential stores below. A command that ran without a card (bypass, a session approval, a
         rule, the Auto classifier) is workspace-write confined by the OS like an agent's; only a
         command approved on its card runs with open writes. A command that the assistant types into
-        your visible terminal has no OS confinement, so it raises a card in every mode.</li>
+        your visible terminal has no OS confinement, so it raises a card in every mode except
+        <code>bypassPermissions</code>. In <code>bypassPermissions</code>, the terminal panel opens
+        and the command runs. A delete in that terminal still raises a card.</li>
       <li><b>Reads of credential stores follow the mode.</b> The credential stores are the deny-list
         in <code class="path">server/security/sensitive_paths.py</code> (the login Keychain,
         <code class="path">~/.ssh</code>, <code class="path">~/.aws</code>, git credentials, browser

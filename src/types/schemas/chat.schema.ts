@@ -171,9 +171,6 @@ export const SSEEventDataSchema = z.object({
   stop_hook_block: z.object({
     reason: z.string().optional(),
     attempt: z.number().optional(),
-    // The gate phase that refused ('deliverable': a claimed delivery the
-    // server could not verify). Undeclared, it never reached the card.
-    source: z.string().optional(),
   }).optional(),
   // Claims the server verified, one frame per verified sentence.
   deliveries: z.object({

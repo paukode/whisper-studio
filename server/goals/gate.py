@@ -5,8 +5,9 @@ requested-file and verification checks, then, only while a goal is active,
 (2a) the goal's quality gates and (2b) the judge. The checks and the judge
 read one transcript: the history with the reply being gated at its end. A
 block means: do not end the turn, inject the feedback and loop again. The
-consecutive-block cap (default 8) backstops both a stuck judge and an
-always-blocking Stop hook.
+deliverable and requested-file blocks carry no frame: the model is sent back
+quietly and the chat shows no card. The consecutive-block cap (default 8)
+backstops both a stuck judge and an always-blocking Stop hook.
 
 Which turns reach the gate is the caller's TurnPolicy: every interactive
 cloud turn, and an on-device turn only while a goal is active. The judge is
@@ -36,14 +37,6 @@ from server.goals import store as goal_store
 log = logging.getLogger("whisper-studio")
 
 
-# What the chat shows while the model is sent back over a claim that did not
-# hold (server/chat/claim_guard.py held the sentence back).
-CLAIM_HELD_REASON = (
-    "Held back a sentence claiming something was delivered, because it could not be "
-    "verified. The model is doing the work now or will say it was not done."
-)
-
-
 def _flag_on(name: str, default: bool = True) -> bool:
     try:
         from server.infrastructure.feature_flags import is_enabled
@@ -51,6 +44,17 @@ def _flag_on(name: str, default: bool = True) -> bool:
         return is_enabled(name)
     except Exception:
         return default
+
+
+def _task_running(task_id: str) -> bool:
+    """True while the background task ``task_id`` still runs."""
+    try:
+        from server.tasks import registry
+
+        task = registry.get_task(task_id)
+    except Exception:  # noqa: BLE001 - an unreadable registry means not running
+        return False
+    return bool(task) and task.get("status") == "running"
 
 
 def _max_blocks(ctx: GateContext) -> int:
@@ -233,20 +237,9 @@ async def run_completion_gate(ctx: GateContext) -> GateDecision:
                     source="cap",
                 )
             log.info("completion gate: deliverable claim unmet; continuing the turn")
-            # The user never saw the held sentence, so the card must not
-            # repeat it: the feedback quoting it goes to the model only.
-            return GateDecision(
-                block=True,
-                feedback=claim_feedback,
-                frame={
-                    "stop_hook_block": {
-                        "reason": CLAIM_HELD_REASON,
-                        "attempt": ctx.attempt + 1,
-                        "source": "deliverable",
-                    }
-                },
-                source="deliverable",
-            )
+            # The user never saw the held sentence: the feedback quoting it
+            # goes to the model only, and the chat shows no card.
+            return GateDecision(block=True, feedback=claim_feedback, source="deliverable")
 
     # ── Phase 1.6: requested deliverable (every gated turn, goal or not) ───
     # The mirror of phase 1.5: the user asked for a file and the turn produced
@@ -255,12 +248,17 @@ async def run_completion_gate(ctx: GateContext) -> GateDecision:
     # only found out by asking. One nudge per turn, since the ask is read out
     # of prose. Plan mode is exempt: the workspace writes are refused there by
     # design, and so is a model with no tools, which has no file tool to call.
+    # A file a background command of the turn is still writing is not owed.
     if ctx.tools_enabled and _flag_on("requested_file_check"):
         from server.goals.requested_files import requested_file_feedback
 
         try:
             file_feedback = requested_file_feedback(
-                messages, ctx.workspace, plan_mode=ctx.plan_mode, asked=ctx.asked
+                messages,
+                ctx.workspace,
+                plan_mode=ctx.plan_mode,
+                asked=ctx.asked,
+                running=_task_running,
             )
         except Exception as e:  # noqa: BLE001 - a checker bug must never abort a turn
             log.warning("requested-file check failed (%s); skipping", e)
@@ -279,12 +277,8 @@ async def run_completion_gate(ctx: GateContext) -> GateDecision:
                     source="cap",
                 )
             log.info("completion gate: a requested file was not produced; continuing the turn")
-            return GateDecision(
-                block=True,
-                feedback=file_feedback,
-                frame={"stop_hook_block": {"reason": file_feedback, "attempt": ctx.attempt + 1}},
-                source="requested_file",
-            )
+            # A quiet nudge: the model makes the file, and the chat shows no card.
+            return GateDecision(block=True, feedback=file_feedback, source="requested_file")
 
     # ── Phase 1.7: verification evidence (every gated turn, goal or not) ────
     # Code was edited this turn but no test/lint/typecheck/build command ran

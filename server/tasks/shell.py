@@ -26,10 +26,10 @@ log = logging.getLogger("whisper-studio")
 OUTPUT_DIR = os.path.join(data_root(), "background_output")
 
 # Longest a background shell command may run before it is killed and recorded
-# as stopped. Long enough for a real build or test suite; short enough that a
-# runaway model-issued command (a whole-home-directory find) can't sit
-# 'running' for hours.
-MAX_RUNTIME_S = 30 * 60
+# as stopped. Long enough for a signed release build with its notarization
+# (1 h 43 min in a field session); short enough that a runaway model-issued
+# command (a whole-home-directory find) can't sit 'running' all day.
+MAX_RUNTIME_S = 2 * 60 * 60
 # How often a task whose leader exited checks whether its group is gone yet.
 _GROUP_POLL_S = 0.2
 
@@ -60,6 +60,7 @@ def start_shell_task(
     write_root: str | None = None,
     scratch_dir: str | None = None,
     secret_reads: bool = False,
+    wake_on_finish: bool = False,
 ) -> dict:
     """Start ``command`` in the background; returns {task_id, output_path, status}.
 
@@ -67,6 +68,8 @@ def start_shell_task(
     tracking, snapshot wrapping); ``command`` is what the user asked for and
     becomes the task title. ``write_mode``, ``write_root``, ``scratch_dir``
     and ``secret_reads`` are the sandbox's (see ``popen_sandboxed``).
+    ``wake_on_finish``: a chat turn started it, so it reports back to that
+    chat when it finishes (server/tasks/wake.py).
     """
     import uuid
 
@@ -79,6 +82,10 @@ def start_shell_task(
     # The run that started it, so a chat Stop spares another run's task.
     if work_owner.current():
         meta["owner"] = work_owner.current()
+    if wake_on_finish:
+        from server.tasks.wake import WAKE_META_KEY
+
+        meta[WAKE_META_KEY] = True
     registry.create_task(
         "shell",
         session_id=session_id,
@@ -208,6 +215,19 @@ def _waiter(task_id: str, proc: subprocess.Popen, output_path: str, session_id: 
     )
     if finished:
         emit_task_event(session_id, _STATUS_EVENT[status], finished)
+        _report_back(finished, stopped_on_request=was_stopped and not timed_out)
+
+
+def _report_back(task: dict, *, stopped_on_request: bool) -> None:
+    """Bring a finished command a chat started back to that chat."""
+    try:
+        from server.tasks.wake import report_finished
+
+        how = report_finished(task, stopped_on_request=stopped_on_request)
+        if not how.startswith("skipped"):
+            log.info("tasks.shell: %s reported back to its chat (%s)", task.get("task_id"), how)
+    except Exception as e:  # noqa: BLE001 - the task row and its event are already out
+        log.warning("tasks.shell: %s not reported back: %s", task.get("task_id"), e)
 
 
 def stop_task(task_id: str) -> bool:

@@ -32,7 +32,7 @@ export interface TurnEntry {
 }
 
 /** Any other row (user, cron_event, session_message, agent_report,
- *  agent_answer), one to one. */
+ *  agent_answer, task_report), one to one. */
 export interface MessageEntry {
   kind: 'message';
   message: ChatMessage;

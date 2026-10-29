@@ -197,9 +197,10 @@ TERMINAL_RUN_TOOL = {
         "write elsewhere, retry it with sandbox_permissions='danger-full-access' plus a one-line "
         "justification; that always asks the user to approve that exact command, even "
         "when commands are otherwise session-approved. mode=visible types the command "
-        "into the user's open terminal so they can watch, and errors if none is open; "
-        "it runs in that terminal's current folder (cwd is ignored) with no write "
-        "confinement, so it always asks the user to approve, in every permission mode. "
+        "into the user's terminal panel so they can watch: it opens the panel, and a "
+        "new terminal (in cwd, else the workspace) when none is open or the open one "
+        "is busy. It runs in that terminal's current folder with no write confinement, "
+        "so it asks the user to approve in every permission mode except Bypass. "
         "Use it only when the user asks to see it run. Every call is approval-gated "
         "and validated first; dangerous commands and interactive ones that wait for "
         "stdin (vim, less, top, watch, ssh without BatchMode=yes, sudo without -n) are "
@@ -223,8 +224,8 @@ TERMINAL_RUN_TOOL = {
                 "type": "string",
                 "description": (
                     "Either sandbox (default; hidden ephemeral PTY, invisible to the "
-                    "user) or visible (types into the user's open terminal, errors "
-                    "if none is open, and always asks the user to approve)."
+                    "user) or visible (types into the user's terminal panel, opening "
+                    "one if needed; asks the user to approve except in Bypass)."
                 ),
             },
             "timeout": {
