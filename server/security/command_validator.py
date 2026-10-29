@@ -108,7 +108,9 @@ def check_dangerous_patterns(command: str) -> str | None:
 # Command substitution detection
 # ---------------------------------------------------------------------------
 
-# Matches $(...), `...`, <(...), >(...)  outside of single quotes
+# Matches $(...), `...`, <(...), >(...)  outside of single quotes. A closed
+# $( ... ) never reaches it: _vet_substitutions checks it first and leaves a
+# plain word in its place.
 _COMMAND_SUBST_PATTERNS = [
     re.compile(r"\$\("),  # $( ... )
     re.compile(r"`"),  # backtick substitution
@@ -119,15 +121,149 @@ _COMMAND_SUBST_PATTERNS = [
 
 def check_command_substitution(command: str) -> str | None:
     """Detect command substitution patterns that could hide malicious commands."""
-    # Strip content inside single quotes (safe — no expansion)
+    # Strip content inside single quotes (safe, no expansion)
     stripped = re.sub(r"'[^']*'", "", command)
-    # Allow heredoc-style input: $(cat <<...) — safe pattern used by
-    # git commit -m, gh pr create --body, etc.
-    stripped = re.sub(r"\$\(cat\s+<<", "", stripped)
     for pattern in _COMMAND_SUBST_PATTERNS:
         if pattern.search(stripped):
             return f"Blocked: command substitution detected ({pattern.pattern})"
     return None
+
+
+# What makes a substitution's output run as a command: words that may come
+# before a statement's program name, and programs that run their arguments.
+_STATEMENT_LEAD = frozenset({"if", "then", "else", "elif", "do", "while", "until", "!", "{"})
+_RUNS_ITS_ARGUMENTS = frozenset({"eval", "source", "."})
+_SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh"})
+_SHELL_C_FLAG = re.compile(r"-[a-z]*c[a-z]*")
+# git commit -m "$(cat <<'EOF' ... EOF)": the heredoc body is already gone.
+_HEREDOC_TEXT = re.compile(r"\s*cat\s+<<")
+_SUBST_WORD = "SUBST"
+_SUBST_SHOWN = 80
+
+
+def _closing_paren(command: str, j: int) -> int | None:
+    """Index of the ``)`` that closes the ``$(`` whose text starts at ``j``."""
+    depth, quote = 1, ""
+    while j < len(command):
+        c = command[j]
+        if quote == "'":
+            if c == "'":
+                quote = ""
+        elif c == "\\":
+            j += 1
+        elif c == "'" and not quote:
+            quote = "'"
+        elif c == '"':
+            quote = "" if quote else '"'
+        elif not quote and c == "(":
+            depth += 1
+        elif not quote and c == ")":
+            depth -= 1
+            if depth == 0:
+                return j
+        j += 1
+    return None
+
+
+def _substitutions(command: str) -> list[tuple[int, int, int]] | None:
+    """(start, end, statement start) of each outermost ``$( ... )`` outside
+    single quotes, or None when one is not closed."""
+    found = []
+    i, stmt, quote = 0, 0, ""
+    while i < len(command):
+        c = command[i]
+        if quote == "'":
+            if c == "'":
+                quote = ""
+        elif c == "\\":
+            i += 1
+        elif c == "'" and not quote:
+            quote = "'"
+        elif c == '"':
+            quote = "" if quote else '"'
+        elif command.startswith("$(", i) and not command.startswith("$((", i):
+            end = _closing_paren(command, i + 2)
+            if end is None:
+                return None
+            found.append((i, end + 1, stmt))
+            i = end + 1
+            continue
+        elif not quote and c in ";&|\n(":
+            stmt = i + 1
+        i += 1
+    return found
+
+
+def _runs_as_command(before: str) -> bool:
+    """Whether a substitution that follows ``before`` (its statement up to the
+    ``$(``) puts its output where the shell runs it: the program name, or the
+    argument of eval, source, or ``sh -c``."""
+    words = before.split()
+    if before and not before[-1].isspace():
+        # Part of a word that started earlier: x$(...), "$(...)", NAME=$(...).
+        if _ENV_ASSIGN.match(words.pop()):
+            return False
+    wrapped = False
+    while words:
+        word = words[0]
+        if word in _CMD_WRAPPERS or word == "xargs":
+            wrapped = True
+        elif not (
+            word in _STATEMENT_LEAD or _ENV_ASSIGN.match(word) or (wrapped and word.startswith("-"))
+        ):
+            break
+        words.pop(0)
+    if not words:
+        return True
+    program = words[0].rsplit("/", 1)[-1]
+    if program in _RUNS_ITS_ARGUMENTS:
+        return True
+    return program in _SHELLS and any(_SHELL_C_FLAG.fullmatch(w) for w in words[1:])
+
+
+def _vet_substitutions(command: str, secret_reads: bool) -> tuple[str, str | None]:
+    """Check each ``$( ... )`` in ``command`` and put a plain word in its place.
+
+    A substitution may run a read-only command, as in the branch check
+    ``test "$(git branch --show-current)" = main && git commit ...``: its text
+    passes every check here and the read-only classifier. Its output must not
+    be run as a command, the way ``$(echo cm0= | base64 -d) -rf x`` builds
+    ``rm``. A substitution that is not closed stays in the text, and
+    check_command_substitution blocks it.
+
+    Returns the command with each checked substitution replaced, and the first
+    warning (None when every substitution passes).
+    """
+    spans = _substitutions(command)
+    if not spans:
+        return command, None
+    # Lazy: server.workspace pulls fastapi (see _github_tools_in_catalog).
+    from server.workspace.read_only import _is_read_only_command
+
+    parts, last = [], 0
+    for start, end, stmt in spans:
+        inner = command[start + 2 : end - 1]
+        shown = command[start:end]
+        if len(shown) > _SUBST_SHOWN:
+            shown = shown[: _SUBST_SHOWN - 4] + "...)"
+        if _runs_as_command(command[stmt:start]):
+            return command, (
+                f"Blocked: the output of {shown} would run as a command. "
+                "Write the command out instead."
+            )
+        if not _HEREDOC_TEXT.match(inner):
+            warning = validate_command(inner, secret_reads=secret_reads)
+            if warning:
+                return command, f"{warning} (inside {shown})"
+            if not _is_read_only_command(inner.strip()):
+                return command, (
+                    f"Blocked: {shown} runs a command that is not read-only. Only a "
+                    "read-only command may run inside $(...); run that one on its own."
+                )
+        parts += [command[last:start], _SUBST_WORD]
+        last = end
+    parts.append(command[last:])
+    return "".join(parts), None
 
 
 # ---------------------------------------------------------------------------
@@ -417,6 +553,11 @@ def validate_command(command: str, secret_reads: bool = False) -> str | None:
     cap_warning = check_subcommand_cap(command)
     if cap_warning:
         return cap_warning
+
+    # Before splitting: a pipe or ; inside $( ... ) is not a separator.
+    command, warning = _vet_substitutions(command, secret_reads)
+    if warning:
+        return warning
 
     subcommands = split_subcommands(command)
     for sub in subcommands:
