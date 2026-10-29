@@ -426,14 +426,18 @@
         REPL, a database shell, or an installer that asks a question, where <code>terminal_run</code>'s
         one-shot model does not fit. It returns as soon as the program wants more input and says why it
         stopped waiting: the program is reading input, output went quiet, the read budget ran out
-        (default 10 seconds, maximum 300), or the shell exited. <code>terminal_close</code> ends that
+        (default 10 seconds, maximum 300), or the shell exited. To stop or resume the program, it
+        sends Ctrl-C (<code>\x03</code>), Ctrl-D (<code>\x04</code>), or Ctrl-Q (<code>\x11</code>)
+        with no other text. <code>terminal_close</code> ends that
         session and kills its process tree. Both ask for approval on every call, and the first command
         line is validated.</li>
       <li><b>Batched reads</b> - <code>run_tool_script</code> runs a short JavaScript program that calls
         read-only tools (<code>await tools.ws_read_file(...)</code>, <code>ws_grep</code>,
         <code>web_fetch</code>, and the like) and returns one final value, so a task that needs many
         reads costs one round trip instead of one per call, and the intermediate results never enter the
-        conversation. A write, run, or approval-requiring tool inside the script throws. The script is
+        conversation. An MCP tool can run in the script when its server or
+        <code>mcp_servers.json</code> marks it read-only. A write, run, or approval-requiring tool
+        inside the script throws. The script is
         approved once, not per inner call.</li>
       <li><b>Web</b> - <code>web_search</code> and <code>web_fetch</code>, listed in the
         <a href="#web">Web</a> section above. Read-only.</li>
