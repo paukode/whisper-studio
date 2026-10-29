@@ -119,6 +119,38 @@ def _record_unfinished_round(ctx: "TurnContext", round_num: int) -> None:
         log.error("Could not record the unfinished round %d: %s", round_num, e)
 
 
+@dataclass
+class _MessageWatch:
+    """Set when _until_user_message stopped its round."""
+
+    dropped: bool = False
+
+
+# Provider events that start the model's answer: from the first of them on, a
+# round runs to its end whatever arrives, and the client starts a new reply
+# where the message is read (midturn_read).
+_ANSWER_EVENTS = (TextDelta, ToolCallStart, ToolCall, Incomplete, RoundResult, RoundError)
+
+
+async def _until_user_message(events, session_id: str, watch: _MessageWatch):
+    """A round's provider events, cut off when a message the user sent is
+    waiting while the model has not started its answer (it is thinking, or
+    still silent). The round is then answered again with the message in it,
+    instead of finishing a reply the message changes. It sits in front of the
+    claim guard, which may hold text it has already been given. Checked as
+    events arrive: a silent provider sends heartbeats, so the wait is a few
+    seconds at most."""
+    from server.chat.engine.midturn_inbox import has_user_message
+
+    answering = False
+    async for ev in events:
+        answering = answering or isinstance(ev, _ANSWER_EVENTS)
+        if not answering and has_user_message(session_id):
+            watch.dropped = True
+            return
+        yield ev
+
+
 def _midturn_text(entry) -> str:
     """How an inbox entry reads to the model. Agent reports are agent output
     (possibly quoting web pages or files) and a command result is command
@@ -511,8 +543,17 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
             # ── One model round via the provider adapter ─────────────────────
             round_result: RoundResult | None = None
             try:
+                adapter_round = ctx.adapter.stream_round(
+                    messages, tools, core_count, round_num, is_last_round
+                )
+                watch = _MessageWatch()
+                provider_events = (
+                    _until_user_message(adapter_round, session_id, watch)
+                    if ctx.midturn_inbox and not is_last_round
+                    else adapter_round
+                )
                 round_events = ctx.claims.wrap(
-                    ctx.adapter.stream_round(messages, tools, core_count, round_num, is_last_round),
+                    provider_events,
                     messages,
                     last_round=is_last_round,
                 )
@@ -603,6 +644,22 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
                         break
                     elif isinstance(ev, RoundResult):
                         round_result = ev
+                if watch.dropped:
+                    # Close the provider stream now, so it stops generating;
+                    # the round's finally records what it was billed. The
+                    # next round reads the message (midturn_read).
+                    for _gen in (round_events, provider_events, adapter_round):
+                        _close = getattr(_gen, "aclose", None)
+                        if _close is not None:
+                            await _close()
+                    log.info(
+                        "Round %d stopped before its answer to read a mid-turn "
+                        "message (session %s)",
+                        round_num,
+                        session_id,
+                    )
+                    yield f"data: {ndjson_dumps({'round_discarded': {'reason': 'midturn'}})}\n\n"
+                    continue
                 if retry_round:
                     yield f"data: {ndjson_dumps({'status': 'Model stream failed; retrying...'})}\n\n"
                     await asyncio.sleep(_ROUND_RETRY_BACKOFF_S * round_retries)

@@ -23,8 +23,10 @@ from server.chat.engine.runner import TurnContext, run_turn
 
 class LateMessageAdapter:
     """Answers with text every round, and pushes a user message into the
-    inbox DURING the first round: after that round's drain, before the loop
-    decides the turn is over. That is the race the fix is about."""
+    inbox DURING the first round, once its answer is showing: after that
+    round's drain, before the loop decides the turn is over. That is the race
+    the fix is about. (A message that lands before any answer shows stops
+    the round instead: tests/test_midturn_restart_round.py.)"""
 
     provider = "test"
 
@@ -38,10 +40,10 @@ class LateMessageAdapter:
 
     async def stream_round(self, messages, tools, core_count, round_num, is_last_round):
         self.calls.append([dict(m) for m in messages])
-        if round_num == self.pushes_on_round:
-            midturn_inbox.push(self.session_id, self.text)
         text = f"answer {round_num}"
         yield TextDelta(text=text)
+        if round_num == self.pushes_on_round:
+            midturn_inbox.push(self.session_id, self.text)
         yield RoundResult(
             stop_reason="end_turn", content=[{"type": "text", "text": text}], usage=Usage()
         )

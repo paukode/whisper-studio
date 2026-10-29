@@ -97,6 +97,14 @@ def has_pending(session_id: str) -> bool:
         return bool(_inboxes.get(session_id))
 
 
+def has_user_message(session_id: str) -> bool:
+    """Whether a message the user sent is waiting. Agent reports and command
+    results do not count: only the user's own words make the running chat
+    turn stop a round that has not answered yet (server/chat/engine/runner.py)."""
+    with _lock:
+        return any(e.kind == USER for e in _inboxes.get(session_id, ()))
+
+
 def close_if_empty(session_id: str) -> bool:
     """Close the inbox when nothing is pending; False means something landed
     and the turn should read it before it ends."""
