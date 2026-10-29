@@ -560,11 +560,7 @@ export interface SSEEventData {
    *  turn (server.security.permissions.record_classifier_verdict). */
   auto_mode_breaker?: { reason?: string };
   goal_eval?: { verdict?: GoalVerdict; feedback?: string; confidence?: number; attempt?: number; cap?: number };
-  /** `source` names the gate phase that refused to end the turn.
-   *  'deliverable': the reply claimed a delivery the server could not
-   *  verify, so it held that sentence back and sent the model back to
-   *  produce it or correct itself (the reason never repeats the claim). */
-  stop_hook_block?: { reason?: string; attempt?: number; source?: string };
+  stop_hook_block?: { reason?: string; attempt?: number };
   /** Claims the server verified in the reply so far, one frame per verified
    *  sentence. Merged into the current assistant message's `deliveries`. */
   deliveries?: { items: DeliveryFrameItem[] };

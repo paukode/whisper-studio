@@ -383,18 +383,6 @@ describe('SSEEventDataSchema', () => {
     }
   });
 
-  it('keeps stop_hook_block.source so a held-back delivery claim is labeled as one', () => {
-    const result = SSEEventDataSchema.safeParse({
-      stop_hook_block: {
-        reason: 'A delivery the reply claimed could not be verified.',
-        attempt: 1,
-        source: 'deliverable',
-      },
-    });
-    expect(result.success).toBe(true);
-    if (result.success) expect(result.data.stop_hook_block?.source).toBe('deliverable');
-  });
-
   it('keeps every key of an activity_label frame, the calls of the round included', () => {
     const frame = { tool_use_id: 'tu_1', tool_use_ids: ['tu_1', 'tu_2'], label: 'Read the plan' };
     const result = SSEEventDataSchema.safeParse({ activity_label: frame });

@@ -240,13 +240,8 @@ export function isUncheckedGoal(tool: ToolUseEvent): boolean {
   return tool.toolName === 'goal_eval' && (tool.input ?? {}).verdict === 'not_checked';
 }
 
-/** What a synthetic card is called. A Stop-hook card the server raised
- *  because the reply claimed a delivery it could not verify says so; every
- *  other source keeps the generic hook label. */
+/** What a synthetic card is called. */
 export function stepLabel(tool: ToolUseEvent): string {
-  if (tool.toolName === 'stop_hook_block' && (tool.input ?? {}).source === 'deliverable') {
-    return 'Checking a claimed delivery';
-  }
   return DISPLAY_NAMES[tool.toolName] ?? tool.toolName;
 }
 
