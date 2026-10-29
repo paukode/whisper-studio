@@ -143,8 +143,8 @@ def test_golden_verified_claim_receipt(monkeypatch):
 
 def test_golden_false_claim_held(monkeypatch):
     # The reply says it saved a file that does not exist: the sentence is never
-    # sent, the gate sends the model back (a stop_hook_block whose source is
-    # "deliverable"), and the corrected answer is what the user reads.
+    # sent, the gate sends the model back with no card in the chat, and the
+    # corrected answer is what the user reads.
     client = FakeBedrockClient(
         [
             [

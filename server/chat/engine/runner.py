@@ -82,6 +82,13 @@ def _remind(messages: list, text: str) -> None:
         messages.append({"role": "user", "content": [{"type": "text", "text": text}]})
 
 
+def _send_back(messages: list, reply, feedback: str) -> None:
+    """Carry the turn on past its reply: the reply, then ``feedback`` as an
+    engine row (deliverables reads the prefix as one)."""
+    messages.append({"role": "assistant", "content": continuable_assistant(reply)})
+    messages.append({"role": "user", "content": f"[completion gate] {feedback}"})
+
+
 def _record_unfinished_round(ctx: "TurnContext", round_num: int) -> None:
     """Record the spend of a round attempt that produced no RoundResult, from
     the adapter's inflight_usage (None when nothing was billed). Never raises:
@@ -500,6 +507,7 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
                 round_events = ctx.claims.wrap(
                     ctx.adapter.stream_round(messages, tools, core_count, round_num, is_last_round),
                     messages,
+                    last_round=is_last_round,
                 )
                 errored = False
                 retry_round = False
@@ -799,6 +807,18 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
                     run_gate_with_progress,
                 )
 
+                # Where no gate reads the reply (agents, scheduled and headless
+                # runs, on-device chat with no goal), the claim guard sends a
+                # claim it held back to the model itself, as the gate would.
+                _claim_note = ctx.claims.take_send_back()
+                if _claim_note and not is_last_round:
+                    _send_back(messages, result_content, _claim_note)
+                    if text_streamed and ctx.policy.completion_gate:
+                        # A chat shows the next answer under this one; a
+                        # run's report is its last round's text alone.
+                        yield f"data: {ndjson_dumps({'text': chr(10) * 2})}\n\n"
+                    continue
+
                 if (
                     not _mid_pending
                     and not is_last_round
@@ -836,18 +856,11 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
                         yield f"data: {ndjson_dumps(_gate.frame)}\n\n"
                     if _gate.block:
                         stop_blocks_used += 1
-                        messages.append(
-                            {
-                                "role": "assistant",
-                                "content": continuable_assistant(result_content),
-                            }
-                        )
-                        messages.append(
-                            {
-                                "role": "user",
-                                "content": f"[completion gate] {_gate.feedback}",
-                            }
-                        )
+                        _send_back(messages, result_content, _gate.feedback)
+                        if not _gate.frame and text_streamed:
+                            # A quiet block shows no card between the two
+                            # answers: the next one starts a paragraph.
+                            yield f"data: {ndjson_dumps({'text': chr(10) * 2})}\n\n"
                         continue
                 elif is_last_round and ctx.policy.completion_gate:
                     # No round is left for a continuation, so the gate does

@@ -654,5 +654,6 @@ def test_the_engine_asks_for_a_file_requested_mid_turn(_gate_env, monkeypatch, r
     nudge = adapter.calls[2][-1]
     assert nudge["content"].startswith(f"[completion gate] {rf.REQUEST_MARKER}")
     assert _LATER in nudge["content"] and _PROMPT not in nudge["content"]
-    assert out.count("stop_hook_block") == 1
+    # A quiet nudge: the chat shows no card.
+    assert "stop_hook_block" not in out
     assert midturn_inbox.has_pending(sid) is False

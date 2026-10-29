@@ -743,7 +743,8 @@ def test_an_honest_correction_ends_the_turn_after_one_nudge(claims_only, tmp_pat
     adapter = _Replies(f"Saved to {missing}.", *[correction] * 10)
     out = _run("claims-correction", adapter, "summarize the meeting")
     assert len(adapter.calls) == 2
-    assert out.count("stop_hook_block") == 1
+    # The model was sent back quietly: no card in the chat.
+    assert "stop_hook_block" not in out
     assert "goal_cap_reached" not in out
 
 
@@ -781,7 +782,7 @@ def test_a_reply_about_a_card_the_session_never_had_is_held_once(claims_only):
     adapter = _Replies(_ABOUT_THE_CARD, *[correction] * 10)
     out = _run(sid, adapter, "which colour is the deploy stage?", history=_CARD_TURN)
     assert len(adapter.calls) == 2
-    assert out.count("stop_hook_block") == 1
+    assert "stop_hook_block" not in out
     feedback = adapter.calls[1][-1]
     assert feedback["role"] == "user" and "create_artifact" in feedback["content"]
 

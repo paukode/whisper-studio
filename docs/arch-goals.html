@@ -61,7 +61,9 @@
       which could not act on them. Every unattended consumer runs with the gate off entirely:
       <a href="arch-agents.html">sub-agents</a> (so a child can never trip the parent turn's evaluator),
       <a href="arch-cron.html">cron</a> and headless turns. Cron instead verifies its own runs with a
-      separate step (see <a href="#cron-verify">Verified cron</a> below). Where the gate does run, the
+      separate step (see <a href="#cron-verify">Verified cron</a> below). Where the gate does not run
+      (subagents, cron, headless runs, and on-device chat with no goal), the stream guard still sends a
+      held claim back to the model. Where the gate does run, the
       checks are deliberately ordered cheapest and most deterministic first, so a model call only happens
       when nothing definite has already settled the question. The first block wins and returns
       immediately.</p>
@@ -137,26 +139,35 @@
         claims are checked, reading the reply the same way the gate does (code, quotes and drafts
         flow through unread, and a list keeps its lead line across a blank line). A verified sentence
         is released with a <code>deliveries</code> frame, which the chat shows as "Verified" chips
-        under the reply (a file's chip opens it). A sentence whose claim does not hold is not shown,
-        nor what follows it. In a round that calls tools, the tool cards wait behind it until the
-        round's calls are known: a sentence none of them could make true is dropped then and the rest
-        released in order before the tools run; one a call could make true waits for the calls, with
-        the tool cards sent first, and follows them as its own paragraph. A cut at the output limit
-        is no sentence end: the sentence goes on in the continuation, a retried one too, and is read
-        whole. The gate then names the held sentences to the model, says the user has not seen them,
-        and asks it to do what this turn asked for or say plainly that it was not done, never to
-        repeat an action that may already have happened (a message, a push, a payment), and never to
-        start again one a call started that is still running; the card in the chat reads "Checking a
-        claimed delivery" and never repeats the sentence. A second nudge follows only when the model
-        acted on the first (it called a tool since). When the turn ends, each held claim that still
-        does not hold is stated in the server's own words ("Not saved: <code>~/a.docx</code> does not
-        exist.", "Not confirmed yet: the deploy is still running."), unless a later sentence
-        corrected it, so a false claim is never shown as fact. The same guard covers subagents,
-        scheduled and headless runs and voice; a run with no gate to send the model back ends its
-        last round with the note, so a subagent's report carries it. A turn that pauses for an
-        approval hands its dropped claims and everything from its first held sentence on to its
-        continuation, which checks them against the call the user approved and shows them first, in
-        order. The guard keeps every call of the turn as it first read it, so compaction or a salvage
+        under the reply (a file's chip opens it).</p>
+        <p>The guard does not show a sentence whose claim does not hold. The text after that sentence
+        goes to the chat immediately. In a round that calls tools, the guard drops a held sentence that
+        none of the calls of the round can make true. A held sentence that a call can make true waits
+        for the calls. If its claim holds after the calls, the sentence follows the tool cards as a
+        separate paragraph. A cut at the output limit does not end a sentence: the sentence continues
+        in the next round, and the guard reads it whole.</p>
+        <p>The server sends the model back to each dropped claim, and the chat shows no card for it.
+        The feedback names the held sentences and tells the model that the chat did not show them to
+        the user. It tells the model to do the work that the user asked for in this turn, or to state
+        that the work was not done. It also tells the model not to do again an action that it possibly
+        did, for example a message, a push or a payment. It tells the model not to start again a call
+        that still runs.</p>
+        <p>A claim in a round that calls tools goes to the model with the tool results of that round
+        (<code>ClaimGuard.send_back</code>). A claim in the reply goes through this gate. Where no gate
+        reads the reply (subagents, scheduled and headless runs, and on-device chat with no goal), the
+        runner sends the claim back (<code>ClaimGuard.take_send_back</code>). The server sends each
+        claim back one time. All of these share the limit of two claim nudges for each turn
+        (<code>claim_nudge_allowed</code>). The second nudge occurs only if the model called a tool
+        after the first.</p>
+        <p>At the end of the turn, the server states each held claim that is still false ("Not saved:
+        <code>~/a.docx</code> does not exist.", "Not confirmed yet: the deploy is still running."),
+        unless a sentence after it corrected it. This makes sure that the chat never shows a false
+        claim as fact. The same guard covers subagents, scheduled and headless runs, and voice. A run
+        with no gate ends its last round with the note, so the report of a subagent includes it. A turn
+        that stops for an approval gives its dropped claims and the sentences that it still held to its
+        continuation. The continuation examines them against the call that the user approved, and
+        shows first, in order, the sentences that hold.</p>
+        <p>The guard keeps every call of the turn as it first read it, so compaction or a salvage
         round cannot make a done act look undone, or a failed one done, and the memory hooks read the
         turn without the sentences the user was not shown. The memory agents' notes are not replies
         and are not held.</p></li>
@@ -174,6 +185,7 @@
         route puts in the same message: a meeting where someone said "export it to a pdf" asked the
         assistant for nothing. The nudge asks for a file only where one was asked for, in the place the
         user named, and for something to look at in the chat; it never picks a folder.
+        The nudge goes to the model, and the chat shows no card for it.
         A file that a background command of the turn writes is not missing while that command runs. If
         the task registry shows the command with the status <code>running</code>, the check does not ask
         for the file. If the request names the file (<code>build.txt</code>), the command must name the
@@ -213,12 +225,14 @@
 
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
-      <div class="callout__body"><p>Four of these checks run whether or not a goal is set, and all of them
-        surface in the UI through the same <code>stop_hook_block</code> frame, which the transcript labels
-        <b>Continuing (Stop hook)</b>. So a turn that keeps going with no Stop hook configured at all is
-        normal: the decision's <code>source</code> field (<code>stop_hook</code>, <code>deliverable</code>,
-        <code>requested_file</code>, <code>verify</code>, <code>gate</code> or <code>evaluator</code>) is
-        what says which check spoke.</p></div>
+      <div class="callout__body"><p>Four of these checks run with or without a goal. The Stop
+        hooks, the verification check and the quality gates show a block with the same
+        <code>stop_hook_block</code> frame, which the transcript labels <b>Continuing (Stop hook)</b>.
+        The claim check and the requested-file check send the model back with no frame, so the chat
+        shows no card for them. Because of this, a turn can continue with no Stop hook configured. The
+        <code>source</code> field of the decision (<code>stop_hook</code>, <code>deliverable</code>,
+        <code>requested_file</code>, <code>verify</code>, <code>gate</code> or <code>evaluator</code>)
+        tells which check blocked the turn.</p></div>
     </div>
 
     <h2 id="quality-gates">Quality gates</h2>

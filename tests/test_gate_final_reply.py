@@ -221,7 +221,8 @@ def test_the_engine_holds_a_final_reply_that_claims_a_missing_file(
     assert feedback["role"] == "user"
     assert feedback["content"].startswith("[completion gate]")
     assert "report.docx" in feedback["content"]
-    assert "stop_hook_block" in out
+    # Sent back quietly: the chat shows no card.
+    assert "stop_hook_block" not in out
 
     # Once the file is really there, the same reply ends the turn.
     (tmp_path / "report.docx").write_bytes(b"content")

@@ -20,7 +20,6 @@ from server.chat.engine.events import Frame, RoundResult, TextDelta, Usage
 from server.chat.engine.policy import TurnPolicy
 from server.chat.engine.runner import TurnContext, run_turn
 from server.goals import gate
-from server.goals.gate import CLAIM_HELD_REASON
 
 
 async def _aiter(items):
@@ -133,9 +132,12 @@ def test_a_claim_ahead_of_the_call_that_makes_it_true_waits_for_the_call(tmp_pat
 def test_a_claim_still_false_after_the_calls_is_dropped(tmp_path):
     notes = tmp_path / "notes.md"
     guard = _guard()
-    _round(guard, [f"Saved the notes to {notes}. Next I check the data."], _PROMPT, tool_call=True)
-    shown = _frames_text(guard.after_tools(_PROMPT))
-    assert "Next I check the data." in shown and str(notes) not in shown
+    items = _round(
+        guard, [f"Saved the notes to {notes}. Next I check the data."], _PROMPT, tool_call=True
+    )
+    # The text after the held sentence went out with the round.
+    assert _text(items) == "Next I check the data."
+    assert str(notes) not in _frames_text(guard.after_tools(_PROMPT))
     assert "Not saved" in _frames_text(guard.finish())
 
 
@@ -274,8 +276,8 @@ def test_the_engine_never_shows_a_false_claim_and_sends_the_model_back(claims_on
     said = _said(frames)
     assert "Saved the report" not in said and str(missing) not in said
     assert "could not write report.docx" in said and "Not saved" not in said
-    (block,) = [f["stop_hook_block"] for f in frames if "stop_hook_block" in f]
-    assert block["source"] == "deliverable" and block["reason"] == CLAIM_HELD_REASON
+    # The model was sent back with no card in the chat.
+    assert not any("stop_hook_block" in f for f in frames)
     assert adapter.calls == 2
 
 

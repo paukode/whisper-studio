@@ -383,6 +383,16 @@ def claim_nudges_used(messages: list) -> int:
     return sum(1 for m in turn_messages(messages) if _is_claim_nudge(m))
 
 
+def claim_nudge_allowed(messages: list) -> bool:
+    """Whether the turn may send the model back over a claim once more: it
+    used fewer than MAX_CLAIM_NUDGES, and after the last one the model acted
+    (a reply that only corrected itself is not asked again). The gate's
+    claim check and the stream guard's send-back (server/chat/claim_guard.py)
+    share the count."""
+    used = claim_nudges_used(messages)
+    return used < MAX_CLAIM_NUDGES and (not used or _acted_since_last_nudge(messages))
+
+
 def _acted_since_last_nudge(messages: list) -> bool:
     """True when an assistant row after the turn's last claim nudge called a
     tool: the model tried to make its claim true rather than only answer."""
@@ -448,7 +458,7 @@ def check_claims(
     (``targeted_paths``), and an artifact-card claim always is. A look around
     with terminal_run makes no planned file a claim."""
     used = claim_nudges_used(messages)
-    if used >= max_attempts or (used and not _acted_since_last_nudge(messages)):
+    if used >= max_attempts or not claim_nudge_allowed(messages):
         return None
     replies = reply_texts(messages)
     if not replies:
@@ -465,22 +475,34 @@ def check_claims(
         extra_calls=calls,
         receipts=receipts,
     )
-    failed: dict[tuple[str, str], str] = {}
-    running = False
+    failed: dict[tuple[str, str], tuple] = {}
     for i, reply in enumerate(replies):
         for claim in c.read_claims(reply):
             if (claim.kind, claim.target) in failed or _settled_later(claim, replies[i + 1 :]):
                 continue
             verdict = check(claim, ev)
             if not verdict.ok:
-                running = running or verdict.pending
-                note = verdict.note
-                if claim.kind == c.ARTIFACT:
-                    note += " (no create_artifact call has made an artifact card)"
-                failed[(claim.kind, claim.target)] = f'- "{_shown(claim.clause)}": {note}'
+                failed[(claim.kind, claim.target)] = (claim, verdict)
     if not failed:
         return None
-    lines = list(failed.values())
+    return claim_feedback(list(failed.values()), messages, workspace)
+
+
+def claim_feedback(failed: list, messages: list, workspace: str | None) -> str:
+    """What sends the model back over the claims in ``failed`` (claim,
+    verdict pairs): each held sentence with what the check found, the files
+    the turn's calls wrote, and, when a call that started one is still
+    running, never to start it again."""
+    from server.goals import claims as c
+
+    lines = []
+    running = False
+    for claim, verdict in failed:
+        running = running or verdict.pending
+        note = verdict.note
+        if claim.kind == c.ARTIFACT:
+            note += " (no create_artifact call has made an artifact card)"
+        lines.append(f'- "{_shown(claim.clause)}": {note}')
     shown = lines[:6] + ([f"- and {len(lines) - 6} more"] if len(lines) > 6 else [])
     written = sorted(p for p in targeted_paths(messages, workspace) if exists_non_empty(p, None))
     tail = f"\nFiles this turn's calls wrote: {', '.join(written[:5])}." if written else ""
