@@ -214,6 +214,7 @@ _EXECUTOR_MODULES = (
     "server.git.executor",
     "server.memory.executor",
     "server.rules_tools",  # rules_write (the user's rules under ~/.whisper)
+    "server.agent_tools.skill_tools",  # skill_list, for tool scripts (chat uses tool_router.py)
 )
 
 for _modname in _EXECUTOR_MODULES:

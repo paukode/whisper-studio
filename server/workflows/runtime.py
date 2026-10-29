@@ -302,15 +302,34 @@ class WorkflowRun:
             return await self._error(mid, rpc.ERR_INTERNAL, "tool args must be an object")
 
         from server.executors import is_read_only
+        from server.mcp_read_only import is_mcp_tool, is_read_only_mcp_tool
 
-        if not is_read_only(name):
+        # An MCP tool is a read by the rule read-only agents use
+        # (server/mcp_read_only.py): the user's mcp_servers.json, else the
+        # server's readOnlyHint.
+        mcp = is_mcp_tool(name)
+        try:
+            mcp_read = mcp and is_read_only_mcp_tool(name)
+        except Exception:  # noqa: BLE001 - an unreadable registry reads as a write
+            mcp_read = False
+        if mcp and not mcp_read:
+            return await self._error(
+                mid,
+                rpc.ERR_INTERNAL,
+                f"tool '{name}' is an MCP tool its server does not mark read-only, so "
+                "a tool script cannot call it. Call it directly as a normal tool. The "
+                'user can mark it read-only in mcp_servers.json ("read_only": true '
+                'on the server, or its name in "read_only_tools").',
+            )
+        if not mcp and not is_read_only(name):
             return await self._error(
                 mid,
                 rpc.ERR_INTERNAL,
                 f"tool '{name}' is not read-only and cannot be called from a tool "
                 "script. Read-only tools (file reads, greps, searches, git status/"
-                "diff, web fetch/search, aws_boto3) run here; anything that writes "
-                "or needs approval must be called directly as a normal tool.",
+                "diff, web fetch/search, aws_boto3, MCP tools marked read-only) run "
+                "here; anything that writes or needs approval must be called directly "
+                "as a normal tool.",
             )
 
         seq = self._seq
@@ -320,7 +339,7 @@ class WorkflowRun:
                 mid, rpc.ERR_INTERNAL, f"tool-call cap {self._TOOL_CALL_CAP} reached"
             )
 
-        from server.skills import execute_tool
+        from server.skills import execute_mcp_tool, execute_tool
 
         # Copy the current context into the worker thread: get_workspace_path()
         # and other tool state read ContextVars (e.g. the workspace override)
@@ -329,9 +348,12 @@ class WorkflowRun:
         ctx = contextvars.copy_context()
         loop = asyncio.get_event_loop()
         try:
-            result = await loop.run_in_executor(
-                None, lambda: ctx.run(execute_tool, name, dict(args))
-            )
+            if mcp:
+                result = await execute_mcp_tool(name, dict(args))
+            else:
+                result = await loop.run_in_executor(
+                    None, lambda: ctx.run(execute_tool, name, dict(args))
+                )
         except Exception as e:  # noqa: BLE001 — surface as a JS throw, not a crash
             self.journal.tool_call({"seq": seq, "name": name, "status": "error", "error": str(e)})
             return await self._error(mid, rpc.ERR_INTERNAL, f"tool '{name}' failed: {e}")
