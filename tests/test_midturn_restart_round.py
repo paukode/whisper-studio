@@ -25,7 +25,7 @@ from server.chat.engine.events import (
 from server.chat.engine.policy import TurnPolicy
 from server.chat.engine.runner import TurnContext, run_turn
 
-NOTE = "Ana and Lukasz are from my team"
+NOTE = "Dana and Miles are from my team"
 
 
 class ThinkingAdapter:

@@ -48,15 +48,15 @@ describe('a message read mid-turn', () => {
     const chat = getChatStore(sessionId).getState();
     chat.addMessage(note('write a recognition email'));
     chat.setStreaming(true);
-    const sent = note('Ana and Lukasz are from my team');
+    const sent = note('Dana and Miles are from my team');
     chat.queueMidTurnNote(sent);
 
     const result = await readSSEStream(
       sseResponse([
-        { text: 'Hi Shantanu, Lukasz and Ana,' },
+        { text: 'Hi Priya, Miles and Dana,' },
         { text: '\n\n' },
-        { midturn_read: { text: 'Ana and Lukasz are from my team' } },
-        { text: 'Hi Ana, Lukasz and Shantanu,' },
+        { midturn_read: { text: 'Dana and Miles are from my team' } },
+        { text: 'Hi Dana, Miles and Priya,' },
       ]),
       sessionId,
       new AbortController().signal,
@@ -66,14 +66,14 @@ describe('a message read mid-turn', () => {
     const state = getChatStore(sessionId).getState();
     expect(state.messages.map((m) => [m.role, m.content])).toEqual([
       ['user', 'write a recognition email'],
-      ['assistant', 'Hi Shantanu, Lukasz and Ana,'],
-      ['user', 'Ana and Lukasz are from my team'],
+      ['assistant', 'Hi Priya, Miles and Dana,'],
+      ['user', 'Dana and Miles are from my team'],
     ]);
     // The same message object: it is not shown twice.
     expect(state.messages[2]).toBe(sent);
     expect(state.pendingMidTurn).toEqual([]);
     // The answer to the message is what the caller commits, below it.
-    expect(result.fullResponse).toBe('Hi Ana, Lukasz and Shantanu,');
+    expect(result.fullResponse).toBe('Hi Dana, Miles and Priya,');
 
     state.finishStream({ role: 'assistant', content: result.fullResponse, timestamp: new Date().toISOString() });
     const kinds = turnEntries(getChatStore(sessionId).getState().messages).map((e) =>
@@ -112,19 +112,19 @@ describe('a round stopped to read a message', () => {
     const chat = getChatStore(sessionId).getState();
     chat.addMessage(note('write a recognition email'));
     chat.setStreaming(true);
-    const sent = note('Ana and Lukasz are from my team');
+    const sent = note('Dana and Miles are from my team');
     chat.queueMidTurnNote(sent);
 
     const result = await readSSEStream(
       sseResponse([
         { thinking_start: true },
-        { thinking: 'Drafting for Shantanu, Lukasz and Ana' },
+        { thinking: 'Drafting for Priya, Miles and Dana' },
         { round_discarded: { reason: 'midturn' } },
-        { midturn_read: { text: 'Ana and Lukasz are from my team' } },
+        { midturn_read: { text: 'Dana and Miles are from my team' } },
         { thinking_start: true },
-        { thinking: 'Ana and Lukasz are on the team' },
+        { thinking: 'Dana and Miles are on the team' },
         { thinking_stop: true },
-        { text: 'Hi Ana, Lukasz and Shantanu,' },
+        { text: 'Hi Dana, Miles and Priya,' },
       ]),
       sessionId,
       new AbortController().signal,
@@ -135,12 +135,12 @@ describe('a round stopped to read a message', () => {
     // No row for the stopped round: the message follows the request.
     expect(state.messages.map((m) => [m.role, m.content])).toEqual([
       ['user', 'write a recognition email'],
-      ['user', 'Ana and Lukasz are from my team'],
+      ['user', 'Dana and Miles are from my team'],
     ]);
-    expect(result.thinkingText).toBe('Ana and Lukasz are on the team');
-    expect(result.thinkingText).not.toContain('Shantanu');
-    expect(state.currentThinkingContent).not.toContain('Shantanu');
-    expect(result.fullResponse).toBe('Hi Ana, Lukasz and Shantanu,');
+    expect(result.thinkingText).toBe('Dana and Miles are on the team');
+    expect(result.thinkingText).not.toContain('Priya');
+    expect(state.currentThinkingContent).not.toContain('Priya');
+    expect(result.fullResponse).toBe('Hi Dana, Miles and Priya,');
   });
 
   it('keeps the thinking of the rounds before it', async () => {
