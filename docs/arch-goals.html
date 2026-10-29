@@ -75,8 +75,9 @@
       <li><h4>Claimed deliverables (always)</h4><p>Behind the <code>deliverable_check</code> flag, and with
         or without a goal. The gate reads every reply of the turn for what it says was delivered
         (<code class="path">server/goals/claims.py</code>, with the words in
-        <code class="path">claim_text.py</code>, paths in <code class="path">claim_paths.py</code> and acts
-        in <code class="path">claim_acts.py</code>): a document path after "saved to" or a word like it,
+        <code class="path">claim_text.py</code>, paths in <code class="path">claim_paths.py</code>, files
+        named by their name alone in <code class="path">claim_names.py</code> and acts in
+        <code class="path">claim_acts.py</code>): a document path after "saved to" or a word like it,
         the app's own file link, the rows of a table whose header names a file, path, location, output
         or saved column, a folder written to, a file removed, a code or other file the reply says it
         made or changed ("I updated <code>server/app.py</code>", or an item under "I updated these
@@ -92,7 +93,11 @@
         <code>asyncio.create_task</code>"), a third party's act ("CI pushed a build", "The PR updated
         the README"), the items under a line about someone else's work ("Summary of your changes:"),
         a code block, a quoted line and a draft the reply hands over ("Here's a draft you can send:")
-        are not claims, and neither is a web address on its own.</p>
+        are not claims, and neither is a web address on its own. A file that the reply names by its
+        name alone is a claim only after a verb of delivery ("I created <code>inside.txt</code>", "The
+        refresh saved <code>snapshot.json</code>"), or with a place ("<code>app.dmg</code> is in
+        ~/Downloads"). The check looks for that name only where the calls of the turn wrote or named a
+        path, and in the workspace. It does not search the disk.</p>
         <p>Each claim is checked against the world, never the model's word
         (<code class="path">server/goals/evidence.py</code>). A file must exist and be non-empty, and
         where the reply says it was made, written since the turn began or by a call of the turn that
@@ -360,7 +365,7 @@
     <div class="spec">
       <dt><code class="path">server/goals/gate.py</code></dt><dd><code>run_completion_gate(GateContext) → GateDecision</code>; the ordered phases and the shared cap. Callers build their own <code>GateContext</code>.</dd>
       <dt><code class="path">server/goals/deliverables.py</code></dt><dd>The turn's replies, calls and prompts as the checks read them, and the claim check's feedback (<code>check_claims</code>).</dd>
-      <dt><code class="path">server/goals/claims.py</code></dt><dd>What a reply says it delivered, clause by clause, each claim with the offsets of the clause that makes it; the words it reads by are in <code class="path">claim_text.py</code> (whose statement it is, what negates or points back, which lines are code, quotes or drafts), paths in <code class="path">claim_paths.py</code> and acts in <code class="path">claim_acts.py</code>.</dd>
+      <dt><code class="path">server/goals/claims.py</code></dt><dd>What a reply says it delivered, clause by clause, each claim with the offsets of the clause that makes it; the words it reads by are in <code class="path">claim_text.py</code> (whose statement it is, what negates or points back, which lines are code, quotes or drafts), paths in <code class="path">claim_paths.py</code>, the files named by their name alone, after a verb of delivery or with a place, in <code class="path">claim_names.py</code>, and acts in <code class="path">claim_acts.py</code>.</dd>
       <dt><code class="path">server/goals/evidence.py</code></dt><dd>Whether a claim holds: the disk for files, folders and removals, the turn's successful calls and agent reports for every other act, where each act went, and recaps of work earlier replies verified.</dd>
       <dt><code class="path">server/goals/acts.py</code></dt><dd>What each tool call did (pushed, committed, merged, opened a PR or issue, uploaded, sent, commented, published, scheduled, removed), where it went, and which files it wrote, from its name and input.</dd>
       <dt><code class="path">server/goals/call_results.py</code></dt><dd>Whether each call finished and succeeded, background commands a later call shows finished, the calls as first read, and the agent reports a turn read.</dd>

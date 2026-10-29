@@ -5,7 +5,9 @@ the model's word:
 
 - a file must be on disk and not empty, and where the reply says it was
   made, written since the turn began or by a successful call of the turn
-  that named that exact path; a folder must hold something, new this turn
+  that named that exact path; a file named by its name alone
+  (``Claim.bare``) is looked for where the turn's calls wrote or named a
+  path, and in the workspace, never across the disk; a folder must hold something, new this turn
   where the reply says it wrote there; a removed file must be gone, and
   removed by a call of the turn (one taken out of git only must be untracked
   by one); a file a row of a table of changes says lost a part or went
@@ -68,6 +70,12 @@ __all__ = ["Call", "Evidence", "Verdict", "check", "not_done", "succeeded", "tur
 _FRESH_SLACK_S = 2.0
 # A folder the reply says it wrote to is read this far.
 _MAX_ENTRIES = 5000
+# A path a call's arguments or result name, for where a bare name may be:
+# rooted, home-relative or relative with a folder in it. Each call's text is
+# read this far, and a bare name is looked for in this many places at most.
+_NAMED_PATH_RE = re.compile(r"(?:~|/)[\w@+.~/-]*[\w@+-]|(?:[\w@+-][\w@+.-]*/)+[\w@+.-]*[\w@+-]")
+_NAMED_SCAN = 20000
+_MAX_BARE_PLACES = 400
 _SCRIPT_TOOLS = frozenset({"run_python", "run_tool_script"})
 _COMMAND_TOOLS = frozenset({"ws_run_command", "terminal_run", "terminal_send", "aws_cli"})
 _ACT_LABELS = {
@@ -429,6 +437,31 @@ class Evidence:
         return [self.path(p) for x in self.calls if x.ok for p in x.writes]
 
     @cached_property
+    def places(self) -> tuple[dict[str, list[str]], list[str]]:
+        """Where a file named alone may be (``_check_bare``): each path the
+        turn wrote, tried or named in a call's arguments or result, by its
+        name, and the folders those paths name or sit in, then the
+        workspace (at most _MAX_BARE_PLACES). Relative paths count only
+        with a workspace."""
+        paths: dict[str, None] = dict.fromkeys([*self.written, *sorted(self.tried_paths)])
+        for x in self.calls:
+            for text in (x.text[:_NAMED_SCAN], x.result[:_NAMED_SCAN]):
+                for m in _NAMED_PATH_RE.finditer(text):
+                    token = m.group(0)
+                    if os.path.isabs(os.path.expanduser(token)) or self.workspace:
+                        paths.setdefault(self.path(token))
+        by_name: dict[str, list[str]] = {}
+        folders: dict[str, None] = {}
+        for p in paths:
+            p = p.rstrip("/")
+            by_name.setdefault(os.path.basename(p), []).append(p)
+            if len(folders) < _MAX_BARE_PLACES:
+                folders.update(dict.fromkeys(f for f in (p, os.path.dirname(p)) if f))
+        if self.workspace:
+            folders.setdefault(os.path.normpath(self.workspace))
+        return by_name, list(folders)[:_MAX_BARE_PLACES]
+
+    @cached_property
     def tried_paths(self) -> set[str]:
         out = {self.path(p) for x in self.calls for p in x.writes}
         out |= {self.path(a.target) for x in self.calls for a in x.acts if a.kind == c.REMOVED}
@@ -643,6 +676,8 @@ def _fresh(st: os.stat_result, started_at: float | None) -> bool:
 
 
 def _path_tried(claim: c.Claim, ev: Evidence) -> bool:
+    if claim.bare:
+        return any(os.path.basename(p) == claim.target for p in ev.tried_paths)
     if not os.path.isabs(os.path.expanduser(claim.target)) and not ev.workspace:
         return False
     path = ev.path(claim.target).rstrip("/")
@@ -693,7 +728,47 @@ def _check_removed(claim: c.Claim, ev: Evidence, path: str, shown: str, tried: b
     return Verdict(False, note=f"no call in this turn removed {shown}")
 
 
+def _bare_places(name: str, ev: Evidence) -> list[str]:
+    """Where the file ``name`` may be: each path the turn wrote, tried or
+    named that ends in it, then that name in each folder of ``ev.places``."""
+    by_name, folders = ev.places
+    return list(dict.fromkeys([*by_name.get(name, []), *(os.path.join(f, name) for f in folders)]))
+
+
+def _check_bare(claim: c.Claim, ev: Evidence) -> Verdict:
+    """A file named by its name alone (``Claim.bare``): one of that name must
+    be where the turn wrote or looked (``_bare_places``), not empty, and new
+    this turn where the reply says it was made."""
+    name = claim.target
+    shown = f"`{name}`"
+    old = None
+    for path in _bare_places(name, ev):
+        try:
+            st = os.stat(path)
+        except OSError:
+            continue
+        if not stat.S_ISREG(st.st_mode) or st.st_size == 0:
+            continue
+        if _fresh(st, ev.started_at) or ev.wrote(path):
+            clock, _iso = _when(st.st_mtime)
+            detail = f"{_size(st.st_size)}, saved {clock}"
+            return Verdict(True, receipt=_path_receipt(c.FILE, path, detail, st.st_mtime))
+        old = old or (path, st)
+    if old is None:
+        return Verdict(False, note=f"no {shown} was found where this turn wrote or looked")
+    if _path_tried(claim, ev) or (claim.made and not ev.recap(claim)):
+        return Verdict(False, note=f"{shown} was not written in this turn")
+    path, st = old
+    clock, _iso = _when(st.st_mtime)
+    return Verdict(
+        True,
+        receipt=_path_receipt(c.FILE, path, f"{_size(st.st_size)}, saved {clock}", st.st_mtime),
+    )
+
+
 def _check_path(claim: c.Claim, ev: Evidence) -> Verdict:
+    if claim.bare:
+        return _check_bare(claim, ev)
     target = claim.target
     shown = f"`{target}`"
     if not os.path.isabs(os.path.expanduser(target)) and not ev.workspace:
@@ -760,6 +835,8 @@ def _could(claim: c.Claim, x: Call, ev: Evidence) -> bool:
         ]
         if not named:
             return not command
+        if claim.bare:
+            return any(os.path.basename(p) == claim.target for p in named)
         path = ev.path(claim.target).rstrip("/")
         return any(p == path or p.startswith(path + "/") for p in named)
     if claim.kind == c.ARTIFACT:
