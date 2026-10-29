@@ -639,6 +639,10 @@ export interface SSEEventData {
    *  point of the stream: what streamed before it is the reply it had
    *  written, and what follows answers the message. */
   midturn_read?: { text: string };
+  /** The round streaming now stopped before it started its answer, to read a
+   *  message the user sent into the turn: its thinking is dropped, and the
+   *  next round answers with the message in it. */
+  round_discarded?: { reason: string };
 
   // Tasks
   todo_update?: unknown;

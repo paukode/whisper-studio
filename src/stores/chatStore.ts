@@ -132,6 +132,9 @@ export interface ChatState {
   setMessages: (messages: ChatMessage[]) => void;
   appendStreamToken: (token: string) => void;
   appendThinkingToken: (token: string) => void;
+  /** Show `text` as the live thinking, in place of what streamed: a round
+   *  that stopped before its answer takes its thinking back. */
+  replaceLiveThinking: (text: string) => void;
   addStreamToolUse: (trace: ToolUseEvent) => void;
   /** Show a caption on the live rows that hold one of its calls. */
   addStreamLabel: (label: WrittenLabel) => void;
@@ -319,6 +322,10 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
     set((state) => ({
       currentThinkingContent: state.currentThinkingContent + token,
     }));
+  },
+
+  replaceLiveThinking: (text: string) => {
+    set({ currentThinkingContent: text });
   },
 
   addStreamToolUse: (trace: ToolUseEvent) => {

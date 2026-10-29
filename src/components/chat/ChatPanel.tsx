@@ -54,7 +54,7 @@ const PendingNotes: React.FC = () => {
             <div style={{ whiteSpace: 'pre-wrap' }}>{note.content}</div>
             <span
               className="msg-timestamp"
-              title="The assistant reads this when it finishes its current step, then answers it below."
+              title="The assistant reads this right away while it is still thinking, else after its current step, then answers it below."
             >
               Queued
             </span>

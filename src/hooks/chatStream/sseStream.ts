@@ -183,6 +183,9 @@ export async function readSSEStream(
   const pendingVisuals: VizArtifact[] = [];
   let pendingPlan: { id: string; title: string; summary: string } | null = null;
   let flushedSegments = 0;
+  // Where the round streaming now began in thinkingText: a round_discarded
+  // frame cuts its thinking back to here.
+  let roundThinkingStart = 0;
   let refusal: string | null = null;
   // The ask_user_question calls of this round, one card once the stream has
   // paused on them (see commitQuestions).
@@ -237,6 +240,7 @@ export async function readSSEStream(
     }, store().messages, pendingLabels));
     fullResponse = '';
     thinkingText = '';
+    roundThinkingStart = 0;
     thinkingMs = 0;
     skillTraces.length = 0;
     // The next segment times its own pre-text wait from here (the store's live
@@ -483,6 +487,16 @@ export async function readSSEStream(
           // message follows it, and the answer to the message streams below
           // it as a reply of its own. The paragraph break the server sends
           // before a late message belongs to neither.
+          // ── round_discarded (a round stopped to read that message) ──
+          // It had not started its answer: what it thought was about the
+          // request without the message, so it goes, and the next round
+          // thinks again with the message in it.
+          if (parsed.round_discarded) {
+            thinkingText = thinkingText.slice(0, roundThinkingStart);
+            thinkingPacer.reset();
+            store().replaceLiveThinking(thinkingText);
+          }
+
           if (parsed.midturn_read) {
             fullResponse = fullResponse.trimEnd();
             flushSegment();
@@ -959,6 +973,8 @@ export async function readSSEStream(
             const ctxUsed = parsed.usage.context_used;
             const ctxMax = parsed.usage.context_max;
             store().setUsage(inputTokens, outputTokens, cost, ctxUsed, ctxMax);
+            // A usage frame ends a round: the next one's thinking starts here.
+            roundThinkingStart = thinkingText.length;
           }
 
           // ── text ──

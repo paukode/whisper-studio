@@ -128,7 +128,7 @@ function toastQueuedIntoRunningTurn(): void {
   useUIStore.getState().addToast({
     type: 'info',
     message:
-      'Added to the running turn. The assistant reads it when it finishes its current step and answers it below your message.',
+      'Added to the running turn. The assistant reads it right away while it is still thinking, else after its current step, and answers it below your message.',
     duration: 5000,
     key: 'midturn-queued',
     persist: false,

@@ -3,7 +3,9 @@
  * the end of its current step (server/chat/engine/runner.py), and the stream
  * marks that point with a `midturn_read` frame. The reply written before it
  * and the answer to the message are two replies with the message between
- * them, not one bubble that reads like the same answer twice.
+ * them, not one bubble that reads like the same answer twice. A round that
+ * had not started its answer stops instead (`round_discarded`): its thinking
+ * goes, and only the answer with the message in it is shown.
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { readSSEStream } from './sseStream';
@@ -101,6 +103,60 @@ describe('a message read mid-turn', () => {
       ['assistant', 'Done with the first part.'],
     ]);
     expect(result.fullResponse).toBe('The logs are clean.');
+  });
+});
+
+describe('a round stopped to read a message', () => {
+  it('drops its thinking, so the message sits right under the request and one answer follows', async () => {
+    const sessionId = 'sess-midturn-restart';
+    const chat = getChatStore(sessionId).getState();
+    chat.addMessage(note('write a recognition email'));
+    chat.setStreaming(true);
+    const sent = note('Ana and Lukasz are from my team');
+    chat.queueMidTurnNote(sent);
+
+    const result = await readSSEStream(
+      sseResponse([
+        { thinking_start: true },
+        { thinking: 'Drafting for Shantanu, Lukasz and Ana' },
+        { round_discarded: { reason: 'midturn' } },
+        { midturn_read: { text: 'Ana and Lukasz are from my team' } },
+        { thinking_start: true },
+        { thinking: 'Ana and Lukasz are on the team' },
+        { thinking_stop: true },
+        { text: 'Hi Ana, Lukasz and Shantanu,' },
+      ]),
+      sessionId,
+      new AbortController().signal,
+      SETTINGS,
+    );
+
+    const state = getChatStore(sessionId).getState();
+    // No row for the stopped round: the message follows the request.
+    expect(state.messages.map((m) => [m.role, m.content])).toEqual([
+      ['user', 'write a recognition email'],
+      ['user', 'Ana and Lukasz are from my team'],
+    ]);
+    expect(result.thinkingText).toBe('Ana and Lukasz are on the team');
+    expect(result.thinkingText).not.toContain('Shantanu');
+    expect(state.currentThinkingContent).not.toContain('Shantanu');
+    expect(result.fullResponse).toBe('Hi Ana, Lukasz and Shantanu,');
+  });
+
+  it('keeps the thinking of the rounds before it', async () => {
+    const sessionId = 'sess-midturn-restart-later';
+    const result = await readSSEStream(
+      sseResponse([
+        { thinking: 'round one thought' },
+        { usage: { input_tokens: 1, output_tokens: 1 } },
+        { thinking: ' round two thought' },
+        { round_discarded: { reason: 'midturn' } },
+      ]),
+      sessionId,
+      new AbortController().signal,
+      SETTINGS,
+    );
+    expect(result.thinkingText).toBe('round one thought');
   });
 });
 
