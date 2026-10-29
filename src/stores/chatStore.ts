@@ -73,6 +73,12 @@ export interface ChatState {
    *  one starts, go to the last assistant message. A verified delivery never
    *  leaves the transcript. */
   liveDeliveries: Delivery[];
+  /** Messages the user sent into the running turn that the model has not read
+   *  yet. They render below the live reply. The stream's `midturn_read` frame
+   *  moves each one into the transcript at the point the model read it, so
+   *  the answer to it starts a reply of its own; any still held when the
+   *  stream ends follow its last row. */
+  pendingMidTurn: ChatMessage[];
 
   /** Queue of pending approvals (FIFO) */
   approvalQueue: PendingApproval[];
@@ -126,6 +132,9 @@ export interface ChatState {
   setMessages: (messages: ChatMessage[]) => void;
   appendStreamToken: (token: string) => void;
   appendThinkingToken: (token: string) => void;
+  /** Show `text` as the live thinking, in place of what streamed: a round
+   *  that stopped before its answer takes its thinking back. */
+  replaceLiveThinking: (text: string) => void;
   addStreamToolUse: (trace: ToolUseEvent) => void;
   /** Show a caption on the live rows that hold one of its calls. */
   addStreamLabel: (label: WrittenLabel) => void;
@@ -159,6 +168,15 @@ export interface ChatState {
    *  and whatever the model says next lands below the card. The segment
    *  takes the live deliveries, which its text claimed. */
   flushStreamSegment: (message: ChatMessage) => void;
+  /** Hold a message sent into the running turn until the model reads it. */
+  queueMidTurnNote: (message: ChatMessage) => void;
+  /** Take the held message the model just read: the one with this text, else
+   *  the oldest. Undefined when none is held (it was already committed, at a
+   *  card the turn paused on). */
+  takeMidTurnNote: (text: string) => ChatMessage | undefined;
+  /** Remove a held message whose delivery failed, wherever it is by now: still
+   *  held, or already in the transcript after the stream ended. */
+  dropMidTurnNote: (message: ChatMessage) => void;
   clearMessages: () => void;
 
   // Message editing
@@ -225,6 +243,12 @@ function withDeliveries(message: ChatMessage, live: Delivery[]): ChatMessage {
   return { ...message, deliveries: mergeDeliveries(message.deliveries, live) };
 }
 
+/** The transcript followed by the held mid-turn messages (the same array
+ *  when there are none). */
+function withPendingNotes(messages: ChatMessage[], pending: ChatMessage[]): ChatMessage[] {
+  return pending.length === 0 ? messages : [...messages, ...pending];
+}
+
 /** The transcript with deliveries no commit took added to the last assistant
  *  message, whose text claimed them (the same array when there are none). */
 function settleDeliveries(messages: ChatMessage[], live: Delivery[]): ChatMessage[] {
@@ -255,6 +279,7 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
   currentStreamLabels: [],
   liveTeamReports: {},
   liveDeliveries: [],
+  pendingMidTurn: [],
   approvalQueue: [],
   currentApproval: null,
   sessionApprovals: { ...DEFAULT_SESSION_APPROVALS },
@@ -297,6 +322,10 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
     set((state) => ({
       currentThinkingContent: state.currentThinkingContent + token,
     }));
+  },
+
+  replaceLiveThinking: (text: string) => {
+    set({ currentThinkingContent: text });
   },
 
   addStreamToolUse: (trace: ToolUseEvent) => {
@@ -369,9 +398,14 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
 
   setStreaming: (streaming: boolean) => {
     // Deliveries a stream left untaken belong to the text it committed, never
-    // to the next stream's.
-    const { messages, liveDeliveries } = get();
-    const settled = { messages: settleDeliveries(messages, liveDeliveries), liveDeliveries: [] };
+    // to the next stream's. Messages the model never read were still sent:
+    // they follow the stream's last row.
+    const { messages, liveDeliveries, pendingMidTurn } = get();
+    const settled = {
+      messages: withPendingNotes(settleDeliveries(messages, liveDeliveries), pendingMidTurn),
+      liveDeliveries: [],
+      pendingMidTurn: [],
+    };
     if (streaming) {
       set({
         ...settled,
@@ -422,9 +456,13 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
         currentStreamLabels: [],
         thinkingStartTime: null,
         liveDeliveries: [],
-        messages: message
-          ? [...state.messages, withDeliveries(message, live)]
-          : settleDeliveries(state.messages, live),
+        pendingMidTurn: [],
+        messages: withPendingNotes(
+          message
+            ? [...state.messages, withDeliveries(message, live)]
+            : settleDeliveries(state.messages, live),
+          state.pendingMidTurn,
+        ),
       };
     });
   },
@@ -449,10 +487,33 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
     }));
   },
 
+  queueMidTurnNote: (message: ChatMessage) => {
+    set((state) => ({ pendingMidTurn: [...state.pendingMidTurn, message] }));
+  },
+
+  takeMidTurnNote: (text: string) => {
+    const pending = get().pendingMidTurn;
+    if (pending.length === 0) return undefined;
+    const want = text.trim();
+    const at = Math.max(0, pending.findIndex((m) => m.content.trim() === want));
+    set({ pendingMidTurn: pending.filter((_, i) => i !== at) });
+    return pending[at];
+  },
+
+  dropMidTurnNote: (message: ChatMessage) => {
+    set((state) => ({
+      pendingMidTurn: state.pendingMidTurn.filter((m) => m !== message),
+      messages: state.messages.includes(message)
+        ? state.messages.filter((m) => m !== message)
+        : state.messages,
+    }));
+  },
+
   clearMessages: () => {
     set({
       messages: [],
       liveDeliveries: [],
+      pendingMidTurn: [],
       currentStreamContent: '',
       currentThinkingContent: '',
       isStreaming: false,

@@ -77,12 +77,18 @@
     </div>
 
     <h2 id="mid-turn">You can keep typing while it works</h2>
-    <p>You do not have to wait for an answer to finish before adding something. Send a message while a
-      turn is streaming and it is <b>folded into that same running turn</b> rather than blocked or
-      started as a second conversation. A short notice confirms it: <em>"Added to the running turn. The
-      assistant will take it into account as it continues and answer it when this turn finishes."</em>
-      Use it to correct course ("actually, use the staging config"), add a constraint, or answer a
-      question the assistant raised mid-way.</p>
+    <p>You do not have to wait for an answer before you add something. If you send a message while a
+      turn streams, the app adds it <b>to that turn</b>. The app does not block the message or start a
+      second conversation. A short notice tells you that the app added it: <em>"Added to the running
+      turn. The assistant reads it right away while it is still thinking, else after its current step,
+      and answers it below your message."</em> Use it to correct the work ("actually, use the staging
+      config"), to add a limit, or to answer a question from the assistant.</p>
+    <p>The app shows your message below the answer, with a dashed border and the label "Queued". When
+      the server adds the message to the model input, the app moves the message to that point in the
+      conversation. If the model did not start its answer, the server stops that step and starts it
+      again with your message. The app removes the reasoning text of the stopped step, and you get one
+      answer. If the model started its answer, that answer completes. The app then shows the answer to
+      your message in a new bubble below your message.</p>
     <p>It is deliberately all-or-nothing. If the turn finished in the moment between your pressing
       Enter and the message arriving, nothing is sent and your text stays in the composer, with a
       notice saying so, so you can send it again as a fresh message. You never get a silently lost

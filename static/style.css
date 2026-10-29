@@ -1018,6 +1018,9 @@ input.segment-speaker {
     flex-shrink: 0;
 }
 .chat-msg-wrap.user-wrap { align-self: flex-end; align-items: flex-end; max-width: 75%; }
+/* Sent into the running turn, not read by the model yet (ChatPanel's
+ * PendingNotes): it joins the transcript where the model reads it. */
+.chat-msg-wrap.pending-note .chat-msg.user { border-style: dashed; opacity: 0.75; }
 .chat-msg-wrap.assistant-wrap { align-self: flex-start; max-width: 100%; }
 /* An assistant turn that holds activity rows (TurnBubble, and the live reply
  * that starts one) fills the page column while it streams: shrink-wrapped,

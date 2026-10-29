@@ -39,6 +39,33 @@ const LiveReply: React.FC<{
 };
 
 /**
+ * Messages the user sent into the running turn that the model has not read
+ * yet, below the live reply. The stream moves each into the transcript where
+ * the model reads it (the midturn_read frame), and the answer to it streams
+ * below it as a reply of its own.
+ */
+const PendingNotes: React.FC = () => {
+  const pending = useActiveChatStore((s) => s.pendingMidTurn);
+  return (
+    <>
+      {pending.map((note) => (
+        <div key={note.timestamp} className="chat-msg-wrap user-wrap pending-note">
+          <div className="chat-msg user">
+            <div style={{ whiteSpace: 'pre-wrap' }}>{note.content}</div>
+            <span
+              className="msg-timestamp"
+              title="The assistant reads this right away while it is still thinking, else after its current step, then answers it below."
+            >
+              Queued
+            </span>
+          </div>
+        </div>
+      ))}
+    </>
+  );
+};
+
+/**
  * Chat panel matching the vanilla #chatPanelWrap structure exactly.
  *
  * Structure:
@@ -363,6 +390,9 @@ export const ChatPanel: React.FC = () => {
 
         {/* Streaming response that starts a new turn */}
         {isStreaming && !liveTurn && <LiveReply />}
+
+        {/* Messages sent into the running turn, until the model reads them */}
+        <PendingNotes />
 
         {/* Approval card, shown when a tool needs permission */}
         <ErrorBoundary label="ApprovalBanner">

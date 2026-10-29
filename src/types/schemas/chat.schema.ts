@@ -295,6 +295,17 @@ export const SSEEventDataSchema = z.object({
     reason: z.string(),
   }).optional(),
 
+  // The model read a message the user sent into this turn: the client starts
+  // a new reply below it (sseStream.ts).
+  midturn_read: z.object({
+    text: z.string(),
+  }).optional(),
+  // The round streaming now stopped before its answer to read that message:
+  // the client drops its thinking (sseStream.ts).
+  round_discarded: z.object({
+    reason: z.string(),
+  }).optional(),
+
   // Tasks
   todo_update: z.unknown().optional(),
 }).passthrough();

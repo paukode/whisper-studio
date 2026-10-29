@@ -85,10 +85,20 @@
       <li><h4>The server queues it</h4><p>The session's busy slot is live, so the endpoint pushes the
         text into the mid-turn inbox and answers
         <code>{"queued_into_running_turn": true}</code>. No second stream opens.</p></li>
-      <li><h4>The running turn picks it up</h4><p>At its next round boundary the engine drains the
-        inbox and appends the message to the live history, wrapped so the model reads it as a course
-        correction inside this turn rather than a separate request. The composer clears and a notice
-        confirms it was added to the running turn.</p></li>
+      <li><h4>The app shows it as queued</h4><p>The app removes the text from the composer, and a
+        notice tells you that the message went into the turn. The app shows the message below the
+        current answer, with a dashed border and the label "Queued".</p></li>
+      <li><h4>A round with no answer stops</h4><p>If the model did not start its answer in the current
+        round, the engine stops that round. An answer starts with the first text or the first tool
+        call. The engine closes the provider stream and sends a <code>round_discarded</code> frame.
+        The app removes the reasoning text of that round. The engine does not stop the last round of
+        the turn, because no round is available for the message.</p></li>
+      <li><h4>The running turn picks it up</h4><p>At the start of the next round, the engine drains
+        the inbox and adds the message to the message list. The engine puts the message in a
+        <code>user_message_mid_turn</code> tag. The tag tells the model that the message changes this
+        turn and is not a separate request. The engine then sends a <code>midturn_read</code> frame.
+        The app closes the answer before this point and moves your message below it. The app shows the
+        answer to your message in a new bubble.</p></li>
       <li><h4>Unless the turn just ended</h4><p>If the turn finished in the gap between your keystroke
         and the request, the server answers <code>409</code> with
         <code>{"queued_into_running_turn": false, "error": "no_running_turn"}</code>. The composer

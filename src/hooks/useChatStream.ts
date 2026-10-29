@@ -128,7 +128,7 @@ function toastQueuedIntoRunningTurn(): void {
   useUIStore.getState().addToast({
     type: 'info',
     message:
-      'Added to the running turn. The assistant will take it into account as it continues and answer it when this turn finishes.',
+      'Added to the running turn. The assistant reads it right away while it is still thinking, else after its current step, and answers it below your message.',
     duration: 5000,
     key: 'midturn-queued',
     persist: false,
@@ -608,6 +608,15 @@ export function useChatStream(): UseChatStreamReturn {
     }
     midTurnInFlight.add(activeSessionId);
 
+    // Held below the live reply from now on, not from the confirmation: the
+    // turn can read the message (and its stream place it) before the reply to
+    // this request arrives. A stream that already ended has no one to place
+    // it; the message joins the transcript once delivery is confirmed.
+    const chat = getChatStore(activeSessionId).getState();
+    const note: ChatMessage = { role: 'user', content: question, timestamp: new Date().toISOString() };
+    const held = chat.isStreaming;
+    if (held) chat.queueMidTurnNote(note);
+
     let delivered = false;
     try {
       // Deliberately a minimal body: the backend only needs `question` +
@@ -639,16 +648,13 @@ export function useChatStream(): UseChatStreamReturn {
     }
 
     if (delivered) {
-      getChatStore(activeSessionId).getState().addMessage({
-        role: 'user',
-        content: question,
-        timestamp: new Date().toISOString(),
-      });
+      if (!held) getChatStore(activeSessionId).getState().addMessage(note);
       // Say where the message went: it is folded into the turn that is
-      // already running and answered at that turn's end, not by a separate
-      // reply. Without this, the silence after sending read as a lost message.
+      // already running, not a turn of its own. Without this, the silence
+      // after sending read as a lost message.
       toastQueuedIntoRunningTurn();
     } else {
+      if (held) getChatStore(activeSessionId).getState().dropMidTurnNote(note);
       useUIStore.getState().addToast({
         type: 'error',
         message:

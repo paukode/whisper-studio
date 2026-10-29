@@ -52,6 +52,11 @@ class FakeBedrockClient:
     @staticmethod
     def _stream(events):
         for ev in events:
+            if callable(ev):
+                # A side effect at this point of the stream (a message the
+                # user sends while the model is still writing).
+                ev()
+                continue
             if isinstance(ev, BaseException):
                 # Connection fault while reading the body (a read timeout, a
                 # dropped socket): it raises out of the stream iterator.

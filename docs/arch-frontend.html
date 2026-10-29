@@ -189,13 +189,14 @@
     </ol>
 
     <h3 id="mid-turn">Sending into a running turn</h3>
-    <p>While the session is streaming, the composer's Send does not open a second stream. It calls
-      <code>sendMidTurn</code>, which POSTs a minimal
-      <code>{question, session_id, midturn: true}</code> to the same <code>/api/chat</code> and waits
-      for a JSON answer. The composer only clears on a confirmed success, so the text is never lost:
-      a success says the message was added to the running turn and will be taken into account as it
-      continues, and a failure (the turn ended in the gap) says plainly that nothing was sent and
-      offers to send it again as a new message. The queueing and fold-in happen server side; see
+    <p>While the session streams, Send in the composer does not open a second stream. It calls
+      <code>sendMidTurn</code>, which sends <code>{question, session_id, midturn: true}</code> to the
+      same <code>/api/chat</code> and waits for a JSON answer. Before the POST, the app shows the
+      message below the answer with the label "Queued", because the turn can read it before the server
+      answers (<code>pendingMidTurn</code> in <code class="path">src/stores/chatStore.ts</code>). If
+      the server accepts the message, the app removes the text from the composer. If the turn stopped
+      in that time, the app removes the message, keeps your text in the composer, and tells you that it
+      sent nothing. For the server side, see
       <a href="arch-chat-turn.html#mid-turn">Sending while it works</a>.</p>
 
     <h3 id="routing-events">Routing SSE events</h3>
@@ -239,6 +240,8 @@
         <tr><td><code>user_question</code></td><td>Collapses parallel <code>ask_user_question</code> calls into one tabbed card.</td></tr>
         <tr><td><code>team_progress</code> / <code>team_results</code></td><td>Folds live <a href="arch-agents.html">sub-agent</a> activity into a turn-local team report.</td></tr>
         <tr><td><code>usage</code></td><td>Updates token counters and the cost estimate; also carries <code>context_used</code>/<code>context_max</code> for the status-bar context meter.</td></tr>
+        <tr><td><code>midturn_read</code></td><td>Commits the text and tool rows before this point as a row, then moves the message with the label "Queued" below it (<code>takeMidTurnNote</code>). The answer to the message streams in a new bubble.</td></tr>
+        <tr><td><code>round_discarded</code></td><td>Removes the reasoning text of the stopped round from the answer that streams (<code>replaceLiveThinking</code>).</td></tr>
         <tr><td><code>grounding</code></td><td>Records how many folders were searched and passages injected this turn, plus the persisted-sources id that lets the chip expand into the answer-sources panel.</td></tr>
         <tr><td><code>status</code></td><td>Turn-setup stage before the first token; renders "Preparing…", "Searching your workspace…", or "Waiting for the model…" in the streaming header, cleared on the first real output.</td></tr>
         <tr><td><code>cron_event</code></td><td>Appends a live cron card that renders identically to the persisted, resumed one.</td></tr>

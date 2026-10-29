@@ -113,6 +113,59 @@ def test_golden_mid_stream_error(monkeypatch):
     assert_golden("mid_stream_error", lines)
 
 
+def test_golden_midturn_message_splits_the_reply(monkeypatch):
+    # The user adds a note once the first answer is written, as the turn takes
+    # its last look at the inbox. The turn answers it in a second round, and
+    # the midturn_read frame between the two answers is where the client
+    # starts a new reply.
+    from server.chat.engine import midturn_inbox
+
+    real_close = midturn_inbox.close_if_empty
+    sent = []
+
+    def note_at_the_last_look(session_id):
+        if not sent:
+            sent.append(midturn_inbox.push(session_id, "Ana and Lukasz are from my team"))
+        return real_close(session_id)
+
+    monkeypatch.setattr(midturn_inbox, "close_if_empty", note_at_the_last_look)
+    client = FakeBedrockClient(
+        [
+            [msg_start(), *text_block("First draft."), *msg_end()],
+            [msg_start(), *text_block("Second draft."), *msg_end()],
+        ]
+    )
+    lines = run_chat_turn(monkeypatch, client, {"question": "write a short email"})
+    assert sent == [True]
+    assert_golden("midturn_note_splits_reply", lines)
+
+
+def test_golden_midturn_message_restarts_an_unanswered_round(monkeypatch):
+    # The note is waiting before the round has shown any answer: the round
+    # stops (round_discarded), the next one reads the note (midturn_read) and
+    # is the only answer. The first round's draft never reaches the client.
+    from server.chat.engine import midturn_inbox
+
+    def user_sends_a_note():
+        assert midturn_inbox.push("golden-session", "Ana and Lukasz are from my team")
+
+    client = FakeBedrockClient(
+        [
+            [
+                user_sends_a_note,
+                msg_start(),
+                *thinking_block("drafting for all three", index=0),
+                *text_block("First draft.", index=1),
+                *msg_end(),
+            ],
+            [msg_start(), *text_block("Second draft."), *msg_end()],
+        ]
+    )
+    lines = run_chat_turn(monkeypatch, client, {"question": "write a short email"})
+    assert not any("First draft" in ln for ln in lines)
+    assert_golden("midturn_note_restarts_round", lines)
+
+
 def test_golden_verified_claim_receipt(monkeypatch):
     # The reply says it saved a memory after a memory_write that succeeded:
     # the claim holds, and a deliveries frame follows the sentence
