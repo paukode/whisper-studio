@@ -187,12 +187,12 @@ def test_reading_a_user_message_is_marked_between_the_two_answers():
     # answer's text comes before the marker, the answer to the message after.
     sid = "late-5"
     midturn_inbox.clear(sid)
-    adapter = LateMessageAdapter(sid, text="  Ana and Lukasz are from my team  ")
+    adapter = LateMessageAdapter(sid, text="  Dana and Miles are from my team  ")
     frames = _frames(_drain_stream(_ctx(sid, adapter, max_rounds=10)))
 
     keys = [next(iter(f)) for f in frames]
     read_at = keys.index("midturn_read")
-    assert frames[read_at] == {"midturn_read": {"text": "Ana and Lukasz are from my team"}}
+    assert frames[read_at] == {"midturn_read": {"text": "Dana and Miles are from my team"}}
     before = "".join(f.get("text", "") for f in frames[:read_at])
     after = "".join(f.get("text", "") for f in frames[read_at:])
     assert "answer 0" in before and "answer 1" not in before

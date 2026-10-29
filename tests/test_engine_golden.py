@@ -125,7 +125,7 @@ def test_golden_midturn_message_splits_the_reply(monkeypatch):
 
     def note_at_the_last_look(session_id):
         if not sent:
-            sent.append(midturn_inbox.push(session_id, "Ana and Lukasz are from my team"))
+            sent.append(midturn_inbox.push(session_id, "Dana and Miles are from my team"))
         return real_close(session_id)
 
     monkeypatch.setattr(midturn_inbox, "close_if_empty", note_at_the_last_look)
@@ -147,7 +147,7 @@ def test_golden_midturn_message_restarts_an_unanswered_round(monkeypatch):
     from server.chat.engine import midturn_inbox
 
     def user_sends_a_note():
-        assert midturn_inbox.push("golden-session", "Ana and Lukasz are from my team")
+        assert midturn_inbox.push("golden-session", "Dana and Miles are from my team")
 
     client = FakeBedrockClient(
         [
