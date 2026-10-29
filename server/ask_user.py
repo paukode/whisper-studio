@@ -83,7 +83,26 @@ CREATE_ARTIFACT_TOOL = {
             },
             "html": {
                 "type": "string",
-                "description": "Complete HTML source code (must be a full standalone document with <!DOCTYPE html>)",
+                "description": (
+                    "Complete HTML source code (must be a full standalone document with "
+                    "<!DOCTYPE html>).\n"
+                    "Theme: the card adds the user's active Whisper theme to the page as "
+                    "CSS variables and keeps them current when the user switches palette "
+                    "or light/dark mode. Style the page with them and pick no colors or "
+                    "fonts of your own unless the user asks for a different look. Start "
+                    "with :root{color-scheme:var(--ws-scheme)} and body{margin:0;"
+                    "background:var(--ws-bg);color:var(--ws-text);font-family:"
+                    "var(--ws-font)}. Variables: --ws-bg (page), --ws-surface and "
+                    "--ws-surface-2 (cards, panels, inputs), --ws-border (1px lines), "
+                    "--ws-text, --ws-heading, --ws-muted, --ws-accent (buttons, links, "
+                    "active items) with --ws-on-accent (text on it) and --ws-accent-soft "
+                    "(tinted fills), --ws-accent-2, --ws-success, --ws-warning, "
+                    "--ws-danger, --ws-c1, --ws-c2, --ws-c3, --ws-c4, --ws-c5, --ws-c6 "
+                    "(series and categories), --ws-font, --ws-mono (code, numbers), "
+                    "--ws-radius, --ws-shadow. Canvas and chart code reads them with "
+                    "getComputedStyle(document.documentElement).getPropertyValue(name). "
+                    "No font <link> tags: the theme fonts are already loaded."
+                ),
             },
             "description": {
                 "type": "string",

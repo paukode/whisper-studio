@@ -88,11 +88,13 @@ most of the file.
 - Complete `<!DOCTYPE html>` document with `<html>`, `<head>`, `<body>`
 - All CSS in a single `<style>` block, with CSS variables for the color palette
 - All JS in a single `<script>` block at the end of `<body>`, no inline event handlers
-- Google Fonts via CDN `<link>`: choose distinctive fonts, not Arial or system defaults
+- Colors and fonts come from the user's active Whisper theme: the artifact card
+  adds it as `--ws-*` CSS variables, which the `create_artifact` html field lists.
+  Build the palette from them and add no font `<link>`, unless the user asks for a
+  different look
 - Responsive layout that works on mobile and desktop
-- Dark background with sharp accent colors preferred (unless the user requests otherwise)
 - `const` and `let` only, no `var`; no inline `style=""` attributes
-- No external JS/CSS dependencies except CDN fonts
+- No external JS/CSS dependencies
 
 ## Step 2B: Modular app
 
@@ -109,7 +111,10 @@ most of the file.
 4. **Create each file with `ws_create_file`** (one call per file, so the user
    approves each write). Follow the same code quality rules as Step 2A, with
    CSS and JS in their own files instead of inline blocks; link them relatively
-   from `index.html` so the folder opens and runs from disk.
+   from `index.html` so the folder opens and runs from disk. No card adds the
+   theme to a folder, so define the palette yourself in `:root` variables:
+   Google Fonts via CDN `<link>` with distinctive fonts, a dark background
+   with sharp accent colors, unless the user asks otherwise.
 5. **Close with a short summary**: the folder path, each created file with a
    one-line purpose, and how to open or serve the app."""
 
