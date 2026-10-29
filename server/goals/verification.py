@@ -132,6 +132,19 @@ def is_code_path(path: str) -> bool:
     return True
 
 
+def _in_scratch(path: str) -> bool:
+    """A file in a session's scratch folder: a throwaway helper the session
+    runs itself (the system prompt sends such files there), not project code.
+    The gate asked a field session to run a test suite for a one-off export
+    script it had already run five times."""
+    if not os.path.isabs(path):
+        return False
+    from server.workspace.paths import scratch_root
+
+    root = os.path.realpath(scratch_root())
+    return os.path.realpath(path).startswith(root + os.sep)
+
+
 def classify_verify_command(command: str) -> str | None:
     """'test' | 'lint' | 'typecheck' | 'build' for a verification command, else None."""
     cmd = (command or "").strip()
@@ -193,7 +206,7 @@ def turn_evidence(messages: list) -> Evidence:
                 inp = _tool_input(b)
                 if name in _EDIT_TOOLS:
                     path = str(inp.get("path") or "")
-                    if path and is_code_path(path):
+                    if path and is_code_path(path) and not _in_scratch(path):
                         if path not in ev.edited_paths:
                             ev.edited_paths.append(path)
                         last_edit_pos = pos

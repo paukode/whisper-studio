@@ -427,7 +427,10 @@ def _run_command_tool() -> list[dict]:
         {
             "name": "ws_run_command",
             "description": (
-                "[Workspace] Run a shell command in the workspace directory. "
+                "[Workspace] Run a shell command. It starts where the previous command "
+                "ended (a `cd` carries over to later calls), in the workspace folder at "
+                "first; the ws_* file tools always resolve relative paths from the "
+                "workspace folder. "
                 "Requires user approval for write commands. Read-only commands run directly. "
                 "Its python3 is the system one and lacks this app's libraries, so prefer "
                 "run_python for Python and office_script for documents; do not reuse other "

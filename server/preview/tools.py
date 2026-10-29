@@ -237,7 +237,11 @@ APPROVAL_GATED_TOOLS: list[dict] = [
                 "session_name": _SESSION_NAME,
                 "expression": {
                     "type": "string",
-                    "description": "JavaScript expression to evaluate.",
+                    "description": (
+                        "JavaScript expression to evaluate. `await` works inside one "
+                        "expression; for several statements pass an async arrow function "
+                        "that returns the value. Objects come back as JSON."
+                    ),
                 },
             },
             "required": ["session_name", "expression"],

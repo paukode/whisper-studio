@@ -27,6 +27,7 @@ from server.approval.markers import (
     APPROVAL,
     PREVIEW_IMAGE,
     WORKSPACE_PROMPT,
+    AppRequest,
     as_plain_text,
     is_app_request,
 )
@@ -94,13 +95,22 @@ _ERROR_PREFIXES = (
     "[Loop guard]",
     "[Not executed]",
 )
+# A finished ws_run_command run returns what the command printed, and that can
+# open with any word: a git hook's "Error opening log file" on a commit that
+# succeeded. Its executor and the gate say a run failed with "Error:" or a
+# bracketed marker in front, or with the exit code at the end, never with the
+# bare "Error " or "error:" an executor's own line uses elsewhere.
+_RUN_ERROR_PREFIXES = tuple(p for p in _ERROR_PREFIXES if p not in ("Error ", "error:"))
 # Where a command tool writes its own exit status, one fixed place each, so a
 # file, a diff or a log that merely mentions an exit code is never read as
 # one. ws_run_command (server/workspace/executors.py run_workspace_command)
 # ends a finished run that failed with "(exit code N)" or "(exit code N:
-# meaning)" on a line of its own, followed at most by the "[Left running]"
-# paragraph; a run that exited 0 says nothing.
-_RUN_EXIT_RE = re.compile(r"\n\(exit code (-?\d+)(?::[^\n]*)?\)(?:\n\[Left running\][^\n]*)?\Z")
+# meaning)" on a line of its own, followed at most by its one-line notes on
+# that run: a "[sandbox]" hint, the "[cwd]" folder it ran in, the "[Left
+# running]" paragraph. A run that exited 0 says nothing.
+_RUN_EXIT_RE = re.compile(
+    r"\n\(exit code (-?\d+)(?::[^\n]*)?\)(?:\n\[(?:sandbox|cwd|Left running)\][^\n]*)*\Z"
+)
 # A ws_run_command that never finished in the foreground has no exit status:
 # a background start or handoff, no workspace (or one the user let go of),
 # no command.
@@ -142,7 +152,8 @@ def tool_outcome(tool_name: str, output) -> ToolOutcome:
     its content never makes it an error. The loop guard and the skill_result
     frame share this one rule."""
     text = output if isinstance(output, str) else str(output)
-    prefixed = text.startswith(_ERROR_PREFIXES)
+    markers = _RUN_ERROR_PREFIXES if tool_name == "ws_run_command" else _ERROR_PREFIXES
+    prefixed = text.startswith(markers)
     exit_code: int | None = None
     if tool_name == "ws_run_command":
         found = _RUN_EXIT_RE.search(_executor_text(text))
@@ -514,7 +525,14 @@ async def execute_tool_batch(
             state.side_effects = side_effects
             state.status = "completed"
 
-            if guard_scope:
+            # An app request (an approval card, a folder picker, a screenshot)
+            # is not the call's result yet: two identical commands make two
+            # identical requests whatever they later print. Recorded as a
+            # result, the second one got the guard's note appended, which made
+            # it plain text, so the command never ran and the model read the
+            # raw request back. Neither the guard nor a hook writes onto one.
+            request = isinstance(state.output, AppRequest)
+            if guard_scope and not request:
                 from server.chat import loop_guard
 
                 _notice, _stub = loop_guard.after_call(
@@ -544,7 +562,8 @@ async def execute_tool_batch(
                 tool_name=tool_name,
                 allow_rewrite=False,
             )
-            _append_hook_context(state, post)
+            if not request:
+                _append_hook_context(state, post)
 
         except Exception as e:
             log.error("Tool execution error (%s): %s", tool_name, e, exc_info=True)

@@ -161,6 +161,51 @@ def test_send_persists_row_and_publishes(temp_sessions_db, monkeypatch):
     assert len(rows) == 1
     assert rows[0]["content"] == ""
     assert rows[0]["sessionMessage"]["content"] == "the migration is done"
+    # The live frame carries the stored row's timestamp (the frontend schema
+    # requires it), so the client's copy and the stored row are one row.
+    assert payload["timestamp"] == rows[0]["timestamp"]
+
+
+def test_a_client_save_keeps_one_copy_of_a_session_message(temp_sessions_db, monkeypatch):
+    # The field case: the client stamped the live row with its own clock, the
+    # save merge kept both rows, and four old messages from another session
+    # came back to the model after later turns.
+    sender = str(uuid.uuid4())
+    target = str(uuid.uuid4())
+    _seed_session(sender, title="Sender Session")
+    _seed_session(target, title="Target Session")
+    published: list[dict] = []
+    from server.agents import event_bus as bus_mod
+
+    monkeypatch.setattr(bus_mod.event_bus, "publish", lambda s, ev: published.append(ev))
+    _run_with_thread_loop(
+        monkeypatch,
+        lambda: execute_send_session_message({"to_session_id": target, "content": "done"}, sender),
+    )
+    payload = published[0]["sessionMessage"]
+    # What src/hooks/chatStream/sseStream.ts adds to the chat for the frame.
+    live = {
+        "role": "session_message",
+        "content": "",
+        "timestamp": payload["timestamp"],
+        "sessionMessage": payload,
+    }
+    user = {"role": "user", "content": "next", "timestamp": "2099-01-01T00:00:00.000Z"}
+    S._upsert_session(
+        target,
+        title="Target Session",
+        custom_title=0,
+        generated_title=0,
+        created_at="2026-01-01",
+        updated_at="2026-01-02",
+        segments="[]",
+        chat_history_frontend=[live, user],
+        speaker_names="{}",
+    )
+    with S._get_conn() as conn:
+        row = conn.execute("SELECT chat_history FROM sessions WHERE id = ?", (target,)).fetchone()
+    history = json.loads(row["chat_history"])
+    assert [m["role"] for m in history] == ["session_message", "user"]
 
 
 def test_send_dedupes_identical_repeats(temp_sessions_db):

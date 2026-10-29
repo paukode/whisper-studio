@@ -278,7 +278,14 @@ class OpenAIResponsesAdapter:
             if _is_prompt_too_long(msg):
                 raise PromptTooLongError(msg) from e
             log.warning("OpenAI responses.create failed (%s): %s", self.model_key, e)
-            yield RoundError(message=_friendly_error(e, self.model_key, self.region))
+            # The SDK already retried the request once. A connection that
+            # still fails (a field turn ended on "Connection error." right
+            # after a long sub-agent wait) gets the engine's round retries,
+            # with their backoff, the way a fault mid-stream does.
+            yield RoundError(
+                message=_friendly_error(e, self.model_key, self.region),
+                retryable=_is_transient(msg, e),
+            )
             return
 
         loop = asyncio.get_event_loop()

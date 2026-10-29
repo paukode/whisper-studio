@@ -15,7 +15,9 @@ no business logic duplicated in the approval layer.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 
@@ -213,7 +215,7 @@ async def start_preview_session(payload: dict) -> tuple[bool, str]:
     decision and the card saw; launch.json is read here only for a payload
     with no pin (the Live pane's Restart button).
     """
-    from server.preview.launch_config import resolve_launch_command
+    from server.preview.launch_config import missing_config_message, resolve_launch_command
     from server.preview.start_policy import pinned_config
     from server.workspace.state import get_workspace_path
 
@@ -230,10 +232,7 @@ async def start_preview_session(payload: dict) -> tuple[bool, str]:
     else:
         resolved = pinned_config(payload) or resolve_launch_command(name)
         if not resolved:
-            return False, (
-                f"No .whisper/launch.json entry named '{name}' and no runtimeExecutable given. "
-                "Either add a launch config or pass runtimeExecutable/runtimeArgs directly."
-            )
+            return False, missing_config_message(name, payload.get("cwd"))
         command, port = resolved["command"], resolved["port"]
         config_workspace = resolved.get("workspace")
 
@@ -335,6 +334,33 @@ async def fill_in_preview(payload: dict) -> tuple[bool, str]:
         return False, f"Fill failed: {e}"
 
 
+_AWAIT_RE = re.compile(r"\bawait\b")
+
+
+async def _evaluate(page, expression: str):
+    """``page.evaluate`` with ``await`` allowed in a single expression.
+
+    Playwright evaluates a plain expression outside any async function, so
+    ``({rows: await fetch(u).then(r => r.json())})`` was a SyntaxError
+    ("Unexpected identifier 'fetch'") in a field session. Such an expression
+    runs again inside an async arrow function; anything else fails as it
+    did."""
+    try:
+        return await page.evaluate(expression)
+    except Exception as e:  # noqa: BLE001 - Playwright raises its own Error type
+        if "SyntaxError" not in str(e) or not _AWAIT_RE.search(expression):
+            raise
+        return await page.evaluate(f"async () => (\n{expression}\n)")
+
+
+def _eval_text(result) -> str:
+    """The result as the model reads it: JSON for objects and lists (not a
+    Python repr with single quotes and True/None), text as it is."""
+    if isinstance(result, (dict, list)):
+        return json.dumps(result, ensure_ascii=False, default=str)
+    return str(result)
+
+
 async def eval_in_preview(payload: dict) -> tuple[bool, str]:
     try:
         session = await _require_own_session(payload, "run code in")
@@ -345,8 +371,8 @@ async def eval_in_preview(payload: dict) -> tuple[bool, str]:
         # page.evaluate ignores the context default timeout (it waits on the JS
         # promise), so bound it explicitly — a blocking expression must not wedge
         # the turn.
-        result = await asyncio.wait_for(session.browser.page.evaluate(expression), timeout=15)
-        return True, str(result)
+        result = await asyncio.wait_for(_evaluate(session.browser.page, expression), timeout=15)
+        return True, _eval_text(result)
     except ValueError as e:
         return False, str(e)
     except asyncio.TimeoutError:

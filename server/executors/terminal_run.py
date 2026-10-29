@@ -457,6 +457,10 @@ async def do_terminal_run(payload: dict) -> tuple[bool, str]:
     return True, f"{preamble}{summary}\n---\n{output}{denial_hint}"
 
 
+# Keys that stop or resume the running program and type no command: Ctrl-C
+# (interrupt), Ctrl-D (end of input), Ctrl-Q (resume output a Ctrl-S paused).
+_CONTROL_KEYS = frozenset("\x03\x04\x11")
+
 _WAIT_REASON_HINTS = {
     "stdin_read": (
         "The program is waiting for input (blocked reading stdin). Send the next "
@@ -495,11 +499,13 @@ async def do_terminal_send(payload: dict) -> tuple[bool, str]:
         return False, "input must be a string"
 
     # Validate whatever LOOKS like a command: the first non-empty line. An empty
-    # send (read-only poll) and bare REPL expressions skip the shell validator.
+    # send (read-only poll), bare REPL expressions, and a send of only the keys
+    # in _CONTROL_KEYS skip the shell validator, whose control-character check
+    # would refuse those keys although they type no command.
     from server.security.command_validator import validate_command
 
     first_line = next((ln for ln in text.splitlines() if ln.strip()), "")
-    if first_line:
+    if first_line and not set(text) <= _CONTROL_KEYS:
         warning = validate_command(first_line)
         if warning:
             return False, warning
@@ -514,7 +520,7 @@ async def do_terminal_send(payload: dict) -> tuple[bool, str]:
     cwd = resolve_cwd(payload.get("cwd"), ws)
     # A bare send with no trailing newline never reaches a REPL that reads full
     # lines, so append one unless the caller sent control bytes deliberately.
-    if text and not text.endswith(("\n", "\x04", "\x03")):
+    if text and not text.endswith(("\n", *_CONTROL_KEYS)):
         text += "\n"
 
     from server.workspace.paths import own_scratch_dir

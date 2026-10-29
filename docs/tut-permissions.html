@@ -340,8 +340,9 @@
         <h3>Destructive patterns are blocked</h3>
         <p>A command validator refuses a small set of clearly destructive shapes before they can run
           at all: <code>rm -rf /</code> on the filesystem root, <code>mkfs</code>, <code>dd</code> to a
-          device, redirects into <code>/etc/</code>, and hidden command substitution like
-          <code>$(...)</code> or backticks. These are denied regardless of mode.</p>
+          device, redirects into <code>/etc/</code>, and command substitution that can contain a command the checks do not see:
+          backticks, or a <code>$(...)</code> that runs a command that is not read-only. These are
+          denied regardless of mode.</p>
       </div>
     </div>
     <p>The validator also refuses access to sensitive paths and files (except in a run that may

@@ -61,6 +61,13 @@ async def _do_write(payload: dict) -> ApprovalOutcome:
         workspace._atomic_write_text(full, content)
     except Exception as e:
         return ApprovalOutcome(ok=False, error=f"Write failed: {e}")
+    # The session now knows the whole file, so its next edit of it needs no
+    # re-read. Recorded before ruff: a fix or a reformat moves the mtime, and
+    # the ruff note below already asks for a re-read then.
+    if payload.get("session_id"):
+        from server import file_state
+
+        file_state.record_write(payload["session_id"], full)
     from server.index.citations import created_file_link
 
     link = created_file_link(path, full)

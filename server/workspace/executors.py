@@ -299,7 +299,7 @@ def _exec_ws_read_file(tool_input, transcript, current_attachments):
     offset = tool_input.get("offset", 1)
     limit = tool_input.get("limit")
     # Dedup: return stub if same file read with same params and unchanged
-    stub = file_state.check_dedup(session_id, path, full, offset, limit)
+    stub = file_state.check_dedup(session_id, full, offset, limit)
     if stub:
         return stub
     try:
@@ -352,7 +352,7 @@ def _exec_ws_read_file(tool_input, transcript, current_attachments):
             )
         # Fall through — result is now within budget
 
-    file_state.record_read(session_id, path, full, offset, limit, len(numbered))
+    file_state.record_read(session_id, full, offset, limit, len(numbered))
     return result
 
 
@@ -406,7 +406,7 @@ def _exec_ws_write_file(tool_input, transcript, current_attachments):
     if not os.path.isfile(full):
         return f"File not found: {path}. Use ws_create_file for new files."
     # Write gate: must have a full prior read, file must not have changed
-    allowed, reason = file_state.check_write_allowed(session_id, path, full)
+    allowed, reason = file_state.check_write_allowed(session_id, full)
     if not allowed:
         return f"Error: {reason}"
     try:
@@ -474,7 +474,7 @@ def _exec_ws_edit_file(tool_input, transcript, current_attachments):
         return f"File not found: {path}"
 
     # Write gate: must have a full prior read
-    allowed, reason = file_state.check_write_allowed(session_id, path, full)
+    allowed, reason = file_state.check_write_allowed(session_id, full)
     if not allowed:
         return f"Error: {reason}"
 
@@ -873,9 +873,30 @@ def run_workspace_command(
         hint = secret_reads_policy.denial_hint(command, output)
         if hint:
             output += "\n" + hint
+    if result.returncode not in (0, None):
+        note = _moved_cwd_note(effective_cwd, ws)
+        if note:
+            output += "\n" + note
     if result.task_id:
         output += "\n" + _left_running_message(result.task_id, result.output_path)
     return CommandRun(text=output, returncode=result.returncode, stopped=result.stopped)
+
+
+def _moved_cwd_note(cwd: str, ws: str) -> str:
+    """For a failed run that started away from the workspace folder: where it
+    ran. An earlier `cd` moves the session's shell for later commands, while
+    the ws_* file tools keep resolving from the workspace folder; a field
+    session lost a dozen runs to `cd sub && ...` from inside sub already."""
+    try:
+        if os.path.realpath(cwd) == os.path.realpath(ws):
+            return ""
+    except OSError:
+        return ""
+    return (
+        f"[cwd] This ran in {cwd}, where an earlier `cd` left this session's shell, "
+        f"not in the workspace folder {ws}. Relative paths in the command resolved "
+        "from there."
+    )
 
 
 def _left_running_message(task_id: str, output_path: str | None) -> str:

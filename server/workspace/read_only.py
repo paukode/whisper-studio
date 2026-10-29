@@ -34,6 +34,8 @@ _READ_ONLY_COMMAND_PREFIXES = frozenset(
         "git blame",
         "git ls-files",
         "git ls-tree",
+        "git merge-base",
+        "git symbolic-ref",
         "ls",
         "cat",
         "head",
@@ -73,6 +75,7 @@ _READ_ONLY_COMMAND_PREFIXES = frozenset(
         "realpath",
         "basename",
         "dirname",
+        "seq",
     }
 )
 _READ_ONLY_COMMANDS = frozenset(tuple(p.split()) for p in _READ_ONLY_COMMAND_PREFIXES)
@@ -367,6 +370,27 @@ def _git_ref_lister(spec: _Options, list_mode: frozenset[str]) -> Callable[[list
     return lists
 
 
+# `git merge-base` only reads, but its options are still an allowlist, so a
+# flag that git adds later needs approval until it is listed here.
+_GIT_MERGE_BASE_OPTIONS = _Options(
+    short="a", long=("all", "octopus", "independent", "is-ancestor", "fork-point")
+)
+
+
+def _git_merge_base_reads(args: list[str]) -> bool:
+    return _parse_options(args, _GIT_MERGE_BASE_OPTIONS) is not None
+
+
+_GIT_SYMBOLIC_REF_OPTIONS = _Options(short="q", long=("quiet", "short", "recurse", "no-recurse"))
+
+
+def _git_symbolic_ref_reads(args: list[str]) -> bool:
+    """`git symbolic-ref NAME` reads; a second operand points NAME at a new
+    ref, and -d / -m are writer options (not in the allowlist)."""
+    parsed = _parse_options(args, _GIT_SYMBOLIC_REF_OPTIONS)
+    return parsed is not None and len(parsed[1]) == 1
+
+
 _UNIQ_OPTIONS = _Options(
     short="cdDiuz0123456789",
     short_valued="fsw",
@@ -586,6 +610,8 @@ _OPERAND_RULES: dict[tuple[str, ...], Callable[[list[str]], bool]] = {
     ("git", "remote"): _git_remote_reads,
     ("git", "branch"): _git_ref_lister(_GIT_BRANCH_OPTIONS, _GIT_LIST_MODE),
     ("git", "tag"): _git_ref_lister(_GIT_TAG_OPTIONS, _GIT_LIST_MODE | {"-n"}),
+    ("git", "merge-base"): _git_merge_base_reads,
+    ("git", "symbolic-ref"): _git_symbolic_ref_reads,
     ("uniq",): _uniq_reads,
     ("sed", "-n"): _sed_prints_only,
 }

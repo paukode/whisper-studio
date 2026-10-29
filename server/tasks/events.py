@@ -66,6 +66,12 @@ def emit_session_event(session_id: str, *, role: str, payload_key: str, payload:
         return
 
     timestamp = payload.get("timestamp") or _utc_now_iso()
+    # The live frame carries the stored row's timestamp. The client keys its
+    # own copy of the row by it, and the save merge (sessions.save_session)
+    # drops the stored row only when the client's copy has the same one;
+    # with the client's clock instead, every message was kept twice and came
+    # back to the model as a new user turn after later ones.
+    payload = {**payload, "timestamp": timestamp}
     persisted_row = {
         "role": role,
         "content": "",

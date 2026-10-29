@@ -308,12 +308,15 @@
       <li><b>Dangerous patterns</b> - <code>rm -rf /</code>, <code>mkfs</code>,
         <code>dd of=/dev/...</code>, redirects into <code class="path">/etc/</code>, and
         <code class="path">/proc/*/environ</code> access.</li>
-      <li><b>Command and process substitution</b> - <code>$(...)</code>, backticks, and
-        <code>&lt;(...)</code> that could hide a nested command (with a narrow exception for the
-        <code>$(cat &lt;&lt;...)</code> pattern used by <code>git commit -m</code> and
-        <code>gh pr create --body</code>).</li>
+      <li><b>Command and process substitution</b> - backticks, <code>&lt;(...)</code>, and a
+        <code>$(...)</code> that can contain a command the checks do not see. A <code>$(...)</code> can run a read-only
+        command that passes all the checks, for example <code>test "$(git branch --show-current)" =
+        main</code>, and the <code>$(cat &lt;&lt;...)</code> pattern of <code>git commit -m</code>. Its
+        output cannot be the program name.</li>
       <li><b>Environment-variable injection</b> - references or assignments to <code>$LD_PRELOAD</code>,
-        <code>$BASH_ENV</code>, <code>$IFS</code>, <code>$PROMPT_COMMAND</code>, and friends.</li>
+        <code>$BASH_ENV</code>, <code>$IFS</code>, <code>$PROMPT_COMMAND</code>, and friends.
+        <code>IFS= read</code> is permitted, because it sets <code>IFS</code> for that one
+        <code>read</code> only.</li>
       <li><b>Obfuscation</b> - control characters, deceptive Unicode whitespace, hex/octal escapes, and
         ANSI-C quoting used to smuggle characters past the other checks.</li>
       <li><b>Sensitive paths and file types</b> - the shared deny-list plus extensions like

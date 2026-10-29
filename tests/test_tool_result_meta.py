@@ -31,12 +31,11 @@ NUMBERED = "    1\timport os\n    2\t\n    3\tprint(os.sep)"
 
 def _dedup_stub() -> str:
     """What ws_read_file returns for an unchanged re-read (server/file_state.py)."""
-    key = ("meta-test", "a.py")
-    file_state.record_read(*key, __file__, None, None, 3)
+    file_state.record_read("meta-test", __file__, None, None, 3)
     try:
-        return file_state.check_dedup(*key, __file__, None, None)
+        return file_state.check_dedup("meta-test", __file__, None, None)
     finally:
-        file_state._read_state.pop(key, None)
+        file_state.clear_session("meta-test")
 
 
 STUB = _dedup_stub()

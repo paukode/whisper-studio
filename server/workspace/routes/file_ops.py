@@ -251,7 +251,7 @@ async def ws_write_endpoint(request: Request):
         )
     # Staleness re-check at write time (file may have changed since approval)
     if session_id and os.path.isfile(full):
-        allowed, reason = file_state.check_write_allowed(session_id, path, full)
+        allowed, reason = file_state.check_write_allowed(session_id, full)
         if not allowed:
             return Response(
                 content=json.dumps({"error": reason}),
@@ -266,7 +266,7 @@ async def ws_write_endpoint(request: Request):
             pass
     _atomic_write_text(full, content)
     if session_id:
-        file_state.update_after_write(session_id, path, full)
+        file_state.record_write(session_id, full)
     return {"path": path, "written": True, "size": len(content)}
 
 
