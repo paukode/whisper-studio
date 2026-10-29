@@ -280,6 +280,32 @@
       the tools fall back to reading the artifact off the persisted chat history, so a card from an
       earlier app launch is still editable.</p>
 
+    <h3 id="visuals-theme">Visuals and the app theme</h3>
+    <p>The cloud chat prompt has a <code>visual_choice</code> section
+      (<code class="path">server/prompts/visuals.py</code>). It tells the model to select the form of
+      each answer, also when the user did not ask for a visual. For a flow, an architecture, or a
+      comparison of three or more options, the model makes a diagram with <code>create_visual</code>.
+      For numbers from the conversation, a file, or a tool result, the model makes a chart with
+      <code>create_chart</code>. For a short answer, the model writes only text. The model adds a
+      maximum of one visual that the user did not ask for in each answer.</p>
+    <p>The text of the section does not change, and it is in the cached static block. Headless runs,
+      scheduled tasks, agents, and the on-device prompt do not get it.</p>
+    <p>Diagram and chart cards read the theme tokens of the app. They show the diagram or chart again
+      when the user changes the palette or the mode. An HTML page from <code>create_artifact</code>
+      runs in a sandboxed iframe on an opaque origin. Thus, the page cannot read the stylesheet of the
+      app or load the bundled fonts from a URL.</p>
+    <p>The card adds one <code>&lt;style id="ws-theme"&gt;</code> block to the page
+      (<code class="path">src/utils/artifactTheme.ts</code>). The block contains the active palette
+      and mode as <code>--ws-*</code> CSS variables, and the bundled fonts as <code>data:</code> URLs.
+      The description of the <code>create_artifact</code> tool gives the same variables to the model.
+      The test <code class="path">tests/test_artifact_theme_contract.py</code> makes sure that the two
+      lists are equal.</p>
+    <p>The card adds the block when it shows a preview, opens the page, or downloads the page. The
+      stored HTML does not change. The block is the first item in the <code>&lt;head&gt;</code> after
+      <code>&lt;meta charset&gt;</code>. Thus, a page style that sets a variable again has priority.
+      When the user changes the palette or the mode, the card loads the preview again with the new
+      values. A download keeps the values that are on the screen at that time.</p>
+
     <h2 id="the-catalogue">The tool catalogue</h2>
     <p>Whisper Studio's <em>full</em> tool pool runs to <b>120 tools plus the skill-backed and MCP
       tools</b> - grouped by purpose: workspace &amp; files, git, GitHub, LSP, web, memory,
