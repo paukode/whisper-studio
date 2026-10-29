@@ -300,8 +300,9 @@ TERMINAL_SEND_TOOL = {
                 "description": (
                     "Text to type into the terminal. A trailing newline is added if "
                     "absent so a line-reading REPL sees a complete line. Use '' to "
-                    "read pending output without sending input. Control bytes are "
-                    "passed through (e.g. \\x03 for Ctrl-C, \\x04 for Ctrl-D/EOF)."
+                    "read pending output without sending input. Send \\x03 (Ctrl-C), "
+                    "\\x04 (Ctrl-D/EOF) or \\x11 (Ctrl-Q) on its own, with no other "
+                    "text; other control bytes are refused."
                 ),
             },
             "timeout": {
