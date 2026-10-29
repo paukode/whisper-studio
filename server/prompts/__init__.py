@@ -28,6 +28,7 @@ from server.prompts.base import BASE
 from server.prompts.modes import BRIEF_PREFIX, PLAN_MODE
 from server.prompts.narration import WORK_NARRATION
 from server.prompts.rules import rules_block as _user_rules_block
+from server.prompts.visuals import VISUAL_CHOICE
 from server.prompts.workspace import (
     CODE_OUTPUT_RULE_GENERIC,
     CODE_OUTPUT_RULE_WORKSPACE,
@@ -384,6 +385,18 @@ _registry.register(
         layer=PromptLayer.WORKSPACE,
         priority=36,
         content=WORK_NARRATION,
+    )
+)
+
+# When a reply should carry a diagram or chart the user did not ask for, and
+# that visuals take the app theme on their own (server/prompts/visuals.py).
+# Fixed text on the cached layer, like the narration rule above.
+_registry.register(
+    PromptSection(
+        name="visual_choice",
+        layer=PromptLayer.WORKSPACE,
+        priority=37,
+        content=VISUAL_CHOICE,
     )
 )
 

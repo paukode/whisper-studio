@@ -1,6 +1,12 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
 import { openHtmlSandboxed } from '@/utils/openHtmlSandboxed';
 import { downloadFile } from '@/utils/downloadFile';
+import {
+  artifactThemeCss,
+  loadArtifactFonts,
+  readArtifactVars,
+  withArtifactTheme,
+} from '@/utils/artifactTheme';
 import { ICON } from '@/components/chat/activityIcons';
 
 interface ProgramArtifactCardProps {
@@ -9,9 +15,40 @@ interface ProgramArtifactCardProps {
   description: string;
 }
 
+/** The theme block for an open preview, or null while closed or before the
+ *  bundled fonts are read. A mode or palette switch re-renders the card, so
+ *  the preview reloads in the new colors. */
+function useArtifactThemeCss(active: boolean): string | null {
+  const [fonts, setFonts] = useState<string | null>(null);
+  const [, rerender] = useReducer((n: number) => n + 1, 0);
+  // Read once per app session and shared by every card. Started on mount,
+  // so Open and Download find it ready and open the tab inside the click.
+  useEffect(() => {
+    let live = true;
+    loadArtifactFonts().then((css) => {
+      if (live) setFonts(css);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+  useEffect(() => {
+    if (!active) return;
+    const observer = new MutationObserver(rerender);
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme', 'data-palette'],
+    });
+    return () => observer.disconnect();
+  }, [active]);
+  if (!active || fonts === null) return null;
+  return fonts + readArtifactVars();
+}
+
 /**
  * Inline chat card for a self-contained HTML program artifact.
- * Supports preview (iframe), open in new tab, and download.
+ * Supports preview (iframe), open in new tab, and download, each with the
+ * app theme added (src/utils/artifactTheme.ts).
  */
 export const ProgramArtifactCard: React.FC<ProgramArtifactCardProps> = ({
   title,
@@ -20,24 +57,29 @@ export const ProgramArtifactCard: React.FC<ProgramArtifactCardProps> = ({
 }) => {
   const [showPreview, setShowPreview] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const themeCss = useArtifactThemeCss(showPreview);
+  const previewHtml = useMemo(
+    () => (themeCss === null ? null : withArtifactTheme(html, themeCss)),
+    [html, themeCss],
+  );
 
   const handlePreview = useCallback(() => {
     setShowPreview((prev) => !prev);
   }, []);
 
-  const handleDownload = useCallback(() => {
+  const handleDownload = useCallback(async () => {
     const filename =
       title
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/(^-|-$)/g, '') || 'program';
-    downloadFile(html, `${filename}.html`, 'text/html');
+    downloadFile(withArtifactTheme(html, await artifactThemeCss()), `${filename}.html`, 'text/html');
   }, [html, title]);
 
-  const handleOpenNewTab = useCallback(() => {
+  const handleOpenNewTab = useCallback(async () => {
     // Open in a sandboxed iframe, never as a same-origin blob: document;
     // otherwise model-authored HTML could call the local backend API.
-    openHtmlSandboxed(html);
+    openHtmlSandboxed(withArtifactTheme(html, await artifactThemeCss()));
   }, [html]);
 
   return (
@@ -83,11 +125,11 @@ export const ProgramArtifactCard: React.FC<ProgramArtifactCardProps> = ({
       </div>
 
       {/* Preview iframe */}
-      {showPreview && (
+      {showPreview && previewHtml !== null && (
         <div style={{ borderTop: '1px solid var(--border)' }}>
           <iframe
             ref={iframeRef}
-            srcDoc={html}
+            srcDoc={previewHtml}
             sandbox="allow-scripts"
             style={{
               width: '100%',
