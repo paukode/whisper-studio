@@ -113,6 +113,25 @@ def test_golden_mid_stream_error(monkeypatch):
     assert_golden("mid_stream_error", lines)
 
 
+def test_golden_midturn_message_splits_the_reply(monkeypatch):
+    # The user adds a note while the first answer is still streaming. The
+    # turn answers it in a second round, and the midturn_read frame between
+    # the two answers is where the client starts a new reply.
+    from server.chat.engine import midturn_inbox
+
+    def user_sends_a_note():
+        assert midturn_inbox.push("golden-session", "Ana and Lukasz are from my team")
+
+    client = FakeBedrockClient(
+        [
+            [msg_start(), *text_block("First draft."), user_sends_a_note, *msg_end()],
+            [msg_start(), *text_block("Second draft."), *msg_end()],
+        ]
+    )
+    lines = run_chat_turn(monkeypatch, client, {"question": "write a short email"})
+    assert_golden("midturn_note_splits_reply", lines)
+
+
 def test_golden_verified_claim_receipt(monkeypatch):
     # The reply says it saved a memory after a memory_write that succeeded:
     # the claim holds, and a deliveries frame follows the sentence

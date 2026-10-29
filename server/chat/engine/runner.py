@@ -372,11 +372,18 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
         # and so the reminders below land after it. Only the chat turn the
         # composer talks to reads the inbox.
         if ctx.midturn_inbox:
+            from server.chat.engine.midturn_inbox import USER as _MIDTURN_USER
             from server.chat.engine.midturn_inbox import drain as _drain_midturn
 
             for _entry in _drain_midturn(session_id):
                 _remind(messages, _midturn_text(_entry))
                 log.info("Injected mid-turn %s (session %s)", _entry.kind, session_id)
+                if _entry.kind == _MIDTURN_USER:
+                    # The model reads the user's message here. The client
+                    # closes the reply streamed so far and shows the message
+                    # below it, so the answer to it starts a reply of its own
+                    # instead of running on in the same bubble.
+                    yield f"data: {ndjson_dumps({'midturn_read': {'text': _entry.text}})}\n\n"
 
         # Wind-down: tell the model when the round cap is near so it
         # consolidates instead of getting cut off mid-plan. Persisted into

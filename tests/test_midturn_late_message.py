@@ -168,3 +168,50 @@ def test_the_completion_gate_still_reads_the_turns_first_prompt(monkeypatch):
     assert nudge["content"].startswith(f"[completion gate] {REQUEST_MARKER}")
     assert "export the flow as a pdf" in nudge["content"]
     assert midturn_inbox.has_pending(sid) is False
+
+
+def _frames(out: str) -> list[dict]:
+    import json
+
+    return [
+        json.loads(line[6:])
+        for line in out.splitlines()
+        if line.startswith("data: ") and line[6:] != "[DONE]"
+    ]
+
+
+def test_reading_a_user_message_is_marked_between_the_two_answers():
+    # The client splits the reply where the model read the message: the first
+    # answer's text comes before the marker, the answer to the message after.
+    sid = "late-5"
+    midturn_inbox.clear(sid)
+    adapter = LateMessageAdapter(sid, text="  Ana and Lukasz are from my team  ")
+    frames = _frames(_drain_stream(_ctx(sid, adapter, max_rounds=10)))
+
+    keys = [next(iter(f)) for f in frames]
+    read_at = keys.index("midturn_read")
+    assert frames[read_at] == {"midturn_read": {"text": "Ana and Lukasz are from my team"}}
+    before = "".join(f.get("text", "") for f in frames[:read_at])
+    after = "".join(f.get("text", "") for f in frames[read_at:])
+    assert "answer 0" in before and "answer 1" not in before
+    assert "answer 1" in after
+    assert keys.count("midturn_read") == 1
+
+
+def test_agent_reports_are_not_marked_as_a_user_message():
+    sid = "late-6"
+    midturn_inbox.clear(sid)
+
+    class ReportAdapter(LateMessageAdapter):
+        async def stream_round(self, messages, tools, core_count, round_num, is_last_round):
+            self.calls.append([dict(m) for m in messages])
+            if round_num == 0:
+                midturn_inbox.push(sid, "agent finished", kind=midturn_inbox.AGENT_REPORT)
+            text = f"answer {round_num}"
+            yield TextDelta(text=text)
+            yield RoundResult(
+                stop_reason="end_turn", content=[{"type": "text", "text": text}], usage=Usage()
+            )
+
+    out = _drain_stream(_ctx(sid, ReportAdapter(sid), max_rounds=10))
+    assert "midturn_read" not in out
