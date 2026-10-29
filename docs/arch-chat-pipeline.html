@@ -153,8 +153,11 @@
         <code>inject_reminder</code> (<code class="path">server/chat/loop_hints.py</code>) rather
         than injected request-only, because a request-only injection forks the token prefix between
         rounds and destroys the moving cache checkpoint.</p></li>
-      <li><h4>Drain the mid-turn inbox</h4><p>Anything you sent while the turn was running is folded
-        into the live message list at this same checkpoint.</p></li>
+      <li><h4>Drain the mid-turn inbox</h4><p>The engine adds each message that you sent during the
+        turn to the message list at this checkpoint. For each message, the engine sends a
+        <code>midturn_read</code> frame. If the model did not start its answer in a round, the engine
+        stops that round and sends a <code>round_discarded</code> frame. The next round starts with
+        your message.</p></li>
       <li><h4>Heartbeat and checkpoint</h4><p>The round beats the session's busy slot, and the
         <code>on_round</code> callback writes the message list to the agent journal, so a killed run
         resumes from here.</p></li>
@@ -290,6 +293,8 @@
         <tr><td><code>skill_progress</code></td><td>How many characters of a still-streaming tool call's arguments have arrived. A whole HTML app can take minutes to stream, so the running step shows the size so far next to its spinner.</td></tr>
         <tr><td><code>activity_label</code></td><td>A short caption that the auxiliary model returned for the tool calls of one round, with the IDs of these calls. Only a chat turn gets captions, and only a cloud model writes them. A chat that uses an on-device model gets no captions. The server sends the frames in round order, while the next round streams or before <code>[DONE]</code>. At the end of the turn, the server waits maximum 3 s for the captions that are not complete, and sends each caption when it is complete. This wait occurs before the server closes the mid-turn inbox. Thus, when the turn ends with an answer, the turn can also answer a message that you send during the wait. If the turn has a round left, it answers that message. If no round is left, the server tells you that the message is not answered. When a message waits in the inbox before the end of the answer, the server does not wait for the captions. The next round starts immediately, and the server sends the captions during that round. A turn that stops for an approval or a question does not wait. If the call is refused, fails, or does not return in 3 s, the server sends no frame (<code class="path">server/chat/engine/activity_labels.py</code>).</td></tr>
         <tr><td><code>usage</code></td><td>Token counters, cost estimate, and remaining context (<code>context_used</code>/<code>context_max</code>).</td></tr>
+        <tr><td><code>midturn_read</code></td><td>The server added a message that you sent during the turn to the model input. The frame gives the <code>text</code> of the message. The client closes the answer before this point and shows the message below it.</td></tr>
+        <tr><td><code>round_discarded</code></td><td>The server stopped the current round before the model started its answer, and the next round adds your message. The client removes the reasoning text of the stopped round.</td></tr>
         <tr><td><code>team_progress</code> / <code>team_results</code></td><td>Sub-agent and team events (spawn, progress, completion) and the final per-agent reports.</td></tr>
         <tr><td><code>grounding</code></td><td>Index-search metadata (folders searched, passages retrieved, and the id of the persisted sources behind the expandable chip).</td></tr>
         <tr><td><code>status</code></td><td>Coarse turn-setup stage. The stream opens from byte zero, so these frames replace a silent wait while condensation, grounding, and dispatch run. Every turn starts <code>preparing</code> then <code>connecting</code>.</td></tr>
