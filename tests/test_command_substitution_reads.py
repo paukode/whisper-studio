@@ -20,6 +20,8 @@ from server.security.command_validator import validate_command
         'test "$(git branch --show-current)" = fix/x && git add -- README.md && git commit -m x',
         'test "$(git rev-parse main)" = "$(git rev-parse fix/x)" && git branch -d fix/x',
         'test -z "$(git status --porcelain)" && git switch main',
+        'test "$(git symbolic-ref --short HEAD)" = fix/x && git commit -m x',
+        "for attempt in $(seq 1 40); do sleep 60; done",
         # A pipe inside $(...) belongs to the substitution, not the outer command.
         'test "$(git log --oneline | head -1)" = x && git push',
         "printf '%s\\n' \"$(date -u +%FT%TZ)\"",
@@ -41,6 +43,8 @@ def test_a_read_only_substitution_passes(command):
         ('bash -lc "$(cat run.txt)"', "would run as a command"),
         ("ls | xargs $(cat cmd.txt)", "would run as a command"),
         ("echo $(touch made)", "not read-only"),
+        # curl can send data and write files, so it is not a read.
+        ("state=$(curl -fsS http://127.0.0.1:8781/api/meta)", "not read-only"),
         ("echo $(cat ~/.ssh/id_rsa)", "sensitive path"),
         ('echo "$(git branch --show-current"', "command substitution detected"),
         ("echo `whoami`", "command substitution detected"),
