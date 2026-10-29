@@ -76,6 +76,12 @@ _COMMAND_FAILED_RE = re.compile(
     r"|\bPermission denied\b|^npm (?:ERR!|error)\s|^(?:unauthorized|denied):",
     re.MULTILINE,
 )
+# How ws_run_command's executor and the gate open a run that failed or never
+# ran: "Error:" (a refusal, or an approved run that exited non-zero), a
+# bracketed marker, no workspace or no command. Any other opening is what a
+# finished run printed, and its exit status is the verdict: a git hook's
+# "Error opening log file" line in front of a commit that succeeded is output.
+_RUN_OWN_HEADS = ("Error:", "[", "No workspace", "No command")
 # A call that has not finished: moved to the background, a terminal program
 # still waiting for input or still printing, a command past its time limit.
 _PENDING_RE = re.compile(
@@ -150,12 +156,13 @@ def still_running(result: str) -> bool:
 def succeeded(name: str, result: str) -> bool:
     """True when a call's result says it did what it was asked."""
     head = result[:400]
-    if _FAILED_RESULT_RE.match(head) or _FAILED_OPENING_RE.match(head):
+    own = name != "ws_run_command" or result.lstrip().startswith(_RUN_OWN_HEADS)
+    if own and (_FAILED_RESULT_RE.match(head) or _FAILED_OPENING_RE.match(head)):
         return False
     if still_running(result):
         return False
     first = result.lstrip().split("\n", 1)[0][:300]
-    if _NOT_DONE_LINE_RE.search(first):
+    if own and _NOT_DONE_LINE_RE.search(first):
         return False
     says = _SUCCESS_SAYS.get(name)
     if says is not None and not head.startswith("[User approved]"):

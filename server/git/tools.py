@@ -6,6 +6,17 @@ with name, description, and input_schema. Executor functions are registered
 separately in executor.py via @register_executor.
 """
 
+# A workspace can be the parent of several projects: the read tools then
+# name the repository they read (server/git/executor.py _get_git_cwd).
+_REPO = {
+    "type": "string",
+    "description": (
+        "A folder inside the workspace that holds the git repository, for a workspace "
+        "folder that is not one itself (a parent of several projects). Default: the "
+        "workspace folder."
+    ),
+}
+
 GIT_READ_TOOLS = [
     {
         "name": "git_status",
@@ -16,6 +27,7 @@ GIT_READ_TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
+                "repo": _REPO,
                 "short": {
                     "type": "boolean",
                     "description": "Use short format output. Default false.",
@@ -33,6 +45,7 @@ GIT_READ_TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
+                "repo": _REPO,
                 "cached": {
                     "type": "boolean",
                     "description": "Show only staged (cached) changes. Default false.",
@@ -57,6 +70,7 @@ GIT_READ_TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
+                "repo": _REPO,
                 "limit": {
                     "type": "integer",
                     "description": "Max number of commits to show. Default 20.",
@@ -85,6 +99,7 @@ GIT_READ_TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
+                "repo": _REPO,
                 "all": {
                     "type": "boolean",
                     "description": "Include remote-tracking branches. Default false.",
@@ -105,6 +120,7 @@ GIT_READ_TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
+                "repo": _REPO,
                 "ref": {
                     "type": "string",
                     "description": "Commit SHA, branch name, tag, or other ref. Default HEAD.",
@@ -125,6 +141,7 @@ GIT_READ_TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
+                "repo": _REPO,
                 "file": {
                     "type": "string",
                     "description": "Relative path of the file to blame.",
@@ -146,7 +163,7 @@ GIT_READ_TOOLS = [
         "description": "[Git] List all stash entries with their index and description.",
         "input_schema": {
             "type": "object",
-            "properties": {},
+            "properties": {"repo": _REPO},
         },
     },
     {
@@ -160,6 +177,7 @@ GIT_READ_TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
+                "repo": _REPO,
                 "remote": {
                     "type": "string",
                     "description": "Remote to fetch. Defaults to origin.",

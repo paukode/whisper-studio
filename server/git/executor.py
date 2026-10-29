@@ -24,14 +24,57 @@ from server.workspace import get_workspace_path
 # --- Helpers ---
 
 
-def _get_git_cwd():
-    """Get workspace path and validate it's a git repo. Returns (cwd, error_msg)."""
+# The tools that take ``repo`` (GIT_READ_TOOLS in server/git/tools.py).
+_REPO_TOOLS = (
+    "git_status, git_diff, git_log, git_show, git_blame, git_branch_list, git_stash_list, git_fetch"
+)
+
+
+def _nested_repos(ws: str, limit: int = 12) -> list[str]:
+    """The folders right inside ``ws`` that hold a git repository."""
+    try:
+        names = sorted(os.listdir(ws))
+    except OSError:
+        return []
+    found = [n for n in names if os.path.exists(os.path.join(ws, n, ".git"))]
+    return found[:limit]
+
+
+def _get_git_cwd(tool_input: dict | None = None):
+    """The repository a git tool runs in, and an error when there is none:
+    (cwd, error_msg).
+
+    A read tool's ``repo`` names a folder inside the workspace that holds the
+    repository; without it, the workspace folder itself. A workspace that is
+    the parent of several projects is not one, and read-only reviewer agents
+    (no shell) could not see a diff at all; the error now names the
+    repositories inside it and how to reach them."""
     ws = get_workspace_path()
     if not ws:
         return None, "No workspace connected. Connect a workspace first."
-    git_path = os.path.join(ws, ".git")
-    if not os.path.exists(git_path):
-        return None, "Workspace is not a git repository."
+    named = str((tool_input or {}).get("repo") or "").strip()
+    if named:
+        root = os.path.realpath(ws)
+        full = os.path.realpath(os.path.join(ws, os.path.expanduser(named)))
+        if full != root and not full.startswith(root + os.sep):
+            return None, f"repo must be a folder inside the workspace ({ws}): {named}"
+        if not os.path.exists(os.path.join(full, ".git")):
+            return None, f"{named} is not a git repository (it has no .git)."
+        return full, None
+    if not os.path.exists(os.path.join(ws, ".git")):
+        nested = _nested_repos(ws)
+        if not nested:
+            return None, "Workspace is not a git repository."
+        how = (
+            f"Pass repo (for example repo={nested[0]!r}) to {_REPO_TOOLS}"
+            if tool_input is not None
+            else f"The read tools ({_REPO_TOOLS}) take repo to name one; to change one, "
+            f"run git -C <folder> through ws_run_command"
+        )
+        return None, (
+            f"Workspace is not a git repository. Repositories inside it: "
+            f"{', '.join(nested)}. {how}."
+        )
     return ws, None
 
 
@@ -70,7 +113,7 @@ def _coerce_limit(value, default=20, lo=1, hi=1000):
 
 @register_executor("git_status", read_only=True, concurrent_safe=True)
 def _exec_git_status(tool_input, transcript, current_attachments):
-    cwd, err = _get_git_cwd()
+    cwd, err = _get_git_cwd(tool_input)
     if err:
         return err
     tool_input.pop("__session_id__", "")
@@ -86,7 +129,7 @@ def _exec_git_status(tool_input, transcript, current_attachments):
 
 @register_executor("git_diff", read_only=True, concurrent_safe=True)
 def _exec_git_diff(tool_input, transcript, current_attachments):
-    cwd, err = _get_git_cwd()
+    cwd, err = _get_git_cwd(tool_input)
     if err:
         return err
     tool_input.pop("__session_id__", "")
@@ -120,7 +163,7 @@ def _exec_git_diff(tool_input, transcript, current_attachments):
 
 @register_executor("git_log", read_only=True, concurrent_safe=True)
 def _exec_git_log(tool_input, transcript, current_attachments):
-    cwd, err = _get_git_cwd()
+    cwd, err = _get_git_cwd(tool_input)
     if err:
         return err
     tool_input.pop("__session_id__", "")
@@ -153,7 +196,7 @@ def _exec_git_log(tool_input, transcript, current_attachments):
 
 @register_executor("git_branch_list", read_only=True, concurrent_safe=True)
 def _exec_git_branch_list(tool_input, transcript, current_attachments):
-    cwd, err = _get_git_cwd()
+    cwd, err = _get_git_cwd(tool_input)
     if err:
         return err
     tool_input.pop("__session_id__", "")
@@ -174,7 +217,7 @@ def _exec_git_branch_list(tool_input, transcript, current_attachments):
 
 @register_executor("git_show", read_only=True, concurrent_safe=True)
 def _exec_git_show(tool_input, transcript, current_attachments):
-    cwd, err = _get_git_cwd()
+    cwd, err = _get_git_cwd(tool_input)
     if err:
         return err
     tool_input.pop("__session_id__", "")
@@ -202,7 +245,7 @@ def _exec_git_show(tool_input, transcript, current_attachments):
 
 @register_executor("git_blame", read_only=True, concurrent_safe=True)
 def _exec_git_blame(tool_input, transcript, current_attachments):
-    cwd, err = _get_git_cwd()
+    cwd, err = _get_git_cwd(tool_input)
     if err:
         return err
     tool_input.pop("__session_id__", "")
@@ -230,7 +273,7 @@ def _exec_git_blame(tool_input, transcript, current_attachments):
 
 @register_executor("git_stash_list", read_only=True, concurrent_safe=True)
 def _exec_git_stash_list(tool_input, transcript, current_attachments):
-    cwd, err = _get_git_cwd()
+    cwd, err = _get_git_cwd(tool_input)
     if err:
         return err
     tool_input.pop("__session_id__", "")
@@ -468,7 +511,7 @@ def _exec_git_fetch(tool_input, transcript, current_attachments):
     """Update remote-tracking branches. Runs outside the command sandbox with
     the user's own git credentials; the sandbox has none, which is why a
     shell `git fetch` there fails with a permission error."""
-    cwd, err = _get_git_cwd()
+    cwd, err = _get_git_cwd(tool_input)
     if err:
         return err
     tool_input.pop("__session_id__", "")

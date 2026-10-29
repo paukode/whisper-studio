@@ -182,7 +182,8 @@ share a helper with @file:src/components/workspace/WorkspacePanel.tsx</code></pr
       short JavaScript program that calls read-only tools (<code>ws_read_file</code>,
       <code>ws_glob</code>, <code>ws_grep</code>, <code>web_fetch</code> and friends) in a loop and
       returns one final value. Intermediate results stay in the program's variables and never enter the
-      conversation, which is where the token saving comes from.</p>
+      conversation, which is where the token saving comes from. MCP tools that are marked read-only
+      also run in the script.</p>
     <p>You can also just use the terminal pane yourself. It is a genuine PTY, so an interactive REPL,
       a watch process, or a one-off command all behave the way they would in Terminal.app. The pane sits
       below the chat, collapses to a single <b>Terminal</b> bar when you do not need it, and carries a

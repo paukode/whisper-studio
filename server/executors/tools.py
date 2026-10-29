@@ -300,8 +300,9 @@ TERMINAL_SEND_TOOL = {
                 "description": (
                     "Text to type into the terminal. A trailing newline is added if "
                     "absent so a line-reading REPL sees a complete line. Use '' to "
-                    "read pending output without sending input. Control bytes are "
-                    "passed through (e.g. \\x03 for Ctrl-C, \\x04 for Ctrl-D/EOF)."
+                    "read pending output without sending input. Send \\x03 (Ctrl-C), "
+                    "\\x04 (Ctrl-D/EOF) or \\x11 (Ctrl-Q) on its own, with no other "
+                    "text; other control bytes are refused."
                 ),
             },
             "timeout": {
@@ -348,7 +349,8 @@ RUN_TOOL_SCRIPT_TOOL = {
         "{pattern:'**/*.ts'})`, `await tools.ws_grep({pattern:'TODO'})`, "
         "`await tools.web_fetch({url})`, `await tools.aws_boto3({service,method})`); "
         "each returns the tool's output as a string. Only read-only tools are "
-        "allowed — a write, run, or approval-requiring tool throws, so do those as "
+        "allowed, MCP tools included when their server or the user marks them "
+        "read-only. A write, run, or approval-requiring tool throws, so do those as "
         "normal tool calls instead. Standard JS is available (JSON, Array, Promise, "
         "await, Promise.all); no fs, network, or process access. End the program "
         "with `return <value>` (a string or a JSON-serializable object); that value "

@@ -498,9 +498,9 @@
       <thead><tr><th>Check</th><th>Blocks</th></tr></thead>
       <tbody>
         <tr><td>Dangerous patterns</td><td><code>rm -rf /</code>, <code>mkfs</code>, <code>dd of=/dev/</code>, redirects into <code>/etc/</code>, <code>/proc/*/environ</code> reads.</td></tr>
-        <tr><td>Command substitution</td><td><code>$(...)</code>, backticks, and process substitution <code>&lt;(...)</code> / <code>&gt;(...)</code> that could hide a nested command.</td></tr>
-        <tr><td>Env injection</td><td>References or assignments to <code>LD_PRELOAD</code>, <code>BASH_ENV</code>, <code>IFS</code>, <code>PROMPT_COMMAND</code>, and friends.</td></tr>
-        <tr><td>Obfuscation</td><td>Hex/octal escapes, ANSI-C quoting, control characters, and zero-width or NBSP-style unicode whitespace.</td></tr>
+        <tr><td>Command substitution</td><td>Backticks, process substitution <code>&lt;(...)</code> / <code>&gt;(...)</code>, and a <code>$(...)</code> that can contain a command the checks do not see. A <code>$(...)</code> can run a read-only command that passes all the checks, for example <code>test "$(git branch --show-current)" = main</code>. Its output cannot be the program name, or the argument of <code>eval</code>, <code>source</code>, or <code>sh -c</code>.</td></tr>
+        <tr><td>Env injection</td><td>References or assignments to <code>LD_PRELOAD</code>, <code>BASH_ENV</code>, <code>IFS</code>, <code>PROMPT_COMMAND</code>, and friends. <code>IFS= read</code> is permitted, because it sets <code>IFS</code> for that one <code>read</code> only.</td></tr>
+        <tr><td>Obfuscation</td><td>Hex/octal escapes, ANSI-C quoting, control characters, zero-width or NBSP-style unicode whitespace, and a backslash in a word outside quotes (<code>r\m</code> runs <code>rm</code>). A backslash in quotes stays in the word. Thus, a regex in <code>node -e "..."</code> is permitted.</td></tr>
         <tr><td>Sensitive paths</td><td>Access to credential files and key types - <code>.pem</code>, <code>id_rsa</code>, <code>.env.production</code>, <code>credentials.json</code>, and the shared sensitive-path list.</td></tr>
         <tr><td>In-place edits</td><td><code>sed -i</code> in any form, nudging edits toward <code>ws_write_file</code> where they can be previewed and reverted.</td></tr>
         <tr><td>Chain cap</td><td>More than <code>MAX_SUBCOMMANDS</code> (50) chained segments, to prevent CPU-starvation via deeply nested pipelines.</td></tr>

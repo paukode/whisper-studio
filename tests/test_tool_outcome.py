@@ -110,6 +110,20 @@ def test_the_exit_code_is_found_before_what_follows_it(tail):
     assert tool_outcome("ws_run_command", f"boom\n(exit code 1){tail}") == ToolOutcome(True, 1)
 
 
+@pytest.mark.parametrize(
+    "notes",
+    [
+        "\n[sandbox] This command ran under the read-only OS sandbox, and the failure above.",
+        "\n[cwd] This ran in /w/sub, where an earlier `cd` left this session's shell.",
+        "\n[sandbox] hidden stores.\n[cwd] This ran in /w/sub.\n[Left running] still going.",
+    ],
+)
+def test_the_runs_own_notes_after_the_exit_code_do_not_hide_it(notes):
+    # A failed run with a sandbox hint used to read as exit 0: no error chip,
+    # no failure count for the loop guard.
+    assert tool_outcome("ws_run_command", f"boom\n(exit code 1){notes}") == ToolOutcome(True, 1)
+
+
 def test_an_approved_command_that_failed_reports_its_exit_code():
     # The gate's inline run (tool_approvals.inline_result_text).
     out = "Error: exit code 1\n\nboom\n(exit code 1)"
@@ -201,6 +215,27 @@ def test_loop_guard_counts_a_failure_the_gate_rule_names(monkeypatch):
         assert failures[("ws_grep", lg.canonical_args({"pattern": "x"}))] == 1
         assert failures[("ws_run_command", lg.canonical_args({"command": "c"}))] == 1
         assert ("ws_read_file", lg.canonical_args({"path": "p"})) not in failures
+    finally:
+        lg.reset_for_turn(scope)
+
+
+def test_identical_commands_stay_approval_requests(monkeypatch):
+    # The field case: polling a build log twice with the same terminal_run
+    # gave two byte-identical approval requests; the guard appended its note
+    # to the second, which broke it, so the command never ran and the model
+    # read "Malformed approval payload". A request is not a result yet.
+    scope = "request-turn"
+    lg.reset_for_turn(scope)
+    monkeypatch.setattr(lg, "enabled", lambda: True)
+    monkeypatch.setattr(lg, "caps", lambda: dict(lg.DEFAULT_CAPS))
+    given = {"command": "tail -5 build.log"}
+    request = approval_request({"action": "terminal_run", **given})
+    try:
+        for _ in range(4):
+            state = _run_batch(monkeypatch, scope, "terminal_run", given, request)
+            assert state.output == request
+            assert te.is_app_request(state.output, te.APPROVAL)
+        assert lg._state(scope).calls == []
     finally:
         lg.reset_for_turn(scope)
 
@@ -462,3 +497,23 @@ def test_local_frames_carry_the_call_id(monkeypatch):
     assert start == {"skill": "ws_read_file", "input": {}, "tool_use_id": "c1", "round": 0}
     (call,) = [f for f in frames if "skill_input" in f]
     assert call["tool_use_id"] == "c1"
+
+
+# A git hook (CodeDefender) printed this in front of a commit that succeeded,
+# in a field session; the app marked the call failed and the claim check then
+# made the reply say "Not committed".
+_HOOK_NOISE = (
+    "Error opening log file, skipping setup: open /Users/me/Library/Logs/x.log: "
+    "operation not permitted\n"
+)
+
+
+def test_a_command_whose_output_opens_with_error_text_exited_zero():
+    out = _HOOK_NOISE + "[main 5c0e335] fix: keep details\n 2 files changed"
+    assert tool_outcome("ws_run_command", out) == ToolOutcome(False, 0)
+    assert tool_outcome("ws_run_command", "error: hint only\nDone.") == ToolOutcome(False, 0)
+    # The run's exit status still decides, and the executor's own line is one.
+    assert tool_outcome("ws_run_command", _HOOK_NOISE + "(exit code 1)") == ToolOutcome(True, 1)
+    assert tool_outcome("ws_run_command", "Error: Blocked: x") == ToolOutcome(True, None)
+    # Other tools keep the whole marker list.
+    assert tool_outcome("ws_read_file", _HOOK_NOISE) == ToolOutcome(True, None)
