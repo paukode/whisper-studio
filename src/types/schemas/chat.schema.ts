@@ -295,6 +295,12 @@ export const SSEEventDataSchema = z.object({
     reason: z.string(),
   }).optional(),
 
+  // The model read a message the user sent into this turn: the client starts
+  // a new reply below it (sseStream.ts).
+  midturn_read: z.object({
+    text: z.string(),
+  }).optional(),
+
   // Tasks
   todo_update: z.unknown().optional(),
 }).passthrough();

@@ -478,6 +478,18 @@ export async function readSSEStream(
             }
           }
 
+          // ── midturn_read (the model read a message sent into this turn) ──
+          // The reply so far is finished: it commits as its own row, the
+          // message follows it, and the answer to the message streams below
+          // it as a reply of its own. The paragraph break the server sends
+          // before a late message belongs to neither.
+          if (parsed.midturn_read) {
+            fullResponse = fullResponse.trimEnd();
+            flushSegment();
+            const note = store().takeMidTurnNote(parsed.midturn_read.text);
+            if (note) store().addMessage(note);
+          }
+
           renderEventCards(parsed, store, sessionId, flushSegment);
           // ── ws_auto_applied (pre-approved action executed server-side) ──
           if (parsed.ws_auto_applied) {

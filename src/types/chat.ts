@@ -635,6 +635,11 @@ export interface SSEEventData {
     reason: string;
   };
 
+  /** The model read a message the user sent into this running turn, at this
+   *  point of the stream: what streamed before it is the reply it had
+   *  written, and what follows answers the message. */
+  midturn_read?: { text: string };
+
   // Tasks
   todo_update?: unknown;
 }

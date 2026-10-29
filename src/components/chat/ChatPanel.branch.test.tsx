@@ -28,6 +28,7 @@ vi.mock('@/stores/sessionRuntimes', () => ({
       messages: [{ role: 'assistant', content: 'hi', timestamp: 1 }],
       isStreaming: false,
       currentStreamContent: '',
+      pendingMidTurn: [],
     }),
   getActiveChatStore: () => ({
     getState: () => ({ clearMessages: vi.fn(), resetSessionApprovals: vi.fn() }),

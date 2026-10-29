@@ -90,7 +90,7 @@ describe('useChatStream', () => {
   });
 
   describe('sendMidTurn', () => {
-    it('confirmed delivery: shows the message and resolves true, without touching isStreaming', async () => {
+    it('confirmed delivery: holds the message for the running turn and resolves true, without touching isStreaming', async () => {
       useSessionStore.setState({ currentSessionId: 'mid-turn-sess', liveSessions: {}, sessions: [] });
       vi.spyOn(globalThis, 'fetch').mockResolvedValue(
         new Response(JSON.stringify({ queued_into_running_turn: true }), {
@@ -109,11 +109,10 @@ describe('useChatStream', () => {
 
       expect(delivered).toBe(true);
       const s = store.getState();
-      expect(
-        s.messages.some(
-          (m) => m.role === 'user' && m.content === 'stop and give me what you have',
-        ),
-      ).toBe(true);
+      // Held below the live reply until the model reads it: the stream's
+      // midturn_read frame places it in the transcript (midturnSplit.test.ts).
+      expect(s.pendingMidTurn.map((m) => m.content)).toEqual(['stop and give me what you have']);
+      expect(s.messages.some((m) => m.content === 'stop and give me what you have')).toBe(false);
       // Untouched — the ALREADY-running turn owns isStreaming, not this call.
       expect(s.isStreaming).toBe(true);
     });
@@ -126,6 +125,7 @@ describe('useChatStream', () => {
         headers: { get: () => 'text/event-stream' },
         body: { cancel },
       } as unknown as Response);
+      getChatStore('race-sess').getState().setStreaming(true);
 
       const { result } = renderHook(() => useChatStream());
       let delivered: boolean | undefined;
@@ -135,9 +135,11 @@ describe('useChatStream', () => {
 
       expect(delivered).toBe(false);
       expect(cancel).toHaveBeenCalled();
-      // Strictly binary — nothing is shown for an attempt that wasn't delivered.
+      // Strictly binary — nothing is shown for an attempt that wasn't delivered:
+      // the message held while the request was in flight is gone again.
       const s = getChatStore('race-sess').getState();
       expect(s.messages.some((m) => m.role === 'user' && m.content === 'are you still there')).toBe(false);
+      expect(s.pendingMidTurn).toEqual([]);
     });
 
     it('a JSON 200 that does not confirm the queue is not delivered', async () => {
@@ -196,7 +198,8 @@ describe('useChatStream', () => {
         delivered = await first;
       });
       expect(delivered).toBe(true);
-      const bubbles = store.getState().messages.filter(
+      const { messages, pendingMidTurn } = store.getState();
+      const bubbles = [...messages, ...pendingMidTurn].filter(
         (m) => m.role === 'user' && m.content === 'did you push the branch?',
       );
       expect(bubbles).toHaveLength(1);
