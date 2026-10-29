@@ -290,10 +290,16 @@ _DANGEROUS_ENV_VARS = re.compile(
 )
 
 
+# `while IFS= read -r line` sets IFS for that one read, the standard way to
+# read whole lines, and not for the commands after it.
+_IFS_FOR_READ = re.compile(r"(?:^|(?<=\s))IFS=[^\s;&|]*\s+(?=read\b)")
+
+
 def check_env_injection(command: str) -> str | None:
     """Detect dangerous environment variable references or assignments."""
     # Strip content inside single quotes
     stripped = re.sub(r"'[^']*'", "", command)
+    stripped = _IFS_FOR_READ.sub("", stripped)
     match = _DANGEROUS_ENV_VARS.search(stripped)
     if match:
         return f"Blocked: dangerous environment variable ({match.group().strip()})"
@@ -348,6 +354,21 @@ _HEX_OCTAL_ESCAPE = re.compile(r"\\x[0-9a-fA-F]{2}|\\[0-7]{1,3}")
 # $'\xNN' ANSI-C quoting used to smuggle characters
 _ANSI_C_QUOTING = re.compile(r"\$'[^']*\\x[0-9a-fA-F]")
 
+# A quoted string, or a backslash pair outside quotes, read left to right.
+_QUOTED_OR_ESCAPE = re.compile(r"""\\.|'[^']*'|"(?:[^"\\]|\\.)*\"""", re.DOTALL)
+
+
+def _without_quoted_text(command: str) -> str:
+    """``command`` with each quoted string replaced by one letter.
+
+    A backslash inside quotes cannot turn ``r\\m`` into ``rm``: inside single
+    quotes it is literal, and inside double quotes it stays in the word unless
+    it escapes $, `, " or \\. So a regex such as ``node -e "s.split(/\\r?\\n/)"``
+    is not obfuscation. The letter keeps a quoted piece joined to its word, so
+    ``"r"\\m`` (which runs rm) is still caught.
+    """
+    return _QUOTED_OR_ESCAPE.sub(lambda m: m.group() if m.group()[0] == "\\" else "q", command)
+
 
 def check_obfuscated_flags(command: str) -> str | None:
     """Detect obfuscation techniques that mask command names or flags."""
@@ -357,7 +378,7 @@ def check_obfuscated_flags(command: str) -> str | None:
         return "Blocked: hex/octal escape sequence in command"
     if _ANSI_C_QUOTING.search(command):
         return "Blocked: ANSI-C quoting with escape sequence"
-    if _BACKSLASH_IN_WORD.search(stripped):
+    if _BACKSLASH_IN_WORD.search(_without_quoted_text(command)):
         return "Blocked: backslash-escaped character in word"
     return None
 
