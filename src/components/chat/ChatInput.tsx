@@ -607,9 +607,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      // Cmd/Ctrl+Enter always sends, even while the autocomplete popup is up —
-      // an explicit "send now" that never gets captured as an item selection.
-      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+      // Cmd+Enter always sends, even while the autocomplete popup is up: an
+      // explicit "send now" that never gets captured as an item selection.
+      if (e.key === 'Enter' && e.metaKey) {
         e.preventDefault();
         void handleSubmit(e as unknown as React.FormEvent);
         return;

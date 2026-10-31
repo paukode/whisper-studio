@@ -128,7 +128,7 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({ onCollapse }) =>
       const r = await fetch(`/api/workspace/search-files?q=${encodeURIComponent(debouncedQuery)}&limit=100`);
       if (!r.ok) return [];
       const data = await r.json();
-      return data?.results ?? data?.files ?? [];
+      return data?.results ?? [];
     },
     enabled: debouncedQuery.length > 0,
   });
@@ -243,7 +243,7 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({ onCollapse }) =>
   );
 
   // Close handler passed to Monaco as onClose — fires from the editor's
-  // Cmd/Ctrl+W keybinding. Prompts to discard first when the tab is dirty.
+  // Cmd+W keybinding. Prompts to discard first when the tab is dirty.
   const handleClose = useCallback(
     (path: string) => {
       void confirmCloseTab(path);

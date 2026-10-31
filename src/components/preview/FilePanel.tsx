@@ -43,7 +43,7 @@ const EXTRACTION_EXTS = new Set(['doc', 'xls', 'pptx', 'ppt', 'html', 'htm', 'ep
 // huge cited workbook would freeze the tab. Checked via a HEAD probe below.
 const XLSX_MAX_BYTES = 30 * 1024 * 1024;
 
-const REVEAL_HINT = 'Preview isn’t available for this file type here. Cmd/Ctrl-click the source link to reveal it in Finder.';
+const REVEAL_HINT = 'Preview isn’t available for this file type here. Cmd-click the source link to reveal it in Finder.';
 
 function extOf(path: string): string {
   const base = path.split('/').pop() ?? path;
@@ -74,7 +74,7 @@ const GuardedSpreadsheet: React.FC<{ path: string; rawUrl: string }> = ({ path, 
 
   if (state === 'checking') return <div style={MUTED}>Loading…</div>;
   if (state === 'too-big') {
-    return <div style={MUTED}>This spreadsheet is too large to preview here. Cmd/Ctrl-click the source link to reveal it in Finder.</div>;
+    return <div style={MUTED}>This spreadsheet is too large to preview here. Cmd-click the source link to reveal it in Finder.</div>;
   }
   return <SpreadsheetViewer filePath={path} rawUrl={rawUrl} />;
 };

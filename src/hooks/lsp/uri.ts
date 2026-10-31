@@ -1,7 +1,7 @@
 /**
  * Filesystem-path <-> file:// URI helpers for the LSP client.
  *
- * The backend proxy runs on macOS/Linux and hands the editor workspace-relative
+ * The backend proxy runs on macOS and hands the editor workspace-relative
  * file paths (e.g. `src/app.py`) plus an absolute workspace root (uiStore.wsPath).
  * The language server wants `file://` URIs, so we join the two and encode.
  */

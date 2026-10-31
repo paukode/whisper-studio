@@ -145,7 +145,7 @@ export interface MonacoEditorProps {
  * Wraps @monaco-editor/react with Whisper Studio theme integration,
  * matching the original vanilla JS editor config exactly:
  *   DM Mono 13px, minimap off, wordWrap off, tabSize 4,
- *   bracket colorization, smooth cursor, custom themes, Ctrl+S/W keybindings,
+ *   bracket colorization, smooth cursor, custom themes, Cmd+S/W keybindings,
  *   cursor position tracking, and live theme switching.
  */
 export const MonacoEditor: React.FC<MonacoEditorProps> = ({
@@ -260,7 +260,7 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
       registerWhisperThemes(monaco);
       monaco.editor.setTheme(getMonacoTheme(resolvedTheme, paletteId));
 
-      // Ctrl+S — Save file
+      // Cmd+S: Save file
       ed.addAction({
         id: 'whisper-save',
         label: 'Save File',
@@ -271,7 +271,7 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
         },
       });
 
-      // Ctrl+W — Close tab
+      // Cmd+W: Close tab
       ed.addAction({
         id: 'whisper-close-tab',
         label: 'Close Tab',

@@ -155,7 +155,7 @@ export interface UIState {
   /* Dialog stack */
   dialogStack: DialogEntry[];
 
-  /* Command palette (Cmd/Ctrl+K) */
+  /* Command palette (Cmd+K) */
   commandPaletteOpen: boolean;
 
   /** The edit whose diff the user asked to see from an activity row's diff

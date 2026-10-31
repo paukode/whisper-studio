@@ -11,7 +11,7 @@ import { SETTINGS_TABS } from '@/components/settings/SettingsModal';
 import { put } from '@/api/client';
 
 /**
- * ⌘K / Ctrl+K command palette — the connective tissue the app was missing.
+ * ⌘K command palette: the connective tissue the app was missing.
  * A searchable list over actions that already exist in the stores, so every
  * capability (new session, connect workspace, switch model/mode/theme, open
  * a settings tab, toggle panels) is reachable without hunting for its button.

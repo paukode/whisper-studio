@@ -322,10 +322,10 @@ export function useChatAutocomplete(opts: UseChatAutocompleteOptions): UseChatAu
       return;
     }
     try {
-      const data = await get<{ results: Array<{ path: string }>; files?: Array<{ path: string }> }>(`/api/workspace/search-files?q=${encodeURIComponent(query)}`);
+      const data = await get<{ results: Array<{ path: string }> }>(`/api/workspace/search-files?q=${encodeURIComponent(query)}`);
       // Stale: a newer search superseded this one while the fetch was in flight.
       if (reqId !== searchReqIdRef.current) return;
-      const files = data.results ?? data.files ?? [];
+      const files = data.results ?? [];
       if (files.length === 0) {
         setAcItems([{ icon: '📂', name: 'No results', desc: `No files matching "${query}"`, insert: prefix + query }]);
       } else {
