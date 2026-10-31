@@ -21,7 +21,11 @@ import os
 from server.workflows import manager, store
 from server.workflows.journal import run_dir
 from server.workflows.launch_policy import is_session_granted, launch_decision
-from server.workflows.runtime import DEFAULT_WORKFLOW_BUDGET_TOKENS, parse_workflow
+from server.workflows.runtime import (
+    DEFAULT_WORKFLOW_BUDGET_TOKENS,
+    NodeNotFoundError,
+    parse_workflow,
+)
 
 log = logging.getLogger("whisper-studio")
 
@@ -333,6 +337,8 @@ async def execute_workflow_run(tool_input, session_id, model_id, effort_label) -
         return "Error: provide a `script`, a saved `name`, or a `resume_from_run_id`.", []
     try:
         meta = await asyncio.to_thread(parse_workflow, script)  # spawns node; keep off the loop
+    except NodeNotFoundError as e:
+        return f"Error: {e}", []
     except ValueError as e:
         return f"Workflow script error: {e}", []
     # The same inline script approved from a card earlier this session (byte
@@ -410,6 +416,8 @@ async def execute_workflow_save(tool_input, session_id: str = "") -> str:
         return "Error: script is required."
     try:
         meta = await asyncio.to_thread(parse_workflow, script)  # spawns node; keep off the loop
+    except NodeNotFoundError as e:
+        return f"Error: {e}"
     except ValueError as e:
         return f"Workflow script error: {e}"
     # A script the user already approved this session is saved TRUSTED: the

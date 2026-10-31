@@ -13,7 +13,7 @@ import pytest
 
 from server.ci import autofix, diagnose
 
-NODE = shutil.which("node") or "/usr/local/bin/node"
+NODE = shutil.which("node") or ""
 _HERE = os.path.dirname(os.path.dirname(__file__))
 HARNESS_OK = os.path.exists(NODE) and os.path.exists(
     os.path.join(_HERE, "server", "workflows", "harness", "harness.mjs")

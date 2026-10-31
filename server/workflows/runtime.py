@@ -37,8 +37,21 @@ _LINE_LIMIT = 10 * 1024 * 1024
 _HARNESS = os.path.join(os.path.dirname(__file__), "harness", "harness.mjs")
 
 
+class NodeNotFoundError(RuntimeError):
+    """No node executable to run the workflow harness."""
+
+
 def _node_bin() -> str:
-    return resolve("node", "WHISPER_NODE_PATH") or "/usr/local/bin/node"
+    """The node that runs the harness: WHISPER_NODE_PATH when it names an
+    executable, else the first node on PATH. Raises NodeNotFoundError when
+    there is neither, so a run never starts on a guessed path."""
+    node = resolve("node", "WHISPER_NODE_PATH")
+    if not node:
+        raise NodeNotFoundError(
+            "Node.js was not found, so workflows cannot run. Install Node.js "
+            "or set WHISPER_NODE_PATH to a node executable."
+        )
+    return node
 
 
 # --disallow-code-generation-from-strings makes eval()/new Function() throw in
@@ -69,7 +82,8 @@ def _scrubbed_env() -> dict:
 def parse_workflow(source: str, *, timeout: float = 10) -> dict:
     """Synchronously run the harness in PARSE mode: syntax-check the script and
     extract+validate its ``meta`` literal WITHOUT executing it. Returns
-    {name, description, phases}. Raises ValueError on any problem. Safe to call
+    {name, description, phases}. Raises ValueError on a problem with the
+    script and NodeNotFoundError when there is no node to run it. Safe to call
     from a worker thread (used by the workflow_run tool for the approval
     preview)."""
     import json

@@ -164,10 +164,12 @@ async def launch_run(request: Request):
 
     # Parse for phases/name (also a final syntax gate before launch). parse_workflow
     # spawns the Node harness (blocking) — keep it off the event loop.
-    from server.workflows.runtime import parse_workflow
+    from server.workflows.runtime import NodeNotFoundError, parse_workflow
 
     try:
         meta = await asyncio.to_thread(parse_workflow, script)
+    except NodeNotFoundError as e:
+        return JSONResponse({"error": str(e)}, status_code=503)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
 

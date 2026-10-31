@@ -15,7 +15,7 @@ import subprocess
 
 import pytest
 
-NODE = shutil.which("node") or "/usr/local/bin/node"
+NODE = shutil.which("node") or ""
 HARNESS = os.path.join(
     os.path.dirname(os.path.dirname(__file__)),
     "server",
