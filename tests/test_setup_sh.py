@@ -2,8 +2,10 @@
 is the path a dev Mac never exercises (the Mac app bundles its own runtime), so
 these pin what it does on a fresh machine."""
 
+import platform
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -100,3 +102,66 @@ def test_setup_checks_the_platform_before_it_checks_or_installs_anything():
     assert lines.index("require_macos_arm64") < lines.index("require_python_312")
     first_call = next(line for line in lines if re.fullmatch(r"(require|check)_[a-z0-9_]+", line))
     assert first_call == "require_macos_arm64"
+
+
+def _run_arm64_python_check(python: str) -> subprocess.CompletedProcess:
+    """_require_arm64_python from setup.sh against the given interpreter."""
+    script = (
+        _function("_require_arm64_python") + f'_require_arm64_python "{python}"\necho reached\n'
+    )
+    return subprocess.run(
+        ["/bin/bash", "-c", script],
+        capture_output=True,
+        text=True,
+        env={"PATH": "/usr/bin:/bin"},
+    )
+
+
+def test_a_venv_python_that_is_not_arm64_is_refused(tmp_path):
+    """An x86_64 Python (one that runs under Rosetta even from a native arm64
+    shell) stops setup before a venv is built from it."""
+    python = tmp_path / "bin" / "python3"
+    _stand_in(python, "exit 1")
+
+    out = _run_arm64_python_check(str(python))
+
+    assert out.returncode == 1
+    assert "reached" not in out.stdout
+    assert out.stderr.strip() == (
+        f"ERROR: {python} is not an arm64 (Apple silicon) Python. "
+        "Install an arm64 Python (Homebrew under /opt/homebrew) and re-run."
+    )
+
+
+def test_a_missing_venv_python_is_refused():
+    out = _run_arm64_python_check("")
+
+    assert out.returncode == 1
+    assert "reached" not in out.stdout
+
+
+def test_an_arm64_venv_python_is_accepted(tmp_path):
+    python = tmp_path / "bin" / "python3"
+    _stand_in(python, "exit 0")
+
+    out = _run_arm64_python_check(str(python))
+
+    assert out.returncode == 0
+    assert out.stdout.strip() == "reached"
+    assert out.stderr == ""
+
+
+def test_the_arm64_check_reads_the_interpreter_architecture():
+    """Run against this test's own interpreter, the check agrees with
+    platform.machine(), so the embedded Python snippet is valid."""
+    out = _run_arm64_python_check(sys.executable)
+
+    assert out.returncode == (0 if platform.machine() == "arm64" else 1)
+
+
+def test_a_new_venv_is_checked_for_arm64_before_it_is_created():
+    lines = [line.strip() for line in SETUP.splitlines()]
+    select = lines.index("_select_venv_python")
+    check = lines.index('_require_arm64_python "$VENV_PYTHON"')
+    create = lines.index('"$VENV_PYTHON" -m venv "$VENV_DIR"')
+    assert select < check < create

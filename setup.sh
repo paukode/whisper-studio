@@ -182,8 +182,8 @@ run_quiet() {
 }
 
 # Prerequisite check for production runs. ffmpeg and ripgrep are runtime
-# dependencies the app cannot start without, so on macOS we auto-install them
-# via Homebrew when missing (same as dev mode) rather than failing the run. The
+# dependencies the app cannot start without, so we auto-install them via
+# Homebrew when missing (same as dev mode) rather than failing the run. The
 # remaining prerequisites (Homebrew itself, curl, lsof) are verified only and
 # reported if missing.
 #
@@ -192,8 +192,6 @@ run_quiet() {
 check_prod_prerequisites() {
     local missing=()
     local versions=()
-    local is_mac=0
-    [ "$(uname)" = "Darwin" ] && is_mac=1
 
     echo ""
     echo "Checking production prerequisites..."
@@ -203,15 +201,13 @@ check_prod_prerequisites() {
     # capture the version string for the success report).
     versions+=("Python:    $(python3 --version 2>&1)")
 
-    # Homebrew, macOS only. The other deps below have brew install
-    # paths that won't work without it.
-    if [ "$is_mac" -eq 1 ]; then
-        if command -v brew >/dev/null 2>&1; then
-            versions+=("Homebrew:  $(brew --version 2>&1 | head -n 1)")
-        else
-            missing+=("Homebrew not found. Install with:
+    # Homebrew. The other deps below have brew install paths that won't
+    # work without it.
+    if command -v brew >/dev/null 2>&1; then
+        versions+=("Homebrew:  $(brew --version 2>&1 | head -n 1)")
+    else
+        missing+=("Homebrew not found. Install with:
       /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"")
-        fi
     fi
 
     # Git and AWS CLI are intentionally not checked here, because setup.sh
@@ -220,52 +216,40 @@ check_prod_prerequisites() {
     # from the user; that's a separate step we can't automate.
 
     # ffmpeg: mlx-whisper uses it to decode audio. Whisper itself won't start
-    # without it on the path. Auto-install via Homebrew on macOS; on Linux or
-    # without brew, report it as missing.
+    # without it on the path. Auto-install via Homebrew; without brew, report
+    # it as missing.
     if command -v ffmpeg >/dev/null 2>&1; then
         versions+=("ffmpeg:    $(ffmpeg -version 2>&1 | head -n 1)")
-    elif [ "$is_mac" -eq 1 ] && command -v brew >/dev/null 2>&1; then
+    elif command -v brew >/dev/null 2>&1; then
         run_quiet "Installing ffmpeg via Homebrew" brew install ffmpeg
         versions+=("ffmpeg:    $(ffmpeg -version 2>&1 | head -n 1)")
-    elif [ "$is_mac" -eq 1 ]; then
-        missing+=("ffmpeg not found. Install with: brew install ffmpeg")
     else
-        missing+=("ffmpeg not found. Install with: apt-get install ffmpeg")
+        missing+=("ffmpeg not found. Install with: brew install ffmpeg")
     fi
 
     # ripgrep: search backend used by the workspace tools. Auto-install via
-    # Homebrew on macOS; on Linux or without brew, report it as missing.
+    # Homebrew; without brew, report it as missing.
     if command -v rg >/dev/null 2>&1; then
         versions+=("ripgrep:   $(rg --version 2>&1 | head -n 1)")
-    elif [ "$is_mac" -eq 1 ] && command -v brew >/dev/null 2>&1; then
+    elif command -v brew >/dev/null 2>&1; then
         run_quiet "Installing ripgrep via Homebrew" brew install ripgrep
         versions+=("ripgrep:   $(rg --version 2>&1 | head -n 1)")
-    elif [ "$is_mac" -eq 1 ]; then
-        missing+=("ripgrep not found. Install with: brew install ripgrep")
     else
-        missing+=("ripgrep not found. Install with: apt-get install ripgrep")
+        missing+=("ripgrep not found. Install with: brew install ripgrep")
     fi
 
     # curl: used by this script for backend/Vite health checks.
     if command -v curl >/dev/null 2>&1; then
         versions+=("curl:      $(curl --version 2>&1 | head -n 1)")
     else
-        if [ "$is_mac" -eq 1 ]; then
-            missing+=("curl not found. Install with: brew install curl  (pre-installed on macOS, check your PATH)")
-        else
-            missing+=("curl not found. Install with: apt-get install curl")
-        fi
+        missing+=("curl not found. Install with: brew install curl  (pre-installed on macOS, check your PATH)")
     fi
 
     # lsof: used by this script to find an available port.
     if command -v lsof >/dev/null 2>&1; then
         versions+=("lsof:      installed")
     else
-        if [ "$is_mac" -eq 1 ]; then
-            missing+=("lsof not found. Pre-installed on macOS, check your PATH.")
-        else
-            missing+=("lsof not found. Install with: apt-get install lsof")
-        fi
+        missing+=("lsof not found. Pre-installed on macOS, check your PATH.")
     fi
 
     if [ ${#missing[@]} -gt 0 ]; then
@@ -313,7 +297,7 @@ MODE_FLAG=""
 NO_OPEN=${NO_OPEN:-0}
 for arg in "$@"; do
     case "$arg" in
-        --new|--fresh)
+        --new)
             FRESH=1
             ;;
         --dev)
@@ -450,6 +434,18 @@ fi
 # user chooses to override. A full copy of the template froze every rate at
 # install time and shadowed later corrections.
 
+# The venv must be built from an arm64 interpreter. The python3 on PATH, or a
+# Homebrew Python under /usr/local, can be an x86_64 build that runs under
+# Rosetta even from a native arm64 shell, which require_macos_arm64 cannot see.
+# The mlx wheels are arm64 only, so refuse instead of building a venv that
+# cannot install them.
+_require_arm64_python() {
+    if ! "$1" -c 'import platform, sys; sys.exit(platform.machine() != "arm64")' >/dev/null 2>&1; then
+        echo "ERROR: $1 is not an arm64 (Apple silicon) Python. Install an arm64 Python (Homebrew under /opt/homebrew) and re-run." >&2
+        exit 1
+    fi
+}
+
 if [ -d "$VENV_DIR" ]; then
     echo "Virtual environment found, skipping Python setup."
     source "$VENV_DIR/bin/activate"
@@ -458,6 +454,7 @@ if [ -d "$VENV_DIR" ]; then
     fi
 else
     _select_venv_python
+    _require_arm64_python "$VENV_PYTHON"
     echo "Creating virtual environment (python: $VENV_PYTHON)..."
     "$VENV_PYTHON" -m venv "$VENV_DIR"
     source "$VENV_DIR/bin/activate"
@@ -568,7 +565,6 @@ if os.path.exists(target):
         with open(target) as f: cfg = json.load(f)
     except Exception: cfg = {}
 cfg["model_mode"] = mode
-cfg["local_mode"] = (mode != "cloud")
 with open(target, "w") as f: json.dump(cfg, f, indent=2)
 print(f"Set model_mode={mode} in {target}")
 PYEOF
@@ -768,14 +764,10 @@ else
 fi
 echo ""
 
-# Auto-open the right URL in the default browser. Only opens on systems
-# where ``open`` exists (macOS, plus some Linux setups that alias it).
-# Silently skipped on systems without it, the URL is already printed.
+# Auto-open the right URL in the default browser.
 if [ "$NO_OPEN" -eq 0 ]; then
-    if command -v open >/dev/null 2>&1; then
-        echo "Opening $APP_URL in your default browser..."
-        open "$APP_URL" 2>/dev/null || true
-    fi
+    echo "Opening $APP_URL in your default browser..."
+    open "$APP_URL" 2>/dev/null || true
 fi
 
 echo "Press Ctrl+C to stop."
