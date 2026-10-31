@@ -373,6 +373,6 @@
     --text-warning: var(--warning);
     --radius: var(--radius-md);
     --accent-gradient: linear-gradient(51deg, var(--accent) 45%, var(--accent-2));
-    --font-sans: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-sans: 'Manrope', -apple-system, BlinkMacSystemFont, sans-serif;
     --font-mono: 'DM Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 }

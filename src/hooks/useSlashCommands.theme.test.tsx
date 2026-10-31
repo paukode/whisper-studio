@@ -8,8 +8,8 @@ const { setThemeMock } = vi.hoisted(() => ({ setThemeMock: vi.fn() }));
 vi.mock('@/providers/ThemeProvider', () => ({
   useTheme: () => ({
     setTheme: setThemeMock,
-    themeKey: 'light-taw',
-    resolvedTheme: 'light-taw',
+    themeKey: 'light',
+    resolvedTheme: 'light',
     themes: [],
   }),
 }));

@@ -816,7 +816,7 @@ describe('readSSEStream tool frames', () => {
       { skill_result: 'ws_read_file', output: 'A', tool_use_id: 'tu_r0', is_error: false, exit_code: null },
       { skill: 'ws_grep', tool_use_id: 'tu_r1', round: 1 },
       { skill_result: 'ws_grep', output: 'a.ts:1: x', tool_use_id: 'tu_r1', is_error: false, exit_code: null },
-      // An older server names no round: the row has none.
+      // A frame that names no round: the row has none.
       { skill: 'ws_read_file', tool_use_id: 'tu_old' },
     ];
     const result = await readSSEStream(sseResponse(frames), 'sess-round-live', signal(), SETTINGS);
@@ -855,7 +855,7 @@ describe('readSSEStream tool frames', () => {
     expect(result.skillTraces.map((t) => t.round)).toEqual([3, 4]);
   });
 
-  it('a result without a meta (an older server) leaves the row without one', async () => {
+  it('a result frame without a meta leaves the row without one', async () => {
     const sid = 'sess-meta-none';
     await readSSEStream(sseResponse([
       { skill: 'ws_grep', tool_use_id: 'tu_n' },
@@ -1008,8 +1008,8 @@ describe('readSSEStream activity_label', () => {
   const committed = (sid: string) => getChatStore(sid).getState().messages;
   const card = { workflow_started: { run_id: 'wf_1', name: 'nightly' } };
   const hook = { hook_blocked: { tool_name: 'ws_run_command', reason: 'blocked' } };
-  /** One call's frames; `round` as the skill frame names it, none from an
-   *  older server. */
+  /** One call's frames; `round` as the skill frame names it, or none when
+   *  `round` is left out. */
   const call = (id: string, name = 'ws_read_file', round?: number) => [
     { skill: name, tool_use_id: id, ...(round === undefined ? {} : { round }) },
     { skill_input: name, input: { path: `${id}.ts` }, tool_use_id: id },

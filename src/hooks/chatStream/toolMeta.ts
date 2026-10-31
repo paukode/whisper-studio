@@ -11,7 +11,8 @@ import type { SSEEventData, ToolMeta } from '@/types/chat';
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
 /** A skill_result frame's meta as the row stores it; undefined for a frame
- *  that carried none (an older server). */
+ *  that carries none (the frame type allows that, though the server's
+ *  skill_result frames always send one). */
 export function toolMetaFromFrame(meta: SSEEventData['meta']): ToolMeta | undefined {
   if (!meta) return undefined;
   return {

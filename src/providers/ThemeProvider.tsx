@@ -14,15 +14,11 @@ const THEME_OPTIONS: readonly ThemeOption[] = [
 ] as const;
 
 /**
- * Maps a stored value to a theme key. A key saved before the themes were
- * merged into one keeps its mode: any 'dark-*' value is dark, any
- * 'light-*' value is light. Anything else follows the system.
+ * Maps a stored value to a theme key: 'light' and 'dark' as saved, anything
+ * else (nothing saved, or an unknown value) follows the system.
  */
 export function toThemeKey(stored: string | null): ThemeKey {
-  if (!stored) return 'auto';
-  if (stored.startsWith('dark')) return 'dark';
-  if (stored.startsWith('light')) return 'light';
-  return 'auto';
+  return stored === 'light' || stored === 'dark' ? stored : 'auto';
 }
 
 /** Reads the persisted theme key from localStorage. */

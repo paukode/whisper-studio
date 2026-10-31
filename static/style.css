@@ -5201,7 +5201,7 @@ button.ws-git-status-badge:hover {
 .session-select-delete:not(:disabled):hover { background: var(--accent-record-dim); }
 .session-select-delete:disabled { opacity: 0.5; cursor: not-allowed; }
 
-/* ---- Command palette (Cmd/Ctrl+K) ---- */
+/* ---- Command palette (Cmd+K) ---- */
 .cmdk-overlay {
     position: fixed;
     inset: 0;

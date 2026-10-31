@@ -72,25 +72,23 @@ describe('ThemeProvider', () => {
     expect(screen.getByTestId('theme-key').textContent).toBe('auto');
   });
 
-  it.each([
-    ['dark-high-contrast', 'dark'],
-    ['dark-daltonized', 'dark'],
-    ['dark-taw', 'dark'],
-    ['light-high-contrast', 'light'],
-    ['light-daltonized', 'light'],
-    ['light-taw', 'light'],
-  ])('keeps the mode of a theme saved before the merge (%s)', (stored, mode) => {
-    localStorage.setItem(STORAGE_KEYS.THEME, stored);
+  it.each(['dark-high-contrast', 'dark-daltonized', 'dark-taw', 'light-high-contrast', 'light-daltonized', 'light-taw'])(
+    'treats a retired theme id as unknown and follows the system (%s)',
+    (stored) => {
+      // The matchMedia mock reports a dark system, so a 'light-*' id no
+      // longer keeps light.
+      localStorage.setItem(STORAGE_KEYS.THEME, stored);
 
-    render(
-      <ThemeProvider>
-        <ThemeConsumer />
-      </ThemeProvider>,
-    );
+      render(
+        <ThemeProvider>
+          <ThemeConsumer />
+        </ThemeProvider>,
+      );
 
-    expect(screen.getByTestId('theme-key').textContent).toBe(mode);
-    expect(document.documentElement.getAttribute('data-theme')).toBe(mode);
-  });
+      expect(screen.getByTestId('theme-key').textContent).toBe('auto');
+      expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
+    },
+  );
 
   it('persists theme to localStorage when setTheme is called', () => {
     render(

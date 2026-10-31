@@ -3,7 +3,7 @@
  *
  * The diagram classes below are the whole styling contract handed to the
  * model: it picks structure and semantics, the theme picks every colour. That
- * is what keeps a diagram readable across all eight themes without the model
+ * is what keeps a diagram readable in every palette and mode without the model
  * ever naming a colour. */
 
 .viz-card {

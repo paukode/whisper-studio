@@ -373,9 +373,10 @@ enum NativeAudioEnumeration {
     }
 
     /// Rows for the picker: the fixed {pid:-1, "System audio"} entry plus one
-    /// row per app. Each app row carries ALL its audio pids ("pids"); "pid"
-    /// stays as the first pid for bridge back-compat. Enumeration does NOT
-    /// trigger the TCC prompt (only starting a tap does).
+    /// row per app. Each app row carries ALL its audio pids ("pids") and, as
+    /// "pid", the first of them: the page tells rows apart by it and sends it
+    /// back in {cmd:"start"}. Enumeration does NOT trigger the TCC prompt
+    /// (only starting a tap does).
     static func listSources() -> [[String: Any]] {
         var out: [[String: Any]] = [["pid": -1, "name": "System audio"]]
         for app in listGroupedApps(onlyRunningOutput: true) {
