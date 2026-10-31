@@ -18,11 +18,6 @@ export default defineConfig(({ command }) => {
   resolve: {
     alias: {
       '@': resolve(__dirname, 'src'),
-      '@components': resolve(__dirname, 'src/components'),
-      '@hooks': resolve(__dirname, 'src/hooks'),
-      '@stores': resolve(__dirname, 'src/stores'),
-      '@types': resolve(__dirname, 'src/types'),
-      '@utils': resolve(__dirname, 'src/utils'),
     },
   },
   server: {
@@ -48,14 +43,14 @@ export default defineConfig(({ command }) => {
     // tsconfig detection) and severs the live chat stream.
     //
     // We ignore these in-tree worktree locations:
-    //  - `.whisper/worktrees/**` — where the enter_worktree tool puts them.
-    //  - `.claude/worktrees/**` — where worktrees are created in this env.
-    //  - `.worktrees/**` — the historical/manual location some flows use.
-    //  - any worktree placed sibling-style at the repo root via
-    //    `<repo>-<branch>` (legacy `addGitWorktree` default path); we
-    //    can't pattern-match that from inside vite, so prefer the
-    //    in-tree patterns and steer the assistant toward them via the
-    //    git instructions prompt.
+    //  - `.whisper/worktrees/**`: where the enter_worktree tool puts them.
+    //  - `.claude/worktrees/**`: where worktrees are created in this env.
+    //  - `.worktrees/**`: where the ws_create_worktree tool puts them.
+    //  - a worktree placed sibling-style next to the repo via
+    //    `<repo>-<branch>` (the `addGitWorktree` default path) is outside
+    //    the vite root and is never watched; we can't pattern-match it
+    //    from inside vite, so prefer the in-tree patterns and steer the
+    //    assistant toward them via the git instructions prompt.
     watch: {
       ignored: [
         '**/.whisper/worktrees/**',

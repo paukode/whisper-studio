@@ -1,16 +1,14 @@
 import { useEffect } from 'react';
 
 /**
- * Parse a key combo string like "Ctrl+Shift+K" into its parts.
- * Supports: Ctrl, Alt, Shift, Meta (or Cmd) modifiers.
+ * Parse a key combo string like "Cmd+Shift+K" into its parts.
+ * Supports: Ctrl, Alt, Shift, Meta (or Cmd, Command, Mod) modifiers.
  */
 interface ParsedCombo {
   ctrlKey: boolean;
   altKey: boolean;
   shiftKey: boolean;
   metaKey: boolean;
-  /** True for the cross-platform "mod" modifier (matches Cmd on macOS, Ctrl elsewhere). */
-  modKey: boolean;
   key: string;
 }
 
@@ -21,7 +19,6 @@ function parseKeyCombo(combo: string): ParsedCombo {
     altKey: false,
     shiftKey: false,
     metaKey: false,
-    modKey: false,
     key: '',
   };
 
@@ -41,10 +38,8 @@ function parseKeyCombo(combo: string): ParsedCombo {
       case 'meta':
       case 'cmd':
       case 'command':
-        modifiers.metaKey = true;
-        break;
       case 'mod':
-        modifiers.modKey = true;
+        modifiers.metaKey = true;
         break;
       default:
         modifiers.key = lower;
@@ -58,7 +53,7 @@ function parseKeyCombo(combo: string): ParsedCombo {
 /**
  * Register a keyboard shortcut.
  *
- * @param combo - Key combo string, e.g. "Ctrl+K", "Ctrl+Shift+P", "Meta+S"
+ * @param combo - Key combo string, e.g. "Cmd+K", "Cmd+Shift+P", "Meta+S"
  * @param handler - Callback invoked when the shortcut is pressed
  * @param enabled - Whether the shortcut is active (default: true)
  *
@@ -83,12 +78,8 @@ export function useKeyboardShortcut(
       // Never treat IME composition keys as shortcuts.
       if (event.isComposing) return;
       const keyMatches = event.key.toLowerCase() === parsed.key;
-      // When `mod` is in the combo we accept either Cmd (macOS-typical) or
-      // Ctrl, and we don't enforce the exact-match constraint for those two
-      // keys so platform-native shortcuts work without per-OS branching.
-      const ctrlMatches = parsed.modKey ? true : event.ctrlKey === parsed.ctrlKey;
-      const metaMatches = parsed.modKey ? true : event.metaKey === parsed.metaKey;
-      const modPressed = parsed.modKey ? (event.ctrlKey || event.metaKey) : true;
+      const ctrlMatches = event.ctrlKey === parsed.ctrlKey;
+      const metaMatches = event.metaKey === parsed.metaKey;
       const altMatches = event.altKey === parsed.altKey;
       const shiftMatches = event.shiftKey === parsed.shiftKey;
 
@@ -96,7 +87,6 @@ export function useKeyboardShortcut(
         keyMatches &&
         ctrlMatches &&
         metaMatches &&
-        modPressed &&
         altMatches &&
         shiftMatches
       ) {

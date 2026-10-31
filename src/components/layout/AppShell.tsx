@@ -212,8 +212,7 @@ const AppShell: React.FC = () => {
   // saves and the beforeunload beacon per live session.
   useSessionPersistence();
 
-  // Global keyboard shortcuts. Using `mod+` so the same binding works on
-  // macOS (Cmd) and Linux/Windows (Ctrl).
+  // Global keyboard shortcuts. mod = Cmd.
   useKeyboardShortcut('mod+,', () => {
     useUIStore.getState().openSettings();
   });

@@ -19,10 +19,9 @@ export interface WorkspaceContextMenuProps {
   onFileSelect: (path: string) => void;
 }
 
-const isMac = typeof navigator !== 'undefined' && /Mac/.test(navigator.userAgent);
-const MOD = isMac ? '\u2318' : 'Ctrl+';
-const OPT = isMac ? '\u2325' : 'Alt+';
-const SHIFT = isMac ? '\u21E7' : 'Shift+';
+const MOD = '\u2318';
+const OPT = '\u2325';
+const SHIFT = '\u21E7';
 
 // ── Module-level state for file clipboard and comparison ──
 
