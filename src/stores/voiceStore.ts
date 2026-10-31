@@ -108,7 +108,7 @@ export interface VoiceState {
   dropStep: (id: string) => void;
   setPendingRequest: (req: VoicePendingRequest | null) => void;
   upsertStep: (step: VoiceStep) => void;
-  finishStep: (name: string, status: 'ok' | 'error', detail: string, runId?: string, output?: string) => void;
+  finishStep: (name: string, status: 'ok' | 'error', detail: string, runId: string, output?: string) => void;
   adjustPending: (delta: number) => void;
   markStreamStarted: () => void;
   setMuted: (muted: boolean) => void;
@@ -249,7 +249,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
       // most recent running step with that name in the same run.
       for (let i = s.steps.length - 1; i >= 0; i--) {
         const st = s.steps[i];
-        if (st.name === name && st.status === 'running' && (!runId || !st.runId || st.runId === runId)) {
+        if (st.name === name && st.status === 'running' && st.runId === runId) {
           const next = s.steps.slice();
           next[i] = { ...st, status, detail, ...(output ? { output } : {}) };
           return { steps: next };
@@ -298,10 +298,9 @@ function keepRunState(s: VoiceState) {
   };
 }
 
-/** A delegated run's step: tagged with its run id, or an untagged assistant
- *  step (older servers), which the first answer to land takes along. */
+/** A delegated run's step: an assistant step tagged with that run's id. */
 export const stepBelongsTo = (step: VoiceStep, runId: string): boolean =>
-  step.source === 'assistant' && (step.runId === runId || !step.runId);
+  step.source === 'assistant' && step.runId === runId;
 
 /** True while a voice conversation is open (any state but off). */
 export const isVoiceOn = (status: VoiceStatus): boolean => status !== 'off';

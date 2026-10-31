@@ -62,12 +62,12 @@ describe('applyVoiceEvent', () => {
   it("spoken bubbles never carry the delegated run's steps; the run keeps them for its written answer", () => {
     const d = deps();
     applyVoiceEvent(ev({ type: 'tool_call', tool_use_id: 'tu1', name: 'ask_assistant', input: { request: 'x' } }), d);
-    applyVoiceEvent(ev({ type: 'assistant_step', name: 'ws_open_folder', status: 'running', detail: 'p' }), d);
+    applyVoiceEvent(ev({ type: 'assistant_step', run_id: 'r1', name: 'ws_open_folder', status: 'running', detail: 'p' }), d);
     // Sonic fills the silence; its bubble must not adopt ws_open_folder.
     applyVoiceEvent(ev({ type: 'assistant_text', text: 'Working on it.', final: true }), d);
     expect(d.calls.commitAssistant).toEqual([['Working on it.', [], true]]);
     expect(useVoiceStore.getState().steps.map((s) => s.name)).toEqual(['ws_open_folder']);
-    applyVoiceEvent(ev({ type: 'assistant_step', name: 'ws_open_folder', status: 'ok', detail: 'opened' }), d);
+    applyVoiceEvent(ev({ type: 'assistant_step', run_id: 'r1', name: 'ws_open_folder', status: 'ok', detail: 'opened' }), d);
     applyVoiceEvent(ev({ type: 'assistant_answer', run_id: 'r1', request: 'x', output: 'Opened it.', status: 'ok' }), d);
     applyVoiceEvent(ev({ type: 'tool_result', tool_use_id: 'tu1', name: 'ask_assistant', output: 'Opened it.', status: 'ok' }), d);
     expect(d.calls.commitAssistant).toHaveLength(2);
@@ -79,7 +79,7 @@ describe('applyVoiceEvent', () => {
   it('a paused delegate result shows no bubble and keeps the steps for the resumed run', () => {
     const d = deps();
     applyVoiceEvent(ev({ type: 'tool_call', tool_use_id: 'tu1', name: 'ask_assistant', input: { request: 'open x' } }), d);
-    applyVoiceEvent(ev({ type: 'assistant_step', name: 'ws_open_folder', status: 'running', detail: 'p' }), d);
+    applyVoiceEvent(ev({ type: 'assistant_step', run_id: 'r1', name: 'ws_open_folder', status: 'running', detail: 'p' }), d);
     applyVoiceEvent(
       ev({ type: 'tool_result', tool_use_id: 'tu1', name: 'ask_assistant', output: 'The assistant paused: needs approval.', status: 'paused' }),
       d,
@@ -286,6 +286,10 @@ describe('applyVoiceEvent', () => {
   it('rejects malformed events at the schema boundary', () => {
     expect(VoiceServerEventSchema.safeParse({ type: 'state', state: 'dancing' }).success).toBe(false);
     expect(VoiceServerEventSchema.safeParse({ type: 'nope' }).success).toBe(false);
+    // Every delegated step names its run; an untagged step is dropped.
+    expect(
+      VoiceServerEventSchema.safeParse({ type: 'assistant_step', name: 'ws_grep', status: 'ok', detail: 'x' }).success,
+    ).toBe(false);
   });
 });
 

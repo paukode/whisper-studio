@@ -24,7 +24,7 @@ export const VoiceServerEventSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('assistant_step'),
     /** Which delegated run the step belongs to (several may run at once). */
-    run_id: z.string().optional(),
+    run_id: z.string(),
     name: z.string(),
     status: z.enum(['running', 'ok', 'error']),
     detail: z.string(),
