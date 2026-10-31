@@ -8,11 +8,10 @@ Contracts under test:
      plugins, agents, data — lives under ~/.whisper (user_root()).
      WHISPER_USER_DIR overrides user_root() (the conftest pins it per-test so
      no test can touch the real ~/.whisper).
-  3. bootstrap_home() seeds the user-editable files exactly once, and MOVES a
-     legacy Application Support tree into user_root() with nothing left
-     behind: pre-data-era top-level stores are swept, stale duplicates are
-     parked (never merged), compat symlinks from the first migration are
-     removed, and migration 017 rewrites recorded absolute paths.
+  3. bootstrap_home() creates both trees and seeds the user-editable files
+     exactly once, never overwriting what the user changed, and moves nothing.
+  4. Migration 017 rewrites the absolute data paths an older sessions.db
+     recorded under the app home.
 """
 
 import importlib
@@ -190,117 +189,6 @@ def test_bootstrap_seeds_plugins_and_restores_protected(tmp_path, monkeypatch):
     assert seeded.is_file() and seeded.read_text() != "# user-edited"
 
 
-# ── the one-shot Application Support -> ~/.whisper relocation ────────────────
-
-
-def test_bootstrap_relocates_a_pre_split_tree(monkeypatch, tmp_path):
-    home, user = _packaged(monkeypatch, tmp_path)
-    # A pre-split install: user data still lives under Application Support.
-    for sub, marker in (
-        ("models", "weights.gguf"),
-        ("skills", "mine.md"),
-        ("plugins", "mine.py"),
-        ("data", "memory/fact.md"),
-    ):
-        p = home / sub / marker
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text("precious")
-    (home / "config.user.json").write_text('{"mine": true}')
-    agents = home / ".whisper" / "agents"
-    agents.mkdir(parents=True)
-    (agents / "pdf_extractor.md").write_text("agent")
-
-    paths.bootstrap_home()
-
-    for sub, marker in (
-        ("models", "weights.gguf"),
-        ("skills", "mine.md"),
-        ("plugins", "mine.py"),
-        ("data", "memory/fact.md"),
-    ):
-        moved = user / sub / marker
-        assert moved.is_file() and moved.read_text() == "precious", f"{sub} not moved"
-        # A clean cut-over: nothing is left behind, not even a symlink —
-        # migration 017 rewrites the absolute paths recorded in sessions.db.
-        assert not (home / sub).exists()
-    assert json.loads((user / "config.user.json").read_text()) == {"mine": True}
-    assert (user / "agents" / "pdf_extractor.md").read_text() == "agent"
-    assert not (home / ".whisper").exists()
-    assert not (home / "config.user.json").exists()
-
-    # Idempotent: a second boot leaves everything in place.
-    paths.bootstrap_home()
-    assert (user / "models" / "weights.gguf").read_text() == "precious"
-
-
-def test_bootstrap_sweeps_pre_data_era_stores_and_stale_caches(monkeypatch, tmp_path):
-    home, user = _packaged(monkeypatch, tmp_path)
-    # Leftovers from before the data/ consolidation sat at the TOP level of
-    # Application Support (memory, scratch, workspace_config.json, ...).
-    (home / "global_memory").mkdir(parents=True)
-    (home / "global_memory" / "fact.md").write_text("old fact")
-    (home / "workspace_config.json").write_text('{"path": null}')
-    (home / "pycache" / "3.13").mkdir(parents=True)
-    (home / "pycache" / "3.13" / "x.pyc").write_text("bytecode")
-
-    paths.bootstrap_home()
-
-    assert (user / "data" / "global_memory" / "fact.md").read_text() == "old fact"
-    assert (user / "data" / "workspace_config.json").is_file()
-    assert not (home / "global_memory").exists()
-    assert not (home / "workspace_config.json").exists()
-    # The bytecode cache is machine noise: deleted, not moved.
-    assert not (home / "pycache").exists()
-
-
-def test_bootstrap_parks_stale_copies_instead_of_clobbering(monkeypatch, tmp_path):
-    home, user = _packaged(monkeypatch, tmp_path)
-    # The live store already moved; a stale duplicate lingers at the old spot.
-    (user / "data" / "global_memory").mkdir(parents=True)
-    (user / "data" / "global_memory" / "fact.md").write_text("live")
-    (home / "global_memory").mkdir(parents=True)
-    (home / "global_memory" / "fact.md").write_text("stale")
-
-    paths.bootstrap_home()
-
-    # The live copy is untouched; the stale one is parked, not merged or lost.
-    assert (user / "data" / "global_memory" / "fact.md").read_text() == "live"
-    parked = user / "data" / "legacy_app_support" / "global_memory" / "fact.md"
-    assert parked.read_text() == "stale"
-    assert not (home / "global_memory").exists()
-
-
-def test_bootstrap_removes_compat_symlinks_from_the_first_migration(monkeypatch, tmp_path):
-    home, user = _packaged(monkeypatch, tmp_path)
-    # The first version of the migration left old -> new symlinks behind.
-    (user / "models").mkdir(parents=True)
-    home.mkdir(parents=True, exist_ok=True)
-    os.symlink(str(user / "models"), str(home / "models"))
-
-    paths.bootstrap_home()
-
-    assert not (home / "models").exists()
-    assert (user / "models").is_dir()
-
-
-def test_bootstrap_never_clobbers_an_existing_new_tree(monkeypatch, tmp_path):
-    home, user = _packaged(monkeypatch, tmp_path)
-    (home / "models").mkdir(parents=True)
-    (home / "models" / "old.gguf").write_text("old")
-    (user / "models").mkdir(parents=True)
-    (user / "models" / "new.gguf").write_text("new")
-
-    paths.bootstrap_home()
-
-    # Both-exist: the new location wins; the old copy is parked under the data
-    # root — never merged, never deleted, and Application Support ends clean.
-    assert (user / "models" / "new.gguf").read_text() == "new"
-    assert not (user / "models" / "old.gguf").exists()
-    parked = user / "data" / "legacy_app_support" / "models" / "old.gguf"
-    assert parked.read_text() == "old"
-    assert not (home / "models").exists()
-
-
 def test_bootstrap_leaves_overridden_data_dir_alone(monkeypatch, tmp_path):
     home, user = _packaged(monkeypatch, tmp_path)
     elsewhere = tmp_path / "elsewhere"
@@ -309,8 +197,8 @@ def test_bootstrap_leaves_overridden_data_dir_alone(monkeypatch, tmp_path):
 
     paths.bootstrap_home()
 
-    # The user already relocated data; it is theirs to manage. The old data
-    # tree stays where it is, and the override location is simply created.
+    # The override location is created, and bootstrap moves nothing: a data
+    # tree under the app home stays exactly where it is.
     assert (home / "data" / "memory").is_dir()
     assert not (user / "data" / "memory").exists()
     assert elsewhere.is_dir()

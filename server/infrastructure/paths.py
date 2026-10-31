@@ -22,12 +22,6 @@ Two roots, split by who edits what:
   it is the repo root, so dev layout is unchanged. ``WHISPER_USER_DIR``
   overrides it for tests and relocation.
 
-On the first packaged boot, :func:`relocate_legacy_home` (called before the
-server modules import) MOVES existing Application Support copies into
-~/.whisper by same-volume rename, sweeps data stores that predate the data/
-consolidation, and leaves nothing behind; migration 017 rewrites the absolute
-paths recorded in sessions.db in the same boot.
-
 data_root() resolution order:
   1. ``WHISPER_DATA_DIR`` environment variable
   2. ``data_dir`` key in config.json
@@ -208,150 +202,16 @@ def _seed_file(src: str, dst: str) -> None:
         log.warning("Could not seed %s from %s: %s", dst, src, e)
 
 
-def _relocate(old: str, new: str) -> None:
-    """One-shot move of a user-data file or directory out of Application
-    Support into ~/.whisper. Same-volume rename (instant, atomic, any size —
-    never a multi-gigabyte copy during boot, which would outlive the app
-    shell's health deadline). No symlink is left behind: the cut-over is
-    complete, and the paths recorded in sessions.db are rewritten by a
-    normal schema migration on the same boot (017_rewrite_data_paths)."""
-    if os.path.islink(old) or not os.path.exists(old):
-        return
-    if os.path.exists(new):
-        # Never merge or clobber. Park the stale copy under the new data root
-        # so Application Support still ends up clean and nothing is destroyed.
-        park = os.path.join(data_root(), "legacy_app_support", os.path.basename(old))
-        try:
-            os.makedirs(os.path.dirname(park), exist_ok=True)
-            if not os.path.exists(park):
-                os.rename(old, park)
-                log.info("Parked stale %s -> %s (newer copy already at %s)", old, park, new)
-        except OSError as e:
-            log.warning("Could not park %s: %s", old, e)
-        return
-    try:
-        os.makedirs(os.path.dirname(new), exist_ok=True)
-        os.rename(old, new)
-        log.info("Relocated %s -> %s", old, new)
-    except OSError as e:
-        log.warning("Could not relocate %s -> %s: %s", old, new, e)
-
-
-# Data stores that historically lived at the TOP level of the app home (before
-# they were consolidated under data/); swept into data_root() so Application
-# Support ends up holding storage/ and logs/ only.
-_LEGACY_TOP_LEVEL_DATA = (
-    "memory",
-    "global_memory",
-    "session_memory",
-    "scratch",
-    "attachments",
-    "plans",
-    "result_cache",
-    "background_output",
-    "search_output",
-    "shell_output",
-    "model-downloads",
-    "workflows",
-    "workspace_config.json",
-    "recent_workspaces.json",
-    "save_locations.json",
-    "cron_jobs.json",
-    "hooks.json",
-    "hooks_trust.json",
-    "permissions.json",
-    "folder_grants.json",
-    "plugins_config.json",
-    "skills_config.json",
-    "buddy.json",
-    "mcp_servers.json",
-)
-
-# User-editable config files that used to live at the app home.
-_CONFIG_FILES = (
-    "config.user.json",
-    "config.json",
-    "config.json.pre-split",
-    "pricing.json",
-)
-
-
-def relocate_legacy_home() -> None:
-    """Move everything except storage/ and logs/ out of the app home.
-
-    Runs before the server modules import (server/main.py calls it first
-    thing), so every path constant frozen at import time already sees the
-    moved files. Idempotent and cheap: after the first run every check is a
-    handful of stat calls. No-op in a dev checkout, where app home and user
-    root are the same directory."""
-    if not os.environ.get("WHISPER_HOME", "").strip():
-        return
-    home = app_home()
-    user = user_root()
-    if os.path.realpath(home) == os.path.realpath(user):
-        return
-    for sub, target in (
-        ("models", models_root()),
-        ("skills", skills_root()),
-        ("plugins", plugins_root()),
-    ):
-        _relocate(os.path.join(home, sub), target)
-        _drop_compat_symlink(os.path.join(home, sub))
-    if data_root() == os.path.join(user, "data"):
-        _relocate(os.path.join(home, "data"), data_root())
-        _drop_compat_symlink(os.path.join(home, "data"))
-        for name in _LEGACY_TOP_LEVEL_DATA:
-            _relocate(os.path.join(home, name), os.path.join(data_root(), name))
-    for name in _CONFIG_FILES:
-        _relocate(os.path.join(home, name), os.path.join(user, name))
-    # Custom agents: <home>/.whisper/agents was always an awkward nesting;
-    # they live at <user>/agents now.
-    _relocate(os.path.join(home, ".whisper", "agents"), os.path.join(user, "agents"))
-    try:
-        legacy_wrap = os.path.join(home, ".whisper")
-        if os.path.isdir(legacy_wrap) and not os.listdir(legacy_wrap):
-            os.rmdir(legacy_wrap)
-    except OSError:
-        pass
-    # Python bytecode cache: pure machine noise, regenerated on demand. The
-    # shell now points PYTHONPYCACHEPREFIX at ~/Library/Caches; drop a stale
-    # cache the old location is no longer used for.
-    pycache = os.path.join(home, "pycache")
-    if os.path.isdir(pycache) and not os.environ.get("PYTHONPYCACHEPREFIX", "").startswith(pycache):
-        try:
-            shutil.rmtree(pycache)
-            log.info("Removed stale bytecode cache %s", pycache)
-        except OSError as e:
-            log.warning("Could not remove %s: %s", pycache, e)
-
-
-def _drop_compat_symlink(path: str) -> None:
-    """Remove a compatibility symlink left by the first version of this
-    migration (which linked old -> new); the recorded-path rewrite in
-    migration 017 makes them unnecessary, and the goal is a clean folder."""
-    if os.path.islink(path):
-        try:
-            os.unlink(path)
-            log.info("Removed compatibility symlink %s", path)
-        except OSError as e:
-            log.warning("Could not remove symlink %s: %s", path, e)
-
-
 def bootstrap_home() -> None:
     """First-run setup for a packaged install: create the WHISPER_HOME and
-    ~/.whisper trees, move any pre-split user data out of Application Support,
-    and seed the user-editable files from the read-only code dir. No-op when
-    WHISPER_HOME is unset (dev checkout: everything already lives at the repo
-    root). Idempotent — existing files and directories are never overwritten —
-    and safe: any single failure logs and moves on rather than blocking boot."""
+    ~/.whisper trees and seed the user-editable files from the read-only code
+    dir. No-op when WHISPER_HOME is unset (dev checkout: everything already
+    lives at the repo root). Idempotent (existing files and directories are
+    never overwritten) and safe: any single failure logs and moves on rather
+    than blocking boot."""
     if not os.environ.get("WHISPER_HOME", "").strip():
         return
     home = app_home()
-    # Move first, then create: a fresh empty dir at the new location would
-    # defeat the move-only-when-destination-missing rule forever. (main.py
-    # already ran this before importing the server; kept here for callers
-    # that bootstrap without going through main — it is idempotent.)
-    relocate_legacy_home()
     for d in (
         home,
         user_root(),
