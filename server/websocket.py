@@ -59,10 +59,8 @@ def resolve_translator(
       source Canary cannot read (Whisper heard ja or ar) gets no line.
     - Apple: any pair among its ~20 languages, on the client via the shell
       bridge; auto-detects an unknown source.
-    Legacy stored modes from the earlier design ("auto"/"model") map to
-    Canary. Pure so it is unit-testable.
+    Any other mode gets no line. Pure so it is unit-testable.
     """
-    mode = {"auto": "canary", "model": "canary"}.get(mode, mode)
     if mode == "off":
         return None
     if language is not None and language == target:

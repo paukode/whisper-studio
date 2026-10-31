@@ -59,13 +59,12 @@ describe('AppConfigResponseSchema', () => {
     const input = {
       chat_models: { opus: 'Claude Opus' },
       effort_level: 'high',
-      brief_mode: true,
       permission_mode: 'plan',
     };
     const result = AppConfigResponseSchema.safeParse(input);
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.brief_mode).toBe(true);
+      expect(result.data.permission_mode).toBe('plan');
     }
   });
 
@@ -74,7 +73,6 @@ describe('AppConfigResponseSchema', () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.effort_level).toBe('high');
-      expect(result.data.brief_mode).toBe(false);
     }
   });
 });

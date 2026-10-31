@@ -313,9 +313,12 @@ def test_resolve_translator_matrix():
     assert r("apple", True, "pl", "de") == "apple"
     assert r("apple", False, "pl", "en") is None
     assert r("apple", True, None, "pl") == "apple"
-    # legacy stored modes map to canary
-    assert r("auto", False, "pl", "en") == "canary"
-    assert r("model", False, "en", "pl") == "canary"
+    # Any other mode (the retired "auto"/"model" included) gets no line and
+    # never falls back to a translator, with or without the Apple bridge.
+    for mode in ("auto", "model", "bogus", ""):
+        assert r(mode, False, "pl", "en") is None, mode
+        assert r(mode, True, "pl", "en") is None, mode
+        assert r(mode, False, None, "en") is None, mode
 
 
 def test_lid_pick_language_constrained():

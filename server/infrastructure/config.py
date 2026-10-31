@@ -114,8 +114,7 @@ DEFAULTS = {
     # The transcript panel's Translate dropdown: "off", "canary" (Canary's
     # native translation, any engine's audio, 25 languages with English on
     # one side of the pair), or "apple" (macOS on-device translator via the
-    # app shell, any pair among its ~20 languages). Legacy values from the
-    # earlier design ("auto"/"model") are read as "canary".
+    # app shell, any pair among its ~20 languages).
     "translate_mode": "off",
     # Target language for the translation line (ISO 639-1).
     "translate_target": "en",

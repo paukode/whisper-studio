@@ -237,7 +237,6 @@ export interface SettingsState {
 const defaultConfig: AppConfig = {
   chatModels: {},
   effortLevel: DEFAULT_EFFORT,
-  briefMode: false,
   permissionMode: 'default',
   transcriptionBackend: 'streaming',
   translateMode: 'off',
@@ -317,14 +316,13 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
       const config: AppConfig = {
         chatModels: (d.chat_models as Record<string, string>) ?? {},
         effortLevel: normalizeEffort(d.effort_level as string | undefined),
-        briefMode: Boolean(d.brief_mode ?? false),
         permissionMode: String(d.permission_mode ?? 'default'),
         transcriptionBackend: String(d.transcription_backend ?? 'streaming'),
-        // Legacy stored modes from the earlier design map to Canary.
-        translateMode: (() => {
-          const raw = String(d.translate_mode ?? 'off');
-          return raw === 'auto' || raw === 'model' ? 'canary' : raw;
-        })(),
+        // The dropdown's translators. Any other stored value runs none (the
+        // server's resolve_translator returns None for it), so it reads as off.
+        translateMode: ['off', 'canary', 'apple'].includes(String(d.translate_mode))
+          ? String(d.translate_mode)
+          : 'off',
         translateTarget: String(d.translate_target ?? 'en'),
         modelMode: ((d.model_mode as AppConfig['modelMode']) ?? 'cloud'),
         backends: ((d.backends as AppConfig['backends']) ?? {}),
@@ -334,14 +332,6 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
         config,
         effortLevel: normalizeEffort(config.effortLevel),
       });
-
-      // One-time migration: the old standalone brief toggle is now the "Brief"
-      // end of the unified Response length control (stored as verbosity). If the
-      // user hasn't picked a length yet, carry over their brief preference.
-      if (!readVerbosity() && config.briefMode) {
-        persistVerbosity('low');
-        set({ verbosity: 'low' });
-      }
 
       // Load actual permission mode from the permissions endpoint (ground truth)
       try {
