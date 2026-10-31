@@ -109,7 +109,7 @@ beforeEach(() => {
   __resetNativeAudioForTests();
 
   // Fake shell bridge: marker + message handler that auto-confirms.
-  window.__WHISPER_NATIVE_AUDIO = { platform: 'macos', available: true };
+  window.__WHISPER_NATIVE_AUDIO = { available: true };
   window.webkit = {
     messageHandlers: {
       nativeAudio: {
@@ -280,8 +280,8 @@ describe('recordingController — mixed mode fail-open', () => {
     native().onAudio(encodeInt16(new Array<number>(1600).fill(0x2000)), 1600, 0.31);
     expect(useRecordingStore.getState().nativeLevel).toBeCloseTo(0.31, 3);
 
-    // Old-shell chunks without rms fall back to a computed level.
-    native().onAudio(encodeInt16(new Array<number>(1600).fill(0)), 1600);
+    // A chunk without rms reads as level 0, even when its samples are loud.
+    native().onAudio(encodeInt16(new Array<number>(1600).fill(0x2000)), 1600);
     expect(useRecordingStore.getState().nativeLevel).toBe(0);
 
     native().onAudio(encodeInt16(new Array<number>(1600).fill(0x2000)), 1600, 0.5);

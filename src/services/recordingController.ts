@@ -304,14 +304,6 @@ async function resolveNativePid(sel: NativeSourceSelection): Promise<number> {
   return sel.pid;
 }
 
-/** Fallback RMS for chunks from older shells that don't send one. */
-function computeRms(samples: Float32Array): number {
-  if (samples.length === 0) return 0;
-  let sum = 0;
-  for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
-  return Math.sqrt(sum / samples.length);
-}
-
 /** One console line per recording when the mixer misbehaves — the mic path
  *  must stay alive regardless, so mixer failures are logged, not thrown. */
 let mixerFailureLogged = false;
@@ -319,13 +311,13 @@ let mixerFailureLogged = false;
 /** Decoded native chunk (16 kHz mono Float32). Mixed mode buffers it for the
  *  mic worklet (the mic is the clock master); native-only mode has no mic
  *  clock, so the chunks drive the chunker/websocket directly. */
-function handleNativeAudio(samples: Float32Array, rms?: number): void {
+function handleNativeAudio(samples: Float32Array, rms: number): void {
   if (!useRecordingStore.getState().isRecording) return;
   if (!nativeAudioMarked) {
     nativeAudioMarked = true;
     mark('first_native_audio', { dbfs: frameDbfs(samples) });
   }
-  useRecordingStore.getState().setNativeLevel(rms ?? computeRms(samples));
+  useRecordingStore.getState().setNativeLevel(rms);
   if (nativeMixer) {
     // Fail-open: a mixer fault must never take the MIC down with it. Drop
     // this native chunk and keep recording; the worklet handler below keeps

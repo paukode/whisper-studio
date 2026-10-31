@@ -7,8 +7,9 @@
 // saves the payload into ~/Downloads (never overwriting — name collisions
 // get " (2)", " (3)", … suffixes) and reports the outcome back to the page
 // through the `window.__whisperShellToast` hook registered by the frontend
-// (src/services/shellToastBridge.ts). If the hook is missing (older cached
-// page), the report degrades to a stderr log — never an alert, never a crash.
+// (src/services/shellToastBridge.ts). If the hook is missing (the page has
+// not registered it yet, or a non-app page is loaded), the report degrades
+// to a stderr log, never an alert, never a crash.
 //
 // The first file written into ~/Downloads triggers the standard macOS
 // "wants to access your Downloads folder" consent prompt; for a
@@ -167,7 +168,8 @@ final class DownloadHandler: NSObject, WKDownloadDelegate {
     // MARK: Page feedback
 
     /// Call the page's `window.__whisperShellToast(message, {type})` hook.
-    /// Missing hook (older page) or JS failure degrades to a stderr log.
+    /// A missing hook (not registered yet, or a non-app page) or a JS
+    /// failure degrades to a stderr log.
     private func notifyPage(message: String, type: String) {
         let log = { FileHandle.standardError.write(Data("[download] \(message)\n".utf8)) }
         DispatchQueue.main.async { [weak self] in

@@ -26,7 +26,7 @@
 // Bridge contract (pinned — the frontend mirrors it in
 // src/services/nativeAudioSource.ts):
 //   * injected at documentStart, main frame only:
-//       window.__WHISPER_NATIVE_AUDIO = { platform: "macos", available: bool }
+//       window.__WHISPER_NATIVE_AUDIO = { available: bool }
 //   * page → native: window.webkit.messageHandlers.nativeAudio.postMessage
 //       {cmd:"list"} | {cmd:"start", pid:-1|N, bundleID?} | {cmd:"stop"}
 //   * native → page (all via evaluateJavaScript on the main thread):
@@ -967,7 +967,7 @@ final class NativeAudioBridge: NSObject, WKScriptMessageHandler {
     /// creating the WKWebView; assign `webView` right after.
     func install(into configuration: WKWebViewConfiguration) {
         let marker =
-            "window.__WHISPER_NATIVE_AUDIO = { platform: \"macos\", available: \(Self.isSupported) };"
+            "window.__WHISPER_NATIVE_AUDIO = { available: \(Self.isSupported) };"
         let script = WKUserScript(
             source: marker, injectionTime: .atDocumentStart, forMainFrameOnly: true)
         configuration.userContentController.addUserScript(script)
@@ -1093,10 +1093,8 @@ final class NativeAudioBridge: NSObject, WKScriptMessageHandler {
 
     private func emitWarning(_ message: String) {
         nativeAudioLog("warning → page: \(message)")
-        // onWarning is newer than onError — guard the callback itself so an
-        // older page bundle is a silent no-op, never a JS exception.
         emit(
-            "window.__whisperNativeAudio && window.__whisperNativeAudio.onWarning && window.__whisperNativeAudio.onWarning(\(Self.jsStringLiteral(message)));"
+            "window.__whisperNativeAudio && window.__whisperNativeAudio.onWarning(\(Self.jsStringLiteral(message)));"
         )
     }
 

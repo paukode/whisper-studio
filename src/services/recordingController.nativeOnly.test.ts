@@ -57,7 +57,7 @@ beforeEach(() => {
   __resetNativeAudioForTests();
 
   // Fake shell bridge: marker + message handler that auto-confirms start.
-  window.__WHISPER_NATIVE_AUDIO = { platform: 'macos', available: true };
+  window.__WHISPER_NATIVE_AUDIO = { available: true };
   window.webkit = {
     messageHandlers: {
       nativeAudio: {

@@ -36,7 +36,7 @@ describe('NativeLevelMeter', () => {
 
 describe('CaptureSourceMenu — active source activity indicator', () => {
   beforeEach(() => {
-    window.__WHISPER_NATIVE_AUDIO = { platform: 'macos', available: true };
+    window.__WHISPER_NATIVE_AUDIO = { available: true };
     useRecordingStore.setState({
       isRecording: true,
       nativeSource: { pid: -1, name: 'System audio' },

@@ -19,7 +19,7 @@
 //
 // Bridge contract (pinned; src/services/nativeMicSource.ts mirrors it):
 //   * injected at documentStart, main frame only:
-//       window.__WHISPER_NATIVE_MIC = { platform: "macos", available: true }
+//       window.__WHISPER_NATIVE_MIC = { available: true }
 //   * page -> native: window.webkit.messageHandlers.nativeMic.postMessage
 //       {cmd:"start"} | {cmd:"stop"}
 //   * native -> page (evaluateJavaScript on the main thread):
@@ -247,7 +247,7 @@ final class NativeMicBridge: NSObject, WKScriptMessageHandler {
     private var session: NativeMicCaptureSession?
 
     func install(into configuration: WKWebViewConfiguration) {
-        let marker = "window.__WHISPER_NATIVE_MIC = { platform: \"macos\", available: true };"
+        let marker = "window.__WHISPER_NATIVE_MIC = { available: true };"
         configuration.userContentController.addUserScript(
             WKUserScript(source: marker, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         configuration.userContentController.add(self, name: Self.messageHandlerName)
