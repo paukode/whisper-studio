@@ -164,7 +164,7 @@ def uninstall() -> dict:
         except Exception:  # noqa: BLE001
             pass
         log.info("Index refresh agent removed")
-    return {"installed": False, "supported": True}
+    return {"installed": False}
 
 
 def sync() -> dict:
@@ -178,7 +178,7 @@ def sync() -> dict:
         return uninstall()
     if _plist_stale(intervals):
         _write_and_load(intervals)
-    return {"installed": True, "supported": True}
+    return {"installed": True}
 
 
 def heal_if_stale() -> None:
@@ -202,7 +202,7 @@ def regenerate() -> None:
 
 
 def status() -> dict:
-    return {"installed": is_installed(), "supported": True}
+    return {"installed": is_installed()}
 
 
 # ── the worker (run by launchd) ──────────────────────────────────────────────

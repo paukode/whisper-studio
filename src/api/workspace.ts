@@ -311,14 +311,6 @@ export function updateIndexSettings(path: string, patch: IndexSettingsPatch): Pr
   return put<IndexSettings>('/api/workspace/index/settings', { path, ...patch });
 }
 
-/** Whether the background refresh helper is installed + whether the platform
- *  supports it (macOS). The per-folder on/off lives in each folder's settings. */
-export interface IndexAgentStatus { installed: boolean; supported: boolean; }
-
-export function getIndexAgent(): Promise<IndexAgentStatus> {
-  return get<IndexAgentStatus>('/api/workspace/index/agent');
-}
-
 /** Remove one folder from the recent list (no-op server-side if it's indexed). */
 export function removeRecentWorkspace(path: string): Promise<{ recent: string[] }> {
   return post<{ recent: string[] }>('/api/workspace/recent/remove', { path });

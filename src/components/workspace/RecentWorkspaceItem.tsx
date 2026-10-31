@@ -13,7 +13,6 @@ export interface RecentWorkspaceItemProps {
   stopping: boolean;
   settings: IndexSettings | undefined;
   menuOpen: boolean;
-  agentSupported: boolean;
   onSelect: () => void;
   onRemoveRecent: (e: React.MouseEvent) => void;
   onToggleMenu: (e: React.MouseEvent) => void;
@@ -31,7 +30,6 @@ export const RecentWorkspaceItem: React.FC<RecentWorkspaceItemProps> = ({
   stopping,
   settings: s,
   menuOpen,
-  agentSupported,
   onSelect,
   onRemoveRecent,
   onToggleMenu,
@@ -129,7 +127,6 @@ export const RecentWorkspaceItem: React.FC<RecentWorkspaceItemProps> = ({
               )}
               <IndexSettingsPanel
                 settings={s}
-                agentSupported={agentSupported}
                 onChange={onChange}
                 onEngineChange={onEngineChange}
                 onDescriptionsEngineChange={onDescriptionsEngineChange}

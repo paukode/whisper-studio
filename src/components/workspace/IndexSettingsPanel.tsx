@@ -5,8 +5,6 @@ import type { IndexEngineOption, IndexSettings, IndexSettingsPatch } from '@/api
 
 interface IndexSettingsPanelProps {
   settings: IndexSettings;
-  /** Whether the background-refresh helper is supported (macOS launchd). */
-  agentSupported: boolean;
   onChange: (patch: IndexSettingsPatch) => void;
   /** Engine changes route through the dialog so it can download the picked
    *  on-device model first. The label is for the download banner. */
@@ -110,7 +108,7 @@ const NoModelsNote: React.FC = () => (
  * the new-folder section of the connect dialog, so a folder is configured the
  * same way before or after it lands in Recent.
  */
-export const IndexSettingsPanel: React.FC<IndexSettingsPanelProps> = ({ settings: s, agentSupported, onChange, onEngineChange, onDescriptionsEngineChange }) => {
+export const IndexSettingsPanel: React.FC<IndexSettingsPanelProps> = ({ settings: s, onChange, onEngineChange, onDescriptionsEngineChange }) => {
   // Engine choices for the active model mode: cloud/hybrid list Haiku + every
   // on-device model from the config (with download state for the "downloads on
   // first pick" suffix), local lists only the models already on disk. No
@@ -178,17 +176,15 @@ export const IndexSettingsPanel: React.FC<IndexSettingsPanelProps> = ({ settings
         {Array.from({ length: 24 }, (_, h) => (<option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>))}
       </select>
     </label>
-    {agentSupported && (
-      <label className="ws-menu-line">
-        <input
-          type="checkbox"
-          checked={s.refresh_when_closed}
-          disabled={!s.schedule.enabled}
-          onChange={(e) => onChange({ refresh_when_closed: e.target.checked })}
-        />
-        Keep refreshing even when the app is closed
-      </label>
-    )}
+    <label className="ws-menu-line">
+      <input
+        type="checkbox"
+        checked={s.refresh_when_closed}
+        disabled={!s.schedule.enabled}
+        onChange={(e) => onChange({ refresh_when_closed: e.target.checked })}
+      />
+      Keep refreshing even when the app is closed
+    </label>
     <label className="ws-menu-line">
       <input
         type="checkbox"

@@ -278,12 +278,3 @@ async def put_index_settings(request: Request):
     scheduler.apply_workspace(ws)
     agent.regenerate()
     return settings
-
-
-@router.get("/agent")
-async def get_agent():
-    """Whether the background refresh helper is installed (supported is always
-    true). The per-folder on/off lives in /settings."""
-    from . import agent
-
-    return agent.status()

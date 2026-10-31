@@ -10,7 +10,6 @@ import {
   cancelIndex,
   getIndexSettings,
   updateIndexSettings,
-  getIndexAgent,
   removeRecentWorkspace,
   clearUnindexedRecents,
   type IndexStatus,
@@ -98,11 +97,10 @@ export const WorkspaceConnectDialog: React.FC = () => {
   // we show "Stopping…" immediately so the click visibly registers, then clear
   // the flag once a status poll reports the build is no longer running.
   const [stopping, setStopping] = useState<Record<string, boolean>>({});
-  // Per-folder settings (loaded lazily when a folder's ⋯ menu opens), the open
-  // menu's path, and whether the background helper is supported on this platform.
+  // Per-folder settings (loaded lazily when a folder's ⋯ menu opens) and the
+  // open menu's path.
   const [settingsByPath, setSettingsByPath] = useState<Record<string, IndexSettings>>({});
   const [openMenu, setOpenMenu] = useState<string | null>(null);
-  const [agentSupported, setAgentSupported] = useState(false);
   const statusesRef = useRef(statuses);
   useEffect(() => {
     statusesRef.current = statuses;
@@ -143,14 +141,6 @@ export const WorkspaceConnectDialog: React.FC = () => {
     },
     [clearStoppedFlags],
   );
-
-  // Is the background helper supported here (macOS)? Once per open.
-  useEffect(() => {
-    if (!isOpen) return;
-    getIndexAgent()
-      .then((a) => setAgentSupported(a.supported))
-      .catch(() => {});
-  }, [isOpen]);
 
   // For a freshly-picked folder (not yet in Recent), load its pending index
   // settings when "index on connect" is ticked, so the inline steps below the
@@ -494,7 +484,7 @@ export const WorkspaceConnectDialog: React.FC = () => {
 
   // Native OS folder picker as a secondary option. The in-page browser is
   // the canonical flow (recents + sorting); this is for users who prefer
-  // the system dialog. Silently no-ops if the backend can't open one.
+  // the system dialog. If the request fails it says so and points to Browse.
   const handleNativePick = useCallback(async () => {
     try {
       const data = await get<{ path: string | null; cancelled?: boolean }>(
@@ -502,7 +492,7 @@ export const WorkspaceConnectDialog: React.FC = () => {
       );
       if (data.path) void connectTo(data.path);
     } catch {
-      setError('Native folder picker is not available here. Use Browse instead.');
+      setError('Could not open the folder picker. Use Browse instead.');
     }
   }, [connectTo]);
 
@@ -574,7 +564,6 @@ export const WorkspaceConnectDialog: React.FC = () => {
       stopping={!!stopping[wsPath]}
       settings={settingsByPath[wsPath]}
       menuOpen={openMenu === wsPath}
-      agentSupported={agentSupported}
       onSelect={() => handleSelectRecent(wsPath)}
       onRemoveRecent={(e) => void handleRemoveRecent(e, wsPath)}
       onToggleMenu={(e) => {
@@ -715,7 +704,6 @@ export const WorkspaceConnectDialog: React.FC = () => {
                   <div className="ws-new-settings-title">Indexing options for this folder</div>
                   <IndexSettingsPanel
                     settings={newFolderSettings}
-                    agentSupported={agentSupported}
                     onChange={(patch) => updateOne(normalizedPath, patch)}
                     onEngineChange={(v, label) => void handleEngineChange(normalizedPath, 'typed_relations', v, label)}
                     onDescriptionsEngineChange={(v, label) => void handleEngineChange(normalizedPath, 'entity_descriptions', v, label)}
