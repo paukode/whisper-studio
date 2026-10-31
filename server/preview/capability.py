@@ -17,7 +17,6 @@ import importlib.util
 import json
 import logging
 import os
-import platform
 
 log = logging.getLogger("whisper-studio")
 
@@ -37,12 +36,7 @@ def _browsers_root() -> str:
     override = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
     if override:
         return os.path.expanduser(override)
-    system = platform.system()
-    if system == "Darwin":
-        return os.path.expanduser("~/Library/Caches/ms-playwright")
-    if system == "Windows":
-        return os.path.expanduser("~/AppData/Local/ms-playwright")
-    return os.path.expanduser("~/.cache/ms-playwright")
+    return os.path.expanduser("~/Library/Caches/ms-playwright")
 
 
 def is_playwright_importable() -> bool:

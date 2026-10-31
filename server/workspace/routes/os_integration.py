@@ -1,11 +1,10 @@
-"""OS file-manager integration: open a file with its default app, or reveal it
-in Finder/Explorer. Reveal accepts absolute paths inside any indexed root so
-grounded citations resolve.
+"""Finder integration: open a file with its default app, or reveal it in
+Finder. Reveal accepts absolute paths inside any indexed root so grounded
+citations resolve.
 """
 
 import json
 import os
-import platform
 import subprocess
 
 from fastapi import Request
@@ -14,16 +13,6 @@ from fastapi.responses import Response
 from .. import router
 from ..paths import _ws_validate_path
 from ..state import get_workspace_path, load_save_locations
-
-
-def _system() -> str:
-    """The host OS family, behind one seam.
-
-    Both routes below branch on it to pick `open` / `xdg-open` / explorer.
-    Tests pin this instead of patching the stdlib module globally, so the
-    macOS branch stays covered on a Linux CI runner without the assertions
-    silently becoming host-dependent."""
-    return platform.system()
 
 
 @router.post("/open-with")
@@ -86,26 +75,14 @@ async def ws_open_with(request: Request):
                 status_code=404,
                 media_type="application/json",
             )
-    system = _system()
-    if system == "Darwin":
-        subprocess.Popen(["open", full])
-    elif system == "Linux":
-        subprocess.Popen(["xdg-open", full])
-    elif system == "Windows":
-        os.startfile(full)
-    else:
-        return Response(
-            content=json.dumps({"error": "Unsupported platform"}),
-            status_code=500,
-            media_type="application/json",
-        )
+    subprocess.Popen(["open", full])
     return {"path": path, "opened": True}
 
 
 @router.post("/reveal")
 async def ws_reveal(request: Request):
-    """Reveal a file in the OS file manager (Finder/Explorer) — selects it in
-    its folder rather than opening it. Used by the chat 'source' links.
+    """Reveal a file in Finder: selects it in its folder rather than opening
+    it. Used by the chat 'source' links.
 
     Accepts a workspace-relative path (resolved against the connected workspace)
     or an absolute path — the latter is allowed only when it lives inside the
@@ -162,19 +139,5 @@ async def ws_reveal(request: Request):
                 status_code=404,
                 media_type="application/json",
             )
-    system = _system()
-    if system == "Darwin":
-        subprocess.Popen(["open", "-R", full])  # reveal + select in Finder
-    elif system == "Linux":
-        subprocess.Popen(
-            ["xdg-open", os.path.dirname(full)]
-        )  # no universal "select"; open the folder
-    elif system == "Windows":
-        subprocess.Popen(["explorer", "/select,", full])
-    else:
-        return Response(
-            content=json.dumps({"error": "Unsupported platform"}),
-            status_code=500,
-            media_type="application/json",
-        )
+    subprocess.Popen(["open", "-R", full])  # reveal + select in Finder
     return {"path": path, "revealed": True}

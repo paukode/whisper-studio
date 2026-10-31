@@ -255,20 +255,15 @@ def _process_name(pid: int) -> str:
     """The executable name of ``pid``: its basename, with a login shell's
     leading '-' dropped. Empty when it cannot be read (a leaderless group)."""
     import subprocess
-    import sys
 
     try:
-        if sys.platform.startswith("linux"):
-            with open(f"/proc/{pid}/comm", encoding="utf-8", errors="replace") as f:
-                name = f.read().strip()
-        else:
-            out = subprocess.run(
-                ["ps", "-o", "comm=", "-p", str(pid)],
-                capture_output=True,
-                text=True,
-                timeout=1.0,
-            )
-            name = out.stdout.strip()
+        out = subprocess.run(
+            ["ps", "-o", "comm=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            timeout=1.0,
+        )
+        name = out.stdout.strip()
     except (OSError, subprocess.SubprocessError):
         return ""
     return os.path.basename(name).lstrip("-")

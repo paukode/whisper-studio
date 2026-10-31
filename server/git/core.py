@@ -83,7 +83,6 @@ def find_git_root(start_path: str) -> str | None:
         return _GIT_ROOT_CACHE[resolved]
 
     current = resolved
-    root = os.path.splitdrive(current)[0] + os.sep if os.name == "nt" else "/"
 
     while True:
         git_path = os.path.join(current, ".git")
@@ -102,18 +101,6 @@ def find_git_root(start_path: str) -> str | None:
         if parent == current:
             break
         current = parent
-
-    # Check root directory as well
-    git_path = os.path.join(root, ".git")
-    try:
-        st = os.stat(git_path)
-        if st.st_mode & 0o170000 in (0o040000, 0o100000):
-            result = unicodedata.normalize("NFC", root)
-            _evict_if_full()
-            _GIT_ROOT_CACHE[resolved] = result
-            return result
-    except OSError:
-        pass
 
     _evict_if_full()
     _GIT_ROOT_CACHE[resolved] = None

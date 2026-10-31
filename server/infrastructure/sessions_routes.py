@@ -426,19 +426,10 @@ _OPEN_WORKSPACE_APPS = ("vscode", "kiro", "finder")
 
 
 def _open_workspace_cmd(app: str, path: str) -> list[str]:
-    import platform
-
-    if platform.system() == "Darwin":
-        return {
-            "finder": ["open", path],
-            "vscode": ["open", "-a", "Visual Studio Code", path],
-            "kiro": ["open", "-a", "Kiro", path],
-        }[app]
-    # Best effort elsewhere: file manager via xdg-open, editors via their CLIs.
     return {
-        "finder": ["xdg-open", path],
-        "vscode": ["code", path],
-        "kiro": ["kiro", path],
+        "finder": ["open", path],
+        "vscode": ["open", "-a", "Visual Studio Code", path],
+        "kiro": ["open", "-a", "Kiro", path],
     }[app]
 
 

@@ -374,13 +374,8 @@ def _pid_alive(pid: int) -> bool:
 
 
 def _system_boot_time() -> float | None:
-    """Epoch seconds of the last system boot (macOS sysctl / Linux /proc)."""
+    """Epoch seconds of the last system boot (macOS sysctl kern.boottime)."""
     try:
-        if os.path.exists("/proc/stat"):
-            with open("/proc/stat") as f:
-                for line in f:
-                    if line.startswith("btime "):
-                        return float(line.split()[1])
         import re
         import subprocess
 
