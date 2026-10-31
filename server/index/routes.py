@@ -282,8 +282,8 @@ async def put_index_settings(request: Request):
 
 @router.get("/agent")
 async def get_agent():
-    """Whether the background refresh helper is installed, and whether this
-    platform supports it (macOS). The per-folder on/off lives in /settings."""
+    """Whether the background refresh helper is installed (supported is always
+    true). The per-folder on/off lives in /settings."""
     from . import agent
 
     return agent.status()

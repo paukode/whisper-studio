@@ -177,21 +177,12 @@ async def _run_folder_dialog() -> tuple[int, str]:
 @router.get("/pick-folder")
 async def ws_pick_folder():
     """Open native OS folder picker dialog and return the selected path."""
-    import platform
-
-    system = platform.system()
-    if system == "Darwin":
-        try:
-            returncode, stdout = await _run_folder_dialog()
-        except TimeoutError:
-            return {"path": None, "cancelled": True}
-        if returncode == 0:
-            path = stdout.strip().rstrip("/")
-            if path:
-                return {"path": path}
+    try:
+        returncode, stdout = await _run_folder_dialog()
+    except TimeoutError:
         return {"path": None, "cancelled": True}
-    return Response(
-        content=json.dumps({"error": "Native folder picker not available on this platform"}),
-        status_code=501,
-        media_type="application/json",
-    )
+    if returncode == 0:
+        path = stdout.strip().rstrip("/")
+        if path:
+            return {"path": path}
+    return {"path": None, "cancelled": True}

@@ -266,8 +266,7 @@ def _safe_write_file(src_file: str, dst_file: str) -> int:
         )
     with open(src_file, "rb") as f:
         data = f.read()
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-    flags |= getattr(os, "O_NOFOLLOW", 0)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
     fd = os.open(dst_file, flags, 0o600)
     try:
         os.write(fd, data)
@@ -443,7 +442,7 @@ def _reconstruct_tree(files: list[tuple[str, bytes]], tmp: str) -> list[str]:
         real_parent = os.path.realpath(parent)
         if not (real_parent == root or real_parent.startswith(root + os.sep)):
             raise SkillImportError(f"path escaped tempdir: {safe}")
-        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
         try:
             fd = os.open(dest, flags, 0o600)
         except FileExistsError:

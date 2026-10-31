@@ -31,7 +31,6 @@ import secrets
 import signal
 import struct
 import subprocess
-import sys
 import termios
 import threading
 import time
@@ -504,20 +503,14 @@ async def run_in_session(
 _SETTLE_WINDOW_S = 0.4
 _SEND_POLL_INTERVAL = 0.05
 
-# Wait-channel substrings that mean "blocked reading a terminal". Per-OS
-# dialects (Linux /proc/<pid>/wchan vs macOS `ps -o wchan`); deliberately not a
-# union — matching the wrong OS's spelling would misclassify a busy process.
+# `ps -o wchan` substrings that mean "blocked reading a terminal".
 #
-# Platform honesty: on Linux /proc/<pid>/wchan names the kernel function, so a
-# tty read is positively detectable. On macOS `ps -o wchan` returns "-" for
-# other processes under normal privileges, so stdin_read cannot be PROVEN there
-# and the classifier conservatively reports inferred_idle instead of
-# over-claiming. The darwin entry is kept for the rare host where wchan is
-# exposed; it simply never matches otherwise.
-_TTY_READ_WCHANS = {
-    "linux": ("n_tty_read", "tty_read", "wait_woken"),
-    "darwin": ("ttyin",),
-}
+# Honesty note: under normal privileges macOS `ps -o wchan` usually returns "-"
+# for other processes, so stdin_read usually cannot be PROVEN and the
+# classifier conservatively reports inferred_idle instead of over-claiming. The
+# signature is kept for the host where wchan is exposed; otherwise it simply
+# never matches.
+_TTY_READ_WCHANS = ("ttyin",)
 
 
 def _foreground_pgrp(session: "_PtySession") -> int | None:
@@ -536,20 +529,15 @@ def _wait_channel(pid: int) -> str:
     in right now. Empty string when it can't be read. Used only as a positive
     signal for `stdin_read`; a miss falls back to `inferred_idle`."""
     try:
-        if sys.platform.startswith("linux"):
-            with open(f"/proc/{pid}/wchan", encoding="utf-8", errors="replace") as f:
-                return f.read().strip()
-        if sys.platform == "darwin":
-            out = subprocess.run(
-                ["ps", "-o", "wchan=", "-p", str(pid)],
-                capture_output=True,
-                text=True,
-                timeout=1.0,
-            )
-            return out.stdout.strip()
+        out = subprocess.run(
+            ["ps", "-o", "wchan=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            timeout=1.0,
+        )
     except (OSError, subprocess.SubprocessError):
         return ""
-    return ""
+    return out.stdout.strip()
 
 
 def _blocked_on_tty_read(pgrp: int) -> bool:
@@ -558,13 +546,7 @@ def _blocked_on_tty_read(pgrp: int) -> bool:
     the caller reports the weaker `inferred_idle` rather than over-claiming."""
     if pgrp is None or pgrp <= 0:
         return False
-    signatures = _TTY_READ_WCHANS.get(
-        "linux" if sys.platform.startswith("linux") else sys.platform, ()
-    )
-    if not signatures:
-        return False
-    wchan = _wait_channel(pgrp)
-    return any(sig in wchan for sig in signatures)
+    return any(sig in _wait_channel(pgrp) for sig in _TTY_READ_WCHANS)
 
 
 def classify_wait_reason(session: "_PtySession", *, settled: bool) -> str:

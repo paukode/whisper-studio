@@ -44,7 +44,7 @@ check).
 Run these checks sequentially:
 
 1. Check `gh` CLI: `ws_run_command("gh --version")`
-   - If it fails: `notify_user` with status=error: "GitHub CLI (gh) is not installed. Install it from https://cli.github.com/ then try again.\n\n- macOS: `brew install gh`\n- Windows: `winget install --id GitHub.cli`\n- Linux: See https://github.com/cli/cli#installation"
+   - If it fails: `notify_user` with status=error: "GitHub CLI (gh) is not installed. Install it from https://cli.github.com/ then try again.\n\n- macOS: `brew install gh`"
    - Stop after notifying.
 
 2. Check auth: `ws_run_command("gh auth status -a")`

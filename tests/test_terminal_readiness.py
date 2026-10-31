@@ -2,10 +2,10 @@
 input (with a typed wait reason), and terminal_send drives a persistent
 interactive PTY whose state survives across calls.
 
-These use a real PTY (this platform has one). stdin_read is only positively
-detectable on Linux (/proc/<pid>/wchan); on macOS the classifier honestly
-reports inferred_idle, so the assertions below check the reasons that hold on
-every platform: session_exit, fast idle return, and state persistence.
+These use a real PTY. On macOS `ps -o wchan` usually cannot prove a tty read,
+so the classifier honestly reports inferred_idle; the assertions below check
+the reasons that always hold: session_exit, fast idle return, and state
+persistence. stdin_read is covered by forcing the tty-read probe.
 """
 
 import asyncio

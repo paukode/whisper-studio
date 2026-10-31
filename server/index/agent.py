@@ -164,17 +164,15 @@ def uninstall() -> dict:
         except Exception:  # noqa: BLE001
             pass
         log.info("Index refresh agent removed")
-    return {"installed": False, "supported": sys.platform == "darwin"}
+    return {"installed": False, "supported": True}
 
 
 def sync() -> dict:
     """Install/refresh the agent if any folder opted in (wake at their hours), or
-    remove it if none did. Called whenever a workspace's settings change. macOS
-    only. Rewrites the plist only when its content differs from what we'd
+    remove it if none did. Called whenever a workspace's settings change.
+    Rewrites the plist only when its content differs from what we'd
     write now, so a stale registration (moved app, new interpreter, changed
     WHISPER_HOME) self-heals without churning launchctl on every call."""
-    if sys.platform != "darwin":
-        return {"installed": False, "supported": False}
     intervals = _wake_intervals()
     if not intervals:
         return uninstall()
@@ -187,7 +185,7 @@ def heal_if_stale() -> None:
     """Startup self-heal: if an agent is registered but its plist no longer
     matches what we'd write (the app moved, was updated, or the app home
     changed), re-register it. No-op when nothing is installed. Best-effort."""
-    if sys.platform != "darwin" or not is_installed():
+    if not is_installed():
         return
     try:
         sync()
@@ -204,7 +202,7 @@ def regenerate() -> None:
 
 
 def status() -> dict:
-    return {"installed": is_installed(), "supported": sys.platform == "darwin"}
+    return {"installed": is_installed(), "supported": True}
 
 
 # ── the worker (run by launchd) ──────────────────────────────────────────────

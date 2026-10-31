@@ -554,7 +554,6 @@ def test_the_folder_picker_does_not_block_other_requests(monkeypatch):
         return _Dialog()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
-    monkeypatch.setattr("platform.system", lambda: "Darwin")
 
     async def go():
         async with _client() as client:
