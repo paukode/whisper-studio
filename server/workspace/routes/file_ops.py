@@ -197,7 +197,7 @@ async def ws_source_file(path: str = "", raw: bool = False):
                 "name": name,
                 "kind": "unsupported",
                 "message": "Couldn't extract a preview for this document. "
-                "Cmd/Ctrl-click the source link to open it in Finder.",
+                "Cmd-click the source link to reveal it in Finder.",
             }
 
     if ext in _WS_BINARY_EXTS:  # audio/video/archives/executables/…
@@ -206,7 +206,7 @@ async def ws_source_file(path: str = "", raw: bool = False):
             "name": name,
             "kind": "unsupported",
             "message": "Preview isn't available for this file type. "
-            "Cmd/Ctrl-click the source link to open it in Finder.",
+            "Cmd-click the source link to reveal it in Finder.",
         }
 
     # Everything else is text (code, markdown, txt, csv, json, …).
@@ -217,7 +217,7 @@ async def ws_source_file(path: str = "", raw: bool = False):
                 "name": name,
                 "kind": "unsupported",
                 "message": "This file is too large to preview here. "
-                "Cmd/Ctrl-click the source link to open it in Finder.",
+                "Cmd-click the source link to reveal it in Finder.",
             }
         with open(full, errors="replace") as f:
             content = f.read()

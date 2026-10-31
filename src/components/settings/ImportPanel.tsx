@@ -76,7 +76,7 @@ export const ImportPanel: React.FC = () => {
     } catch {
       addToast({
         type: 'error',
-        message: 'Native folder picker is not available on this platform.',
+        message: 'Could not open the folder picker.',
       });
     }
   }, [addToast]);
@@ -90,7 +90,7 @@ export const ImportPanel: React.FC = () => {
     } catch {
       addToast({
         type: 'error',
-        message: 'Native folder picker is not available on this platform.',
+        message: 'Could not open the folder picker.',
       });
     }
   }, [addToast]);
