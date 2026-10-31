@@ -165,3 +165,35 @@ def test_a_new_venv_is_checked_for_arm64_before_it_is_created():
     check = lines.index('_require_arm64_python "$VENV_PYTHON"')
     create = lines.index('"$VENV_PYTHON" -m venv "$VENV_DIR"')
     assert select < check < create
+
+
+def test_a_kept_venv_is_checked_for_arm64_before_it_is_used():
+    """A venv/ kept from an earlier run gets the same check before it is
+    activated: one built under Rosetta would otherwise be reused as is."""
+    lines = [line.strip() for line in SETUP.splitlines()]
+    found = lines.index('echo "Virtual environment found, skipping Python setup."')
+    check = lines.index(
+        '_require_arm64_python "$VENV_DIR/bin/python" "Delete $VENV_DIR/ and re-run ./setup.sh."'
+    )
+    activate = lines.index('source "$VENV_DIR/bin/activate"', found)
+    assert found + 1 == check < activate
+
+
+def test_a_kept_venv_that_is_not_arm64_says_to_delete_it(tmp_path):
+    python = tmp_path / "venv" / "bin" / "python"
+    _stand_in(python, "exit 1")
+    script = (
+        _function("_require_arm64_python")
+        + f'_require_arm64_python "{python}" "Delete venv/ and re-run ./setup.sh."\necho reached\n'
+    )
+
+    out = subprocess.run(
+        ["/bin/bash", "-c", script], capture_output=True, text=True, env={"PATH": "/usr/bin:/bin"}
+    )
+
+    assert out.returncode == 1
+    assert "reached" not in out.stdout
+    assert out.stderr.strip() == (
+        f"ERROR: {python} is not an arm64 (Apple silicon) Python. "
+        "Delete venv/ and re-run ./setup.sh."
+    )

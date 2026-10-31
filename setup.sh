@@ -438,16 +438,19 @@ fi
 # Homebrew Python under /usr/local, can be an x86_64 build that runs under
 # Rosetta even from a native arm64 shell, which require_macos_arm64 cannot see.
 # The mlx wheels are arm64 only, so refuse instead of building a venv that
-# cannot install them.
+# cannot install them. A venv kept from an earlier run gets the same check:
+# one built under Rosetta would otherwise be reused as is. $2 replaces the
+# advice in the error.
 _require_arm64_python() {
     if ! "$1" -c 'import platform, sys; sys.exit(platform.machine() != "arm64")' >/dev/null 2>&1; then
-        echo "ERROR: $1 is not an arm64 (Apple silicon) Python. Install an arm64 Python (Homebrew under /opt/homebrew) and re-run." >&2
+        echo "ERROR: $1 is not an arm64 (Apple silicon) Python. ${2:-Install an arm64 Python (Homebrew under /opt/homebrew) and re-run.}" >&2
         exit 1
     fi
 }
 
 if [ -d "$VENV_DIR" ]; then
     echo "Virtual environment found, skipping Python setup."
+    _require_arm64_python "$VENV_DIR/bin/python" "Delete $VENV_DIR/ and re-run ./setup.sh."
     source "$VENV_DIR/bin/activate"
     if ! _python_loads_extensions "$VENV_DIR/bin/python"; then
         echo "  (Vector search is using the numpy fallback. For faster sqlite-vec search, delete venv/ and re-run this script with Homebrew available.)"
