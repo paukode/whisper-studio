@@ -52,3 +52,51 @@ def test_an_installed_homebrew_python_builds_the_venv(tmp_path, version):
 
     assert out.stdout.strip() == str(brew_python)
     assert "install" not in calls.read_text()
+
+
+def _run_platform_check(tmp_path: Path, system: str, machine: str) -> subprocess.CompletedProcess:
+    """require_macos_arm64 from setup.sh, against a uname stand-in that reports
+    the given OS (uname -s) and CPU (uname -m)."""
+    tools = tmp_path / "bin"
+    _stand_in(tools / "uname", f'[ "$1" = -m ] && echo "{machine}" || echo "{system}"')
+    script = _function("require_macos_arm64") + "require_macos_arm64\necho reached\n"
+    return subprocess.run(
+        ["/bin/bash", "-c", script],
+        capture_output=True,
+        text=True,
+        env={"PATH": f"{tools}:/usr/bin:/bin"},
+    )
+
+
+@pytest.mark.parametrize(
+    ("system", "machine"),
+    [("Linux", "x86_64"), ("Linux", "aarch64"), ("Darwin", "x86_64"), ("FreeBSD", "arm64")],
+)
+def test_setup_refuses_anything_but_macos_on_apple_silicon(tmp_path, system, machine):
+    """Another OS, an Intel Mac or a Rosetta shell (both report x86_64) stops
+    with the same message the server's platform guard gives, and nothing after
+    the check runs."""
+    out = _run_platform_check(tmp_path, system, machine)
+
+    assert out.returncode == 1
+    assert "reached" not in out.stdout
+    assert out.stderr.strip() == (
+        f"Whisper Studio requires macOS on Apple silicon (arm64). Detected: {system}/{machine}."
+    )
+
+
+def test_setup_continues_on_macos_on_apple_silicon(tmp_path):
+    out = _run_platform_check(tmp_path, "Darwin", "arm64")
+
+    assert out.returncode == 0
+    assert out.stdout.strip() == "reached"
+    assert out.stderr == ""
+
+
+def test_setup_checks_the_platform_before_it_checks_or_installs_anything():
+    """The platform check is the first command setup.sh runs, ahead of the
+    Python check (which can offer a Homebrew install)."""
+    lines = SETUP.splitlines()
+    assert lines.index("require_macos_arm64") < lines.index("require_python_312")
+    first_call = next(line for line in lines if re.fullmatch(r"(require|check)_[a-z0-9_]+", line))
+    assert first_call == "require_macos_arm64"

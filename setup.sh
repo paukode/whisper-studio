@@ -8,6 +8,21 @@ SETUP_LOG="setup.log"
 # default. .nvmrc lets us bump Node without editing this script.
 NODE_VERSION="$( [ -f .nvmrc ] && tr -d ' \n' < .nvmrc || echo 22.16.0 )"
 
+# Whisper Studio supports one platform: macOS on Apple silicon (arm64). Stop
+# here, before anything is checked or installed, on any other OS or CPU. An
+# Intel Mac, and a shell running under Rosetta, report x86_64 and are refused.
+# Same message as server/infrastructure/platform_guard.py.
+require_macos_arm64() {
+    local os arch
+    os="$(uname -s)"
+    arch="$(uname -m)"
+    if [ "$os" != "Darwin" ] || [ "$arch" != "arm64" ]; then
+        echo "Whisper Studio requires macOS on Apple silicon (arm64). Detected: $os/$arch." >&2
+        exit 1
+    fi
+}
+require_macos_arm64
+
 # Ensure Python 3.12+. The Mac app ships CPython 3.13, and the voice-mode SDK
 # (aws-sdk-bedrock-runtime in requirements.txt) only installs on 3.12 or newer,
 # so an older interpreter would silently produce an app without voice mode. If

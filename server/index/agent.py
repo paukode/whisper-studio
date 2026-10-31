@@ -271,6 +271,13 @@ def run() -> int:
 
 
 if __name__ == "__main__":
+    # launchd starts this worker on its own, not through server/main.py, so it
+    # makes the same platform check first: refuse (fail closed) on anything but
+    # macOS on Apple silicon, before any action or the heavy index imports run.
+    from server.infrastructure.platform_guard import require_macos_arm64
+
+    require_macos_arm64()
+
     import argparse
 
     logging.basicConfig(level=logging.INFO)

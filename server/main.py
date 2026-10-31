@@ -4,6 +4,12 @@ import os
 import threading
 from contextlib import asynccontextmanager
 
+# Stop on anything but macOS on Apple silicon BEFORE any third-party or server
+# module loads, so an unsupported machine gets one clear message (fail closed).
+from server.infrastructure.platform_guard import require_macos_arm64
+
+require_macos_arm64()
+
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
