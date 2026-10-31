@@ -5,9 +5,7 @@ and was lossy in ways nothing reported: table cell shading vanished, fonts
 resolved to whatever the system had rather than what the CSS asked for, and
 point sizes arrived inflated by 4/3 because the importer converted at 96
 DPI. Undoing that damage took regex surgery on the emitted OOXML. Building
-the document directly means the file says what we meant the first time, and
-it works off macOS, so the docx tests finally run on every CI runner instead
-of skipping on Linux.
+the document directly means the file says what we meant the first time.
 
 The supported vocabulary is deliberately the one create_docx advertises,
 not "HTML":

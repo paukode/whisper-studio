@@ -99,7 +99,7 @@ def wait_group_gone(
     process: subprocess.Popen, timeout: float, poll_s: float = _GROUP_POLL_S
 ) -> bool:
     """Poll until the whole group has exited, reaping the leader on the way
-    (an unreaped leader would keep the group alive as a zombie on Linux).
+    (an unreaped leader would keep the group alive as a zombie).
     True when it is gone within ``timeout`` seconds. Blocking."""
     pgid = _group_id(process)
     if pgid is None:

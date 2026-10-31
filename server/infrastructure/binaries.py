@@ -21,8 +21,9 @@ import subprocess
 log = logging.getLogger("whisper-studio")
 
 # Well-known locations for user-installed CLIs, probed when the login-shell
-# capture fails or comes back thin. Covers Homebrew (arm64 + intel), pipx /
-# `pip install --user`, and Rust/cargo tools.
+# capture fails or comes back thin. Covers Homebrew (/opt/homebrew), pkg
+# installers that write to /usr/local, pipx / `pip install --user`, and
+# Rust/cargo tools.
 _COMMON_TOOL_DIRS = (
     "/opt/homebrew/bin",
     "/opt/homebrew/sbin",

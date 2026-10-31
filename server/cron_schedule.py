@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 def _system_tz_name() -> str:
     """The host's IANA timezone name (e.g. 'America/New_York').
 
-    Resolves from $TZ, then the /etc/localtime symlink (macOS + Linux), then
+    Resolves from $TZ, then the /etc/localtime symlink (macOS), then
     falls back to UTC. No third-party dependency.
     """
     tz = (os.environ.get("TZ") or "").strip()

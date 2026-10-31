@@ -32,10 +32,10 @@ class InstallError(Exception):
 @lru_cache(maxsize=1)
 def _total_memory_bytes() -> int | None:
     """Physical RAM of the machine THIS process is running on, measured at
-    call time — never a constant for any particular machine. Works on macOS
-    and Linux via ``os.sysconf``; falls back to ``sysctl`` for a Python build
-    that doesn't expose those keys. ``None`` if neither path succeeds, so
-    callers omit the fit verdict rather than guess."""
+    call time, never a constant for any particular machine. Works on macOS
+    via ``os.sysconf``; falls back to ``sysctl hw.memsize`` for a Python
+    build that doesn't expose those keys. ``None`` if neither path succeeds,
+    so callers omit the fit verdict rather than guess."""
     try:
         return int(os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE"))
     except (ValueError, OSError, AttributeError):
