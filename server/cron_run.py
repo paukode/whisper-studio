@@ -83,7 +83,13 @@ def _assemble_cron_tools(pool: list[dict]) -> list[dict]:
     assembled pool with its canonical schema, so the old always-inject shadow
     definition (from when it was a disableable skill) is gone.
     """
-    return [t for t in pool if t["name"] != "ask_user_question"]
+    from server.tool_inputs import ToolCatalog
+
+    available = pool.available if isinstance(pool, ToolCatalog) else pool
+    return ToolCatalog(
+        [t for t in pool if t["name"] != "ask_user_question"],
+        available=[t for t in available if t["name"] != "ask_user_question"],
+    )
 
 
 def _merge_notifications(notifications: list[str], tail: str) -> str:

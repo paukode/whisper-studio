@@ -140,8 +140,10 @@ class ClaudeStreamUsage:
             self.started = True
             self._take(data.get("message", {}).get("usage") or {})
         elif kind == "message_delta":
-            self._delta_seen = True
-            self._take(data.get("usage") or {})
+            usage = data.get("usage") or {}
+            if _int(usage.get("output_tokens")) is not None:
+                self._delta_seen = True
+            self._take(usage)
         elif kind == "message_stop":
             metrics = data.get("amazon-bedrock-invocationMetrics")
             if isinstance(metrics, dict):

@@ -53,7 +53,29 @@ class FakeAdapter:
 def _fork(adapter, messages=None):
     return review_fork.ReviewFork(
         adapter=adapter,
-        tools=[{"name": "memory_write"}, {"name": "ws_run_command"}],
+        # STUB descriptors for fake_route: this memory writer only takes a filename.
+        tools=[
+            {
+                "name": "memory_write",
+                "description": "Stub memory writer",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"filename": {"type": "string"}},
+                    "required": ["filename"],
+                    "additionalProperties": False,
+                },
+            },
+            {
+                "name": "ws_run_command",
+                "description": "Stub command, restricted during review",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"command": {"type": "string"}},
+                    "required": ["command"],
+                    "additionalProperties": False,
+                },
+            },
+        ],
         core_count=1,
         messages=messages
         or [

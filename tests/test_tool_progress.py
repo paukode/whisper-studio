@@ -45,8 +45,10 @@ def _fc_round(deltas: list[str]):
 
 
 def test_openai_adapter_reports_progress_per_step(monkeypatch):
-    piece = '{"html": "' + "x" * 2990 + '"'  # 3000 chars each
-    a, _fr = _adapter(monkeypatch, [_fc_round([piece, ",", piece[1:], piece[1:] + "}"])])
+    given = {"title": "Big", "html": "<!DOCTYPE html><p>" + "x" * (3 * STEP) + "</p>"}
+    encoded = json.dumps(given)
+    chunks = [encoded[i : i + 3000] for i in range(0, len(encoded), 3000)]
+    a, _fr = _adapter(monkeypatch, [_fc_round(chunks)])
     evs = asyncio.run(
         _collect(a.stream_round([{"role": "user", "content": "go"}], [], None, 0, False))
     )
@@ -56,8 +58,10 @@ def test_openai_adapter_reports_progress_per_step(monkeypatch):
     chars = [p.chars for p in progress]
     assert chars == sorted(chars) and chars[0] >= STEP
     # One report per crossed step, never per delta.
-    total = sum(len(d) for d in [piece, ",", piece[1:], piece[1:] + "}"])
+    total = len(encoded)
     assert len(progress) <= total // STEP + 1
+    (call,) = [e for e in evs if isinstance(e, EV.ToolCall)]
+    assert call.input == given
     assert isinstance(evs[-1], EV.RoundResult)
 
 

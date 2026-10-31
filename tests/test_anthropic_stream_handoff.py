@@ -29,14 +29,18 @@ class _SlowBody:
 
     def __iter__(self):
         yield _ev({"type": "message_start", "message": {"usage": {"input_tokens": 1}}})
-        yield _ev({"type": "content_block_start", "content_block": {"type": "text"}})
+        yield _ev({"type": "content_block_start", "index": 0, "content_block": {"type": "text"}})
         for i in range(4):
             time.sleep(0.1)
             self.stamps[f"t{i} "] = time.monotonic()
             yield _ev(
-                {"type": "content_block_delta", "delta": {"type": "text_delta", "text": f"t{i} "}}
+                {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "text_delta", "text": f"t{i} "},
+                }
             )
-        yield _ev({"type": "content_block_stop"})
+        yield _ev({"type": "content_block_stop", "index": 0})
         yield _ev(
             {
                 "type": "message_delta",

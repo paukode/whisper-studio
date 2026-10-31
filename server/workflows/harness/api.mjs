@@ -25,7 +25,10 @@ export function makeApi(rpcCall, notify, meta, args) {
     if (typeof name !== "string" || !name.trim()) {
       throw new Error("tool(name, args): name must be a non-empty string");
     }
-    const r = await rpcCall("tool", { name, args: toolArgs || {} });
+    if (toolArgs === null || typeof toolArgs !== "object" || Array.isArray(toolArgs)) {
+      throw new Error("tool args must be an object");
+    }
+    const r = await rpcCall("tool", { name, args: toolArgs });
     return r?.output ?? "";
   }
   const tools = new Proxy(Object.create(null), {

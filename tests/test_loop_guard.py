@@ -117,6 +117,15 @@ def _run_batch(monkeypatch, name, tool_input, output="same", guard_scope=SCOPE):
     async def _go():
         return await te.execute_tool_batch(
             [{"id": "t", "name": name, "input": tool_input}],
+            # Stub schema for the canned grep response used by the guard tests.
+            tool_schemas={
+                "ws_grep": {
+                    "type": "object",
+                    "properties": {"pattern": {"type": "string"}},
+                    "required": ["pattern"],
+                    "additionalProperties": False,
+                }
+            },
             is_concurrent_safe=lambda n: False,
             loop=asyncio.get_running_loop(),
             executor=executor,

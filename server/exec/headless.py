@@ -143,7 +143,9 @@ def _round_catalog(session_id: str, ws_connected: bool, *, attended: bool = Fals
         if t["name"] not in seen:
             seen.add(t["name"])
             tools.append(t)
-    return tools
+    from server.tool_inputs import ToolCatalog
+
+    return ToolCatalog(tools, available=[*advertised, *_deferred])
 
 
 def _resume_messages(paused: dict, answers: list[dict]) -> list:

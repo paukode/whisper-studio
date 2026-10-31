@@ -278,6 +278,21 @@ def test_tool_batch_refuses_names_outside_the_scope_and_only_when_scoped(monkeyp
     async def batch(scope):
         return await te.execute_tool_batch(
             uses,
+            # Explicit schemas for the scope-test router's read/write stubs.
+            tool_schemas={
+                "ws_read_file": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"],
+                    "additionalProperties": False,
+                },
+                "ws_write_file": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
+                    "required": ["path", "content"],
+                    "additionalProperties": False,
+                },
+            },
             is_concurrent_safe=lambda n: False,
             loop=asyncio.get_running_loop(),
             executor=executor,

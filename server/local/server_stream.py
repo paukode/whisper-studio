@@ -176,138 +176,77 @@ def _tool_results_to_messages(tool_results: list[dict], names_by_id: dict[str, s
     return msgs
 
 
-def _schema_props(schemas: list[dict]) -> dict[str, dict]:
-    """``{tool_name: {param: json_schema}}`` from the declared OpenAI functions."""
-    out: dict[str, dict] = {}
-    for s in schemas or []:
-        fn = s.get("function") or {}
-        name = fn.get("name")
-        if not name:
-            continue
-        props = ((fn.get("parameters") or {}).get("properties")) or {}
-        if isinstance(props, dict):
-            out[name] = props
-    return out
-
-
-def _coerce_arg(value, spec: dict):
-    """Best-effort coercion of one argument to its declared JSON-schema type.
-
-    Local models emit sloppier arguments than a hosted API does — a ``string``
-    parameter can arrive as a list or a number. Bedrock validates against the
-    schema before we ever see the call; llama-server hands through whatever the
-    model produced, so an un-coerced list reaches an executor that calls
-    ``.strip()`` on it and the tool call is wasted on an AttributeError.
-    Only obvious mismatches are converted; anything already correct, or too
-    ambiguous to convert, is passed through untouched for the executor to reject.
-    """
-    want = spec.get("type") if isinstance(spec, dict) else None
-    if want == "string" and not isinstance(value, str):
-        if isinstance(value, list):
-            # "path": [] means "no argument" — it must become "" so the executor's
-            # own `or "."` default applies. Left as a list it reaches .strip() and
-            # the call dies on AttributeError (observed on a Gemma fine-tune).
-            if not value:
-                return ""
-            # A single-element list is the common "path": ["a.py"] slip. Longer
-            # lists are genuinely ambiguous, so join on comma only for scalars.
-            flat = [v for v in value if isinstance(v, (str, int, float, bool))]
-            if len(flat) == 1:
-                return str(flat[0])
-            if len(flat) == len(value):
-                return ",".join(str(v) for v in flat)
-            return value
-        if isinstance(value, (int, float, bool)):
-            return str(value)
-        if value is None:
-            return ""
-        return value
-    if want in ("integer", "number") and isinstance(value, str):
-        try:
-            return int(value) if want == "integer" else float(value)
-        except ValueError:
-            return value
-    if want == "boolean" and isinstance(value, str):
-        low = value.strip().lower()
-        if low in ("true", "false"):
-            return low == "true"
-    if want == "array" and isinstance(value, (str, int, float, bool)):
-        return [value]
-    return value
-
-
-def _coerce_call_args(name: str, args: dict, props_by_tool: dict[str, dict]) -> dict:
-    """Coerce a parsed call's arguments toward the tool's declared types."""
-    props = props_by_tool.get(name)
-    if not props or not isinstance(args, dict):
-        return args
-    fixed = {}
-    for key, value in args.items():
-        spec = props.get(key)
-        new = _coerce_arg(value, spec) if isinstance(spec, dict) else value
-        if new is not value and type(new) is not type(value):
-            log.info(
-                "Coerced %s.%s from %s to %s (local models emit loose types).",
-                name,
-                key,
-                type(value).__name__,
-                type(new).__name__,
-            )
-        fixed[key] = new
-    return fixed
-
-
 class _CallAccumulator:
-    """Reassembles streamed ``tool_calls`` deltas into complete calls.
-
-    Arguments arrive as JSON string fragments across many deltas, and the index
-    field is what ties fragments to their call when several stream in parallel.
-    """
+    """Reassemble indexed calls, retaining errors until usage has arrived."""
 
     def __init__(self) -> None:
         self._by_index: dict[int, dict] = {}
+        self.error: str | None = None
+        self.seen = False
+
+    @property
+    def names(self) -> list[str]:
+        return [c["name"] for c in self._by_index.values()] or (
+            ["unknown tool"] if self.seen else []
+        )
+
+    @property
+    def argument_chars(self) -> int:
+        return sum(len(c["args"]) for c in self._by_index.values())
 
     def feed(self, deltas: list[dict]) -> None:
-        for d in deltas or []:
-            if not isinstance(d, dict):
+        self.seen = True
+        if not isinstance(deltas, list):
+            self.error = "Tool call deltas must be a list."
+            return
+        for d in deltas:
+            if not isinstance(d, dict) or type(d.get("index")) is not int or d["index"] < 0:
+                self.error = "Tool call has a missing or invalid index."
                 continue
-            idx = d.get("index", 0) or 0
-            slot = self._by_index.setdefault(idx, {"id": None, "name": None, "args": ""})
-            if d.get("id"):
-                slot["id"] = d["id"]
-            fn = d.get("function") or {}
-            if fn.get("name"):
-                slot["name"] = fn["name"]
-            if fn.get("arguments"):
-                slot["args"] += fn["arguments"]
+            idx = d["index"]
+            fn = d.get("function")
+            if not isinstance(fn, dict):
+                self.error = "Tool call is missing its function."
+                continue
+            slot = self._by_index.get(idx)
+            if slot is None:
+                name = fn.get("name")
+                if not isinstance(name, str) or not name.strip():
+                    self.error = "Orphan tool arguments: no named call was started."
+                    continue
+                slot = {"id": None, "name": name, "args": ""}
+                self._by_index[idx] = slot
+            if "id" in d and d["id"] is not None:
+                if not isinstance(d["id"], str) or not d["id"].strip():
+                    self.error = "Tool call has an invalid id."
+                elif slot["id"] not in (None, d["id"]):
+                    self.error = "Conflicting tool call ids."
+                else:
+                    slot["id"] = d["id"]
+            if "name" in fn and fn["name"] not in (None, slot["name"]):
+                self.error = "Conflicting tool call names."
+            if "arguments" in fn:
+                if not isinstance(fn["arguments"], str):
+                    self.error = "Tool arguments must be a JSON string."
+                else:
+                    slot["args"] += fn["arguments"]
 
     def finish(self) -> list[dict]:
-        """``[{id, name, input}]`` in stream order, skipping nameless slots."""
-        calls = []
-        for idx in sorted(self._by_index):
-            slot = self._by_index[idx]
-            if not slot["name"]:
-                continue
-            raw = (slot["args"] or "").strip()
-            try:
-                args = json.loads(raw) if raw else {}
-            except json.JSONDecodeError:
-                log.warning(
-                    "llama-server tool %r had unparseable arguments %r — passing {}.",
-                    slot["name"],
-                    raw[:200],
-                )
-                args = {}
-            calls.append(
-                {
-                    # A server that sends no id gets a unique one: ids key
-                    # the stored edits (server/workspace/edits.py), so a
-                    # per-round index would repeat across turns.
-                    "id": slot["id"] or f"call_{uuid.uuid4().hex[:24]}",
-                    "name": slot["name"],
-                    "input": args if isinstance(args, dict) else {},
-                }
-            )
+        """Return complete objects only, refusing the whole invalid round."""
+        from server.tool_inputs import ToolInputError, parse_tool_arguments, validate_call_ids
+
+        if self.error:
+            raise ToolInputError(self.error)
+        calls = [
+            {
+                # Some local servers omit ids; keep the unique-id fallback.
+                "id": slot["id"] or f"call_{uuid.uuid4().hex[:24]}",
+                "name": slot["name"],
+                "input": parse_tool_arguments(slot["args"], slot["name"]),
+            }
+            for _, slot in sorted(self._by_index.items())
+        ]
+        validate_call_ids(calls)
         return calls
 
 
@@ -377,4 +316,27 @@ async def _stream_round(base_url: str, payload: dict):
         raise RuntimeError(
             "model server closed the stream mid-generation (no finish_reason/[DONE])"
         )
-    yield ("done", {"calls": acc.finish(), "finish_reason": finish_reason, "usage": usage})
+    from server.tool_inputs import ToolInputError
+
+    calls = []
+    error = None
+    if acc.seen and finish_reason != "tool_calls":
+        error = f"Tool argument round did not finish normally ({finish_reason or 'missing finish reason'})."
+    if error is None:
+        try:
+            calls = acc.finish()
+        except ToolInputError as exc:
+            error = str(exc)
+    if error is None and finish_reason == "tool_calls" and not calls:
+        error = "The model reported tool calls without a complete call payload."
+    yield (
+        "done",
+        {
+            "calls": calls,
+            "finish_reason": finish_reason,
+            "usage": usage,
+            "argument_error": error,
+            "call_names": acc.names,
+            "argument_chars": acc.argument_chars,
+        },
+    )

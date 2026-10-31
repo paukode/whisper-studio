@@ -538,6 +538,9 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
             )
         _snap_loop.run_in_executor(None, _snapshot)
 
+        from server.tool_inputs import schemas_for_tools
+
+        tool_schemas = schemas_for_tools(tools)
         _tool_round = None
         try:
             # ── One model round via the provider adapter ─────────────────────
@@ -783,8 +786,17 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
             )
             yield f"data: {ndjson_dumps({'usage': {'input_tokens': round_input_tokens, 'output_tokens': round_output_tokens, 'total_input': total_input_tokens, 'total_output': total_output_tokens, 'total_prompt': total_prompt_tokens, 'cache_read_tokens': round_cache_read, 'cache_creation_tokens': round_cache_creation, 'total_cache_read': total_cache_read, 'total_cache_creation': total_cache_creation, 'estimated_cost_usd': round(total_cost, 6), 'model': ctx.model_key, 'context_used': _prompt_tokens, 'context_max': _ctx_max}})}\n\n"
 
-            # ── Tool-use extraction with replay protection ───────────────────
+            # Validate round identities before replay filtering can hide a
+            # duplicate sibling. Usage above is still accounted exactly once.
+            from server.tool_inputs import ToolInputError, validate_call_ids
+
             tool_uses_raw = [b for b in result_content if b["type"] == "tool_use"]
+            try:
+                validate_call_ids(tool_uses_raw)
+            except ToolInputError as exc:
+                yield f"data: {ndjson_dumps({'error': f'{exc} No tools from this round were run.'})}\n\n"
+                yield "data: [DONE]\n\n"
+                return
             tool_uses = []
             for _tu in tool_uses_raw:
                 if not _seen_tool_ids.has(_tu["id"]):
@@ -1017,7 +1029,13 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
             # the exits.
             _outcome = ToolRound()
             _tool_round = run_tool_round(
-                ctx, messages, tool_uses, _outcome, scope_id=_scope_id, round_num=round_num
+                ctx,
+                messages,
+                tool_uses,
+                _outcome,
+                tool_schemas=tool_schemas,
+                scope_id=_scope_id,
+                round_num=round_num,
             )
             async for _frame in _tool_round:
                 yield _frame

@@ -295,11 +295,18 @@ class WorkflowRun:
         full result is returned to the program.
         """
         name = str(params.get("name") or "")
-        args = params.get("args") or {}
+        args = params.get("args")
         if self._cancelled:
             return await self._error(mid, rpc.ERR_CANCELLED, "run cancelled")
         if not isinstance(args, dict):
             return await self._error(mid, rpc.ERR_INTERNAL, "tool args must be an object")
+        from server.chat.tool_pool import assemble_full_catalog
+        from server.tool_inputs import ToolInputError, schemas_for_tools, validate_tool_input
+
+        try:
+            validate_tool_input(name, args, schemas_for_tools(assemble_full_catalog()))
+        except ToolInputError as exc:
+            return await self._error(mid, rpc.ERR_INTERNAL, str(exc))
 
         from server.executors import is_read_only
         from server.mcp_read_only import is_mcp_tool, is_read_only_mcp_tool
@@ -339,7 +346,15 @@ class WorkflowRun:
                 mid, rpc.ERR_INTERNAL, f"tool-call cap {self._TOOL_CALL_CAP} reached"
             )
 
+        from server.security.secret_reads import SECRET_READS_KEY
         from server.skills import execute_mcp_tool, execute_tool
+
+        # A script's arguments are untrusted, including authorization stamps.
+        # Script subcalls cannot prompt for credentials or impersonate a session.
+        call_input = dict(args)
+        call_input["__session_id__"] = self.session_id
+        call_input["__agent__"] = True
+        call_input[SECRET_READS_KEY] = False
 
         # Copy the current context into the worker thread: get_workspace_path()
         # and other tool state read ContextVars (e.g. the workspace override)
@@ -349,10 +364,10 @@ class WorkflowRun:
         loop = asyncio.get_event_loop()
         try:
             if mcp:
-                result = await execute_mcp_tool(name, dict(args))
+                result = await execute_mcp_tool(name, call_input)
             else:
                 result = await loop.run_in_executor(
-                    None, lambda: ctx.run(execute_tool, name, dict(args))
+                    None, lambda: ctx.run(execute_tool, name, call_input)
                 )
         except Exception as e:  # noqa: BLE001 — surface as a JS throw, not a crash
             self.journal.tool_call({"seq": seq, "name": name, "status": "error", "error": str(e)})

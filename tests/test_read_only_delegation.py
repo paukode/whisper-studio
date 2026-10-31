@@ -48,6 +48,7 @@ NOTE = (
     {
         "filename": "planted.md",
         "name": "planted",
+        "description": "A note written by the resumed memory agent.",
         "type": "user",
         "content": "x",
         "scope": "global",
@@ -124,8 +125,20 @@ def _result(fake, request: int) -> str:
 def _delegate(monkeypatch, workspace, parent_type: str, tool: str) -> _Agents:
     """A parent of parent_type calls the delegation tool; the agent it would
     start creates a file in the workspace."""
-    model = _model(monkeypatch, parent=_calls((tool, DELEGATIONS[tool])), child=_calls(CREATE))
-    asyncio.run(_run(parent_type, "look around [parent]", workspace_path=str(workspace)))
+    session_id = f"s-{uuid.uuid4().hex[:8]}"
+    args = dict(DELEGATIONS[tool])
+    if tool == "team_create":
+        # Required model input, distinct from the executor's internal session stamp.
+        args["session_id"] = session_id
+    model = _model(monkeypatch, parent=_calls((tool, args)), child=_calls(CREATE))
+    asyncio.run(
+        _run(
+            parent_type,
+            "look around [parent]",
+            session_id=session_id,
+            workspace_path=str(workspace),
+        )
+    )
     return model
 
 

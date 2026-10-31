@@ -327,93 +327,92 @@ def test_call_accumulator_keeps_parallel_calls_separate():
     assert [c["input"]["path"] for c in calls] == ["x", "y"]
 
 
-def test_call_accumulator_survives_bad_json():
+@pytest.mark.parametrize("raw", ["{not json", "", "[]", "null", '{"x":1,"x":2}', '{"x":NaN}'])
+def test_call_accumulator_rejects_invalid_arguments(raw):
+    from server.tool_inputs import ToolInputError
+
     acc = SS._CallAccumulator()
-    acc.feed([{"index": 0, "id": "a", "function": {"name": "t", "arguments": "{not json"}}])
-    assert acc.finish() == [{"id": "a", "name": "t", "input": {}}]
+    acc.feed([{"index": 0, "id": "a", "function": {"name": "t", "arguments": raw}}])
+    with pytest.raises(ToolInputError):
+        acc.finish()
 
 
 def test_call_accumulator_gives_a_call_with_no_id_a_unique_one():
-    """Ids key the stored edits (server/workspace/edits.py), so the fallback
-    for a server that sends none must not repeat across turns the way a
-    per-round index would."""
+    """Generated ids stay unique across turns; explicit empty objects are valid."""
     ids = []
     for _ in range(2):
         acc = SS._CallAccumulator()
         acc.feed([{"index": 0, "function": {"name": "t", "arguments": "{}"}}])
         (call,) = acc.finish()
+        assert call["input"] == {}
         ids.append(call["id"])
     assert ids[0] != ids[1]
     assert all(i.startswith("call_") for i in ids)
 
 
-# ── SSE normalization ────────────────────────────────────────────────────────
+# Strict parsing preserves values; schema validation belongs to execution.
+_STUB_SCHEMAS = {
+    "t": {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string"},
+            "limit": {"type": "integer"},
+            "deep": {"type": "boolean"},
+            "globs": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["path", "limit", "deep", "globs"],
+        "additionalProperties": False,
+    }
+}
+_VALID_ARGS = {"path": "server", "limit": 20, "deep": True, "globs": ["*.py"]}
 
 
-def test_coerces_loose_argument_types_against_the_schema():
-    """Regression: the Coder emitted "path": ["dir"] for a string parameter and
-    _exec_ws_list_dir died on .strip(). Bedrock validates against the schema
-    first; llama-server hands through whatever the model produced."""
-    schemas = [
-        {
-            "function": {
-                "name": "ws_list_directory",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "path": {"type": "string"},
-                        "limit": {"type": "integer"},
-                        "deep": {"type": "boolean"},
-                        "globs": {"type": "array"},
-                    },
-                },
-            }
-        }
-    ]
-    props = SS._schema_props(schemas)
-    got = SS._coerce_call_args(
-        "ws_list_directory",
-        {"path": ["server"], "limit": "20", "deep": "true", "globs": "*.py"},
-        props,
-    )
-    assert got == {"path": "server", "limit": 20, "deep": True, "globs": ["*.py"]}
+def _accumulated_input(args):
+    acc = SS._CallAccumulator()
+    acc.feed([{"index": 0, "id": "a", "function": {"name": "t", "arguments": json.dumps(args)}}])
+    return acc.finish()[0]["input"]
 
 
-def test_empty_and_null_string_args_become_empty_string():
-    """Regression: the Coder emitted "path": [] for a string parameter, which
-    reached _exec_ws_list_dir's .strip() and killed the call. It must become ""
-    so the executor's own default applies."""
-    schemas = [
-        {
-            "function": {
-                "name": "ws_list_directory",
-                "parameters": {"type": "object", "properties": {"path": {"type": "string"}}},
-            }
-        }
-    ]
-    props = SS._schema_props(schemas)
-    assert SS._coerce_call_args("ws_list_directory", {"path": []}, props) == {"path": ""}
-    assert SS._coerce_call_args("ws_list_directory", {"path": None}, props) == {"path": ""}
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"path": ["server"]},
+        {"path": []},
+        {"path": None},
+        {"path": {"a": 1}},
+        {"limit": "20"},
+        {"deep": "true"},
+        {"globs": "*.py"},
+    ],
+)
+def test_parser_preserves_schema_invalid_values_for_boundary_rejection(changes):
+    from server.tool_inputs import ToolInputError, validate_tool_input
+
+    args = {**_VALID_ARGS, **changes}
+    parsed = _accumulated_input(args)
+    assert parsed == args
+    with pytest.raises(ToolInputError, match="type constraint"):
+        validate_tool_input("t", parsed, _STUB_SCHEMAS)
+    assert parsed == args
 
 
-def test_coercion_leaves_correct_and_ambiguous_values_alone():
-    schemas = [
-        {
-            "function": {
-                "name": "t",
-                "parameters": {"type": "object", "properties": {"path": {"type": "string"}}},
-            }
-        }
-    ]
-    props = SS._schema_props(schemas)
-    # Already correct.
-    assert SS._coerce_call_args("t", {"path": "a.py"}, props) == {"path": "a.py"}
-    # Nested object into a string is ambiguous — pass through so the executor
-    # can reject it with a clear validation error instead of us inventing a value.
-    nested = {"path": {"a": 1}}
-    assert SS._coerce_call_args("t", nested, props) == nested
-    # Unknown tool / unknown param: untouched.
-    assert SS._coerce_call_args("other", {"path": ["x"]}, props) == {"path": ["x"]}
+@pytest.mark.parametrize("path", ["a.py", ""])
+def test_parser_and_validation_preserve_correct_values(path):
+    from server.tool_inputs import validate_tool_input
+
+    args = {**_VALID_ARGS, "path": path}
+    parsed = _accumulated_input(args)
+    validate_tool_input("t", parsed, _STUB_SCHEMAS)
+    assert parsed == args
+
+
+def test_validation_refuses_unknown_tools_and_undeclared_arguments():
+    from server.tool_inputs import ToolInputError, validate_tool_input
+
+    with pytest.raises(ToolInputError, match="Unknown tool"):
+        validate_tool_input("other", _accumulated_input(_VALID_ARGS), _STUB_SCHEMAS)
+    with pytest.raises(ToolInputError, match="additionalProperties"):
+        validate_tool_input("t", _accumulated_input({**_VALID_ARGS, "extra": "x"}), _STUB_SCHEMAS)
 
 
 def _fake_httpx(monkeypatch, lines: list[str], captured: dict) -> None:

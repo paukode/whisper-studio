@@ -295,12 +295,15 @@ async def _run_batch(tool_uses: list[dict], latch):
     from concurrent.futures import ThreadPoolExecutor
 
     from server.approval.bootstrap import register_defaults
+    from server.chat.tool_pool import assemble_full_catalog
+    from server.tool_inputs import schemas_for_tools
 
     register_defaults()
     pool = ThreadPoolExecutor(max_workers=2)
     try:
         states = await te.execute_tool_batch(
             tool_uses,
+            tool_schemas=schemas_for_tools(assemble_full_catalog(ws_connected=True)),
             is_concurrent_safe=lambda n: False,
             loop=asyncio.get_running_loop(),
             executor=pool,

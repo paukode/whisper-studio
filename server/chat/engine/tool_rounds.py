@@ -84,6 +84,7 @@ async def run_tool_round(
     tool_uses: list,
     outcome: ToolRound,
     *,
+    tool_schemas: dict,
     scope_id: str,
     round_num: int,
 ):
@@ -115,6 +116,7 @@ async def run_tool_round(
     _batch_task = asyncio.create_task(
         execute_tool_batch(
             tool_uses,
+            tool_schemas=tool_schemas,
             is_concurrent_safe=_is_tool_concurrent_safe,
             loop=ctx.loop,
             executor=ctx.executor,

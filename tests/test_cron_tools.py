@@ -71,10 +71,14 @@ def _run_cron_job(
     import server.prompts.rules as R
     import server.tool_executor as TE
     import server.workspace as WS
+    from server.agent_tools.schemas import NOTIFY_USER_TOOL
+    from server.executors.tools import TERMINAL_RUN_TOOL, WEB_SEARCH_TOOL
 
+    # Only advertise this harness's supported calls, using canonical descriptors
+    # before the config stub removes optional dependencies. Explicit [] stays empty.
+    _tools = [TERMINAL_RUN_TOOL, NOTIFY_USER_TOOL, WEB_SEARCH_TOOL] if tools is None else tools
     monkeypatch.setattr(C, "load_cron_jobs", lambda: [job])
     monkeypatch.setattr("server.chat.engine.anthropic._get_bedrock_client", lambda: fake_stream)
-    _tools = tools or []
     # A fresh list per call, as the real pool returns.
     monkeypatch.setattr(
         TP, "assemble_partitioned_pool", lambda **k: (list(_tools), [], len(_tools))

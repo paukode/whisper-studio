@@ -402,6 +402,9 @@ def test_a_sibling_folder_sharing_the_prefix_is_outside(trusted, perms, tmp_path
 
 
 def _batch(monkeypatch, route, tool_input: dict, *, plan_mode=False, denials=None):
+    from server.preview.tools import PREVIEW_TOOLS
+    from server.tool_inputs import schemas_for_tools
+
     monkeypatch.setattr(te, "route_tool", route)
     monkeypatch.setattr(te, "run_hooks", AsyncMock(return_value=HookOutcome()))
     executor = ThreadPoolExecutor(max_workers=1)
@@ -409,6 +412,8 @@ def _batch(monkeypatch, route, tool_input: dict, *, plan_mode=False, denials=Non
     async def _go():
         return await te.execute_tool_batch(
             [{"id": "t1", "name": "preview_start", "input": tool_input}],
+            # Test permissions with the actual schema, without requiring a browser install.
+            tool_schemas=schemas_for_tools(PREVIEW_TOOLS),
             is_concurrent_safe=lambda n: False,
             loop=asyncio.get_running_loop(),
             executor=executor,

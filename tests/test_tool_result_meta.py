@@ -185,6 +185,17 @@ def _batch(monkeypatch, route, tool_uses, **kw):
     async def _go():
         return await te.execute_tool_batch(
             tool_uses,
+            # Stub schemas: timing routes accept no args, the skipped write a path.
+            tool_schemas={
+                "ws_grep": {"type": "object", "additionalProperties": False},
+                "boom": {"type": "object", "additionalProperties": False},
+                "ws_write_file": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"],
+                    "additionalProperties": False,
+                },
+            },
             is_concurrent_safe=lambda n: False,
             loop=asyncio.get_running_loop(),
             executor=executor,

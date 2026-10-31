@@ -140,6 +140,8 @@ def test_only_calls_that_wait_on_agents_add_to_the_waited_total(monkeypatch, too
     async def batch():
         return await te.execute_tool_batch(
             [{"id": "a", "name": tool, "input": {}}],
+            # The clock-only stub does not take any model arguments.
+            tool_schemas={tool: {"type": "object", "additionalProperties": False}},
             is_concurrent_safe=lambda n: False,
             loop=asyncio.get_running_loop(),
             executor=executor,

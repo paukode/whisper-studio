@@ -151,7 +151,11 @@ def test_unattended_ws_approval_executes_inline_with_agent_stamp(monkeypatch):
 def test_unattended_ask_user_question_refuses_instead_of_pausing():
     adapter = ScriptedAdapter(
         [
-            _tool_use_round("q1", "ask_user_question", {"question": "Which color?"}),
+            _tool_use_round(
+                "q1",
+                "ask_user_question",
+                {"question": "Which color?", "options": ["Blue", "Other (please specify)"]},
+            ),
             _text_round("Went with blue since you're unavailable."),
         ]
     )
@@ -180,7 +184,11 @@ def test_unattended_ask_user_question_refuses_instead_of_pausing():
 def test_attended_ask_user_question_still_pauses_as_today():
     adapter = ScriptedAdapter(
         [
-            _tool_use_round("q1", "ask_user_question", {"question": "Which color?"}),
+            _tool_use_round(
+                "q1",
+                "ask_user_question",
+                {"question": "Which color?", "options": ["Blue", "Other (please specify)"]},
+            ),
             _text_round("unreachable — the turn should have paused first"),
         ]
     )

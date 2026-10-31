@@ -237,9 +237,21 @@ def test_stop_cancels_an_in_flight_cron_run_quickly(monkeypatch):
         await asyncio.sleep(30)
         return ("finished", [])  # pragma: no cover — never reached if stop works
 
+    # STUB: only this test's cancellable fake router implements slow_tool.
+    # Its model-facing contract accepts exactly an empty object, not arbitrary input.
+    slow_tool = {
+        "name": "slow_tool",
+        "description": "Wait in the fake router until the cron run is cancelled.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        },
+    }
     monkeypatch.setattr(C, "load_cron_jobs", lambda: [job])
     monkeypatch.setattr("server.chat.engine.anthropic._get_bedrock_client", lambda: fake_stream)
-    monkeypatch.setattr(TP, "assemble_partitioned_pool", lambda **k: ([], [], 0))
+    monkeypatch.setattr(TP, "assemble_partitioned_pool", lambda **k: ([slow_tool], [], 1))
     monkeypatch.setattr(WS, "get_workspace_path", lambda: "")
     monkeypatch.setattr(R, "append_rules", lambda s: s)
     monkeypatch.setattr(TE, "route_tool", fake_route_tool)

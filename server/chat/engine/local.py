@@ -175,6 +175,23 @@ def _summed_usage(usages: list) -> dict | None:
     }
 
 
+def _local_usage(spent: list, payload: dict, received: int) -> Usage:
+    """Full prompt minus KV reuse, or explicitly estimated payload counts."""
+    usage = _summed_usage(spent) or {}
+    prompt = int(usage.get("prompt_tokens") or 0)
+    completion = int(usage.get("completion_tokens") or 0)
+    details = usage.get("prompt_tokens_details")
+    cached = int(details.get("cached_tokens") or 0) if isinstance(details, dict) else 0
+    cached = min(cached, prompt)
+    if prompt or completion:
+        return Usage(
+            input_tokens=prompt - cached, output_tokens=completion, cache_read_tokens=cached
+        )
+    from server.costs.capture import estimated_counts, json_chars
+
+    return Usage(**estimated_counts(json_chars(payload), received))
+
+
 class LocalAdapter:
     provider = "local"
     # Set by the engine each round: called with ``(body, attempt)`` for every
@@ -346,30 +363,23 @@ class LocalAdapter:
 
     # ── One streamed round ────────────────────────────────────────────────────
 
-    async def stream_round(self, messages, tools, core_count, round_num, is_last_round):
-        from server.local.server_stream import (
-            _coerce_call_args,
-            _schema_props,
-            _stream_round,
-        )
+    def inflight_usage(self) -> Usage | None:
+        """A rejected argument round still bills the usage its done chunk reported."""
+        return getattr(self, "_inflight_usage", None)
 
-        # A round gets at most one retry, of one of two kinds. llama-server's
-        # prefix cache makes either cheap: the retry re-processes only its
-        # short tail, not the whole prompt (confirmed: a stalled round's retry
-        # re-prompts in the tens, not thousands, of tokens).
-        #   * Empty: some fine-tunes decode a handful of tokens and stop with
-        #     neither text nor a tool call, most often right after a tool
-        #     result. The retry adds a "continue" nudge.
-        #   * Announced: a short reply that only says what the model will do
-        #     next (_announces_next_step) while tools were offered. The retry
-        #     sends that reply back as the model's own words with a nudge to
-        #     make the call. Its output is held until it proves to be a call:
-        #     the user already saw the announcement, so prose from the retry
-        #     is dropped and the announcement stands as the round's answer.
+    async def stream_round(self, messages, tools, core_count, round_num, is_last_round):
+        from server.costs.capture import json_chars
+        from server.local.server_stream import _stream_round
+        from server.tool_inputs import ToolInputError, validate_call_ids
+
+        self._inflight_usage = None
+        # One empty-completion or announcement retry, as before. Invalid tool
+        # arguments are terminal, not an empty completion that can be nudged.
         announced = ""
         spent: list = []
         round_chars = 0
         reasoning_chars = 0
+        argument_chars = 0
         round_text = ""
         calls: list[dict] = []
         finish_reason: str | None = None
@@ -381,7 +391,6 @@ class LocalAdapter:
                 retry=attempt > 0 and not announced,
                 announced=announced,
             )
-            props_by_tool = _schema_props(payload.get("tools") or [])
             if attempt and self.on_retry_request is not None:
                 try:
                     self.on_retry_request(payload, attempt)
@@ -394,6 +403,8 @@ class LocalAdapter:
             attempt_calls: list[dict] = []
             attempt_usage: dict | None = None
             attempt_finish: str | None = None
+            argument_error = None
+            call_names = []
             attempt_text = ""
             try:
                 async for kind, piece in _stream_round(self.base_url, payload):
@@ -411,10 +422,17 @@ class LocalAdapter:
                         round_chars += len(piece)
                         attempt_text += piece
                         events.append(TextDelta(text=piece))
-                    else:  # ("done", {...})
+                    else:  # ("done", {...}), including rejected argument rounds
                         attempt_calls = piece.get("calls") or []
                         attempt_usage = piece.get("usage")
                         attempt_finish = piece.get("finish_reason")
+                        argument_error = piece.get("argument_error")
+                        call_names = piece.get("call_names") or [
+                            c.get("name", "unknown tool") for c in attempt_calls
+                        ]
+                        argument_chars += piece.get(
+                            "argument_chars", sum(json_chars(c.get("input")) for c in attempt_calls)
+                        )
                     if hold:
                         held.extend(events)
                         continue
@@ -424,8 +442,6 @@ class LocalAdapter:
                         yield ev
             except Exception as e:
                 if hold:
-                    # The announcement already reached the user: a failed
-                    # retry leaves it as the round's answer.
                     log.warning("Local model round %d call retry failed: %r", round_num, e)
                     break
                 if thinking_open:
@@ -433,19 +449,35 @@ class LocalAdapter:
                 msg = str(e)
                 if any(marker in msg.lower() for marker in _CTX_OVERFLOW_MARKERS):
                     raise PromptTooLongError(msg) from e
-                # Connection-drop exceptions often stringify to '' — surface
-                # the type so neither the log nor the user gets a blank error.
                 if not msg.strip():
                     msg = f"connection to the local model server was lost ({e.__class__.__name__})"
                 log.warning("Local model round %d failed: %r", round_num, e)
                 yield RoundError(message=msg)
                 return
-            if thinking_open:  # reasoned but produced no answer text this round
+            if thinking_open:
                 if hold:
                     held.append(ThinkingStop())
                 else:
                     yield ThinkingStop()
             spent.append(attempt_usage)
+            self._inflight_usage = _local_usage(
+                spent, payload, round_chars + reasoning_chars + argument_chars
+            )
+            if attempt_finish == "length" and call_names:
+                _, _, note = self._output_limit_outcome(
+                    round_num, attempt_text, [{"name": n} for n in call_names]
+                )
+                yield RoundError(message=note)
+                return
+            try:
+                validate_call_ids(attempt_calls)
+                if any(not isinstance(c.get("input"), dict) for c in attempt_calls):
+                    raise ToolInputError("Tool arguments must be a JSON object.")
+            except ToolInputError as exc:
+                argument_error = argument_error or str(exc)
+            if argument_error:
+                yield RoundError(message=f"{argument_error} No tools from this round were run.")
+                return
 
             if hold:
                 if attempt_calls:
@@ -465,8 +497,6 @@ class LocalAdapter:
                 )
                 break
             calls, finish_reason, round_text = attempt_calls, attempt_finish, attempt_text
-            # A round the output cap cut off is not a stall: nudging it would
-            # only spend the same budget again.
             if calls or finish_reason == "length" or attempt == 1:
                 break
             if round_text:
@@ -475,15 +505,13 @@ class LocalAdapter:
                     break
                 announced = round_text
                 log.info(
-                    "Local turn (%s) only announced a step at round %d; "
-                    "retrying once with a call nudge.",
+                    "Local turn (%s) only announced a step at round %d; retrying once with a call nudge.",
                     self.model_key,
                     round_num,
                 )
                 continue
             log.info(
-                "Local turn (%s) got an empty completion at round %d; "
-                "retrying once with a continuation nudge.",
+                "Local turn (%s) got an empty completion at round %d; retrying once with a continuation nudge.",
                 self.model_key,
                 round_num,
             )
@@ -498,21 +526,15 @@ class LocalAdapter:
                 yield TextDelta(text=shown)
                 content.append({"type": "text", "text": note})
 
-        # Normalize loose argument types against the declared schema before
-        # the call reaches an executor (and before it enters history).
+        # Preserve model arguments exactly. The shared boundary validates their
+        # declared schema rather than coercing a small model's loose types.
         for c in calls:
-            c["input"] = _coerce_call_args(c["name"], c.get("input") or {}, props_by_tool)
             yield ToolCallStart(name=c["name"], id=c["id"])
             yield ToolCall(id=c["id"], name=c["name"], input=c["input"])
 
         if not calls and self._turn_out_chars == 0 and finish_reason != "length":
-            # Model-quality failure made legible: the turn ended with neither
-            # text nor a tool call (seen on some community fine-tunes after a
-            # tool result). Not a substitute for an answer.
             log.warning(
-                "Local turn (%s) ended with no text and no tool call at round %d.",
-                self.model_key,
-                round_num,
+                "Local turn (%s) ended with no text or call at round %d.", self.model_key, round_num
             )
             note = (
                 "(No answer: the model ended its turn without producing any "
@@ -529,33 +551,9 @@ class LocalAdapter:
             content.append(
                 {"type": "tool_use", "id": c["id"], "name": c["name"], "input": c["input"]}
             )
-
-        # Usage semantics match the cloud frame (and the old local tally):
-        # llama.cpp reports the FULL prompt in prompt_tokens and the KV-reused
-        # prefix in prompt_tokens_details.cached_tokens; input_tokens is the
-        # difference (what was actually prefilled), cache_read the reused
-        # prefix. Summing full prompts would recount the conversation every
-        # tool round. No usage (older builds): characters / 4 of the body
-        # posted and of what came back (text, reasoning, tool-call arguments).
-        usage = _summed_usage(spent) or {}
-        prompt = int(usage.get("prompt_tokens") or 0)
-        completion = int(usage.get("completion_tokens") or 0)
-        details = usage.get("prompt_tokens_details")
-        cached = int(details.get("cached_tokens") or 0) if isinstance(details, dict) else 0
-        cached = min(cached, prompt)  # a buggy build must not go negative
-        if prompt or completion:
-            round_usage_ev = Usage(
-                input_tokens=prompt - cached,
-                output_tokens=completion,
-                cache_read_tokens=cached,
-            )
-        else:
-            from server.costs.capture import estimated_counts, json_chars
-
-            received = round_chars + reasoning_chars
-            received += sum(json_chars(c.get("input") or {}) for c in calls)
-            round_usage_ev = Usage(**estimated_counts(json_chars(payload), received))
-        yield RoundResult(stop_reason=stop_reason, content=content, usage=round_usage_ev)
+        usage = _local_usage(spent, payload, round_chars + reasoning_chars + argument_chars)
+        self._inflight_usage = None
+        yield RoundResult(stop_reason=stop_reason, content=content, usage=usage)
 
     def _output_limit_outcome(
         self, round_num: int, round_text: str, calls: list[dict]

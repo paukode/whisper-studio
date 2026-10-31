@@ -71,7 +71,7 @@ def count_user_prompts(messages: list, since_index: int = 0) -> int:
     return sum(1 for m in messages[max(0, since_index) :] if _is_real_user_prompt(m))
 
 
-async def _dispatch(fork: ReviewFork, tool_use: dict) -> str:
+async def _dispatch(fork: ReviewFork, tool_use: dict, tool_schemas: dict) -> str:
     from server.tool_router import route_tool
 
     name = str(tool_use.get("name") or "")
@@ -81,9 +81,17 @@ async def _dispatch(fork: ReviewFork, tool_use: dict) -> str:
             "memory tools, skill tools and read-only workspace reads are. Save what you learned "
             "or reply 'Nothing to save.'"
         )
-    call_input = dict(tool_use.get("input") or {})
+    from server.security.secret_reads import SECRET_READS_KEY
+    from server.tool_inputs import ToolInputError, validate_tool_input
+
+    try:
+        validate_tool_input(name, tool_use.get("input"), tool_schemas)
+    except ToolInputError as exc:
+        return f"[Refused] {exc}"
+    call_input = dict(tool_use["input"])
     call_input["__session_id__"] = fork.session_id
     call_input["__agent__"] = True
+    call_input[SECRET_READS_KEY] = False
     try:
         output, _effects = await route_tool(
             name,
@@ -135,6 +143,12 @@ async def run_review(
     from server.chat.budget import make_budget_tool_result
     from server.chat.engine.events import RoundError, RoundResult
     from server.memory.prompts import build_learning_review_prompt
+    from server.tool_inputs import (
+        ToolInputError,
+        schemas_for_tools,
+        validate_call_ids,
+        validate_tool_input,
+    )
 
     prompt = build_learning_review_prompt(
         recent_user_turns=count_user_prompts(fork.messages, since_index),
@@ -152,6 +166,7 @@ async def run_review(
         "ended": "no_result",
     }
     for round_num in range(max_rounds):
+        tool_schemas = schemas_for_tools(fork.tools)
         result: RoundResult | None = None
         try:
             async for ev in fork.adapter.stream_round(
@@ -191,10 +206,21 @@ async def run_review(
         if result.stop_reason != "tool_use" or not tool_uses:
             stats["ended"] = "done"
             return stats
+        # Preflight every executable sibling before even the first memory write.
+        try:
+            validate_call_ids(tool_uses)
+            for tu in tool_uses:
+                if tu["name"] in ALLOWED_TOOLS:
+                    validate_tool_input(tu["name"], tu.get("input"), tool_schemas)
+        except ToolInputError as exc:
+            stats["ended"] = "error"
+            stats["error"] = f"[Refused] No tools from this review round ran. {exc}"
+            log.warning("learning review round %d: %s", round_num, stats["error"])
+            return stats
         messages.append({"role": "assistant", "content": result.content})
         tool_results = []
         for tu in tool_uses:
-            output = await _dispatch(fork, tu)
+            output = await _dispatch(fork, tu, tool_schemas)
             stats["tool_calls"].append(tu.get("name"))
             tool_results.append(
                 {

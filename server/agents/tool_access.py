@@ -191,7 +191,11 @@ class AgentToolAccess:
 
         activated = [*get_ordered(self._session_id), *get_ordered(self.scope.activation_key)]
         advertised, _deferred, _core_count = partition_pool(self._catalog, activated, chat=False)
-        return [*advertised, *self._runtime]
+        from server.tool_inputs import ToolCatalog
+
+        return ToolCatalog(
+            [*advertised, *self._runtime], available=[*self._catalog, *self._runtime]
+        )
 
     def deferred_index(self) -> str:
         """The system-prompt index of entitled tools not offered yet, or ""

@@ -215,9 +215,10 @@ class AnthropicAdapter:
         inflight = getattr(self, "_inflight", None)
         if inflight is None:
             return None
-        meter, label = inflight
-        partial = meter.partial(self._inflight_received, label=label)
-        return Usage(**partial) if partial else None
+        meter, label, posted = inflight
+        if not meter.started:
+            return None
+        return Usage(**meter.result(posted["chars"], self._inflight_received, label=label))
 
     async def stream_round(self, messages, tools, core_count, round_num, is_last_round):
         """Yield neutral RoundEvents for one model round. Raises
@@ -226,11 +227,10 @@ class AnthropicAdapter:
 
         meter = ClaudeStreamUsage()
         label = f"{self.model_key} round {round_num}"
-        self._inflight = (meter, label)
-        self._inflight_received = 0
-        # Characters of the exact body posted: the input estimate should the
-        # stream report no usage at all. Built in the invoke worker, as before.
+        # Keep the posted request estimate on rejection as well as success.
         posted = {"chars": 0}
+        self._inflight = (meter, label, posted)
+        self._inflight_received = 0
 
         def _call(messages=messages):
             body = json.dumps(
@@ -291,9 +291,13 @@ class AnthropicAdapter:
 
         self._loop.run_in_executor(self._executor, _read_stream)
 
+        from server.tool_inputs import ToolInputError, parse_tool_arguments, validate_call_ids
+
         content_blocks: list[dict] = []
-        current_block: dict | None = None
+        blocks_by_index: dict[int, dict] = {}
         stop_reason = "end_turn"
+        argument_error = None
+        message_stopped = False
 
         try:
             while True:
@@ -305,15 +309,38 @@ class AnthropicAdapter:
                         data if isinstance(data, WhisperAPIError) else classify_bedrock_error(data)
                     )
                     log.warning("Bedrock stream error: %s", api_err)
-                    yield RoundError(message=api_err.user_message, retryable=api_err.is_retryable)
+                    yield RoundError(
+                        message=argument_error or api_err.user_message,
+                        retryable=not argument_error and api_err.is_retryable,
+                    )
                     return
                 event_type = data.get("type")
-                # Usage: message_start (prompt), message_delta (cumulative
-                # output, the last value is the count), message_stop (Bedrock's
-                # invocationMetrics trailer).
+                # Drain usage even after invalid arguments, including the
+                # authoritative Bedrock trailer. Nothing invalid is executed.
                 meter.observe(data)
+                if event_type == "content_block_delta":
+                    received_delta = data.get("delta", {})
+                    received_field = {
+                        "thinking_delta": "thinking",
+                        "text_delta": "text",
+                        "input_json_delta": "partial_json",
+                    }.get(received_delta.get("type"))
+                    received_text = received_delta.get(received_field) if received_field else None
+                    if isinstance(received_text, str):
+                        self._inflight_received += len(received_text)
+                if event_type == "message_delta":
+                    stop_reason = data.get("delta", {}).get("stop_reason", stop_reason)
+                elif event_type == "message_stop":
+                    message_stopped = True
+                if argument_error:
+                    continue
+                index = data.get("index")
+                current_block = blocks_by_index.get(index)
 
                 if event_type == "content_block_start":
+                    if type(index) is not int or index < 0 or current_block is not None:
+                        argument_error = "Duplicate or missing content block index."
+                        continue
                     block = data.get("content_block", {})
                     current_block = {
                         "type": block.get("type"),
@@ -321,50 +348,81 @@ class AnthropicAdapter:
                         "id": block.get("id", ""),
                         "name": block.get("name", ""),
                         "input_json": "",
+                        "initial_input": block.get("input"),
+                        "input_delta_seen": False,
                         "signature": "",
+                        "closed": False,
                     }
+                    blocks_by_index[index] = current_block
                     content_blocks.append(current_block)
                     if current_block["type"] == "tool_use":
+                        try:
+                            validate_call_ids(
+                                [b for b in content_blocks if b["type"] == "tool_use"]
+                            )
+                        except ToolInputError as exc:
+                            argument_error = str(exc)
+                            continue
                         yield ToolCallStart(name=current_block["name"], id=current_block["id"])
                     elif current_block["type"] == "thinking":
                         yield ThinkingStart()
 
-                elif event_type == "content_block_delta":
+                elif event_type in ("content_block_delta", "content_block_stop"):
+                    if current_block is None or current_block["closed"]:
+                        argument_error = "Orphan or duplicate content block event."
+                        continue
+                    if event_type == "content_block_stop":
+                        current_block["closed"] = True
+                        if current_block["type"] == "thinking":
+                            yield ThinkingStop()
+                        elif current_block["type"] == "tool_use":
+                            try:
+                                if current_block["input_delta_seen"]:
+                                    parsed = parse_tool_arguments(
+                                        current_block["input_json"], current_block["name"]
+                                    )
+                                    initial = current_block["initial_input"]
+                                    if initial is not None and (
+                                        not isinstance(initial, dict)
+                                        or (initial and initial != parsed)
+                                    ):
+                                        raise ToolInputError(
+                                            "Conflicting initial tool input and argument deltas."
+                                        )
+                                else:
+                                    parsed = current_block["initial_input"]
+                                    if not isinstance(parsed, dict):
+                                        raise ToolInputError(
+                                            "Tool arguments are missing; expected a JSON object."
+                                        )
+                            except ToolInputError as exc:
+                                argument_error = str(exc)
+                                continue
+                            current_block["parsed_input"] = parsed
+                            yield ToolCall(
+                                id=current_block["id"], name=current_block["name"], input=parsed
+                            )
+                        continue
+
                     delta = data.get("delta", {})
-                    if (
-                        delta.get("type") == "thinking_delta"
-                        and current_block
-                        and current_block["type"] == "thinking"
-                    ):
+                    kind = delta.get("type")
+                    if kind == "thinking_delta" and current_block["type"] == "thinking":
                         text = delta.get("thinking", "")
                         current_block["text"] += text
-                        self._inflight_received += len(text)
                         yield ThinkingDelta(text=text)
-                    elif (
-                        delta.get("type") == "signature_delta"
-                        and current_block
-                        and current_block["type"] == "thinking"
-                    ):
+                    elif kind == "signature_delta" and current_block["type"] == "thinking":
                         current_block["signature"] += delta.get("signature", "")
-                    elif (
-                        delta.get("type") == "text_delta"
-                        and current_block
-                        and current_block["type"] == "text"
-                    ):
+                    elif kind == "text_delta" and current_block["type"] == "text":
                         text = delta.get("text", "")
                         current_block["text"] += text
-                        self._inflight_received += len(text)
                         yield TextDelta(text=text)
-                    elif (
-                        delta.get("type") == "input_json_delta"
-                        and current_block
-                        and current_block["type"] == "tool_use"
-                    ):
-                        piece = delta.get("partial_json", "")
+                    elif kind == "input_json_delta":
+                        piece = delta.get("partial_json")
+                        if current_block["type"] != "tool_use" or not isinstance(piece, str):
+                            argument_error = "Orphan or invalid tool argument delta."
+                            continue
+                        current_block["input_delta_seen"] = True
                         current_block["input_json"] += piece
-                        self._inflight_received += len(piece)
-                        # A large tool argument (a whole HTML app) streams for
-                        # minutes with nothing else to show: report its size.
                         _n = len(current_block["input_json"])
                         if _n >= current_block.get("next_progress", TOOL_ARGS_PROGRESS_STEP):
                             current_block["next_progress"] = (
@@ -373,28 +431,6 @@ class AnthropicAdapter:
                             yield ToolCallProgress(
                                 name=current_block["name"], chars=_n, id=current_block["id"]
                             )
-
-                elif event_type == "content_block_stop":
-                    if current_block and current_block["type"] == "thinking":
-                        yield ThinkingStop()
-                    elif current_block and current_block["type"] == "tool_use":
-                        try:
-                            parsed_input = (
-                                json.loads(current_block["input_json"])
-                                if current_block["input_json"]
-                                else {}
-                            )
-                        except json.JSONDecodeError:
-                            parsed_input = {}
-                        current_block["parsed_input"] = parsed_input
-                        yield ToolCall(
-                            id=current_block["id"],
-                            name=current_block["name"],
-                            input=parsed_input,
-                        )
-
-                elif event_type == "message_delta":
-                    stop_reason = data.get("delta", {}).get("stop_reason", stop_reason)
         finally:
             stop_reading.set()
             try:
@@ -420,18 +456,27 @@ class AnthropicAdapter:
                 round_num + 1,
             )
 
-        # The round completed: its cost travels on the RoundResult, so the
-        # engine must not also record it as an unfinished attempt.
+        tool_blocks = [b for b in content_blocks if b["type"] == "tool_use"]
+        if tool_blocks and stop_reason == "max_tokens":
+            argument_error = "Output token limit reached while writing tool arguments."
+        elif tool_blocks and (not message_stopped or any(not b["closed"] for b in tool_blocks)):
+            argument_error = (
+                argument_error or "Tool arguments were incomplete: a block never finished."
+            )
+        if argument_error:
+            yield RoundError(message=f"{argument_error} No tools from this round were run.")
+            return
+
+        # Only a successful round transfers its cost to RoundResult.
+        content = _to_canonical_content(content_blocks)
         self._inflight = None
-        yield RoundResult(
-            stop_reason=stop_reason,
-            content=_to_canonical_content(content_blocks),
-            usage=usage,
-        )
+        yield RoundResult(stop_reason=stop_reason, content=content, usage=usage)
 
 
 def _to_canonical_content(content_blocks: list[dict]) -> list[dict]:
-    """Streamed block accumulators → canonical assistant content blocks."""
+    """Streamed block accumulators to canonical content, never default arguments."""
+    from server.tool_inputs import ToolInputError
+
     result = []
     for b in content_blocks:
         if b["type"] == "thinking":
@@ -441,12 +486,9 @@ def _to_canonical_content(content_blocks: list[dict]) -> list[dict]:
         elif b["type"] == "text":
             result.append({"type": "text", "text": b["text"]})
         elif b["type"] == "tool_use":
+            if not b.get("closed") or not isinstance(b.get("parsed_input"), dict):
+                raise ToolInputError("Cannot use incomplete tool arguments.")
             result.append(
-                {
-                    "type": "tool_use",
-                    "id": b["id"],
-                    "name": b["name"],
-                    "input": b.get("parsed_input", {}),
-                }
+                {"type": "tool_use", "id": b["id"], "name": b["name"], "input": b["parsed_input"]}
             )
     return result

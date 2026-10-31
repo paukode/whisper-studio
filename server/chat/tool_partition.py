@@ -145,4 +145,6 @@ def partition_pool(
             advertised.append(tool)
             seen.add(name)
     deferred = [t for t in catalog if t["name"] not in seen]
-    return advertised, deferred, core_count
+    from server.tool_inputs import ToolCatalog
+
+    return ToolCatalog(advertised, available=catalog), deferred, core_count

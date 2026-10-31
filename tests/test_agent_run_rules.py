@@ -126,6 +126,15 @@ def test_the_executor_hands_plan_mode_to_the_call_and_takes_it_back(monkeypatch)
     async def batch(plan_mode: bool):
         await te.execute_tool_batch(
             [{"id": "a", "name": "ws_read_file", "input": {"path": "a.txt"}}],
+            # Schema for the plan-scope observer's stub read tool.
+            tool_schemas={
+                "ws_read_file": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"],
+                    "additionalProperties": False,
+                }
+            },
             is_concurrent_safe=lambda n: False,
             loop=asyncio.get_running_loop(),
             executor=executor,

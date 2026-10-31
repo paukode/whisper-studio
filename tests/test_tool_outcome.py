@@ -182,6 +182,30 @@ def _run_batch(monkeypatch, scope, name, tool_input, output):
     async def _go():
         return await te.execute_tool_batch(
             [{"id": "t", "name": name, "input": tool_input}],
+            # These routers only return canned output, with one string argument.
+            tool_schemas={
+                "ws_grep": {
+                    "type": "object",
+                    "properties": {"pattern": {"type": "string"}},
+                    "required": ["pattern"],
+                    "additionalProperties": False,
+                },
+                "ws_read_file": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"],
+                    "additionalProperties": False,
+                },
+                **{
+                    tool: {
+                        "type": "object",
+                        "properties": {"command": {"type": "string"}},
+                        "required": ["command"],
+                        "additionalProperties": False,
+                    }
+                    for tool in ("ws_run_command", "terminal_run")
+                },
+            },
             is_concurrent_safe=lambda n: False,
             loop=asyncio.get_running_loop(),
             executor=executor,
