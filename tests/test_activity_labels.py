@@ -789,11 +789,15 @@ def test_a_claude_caption_runs_on_the_captions_own_client(monkeypatch, config):
 
     def fake_invoke(client, **kw):
         used.append(client)
-        return {"content": [{"type": "text", "text": "Read a.py"}]}
+        return {"content": [{"type": "text", "text": "Read a.py"}], "stop_reason": "end_turn"}
 
     monkeypatch.setattr(aws_clients, "cached_client", fake_cached_client)
     monkeypatch.setattr(infra, "_get_bedrock_client", shared_client)
-    monkeypatch.setattr(infra, "_get_chat_models", lambda: {"haiku": "h-id"})
+    monkeypatch.setattr(
+        infra,
+        "_get_chat_models",
+        lambda: {"haiku": "global.anthropic.claude-haiku-4-5-20251001-v1:0"},
+    )
     monkeypatch.setattr(calls_mod, "invoke_claude", fake_invoke)
 
     reply = oneshot.one_shot(

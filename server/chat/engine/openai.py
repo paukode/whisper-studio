@@ -15,8 +15,8 @@ Owns everything GPT/mantle-specific:
     follow) and HEARTBEAT keepalives during idle gaps
   - prompt-too-long detection: mantle rejections like ``prompt tokens (281096)
     exceed customer model maximum (278528)`` raise ``PromptTooLongError`` so
-    the engine's reactive rescue + salvage round apply to GPT turns exactly as
-    they do to Claude
+    the engine's bounded, fail-closed compaction applies to GPT turns exactly
+    as it does to Claude
   - effort/verbosity mapping and the tool exclusions (EXCLUDED_TOOLS)
 
 Cache note: the Responses API has no explicit checkpoints; a stable
@@ -55,12 +55,21 @@ _HEARTBEAT_S = 5.0
 _EARLY_RELEASE_GRACE_S = 1.0
 
 
-def _is_prompt_too_long(message: str) -> bool:
+def _is_prompt_too_long(message: str, error=None) -> bool:
+    """Recognize structured provider codes as well as documented limit messages."""
+    code = error.get("code") if isinstance(error, dict) else getattr(error, "code", None)
+    body = error if isinstance(error, dict) else getattr(error, "body", None)
+    if isinstance(body, dict):
+        detail = body.get("error", body)
+        if isinstance(detail, dict):
+            code = detail.get("code") or code
     low = (message or "").lower()
     return (
-        windows.parse_prompt_cap(message) is not None
+        code == "context_length_exceeded"
+        or windows.parse_prompt_cap(message) is not None
         or "too long" in low
         or ("prompt tokens" in low and "exceed" in low)
+        or ("context length" in low and "exceed" in low)
         or "context_length_exceeded" in low
     )
 
@@ -275,7 +284,7 @@ class OpenAIResponsesAdapter:
             stream = await client.responses.create(**request)
         except Exception as e:  # noqa: BLE001 — classify, then surface or rescue
             msg = str(e)
-            if _is_prompt_too_long(msg):
+            if _is_prompt_too_long(msg, e):
                 raise PromptTooLongError(msg) from e
             log.warning("OpenAI responses.create failed (%s): %s", self.model_key, e)
             # The SDK already retried the request once. A connection that
@@ -337,7 +346,7 @@ class OpenAIResponsesAdapter:
                     break
                 if kind == "exc":
                     msg = str(payload)
-                    if _is_prompt_too_long(msg):
+                    if _is_prompt_too_long(msg, payload):
                         raise PromptTooLongError(msg) from payload
                     log.warning("OpenAI stream broke mid-round (%s): %r", self.model_key, payload)
                     yield RoundError(
@@ -443,7 +452,7 @@ class OpenAIResponsesAdapter:
                         getattr(resp, "error", None) or getattr(ev, "message", "") or "stream error"
                     )
                     msg = str(getattr(err, "message", err))
-                    if _is_prompt_too_long(msg):
+                    if _is_prompt_too_long(msg, err):
                         raise PromptTooLongError(msg)
                     log.warning("OpenAI stream failed (%s, event=%s): %s", self.model_key, et, msg)
                     yield RoundError(

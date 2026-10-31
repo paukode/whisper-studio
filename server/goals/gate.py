@@ -75,7 +75,7 @@ def goal_in_play(session_id: str) -> bool:
 def last_round_not_checked(
     session_id: str,
     *,
-    salvage: bool = False,
+    context_failure: bool = False,
     budget: bool = False,
     deadline: bool = False,
     attempt: int,
@@ -86,17 +86,13 @@ def last_round_not_checked(
 
     The gate does not run there: a block would need a round the turn does not
     have. So an active goal is recorded as not checked, with the reason the
-    round was the last (a salvage round after a context overflow, the cost
-    budget, the time budget, else the round cap), instead of the turn ending
-    with no verdict at all. The goal stays set and is checked when the next
-    turn ends."""
+    turn stopped (failed context compaction, the cost budget, the time budget,
+    else the round cap), instead of the turn ending with no verdict at all.
+    The goal stays set and is checked when the next turn ends."""
     if not goal_in_play(session_id):
         return None
-    if salvage:
-        why = (
-            "the conversation no longer fit the model's context window, so the "
-            "final answer was written from what fit"
-        )
+    if context_failure:
+        why = "context compaction failed, so the turn stopped without completing the answer"
     elif budget:
         why = "the cost budget made this the turn's final round"
     elif deadline:

@@ -1,71 +1,47 @@
-"""Context compaction: keeps the messages list under Bedrock's 200k-token
-input cap during long, tool-heavy conversations.
+"""Fail-closed context compaction with a pure pruning pre-pass.
 
-Three layered strategies, in order of preference:
-
-1. ``microcompact_messages`` — pure local heuristic. Walks the conversation
-   and progressively truncates older tool_result blocks. Cheap, no API
-   call. Always runs as the pre-pass.
-
-2. Session memory shortcut — if a session has accumulated memory (see
-   ``server.memory.session_memory``), we use that as the summary instead
-   of calling Claude again. Zero API cost.
-
-3. ``compact_messages_with_claude`` — async Bedrock summarisation as
-   the production path. Falls back to ``_compact_messages_simple``
-   (deterministic truncation) if the summarisation call fails.
-
-``COMPACT_TRIGGER_CHARS`` / ``MAX_CONTEXT_CHARS`` thresholds are sized so
-the chat endpoint compacts pre-emptively (at 650K chars, below Bedrock's
-200K-token / ~800K-char input cap) rather than waiting for a Bedrock 400 on
-prompt-too-long.
+A summary uses exactly one selected model. Failed, incomplete, oversized or
+non-shrinking summaries never replace the caller's history.
 """
 
 import asyncio
+import hashlib
 import json
 import logging
-
-from .infra import _get_bedrock_client
+from copy import deepcopy
 
 log = logging.getLogger("whisper-studio")
 
-# LEGACY fallback thresholds, kept for models whose window cannot be resolved
-# (an unsized local entry). Sized for a 200K-token window (~800K chars at the
-# codebase's 4-chars/token estimate). Every resolvable model instead budgets
-# per-model via thresholds_for below: 95% (trigger) / 98% (truncation ceiling)
-# of its real input budget — 1M-window Claude models compact around ~3.3M
-# chars, Haiku around ~520K, GPT-mantle against its 278,528 prompt cap, local
-# models against the live n_ctx.
+
+class CompactionError(RuntimeError):
+    """Compaction could not safely replace history; callers must stop or retry."""
+
+    def __init__(self):
+        super().__init__(
+            "Context compaction failed; conversation history is unchanged. "
+            "Check the compaction model and its availability, then retry, "
+            "or start a new conversation with less context."
+        )
+
+
+# Legacy budgets for an unsized model, using the application's char estimate.
 MAX_CONTEXT_CHARS = 750_000
-COMPACT_TRIGGER_CHARS = 650_000  # Compact pre-emptively at this size
+COMPACT_TRIGGER_CHARS = 650_000
 
 
 def thresholds_for(model_key: str | None, meta: dict | None = None) -> tuple[int, int]:
-    """Per-model (trigger_chars, hard_ceiling_chars) for compaction: 95% and
-    98% of the model's input budget (context window minus the reserved
-    answer). Falls back to the legacy constants when the model is unknown."""
+    """Return estimated trigger and hard ceiling; config failures are not defaults."""
     if model_key:
-        try:
-            from server.chat.engine.windows import compact_thresholds_chars
+        from server.chat.engine.windows import compact_thresholds_chars
 
-            t = compact_thresholds_chars(model_key)
-            if t:
-                return t
-        except Exception as e:  # noqa: BLE001 — budgeting must never break a turn
-            log.debug("thresholds_for(%s) fell back to legacy constants: %s", model_key, e)
+        thresholds = compact_thresholds_chars(model_key, meta)
+        if thresholds:
+            return thresholds
     return COMPACT_TRIGGER_CHARS, MAX_CONTEXT_CHARS
 
 
 def _content_size(content) -> int:
-    """Char size of a message/block ``content`` field.
-
-    Content is either a plain string or a list of blocks, and blocks nest: a
-    ``tool_result``'s ``content`` can itself be a list of text/image blocks, and
-    an image block carries its (large) base64 payload under ``source.data``.
-    Recurse so both are counted, rather than taking ``len()`` of a list — which
-    returns the block *count* (a handful), badly under-counting the real size
-    and letting an image-heavy history slip past the compaction trigger.
-    """
+    """Count text, nested results, tool arguments and attachment payloads."""
     if isinstance(content, str):
         return len(content)
     if not isinstance(content, list):
@@ -79,85 +55,48 @@ def _content_size(content) -> int:
             source = block.get("source")
             if isinstance(source, dict):
                 total += len(source.get("data", ""))
+            if "input" in block:
+                total += len(json.dumps(block["input"], ensure_ascii=False, sort_keys=True))
             total += _content_size(block.get("content", ""))
     return total
 
 
 def estimate_message_size(messages: list) -> int:
-    total = 0
-    for msg in messages:
-        total += _content_size(msg.get("content", ""))
-        total += 20
-    return total
+    return sum(_content_size(msg.get("content", "")) + 20 for msg in messages)
 
 
 def microcompact_messages(messages: list, keep_recent: int = 6) -> list:
-    """Smarter microcompact: age-based selective removal of tool results.
-
-    Strategy:
-    - Recent messages (last `keep_recent`): keep intact
-    - Older messages: progressively truncate tool_result blocks
-      - Oldest third: remove tool results entirely (replace with one-line summary)
-      - Middle third: truncate to 500 chars
-      - Newer third: truncate to 2000 chars
-    """
+    """Pure age-tiered pruning of old string tool results, never a failure fallback."""
+    messages = deepcopy(messages)
     total = len(messages)
     if total <= keep_recent:
         return messages
-
     old_count = total - keep_recent
-    tier1_end = old_count // 3  # Oldest: strip tool results
-    tier2_end = (old_count * 2) // 3  # Middle: heavy truncation
-
-    out = []
-    for i, m in enumerate(messages):
-        is_recent = i >= total - keep_recent
-        if is_recent or m.get("role") != "user":
-            out.append(m)
+    tier1_end = old_count // 3
+    tier2_end = (old_count * 2) // 3
+    for i, message in enumerate(messages[:old_count]):
+        content = message.get("content", "")
+        if message.get("role") != "user" or not isinstance(content, list):
             continue
-
-        content = m.get("content", "")
-        if not isinstance(content, list):
-            out.append(m)
-            continue
-
-        new_content = []
-        for b in content:
-            if not isinstance(b, dict) or b.get("type") != "tool_result":
-                new_content.append(b)
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "tool_result":
                 continue
-
-            result_text = b.get("content", "")
-            if not isinstance(result_text, str):
-                new_content.append(b)
+            text = block.get("content", "")
+            if not isinstance(text, str):
                 continue
-
             if i < tier1_end:
-                # Oldest tier: replace with one-line summary
-                summary = result_text[:80].replace("\n", " ")
-                new_content.append({**b, "content": f"[{summary}... (removed for compaction)]"})
+                candidate = f"[{text[:80].replace(chr(10), ' ')}... (removed for compaction)]"
             elif i < tier2_end:
-                # Middle tier: heavy truncation
-                if len(result_text) > 500:
-                    new_content.append({**b, "content": result_text[:500] + "\n...[truncated]"})
-                else:
-                    new_content.append(b)
+                candidate = text[:500] + "\n...[truncated]" if len(text) > 500 else text
             else:
-                # Newer old: moderate truncation
-                if len(result_text) > 2000:
-                    new_content.append({**b, "content": result_text[:2000] + "\n...[truncated]"})
-                else:
-                    new_content.append(b)
-
-        out.append({**m, "content": new_content})
-    return out
+                candidate = text[:2000] + "\n...[truncated]" if len(text) > 2000 else text
+            if len(candidate) < len(text):
+                block["content"] = candidate
+    return messages
 
 
 def _is_clean_user_start(msg: dict) -> bool:
-    """True if `msg` can legally START a Bedrock message list: a user message
-    with no tool_result blocks. A tool_result at the head is invalid once its
-    matching assistant tool_use has been summarized/dropped away — Bedrock
-    rejects it with a non-retryable ValidationException."""
+    """Whether a recent suffix begins on a user turn without orphaned results."""
     if not isinstance(msg, dict) or msg.get("role") != "user":
         return False
     content = msg.get("content")
@@ -167,11 +106,7 @@ def _is_clean_user_start(msg: dict) -> bool:
 
 
 def _safe_recent_split(messages: list, keep_recent: int) -> int:
-    """Index at which to split so `messages[split:]` begins on a clean user
-    turn, never a dangling tool_result. Starts from the desired keep_recent
-    boundary and moves EARLIER (growing the recent window) until the boundary
-    is clean. Returns 0 if no clean boundary exists in range — the caller then
-    leaves the history intact rather than emit an invalid one."""
+    """Grow the recent suffix backwards to a clean user turn, or return zero."""
     split = max(0, len(messages) - keep_recent)
     while split > 0 and not _is_clean_user_start(messages[split]):
         split -= 1
@@ -179,9 +114,7 @@ def _safe_recent_split(messages: list, keep_recent: int) -> int:
 
 
 def ensure_valid_start(messages: list) -> list:
-    """Drop leading messages until the list starts on a clean user turn, so a
-    history that was sliced mid tool_use/tool_result pair never begins with an
-    orphaned tool_result. Returns the (possibly shorter) list."""
+    """Drop leading messages until the list starts on a clean user turn."""
     i = 0
     while i < len(messages) and not _is_clean_user_start(messages[i]):
         i += 1
@@ -199,29 +132,15 @@ def _block_ids(content, block_type: str, id_key: str) -> set:
 
 
 def sanitize_tool_pairs(messages: list) -> list:
-    """Drop orphaned tool_use / tool_result blocks anywhere in the history.
+    """Drop orphaned tool blocks, using original immediate neighbours.
 
-    Bedrock requires every tool_result block to sit in the message immediately
-    after the one carrying its matching tool_use (and every tool_use to be
-    answered by a tool_result in the very next message). An interrupted turn — a
-    killed stream, a partial assistant turn whose tool_use blocks were stripped,
-    a compaction that removed one side of a pair — can persist a tool_result
-    whose tool_use is gone (or vice-versa). Bedrock then rejects the ENTIRE
-    request non-retryably ("unexpected tool_use_id ... in tool_result blocks"),
-    so the session gets wedged: no new message can be sent.
-
-    This pass self-heals such histories at send time. Validity is judged against
-    each message's ORIGINAL immediate neighbours; orphaned blocks are dropped. A
-    message emptied by the drop keeps its role with a single placeholder text
-    block, so message count and user/assistant alternation are untouched (which
-    avoids introducing a fresh Bedrock validation error). Well-formed histories
-    pass through unchanged."""
+    This send-time repair helper is not part of compaction. Empty messages
+    retain their role with a placeholder; well-formed histories are unchanged.
+    """
     if not messages:
         return messages
-
     uses = [_block_ids(m.get("content"), "tool_use", "id") for m in messages]
     results = [_block_ids(m.get("content"), "tool_result", "tool_use_id") for m in messages]
-
     out: list = []
     for i, m in enumerate(messages):
         content = m.get("content")
@@ -234,9 +153,9 @@ def sanitize_tool_pairs(messages: list) -> list:
         for b in content:
             if isinstance(b, dict):
                 if b.get("type") == "tool_result" and b.get("tool_use_id") not in prev_uses:
-                    continue  # tool_result with no matching tool_use in the prior message
+                    continue
                 if b.get("type") == "tool_use" and b.get("id") not in next_results:
-                    continue  # tool_use never answered by a tool_result in the next message
+                    continue
             kept.append(b)
         if kept == content:
             out.append(m)
@@ -252,43 +171,45 @@ async def compact_messages_with_claude(
     model_key: str = "",
     trigger: str = "pressure",
 ) -> list:
-    """Intelligent context compaction, cheapest rung first:
+    """Return a safe replacement or raise CompactionError, never mutate history.
 
-    0. Prune-and-remeasure — age-tiered tool-result pruning (microcompact).
-       When pruning alone brings the history back under the model's trigger
-       threshold, that IS the compaction: no summary call is paid for.
-    1. Session memory shortcut — if a session memory file exists, use it as
-       the summary instead of calling the LLM (zero API cost).
-    2. LLM summarization — call Claude to produce a summary of old messages.
-    3. Simple truncation — fallback if LLM call fails.
-
-    Every run is bracketed by durable start/end records
-    (server/chat/compaction_log.py), so a crash mid-compaction leaves an
-    unmatched start instead of silence, and the outcome of each run
-    (pruned-only / session-memory / summary / truncation) is auditable later.
+    The historical name/signature remains for callers. model_id is not a
+    fallback route. Cancellation propagates after best-effort error telemetry.
+    Thresholds are estimates of history size, not a claim about the full wire
+    request (system prompt, tools and provider tokenization are caller-owned).
     """
-    if len(messages) < 6:
-        return messages
-
     from server.chat.compaction_log import record_end, record_start
 
-    before_chars = estimate_message_size(messages)
-    record_start(session_id, trigger=trigger, before_chars=before_chars)
+    before_chars = 0
 
-    def _done(result: list, outcome: str, detail: str = "") -> list:
-        record_end(
-            session_id,
-            outcome=outcome,
-            after_chars=estimate_message_size(result),
-            detail=detail,
-        )
-        return result
+    def record(callback, **kwargs):
+        try:
+            callback(session_id, **kwargs)
+        except Exception:  # noqa: BLE001 - diagnostics cannot change the outcome
+            log.debug("Compaction diagnostics unavailable")
 
+    outcome = "error"
+    after_chars = before_chars
     try:
-        return _done(*await _compact_strategies(messages, model_id, session_id, model_key, trigger))
-    except Exception as e:  # noqa: BLE001 - close the bracket, then re-raise
-        record_end(session_id, outcome="error", after_chars=before_chars, detail=str(e))
+        before_chars = estimate_message_size(messages)
+        after_chars = before_chars
+        record(record_start, trigger=trigger, before_chars=before_chars)
+        result, outcome = await _compact_strategies(
+            messages, model_id, session_id, model_key, trigger
+        )
+        after_chars = estimate_message_size(result)
+        return result
+    except asyncio.CancelledError:
+        outcome = "error"
         raise
+    except CompactionError:
+        outcome = "error"
+        raise
+    except Exception:  # noqa: BLE001 - no provider response or prompt in public errors
+        outcome = "error"
+        raise CompactionError() from None
+    finally:
+        record(record_end, outcome=outcome, after_chars=after_chars)
 
 
 async def _compact_strategies(
@@ -298,308 +219,149 @@ async def _compact_strategies(
     model_key: str,
     trigger: str = "pressure",
 ) -> tuple[list, str]:
-    """The strategy ladder body. Returns (compacted_messages, outcome)."""
+    """Try pure pruning, then one summary of ORIGINAL history, with no fallback."""
+    messages = deepcopy(messages)
     before_chars = estimate_message_size(messages)
-
-    # Rung 0: prune, then REMEASURE. Old tool results are the cheapest thing
-    # to shed; when shedding them resolves the pressure, skip the summary
-    # entirely (no model call, no information loss beyond stale tool output).
-    # Never taken on a provider-reported overflow: the wire said the request
-    # was too long, and that signal outranks the char estimate this rung
-    # would use to declare victory.
-    messages = microcompact_messages(messages)
-    pruned_chars = estimate_message_size(messages)
-    trigger_chars = thresholds_for(model_key)[0]
+    trigger_chars, hard_ceiling = thresholds_for(model_key)
+    split = _safe_recent_split(messages, min(8, len(messages)))
+    pruned = microcompact_messages(messages, keep_recent=len(messages) - split)
+    pruned_chars = estimate_message_size(pruned)
     if (
         trigger != "context-overflow"
-        and pruned_chars <= trigger_chars
+        and pruned_chars <= min(trigger_chars, hard_ceiling)
         and pruned_chars < before_chars
     ):
-        log.info(
-            "Compaction resolved by pruning alone: %d -> %d chars (trigger %d); "
-            "no summary call needed",
-            before_chars,
-            pruned_chars,
-            trigger_chars,
-        )
-        return messages, "pruned-only"
-
-    keep_recent = min(8, len(messages))
-    # Split on a tool_use/tool_result-safe boundary so the recent window never
-    # begins with an orphaned tool_result (which Bedrock rejects non-retryably,
-    # defeating the very compaction meant to rescue the turn).
-    split = _safe_recent_split(messages, keep_recent)
+        return pruned, "pruned-only"
     if split == 0:
-        # No boundary to summarize behind without orphaning a tool_result;
-        # leave the history intact rather than build an invalid request.
+        if trigger == "context-overflow":
+            raise CompactionError()
         return messages, "unchanged"
-    old_messages = messages[:split]
-    recent_messages = messages[split:]
 
-    # Strategy 1: Session memory shortcut (zero API cost)
-    if session_id:
-        try:
-            from server.memory.session_memory import load_session_memory
-
-            session_mem = load_session_memory(session_id)
-            if session_mem and len(session_mem) > 50:
-                summary_msg = {
-                    "role": "user",
-                    "content": (
-                        "[Context summary from session memory]\n"
-                        f"{session_mem}\n\n"
-                        f"{_summary_extras(old_messages, session_id)}"
-                        "[End of session memory, recent messages follow]"
-                    ),
-                }
-                log.info(
-                    "Compacted %d old messages using session memory (%d chars)",
-                    len(old_messages),
-                    len(session_mem),
-                )
-                return [summary_msg] + recent_messages, "session-memory"
-        except Exception as e:
-            log.warning("session memory compaction failed, falling back to LLM summary: %s", e)
-
-    # Strategy 2: LLM summarization
-    history_text = []
-    for msg in old_messages:
-        role = msg.get("role", "user")
-        content = msg.get("content", "")
-        if isinstance(content, str):
-            history_text.append(f"{role.upper()}: {content[:1000]}")
-        elif isinstance(content, list):
-            parts = [
-                b.get("text", "")
-                for b in content
-                if isinstance(b, dict) and b.get("type") == "text"
-            ]
-            history_text.append(f"{role.upper()}: {' '.join(parts)[:1000]}")
-
-    if not history_text:
-        return recent_messages, "truncation"
-
+    # Pruning was insufficient. The summary must see all original text and
+    # tool arguments/results, not a clipped or pruned version of that history.
+    old_messages, recent_messages = messages[:split], messages[split:]
+    summary_key = _summary_model_key(model_key)
+    extras = _summary_extras(old_messages, session_id)
     summary_prompt = (
-        "Summarize the following conversation history concisely. "
-        "Preserve: (1) primary user intent, (2) key decisions made, "
-        "(3) files touched or created, (4) errors encountered, "
-        "(5) pending tasks. Keep it under 500 words. "
-        "Do not use em dashes or en dashes; prefer commas, parentheses, a colon, or a short spaced hyphen:\n\n"
-        + "\n\n".join(history_text)
+        "Summarize the following conversation history concisely. Preserve user intent, "
+        "constraints, decisions, files, tool calls and results, errors, and pending tasks. "
+        "Keep it under 500 words. Attachment omission markers are references, not image "
+        "or document contents; do not invent their contents.\n\n" + _serialize_history(old_messages)
     )
-
-    _summary_system = (
-        "You produce concise conversation summaries. "
-        "Do not use em dashes or en dashes; prefer commas, "
-        "parentheses, a colon, or a short spaced hyphen."
+    summary_system = (
+        "You produce concise conversation summaries. Do not use em dashes or en dashes; "
+        "prefer commas, parentheses, a colon, or a short spaced hyphen."
     )
+    if len(summary_system) + len(summary_prompt) + 40 > thresholds_for(summary_key)[1]:
+        raise CompactionError()
 
-    try:
-        # Resolve at call time to dodge the __init__.py partial-init window
-        # (this module is imported BEFORE `executor` is bound on the package).
-        from server.chat import executor as _executor
+    from server.chat import executor
+    from server.infrastructure.oneshot import one_shot
+    from server.local.runtime import is_local_model
 
-        loop = asyncio.get_event_loop()
+    local = is_local_model(summary_key)
 
-        def _call():
-            # Provider-aware summarizer: when the caller names the session's
-            # model key, one_shot routes the summary through that same model
-            # (Claude via Bedrock, GPT via mantle, local via llama-server) —
-            # so a GPT or local turn never depends on the Anthropic path.
-            # auxiliary_models.compaction may name a different (cheaper) key.
-            summary_key = _summary_model_key(model_key)
-            direct_ok = _direct_bedrock_allowed(model_id)
-            if summary_key:
-                try:
-                    from server.infrastructure.oneshot import one_shot
-                    from server.local.runtime import is_local_model
+    def call():
+        return one_shot(
+            summary_system,
+            summary_prompt,
+            max_tokens=1024,
+            engine=summary_key if local else "cloud",
+            cloud_model_key=summary_key,
+            feature=_SUMMARY_FEATURE,
+            source="compaction",
+            session_id=session_id or "",
+        )
 
-                    if is_local_model(summary_key):
-                        return one_shot(
-                            _summary_system,
-                            summary_prompt,
-                            max_tokens=1024,
-                            engine=summary_key,
-                            feature=_SUMMARY_FEATURE,
-                            source="compaction",
-                        )
-                    return one_shot(
-                        _summary_system,
-                        summary_prompt,
-                        max_tokens=1024,
-                        engine="cloud",
-                        cloud_model_key=summary_key,
-                        feature=_SUMMARY_FEATURE,
-                        source="compaction",
-                        session_id=session_id or "",
+    summary = await asyncio.get_running_loop().run_in_executor(executor, call)
+    if not isinstance(summary, str) or not summary.strip():
+        raise CompactionError()
+    result = [
+        {
+            "role": "user",
+            "content": (
+                f"[Context summary of earlier conversation]\n{summary.strip()}\n\n{extras}"
+            ).rstrip(),
+        },
+        *recent_messages,
+    ]
+    after_chars = estimate_message_size(result)
+    if after_chars >= before_chars or after_chars > hard_ceiling:
+        raise CompactionError()
+    return result, "summary"
+
+
+def _serialize_history(messages: list) -> str:
+    """Deterministic lossless JSON for text/tool blocks; binary gets a reference.
+
+    No arbitrary values are stringified, and nothing is length-clipped. An
+    inline binary payload is identified by its original position and digest.
+    External attachment references and other metadata remain verbatim.
+    """
+
+    def visit(value, path, binary_source=False):
+        if isinstance(value, list):
+            return [visit(item, f"{path}[{i}]") for i, item in enumerate(value)]
+        if isinstance(value, dict):
+            binary_source = binary_source and value.get("type") == "base64"
+            attachment = value.get("type") in ("image", "document", "audio", "video")
+            out = {}
+            for key, item in value.items():
+                item_path = f"{path}.{key}"
+                if binary_source and key == "data":
+                    if not isinstance(item, str):
+                        raise CompactionError()
+                    digest = hashlib.sha256(item.encode("utf-8")).hexdigest()
+                    out[key] = (
+                        f"[binary attachment omitted; reference={item_path}; sha256={digest}]"
                     )
-                except Exception as os_err:
-                    log.warning(
-                        "one_shot compaction summarizer failed (%s); %s",
-                        os_err,
-                        "trying direct Bedrock" if direct_ok else "truncating instead",
-                    )
-            if not direct_ok:
-                # The direct rung sends an Anthropic body to ``model_id``: only
-                # a Claude Bedrock id can take it, and never in Local mode. An
-                # on-device or GPT session truncates instead.
-                return ""
-            from server.costs.calls import invoke_claude
+                elif key == "input":
+                    # Tool arguments are opaque JSON, never attachment blocks.
+                    out[key] = item
+                else:
+                    out[key] = visit(item, item_path, attachment and key == "source")
+            return out
+        return value
 
-            result = invoke_claude(
-                _get_bedrock_client(),
-                model_id=model_id,
-                contentType="application/json",
-                accept="application/json",
-                body=json.dumps(
-                    {
-                        "anthropic_version": "bedrock-2023-05-31",
-                        "max_tokens": 1024,
-                        "system": _summary_system,
-                        "messages": [{"role": "user", "content": summary_prompt}],
-                    }
-                ),
-                source="compaction",
-                session_id=session_id or "",
-            )
-            return result.get("content", [{}])[0].get("text", "")
-
-        summary = await loop.run_in_executor(_executor, _call)
-        if summary:
-            # Persist this summary as session memory for future compactions
-            if session_id:
-                try:
-                    from server.memory.session_memory import get_session_memory_path
-
-                    path = get_session_memory_path(session_id)
-                    with open(path, "w", encoding="utf-8") as f:
-                        f.write(summary)
-                except Exception as e:
-                    log.debug("could not persist compaction summary to session memory: %s", e)
-
-            summary_msg = {
-                "role": "user",
-                "content": (
-                    f"[Context summary of earlier conversation]\n{summary}\n\n"
-                    f"{_summary_extras(old_messages, session_id)}"
-                ).rstrip(),
-            }
-            log.info(
-                "Compacted %d old messages into summary (%d chars)", len(old_messages), len(summary)
-            )
-            return [summary_msg] + recent_messages, "summary"
-    except Exception as e:
-        log.warning("Claude compaction failed, falling back to truncation: %s", e)
-
-    # Strategy 3: Simple truncation fallback
-    return _compact_messages_simple(messages, model_id, model_key=model_key), "truncation"
+    return json.dumps(
+        visit(messages, "history"), ensure_ascii=False, sort_keys=True, allow_nan=False
+    )
 
 
 def _summary_extras(old_messages: list, session_id: str) -> str:
-    """Verbatim user messages, the mechanical anchor index and the
-    session_search recovery pointer (server/chat/compaction_anchors.py),
-    ready to append to a summary message. Empty string when nothing applies
-    or the flag is off; never raises."""
-    try:
-        from server.chat.compaction_anchors import render_summary_extras
-        from server.infrastructure.feature_flags import is_enabled
+    """Keep verbatim user excerpts, anchors and recovery pointer; errors propagate."""
+    from server.chat.compaction_anchors import render_summary_extras
+    from server.infrastructure.feature_flags import is_enabled
 
-        pointer_sid = session_id if is_enabled("session_search") else ""
-        extras = render_summary_extras(old_messages, pointer_sid)
-        return f"{extras}\n\n" if extras else ""
-    except Exception as e:  # noqa: BLE001 - extras are a bonus, never a failure
-        log.debug("compaction extras skipped: %s", e)
-        return ""
+    pointer_sid = session_id if is_enabled("session_search") else ""
+    extras = render_summary_extras(old_messages, pointer_sid)
+    return f"{extras}\n\n" if extras else ""
 
 
 _SUMMARY_FEATURE = "Context compaction"
 
 
 def _summary_model_key(model_key: str) -> str:
-    """The chat_models key the summarizer runs on: ``auxiliary_models.compaction``
-    when set to a real key, else the session's own model.
-
-    In Local mode a cloud ``auxiliary_models.compaction`` key is not used: the
-    session's own on-device model summarises instead (the on-device path), and
-    a session with no on-device model gets the cloud guard's refusal from
-    one_shot, then truncation."""
+    """Resolve compaction's exact key; only missing settings default to main."""
     try:
-        from server.infrastructure.auxiliary import MAIN, aux_model_key
-
-        key = aux_model_key("compaction", MAIN)
-        if key == MAIN:
-            return model_key
-        from server.infrastructure.cloud_guard import cloud_allowed
+        from server.infrastructure.config import load_config
         from server.local.runtime import is_local_model
 
-        if not cloud_allowed() and not is_local_model(key):
-            log.info(
-                "auxiliary_models.compaction=%r is a cloud model; Local mode summarises on %r",
-                key,
-                model_key,
-            )
-            return model_key
+        config = load_config()
+        auxiliary = config.get("auxiliary_models", {})
+        if not isinstance(auxiliary, dict):
+            raise CompactionError()
+        key = auxiliary.get("compaction", "main")
+        if not isinstance(key, str) or not key.strip():
+            raise CompactionError()
+        key = model_key if key == "main" else key
+        if not isinstance(key, str) or not key.strip():
+            raise CompactionError()
+        models = config.get("chat_models", {})
+        if not isinstance(models, dict) or (key not in models and not is_local_model(key)):
+            raise CompactionError()
         return key
-    except Exception:  # noqa: BLE001
-        return model_key
-
-
-def _direct_bedrock_allowed(model_id: str) -> bool:
-    """True when the last-resort direct InvokeModel rung may run: ``model_id``
-    is a Claude id on Bedrock (the rung sends an Anthropic Messages body) and
-    the app is not in Local mode. An on-device key or a GPT-on-mantle id is
-    never sent there."""
-    mid = (model_id or "").lower()
-    if not mid or mid.startswith("local") or mid.startswith("openai.") or "claude" not in mid:
-        return False
-    try:
-        from server.infrastructure.cloud_guard import cloud_allowed
-
-        return cloud_allowed()
-    except Exception:  # noqa: BLE001 - an unreadable mode never opens the cloud rung
-        return False
-
-
-def _compact_messages_simple(messages: list, model_id: str, model_key: str = "") -> list:
-    """Simple truncation-based compaction (fallback)."""
-    if len(messages) < 4:
-        return messages
-    keep_recent = min(8, len(messages))
-    trimmed = []
-    for i, msg in enumerate(messages):
-        is_recent = i >= len(messages) - keep_recent
-        content = msg.get("content", "")
-        if is_recent:
-            trimmed.append(msg)
-            continue
-        if isinstance(content, str) and len(content) > 2000:
-            trimmed.append({"role": msg["role"], "content": content[:2000] + "\n... (trimmed)"})
-        elif isinstance(content, list):
-            new_blocks = []
-            for block in content:
-                if isinstance(block, dict):
-                    if block.get("type") == "tool_result":
-                        c = block.get("content", "")
-                        if isinstance(c, str) and len(c) > 500:
-                            new_blocks.append({**block, "content": c[:500] + "\n... (trimmed)"})
-                        else:
-                            new_blocks.append(block)
-                    elif block.get("type") == "text" and len(block.get("text", "")) > 2000:
-                        new_blocks.append(
-                            {**block, "text": block["text"][:2000] + "\n... (trimmed)"}
-                        )
-                    else:
-                        new_blocks.append(block)
-                else:
-                    new_blocks.append(block)
-            trimmed.append({"role": msg["role"], "content": new_blocks})
-        else:
-            trimmed.append(msg)
-
-    _, hard_ceiling = thresholds_for(model_key)
-    while len(trimmed) > 4 and estimate_message_size(trimmed) > hard_ceiling:
-        trimmed = trimmed[2:]
-
-    # Front-trimming can leave a dangling tool_result at the head; never start
-    # a history on one.
-    return ensure_valid_start(trimmed)
+    except CompactionError:
+        raise
+    except Exception:  # noqa: BLE001 - config read failures must not choose another model
+        raise CompactionError() from None

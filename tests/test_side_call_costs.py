@@ -36,7 +36,11 @@ class _FakeBedrock:
         self.calls += 1
         if self.delay:
             time.sleep(self.delay)
-        payload = {"content": [{"type": "text", "text": self.text}], "usage": self.usage}
+        payload = {
+            "content": [{"type": "text", "text": self.text}],
+            "usage": self.usage,
+            "stop_reason": "end_turn",
+        }
         return {"body": _Body(json.dumps(payload).encode())}
 
 
@@ -106,7 +110,7 @@ def test_a_gpt_one_shot_is_logged_from_its_responses_usage(monkeypatch):
     usage = SimpleNamespace(
         input_tokens=900, output_tokens=30, input_tokens_details=SimpleNamespace(cached_tokens=800)
     )
-    response = SimpleNamespace(output_text="summary", usage=usage)
+    response = SimpleNamespace(output_text="summary", usage=usage, status="completed")
     client = SimpleNamespace(responses=SimpleNamespace(create=lambda **kw: response))
     monkeypatch.setattr("server.openai_bedrock.runtime.build_sync_client", lambda region: client)
     monkeypatch.setattr("server.openai_bedrock.runtime.region_for", lambda key: "us-east-1")

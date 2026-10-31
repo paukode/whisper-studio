@@ -853,6 +853,10 @@ async def websocket_endpoint(
                 _end_take(session_id, slot)
             if asr_session is not None:
                 try:
-                    await loop.run_in_executor(backend_mod.executor, asr_session.close)
-                except Exception:
-                    pass
+                    # Cancellation of the socket must not cancel a close that
+                    # is still queued behind another decode on the ASR worker.
+                    close_job = loop.run_in_executor(backend_mod.executor, asr_session.close)
+                    close_job.add_done_callback(lambda job: job.cancelled() or job.exception())
+                    await asyncio.shield(close_job)
+                except Exception as e:
+                    log.warning("ASR session close failed: %s", e)

@@ -1,109 +1,88 @@
-"""Compaction's last-resort direct InvokeModel rung only ever takes a Claude
-Bedrock id outside Local mode. An on-device session (whose model id is its
-local key) or a GPT session goes straight to truncation when its one-shot
-summary fails, so the conversation is never sent to Bedrock under a model id
-that cannot take it, and Local mode never summarises on a cloud key."""
-
-from __future__ import annotations
+"""One selected model per compaction, no direct-provider fallback."""
 
 import asyncio
+from copy import deepcopy
+from unittest.mock import Mock
 
 import pytest
 
-from server.chat import compaction, compaction_log
+# Import before fixtures replace load_config; the provider binds it at import time.
+import server.openai_bedrock.runtime  # noqa: F401
+from server.chat import compaction
+from server.infrastructure import config, oneshot
 
 
 @pytest.fixture(autouse=True)
-def _quiet(tmp_path, monkeypatch):
-    monkeypatch.setattr(compaction_log, "data_root", lambda: str(tmp_path))
-    # Force the ladder past rung 0 and skip the session-memory shortcut.
-    monkeypatch.setattr(compaction, "thresholds_for", lambda *_a, **_k: (10, 20))
+def isolated_models(monkeypatch):
+    cfg = {
+        "model_mode": "cloud",
+        "chat_models": {
+            "claude": "global.anthropic.claude-haiku-4-5",
+            "gpt": "openai.gpt-5.5",
+            "local_test": "local:test",
+        },
+        "chat_model_meta": {"gpt": {"provider": "openai_bedrock"}},
+    }
+    monkeypatch.setattr(config, "load_config", lambda *a, **k: cfg)
+    monkeypatch.setattr(compaction, "thresholds_for", lambda *a, **k: (100_000, 120_000))
+    monkeypatch.setattr("server.local.runtime.is_local_model", lambda k: k == "local_test")
+    return cfg
 
 
-@pytest.fixture
-def set_mode(monkeypatch):
-    from server.infrastructure import config as cfg_mod
-
-    real = cfg_mod.load_config()
-
-    def _set(mode: str, **extra) -> None:
-        cfg = {**real, "model_mode": mode, **extra}
-        monkeypatch.setattr(cfg_mod, "load_config", lambda *a, **k: cfg)
-
-    return _set
-
-
-@pytest.fixture
-def invokes(monkeypatch):
-    """Every direct Bedrock InvokeModel the rung makes, by modelId."""
-    calls: list[str] = []
-
-    class _Client:
-        def invoke_model(self, *, modelId, **_kw):  # noqa: N803 - boto3 kwarg
-            calls.append(modelId)
-            raise RuntimeError("stub: no network in tests")
-
-    monkeypatch.setattr(compaction, "_get_bedrock_client", lambda: _Client())
-    monkeypatch.setattr("server.local.runtime.is_local_model", lambda k: k.startswith("local_"))
-    return calls
-
-
-def _failing_one_shot(seen: list[dict]):
-    def fake(system, user, *, max_tokens, engine=None, cloud_model_key="haiku", **kw):
-        seen.append({"engine": engine, "cloud_model_key": cloud_model_key})
-        raise RuntimeError("summarizer returned empty")
-
-    return fake
-
-
-def _history(n: int = 14) -> list[dict]:
+def history():
     return [
-        {"role": "user" if i % 2 == 0 else "assistant", "content": f"message {i} " + "x" * 300}
-        for i in range(n)
+        {"role": "user" if i % 2 == 0 else "assistant", "content": f"message {i} " + "x" * 3000}
+        for i in range(14)
     ]
 
 
-def _compact(model_id: str, model_key: str) -> list:
+def compact(messages, key):
     return asyncio.run(
         compaction.compact_messages_with_claude(
-            _history(), model_id, session_id="", model_key=model_key, trigger="context-overflow"
+            messages, "unused-model-id", model_key=key, trigger="context-overflow"
         )
     )
 
 
-@pytest.mark.parametrize(
-    ("model_id", "model_key"),
-    [("local_gemma", "local_gemma"), ("openai.gpt-5.5", "gpt5.5")],
-)
-def test_failed_summary_never_sends_a_non_claude_id_to_invoke_model(
-    set_mode, invokes, monkeypatch, model_id, model_key
+@pytest.mark.parametrize("key", ["claude", "gpt", "local_test"])
+def test_failure_has_one_attempt_no_other_provider(monkeypatch, key):
+    summary = Mock(side_effect=RuntimeError("private provider response"))
+    direct = Mock(side_effect=AssertionError("no direct fallback"))
+    monkeypatch.setattr(oneshot, "one_shot", summary)
+    monkeypatch.setattr("server.costs.calls.invoke_claude", direct)
+    messages = history()
+    original = deepcopy(messages)
+    with pytest.raises(compaction.CompactionError) as error:
+        compact(messages, key)
+    assert "private provider" not in str(error.value)
+    assert messages == original
+    assert summary.call_count == 1
+    assert summary.call_args.kwargs["cloud_model_key"] == key
+    assert summary.call_args.kwargs["engine"] == (key if key == "local_test" else "cloud")
+    direct.assert_not_called()
+
+
+def test_local_mode_refuses_explicit_cloud_aux_without_local_substitution(
+    isolated_models, monkeypatch
 ):
-    set_mode("cloud")
-    seen: list[dict] = []
-    monkeypatch.setattr("server.infrastructure.oneshot.one_shot", _failing_one_shot(seen))
-    out = _compact(model_id, model_key)
-    assert seen, "the provider-aware summarizer is still tried first"
-    assert invokes == []
-    assert out and len(out) < len(_history())  # truncation still shrinks the history
+    isolated_models.update(model_mode="local", auxiliary_models={"compaction": "claude"})
+    cloud = Mock(side_effect=AssertionError("cloud client must not be constructed"))
+    local = Mock(side_effect=AssertionError("must not substitute local model"))
+    monkeypatch.setattr("server.chat.infra._get_bedrock_client", cloud)
+    monkeypatch.setattr("server.openai_bedrock.runtime.build_sync_client", cloud)
+    monkeypatch.setattr("server.infrastructure.oneshot._local_one_shot", local)
+    with pytest.raises(compaction.CompactionError):
+        compact(history(), "local_test")
+    cloud.assert_not_called()
+    local.assert_not_called()
 
 
-def test_claude_session_keeps_its_direct_rung_outside_local_mode(set_mode, invokes, monkeypatch):
-    set_mode("cloud")
-    monkeypatch.setattr("server.infrastructure.oneshot.one_shot", _failing_one_shot([]))
-    model_id = "global.anthropic.claude-opus-5"
-    _compact(model_id, "opus5.0")
-    assert invokes == [model_id]
-
-
-def test_local_mode_summarises_on_the_session_model_not_a_cloud_aux_key(
-    set_mode, invokes, monkeypatch
-):
-    set_mode("local", auxiliary_models={"compaction": "haiku"})
-    seen: list[dict] = []
-    monkeypatch.setattr("server.infrastructure.oneshot.one_shot", _failing_one_shot(seen))
-    _compact("global.anthropic.claude-opus-5", "local_gemma")
-    # The on-device session model runs the summary; the cloud aux key never does.
-    assert [c["engine"] for c in seen] == ["local_gemma"]
-    assert all(c["cloud_model_key"] != "haiku" or c["engine"] != "cloud" for c in seen)
-    # And Local mode never opens the direct rung, even for a Claude-looking id.
-    assert invokes == []
+def test_local_mode_allows_explicit_local_aux(isolated_models, monkeypatch):
+    isolated_models.update(model_mode="local", auxiliary_models={"compaction": "local_test"})
+    local = Mock(return_value="Current history summary")
+    monkeypatch.setattr("server.local.runtime.is_downloaded", lambda k: k == "local_test")
+    monkeypatch.setattr("server.infrastructure.oneshot._local_one_shot", local)
+    out = compact(history(), "claude")
+    assert "Current history summary" in out[0]["content"]
+    assert local.call_count == 1
+    assert local.call_args.args[0] == "local_test"

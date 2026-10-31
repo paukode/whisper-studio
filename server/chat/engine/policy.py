@@ -18,9 +18,6 @@ class TurnPolicy:
     # Stop button is the brake). Runs nobody is watching pass the Settings
     # time limit: agents, scheduled runs and unattended headless runs.
     deadline_seconds: float | None = None
-    # Whether an unrescuable turn gets one final no-tools round on a hard-
-    # trimmed context (synthesize from what remains) instead of a bare error.
-    salvage_round: bool = True
     # Completion gate (Stop hooks, the deliverable and verification checks, the
     # goal's quality gates and its judge). Unattended consumers (agents, cron,
     # headless runs) build their own policy with it off.

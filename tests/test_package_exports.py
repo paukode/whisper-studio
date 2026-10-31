@@ -52,7 +52,7 @@ CHAT_EXPORTS = [
     "MAX_CONTEXT_CHARS",
     "microcompact_messages",
     "compact_messages_with_claude",
-    "_compact_messages_simple",
+    "CompactionError",
     "TOOL_RESULT_BUDGET_BYTES",
     "make_budget_tool_result",
     "assemble_tool_pool",

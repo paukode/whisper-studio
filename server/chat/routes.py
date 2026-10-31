@@ -2015,7 +2015,9 @@ async def chat_endpoint(request: Request):
 
         # Pre-flight proactive compaction (provider-aware summarizer), against
         # the ACTIVE model's own input budget (95% trigger). It makes an LLM
-        # summarization call, so tell the UI what the wait is.
+        # summarization call, so tell the UI what the wait is. CompactionError
+        # must escape to staged_stream's TURN_SETUP_FAILED frame and slot/inbox
+        # cleanup. Never send a provider request or substitute history on failure.
         if estimate_message_size(messages) > thresholds_for(model_key)[0]:
             _status("Compacting conversation history...")
             messages = await compact_messages_with_claude(

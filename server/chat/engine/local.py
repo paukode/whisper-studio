@@ -11,9 +11,9 @@ Owns everything local-specific:
   - loose-argument coercion against the declared schema before a call reaches
     an executor (small models emit "5" for 5 etc.).
   - context-overflow detection: llama-server rejections raise
-    ``PromptTooLongError`` so the engine's reactive rescue + salvage round
-    apply to local turns too (compaction summarizes via the resident local
-    model through one_shot — the path stays fully offline).
+    ``PromptTooLongError`` so the engine's fail-closed compaction applies to
+    local turns too. Only the configured summary model may run; Local mode
+    refuses a cloud selection rather than substituting a different model.
   - the model-quality quirk where a fine-tune ends its turn with neither text
     nor a tool call: surfaced as a legible message instead of an empty bubble.
   - rounds the output cap cut off (finish_reason ``length``): continued when

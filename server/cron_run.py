@@ -374,7 +374,6 @@ async def _execute_cron_prompt(job_id: str) -> None:
                 # Exactly like agents: an unattended run must never gain NEW
                 # Stop-hook exposure as a side effect of this migration.
                 completion_gate=False,
-                salvage_round=True,
             ),
             loop=loop,
             executor=_CRON_EXECUTOR,

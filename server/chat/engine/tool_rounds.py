@@ -224,9 +224,13 @@ async def run_tool_round(
             # An LLM summarization call sits between rounds here; without a
             # frame the wait reads as a mid-turn hang.
             yield f"data: {ndjson_dumps({'status': 'Compacting conversation context...'})}\n\n"
-            messages = await compact_messages_with_claude(
+            # CompactionError propagates to runner's terminal handler. Do not
+            # clear outcome.tool_results or replace history on failure: both
+            # the result frames and the complete tool pair must survive.
+            compacted = await compact_messages_with_claude(
                 messages, ctx.model_id, session_id=session_id, model_key=ctx.model_key
             )
+            messages = compacted
             # Restore any attachment the summary swallowed. The REACTIVE
             # path (the prompt-too-long rescue in runner.py) deliberately
             # does not re-inject (it must shrink; analyze_document has

@@ -75,32 +75,48 @@ def test_render_summary_extras_carries_pointer_only_with_a_session_id():
     assert recovery_pointer("x").startswith("Recovery:")
 
 
-def test_session_memory_compaction_appends_verbatim_user_messages_and_pointer(monkeypatch):
+def test_current_summary_appends_users_and_pointer_without_session_cache(monkeypatch):
+    from unittest.mock import Mock
+
     from server.memory import session_memory
 
-    monkeypatch.setattr(session_memory, "load_session_memory", lambda sid: "M" * 80)
+    cache = Mock(side_effect=AssertionError("stale cache must not be read or written"))
+    monkeypatch.setattr(session_memory, "load_session_memory", cache)
+    monkeypatch.setattr(session_memory, "get_session_memory_path", cache)
+    monkeypatch.setattr(compaction, "thresholds_for", lambda *a, **k: (100_000, 120_000))
+    monkeypatch.setattr(
+        "server.infrastructure.config.load_config",
+        lambda: {"chat_models": {"claude": "global.anthropic.claude-haiku-4-5"}},
+    )
+    monkeypatch.setattr("server.local.runtime.is_local_model", lambda k: False)
+    monkeypatch.setattr("server.infrastructure.oneshot.one_shot", lambda *a, **k: "Current summary")
     monkeypatch.setattr(
         "server.infrastructure.feature_flags.is_enabled", lambda name: name == "session_search"
     )
     msgs = []
     for i in range(6):
         msgs.append({"role": "user", "content": f"user instruction number {i}"})
-        msgs.append({"role": "assistant", "content": f"reply {i}"})
-    out, outcome = asyncio.run(compaction._compact_strategies(msgs, "model-id", "sess-9", ""))
-    assert outcome == "session-memory"
+        msgs.append({"role": "assistant", "content": f"reply {i} " + "x" * 2000})
+    out, outcome = asyncio.run(compaction._compact_strategies(msgs, "model-id", "sess-9", "claude"))
+    assert outcome == "summary"
     summary = out[0]["content"]
-    # Messages 0..3 were summarized (8 kept); their user prompts ride verbatim.
+    assert "Current summary" in summary
     assert "user instruction number 1" in summary
     assert 'session_id="sess-9"' in summary
     assert out[1:] == msgs[4:]
+    cache.assert_not_called()
 
 
 def test_summary_model_key_follows_auxiliary_compaction_setting(monkeypatch):
-    from server.infrastructure import auxiliary
-
-    monkeypatch.setattr(auxiliary, "_map", lambda config=None: {})
+    cfg = {
+        "chat_models": {
+            "opus5.0": "global.anthropic.claude-opus-5",
+            "haiku": "global.anthropic.claude-haiku-4-5",
+        }
+    }
+    monkeypatch.setattr("server.infrastructure.config.load_config", lambda: cfg)
     assert compaction._summary_model_key("opus5.0") == "opus5.0"
-    monkeypatch.setattr(auxiliary, "_map", lambda config=None: {"compaction": "haiku"})
+    cfg["auxiliary_models"] = {"compaction": "haiku"}
     assert compaction._summary_model_key("opus5.0") == "haiku"
-    monkeypatch.setattr(auxiliary, "_map", lambda config=None: {"compaction": "main"})
+    cfg["auxiliary_models"] = {"compaction": "main"}
     assert compaction._summary_model_key("opus5.0") == "opus5.0"

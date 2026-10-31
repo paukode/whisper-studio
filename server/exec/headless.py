@@ -468,7 +468,6 @@ async def run_headless_turn(
                 max_rounds=rounds,
                 deadline_seconds=deadline,
                 completion_gate=False,
-                salvage_round=True,
             ),
             loop=loop,
             executor=_HEADLESS_EXECUTOR,
@@ -498,6 +497,7 @@ async def run_headless_turn(
         # SSE FRAME VOCABULARY, exactly like _run_agent_loop's own drain —
         # see that function's comment before touching this one. ────────────
         rounds_used = 0
+        compaction_failed = False
         all_text_parts: list[str] = []
         round_text_parts: list[str] = []
         final_usage = {
@@ -548,6 +548,7 @@ async def run_headless_turn(
                     elif "text" in frame and isinstance(frame.get("text"), str):
                         round_text_parts.append(frame["text"])
                     elif "error" in frame:
+                        compaction_failed |= frame.get("error_code") == "COMPACTION_FAILED"
                         yield {"type": "error", "message": frame["error"]}
                     elif "skill_input" in frame:
                         tool_name = frame["skill_input"]
@@ -609,6 +610,12 @@ async def run_headless_turn(
             flushed = _flush_round_text()  # catch trailing text with no following usage frame
             if flushed:
                 yield {"type": "text", "text": flushed}
+
+        # The engine already drained its terminal cleanup. Preserve any text
+        # flushed above, but never distill or store a false successful answer.
+        if compaction_failed:
+            yield {"type": "done", "status": "failed", "session_id": session_id}
+            return
 
         from server.chat.engine.runner import SOFT_LIMIT_FRACTION
 

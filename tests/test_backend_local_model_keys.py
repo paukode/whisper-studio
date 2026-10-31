@@ -36,7 +36,7 @@ def test_one_shot_runs_on_the_picked_local_model(monkeypatch):
         seen["key"] = key
         return "condensed"
 
-    monkeypatch.setattr(rt, "complete", fake_complete)
+    monkeypatch.setattr(oneshot, "_local_one_shot", fake_complete)
     out = oneshot.one_shot(
         system="s",
         user="u",

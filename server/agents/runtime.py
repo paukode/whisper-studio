@@ -574,16 +574,10 @@ async def _run_agent_loop(
     """Internal agent loop — the shared chat/engine turn loop
     (server.chat.engine.runner.run_turn) instead of a hand-rolled round loop.
 
-    Ports agents onto the exact engine interactive chat uses: round budgets,
-    the salvage round, the shared tool-execution safety gate (execute_tool_batch
-    + process_tool_results — every tool call flows through server.tool_router,
-    same as chat), and unattended resolution of approval/pause-inducing tools
-    (TurnContext.unattended). completion_gate is forced OFF — an agent must
-    never trigger the PARENT chat turn's goal-gate evaluator — and
-    turn_scope_id keys this run's goal-store/auto-mode-breaker/paused-turn
-    state so it can never collide with a concurrently running parent turn
-    that shares the same session_id (e.g. the chat turn whose spawn_agent
-    call is still awaiting this very run).
+    Shares chat's round budgets, fail-closed compaction and tool safety gate.
+    Unattended runs resolve approvals through that gate. completion_gate is
+    off: an agent must never trigger its parent's goal judge. turn_scope_id
+    isolates this run's goal, breaker and pause state from its parent.
 
     Not migrated, by design: _distill_structured (a one-shot structured-output
     call over the finished transcript; chat/engine's adapters have no
@@ -869,7 +863,6 @@ async def _run_agent_loop(
             # Agents must never trigger the parent chat turn's goal-gate
             # evaluator.
             completion_gate=False,
-            salvage_round=True,
         ),
         loop=loop,
         executor=_agent_executor,
@@ -919,6 +912,7 @@ async def _run_agent_loop(
     }
     round_text_parts: list[str] = []
     error_text: str | None = None
+    compaction_failed = False
     # The final round's message is the report the caller receives; the
     # earlier rounds are narration that lives in the journal.
     last_round_text = ""
@@ -990,6 +984,7 @@ async def _run_agent_loop(
                     round_text_parts.append(frame["text"])
                 elif "error" in frame:
                     error_text = frame["error"]
+                    compaction_failed |= frame.get("error_code") == "COMPACTION_FAILED"
                 elif "budget_warning" in frame:
                     cost_capped = True
                 elif "skill_input" in frame:
@@ -1108,7 +1103,7 @@ async def _run_agent_loop(
     body_text = _finalize(report_text or collected_text)
 
     structured = None
-    if structured_schema is not None:
+    if structured_schema is not None and not compaction_failed:
         # One-shot structured-output calls on the old provider adapters
         # (server.agents.providers): the chat/engine adapters have no
         # equivalent. See distill_run_output.
@@ -1126,7 +1121,10 @@ async def _run_agent_loop(
             source=cost_source,
         )
 
-    if stopped_early:
+    if compaction_failed:
+        # Keep every partial note, without another model request or success.
+        body_text = _finalize(f"[Agent Error] {error_text}\n\n{collected_text}")
+    if stopped_early and not compaction_failed:
         if cost_capped:
             stop_reason, reason_text = "cost_cap", "reached the session cost cap"
         elif _time_up:
@@ -1176,11 +1174,12 @@ async def _run_agent_loop(
         # plainly instead of an empty result.
         body_text = f"[Agent Error] {error_text}"
 
-    _emit("completed", turn=rounds_used, turns_used=rounds_used, status="completed")
+    status, reason = ("failed", "error") if compaction_failed else ("completed", "completed")
+    _emit(status, turn=rounds_used, turns_used=rounds_used, status=status)
     _close_journal(
         journal,
-        "completed",
-        "completed",
+        status,
+        reason,
         body_text,
         turns_used=rounds_used,
         usage=final_usage,
@@ -1190,8 +1189,8 @@ async def _run_agent_loop(
         agent_id=agent_id,
         agent_type=config.agent_type,
         output=body_text,
-        status="completed",
-        stop_reason="completed",
+        status=status,
+        stop_reason=reason,
         turns_used=rounds_used,
         tools_called=tools_called,
         usage=final_usage,

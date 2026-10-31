@@ -6,9 +6,8 @@ must behave identically across Claude/GPT/local and chat/subagents/cron:
 
   - round budgets and wind-down reminders (TurnPolicy)
   - context management: proactive compaction (char estimate + token-truth
-    nudge), reactive prompt-too-long rescue (trim + retry), and the salvage
-    round (one final no-tools round on a hard-trimmed context, so a turn that
-    did forty rounds of work never dies with a bare error)
+    nudge) and one fail-closed summary attempt per provider overflow episode.
+    An uncompactable context ends visibly without deleting history.
   - tool execution through the shared safety gate (execute_tool_batch +
     process_tool_results, run by tool_rounds.py for every round that ended
     with tool calls: every result flows the gate, the engine never reads
@@ -287,10 +286,9 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
     """The round loop of run_turn."""
     from server.chat.attachment_context import ensure_attachments_present
     from server.chat.compaction import (
+        CompactionError,
         compact_messages_with_claude,
-        ensure_valid_start,
         estimate_message_size,
-        sanitize_tool_pairs,
         thresholds_for,
     )
     from server.costs.tracker import call_cost, prompt_token_total
@@ -362,8 +360,8 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
     # Replay protection — skip duplicate tool_use IDs across the stream.
     _seen_tool_ids = BoundedUUIDSet(capacity=256)
 
-    # Reactive prompt-too-long rescue state.
-    salvage_mode = False
+    # Only a completed provider round resets this overflow episode's allowance.
+    overflow_attempted = False
 
     # Mid-stream fault rescue state (see _ROUND_RETRIES_MAX).
     round_retries = 0
@@ -393,7 +391,7 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
             else None
         )
         deadline_hit = _soft_deadline is not None and time.monotonic() >= _soft_deadline
-        is_last_round = round_num == cap - 1 or deadline_hit or salvage_mode
+        is_last_round = round_num == cap - 1 or deadline_hit
 
         from server.chat.loop_hints import FINAL_ROUND_AT, near_cap_reminder
 
@@ -431,8 +429,8 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
         # Deadline enforcement: the FIRST round observed past the wall-clock
         # deadline gets a "finalize now" reminder, exactly once (a later
         # max_tokens/pause_turn continuation must not repeat it every round).
-        # Tool availability is forced off below (parallel to salvage_mode) so
-        # this round is genuinely terminal — tools-wise — regardless of
+        # Tool availability is forced off below (as for the cost cap), so
+        # this round is genuinely terminal for tools, regardless of
         # provider, rather than merely continuing with is_last_round=True.
         if deadline_hit and not _deadline_finalized:
             _deadline_finalized = True
@@ -497,7 +495,7 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
             if ctx.final_round_hint:
                 _remind(messages, ctx.final_round_hint)
 
-        if salvage_mode or deadline_hit or budget_final:
+        if deadline_hit or budget_final:
             tools, core_count = [], None
         elif ctx.tool_catalog is not None:
             tools, core_count = ctx.tool_catalog()
@@ -670,42 +668,27 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
                 if errored:
                     return
             except PromptTooLongError:
-                # Reactive rescue: strip oldest messages, compact, retry.
-                log.warning("Prompt too long — applying reactive compaction")
+                # One summary attempt per overflow episode, using ALL history.
+                # Never delete a prefix or synthesize from a hard-trimmed tail.
+                # A second overflow (or no retry round left) is terminal.
+                if overflow_attempted or round_num >= cap - 1:
+                    raise CompactionError() from None
+                overflow_attempted = True
+                log.warning("Prompt too long: attempting fail-closed compaction")
                 yield f"data: {ndjson_dumps({'status': 'Compacting context (prompt too long)...'})}\n\n"
-                if len(messages) > 4:
-                    messages = ensure_valid_start(messages[2:])
-                    messages = await compact_messages_with_claude(
-                        messages,
-                        ctx.model_id,
-                        session_id=session_id,
-                        model_key=ctx.model_key,
-                        trigger="context-overflow",
-                    )
-                    messages = sanitize_tool_pairs(messages)
-                    continue  # retry the round
-                if ctx.policy.salvage_round and not salvage_mode:
-                    # Salvage: one final no-tools round on a hard-trimmed tail,
-                    # so the work already done yields an answer, not an error.
-                    salvage_mode = True
-                    log.warning("Reactive compaction exhausted — salvage round")
-                    yield f"data: {ndjson_dumps({'status': 'Context exceeds the model window; synthesizing a final answer from what fits...'})}\n\n"
-                    tail = sanitize_tool_pairs(ensure_valid_start(messages[-6:]))
-                    tail.append(
-                        {
-                            "role": "user",
-                            "content": (
-                                "[The conversation no longer fits the model's context "
-                                "window and was truncated. Synthesize the best possible "
-                                "final answer from the work above. Do not call tools.]"
-                            ),
-                        }
-                    )
-                    messages = tail
-                    continue
-                yield f"data: {ndjson_dumps({'error': 'Conversation too long even after compaction. Please start a new session.'})}\n\n"
-                yield "data: [DONE]\n\n"
-                return
+                compacted = await compact_messages_with_claude(
+                    messages,
+                    ctx.model_id,
+                    session_id=session_id,
+                    model_key=ctx.model_key,
+                    trigger="context-overflow",
+                )
+                if estimate_message_size(compacted) >= estimate_message_size(messages):
+                    raise CompactionError() from None
+                # Commit only a successful, strictly smaller replacement. Core
+                # compaction preserves the recent suffix, tool pairs and refs.
+                messages = compacted
+                continue
             except WhisperAPIError as api_err:
                 log.warning("Round %d failed with API error: %s", round_num, api_err)
                 yield f"data: {ndjson_dumps({'error': api_err.user_message})}\n\n"
@@ -737,6 +720,7 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
             # transient fault a fresh retry allowance instead of letting one
             # early blip spend the whole turn's budget.
             round_retries = 0
+            overflow_attempted = False
 
             stop_reason = round_result.stop_reason
             usage = round_result.usage
@@ -943,7 +927,6 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
                     # not run; an active goal is reported as not checked.
                     _unchecked = last_round_not_checked(
                         _scope_id,
-                        salvage=salvage_mode,
                         budget=budget_final,
                         deadline=deadline_hit,
                         attempt=stop_blocks_used,
@@ -1052,7 +1035,27 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
                 return
 
             messages = _outcome.messages
+        except CompactionError as exc:
+            # All three mid-turn boundaries land here: reactive overflow,
+            # output-limit continuation and the tool phase. Keep messages and
+            # streamed output intact; [DONE] uses run_turn's label/inbox drain.
+            log.warning("Round %d stopped: context compaction failed", round_num)
+            yield f"data: {ndjson_dumps({'error': str(exc), 'error_code': 'COMPACTION_FAILED'})}\n\n"
+            if ctx.policy.completion_gate:
+                from server.goals.gate import last_round_not_checked
+
+                unchecked = last_round_not_checked(
+                    _scope_id, context_failure=True, attempt=stop_blocks_used, cap=_goal_cap
+                )
+                if unchecked:
+                    yield f"data: {ndjson_dumps(unchecked)}\n\n"
+            yield "data: [DONE]\n\n"
+            return
         finally:
+            # Consumers checkpoint this field when the turn ends. A successful
+            # compaction can replace the working list; retain subsequent results
+            # and partial replies if a later compaction fails or is cancelled.
+            ctx.messages = messages
             # Torn down mid-round (Stop / tab-close): close the tool phase,
             # whose own finally cancels a still-running tool batch. A phase
             # that ran to its end closes as a no-op. The adapter's own finally

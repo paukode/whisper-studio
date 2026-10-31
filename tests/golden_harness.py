@@ -72,7 +72,12 @@ class FakeBedrockClient:
         # Compaction summarizer path; deterministic canned summary.
         return {
             "body": _Readable(
-                json.dumps({"content": [{"type": "text", "text": "(scripted summary)"}]})
+                json.dumps(
+                    {
+                        "content": [{"type": "text", "text": "(scripted summary)"}],
+                        "stop_reason": "end_turn",
+                    }
+                )
             )
         }
 
@@ -162,7 +167,6 @@ def msg_end(stop_reason="end_turn", output_tokens=50):
 
 def run_chat_turn(monkeypatch, fake_client, body):
     """POST /api/chat against a scripted client; return raw SSE data lines."""
-    import server.chat.compaction as compaction_mod
     import server.chat.engine.anthropic as engine_anthropic_mod
     import server.chat.routes as routes_mod
     import server.local.route as local_route
@@ -173,7 +177,9 @@ def run_chat_turn(monkeypatch, fake_client, body):
     # would silently send the scripted turn to REAL Bedrock.
     if hasattr(routes_mod, "_get_bedrock_client"):
         monkeypatch.setattr(routes_mod, "_get_bedrock_client", lambda: fake_client)
-    monkeypatch.setattr(compaction_mod, "_get_bedrock_client", lambda: fake_client)
+    # Compaction now uses one_shot, not a private Bedrock fallback binding.
+    # Its exact selected model still resolves normally; only transport is fake.
+    monkeypatch.setattr("server.chat.infra._get_bedrock_client", lambda: fake_client)
     monkeypatch.setattr(engine_anthropic_mod, "_get_bedrock_client", lambda: fake_client)
     # Keep the turn on the cloud Anthropic branch regardless of local config.
     monkeypatch.setattr(local_route, "local_chat_response", lambda **kw: None)

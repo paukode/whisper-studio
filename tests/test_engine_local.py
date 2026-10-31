@@ -345,8 +345,12 @@ def test_context_overflow_raises_prompt_too_long_and_salvages(monkeypatch):
         return [c async for c in run_turn(ctx)]
 
     blob = "".join(asyncio.run(go()))
-    assert "synthesizing a final answer" in blob
-    assert "Salvaged locally." in blob
+    assert "Context compaction failed" in blob
+    assert "history is unchanged" in blob
+    assert "Salvaged locally." not in blob
+    assert calls_round["n"] == 1
+    assert ctx.messages == [{"role": "user", "content": "big"}]
+    assert blob.count("data: [DONE]") == 1
 
 
 def test_usage_frame_reports_cached_prefix_semantics(monkeypatch):

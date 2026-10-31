@@ -48,7 +48,7 @@ from .budget import (  # noqa: E402,F401
 from .compaction import (  # noqa: E402,F401
     COMPACT_TRIGGER_CHARS,
     MAX_CONTEXT_CHARS,
-    _compact_messages_simple,
+    CompactionError,
     compact_messages_with_claude,
     estimate_message_size,
     microcompact_messages,

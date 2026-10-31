@@ -109,6 +109,26 @@ def test_output_cap_follows_the_reader_not_the_map_engine(monkeypatch, map_engin
         assert len(body) > cfg["local_max_output_chars"]
 
 
+@pytest.mark.parametrize("reader", [BIG, "local_gemma"])
+def test_local_writer_is_not_given_a_cloud_reader_as_an_explicit_model(monkeypatch, reader):
+    from server.infrastructure import oneshot
+    from server.local import runtime
+
+    used = []
+    monkeypatch.setattr(runtime, "loaded_key", lambda: "local_gemma")
+    monkeypatch.setattr(runtime, "is_downloaded", lambda key: key == "local_gemma")
+
+    def complete(key, system, user, *, max_tokens):
+        used.append(key)
+        return "Extracted notes"
+
+    monkeypatch.setattr(oneshot, "_local_one_shot", complete)
+    assert mr._map_model("local", reader) == "local_gemma"
+    result = mr._map_chunk("Transcript", 1, 1, "local", mr._cfg(_cfg()), chat_model_key=reader)
+    assert result == "Extracted notes"
+    assert used == ["local_gemma"]
+
+
 def test_specific_local_key_maps_serially_in_local_sized_chunks(monkeypatch):
     cfg = mr._cfg(_cfg())
     active = {"now": 0, "peak": 0}

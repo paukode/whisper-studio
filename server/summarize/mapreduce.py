@@ -387,8 +387,15 @@ def _map_model(engine: str, chat_model_key: str | None) -> str:
     to, else the engine itself. Part of the cache key, so a different map model
     never serves another one's result."""
     if engine == "local":
-        return resolve_local_key(chat_model_key)
+        return resolve_local_key(_local_reader_key(chat_model_key))
     return engine
+
+
+def _local_reader_key(chat_model_key: str | None) -> str | None:
+    """A cloud reader is not an explicit selection of the local map model."""
+    from server.local.runtime import is_local_model
+
+    return chat_model_key if chat_model_key and is_local_model(chat_model_key) else None
 
 
 def _cache_key(text: str, cfg: dict, map_model: str, limit: int, max_out: int) -> str:
@@ -552,9 +559,9 @@ def _map_chunk(
             MAP_USER.format(i=i, n=n, chunk=chunk),
             max_tokens=int(cfg["map_max_tokens"]),
             engine=engine,
-            # Only the "local" alias follows a local model key; resolve_local_key
-            # ignores a cloud chat key, and a cloud or specific-key map ignores it.
-            local_model_key=chat_model_key if engine == "local" else None,
+            # Only an on-device reader selects the local writer. A cloud
+            # reader leaves the explicit local alias to follow the resident model.
+            local_model_key=_local_reader_key(chat_model_key) if engine == "local" else None,
             feature="Transcript condensation",
             source="condensation",
         )

@@ -5,9 +5,10 @@ checkpoints (tools/system/moving message breakpoints and the canary), the
 invoke retry wrapper, the threaded EventStream reader, and the decode of
 Anthropic stream events into the neutral vocabulary in ``events``.
 
-``stream_round`` raises ``PromptTooLongError`` at invoke time (the engine owns
-the rescue) and yields a terminal ``RoundResult`` carrying the canonical
-assistant content on success. Mid-stream failures become ``RoundError``.
+``stream_round`` raises ``PromptTooLongError`` at invoke or stream time so the
+engine owns bounded compaction. It yields ``RoundResult`` with canonical
+assistant content on success. Other stream failures and prior tool-input
+rejections become ``RoundError``.
 """
 
 import asyncio
@@ -221,8 +222,10 @@ class AnthropicAdapter:
         return Usage(**meter.result(posted["chars"], self._inflight_received, label=label))
 
     async def stream_round(self, messages, tools, core_count, round_num, is_last_round):
-        """Yield neutral RoundEvents for one model round. Raises
-        PromptTooLongError / WhisperAPIError at invoke time (engine handles)."""
+        """Yield round events; propagate overflow at invoke or stream time.
+
+        Other invoke-time WhisperAPIError failures also reach the engine.
+        """
         from server.costs.capture import ClaudeStreamUsage
 
         meter = ClaudeStreamUsage()
@@ -309,6 +312,13 @@ class AnthropicAdapter:
                         data if isinstance(data, WhisperAPIError) else classify_bedrock_error(data)
                     )
                     log.warning("Bedrock stream error: %s", api_err)
+                    from server.infrastructure.errors import PromptTooLongError
+
+                    # Overflow requires the engine's bounded compaction path,
+                    # never a transient retry of the same oversized request.
+                    # Keep any prior tool-input rejection terminal.
+                    if isinstance(api_err, PromptTooLongError) and not argument_error:
+                        raise api_err
                     yield RoundError(
                         message=argument_error or api_err.user_message,
                         retryable=not argument_error and api_err.is_retryable,
