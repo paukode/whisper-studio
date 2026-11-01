@@ -49,7 +49,7 @@ from server.infrastructure.effort import (
     normalize_effort,
     openai_effort_tier_for,
 )
-from server.infrastructure.paths import config_dir, repo_root
+from server.infrastructure.paths import app_home, config_dir, repo_root
 
 log = logging.getLogger("whisper-studio")
 
@@ -790,13 +790,27 @@ def _value_checks() -> dict[str, tuple[set[str], str]]:
     }
 
 
+def _legacy_config_paths() -> list[str]:
+    """Where an old config.json may still sit: next to config.user.json and,
+    in a packaged install (WHISPER_HOME set), in the app home, where the
+    packaged app kept its config before the user files moved to ~/.whisper.
+    Only checked for, never read, moved or deleted."""
+    paths = [LEGACY_CONFIG_PATH]
+    if os.environ.get("WHISPER_HOME", "").strip():
+        packaged = os.path.join(app_home(), "config.json")
+        if os.path.realpath(packaged) != os.path.realpath(LEGACY_CONFIG_PATH):
+            paths.append(packaged)
+    return paths
+
+
 def old_config_notices() -> list[tuple[str, str]]:
     """(title, message) for each old or unknown setting the app does not use, so
     startup says so instead of ignoring it quietly. Reads only; nothing on disk
     changes. Each message stays the same while its cause does, so the bell shows
     it once (record_notification_once).
 
-    - An old single-file config.json next to config.user.json.
+    - An old single-file config.json next to config.user.json, or in the app
+      home (WHISPER_HOME), where a packaged install used to keep it.
     - local_mode set in config.user.json with no model_mode: local_mode used to
       switch the app to Local mode, so the user would otherwise get the shipped
       mode without being told.
@@ -807,16 +821,17 @@ def old_config_notices() -> list[tuple[str, str]]:
     """
     shipped_mode = str(_system_config().get("model_mode") or DEFAULTS["model_mode"])
     notices: list[tuple[str, str]] = []
-    if os.path.exists(LEGACY_CONFIG_PATH):
-        notices.append(
-            (
-                "config.json is no longer read",
-                f"Whisper Studio ignores {LEGACY_CONFIG_PATH} and leaves it as it is. "
-                f"Settings are read from {USER_CONFIG_PATH} only. Copy what you still "
-                "need from config.json into config.user.json, or set it again in "
-                "Settings, then delete or rename config.json.",
+    for legacy_path in _legacy_config_paths():
+        if os.path.exists(legacy_path):
+            notices.append(
+                (
+                    "config.json is no longer read",
+                    f"Whisper Studio ignores {legacy_path} and leaves it as it is. "
+                    f"Settings are read from {USER_CONFIG_PATH} only. Copy what you still "
+                    "need from config.json into config.user.json, or set it again in "
+                    "Settings, then delete or rename config.json.",
+                )
             )
-        )
     user = _load_user_config()
     if user.get("local_mode") and "model_mode" not in user:
         notices.append(
