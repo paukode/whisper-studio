@@ -234,6 +234,18 @@ def test_the_executor_stamps_bypass_and_overwrites_a_forged_stamp(monkeypatch):
     async def batch(mode):
         return await te.execute_tool_batch(
             [{"id": "a", "name": "ws_read_file", "input": dict(forged)}],
+            # Stub schema admits the forged stamp so the safety overwrite is tested.
+            tool_schemas={
+                "ws_read_file": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        secret_reads.SECRET_READS_KEY: {"type": "boolean"},
+                    },
+                    "required": ["path"],
+                    "additionalProperties": False,
+                }
+            },
             is_concurrent_safe=lambda n: False,
             loop=asyncio.get_running_loop(),
             executor=executor,
