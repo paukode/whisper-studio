@@ -173,3 +173,50 @@ def test_a_server_that_cannot_be_told_to_stop_is_named_as_still_running(isolated
     out = asyncio.run(go())
     assert "may still be running it" in out
     assert "a retry can repeat its effects" in out
+
+
+class _GatedSession:
+    """A session whose calls finish when the test releases them."""
+
+    def __init__(self):
+        self.gates: dict[str, asyncio.Event] = {}
+
+    async def call_tool(self, name, arguments=None):
+        gate = self.gates[(arguments or {})["who"]]
+        await gate.wait()
+        result = MagicMock()
+        result.content = []
+        result.isError = False
+        return result
+
+
+def test_overlapping_calls_each_remove_their_own_entry(isolated_mcp):
+    """The older call finishing first must not drop the newer call's context:
+    an unattended agent call still in flight keeps its agent attribution."""
+    mgr, _ = _manager({"command": "x", "call_timeout_seconds": 5})
+    session = _GatedSession()
+    mgr._sessions["srv"]["session"] = session
+
+    async def go():
+        session.gates = {"chat": asyncio.Event(), "agent": asyncio.Event()}
+        chat = asyncio.create_task(
+            mgr.execute_approved_tool_call(
+                "mcp__srv__slow_query", {"who": "chat", "__session_id__": "chat-1"}
+            )
+        )
+        await asyncio.sleep(0.01)
+        agent = asyncio.create_task(
+            mgr.execute_approved_tool_call(
+                "mcp__srv__slow_query",
+                {"who": "agent", "__session_id__": "agent-run", "__agent__": True},
+            )
+        )
+        await asyncio.sleep(0.01)
+        session.gates["chat"].set()
+        await chat
+        assert mgr._active_calls["srv"] == [{"session_id": "agent-run", "agent": True}]
+        session.gates["agent"].set()
+        await agent
+        assert "srv" not in mgr._active_calls
+
+    asyncio.run(asyncio.wait_for(go(), timeout=5))

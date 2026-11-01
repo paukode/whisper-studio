@@ -857,9 +857,8 @@ class MCPManager:
         is_agent = bool(arguments.get("__agent__"))
 
         session = session_info["session"]
-        self._active_calls.setdefault(server_name, []).append(
-            {"session_id": session_id, "agent": is_agent}
-        )
+        call_entry = {"session_id": session_id, "agent": is_agent}
+        self._active_calls.setdefault(server_name, []).append(call_entry)
         timeout_s = _call_timeout_s(session_info.get("config") or {})
         stop_event = session_info.get("stop_event")
         request: dict = {}
@@ -937,9 +936,13 @@ class MCPManager:
             log.error("MCP tool call error (%s/%s): %s", server_name, original_name, e)
             return f"[MCP Error] {e}"
         finally:
+            # Remove THIS call's entry: with overlapping calls the one that
+            # finishes first is not necessarily the newest.
             stack = self._active_calls.get(server_name)
-            if stack:
-                stack.pop()
+            if stack is not None:
+                stack.remove(call_entry)
+                if not stack:
+                    self._active_calls.pop(server_name, None)
 
     def _build_elicitation_callback(self, server_name: str):
         """Build the `elicitation_callback` bound into `ClientSession` for
