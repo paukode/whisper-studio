@@ -1,159 +1,56 @@
 #!/bin/bash
 set -e
 
+# Installs and starts Whisper Studio from this checkout, with the same pieces
+# the Mac app bundles (macapp/build_app.sh): Python 3.13 with requirements.txt,
+# the Playwright browser, llama-server, ffmpeg/ffprobe, Node and the always-on
+# speech models. The app opens in your default browser. Every step either
+# works or stops the script with an error; nothing is skipped with a warning.
+
 VENV_DIR="venv"
 NODE_MODULES_DIR="node_modules"
 SETUP_LOG="setup.log"
-# Read Node version from .nvmrc if present, otherwise fall back to a known-good
-# default. .nvmrc lets us bump Node without editing this script.
-NODE_VERSION="$( [ -f .nvmrc ] && tr -d ' \n' < .nvmrc || echo 22.16.0 )"
 
-# Whisper Studio supports one platform: macOS on Apple silicon (arm64). Stop
-# here, before anything is checked or installed, on any other OS or CPU. An
-# Intel Mac, and a shell running under Rosetta, report x86_64 and are refused.
-# Same message as server/infrastructure/platform_guard.py.
+# Whisper Studio supports one platform: macOS 14 or later on Apple silicon
+# (arm64). Stop here, before anything is checked or installed, on any other OS,
+# CPU or macOS version. An Intel Mac, and a shell running under Rosetta, report
+# x86_64 and are refused. Same rule as server/infrastructure/platform_guard.py.
 require_macos_arm64() {
-    local os arch
+    local os arch major
     os="$(uname -s)"
     arch="$(uname -m)"
     if [ "$os" != "Darwin" ] || [ "$arch" != "arm64" ]; then
         echo "Whisper Studio requires macOS on Apple silicon (arm64). Detected: $os/$arch." >&2
         exit 1
     fi
+    major="$(sw_vers -productVersion | cut -d. -f1)"
+    if [ "$major" -lt 14 ]; then
+        echo "Whisper Studio requires macOS 14 or later. Detected: $(sw_vers -productVersion)." >&2
+        exit 1
+    fi
 }
 require_macos_arm64
 
-# Ensure Python 3.12+. The Mac app ships CPython 3.13, and the voice-mode SDK
-# (aws-sdk-bedrock-runtime in requirements.txt) only installs on 3.12 or newer,
-# so an older interpreter would silently produce an app without voice mode. If
-# the active Python is older or missing, offer to install Python 3.12 via
-# Homebrew, persist it on PATH in ~/.zshrc, and use it for the rest of this run.
-_py_minor_ok() {
-    # Args: <major> <minor>. True when version >= 3.12 (or major > 3).
-    [ "$1" -gt 3 ] || { [ "$1" -eq 3 ] && [ "$2" -ge 12 ]; }
-}
-
-_install_python_312() {
-    # Need an interactive terminal to ask, and Homebrew to install.
-    if [ ! -t 0 ]; then
-        echo "Re-run in an interactive terminal to auto-install, or install Python 3.12+ yourself. Exiting."
-        exit 1
-    fi
-    if ! command -v brew >/dev/null 2>&1; then
-        echo "Homebrew is needed to install Python automatically. Get it at https://brew.sh, then re-run. Exiting."
-        exit 1
-    fi
-
-    printf "Install Python 3.12 via Homebrew now? [y/N] "
-    read -r reply
-    case "$reply" in
-        [Yy] | [Yy][Ee][Ss]) ;;
-        *) echo "Cannot continue without Python 3.12 or newer. Exiting."; exit 1 ;;
-    esac
-
-    echo "Installing Python 3.12 via Homebrew (this can take a few minutes)..."
-    brew install python@3.12
-
-    # python@3.12 is keg-only; its libexec/bin holds the unversioned python3/pip3.
-    local py_bin
-    py_bin="$(brew --prefix python@3.12)/libexec/bin"
-
-    # Persist for future shells so `python3` is 3.12 going forward.
-    local zrc="$HOME/.zshrc"
-    if [ ! -f "$zrc" ] || ! grep -qs "python@3.12/libexec/bin" "$zrc"; then
-        {
-            echo ""
-            echo "# Added by whisper-studio setup.sh: prefer Homebrew Python 3.12"
-            echo "export PATH=\"$py_bin:\$PATH\""
-        } >> "$zrc"
-        echo "Added Python 3.12 to PATH in $zrc."
-    fi
-
-    # Use it for the rest of THIS run (so the venv below is built with 3.12).
-    export PATH="$py_bin:$PATH"
-    hash -r 2>/dev/null || true
-}
-
-# ── Vector-search Python ──────────────────────────────────────────────────
-# sqlite-vec needs an interpreter whose stdlib sqlite3 can load extensions. The
-# python.org macOS framework build can't; Homebrew's can. We build the venv from
-# an extension-capable interpreter, referenced by ABSOLUTE PATH only, so the user's
-# default python3 and shell config are left untouched. Falls back gracefully to
-# the active python3 (the index then uses its numpy vector search).
-VENV_PYTHON=""
-
-_python_loads_extensions() {
-    "$1" - >/dev/null 2>&1 <<'PYEOF'
-import sqlite3, sys
-try:
-    sqlite3.connect(":memory:").enable_load_extension(True)
-except Exception:
-    sys.exit(1)
-PYEOF
-}
-
-_select_venv_python() {
-    if command -v python3 >/dev/null 2>&1 && _python_loads_extensions "$(command -v python3)"; then
-        VENV_PYTHON="$(command -v python3)"
-        return 0
-    fi
-    if ! command -v brew >/dev/null 2>&1; then
-        echo "Note: this Python can't load SQLite extensions and Homebrew isn't present. Vector search will use the numpy fallback (still works)."
-        VENV_PYTHON="$(command -v python3)"
-        return 0
-    fi
-    echo "Building the venv from a Homebrew Python so vector search can use sqlite-vec (your default python3 is untouched)..."
-    local v cand
-    for v in 3.13 3.12; do
-        cand="$(brew --prefix)/opt/python@$v/bin/python$v"
-        if [ -x "$cand" ]; then VENV_PYTHON="$cand"; break; fi
+# A source install keeps its data in this checkout. WHISPER_HOME and
+# WHISPER_USER_DIR point the server at another data root (the Mac app sets
+# WHISPER_HOME for its own data), so an exported value would mix the two.
+refuse_foreign_data_root() {
+    local var
+    for var in WHISPER_HOME WHISPER_USER_DIR; do
+        if [ -n "${!var}" ]; then
+            echo "ERROR: $var is set (${!var}). A source install keeps its data in this checkout. Run: unset $var" >&2
+            exit 1
+        fi
     done
-    if [ -z "$VENV_PYTHON" ]; then
-        echo "Installing python@3.13 via Homebrew (one-time, isolated to Homebrew)..."
-        brew install python@3.13 >/dev/null 2>&1 || true
-        VENV_PYTHON="$(brew --prefix)/opt/python@3.13/bin/python3.13"
-    fi
-    if [ ! -x "$VENV_PYTHON" ] || ! _python_loads_extensions "$VENV_PYTHON"; then
-        echo "Note: couldn't get an extension-capable Python. Vector search will use the numpy fallback."
-        VENV_PYTHON="$(command -v python3)"
-    fi
 }
+refuse_foreign_data_root
 
-require_python_312() {
-    local ver="" major=0 minor=0
-    if command -v python3 >/dev/null 2>&1; then
-        ver=$(python3 -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")')
-        major=${ver%%.*}
-        minor=${ver#*.}
-    fi
-
-    if [ -n "$ver" ] && _py_minor_ok "$major" "$minor"; then
-        return 0
-    fi
-
-    if [ -n "$ver" ]; then
-        echo "Python $ver detected; this project requires Python 3.12 or newer."
-    else
-        echo "Python 3 was not found; this project requires Python 3.12 or newer."
-    fi
-
-    _install_python_312
-
-    # Re-check against the freshly installed Python.
-    if ! command -v python3 >/dev/null 2>&1; then
-        echo "ERROR: python3 still not found after install. Open a new terminal and re-run."
-        exit 1
-    fi
-    ver=$(python3 -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")')
-    major=${ver%%.*}
-    minor=${ver#*.}
-    if ! _py_minor_ok "$major" "$minor"; then
-        echo "ERROR: Python is still $ver. Open a new terminal so the updated PATH applies, then re-run. Exiting."
-        exit 1
-    fi
-    echo "Using Python $ver for this setup."
-}
-require_python_312
+# The Node version lives in .nvmrc only; macapp/build_app.sh reads the same file.
+if [ ! -f .nvmrc ]; then
+    echo "ERROR: .nvmrc is missing. It holds the Node version; restore it with: git checkout .nvmrc" >&2
+    exit 1
+fi
+NODE_VERSION="$(tr -d ' \n' < .nvmrc)"
 
 # Runs a noisy install command. Output goes to $SETUP_LOG on success
 # (terminal stays clean, just the one-line progress message). On
@@ -181,81 +78,21 @@ run_quiet() {
     fi
 }
 
-# Prerequisite check for production runs. ffmpeg and ripgrep are runtime
-# dependencies the app cannot start without, so we auto-install them via
-# Homebrew when missing (same as dev mode) rather than failing the run. The
-# remaining prerequisites (Homebrew itself, curl, lsof) are verified only and
-# reported if missing.
-#
-# Collects all unmet items before exiting so the user can fix everything in a
-# single pass instead of re-running the script after each one.
-check_prod_prerequisites() {
+# Prerequisites that this script cannot install. Collects every unmet item
+# before exiting, so the user can fix everything in a single pass.
+check_prerequisites() {
     local missing=()
-    local versions=()
 
-    echo ""
-    echo "Checking production prerequisites..."
-    echo ""
-
-    # Python 3.12+ (already validated by require_python_312; we just
-    # capture the version string for the success report).
-    versions+=("Python:    $(python3 --version 2>&1)")
-
-    # Homebrew. The other deps below have brew install paths that won't
-    # work without it.
-    if command -v brew >/dev/null 2>&1; then
-        versions+=("Homebrew:  $(brew --version 2>&1 | head -n 1)")
-    else
+    if ! command -v brew >/dev/null 2>&1; then
         missing+=("Homebrew not found. Install with:
       /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"")
     fi
-
-    # Git and AWS CLI are intentionally not checked here, because setup.sh
-    # auto-installs them (see the venv block below) so requiring them
-    # up front would double-gate. AWS CLI still needs ``aws configure``
-    # from the user; that's a separate step we can't automate.
-
-    # ffmpeg: mlx-whisper uses it to decode audio. Whisper itself won't start
-    # without it on the path. Auto-install via Homebrew; without brew, report
-    # it as missing.
-    if command -v ffmpeg >/dev/null 2>&1; then
-        versions+=("ffmpeg:    $(ffmpeg -version 2>&1 | head -n 1)")
-    elif command -v brew >/dev/null 2>&1; then
-        run_quiet "Installing ffmpeg via Homebrew" brew install ffmpeg
-        versions+=("ffmpeg:    $(ffmpeg -version 2>&1 | head -n 1)")
-    else
-        missing+=("ffmpeg not found. Install with: brew install ffmpeg")
-    fi
-
-    # ripgrep: search backend used by the workspace tools. Auto-install via
-    # Homebrew; without brew, report it as missing.
-    if command -v rg >/dev/null 2>&1; then
-        versions+=("ripgrep:   $(rg --version 2>&1 | head -n 1)")
-    elif command -v brew >/dev/null 2>&1; then
-        run_quiet "Installing ripgrep via Homebrew" brew install ripgrep
-        versions+=("ripgrep:   $(rg --version 2>&1 | head -n 1)")
-    else
-        missing+=("ripgrep not found. Install with: brew install ripgrep")
-    fi
-
-    # curl: used by this script for backend/Vite health checks.
-    if command -v curl >/dev/null 2>&1; then
-        versions+=("curl:      $(curl --version 2>&1 | head -n 1)")
-    else
-        missing+=("curl not found. Install with: brew install curl  (pre-installed on macOS, check your PATH)")
-    fi
-
-    # lsof: used by this script to find an available port.
-    if command -v lsof >/dev/null 2>&1; then
-        versions+=("lsof:      installed")
-    else
-        missing+=("lsof not found. Pre-installed on macOS, check your PATH.")
-    fi
+    # curl: downloads and the health checks. lsof: the port search.
+    command -v curl >/dev/null 2>&1 || missing+=("curl not found. It ships with macOS; check your PATH.")
+    command -v lsof >/dev/null 2>&1 || missing+=("lsof not found. It ships with macOS; check your PATH.")
 
     if [ ${#missing[@]} -gt 0 ]; then
-        echo "ERROR: production-mode prerequisites are not met."
-        echo ""
-        echo "The following ${#missing[@]} item(s) need attention:"
+        echo "ERROR: prerequisites are not met."
         echo ""
         local i=1
         for item in "${missing[@]}"; do
@@ -266,18 +103,7 @@ check_prod_prerequisites() {
         echo "Fix the items above, then re-run 'bash setup.sh'."
         exit 1
     fi
-
-    echo "All prerequisites met:"
-    echo ""
-    for line in "${versions[@]}"; do
-        echo "  $line"
-    done
-    echo ""
 }
-
-# User config handling (seed config.user.json on first run, back it up and reset
-# it on --new) happens after argument parsing below, once we know whether --new
-# was passed. An old config.json is never read, moved or deleted.
 
 # Truncate the install log so each run starts fresh.
 : > "$SETUP_LOG"
@@ -288,10 +114,6 @@ FRESH=0
 # Vite dev server with HMR.
 PROD=1
 ENV_FLAG=""   # tracks an explicit --dev/--prod so passing both is rejected
-# Model mode: where indexing/RAG runs (cloud / hybrid / local). Only persisted
-# when a flag is given, so a plain re-run honors the existing config; a fresh
-# install gets the server-seeded first-run default (local), same as the Mac app.
-MODE_FLAG=""
 # Auto-open the app in the default browser once everything is ready.
 # Can also be disabled via NO_OPEN=1 env var (useful for SSH sessions
 # where ``open`` would launch a phantom tab on the remote Mac's display).
@@ -317,30 +139,18 @@ for arg in "$@"; do
             ENV_FLAG="prod"
             PROD=1
             ;;
-        --cloud)
-            MODE_FLAG="cloud"
-            ;;
-        --hybrid)
-            MODE_FLAG="hybrid"
-            ;;
-        --local)
-            MODE_FLAG="local"
-            ;;
         --no-open)
             NO_OPEN=1
             ;;
         -h|--help)
-            echo "Usage: bash setup.sh [--new] [--dev|--prod] [--cloud|--hybrid|--local] [--no-open]"
-            echo "  --new       Delete venv/, node_modules/, and static/dist/ and reinstall from scratch."
-            echo "              Also backs up config.user.json (timestamped) and resets it to the same"
-            echo "              first-run defaults a fresh Mac-app install gets (an old config.json"
-            echo "              is never read or changed)."
+            echo "Usage: bash setup.sh [--new] [--dev|--prod] [--no-open]"
+            echo "  --new       Delete venv/, node_modules/, static/dist/ and vendor/ and reinstall"
+            echo "              them. Also backs up pricing.json (timestamped) and removes it, so"
+            echo "              rates come from pricing.example.json. config.user.json is never"
+            echo "              touched."
             echo "  --dev       Development mode: run the backend + Vite dev server with HMR."
             echo "  --prod      Production mode: build the frontend and serve it from the backend"
             echo "              only (no Vite dev server). This is the default."
-            echo "  --cloud     Start in cloud mode: all indexing/RAG on Amazon Bedrock."
-            echo "  --hybrid    Start in hybrid mode: pick a backend per capability."
-            echo "  --local     Start in local mode: everything on-device."
             echo "  --no-open   Don't auto-open the app in the default browser."
             echo "              Also honored via NO_OPEN=1 env var."
             echo ""
@@ -349,9 +159,9 @@ for arg in "$@"; do
             echo "Everything else behaves like the Mac app's first launch: transcription"
             echo "models download on your first recording, index models on your first index"
             echo "build, and chat models are installed on demand from Settings > Models > Discover."
-            echo "Without a mode flag, an existing config is honored; a fresh install starts in"
-            echo "local mode, the Mac app's first-run default: nothing leaves the machine until"
-            echo "you switch to hybrid or cloud in Settings."
+            echo "A fresh install starts in Local mode, the Mac app's first-run default:"
+            echo "nothing leaves the machine until you switch to Hybrid or Cloud in"
+            echo "Settings > Model mode."
             echo ""
             echo "Default: production, builds the frontend and serves it from the backend,"
             echo "then opens the app in your default browser. Use --dev for the Vite HMR server."
@@ -365,169 +175,162 @@ for arg in "$@"; do
     esac
 done
 
-# Production runs do a strict pre-flight before touching the filesystem
-# so the user gets a single, actionable list of missing tools instead of
-# a half-installed venv and a cryptic Python traceback ten minutes later.
-if [ "$PROD" -eq 1 ]; then
-    check_prod_prerequisites
-fi
+# Check everything this script cannot install before it deletes or installs
+# anything, so a missing tool never leaves a half-removed checkout behind.
+check_prerequisites
 
 if [ "$FRESH" -eq 1 ]; then
-    # A fresh install resets the user config too: archive any existing layer as
-    # a timestamped backup (it holds the user's Tavily key + per-machine
-    # settings), then REMOVE it so the first-run seeding below recreates
-    # config.user.json with the same defaults a fresh Mac-app install gets.
-    # It is gitignored, so the backup is the only copy: never delete without
-    # backing up first. An old config.json is left alone (it is no longer read).
-    for cfg_file in config.user.json; do
-        if [ -f "$cfg_file" ]; then
-            config_backup="$cfg_file.bak.$(date +%Y%m%d%H%M%S)"
-            cp "$cfg_file" "$config_backup"
-            rm -f "$cfg_file"
-            echo "Backed up $cfg_file to $config_backup and reset it."
-        fi
-    done
-    echo "  Config will be re-seeded with first-run defaults (local mode)."
-    echo "  Re-add your Tavily API key and any custom settings in Settings (gear icon)."
-    # pricing.json gets the same treatment (gitignored per-key rate overrides;
-    # defaults live in pricing.example.json). Back up any existing one and
-    # remove it so a fresh install bills at the current rate table.
+    # --new rebuilds what this script installs. config.user.json holds the
+    # user's settings and is never touched. pricing.json (per-key rate
+    # overrides) is backed up and removed, so rates come from
+    # pricing.example.json again.
     if [ -f pricing.json ]; then
         pricing_backup="pricing.json.bak.$(date +%Y%m%d%H%M%S)"
         cp pricing.json "$pricing_backup"
         rm -f pricing.json
         echo "Backed up pricing.json to $pricing_backup and removed it (rates come from pricing.example.json)."
     fi
-    if [ -d "$VENV_DIR" ]; then
-        echo "Removing existing virtual environment ($VENV_DIR)..."
-        rm -rf "$VENV_DIR"
-    fi
-    if [ -d "$NODE_MODULES_DIR" ]; then
-        echo "Removing existing node_modules ($NODE_MODULES_DIR)..."
-        rm -rf "$NODE_MODULES_DIR"
-    fi
-    # Also wipe the Vite build output. Without this, a --new run will
-    # still serve a stale compiled bundle from static/dist/ even after
-    # node_modules has been reinstalled, so frontend code changes
-    # made since the last build won't take effect until the user
-    # remembers to rerun `npm run build`. Forcing a clean slate is
-    # what "fresh install" should actually mean.
-    if [ -d "static/dist" ]; then
-        echo "Removing existing frontend build (static/dist/)..."
-        rm -rf static/dist
-    fi
+    for dir in "$VENV_DIR" "$NODE_MODULES_DIR" static/dist vendor; do
+        if [ -d "$dir" ]; then
+            echo "Removing $dir/..."
+            rm -rf "$dir"
+        fi
+    done
 fi
 
-# The user config is NOT copied from config.example.json any more: that file is
-# the read-only SYSTEM layer (catalog + defaults), and a full copy of it is
-# exactly what used to shadow shipped model/pricing updates after first run.
-# Instead, once the venv exists, the first-run seeding below calls the same
-# seed_user_config() the packaged Mac app runs on boot, which creates a
-# config.user.json holding only the first-run defaults (local mode, with the
-# on-device index capabilities parked for a later switch to hybrid; weights
-# download on demand).
+# ── Python ─────────────────────────────────────────────────────────────────
+# The venv is built from Homebrew's Python 3.13, called by its full path (the
+# Mac app ships CPython 3.13, and the user's default python3 and shell files
+# are never changed). It must be an arm64 build (the mlx wheels are arm64 only)
+# and its sqlite3 must load extensions, because the index stores its vectors
+# with sqlite-vec. A kept venv gets the same checks on every run.
+BREW_PYTHON="$(brew --prefix)/opt/python@3.13/bin/python3.13"
 
-# NOTE: new template models need no sync step. load_config merges
-# DEFAULTS -> config.example.json -> the user layer additively, so a model
-# added to config.example.json reaches every install on the next start.
+_python_loads_extensions() {
+    "$1" - >/dev/null 2>&1 <<'PYEOF'
+import sqlite3
+sqlite3.connect(":memory:").enable_load_extension(True)
+PYEOF
+}
 
-# pricing.json is not seeded (the packaged app does not seed it either): the
-# app bills from pricing.example.json, and pricing.json holds only the rates a
-# user chooses to override. A full copy of the template froze every rate at
-# install time and shadowed later corrections.
-
-# The venv must be built from an arm64 interpreter. The python3 on PATH, or a
-# Homebrew Python under /usr/local, can be an x86_64 build that runs under
-# Rosetta even from a native arm64 shell, which require_macos_arm64 cannot see.
-# The mlx wheels are arm64 only, so refuse instead of building a venv that
-# cannot install them. A venv kept from an earlier run gets the same check:
-# one built under Rosetta would otherwise be reused as is. $2 replaces the
-# advice in the error.
-_require_arm64_python() {
-    if ! "$1" -c 'import platform, sys; sys.exit(platform.machine() != "arm64")' >/dev/null 2>&1; then
-        echo "ERROR: $1 is not an arm64 (Apple silicon) Python. ${2:-Install an arm64 Python (Homebrew under /opt/homebrew) and re-run.}" >&2
+# $2 is the advice printed with the error.
+_require_venv_python() {
+    local py="$1" advice="$2"
+    if ! "$py" -c 'import platform, sys; sys.exit(platform.machine() != "arm64")' >/dev/null 2>&1; then
+        echo "ERROR: $py is not an arm64 (Apple silicon) Python. $advice" >&2
+        exit 1
+    fi
+    if ! "$py" -c 'import sys; sys.exit(sys.version_info[:2] != (3, 13))' >/dev/null 2>&1; then
+        echo "ERROR: $py is not Python 3.13. $advice" >&2
+        exit 1
+    fi
+    if ! _python_loads_extensions "$py"; then
+        echo "ERROR: $py cannot load SQLite extensions, which the index needs (sqlite-vec). $advice" >&2
         exit 1
     fi
 }
 
 if [ -d "$VENV_DIR" ]; then
-    echo "Virtual environment found, skipping Python setup."
-    _require_arm64_python "$VENV_DIR/bin/python" "Delete $VENV_DIR/ and re-run ./setup.sh."
-    source "$VENV_DIR/bin/activate"
-    if ! _python_loads_extensions "$VENV_DIR/bin/python"; then
-        echo "  (Vector search is using the numpy fallback. For faster sqlite-vec search, delete venv/ and re-run this script with Homebrew available.)"
+    _require_venv_python "$VENV_DIR/bin/python" "Delete $VENV_DIR/ and re-run: bash setup.sh"
+else
+    if [ ! -x "$BREW_PYTHON" ]; then
+        run_quiet "Installing python@3.13 via Homebrew" brew install python@3.13
+    fi
+    _require_venv_python "$BREW_PYTHON" "Reinstall it with: brew reinstall python@3.13"
+    echo "Creating virtual environment (python: $BREW_PYTHON)..."
+    "$BREW_PYTHON" -m venv "$VENV_DIR"
+fi
+source "$VENV_DIR/bin/activate"
+
+# Python packages: reinstalled whenever requirements.txt changes, the same
+# stamp check macapp/build_app.sh uses, so a `git pull` never leaves a venv on
+# old packages.
+REQ_STAMP="$VENV_DIR/.requirements.sha256"
+REQ_SHA="$(shasum -a 256 requirements.txt | awk '{print $1}')"
+if [ -f "$REQ_STAMP" ] && [ "$(cat "$REQ_STAMP")" = "$REQ_SHA" ]; then
+    echo "Python packages match requirements.txt."
+else
+    run_quiet "Installing Python dependencies" pip install -r requirements.txt
+    echo "$REQ_SHA" > "$REQ_STAMP"
+fi
+
+# Live-preview browser: the Playwright pip package does not bundle the browser
+# binary, so fetch the Chromium build the pinned version expects. Runs every
+# time, so a Playwright bump fetches its build; an existing build is reused.
+run_quiet "Installing Playwright Chromium (live preview)" python -m playwright install chromium
+
+mkdir -p data
+
+# ── Node ───────────────────────────────────────────────────────────────────
+# Node lives inside the venv (nodeenv). It builds the frontend and, at runtime,
+# runs the workflow harness and the workspace's own ESLint for the assistant's
+# JS/TS checks (macapp/build_app.sh bundles the same version for the app). The
+# app itself never calls npm or npx.
+if [ -x "$VENV_DIR/bin/node" ]; then
+    if [ "$("$VENV_DIR/bin/node" --version)" != "v$NODE_VERSION" ]; then
+        echo "ERROR: $VENV_DIR/bin/node is $("$VENV_DIR/bin/node" --version), .nvmrc asks for v$NODE_VERSION. Delete $VENV_DIR/ and re-run: bash setup.sh" >&2
+        exit 1
     fi
 else
-    _select_venv_python
-    _require_arm64_python "$VENV_PYTHON"
-    echo "Creating virtual environment (python: $VENV_PYTHON)..."
-    "$VENV_PYTHON" -m venv "$VENV_DIR"
-    source "$VENV_DIR/bin/activate"
-    run_quiet "Installing Python dependencies" pip install -r requirements.txt
-
-    # Live-preview browser: the Playwright pip package (requirements.txt) does
-    # not bundle the browser binary, so fetch the Chromium build it expects.
-    # Idempotent: Playwright skips the download if the build is already cached
-    # under ms-playwright, so re-running setup.sh is cheap.
-    run_quiet "Installing Playwright Chromium (live preview)" python -m playwright install chromium
-
-    mkdir -p data
-
-    # Install ffmpeg (needed by mlx-whisper for audio processing)
-    if command -v ffmpeg >/dev/null 2>&1; then
-        echo "ffmpeg already installed."
-    elif command -v brew >/dev/null 2>&1; then
-        run_quiet "Installing ffmpeg via Homebrew" brew install ffmpeg
-    else
-        echo "WARNING: ffmpeg not found. Please install ffmpeg for audio processing."
-    fi
-
-    # Install ripgrep (search engine dependency)
-    if command -v rg >/dev/null 2>&1; then
-        echo "ripgrep already installed."
-    elif command -v brew >/dev/null 2>&1; then
-        run_quiet "Installing ripgrep via Homebrew" brew install ripgrep
-    else
-        echo "ripgrep installed via pip package (requirements.txt)."
-    fi
-
-    # Install git. Needed at runtime for skill/plugin cloning and for
-    # the workspace git integration. The user almost certainly has it
-    # if they cloned this repo, but they may have grabbed a tarball.
-    if command -v git >/dev/null 2>&1; then
-        echo "git already installed."
-    elif command -v brew >/dev/null 2>&1; then
-        run_quiet "Installing git via Homebrew" brew install git
-    else
-        echo "WARNING: git not found and no Homebrew. Skill/plugin cloning will fail."
-    fi
-
-    # Install AWS CLI. Required for Bedrock-backed Claude inference;
-    # the install does NOT configure credentials, so the user still has
-    # to run ``aws configure`` once with their access keys and the
-    # Bedrock region.
-    if command -v aws >/dev/null 2>&1; then
-        echo "AWS CLI already installed."
-    elif command -v brew >/dev/null 2>&1; then
-        run_quiet "Installing AWS CLI via Homebrew" brew install awscli
-        echo "  Run 'aws configure' to set your access keys + Bedrock region."
-    else
-        echo "WARNING: AWS CLI not found and no Homebrew. Chat (Bedrock) will fail until installed."
-    fi
-
-    # Install isolated Node.js into the venv. It builds the frontend and, at
-    # runtime, runs the workflow harness and the workspace's own ESLint for the
-    # assistant's JS/TS checks (macapp/build_app.sh bundles bin/node for the
-    # same runtime uses). The app itself never calls npm or npx.
-    run_quiet "Installing Node.js $NODE_VERSION into virtual environment" \
+    run_quiet "Installing Node.js $NODE_VERSION into the virtual environment" \
         nodeenv --python-virtualenv --node="$NODE_VERSION"
     source "$VENV_DIR/bin/activate"
 fi
 
-if [ -d "$NODE_MODULES_DIR" ]; then
-    echo "node_modules found, skipping npm install."
+# npm packages come from package-lock.json exactly (npm ci never rewrites the
+# lock file), and are reinstalled whenever the lock file changes.
+LOCK_STAMP="$NODE_MODULES_DIR/.package-lock.sha256"
+LOCK_SHA="$(shasum -a 256 package-lock.json | awk '{print $1}')"
+if [ -f "$LOCK_STAMP" ] && [ "$(cat "$LOCK_STAMP")" = "$LOCK_SHA" ]; then
+    echo "npm packages match package-lock.json."
 else
-    run_quiet "Installing npm dependencies" npm install
+    run_quiet "Installing npm dependencies" npm ci
+    echo "$LOCK_SHA" > "$LOCK_STAMP"
+fi
+
+# ── Command-line tools from Homebrew ───────────────────────────────────────
+# git: skill/plugin cloning and the workspace git integration. AWS CLI: the
+# assistant's aws_cli tool (Bedrock credentials come from `aws configure`,
+# which this script cannot do for you). ripgrep comes from requirements.txt.
+if ! command -v git >/dev/null 2>&1; then
+    run_quiet "Installing git via Homebrew" brew install git
+fi
+if ! command -v aws >/dev/null 2>&1; then
+    run_quiet "Installing AWS CLI via Homebrew" brew install awscli
+    echo "  Run 'aws configure' to set your access keys + Bedrock region."
+fi
+
+# ── ffmpeg / ffprobe ───────────────────────────────────────────────────────
+# The same static arm64 builds the Mac app bundles (macapp/ffmpeg_pin.env),
+# installed into vendor/ffmpeg and handed to the server through the same
+# WHISPER_FFMPEG_PATH / WHISPER_FFPROBE_PATH variables the app sets.
+. macapp/ffmpeg_pin.env
+FFMPEG_HOME="vendor/ffmpeg"
+
+install_ffmpeg_tool() {
+    local tool="$1" sha="$2" tmp
+    tmp="$(mktemp -d)"
+    curl -fsSL --retry 3 --retry-delay 2 -o "$tmp/$tool.zip" "$FFMPEG_BASE_URL/$tool.zip" || { rm -rf "$tmp"; return 1; }
+    if ! echo "$sha  $tmp/$tool.zip" | shasum -a 256 -c - >/dev/null 2>&1; then
+        echo "    checksum mismatch for $tool.zip"
+        rm -rf "$tmp"
+        return 1
+    fi
+    mkdir -p "$FFMPEG_HOME"
+    unzip -o -q "$tmp/$tool.zip" -d "$FFMPEG_HOME" || { rm -rf "$tmp"; return 1; }
+    rm -rf "$tmp"
+    chmod +x "$FFMPEG_HOME/$tool"
+    "$FFMPEG_HOME/$tool" -version >/dev/null 2>&1
+}
+
+if [ "$(cat "$FFMPEG_HOME/.build" 2>/dev/null)" = "$FFMPEG_BUILD_ID" ] \
+    && [ -x "$FFMPEG_HOME/ffmpeg" ] && [ -x "$FFMPEG_HOME/ffprobe" ]; then
+    echo "ffmpeg $FFMPEG_BUILD_ID present at $FFMPEG_HOME."
+else
+    rm -rf "$FFMPEG_HOME"
+    run_quiet "Installing ffmpeg $FFMPEG_BUILD_ID into $FFMPEG_HOME" install_ffmpeg_tool ffmpeg "$FFMPEG_ZIP_SHA256"
+    run_quiet "Installing ffprobe $FFMPEG_BUILD_ID into $FFMPEG_HOME" install_ffmpeg_tool ffprobe "$FFPROBE_ZIP_SHA256"
+    echo "$FFMPEG_BUILD_ID" > "$FFMPEG_HOME/.build"
 fi
 
 # Build frontend in production mode
@@ -536,46 +339,23 @@ if [ "$PROD" -eq 1 ]; then
 fi
 
 # ── First-run config seeding (Mac-app parity) ────────────────────────────────
-# A fresh checkout has no user config layer. The packaged app's boot creates one
-# via seed_user_config() (bootstrap_home only runs when WHISPER_HOME is set),
-# seeding the first-run defaults: local mode, with the on-device index
-# capabilities parked for a later switch to hybrid and every weight downloading
-# on demand. Run the exact same code path
-# here so a setup.sh install starts identically to the Mac app's first launch.
-# An existing config.user.json is left alone, the user's settings win. An old
-# config.json is never read, moved or deleted, and it does not block the seed: a
-# checkout with only config.json starts like a fresh install, in Local mode
-# (same as the Mac app), and the app shows a notice about the old file.
+# A checkout without config.user.json gets the first-run defaults from the same
+# seed_user_config() the Mac app runs on its first launch: Local mode, with
+# every weight downloading on demand. The app's first-run notice then explains
+# the model modes and where to change them (Settings > Model mode). An
+# existing config.user.json is never read or changed here. An old config.json
+# is never read, moved or deleted, and the app shows a notice about it.
 if [ -f config.json ]; then
     echo "NOTE: config.json is no longer read. Settings live in config.user.json only."
     echo "  Copy what you still need from config.json into config.user.json, then delete or rename config.json."
 fi
 if [ ! -f config.user.json ]; then
-    if python -c "from server.infrastructure.config import seed_user_config; seed_user_config()" >>"$SETUP_LOG" 2>&1 && [ -f config.user.json ]; then
-        echo "Seeded config.user.json with first-run defaults (local mode) matching the Mac app's first launch."
-    else
-        echo "WARNING: could not seed the first-run config; the backend will run on shipped defaults (see $SETUP_LOG)."
+    run_quiet "Seeding config.user.json with the first-run defaults (Local mode)" \
+        python -c "from server.infrastructure.config import seed_user_config; seed_user_config()"
+    if [ ! -f config.user.json ]; then
+        echo "ERROR: seeding finished but config.user.json is missing (see $SETUP_LOG)." >&2
+        exit 1
     fi
-fi
-
-# ── Persist an explicit model-mode flag ──────────────────────────────────────
-# Only when a flag was passed: write it into config.user.json (the one just
-# seeded, or the user's own). Without a flag the existing config, or the seeded
-# first-run default, decides the mode.
-if [ -n "$MODE_FLAG" ]; then
-    python - "$MODE_FLAG" <<'PYEOF' || true
-import json, os, sys
-mode = sys.argv[1]
-target = "config.user.json"
-cfg = {}
-if os.path.exists(target):
-    try:
-        with open(target) as f: cfg = json.load(f)
-    except Exception: cfg = {}
-cfg["model_mode"] = mode
-with open(target, "w") as f: json.dump(cfg, f, indent=2)
-print(f"Set model_mode={mode} in {target}")
-PYEOF
 fi
 
 # ── On-device serving runtime: llama.cpp (llama-server) ─────────────────────
@@ -590,9 +370,7 @@ fi
 # The build is the one in server/local/llama_pin.env, the same release tarball
 # macapp/build_app.sh bundles, so a source install and the Mac app run the same
 # binary. It goes into vendor/llama, the only place the server looks outside
-# the app (a llama-server on PATH or from Homebrew is never used). Failure here
-# is REPORTED, not silently absorbed: without llama-server, on-device chat does
-# not work at all, so a broken install must be visible.
+# the app (a llama-server on PATH or from Homebrew is never used).
 . server/local/llama_pin.env
 LLAMA_HOME="vendor/llama"
 LLAMA_ASSET="llama-${LLAMA_TAG}-bin-macos-arm64.tar.gz"
@@ -628,49 +406,30 @@ install_llama_server() {
         \( -name 'llama-server' -o -name '*.dylib' -o -name '*.metallib' \) \
         -exec cp -RP {} "$LLAMA_HOME/bin/" \;
     rm -rf "$tmp"
-    [ -x "$LLAMA_HOME/bin/llama-server" ]
+    [ "$(llama_server_build "$LLAMA_HOME/bin/llama-server")" = "${LLAMA_TAG#b}" ]
 }
 
-LLAMA_BUILD="$(llama_server_build "$LLAMA_HOME/bin/llama-server" || true)"
-if [ "$LLAMA_BUILD" = "${LLAMA_TAG#b}" ]; then
-    echo "  ✓ llama-server $LLAMA_TAG present at $LLAMA_HOME/bin/llama-server."
+if [ "$(llama_server_build "$LLAMA_HOME/bin/llama-server" || true)" = "${LLAMA_TAG#b}" ]; then
+    echo "llama-server $LLAMA_TAG present at $LLAMA_HOME/bin/llama-server."
 else
-    echo "Installing llama.cpp $LLAMA_TAG (llama-server) into $LLAMA_HOME..."
-    if install_llama_server >>"$SETUP_LOG" 2>&1; then
-        LLAMA_BUILD="$(llama_server_build "$LLAMA_HOME/bin/llama-server" || true)"
-        echo "  ✓ llama-server installed (build ${LLAMA_BUILD:-unknown}) at $LLAMA_HOME/bin/llama-server."
-    else
-        echo "  ✗ llama.cpp $LLAMA_TAG install FAILED (see $SETUP_LOG)."
-        echo "    On-device chat will not work until this succeeds, there is no"
-        echo "    fallback runtime. Check the network and re-run: bash setup.sh"
-    fi
+    run_quiet "Installing llama.cpp $LLAMA_TAG (llama-server) into $LLAMA_HOME" install_llama_server
 fi
 
 # ── Model weights: only the always-on speech models are fetched ─────────────
-# Language ID (VoxLingua107) and the two speaker encoders (ReDimNet2, the
-# default, and ECAPA, the fallback) are bundled infrastructure (~190MB total):
-# every transcription path needs them, they are hidden from the Settings model
-# lists, and the Mac app ships them inside the bundle (build_app.sh stages the
-# same three). Fetch them here so a source install matches the app. Idempotent:
-# the ensure functions check their sentinel files and return instantly when
-# the models are already on disk. ReDimNet2 comes through torch.hub, and like
-# the app build a hub hiccup must not fail the install (it then downloads on
-# first use).
-echo ""
-echo "Fetching the always-on speech models (language ID + speaker encoders, ~190MB)..."
-"$VENV_DIR/bin/python" - <<'PYEOF'
+# Language ID (VoxLingua107) and the two speaker encoders (ReDimNet2 and ECAPA)
+# are bundled infrastructure (~190MB total): every transcription path needs
+# them, they are hidden from the Settings model lists, and the Mac app ships
+# them inside the bundle (build_app.sh stages the same three and stops when one
+# fails). Idempotent: the ensure functions check their sentinel files and
+# return at once when the models are already on disk.
+run_quiet "Fetching the always-on speech models (language ID + speaker encoders, ~190MB)" \
+    python -c "
 from server.asr.lid import _ensure_model
 from server.diarization.embedder import _ensure_ecapa_files, _ensure_redimnet_files
-
 _ensure_model()
 _ensure_ecapa_files()
-print("Language ID and ECAPA speaker encoder present.")
-try:
-    _ensure_redimnet_files()
-    print("ReDimNet2 speaker encoder present.")
-except Exception as e:  # network or hub failure: first use downloads it
-    print(f"Note: ReDimNet2 was not fetched ({e}); it downloads on first use.")
-PYEOF
+_ensure_redimnet_files()
+"
 # Everything else downloads ON DEMAND with an in-app progress banner, into
 # ./models (idempotent, resumable):
 #   * transcription engines, on your first recording (or pre-pull them from
@@ -711,11 +470,27 @@ pick_port() {
 PORT=$(pick_port 41430)
 export PORT
 
+# The binaries the server spawns, pinned the way the Mac app pins its bundled
+# copies (macapp/shell/main.swift). llama-server is found in vendor/llama.
+export WHISPER_FFMPEG_PATH="$PWD/$FFMPEG_HOME/ffmpeg"
+export WHISPER_FFPROBE_PATH="$PWD/$FFMPEG_HOME/ffprobe"
+export WHISPER_NODE_PATH="$PWD/$VENV_DIR/bin/node"
+
 # Only the packaged macOS shell owns the backend parent-watchdog contract.
 # A dev server launched from an app terminal can inherit its outer shell's
 # WHISPER_PARENT_PID; passing that stale PID to this new backend makes it exit
 # as soon as startup completes. setup.sh is the direct parent here, so clear it.
 unset WHISPER_PARENT_PID
+
+SERVER_PID=""
+VITE_PID=""
+stop_children() {
+    [ -n "$VITE_PID" ] && kill "$VITE_PID" 2>/dev/null
+    [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null
+    return 0
+}
+# Registered before anything is spawned, so every exit path stops the children.
+trap stop_children EXIT
 
 python -m server.main &
 SERVER_PID=$!
@@ -724,18 +499,23 @@ SERVER_PID=$!
 # loads any model (weights download and load on demand), but a cold first boot
 # still compiles bytecode and opens the databases, so keep a generous ceiling.
 echo "Waiting for backend (up to 90s on a cold first boot)..."
+backend_ready=0
 for i in $(seq 1 90); do
     if curl -sf "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then
         echo "Backend ready after ${i}s."
+        backend_ready=1
+        break
+    fi
+    if ! kill -0 "$SERVER_PID" 2>/dev/null; then
         break
     fi
     sleep 1
 done
-if ! curl -sf "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then
-    echo "WARNING: backend did not respond on /health within 90s. Check logs." >&2
+if [ "$backend_ready" -ne 1 ]; then
+    echo "ERROR: the backend did not answer on http://127.0.0.1:$PORT/health. Its output is above." >&2
+    exit 1
 fi
 
-VITE_PID=""
 if [ "$PROD" -eq 0 ]; then
     VITE_PORT=$(pick_port 41460)
 
@@ -763,14 +543,17 @@ fi
 # 15s ceiling is generous; Vite typically responds within ~2s.
 if [ "$PROD" -eq 0 ]; then
     echo "Waiting for Vite dev server..."
+    vite_ready=0
     for i in $(seq 1 30); do
         if curl -sf "$APP_URL" >/dev/null 2>&1; then
+            vite_ready=1
             break
         fi
         sleep 0.5
     done
-    if ! curl -sf "$APP_URL" >/dev/null 2>&1; then
-        echo "WARNING: Vite did not respond on $APP_URL within 15s. Check logs." >&2
+    if [ "$vite_ready" -ne 1 ]; then
+        echo "ERROR: Vite did not answer on $APP_URL within 15s. Its output is above." >&2
+        exit 1
     fi
 fi
 
@@ -784,14 +567,16 @@ else
     echo "Whisper Studio is running at $APP_URL"
 fi
 echo ""
+echo "In the browser, Apple translation and system or per-app audio capture are not"
+echo "available (they need the Mac app). Chrome and Edge can capture a tab's audio."
+echo ""
 
 # Auto-open the right URL in the default browser.
 if [ "$NO_OPEN" -eq 0 ]; then
     echo "Opening $APP_URL in your default browser..."
-    open "$APP_URL" 2>/dev/null || true
+    open "$APP_URL"
 fi
 
 echo "Press Ctrl+C to stop."
 
-trap "kill $SERVER_PID 2>/dev/null; [ -n \"$VITE_PID\" ] && kill $VITE_PID 2>/dev/null" EXIT
-wait $SERVER_PID
+wait "$SERVER_PID"
