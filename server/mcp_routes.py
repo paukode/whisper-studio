@@ -31,7 +31,7 @@ def _extract_mcp_extra_fields(body: dict, old: dict | None = None) -> dict:
     For an update (`old` given), a field absent from the request body
     carries the previous value forward (as command/args/env already do
     in mcp_update_server), so a partial edit never silently
-    resets the rest of the entry.
+    resets the rest of the entry. A field the body sends empty is removed.
     """
     old = old or {}
     extra: dict = {}
@@ -65,6 +65,25 @@ def _extract_mcp_extra_fields(body: dict, old: dict | None = None) -> dict:
     ):
         extra["call_timeout_seconds"] = call_timeout
     return extra
+
+
+# The entry keys the Settings form owns: PUT rebuilds exactly these. Any other
+# key in the stored entry (read_only, read_only_tools, ...) is kept as it is.
+_FORM_KEYS = frozenset(
+    {
+        "command",
+        "args",
+        "env",
+        "enabled",
+        "url",
+        "bearer_token_env_var",
+        "approval_mode",
+        "tool_overrides",
+        "enabled_tools",
+        "disabled_tools",
+        "call_timeout_seconds",
+    }
+)
 
 
 def _not_found(name: str) -> Response:
@@ -239,17 +258,15 @@ async def mcp_update_server(name: str, request: Request):
     command = body.get("command", old.get("command", "")).strip()
     args = body.get("args", old.get("args", []))
     env = body.get("env", old.get("env", {}))
-    # Preserve the persisted `enabled` flag. Rebuilding the entry as
-    # {command, args, env} only would drop it, silently flipping the
-    # server's state on every edit or rename. The Settings UI uses PUT for
-    # both in-place edit and rename (missing flag counts as enabled,
-    # matching load_config's backfill).
+    # Preserve the persisted `enabled` flag: the Settings UI uses PUT for both
+    # in-place edit and rename, and a missing flag counts as enabled.
     enabled = bool(old.get("enabled", True))
     extra = _extract_mcp_extra_fields(body, old)
     target_name = new_name if new_name and new_name != name else name
     if target_name != name:
         config.pop(name)
     config[target_name] = {
+        **{k: v for k, v in old.items() if k not in _FORM_KEYS},
         "command": command,
         "args": args,
         "env": env,

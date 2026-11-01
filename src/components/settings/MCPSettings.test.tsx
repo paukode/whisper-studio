@@ -6,12 +6,13 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 // The panel reads the one MCP store (mcpStore); its refresh goes through
 // get() and the enable switch through patch(). Mutations (post/put/del) are
 // exercised in the remote/approval-granularity and elicitation blocks below.
-const { getMock, postMock, patchMock } = vi.hoisted(() => ({
+const { getMock, postMock, putMock, patchMock } = vi.hoisted(() => ({
   getMock: vi.fn(),
   postMock: vi.fn(),
+  putMock: vi.fn(),
   patchMock: vi.fn(),
 }));
-vi.mock('@/api/client', () => ({ get: getMock, put: vi.fn(), post: postMock, del: vi.fn(), patch: patchMock }));
+vi.mock('@/api/client', () => ({ get: getMock, put: putMock, post: postMock, del: vi.fn(), patch: patchMock }));
 
 import { MCPSettings, parseMcpArgs } from './MCPSettings';
 import { MoreMenu } from '@/components/chat/MoreMenu';
@@ -381,5 +382,51 @@ describe('MCPSettings: pending elicitations', () => {
 
     expect(screen.getByText('No MCP servers configured.')).toBeInTheDocument();
     expect(screen.queryByText(/needs input/i)).toBeNull();
+  });
+});
+
+describe('MCPSettings: clearing fields on edit', () => {
+  beforeEach(() => {
+    getMock.mockReset();
+    putMock.mockReset();
+    putMock.mockResolvedValue({});
+    useUIStore.setState({ addToast: vi.fn().mockReturnValue('t') as never });
+  });
+
+  it('sends cleared fields as explicit empty values so the stored ones are removed', async () => {
+    const stored = server('srv', {
+      env: { TOKEN_X: 'secret' },
+      url: 'https://example.com/mcp',
+      bearer_token_env_var: 'MY_TOKEN',
+      tool_overrides: { delete_all: 'approve' },
+      enabled_tools: ['get_data'],
+      disabled_tools: ['delete_all'],
+    });
+    getMock.mockResolvedValue(responseFor([stored]));
+    seed([stored]);
+    renderWithClient(<MCPSettings />);
+    await waitFor(() => expect(screen.getByText('Edit')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText('Edit'));
+    fireEvent.change(screen.getByDisplayValue('{"TOKEN_X":"secret"}'), { target: { value: '' } });
+    fireEvent.change(screen.getByDisplayValue('https://example.com/mcp'), { target: { value: '' } });
+    fireEvent.change(screen.getByDisplayValue('MY_TOKEN'), { target: { value: '' } });
+    fireEvent.change(screen.getByDisplayValue('{"delete_all":"approve"}'), { target: { value: '' } });
+    fireEvent.change(screen.getByDisplayValue('get_data'), { target: { value: '' } });
+    fireEvent.change(screen.getByDisplayValue('delete_all'), { target: { value: '' } });
+    fireEvent.click(screen.getByText('Save'));
+
+    await waitFor(() => expect(putMock).toHaveBeenCalled());
+    expect(putMock).toHaveBeenCalledWith(
+      '/api/mcp/servers/srv',
+      expect.objectContaining({
+        env: {},
+        url: '',
+        bearer_token_env_var: '',
+        tool_overrides: {},
+        enabled_tools: [],
+        disabled_tools: [],
+      }),
+    );
   });
 });

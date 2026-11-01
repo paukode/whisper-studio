@@ -149,7 +149,10 @@ export const MCPSettings: React.FC = () => {
     }
     const args = parsedArgs.args;
 
-    let env: Record<string, string> | undefined;
+    // Cleared fields are sent as explicit empty values: an edit (PUT) keeps
+    // the stored value of any field the body leaves out, so leaving a cleared
+    // field out would keep its old value (an env var, a url, a tool list).
+    let env: Record<string, string> = {};
     if (formData.env.trim()) {
       try {
         const parsed = z.record(z.string(), z.string()).safeParse(JSON.parse(dequoteSmart(formData.env)));
@@ -165,7 +168,7 @@ export const MCPSettings: React.FC = () => {
       }
     }
 
-    let toolOverrides: Record<string, string> | undefined;
+    let toolOverrides: Record<string, string> = {};
     if (formData.toolOverrides.trim()) {
       try {
         const parsed = z
@@ -183,18 +186,13 @@ export const MCPSettings: React.FC = () => {
       }
     }
 
-    const bearerTokenEnvVar = formData.bearerTokenEnvVar.trim() || undefined;
-    const approvalMode = formData.approvalMode || 'auto';
-    const enabledTools = parseToolNameList(formData.enabledTools);
-    const disabledTools = parseToolNameList(formData.disabledTools);
-
     const extraBody = {
-      url: url || undefined,
-      bearer_token_env_var: bearerTokenEnvVar,
-      approval_mode: approvalMode,
+      url,
+      bearer_token_env_var: formData.bearerTokenEnvVar.trim(),
+      approval_mode: formData.approvalMode || 'auto',
       tool_overrides: toolOverrides,
-      enabled_tools: enabledTools.length ? enabledTools : undefined,
-      disabled_tools: disabledTools.length ? disabledTools : undefined,
+      enabled_tools: parseToolNameList(formData.enabledTools),
+      disabled_tools: parseToolNameList(formData.disabledTools),
     };
 
     setSaving(true);
