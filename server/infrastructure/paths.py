@@ -1,11 +1,8 @@
 """Single owner for on-disk app-data locations.
 
-Modules were each deriving a DATA_DIR from their own ``__file__`` (three
-``dirname()`` calls up to the repo root), which silently moves with whatever
-checkout/worktree the server happens to run from — data written by a worktree
-instance evaporates with the worktree. New code should resolve app data
-through :func:`data_root` instead; existing per-module DATA_DIRs migrate here
-over time.
+Every module resolves app data through :func:`data_root` (never from its own
+``__file__``, which would move with whatever checkout or worktree the server
+runs from).
 
 Two roots, split by who edits what:
 
@@ -103,16 +100,10 @@ def data_root() -> str:
     env = os.environ.get("WHISPER_DATA_DIR", "").strip()
     if env:
         return os.path.abspath(os.path.expanduser(env))
-    try:
-        # Lazy import: config pulls fastapi; keep paths importable at early boot.
-        from server.infrastructure import config as _config
+    # Lazy import: config pulls fastapi; keep paths importable at early boot.
+    from server.infrastructure import config as _config
 
-        configured = str(_config.get("data_dir", "") or "").strip()
-    except Exception as e:  # noqa: BLE001 — config may be mid-import at boot
-        # Swallowing silently once hid a circular-import bug for weeks (a
-        # configured data_dir was ignored); keep booting, but say so.
-        log.warning("data_root: config unavailable (%s); using default data dir", e)
-        configured = ""
+    configured = str(_config.get("data_dir", "") or "").strip()
     if configured:
         return os.path.abspath(os.path.expanduser(configured))
     return os.path.join(user_root(), "data")
