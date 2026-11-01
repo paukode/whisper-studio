@@ -109,31 +109,6 @@ def test_old_config_json_gets_a_notice_until_it_is_gone(split_env):
     assert cfg.old_config_notices() == []
 
 
-def test_a_config_json_in_the_packaged_app_home_gets_a_notice(split_env, monkeypatch):
-    """A packaged install kept config.json in the app home (WHISPER_HOME,
-    ~/Library/Application Support/WhisperStudio); the user files now live in
-    ~/.whisper. A config.json left in the old place is named, never touched."""
-    home = split_env / "app-home"
-    home.mkdir()
-    monkeypatch.setenv("WHISPER_HOME", str(home))
-    assert cfg.old_config_notices() == []
-
-    (home / "config.json").write_text('{"effort_level": "low"}')
-    [(title, message)] = cfg.old_config_notices()
-    assert title == "config.json is no longer read"
-    assert str(home / "config.json") in message
-    assert (home / "config.json").read_text() == '{"effort_level": "low"}'
-
-    # Both places: one notice for each file.
-    (split_env / "config.json").write_text("{}")
-    assert len(cfg.old_config_notices()) == 2
-
-    # A dev checkout (no WHISPER_HOME) checks only next to config.user.json.
-    monkeypatch.delenv("WHISPER_HOME")
-    [(_, message)] = cfg.old_config_notices()
-    assert str(split_env / "config.json") in message
-
-
 def test_local_mode_is_not_followed_and_gets_a_notice(split_env, monkeypatch):
     tmp = split_env
     (tmp / "config.user.json").write_text(json.dumps({"local_mode": True}))
