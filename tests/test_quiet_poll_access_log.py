@@ -18,12 +18,15 @@ def test_successful_polls_are_hidden_but_failures_and_writes_still_log():
         '127.0.0.1:1 - "GET /api/workspace/status HTTP/1.1" 200 OK',
         '127.0.0.1:1 - "GET /api/notifications/unread-count HTTP/1.1" 200 OK',
         '127.0.0.1:1 - "GET /api/workspace/index/status HTTP/1.1" 200 OK',
+        '127.0.0.1:1 - "GET /api/workspace/index/status?path=%2Fws HTTP/1.1" 200 OK',
     ]
     kept = [
         '127.0.0.1:1 - "GET /api/preview/sessions HTTP/1.1" 500 Internal Server Error',
         '127.0.0.1:1 - "POST /api/preview/sessions HTTP/1.1" 200 OK',
         '127.0.0.1:1 - "DELETE /api/preview/sessions/p1 HTTP/1.1" 200 OK',
         '127.0.0.1:1 - "POST /api/chat HTTP/1.1" 200 OK',
+        '127.0.0.1:1 - "GET /api/workspace/index/status?path=%2Fws HTTP/1.1" 500 Error',
+        '127.0.0.1:1 - "GET /api/workspace/status-report HTTP/1.1" 200 OK',
     ]
     assert all(not f.filter(_rec(m)) for m in hidden)
     assert all(f.filter(_rec(m)) for m in kept)

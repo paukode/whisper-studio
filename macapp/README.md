@@ -40,7 +40,7 @@ cwd = `Contents/Resources/backend` and this environment:
 | `HOST` | `127.0.0.1` |
 | `PORT` | free port picked at launch |
 | `WHISPER_HOME` | `~/Library/Application Support/WhisperStudio` (a pre-set `WHISPER_HOME` is respected, for testing). Holds `storage/` (session history) and `logs/`, nothing else. All user-editable state (the config files, `models/`, `skills/`, `plugins/`, `agents/`, `data/` for memory, workflows and attachments) lives at `~/.whisper`; the first boot moves any existing Application Support copies there and rewrites recorded paths (no symlinks left behind). Bytecode caches go to `~/Library/Caches/WhisperStudio`. |
-| `WHISPER_BIN_DIR` | `Contents/Resources/bin` (backend prepends it to PATH) |
+| `WHISPER_BIN_DIR` | `Contents/Resources/bin` (the shell puts it first on PATH) |
 | `WHISPER_LLAMA_SERVER_PATH` | `Resources/bin/llama-server` |
 | `WHISPER_FFMPEG_PATH` | `Resources/bin/ffmpeg` |
 | `WHISPER_FFPROBE_PATH` | `Resources/bin/ffprobe` |

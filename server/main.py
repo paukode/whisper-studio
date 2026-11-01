@@ -83,14 +83,10 @@ log = logging.getLogger("whisper-studio")
 # Runs at import, before anything reads the config or spawns a subprocess:
 #  * bootstrap_home() seeds $WHISPER_HOME (config/pricing/rules/skills + the
 #    directory tree) on first run; a no-op in a dev checkout (env unset).
-#  * WHISPER_BIN_DIR (the bundle's binary dir) is prepended to PATH so
-#    library-internal spawns that we can't route through
-#    server/infrastructure/binaries.py — e.g. mlx_whisper's bare "ffmpeg"
-#    call — resolve under launchd's minimal PATH.
+#    The Mac shell already puts WHISPER_BIN_DIR (the bundle's binary dir)
+#    first on PATH, so library-internal spawns (e.g. mlx_whisper's bare
+#    "ffmpeg" call) resolve to the bundled binaries.
 bootstrap_home()
-_BIN_DIR = os.environ.get("WHISPER_BIN_DIR", "").strip()
-if _BIN_DIR and _BIN_DIR not in os.environ.get("PATH", "").split(os.pathsep):
-    os.environ["PATH"] = _BIN_DIR + os.pathsep + os.environ.get("PATH", "")
 # Adopt the user's login-shell environment: PATH is widened with their real
 # tool locations (Homebrew, pipx, nvm, …) so spawned commands resolve under the
 # minimal environment a GUI-launched .app inherits, and the full environment
@@ -106,22 +102,25 @@ class _QuietPollAccessLog(logging.Filter):
     terminal. Only these pure-polling GETs are hidden; every other request —
     builds, connects, removes, errors — still logs normally."""
 
-    # Status-qualified so a failing poll (non-200) still logs. The preview
-    # poll alone was 75% of a 221K-line backend.log before it was quieted
-    # here and slowed in useDockLiveWatcher.
+    # GET paths, with or without a query string. Status-qualified so a
+    # failing poll (non-200) still logs. The preview poll alone was 75% of a
+    # 221K-line backend.log before it was quieted here and slowed in
+    # useDockLiveWatcher.
     _NOISY = (
         "/api/workspace/index/status",
-        'GET /api/preview/sessions HTTP/1.1" 200',
-        'GET /api/workspace/status HTTP/1.1" 200',
-        'GET /api/notifications/unread-count HTTP/1.1" 200',
+        "/api/preview/sessions",
+        "/api/workspace/status",
+        "/api/notifications/unread-count",
     )
 
     def filter(self, record: logging.LogRecord) -> bool:
         try:
             msg = record.getMessage()
         except Exception:
+            return True  # keep a line this filter cannot read
+        if 'HTTP/1.1" 200' not in msg:
             return True
-        return not any(p in msg for p in self._NOISY)
+        return not any(f'"GET {p} ' in msg or f'"GET {p}?' in msg for p in self._NOISY)
 
 
 def _raise_fd_soft_limit() -> None:
@@ -572,12 +571,15 @@ app.mount("/static", _CachedStatic(directory=os.path.join(BASE_DIR, "static")), 
 
 # The bundled documentation site (docs/ in the repo, staged next to server/ in
 # the packaged app). Served for the in-app docs panel and the @docs references;
-# absent in stripped builds, then the panel simply has nothing to mount.
+# every install ships it, so a missing site stops the boot.
 from server.docs_qa import docs_dir as _docs_dir  # noqa: E402
 
 _docs = _docs_dir()
-if _docs:
-    app.mount("/docs-site", StaticFiles(directory=_docs, html=True), name="docs-site")
+if not _docs:
+    raise RuntimeError(
+        "The documentation site (docs/index.html) is missing: the install is incomplete."
+    )
+app.mount("/docs-site", StaticFiles(directory=_docs, html=True), name="docs-site")
 
 
 def _spa_index_response() -> Response:
@@ -608,22 +610,6 @@ async def health():
     return {"status": "ok"}
 
 
-# SPA fallback: any GET that wasn't matched by an /api, /ws, or /static route
-# above gets the index.html so client-side navigation survives a hard reload.
-# The matcher excludes prefixes that the routers already own, so this stays a
-# safe net rather than shadowing real handlers.
-_SPA_RESERVED_PREFIXES = ("api/", "ws/", "static/", "health", "favicon.ico")
-
-
-@app.get("/{full_path:path}")
-async def spa_fallback(full_path: str):
-    if any(full_path == p.rstrip("/") or full_path.startswith(p) for p in _SPA_RESERVED_PREFIXES):
-        # Let FastAPI return the real 404 from the matched router rather than
-        # masking it with the SPA shell.
-        return Response(status_code=404)
-    return _spa_index_response()
-
-
 if __name__ == "__main__":
     import uvicorn
 
@@ -631,9 +617,11 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 41430))
     # Bind to localhost by default so the dev server isn't exposed on
     # every coffee-shop / hotel / conference Wi-Fi the laptop joins.
-    # Power users wanting LAN access set HOST=0.0.0.0 explicitly:
+    # Power users wanting LAN access set HOST=0.0.0.0 explicitly, and list the
+    # LAN origin in WHISPER_TRUSTED_ORIGINS (the origin guard refuses it
+    # otherwise):
     #
-    #   HOST=0.0.0.0 bash setup.sh --prod
+    #   HOST=0.0.0.0 WHISPER_TRUSTED_ORIGINS=... bash setup.sh --prod
     host = os.environ.get("HOST", "127.0.0.1")
     # uvicorn closes idle keep-alive sockets after 5s by default, which is
     # shorter than most of the UI's poll intervals (4s, 5s, 10s, 15s, 30s,
