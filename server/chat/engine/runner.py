@@ -330,14 +330,9 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
     stop_blocks_used = 0
     from server.goals import DEFAULT_MAX_CONSECUTIVE_BLOCKS
     from server.goals import store as _goal_store
+    from server.infrastructure import config as _cfg
 
-    _goal_cap = DEFAULT_MAX_CONSECUTIVE_BLOCKS
-    try:
-        from server.infrastructure import config as _cfg
-
-        _goal_cap = int(_cfg.get("goal_max_consecutive_blocks", _goal_cap))
-    except Exception:
-        pass
+    _goal_cap = int(_cfg.get("goal_max_consecutive_blocks", DEFAULT_MAX_CONSECUTIVE_BLOCKS))
     _goal_row = _goal_store.get_goal(_scope_id)
     goal_text = _goal_row["goal"]
     if ctx.is_new_turn and goal_text:
@@ -1068,39 +1063,35 @@ def _build_review_fork(ctx: TurnContext, tools, core_count, messages, final_cont
     """The turn's own request, packaged for the post-turn learning review
     (server/memory/review_fork.py): same adapter, same tools, the final
     message list plus the last assistant reply. None when the provider cannot
-    be forked (on-device) or the flag is off; the extractor then falls back
-    to the excerpt-based agent."""
-    try:
-        from server.infrastructure.feature_flags import is_enabled
-        from server.memory.review_fork import ReviewFork, supports_fork
+    be forked (on-device) or the flag is off; the extractor then uses the
+    excerpt-based agent."""
+    from server.infrastructure.feature_flags import is_enabled
+    from server.memory.review_fork import ReviewFork, supports_fork
 
-        if not is_enabled("learning_review_fork") or not supports_fork(ctx.adapter):
-            return None
-        final = [
-            b
-            for b in (final_content or [])
-            if isinstance(b, dict) and b.get("type") in ("text", "thinking")
-        ]
-        full = list(messages)
-        if final:
-            full.append({"role": "assistant", "content": final})
-        return ReviewFork(
-            adapter=ctx.adapter,
-            tools=list(tools),
-            core_count=core_count,
-            messages=full,
-            model_key=ctx.model_key,
-            model_id=ctx.model_id,
-            session_id=ctx.session_id,
-            ws_path=ctx.ws_path,
-            loop=ctx.loop,
-            executor=ctx.executor,
-            transcript=ctx.transcript,
-            attachments=ctx.current_attachments,
-        )
-    except Exception as e:  # noqa: BLE001 - the review is optional
-        log.debug("review fork not built: %s", e)
+    if not is_enabled("learning_review_fork") or not supports_fork(ctx.adapter):
         return None
+    final = [
+        b
+        for b in (final_content or [])
+        if isinstance(b, dict) and b.get("type") in ("text", "thinking")
+    ]
+    full = list(messages)
+    if final:
+        full.append({"role": "assistant", "content": final})
+    return ReviewFork(
+        adapter=ctx.adapter,
+        tools=list(tools),
+        core_count=core_count,
+        messages=full,
+        model_key=ctx.model_key,
+        model_id=ctx.model_id,
+        session_id=ctx.session_id,
+        ws_path=ctx.ws_path,
+        loop=ctx.loop,
+        executor=ctx.executor,
+        transcript=ctx.transcript,
+        attachments=ctx.current_attachments,
+    )
 
 
 def _fire_memory_hooks(messages, session_id, ws_path, model_id, fork=None) -> None:

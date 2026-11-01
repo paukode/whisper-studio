@@ -100,19 +100,14 @@ def core_names(*, chat: bool = True) -> frozenset[str]:
     ``progressive_tools_core_extra`` / ``progressive_tools_defer_extra`` are
     hand-edit-only operator knobs (no UI, not in the example config): lists of
     tool names to force into or out of the always-advertised core set."""
-    extra: set[str] = set()
-    defer: set[str] = set()
-    try:
-        from server.infrastructure.config import load_config
-        from server.infrastructure.feature_flags import is_enabled
+    from server.infrastructure.config import load_config
+    from server.infrastructure.feature_flags import is_enabled
 
-        cfg = load_config()
-        extra = {str(n) for n in (cfg.get("progressive_tools_core_extra") or [])}
-        defer = {str(n) for n in (cfg.get("progressive_tools_defer_extra") or [])}
-        if chat and is_enabled("skill_self_improvement"):
-            extra.add("skill_manage")
-    except Exception:
-        pass
+    cfg = load_config()
+    extra = {str(n) for n in (cfg.get("progressive_tools_core_extra") or [])}
+    defer = {str(n) for n in (cfg.get("progressive_tools_defer_extra") or [])}
+    if chat and is_enabled("skill_self_improvement"):
+        extra.add("skill_manage")
     if chat:
         extra |= CHAT_CORE_TOOLS
     # tool_search is the way back to everything else; it can never defer.

@@ -12,10 +12,7 @@ approval pauses are self-healing, activation order stays deterministic
 (cache-friendly), and nothing touches the database.
 """
 
-import logging
 import threading
-
-log = logging.getLogger("whisper-studio")
 
 _lock = threading.Lock()
 # session_id -> append-only ordered activations
@@ -84,14 +81,11 @@ def activate_from_history(session_id: str, messages: list[dict]) -> list[str]:
                     seen.add(name)
                     names.append(name)
     # Tool families: using one member advertises the rest.
-    try:
-        from server.artifacts import ARTIFACT_TOOL_FAMILY
+    from server.artifacts import ARTIFACT_TOOL_FAMILY
 
-        if any(n in ARTIFACT_TOOL_FAMILY for n in names):
-            for member in ("read_artifact", "edit_artifact"):
-                if member not in seen:
-                    seen.add(member)
-                    names.append(member)
-    except Exception as e:  # noqa: BLE001
-        log.debug("artifact family activation skipped: %s", e)
+    if any(n in ARTIFACT_TOOL_FAMILY for n in names):
+        for member in ("read_artifact", "edit_artifact"):
+            if member not in seen:
+                seen.add(member)
+                names.append(member)
     return activate(session_id, names)

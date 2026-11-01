@@ -66,16 +66,12 @@ def _downloaded_local_only(config: dict | None = None) -> dict:
     disk-authoritative for local models (only surfaces downloaded recommendations
     plus config is_local entries), so this yields exactly the downloaded ones the
     config doesn't already carry. ``config`` is the catalog to compare against
-    (a workspace-aware ``load_config(ws)``); omitted, the global config. Never
-    raises: a registry hiccup must not break the chat catalog."""
-    try:
-        from server.local.registry import local_models
+    (a workspace-aware ``load_config(ws)``); omitted, the global config."""
+    from server.local.registry import local_models
 
-        cfg = load_config() if config is None else config
-        cfg_keys = set(cfg.get("chat_models", {}))
-        return {k: m for k, m in local_models().items() if k not in cfg_keys}
-    except Exception:  # pragma: no cover - defensive
-        return {}
+    cfg = load_config() if config is None else config
+    cfg_keys = set(cfg.get("chat_models", {}))
+    return {k: m for k, m in local_models().items() if k not in cfg_keys}
 
 
 def _get_chat_models(config: dict | None = None) -> dict:

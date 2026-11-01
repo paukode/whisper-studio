@@ -57,15 +57,6 @@ def _task_running(task_id: str) -> bool:
     return bool(task) and task.get("status") == "running"
 
 
-def _max_blocks(ctx: GateContext) -> int:
-    try:
-        from server.infrastructure import config
-
-        return int(config.get("goal_max_consecutive_blocks", ctx.max_consecutive_blocks))
-    except Exception:
-        return ctx.max_consecutive_blocks
-
-
 def goal_in_play(session_id: str) -> bool:
     """Whether the gate's goal phases run for ``session_id``: the goal_loop
     flag is on and the session has an active goal."""
@@ -161,7 +152,7 @@ async def run_completion_gate(ctx: GateContext) -> GateDecision:
     The goal_loop flag gates ONLY the goal phases: Stop hooks are WS-I's
     contract and must keep firing even when the goal loop is disabled (the gate
     replaced the loops' direct check_stop_hooks calls)."""
-    cap = _max_blocks(ctx)
+    cap = ctx.max_consecutive_blocks
 
     # ── Phase 1: Stop hooks (WS-I engine) ────────────────────────────────────
     from server.hooks import check_stop_hooks

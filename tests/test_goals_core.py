@@ -457,13 +457,14 @@ def test_gate_deliverable_block_respects_the_cap(tmp_path, monkeypatch):
     from server.goals import gate
 
     monkeypatch.setattr(gate, "_flag_on", lambda n, d=True: True)
-    monkeypatch.setattr(gate, "_max_blocks", lambda ctx: 2)
     sid = _mk_session()
     msgs = [
         {"role": "user", "content": "write the report"},
         {"role": "assistant", "content": f"Saved to: `{tmp_path}/report.docx`"},
     ]
-    d = _run(gate.run_completion_gate(_ctx(sid, messages=msgs, attempt=2)))
+    d = _run(
+        gate.run_completion_gate(_ctx(sid, messages=msgs, attempt=2, max_consecutive_blocks=2))
+    )
     assert not d.block and d.source == "cap"
     assert d.frame["goal_cap_reached"]["source"] == "deliverable"
 
