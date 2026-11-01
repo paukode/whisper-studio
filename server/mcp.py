@@ -112,6 +112,23 @@ _LAUNCH_KEYS = ("command", "args", "env", "url", "bearer_token_env_var")
 #             setting. For a server the user does not fully trust.
 _VALID_APPROVAL_MODES = {"auto", "prompt", "writes", "approve"}
 
+
+def effective_approval_mode(value) -> str:
+    """The tier a configured approval value gates with: "auto" when unset, the
+    value itself when valid, and "approve" (fail closed) for anything else, so
+    a typo in mcp_servers.json never removes the approval gate."""
+    if value is None:
+        return "auto"
+    if value in _VALID_APPROVAL_MODES:
+        return value
+    log.warning(
+        "MCP approval value %r is not one of %s; gating as approve",
+        value,
+        sorted(_VALID_APPROVAL_MODES),
+    )
+    return "approve"
+
+
 # Heuristic used only by the "writes" tier: MCP tools carry no structured
 # read/write annotation today, so this is a best-effort name-based guess, not
 # a guarantee. Errs toward gating (anything not matching is treated as a
@@ -757,12 +774,10 @@ class MCPManager:
         if not isinstance(entry, dict):
             return "auto"
         overrides = entry.get("tool_overrides")
-        tier = overrides.get(tool_name) if isinstance(overrides, dict) else None
-        if tier not in _VALID_APPROVAL_MODES:
-            tier = entry.get("approval_mode", "auto")
-        if tier not in _VALID_APPROVAL_MODES:
-            tier = "auto"
-        return tier
+        override = overrides.get(tool_name) if isinstance(overrides, dict) else None
+        if override is not None:
+            return effective_approval_mode(override)
+        return effective_approval_mode(entry.get("approval_mode"))
 
     def get_tool_approval_tier_for_tool_name(self, tool_name: str) -> str | None:
         """Like get_tool_approval_tier, but looks the (server, original
