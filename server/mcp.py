@@ -97,19 +97,20 @@ CONFIG_POLL_S = 1.0
 _LAUNCH_KEYS = ("command", "args", "env", "url", "bearer_token_env_var")
 
 # Per-server/tool approval tiers (see MCPManager.get_tool_approval_tier).
-#   auto    — no approval needed; the tool executes immediately. The
-#             default for a server with no approval_mode.
-#   prompt  — every call goes through the normal approval pipeline (category
-#             "mcp" in resolve_static_decision): subject to the user's
-#             permission mode, session approvals, and custom rules, same as
-#             any other approval-gated tool.
-#   writes  — tool calls that look read-only (name starts with get_/list_/
-#             search_/etc.) auto-execute; anything else goes through the
-#             normal approval pipeline like "prompt".
-#   approve — every call always asks, and — like the "github-destructive"
-#             category — this floor cannot be bypassed by bypassPermissions,
-#             a blanket session "yes for all MCP tools", or any other global
-#             setting. For a server the user does not fully trust.
+#   auto:    no approval needed; the tool executes immediately. The
+#            default for a server with no approval_mode.
+#   prompt:  every call goes through the normal approval pipeline (category
+#            "mcp" in resolve_static_decision): subject to the user's
+#            permission mode, session approvals, and custom rules, same as
+#            any other approval-gated tool.
+#   writes:  tool calls that look read-only (name starts with get_/list_/
+#            search_/etc.) auto-execute; anything else goes through the
+#            normal approval pipeline like "prompt".
+#   approve: every call always asks, and (like the "github-destructive"
+#            category) this floor cannot be bypassed by bypassPermissions,
+#            a blanket session "yes for all MCP tools", or any other global
+#            setting. For a server the user does not fully trust. An
+#            unknown tier gates as approve (effective_approval_mode).
 _VALID_APPROVAL_MODES = {"auto", "prompt", "writes", "approve"}
 
 
