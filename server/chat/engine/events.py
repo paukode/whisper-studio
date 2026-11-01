@@ -144,19 +144,3 @@ class RoundResult:
     stop_reason: str
     content: list = field(default_factory=list)
     usage: Usage = field(default_factory=Usage)
-
-
-RoundEvent = (
-    TextDelta
-    | ThinkingStart
-    | ThinkingDelta
-    | ThinkingStop
-    | ToolCallStart
-    | ToolCallProgress
-    | ToolCall
-    | Usage
-    | RoundError
-    | Incomplete
-    | Heartbeat
-    | RoundResult
-)

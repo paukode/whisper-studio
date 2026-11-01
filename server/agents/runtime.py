@@ -660,7 +660,6 @@ async def _run_agent_loop(
         agent_id=agent_id,
         depth=depth,
         session_id=session_id,
-        ws_connected=bool(ws_path),
         budget=extension,
     )
     activate_from_history(access.scope.activation_key, messages)

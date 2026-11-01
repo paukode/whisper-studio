@@ -30,7 +30,7 @@ def test_every_tool_that_saves_outside_the_workspace_waits_to_be_asked():
     # request and says that without one the content belongs in the reply.
     from server.chat.tool_pool import assemble_full_catalog
 
-    tools = {t["name"]: t for t in assemble_full_catalog(ws_connected=False)}
+    tools = {t["name"]: t for t in assemble_full_catalog()}
     writers = [
         "save_file",
         "ws_create_file",

@@ -189,9 +189,7 @@ def build_context_report(
     total_chars = sum(s["chars"] for s in sections)
     cached_chars = sum(s["chars"] for s in sections if s["cached"])
 
-    advertised, deferred, _core = assemble_partitioned_pool(
-        ws_connected=bool(ws_path), session_id=session_id
-    )
+    advertised, deferred, _core = assemble_partitioned_pool(session_id=session_id)
     catalog_names = {t["name"] for t in advertised} | {t["name"] for t in deferred}
 
     duplication = find_duplication(texts, advertised + deferred)

@@ -10,7 +10,7 @@ Contracts pinned here:
    returning the server's live status.
 3. reconcile() starts exactly the enabled servers (missing flag counts
    as enabled), so a disabled server stays stopped across app restarts.
-4. The per-turn tool pool (assemble_tool_pool) contains a server's tools
+4. The per-turn tool pool (assemble_full_catalog) contains a server's tools
    exactly while it is enabled — flipping the flag changes the pool for
    the very next assembly, which is what makes the toggle immediate.
 """
@@ -208,7 +208,7 @@ def test_reconcile_skips_disabled_and_treats_missing_flag_as_enabled(isolated_mc
 
 
 def test_tool_pool_follows_the_enabled_flag_per_assembly(isolated_mcp, monkeypatch):
-    """assemble_tool_pool is called per model request, so a toggle is in
+    """assemble_full_catalog is called per model request, so a toggle is in
     effect for the very next message: disabled -> the server's tools are
     absent; enabled -> present."""
     from server.chat import tool_pool
@@ -226,7 +226,7 @@ def test_tool_pool_follows_the_enabled_flag_per_assembly(isolated_mcp, monkeypat
     }
     monkeypatch.setattr(tool_pool, "mcp_manager", mgr)
 
-    names = {t["name"] for t in tool_pool.assemble_tool_pool()}
+    names = {t["name"] for t in tool_pool.assemble_full_catalog()}
     assert "mcp__alpha__ping" not in names
 
     # Flip the persisted flag (what PATCH does) and reassemble: the tool is
@@ -236,5 +236,5 @@ def test_tool_pool_follows_the_enabled_flag_per_assembly(isolated_mcp, monkeypat
             {"servers": {"alpha": {"command": "x", "args": [], "env": {}, "enabled": True}}},
             f,
         )
-    names = {t["name"] for t in tool_pool.assemble_tool_pool()}
+    names = {t["name"] for t in tool_pool.assemble_full_catalog()}
     assert "mcp__alpha__ping" in names

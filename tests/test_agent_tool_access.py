@@ -111,12 +111,11 @@ def _access(agent_type: str, **kw) -> AgentToolAccess:
         agent_id="probe",
         depth=kw.get("depth", 0),
         session_id=f"s-{uuid.uuid4().hex[:8]}",
-        ws_connected=kw.get("ws_connected", True),
     )
 
 
 def _deferred_names() -> list[str]:
-    catalog = {t["name"] for t in assemble_full_catalog(plan_mode=False, ws_connected=True)}
+    catalog = {t["name"] for t in assemble_full_catalog()}
     runtime = {t["name"] for t in get_agent_runtime_tools("probe", 0)}
     return sorted(catalog - core_names() - runtime)
 
@@ -177,7 +176,7 @@ def test_read_only_agent_can_neither_delegate_nor_act_outside_the_workspace():
     }
     for agent_type in ("explore", "plan"):
         assert escapes.isdisjoint(_access(agent_type).scope.permitted), agent_type
-    catalog = {t["name"] for t in assemble_full_catalog(plan_mode=False, ws_connected=True)}
+    catalog = {t["name"] for t in assemble_full_catalog()}
     assert escapes & catalog <= _access("general").scope.permitted, (
         "only read-only agents lose them"
     )

@@ -1671,9 +1671,6 @@ async def chat_endpoint(request: Request):
         # visible history (self-healing across restarts/pauses), activate a
         # requested skill so an @skills: request can call its tool even when it
         # is deferred, then compute the deferred index for the static system block.
-        # The suppress flag isn't known yet (grounding resolves later); the index
-        # may list a few tools a strict-RAG round hides — harmless, tool_search
-        # activation still intersects with the post-filter catalog per round.
         from server.chat.tool_activation import activate, activate_from_history
         from server.chat.tool_index import build_deferred_index
         from server.chat.tool_pool import assemble_partitioned_pool
@@ -1683,10 +1680,7 @@ async def chat_endpoint(request: Request):
         if force_skill:
             activate(session_id, [force_skill])
         _advertised0, _deferred0, _core_count0 = assemble_partitioned_pool(
-            plan_mode=plan_mode,
-            ws_connected=bool(ws_path),
-            session_id=session_id,
-            ultracode=ultracode_active,
+            session_id=session_id, ultracode=ultracode_active
         )
         _deferred_index = build_deferred_index(_deferred0)
 

@@ -89,7 +89,6 @@ def _access(agent_type: str) -> AgentToolAccess:
         agent_id="probe",
         depth=0,
         session_id=f"s-{uuid.uuid4().hex[:8]}",
-        ws_connected=True,
     )
 
 
@@ -467,8 +466,8 @@ def test_a_voice_turn_keeps_the_memory_tools_an_unattended_run_defers(monkeypatc
     monkeypatch.setattr(
         "server.infrastructure.feature_flags.is_enabled", lambda name, *a, **k: True
     )
-    voice = {t["name"] for t in _round_catalog("s-voice", False, attended=True)}
-    unattended = {t["name"] for t in _round_catalog("s-wake", False)}
+    voice = {t["name"] for t in _round_catalog("s-voice", attended=True)}
+    unattended = {t["name"] for t in _round_catalog("s-wake")}
     assert CHAT_CORE_TOOLS <= voice
     assert CHAT_CORE_TOOLS.isdisjoint(unattended)
 

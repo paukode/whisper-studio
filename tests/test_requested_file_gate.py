@@ -104,7 +104,7 @@ def test_a_document_tool_answers_a_request_to_save_a_file(name):
     # need not repeat the path for the request to be met.
     from server.chat.tool_pool import assemble_full_catalog
 
-    assert name in {t["name"] for t in assemble_full_catalog(ws_connected=True)}
+    assert name in {t["name"] for t in assemble_full_catalog()}
     msgs = [
         {"role": "user", "content": "write the report as a docx and save it to Downloads"},
         _tool(name),

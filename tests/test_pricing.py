@@ -11,7 +11,7 @@ import json
 
 import pytest
 
-from server.chat import _get_chat_models
+from server.chat.infra import _get_chat_models
 from server.costs import tracker
 from server.costs.tracker import estimate_cost, get_model_pricing
 

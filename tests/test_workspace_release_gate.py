@@ -79,7 +79,7 @@ async def _batch(tool_uses, latch, *, unattended=False):
     register_defaults()
     # Exercise workspace release with canonical preview schemas, independently
     # of whether this test machine has installed the optional browser runtime.
-    schemas = schemas_for_tools([*assemble_full_catalog(ws_connected=True), *PREVIEW_TOOLS])
+    schemas = schemas_for_tools([*assemble_full_catalog(), *PREVIEW_TOOLS])
     pool = ThreadPoolExecutor(max_workers=2)
     try:
         return await te.execute_tool_batch(

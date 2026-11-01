@@ -127,16 +127,14 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _round_catalog(session_id: str, ws_connected: bool, *, attended: bool = False) -> list[dict]:
+def _round_catalog(session_id: str, *, attended: bool = False) -> list[dict]:
     """This round's advertised tools: the core pool plus everything tool_search
     has activated for ``session_id`` so far, deduplicated by name. An attended
     run (voice: a person is there, just not at the chat) keeps the chat's core
     set, memory tools included; an unattended one leaves them deferred."""
     from server.chat.tool_pool import assemble_partitioned_pool
 
-    advertised, _deferred, _core = assemble_partitioned_pool(
-        plan_mode=False, ws_connected=ws_connected, session_id=session_id, chat=attended
-    )
+    advertised, _deferred, _core = assemble_partitioned_pool(session_id=session_id, chat=attended)
     seen: set[str] = set()
     tools: list[dict] = []
     for t in advertised:
@@ -379,10 +377,9 @@ async def run_headless_turn(
         # EVERY round ─────────────────────────────────────────────────────────
         # Progressive tool disclosure: re-derive this session's activations
         # from visible history first (self-healing across restarts, exactly
-        # like server/chat/routes.py), then the same call agents/runtime.py
-        # makes (assemble_partitioned_pool(plan_mode=False, ws_connected=...,
-        # session_id=...)) but WITHOUT filter_tools_for_agent or
-        # get_agent_runtime_tools — see the module docstring. The catalog is
+        # like server/chat/routes.py), then assemble_partitioned_pool for this
+        # session, but WITHOUT filter_tools_for_agent or
+        # get_agent_runtime_tools (see the module docstring). The catalog is
         # rebuilt per round (like _assemble_round_tools in the chat engine):
         # a tool_search activation in round N must be advertised in round N+1,
         # otherwise the model keeps searching for a tool it can never call.
@@ -390,12 +387,12 @@ async def run_headless_turn(
         # appended to the system prompt below.
         activate_from_history(session_id, messages)
         _advertised0, deferred, _core_count = assemble_partitioned_pool(
-            plan_mode=False, ws_connected=bool(ws_path), session_id=session_id, chat=attended
+            session_id=session_id, chat=attended
         )
         deferred_tool_index = build_deferred_index(deferred)
 
         def _tool_catalog() -> tuple[list[dict], int | None]:
-            return _round_catalog(session_id, bool(ws_path), attended=attended), None
+            return _round_catalog(session_id, attended=attended), None
 
         system = (
             "You are completing a single headless task with no human attending this "

@@ -58,15 +58,6 @@ def _get_bedrock_client():
     )
 
 
-def _reset_bedrock_client_cache() -> None:
-    """Test hook: drops cached clients so the next ``_get_bedrock_client()``
-    builds fresh ones (tests/conftest.py resets between tests). Nothing in the
-    config-update path calls this: clients are keyed per region, so a region
-    change simply builds a new entry."""
-    with _BEDROCK_CLIENT_LOCK:
-        _BEDROCK_CLIENTS.clear()
-
-
 def _downloaded_local_only(config: dict | None = None) -> dict:
     """On-device models present in the registry (downloaded) but NOT in config
     chat_models. The app ships no local chat models, so a recommended model the

@@ -178,13 +178,6 @@ def _caption_client():
     )
 
 
-def _reset_caption_client_cache() -> None:
-    """Test hook: drop the cached client so a patched boto3 takes effect
-    (tests/conftest.py resets it between tests, like the chat client)."""
-    with _CLIENT_LOCK:
-        _CLIENTS.clear()
-
-
 def _labelled(name: str) -> bool:
     return name not in _SKIP_NAMES and not name.startswith(_SKIP_PREFIXES)
 

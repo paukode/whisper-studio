@@ -184,9 +184,6 @@ def _assemble_round_tools(ctx: TurnContext) -> tuple[list, int | None]:
     from server.infrastructure.feature_flags import is_enabled
 
     catalog = assemble_full_catalog(
-        plan_mode=ctx.plan_mode,
-        ws_connected=bool(ctx.ws_path),
-        suppress_workspace_search=ctx.suppress_ws_search,
         # The workflow runtime + CI tools live behind this one flag (the only
         # ultracode gate in tool_pool). THIS catalog becomes the request's
         # tools array, so omitting the flag here kept workflow_run off the wire

@@ -1,21 +1,19 @@
 """Tool catalogue assembly.
 
-Tier 1 — catalogue: union of every tool source (skills, workspace, git,
-LSP, notebook, agents, cron, memory, MCP, etc.). The catalogue is
-deliberately STABLE across per-turn state flips (plan mode, strict-RAG
-grounding, workspace connect/disconnect): register always, refuse at
-execution. A tools array that changes between turns invalidates the
-prompt-prefix cache, so per-turn filters live at execution time, not here.
+Collect: the union of every tool source (skills, workspace, git, LSP,
+notebook, agents, cron, memory, MCP, etc.). The catalogue is deliberately
+STABLE across per-turn state (plan mode, grounding, workspace connect or
+disconnect): register always, refuse at execution. A tools array that
+changes between turns invalidates the prompt-prefix cache, so per-turn
+restrictions live in server/tool_executor.py, not here.
 
-Tier 3 — sort & merge: built-ins first (sorted by name), MCP tools next
-(also sorted), deduplicated. Bedrock rejects requests with duplicate
-tool names so dedup is mandatory. (Tier 2, the per-turn mode filter, was
-retired — see the comment above Tier 3 in assemble_full_catalog.)
+Sort and merge: built-ins first (sorted by name), MCP tools next (also
+sorted), deduplicated. Bedrock rejects requests with duplicate tool names,
+so dedup is mandatory.
 
-``_is_tool_concurrent_safe`` lives here because it's read directly by
-the chat endpoint when deciding whether to run a tool batch in parallel —
-keeping it next to the catalogue keeps the safety classification close
-to the catalogue that produced the tool.
+``_is_tool_concurrent_safe`` lives here because the tool phase reads it
+when it decides whether to run a tool batch in parallel; it keeps the
+safety classification next to the catalogue that produced the tool.
 """
 
 from server.agent_tools import AGENT_TOOLS
@@ -41,8 +39,8 @@ from server.workspace import (
     get_worktree_tools,
 )
 
-# Tools known to be concurrent-safe that don't go through executor registry
-# (handled inline in chat.py or by specialized handlers).
+# Tools known to be concurrent-safe that are not in the executor registry
+# (dispatched by server/tool_router.py or by specialized handlers).
 _BUILTIN_CONCURRENT_SAFE = {
     "lsp_diagnostics",
     "lsp_hover",
@@ -79,29 +77,8 @@ def _is_tool_concurrent_safe(tool_name: str) -> bool:
     return False
 
 
-def assemble_tool_pool(
-    *,
-    plan_mode: bool = False,
-    ws_connected: bool = False,
-    suppress_workspace_search: bool = False,
-) -> list[dict]:
-    """Full advertised tool pool for one model request, nothing deferred.
-    The interactive chat loop and cron use ``assemble_partitioned_pool``
-    (progressive core + activated tools, everything else discoverable via
-    tool_search); agents build their entitlement from
-    ``assemble_full_catalog`` in server/agents/tool_access.py."""
-    return assemble_full_catalog(
-        plan_mode=plan_mode,
-        ws_connected=ws_connected,
-        suppress_workspace_search=suppress_workspace_search,
-    )
-
-
 def assemble_partitioned_pool(
     *,
-    plan_mode: bool = False,
-    ws_connected: bool = False,
-    suppress_workspace_search: bool = False,
     session_id: str = "",
     ultracode: bool = False,
     chat: bool = True,
@@ -111,12 +88,7 @@ def assemble_partitioned_pool(
     Flag off (or no session): full catalog, nothing deferred. ``chat`` False
     (scheduled tasks and unattended headless turns; voice passes True) leaves
     the chat-only core tools deferred (tool_partition.CHAT_CORE_TOOLS)."""
-    catalog = assemble_full_catalog(
-        plan_mode=plan_mode,
-        ws_connected=ws_connected,
-        suppress_workspace_search=suppress_workspace_search,
-        ultracode=ultracode,
-    )
+    catalog = assemble_full_catalog(ultracode=ultracode)
     from server.infrastructure.feature_flags import is_enabled as _ff_enabled
 
     if not session_id or not _ff_enabled("progressive_tools"):
@@ -127,29 +99,22 @@ def assemble_partitioned_pool(
     return partition_pool(catalog, get_ordered(session_id), chat=chat)
 
 
-def assemble_full_catalog(
-    *,
-    plan_mode: bool = False,
-    ws_connected: bool = False,
-    suppress_workspace_search: bool = False,
-    ultracode: bool = False,
-) -> list[dict]:
-    """Three-tier tool assembly: catalog → mode filter → sorted pool.
+def assemble_full_catalog(*, ultracode: bool = False) -> list[dict]:
+    """Two-step tool assembly: collect, then sort and merge.
 
-    Tier 1 (catalog): All registered tools from all sources.
-    Tier 2 (mode filter): Remove tools incompatible with current mode.
-    Tier 3 (sort & merge): Built-ins sorted, MCP sorted, concatenated.
+    Collect: all registered tools from all sources.
+    Sort and merge: built-ins sorted, MCP sorted, concatenated, deduplicated.
 
     This is the PRE-PARTITION catalog: also the single source of truth for
     tool_search, which must see every tool regardless of deferral.
     """
-    # Tier 1: full catalog
+    # Collect the full catalog
     builtin_tools = list(TOOLS)  # skill-based tools
     builtin_tools += CORE_EXECUTOR_TOOLS
     builtin_tools += PROMPT_TOOLS
     builtin_tools += get_global_workspace_tools()
     # git_clone is the one git tool that works WITHOUT a connected workspace
-    # — by design, it creates one. Always include it so the assistant can
+    # (by design, it creates one). Always include it so the assistant can
     # respond to "clone this repo" from a fresh state.
     from server.git.tools import GIT_WRITE_TOOLS
 
@@ -158,13 +123,13 @@ def assemble_full_catalog(
             builtin_tools.append(t)
             break
     # Workspace, worktree, git, and GitHub tools are in the catalog
-    # UNCONDITIONALLY — the catalog is deliberately independent of whether a
+    # UNCONDITIONALLY: the catalog is deliberately independent of whether a
     # workspace is connected right now. Their executors gate at execution
     # ("No workspace connected", "not a git repo", or a folder picker), so a
     # mid-session connect/disconnect no longer rewrites the tools array and
     # invalidates the prompt-prefix cache (register always, refuse at
     # execution). The write-tool variants come last so the workspace schemas
-    # win the Tier-3 dedup on shared names.
+    # win the dedup on shared names.
     builtin_tools += get_workspace_tools()
     builtin_tools += get_worktree_tools()
     builtin_tools += get_git_tools()
@@ -201,7 +166,7 @@ def assemble_full_catalog(
     # live in the EXECUTORS registry. Gated on the persisted enabled set inside
     # plugin_tools(), so toggling a plugin off hides its tools on the next turn
     # without a restart. Appended after the built-ins so core schemas win the
-    # Tier-3 dedup on any name clash.
+    # dedup on any name clash.
     from server.plugins import plugin_tools
 
     builtin_tools += plugin_tools()
@@ -229,10 +194,10 @@ def assemble_full_catalog(
 
     builtin_tools += RULES_TOOLS
 
-    # Live preview tools — flag AND capability probe must both pass, so the
+    # Live preview tools: flag AND capability probe must both pass, so the
     # tools are genuinely absent from the catalog (not just disabled) until
     # the user has both opted in AND completed the Playwright/Chromium
-    # install. Checked live (cheap — no subprocess), not cached at
+    # install. Checked live (cheap, no subprocess), not cached at
     # flag-toggle time, so a corrupted/deleted install hides the tools again
     # automatically.
     if _ff_enabled("preview_tools"):
@@ -245,26 +210,12 @@ def assemble_full_catalog(
 
     mcp_tools = list(mcp_manager.get_bedrock_tools())
 
-    # Tier 2 (retired): per-turn mode filters used to strip tools here, which
-    # rewrote the tools array on every plan-mode toggle and every strict-RAG
-    # round and invalidated the prompt-prefix cache. The catalog is now stable
-    # across those flips; enforcement moved to where it always also lived:
-    #   - plan mode: tool_executor blocks _PLAN_MODE_BLOCKED at execution and
-    #     tells the model why, so the schemas can stay advertised.
-    #   - strict-RAG: the grounding block itself instructs the model to answer
-    #     from the injected passages instead of re-crawling (see
-    #     server/index/pipeline.py); withholding the schemas was belt and
-    #     suspenders that cost a cache miss per grounded turn.
-    # The plan_mode / suppress_workspace_search parameters are kept so call
-    # sites don't churn, and because execution-level consumers still key off
-    # the same per-turn state.
-
-    # Tier 3: sort each group, concatenate, deduplicate
+    # Sort each group, concatenate, deduplicate
     builtin_tools.sort(key=lambda t: t["name"])
     mcp_tools.sort(key=lambda t: t["name"])
     combined = builtin_tools + mcp_tools
 
-    # Deduplicate by name — MCP servers may contribute tools that clash with
+    # Deduplicate by name: MCP servers may contribute tools that clash with
     # built-ins or with each other. Bedrock rejects non-unique tool names.
     seen = set()
     deduped = []

@@ -8,7 +8,7 @@ import pytest
 
 import server.executors.content  # noqa: F401 — registers the prompt executors
 import server.skills as skills_mod
-from server.chat import (
+from server.chat.budget import (
     TOOL_RESULT_BUDGET_BYTES,
     make_budget_tool_result,
 )

@@ -373,7 +373,6 @@ async def route_tool(
         from server.agent_tools import execute_tool_search
         from server.chat.tool_pool import assemble_full_catalog
         from server.infrastructure.effort import is_ultracode
-        from server.workspace import get_workspace_path
 
         # The TRUE full catalog (pre-partition): every registered tool,
         # including plan/result-cache/preview/worktree/background-task tools.
@@ -381,11 +380,7 @@ async def route_tool(
         # callable next round. ultracode rides along so the catalog matches the
         # round's own — searching for "workflow" from an ultracode turn must not
         # come back empty for tools the very same turn can call.
-        all_t = assemble_full_catalog(
-            plan_mode=False,
-            ws_connected=bool(get_workspace_path()),
-            ultracode=is_ultracode(effort_label),
-        )
+        all_t = assemble_full_catalog(ultracode=is_ultracode(effort_label))
         activation_key = session_id
         if tool_scope is not None:
             # An agent finds only what it may run (a read-only agent is never

@@ -263,7 +263,7 @@ def test_run_agent_structured_schema_end_to_end(monkeypatch):
             },
         ]
     )
-    monkeypatch.setattr("server.chat._get_bedrock_client", lambda: fake_old)
+    monkeypatch.setattr("server.chat.infra._get_bedrock_client", lambda: fake_old)
 
     schema = {
         "type": "object",

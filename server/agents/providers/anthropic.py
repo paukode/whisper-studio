@@ -39,7 +39,7 @@ class AnthropicBedrockAdapter:
         # path (region/config/retries); reusing it keeps a single seam for
         # configuration and for the test suite's client fakes.
         if self._bedrock is None:
-            from server.chat import _get_bedrock_client
+            from server.chat.infra import _get_bedrock_client
 
             self._bedrock = _get_bedrock_client()
         return self._bedrock

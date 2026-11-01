@@ -144,20 +144,11 @@ def test_core_count_breakpoint_added():
 # ── pool assembly parity ─────────────────────────────────────────────────────
 
 
-def test_legacy_pool_byte_identical_and_partitioned_smaller():
-    from server.chat.tool_pool import (
-        assemble_full_catalog,
-        assemble_partitioned_pool,
-        assemble_tool_pool,
-    )
+def test_partitioned_pool_is_smaller_than_the_full_catalog():
+    from server.chat.tool_pool import assemble_full_catalog, assemble_partitioned_pool
 
-    full = assemble_full_catalog(ws_connected=False)
-    legacy = assemble_tool_pool(ws_connected=False)
-    assert [t["name"] for t in legacy] == [t["name"] for t in full]
-
-    advertised, deferred, core_count = assemble_partitioned_pool(
-        ws_connected=False, session_id="s-parity"
-    )
+    full = assemble_full_catalog()
+    advertised, deferred, core_count = assemble_partitioned_pool(session_id="s-parity")
     assert len(advertised) + len(deferred) == len(full)
     assert 0 < core_count <= len(advertised)
     assert len(advertised) < len(full)  # something actually deferred
@@ -168,10 +159,10 @@ def test_legacy_pool_byte_identical_and_partitioned_smaller():
 def test_progressive_pool_includes_activated():
     from server.chat.tool_pool import assemble_full_catalog, assemble_partitioned_pool
 
-    full_names = {t["name"] for t in assemble_full_catalog(ws_connected=False)}
+    full_names = {t["name"] for t in assemble_full_catalog()}
     target = next(iter(full_names - core_names()))
     tool_activation.activate("s-act", [target])
-    advertised, _deferred, _core = assemble_partitioned_pool(ws_connected=False, session_id="s-act")
+    advertised, _deferred, _core = assemble_partitioned_pool(session_id="s-act")
     assert target in {t["name"] for t in advertised}
 
 
@@ -226,6 +217,6 @@ def test_skill_manage_is_core_exactly_while_its_flag_is_on(monkeypatch, on):
         "is_enabled",
         lambda name: on if name == "skill_self_improvement" else real(name),
     )
-    advertised, deferred, _core = assemble_partitioned_pool(ws_connected=False, session_id="s-sk")
+    advertised, deferred, _core = assemble_partitioned_pool(session_id="s-sk")
     assert ("skill_manage" in {t["name"] for t in advertised}) is on
     assert ("skill_manage" in {t["name"] for t in deferred}) is not on

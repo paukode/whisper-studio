@@ -261,22 +261,12 @@ async def _execute_cron_prompt(job_id: str) -> None:
 
         ws_latch = latch_workspace(get_workspace_path)
         _advertised, deferred, _core_count = assemble_partitioned_pool(
-            plan_mode=False,
-            ws_connected=bool(ws_latch.path),
-            suppress_workspace_search=False,
-            session_id=session_id,
-            chat=False,
+            session_id=session_id, chat=False
         )
         deferred_tool_index = build_deferred_index(deferred)
 
         def _tool_catalog() -> tuple[list[dict], int | None]:
-            pool, _deferred, _core = assemble_partitioned_pool(
-                plan_mode=False,
-                ws_connected=bool(ws_latch.path),
-                suppress_workspace_search=False,
-                session_id=session_id,
-                chat=False,
-            )
+            pool, _deferred, _core = assemble_partitioned_pool(session_id=session_id, chat=False)
             return _assemble_cron_tools(pool), None
 
         from server.prompts.rules import append_rules

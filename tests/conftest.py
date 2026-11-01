@@ -187,13 +187,15 @@ def _drop_cached_bedrock_clients():
     yield
     infra = sys.modules.get("server.chat.infra")
     if infra is not None:
-        infra._reset_bedrock_client_cache()
+        with infra._BEDROCK_CLIENT_LOCK:
+            infra._BEDROCK_CLIENTS.clear()
     recall = sys.modules.get("server.memory.recall")
     if recall is not None:
         recall._reset_recall_client_cache()
     labels = sys.modules.get("server.chat.engine.activity_labels")
     if labels is not None:
-        labels._reset_caption_client_cache()
+        with labels._CLIENT_LOCK:
+            labels._CLIENTS.clear()
 
 
 @pytest.fixture(autouse=True)

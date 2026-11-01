@@ -70,7 +70,7 @@ async def _bedrock_check(model: str | None) -> dict:
                 "messages": [{"role": "user", "content": "ping"}],
             }
         )
-        from server.chat import _get_chat_models
+        from server.chat.infra import _get_chat_models
 
         chat_models = _get_chat_models()
         ping_model = (

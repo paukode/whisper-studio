@@ -637,7 +637,7 @@ def test_the_plan_mode_writers_are_tools_plan_mode_lets_write():
     from server.executors import EXECUTOR_META
     from server.tool_executor import _PLAN_MODE_BLOCKED
 
-    catalog = {t["name"] for t in assemble_full_catalog(plan_mode=True, ws_connected=True)}
+    catalog = {t["name"] for t in assemble_full_catalog()}
     for name in OUTSIDE_WRITERS:
         assert name in catalog, name
         assert name not in _PLAN_MODE_BLOCKED, name

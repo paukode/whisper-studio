@@ -6,10 +6,9 @@ this session has ACTIVATED (via tool_search or history replay); everything
 else appears only as a one-line entry in the deferred index inside the system
 prompt, discoverable and loadable on demand.
 
-The partition applies to the full stable catalog. Per-turn mode filters
-(plan-mode blocks, strict-RAG suppression) no longer strip the catalog —
-they are enforced at execution time — so activation intersects with a
-catalog that is byte-stable across those flips.
+The partition applies to the full catalog, which is byte-stable across
+per-turn state (plan mode, workspace connect or disconnect): restrictions
+are enforced at execution time, never by stripping schemas.
 """
 
 import logging
@@ -124,7 +123,7 @@ def core_names(*, chat: bool = True) -> frozenset[str]:
 def partition_pool(
     catalog: list[dict], activated: list[str], *, chat: bool = True
 ) -> tuple[list[dict], list[dict], int]:
-    """Split a post-mode-filter catalog into (advertised, deferred, core_count).
+    """Split the full catalog into (advertised, deferred, core_count).
 
     Advertised ordering is cache-critical: core tools keep the catalog's
     existing sorted order (stable prefix), activated tools are APPENDED in

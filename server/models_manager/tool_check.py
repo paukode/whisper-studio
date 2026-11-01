@@ -186,7 +186,7 @@ def fresh_session_tools() -> tuple[list[dict], int | None]:
     from server.chat.tool_pool import assemble_full_catalog
     from server.infrastructure.feature_flags import is_enabled
 
-    catalog = assemble_full_catalog(ws_connected=True)
+    catalog = assemble_full_catalog()
     if is_enabled("progressive_tools"):
         tools, _, core_count = partition_pool(catalog, [])
         return tools, core_count

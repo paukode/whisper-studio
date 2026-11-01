@@ -177,9 +177,7 @@ def test_fresh_session_tools_match_the_first_chat_round():
     from server.chat.engine.runner import _assemble_round_tools
 
     ctx = SimpleNamespace(
-        plan_mode=False,
         ws_path="/tmp/example",
-        suppress_ws_search=False,
         effort_label=None,
         session_id="a-session-with-no-activations",
     )

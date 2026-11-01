@@ -125,7 +125,6 @@ class AgentToolAccess:
         agent_id: str,
         depth: int,
         session_id: str,
-        ws_connected: bool,
         budget: dict | None = None,
     ):
         from server.infrastructure.feature_flags import is_enabled
@@ -133,7 +132,6 @@ class AgentToolAccess:
         self._config = config
         self._agent_id = agent_id
         self._depth = depth
-        self._ws_connected = ws_connected
         self._session_id = session_id
         self._progressive = (
             config.allowed_tools is None and bool(session_id) and is_enabled("progressive_tools")
@@ -155,7 +153,7 @@ class AgentToolAccess:
         from server.chat.tool_pool import assemble_full_catalog
 
         config, agent_id, depth = self._config, self._agent_id, self._depth
-        catalog = assemble_full_catalog(plan_mode=False, ws_connected=self._ws_connected)
+        catalog = assemble_full_catalog()
         in_catalog = {t["name"] for t in catalog}
         core = core_names(chat=False)
         # A name in both lists keeps the chat's schema when it is core
