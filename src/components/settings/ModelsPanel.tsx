@@ -360,7 +360,11 @@ export const ModelsPanel: React.FC<{ section?: ModelSection }> = ({ section }) =
         // Bundled infrastructure models (language ID, speaker encoder) are
         // always installed via the app bundle / setup.sh and never user-managed.
         const rows = models.filter((m) => m.group === group.id && !m.bundled);
-        if (rows.length === 0) return null;
+        // Local chat keeps its section with no rows: its hint carries the
+        // only link to the config file, where local models are added too.
+        if (rows.length === 0 && (group.id !== 'local-chat' || catalogQuery.isLoading)) {
+          return null;
+        }
         return (
           <div key={group.id} className="models-section">
             <h4 className="models-section-title">{group.label}</h4>
