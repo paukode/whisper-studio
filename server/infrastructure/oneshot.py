@@ -30,14 +30,19 @@ def resolve_local_key(local_model_key: str | None) -> str:
 
 
 def resolve_map_engine(config: dict | None = None) -> str:
-    """Return the existing generic map selection, including its legacy default."""
+    """The one-shot writer for the active mode: "haiku", "local", OFF, or an
+    installed on-device model key. Any other value (for example an on-device
+    model that was removed) raises instead of sending the call to the cloud."""
     from server.infrastructure.model_mode import resolve_backend
     from server.local import registry as local_registry
 
     engine = resolve_backend("index_llm", config)
     if engine in ("haiku", "local", OFF) or engine in local_registry.local_models():
         return engine
-    return "haiku"
+    raise RuntimeError(
+        f"The one-shot writer (Settings > Model mode) is set to {engine!r}, which is not "
+        "an installed on-device model. Choose another one-shot writer."
+    )
 
 
 def _is_claude_id(model_id: str) -> bool:

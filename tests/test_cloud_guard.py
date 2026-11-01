@@ -108,6 +108,13 @@ def test_one_shot_writer_off_runs_no_model(set_mode, cloud_clients, monkeypatch)
     assert cloud_clients == []
 
 
+def test_a_removed_on_device_writer_is_refused_not_sent_to_the_cloud(set_mode, cloud_clients):
+    cfg = set_mode("hybrid", backends={"index_llm": "local_removed_model"})
+    with pytest.raises(RuntimeError, match="local_removed_model"):
+        oneshot.resolve_map_engine(cfg)
+    assert cloud_clients == []
+
+
 def test_aux_model_id_resolves_no_cloud_model_in_local_mode():
     models = {"haiku": "h-id", "sonnet": "s-id"}
     overrides = {"auxiliary_models": {"memory_recall": "sonnet"}}

@@ -1,6 +1,8 @@
 """The hybrid `backends` map accepts specific on-device model keys for the two
 LLM capabilities (ner, index_llm), not just the haiku/local/gliner sentinels."""
 
+import pytest
+
 import server.local.registry as reg
 import server.local.runtime as rt
 
@@ -15,9 +17,10 @@ def test_resolve_map_engine_passes_local_model_keys(monkeypatch):
     _fake_registry(monkeypatch)
     cfg = {"model_mode": "hybrid", "backends": {"index_llm": "local_qwen35_9b"}}
     assert resolve_map_engine(cfg) == "local_qwen35_9b"
-    # Unknown values still coerce to haiku (the map step must produce output).
+    # An unknown value is refused, never sent to the cloud writer instead.
     cfg["backends"]["index_llm"] = "bogus"
-    assert resolve_map_engine(cfg) == "haiku"
+    with pytest.raises(RuntimeError, match="bogus"):
+        resolve_map_engine(cfg)
     # The sentinels are untouched.
     cfg["backends"]["index_llm"] = "local"
     assert resolve_map_engine(cfg) == "local"
