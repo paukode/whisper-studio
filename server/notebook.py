@@ -1,7 +1,4 @@
-"""
-NotebookEdit / NotebookRead tools — read and edit Jupyter .ipynb notebooks.
-Read and edit Jupyter .ipynb notebooks.
-"""
+"""notebook_read / notebook_edit: read and edit Jupyter .ipynb notebooks."""
 
 import json
 import logging
@@ -58,7 +55,7 @@ NOTEBOOK_EDIT_TOOL = {
             "cell_type": {
                 "type": "string",
                 "enum": ["code", "markdown"],
-                "description": "Cell type — required for insert, defaults to existing type for replace",
+                "description": "Cell type: defaults to code for insert, keeps the existing type for replace",
             },
             "edit_mode": {
                 "type": "string",
@@ -177,7 +174,7 @@ def execute_notebook_tool(tool_name: str, tool_input: dict) -> str:
         idx = int(tool_input.get("cell_index", 0))
         edit_mode = tool_input.get("edit_mode", "replace")
         new_source = tool_input.get("new_source", "")
-        cell_type = tool_input.get("cell_type", "code")
+        cell_type = tool_input.get("cell_type")
 
         if edit_mode == "delete":
             if idx < 0 or idx >= len(cells):
@@ -185,6 +182,7 @@ def execute_notebook_tool(tool_name: str, tool_input: dict) -> str:
             cells.pop(idx)
 
         elif edit_mode == "insert":
+            cell_type = cell_type or "code"
             new_cell: dict = {
                 "cell_type": cell_type,
                 "source": new_source,
@@ -207,6 +205,10 @@ def execute_notebook_tool(tool_name: str, tool_input: dict) -> str:
             if existing.get("cell_type") == "code":
                 existing["outputs"] = []
                 existing["execution_count"] = None
+            else:
+                # Only code cells carry outputs (nbformat).
+                existing.pop("outputs", None)
+                existing.pop("execution_count", None)
 
         # Do NOT write directly. Mirror ws_write_file / ws_edit_file: emit a
         # [WS_APPROVAL] payload with the "write" action so the change goes
