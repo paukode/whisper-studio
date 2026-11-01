@@ -39,6 +39,7 @@ def test_login_persistence_paths_are_sensitive():
 def test_control_port_rule_reads_the_env(monkeypatch):
     from server.sandbox import _control_port_deny_rules
 
+    monkeypatch.delenv("WHISPER_DEV_PROXY_PORT", raising=False)
     monkeypatch.setenv("PORT", "1234")
     assert _control_port_deny_rules() == ['(deny network-outbound (remote ip "localhost:1234"))']
     # Empty means the backend default port.
@@ -47,6 +48,17 @@ def test_control_port_rule_reads_the_env(monkeypatch):
     # A non-numeric value adds no rule (no broken profile).
     monkeypatch.setenv("PORT", "nope")
     assert _control_port_deny_rules() == []
+
+
+def test_the_dev_proxy_port_is_denied_too(monkeypatch):
+    from server.sandbox import _control_port_deny_rules
+
+    monkeypatch.setenv("PORT", "41430")
+    monkeypatch.setenv("WHISPER_DEV_PROXY_PORT", "41460")
+    assert _control_port_deny_rules() == [
+        '(deny network-outbound (remote ip "localhost:41430"))',
+        '(deny network-outbound (remote ip "localhost:41460"))',
+    ]
 
 
 def test_a_confined_profile_denies_the_control_port(monkeypatch):

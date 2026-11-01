@@ -488,6 +488,13 @@ pick_port() {
 
 PORT=$(pick_port 41430)
 export PORT
+# Dev mode: the Vite port is chosen before the backend starts, so the backend
+# knows it. Vite proxies /api to the backend, and a confined command must be
+# denied that port as well as the backend's own (server/sandbox.py).
+if [ "$PROD" -eq 0 ]; then
+    VITE_PORT=$(pick_port 41460)
+    export WHISPER_DEV_PROXY_PORT="$VITE_PORT"
+fi
 
 # The binaries the server spawns, pinned the way the Mac app pins its bundled
 # copies (macapp/shell/main.swift). llama-server is found in vendor/llama.
@@ -536,8 +543,6 @@ if [ "$backend_ready" -ne 1 ]; then
 fi
 
 if [ "$PROD" -eq 0 ]; then
-    VITE_PORT=$(pick_port 41460)
-
     # Forward the chosen backend port to vite so its proxy targets the
     # right server when the backend lands next to 41430. A separate var
     # (not ``PORT``) because vite reads ``PORT`` as its own listen port,

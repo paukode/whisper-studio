@@ -180,20 +180,27 @@ def _scratch_env(write_mode: str, scratch_dir: str | None) -> dict[str, str]:
 
 
 def _control_port_deny_rules() -> list[str]:
-    """Deny a CONFINED command the app's own control API port on loopback.
+    """Deny a CONFINED command the app's own control API ports on loopback.
 
     A command that no person reviewed runs write-confined, but the OS sandbox
     does not restrict the network by default, so it could reach
     http://127.0.0.1:<port>/api/approval/execute and run another command with
     OPEN writes (escaping its own confinement), or flip the permission mode.
-    Denying the one loopback port the backend listens on closes that, while any
-    other local port (a dev server, a database) stays reachable. The port comes
-    from the environment (``PORT``, the backend default 41430). Open
-    (human-approved) commands are exempt: a person read that exact command."""
-    port = (os.environ.get("PORT") or "41430").strip()
-    if not port.isdigit():
-        return []
-    return [f'(deny network-outbound (remote ip "localhost:{port}"))']
+    Denying the loopback ports that reach the backend closes that, while any
+    other local port (a dev server, a database) stays reachable. The ports
+    come from the environment: ``PORT`` (the backend, default 41430) and, in
+    ``setup.sh --dev``, ``WHISPER_DEV_PROXY_PORT`` (the Vite server, which
+    proxies /api to the backend). Open (human-approved) commands are exempt:
+    a person read that exact command."""
+    ports = [(os.environ.get("PORT") or "41430").strip()]
+    proxy = (os.environ.get("WHISPER_DEV_PROXY_PORT") or "").strip()
+    if proxy:
+        ports.append(proxy)
+    return [
+        f'(deny network-outbound (remote ip "localhost:{port}"))'
+        for port in ports
+        if port.isdigit()
+    ]
 
 
 def _app_config_targets() -> tuple[list[str], list[str]]:
