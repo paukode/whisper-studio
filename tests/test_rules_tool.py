@@ -38,7 +38,10 @@ def test_project_rule_lands_in_the_workspace_folder(tmp_path, monkeypatch):
         {"target": "project_rules", "content": "Run the suite before merging"}
     )
     path = os.path.join(project_rules_dir(ws), "rules.md")
-    assert "Added 1 rule" in out and "~/.whisper/rules/" in out
+    assert "Added 1 rule" in out
+    # The message names the file actually written, wherever the user root is.
+    shown = path.replace(os.path.expanduser("~"), "~", 1)
+    assert shown in out
     assert _read(path) == "- Run the suite before merging\n"
 
 
