@@ -63,3 +63,22 @@ def test_the_database_the_app_runs_on_has_neither_column():
         present = _columns(conn)
     assert "workspace_path" in present
     assert {"compaction_count", "latched_config"}.isdisjoint(present)
+
+
+# ── A stored history that does not parse is never overwritten ────────────────
+
+
+def test_appending_to_a_session_with_a_corrupt_history_raises_and_keeps_the_row():
+    import pytest
+
+    from server.infrastructure import sessions
+
+    sessions._ensure_db()
+    sessions._append_message_sync("corrupt", {"role": "user", "content": "hello"})
+    with sessions._get_conn() as conn:
+        conn.execute("UPDATE sessions SET chat_history = '{not json' WHERE id = 'corrupt'")
+    with pytest.raises(ValueError, match="Session corrupt"):
+        sessions._append_message_sync("corrupt", {"role": "user", "content": "again"})
+    with sessions._get_conn() as conn:
+        raw = conn.execute("SELECT chat_history FROM sessions WHERE id = 'corrupt'").fetchone()[0]
+    assert raw == "{not json"

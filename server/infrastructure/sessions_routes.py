@@ -24,7 +24,6 @@ from server.infrastructure.sessions import (
     _get_conn,
     _lock_for,
     _row_to_dict,
-    _safe_col,
     _upsert_session,
     list_session_summaries,
     router,
@@ -378,7 +377,7 @@ async def open_session_workspace(session_id: str, request: Request):
         row = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
     if row is None:
         return JSONResponse({"error": "not found"}, status_code=404)
-    path = _safe_col(row, "workspace_path", "")
+    path = row["workspace_path"]
     if not path or not os.path.isdir(path):
         return JSONResponse({"error": "session has no workspace folder"}, status_code=400)
     try:
@@ -456,18 +455,10 @@ def _session_export_lines(session_id: str, row) -> tuple[str, list[str]]:
     both produce byte-identical per-session content."""
     from server.utils import ndjson_dumps
 
-    try:
-        segments = json.loads(row["segments"]) or []
-    except (TypeError, ValueError):
-        segments = []
-    try:
-        chat_history = json.loads(row["chat_history"]) or []
-    except (TypeError, ValueError):
-        chat_history = []
-    try:
-        speaker_names = json.loads(row["speaker_names"]) or {}
-    except (TypeError, ValueError):
-        speaker_names = {}
+    # A column that does not parse raises: an export is never silently empty.
+    segments = json.loads(row["segments"]) or []
+    chat_history = json.loads(row["chat_history"]) or []
+    speaker_names = json.loads(row["speaker_names"]) or {}
     title = row["title"]
 
     lines = [

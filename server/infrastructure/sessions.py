@@ -127,12 +127,19 @@ def _get_conn():
         conn.close()
 
 
-def _safe_col(row, col, default=""):
-    """Safely read a column that may not exist yet (pre-migration)."""
+def _stored_history(session_id: str, raw) -> list:
+    """A session's stored chat_history as a list. A value that does not parse
+    raises ValueError naming the session, so a write never replaces a history
+    it could not read."""
     try:
-        return row[col]
-    except (IndexError, KeyError):
-        return default
+        history = json.loads(raw or "[]")
+    except (TypeError, ValueError) as e:
+        raise ValueError(
+            f"Session {session_id}: stored chat history is not valid JSON ({e})."
+        ) from e
+    if not isinstance(history, list):
+        raise ValueError(f"Session {session_id}: stored chat history is not a list.")
+    return history
 
 
 def _row_to_dict(row):
@@ -146,9 +153,9 @@ def _row_to_dict(row):
         "segments": json.loads(row["segments"]),
         "chatHistory": json.loads(row["chat_history"]),
         "speakerNames": json.loads(row["speaker_names"]),
-        "workspacePath": _safe_col(row, "workspace_path", ""),
-        "goal": _safe_col(row, "goal", ""),
-        "goalState": json.loads(_safe_col(row, "goal_state", "{}") or "{}"),
+        "workspacePath": row["workspace_path"],
+        "goal": row["goal"],
+        "goalState": json.loads(row["goal_state"] or "{}"),
     }
 
 
@@ -162,9 +169,9 @@ def _row_to_summary(row):
         "date": row["updated_at"],
         "segmentCount": len(json.loads(row["segments"])),
         "chatCount": len(json.loads(row["chat_history"])),
-        "workspacePath": _safe_col(row, "workspace_path", ""),
-        "pinned": bool(_safe_col(row, "pinned", 0)),
-        "archived": bool(_safe_col(row, "archived", 0)),
+        "workspacePath": row["workspace_path"],
+        "pinned": bool(row["pinned"]),
+        "archived": bool(row["archived"]),
     }
 
 
@@ -172,27 +179,20 @@ def list_session_summaries() -> list[dict]:
     """Sidebar rows for every session, cheapest first.
 
     The summary needs only counts from the two JSON columns, so they are
-    measured in SQL. The old path loaded every session's full chat history
-    and transcript into Python and parsed them just to take len(): on a store
-    with a few long agentic sessions that was hundreds of megabytes of JSON
-    per sidebar refresh, and it ran on the event loop. A SQLite without the
-    JSON functions falls back to the parsing path."""
+    measured in SQL instead of parsing every session's full chat history and
+    transcript just to take len()."""
     with _get_conn() as conn:
-        try:
-            rows = conn.execute(
-                """
-                SELECT id, title, custom_title, generated_title, created_at, updated_at,
-                       workspace_path, pinned, archived,
-                       CASE WHEN json_valid(segments) THEN json_array_length(segments) ELSE 0 END
-                           AS segment_count,
-                       CASE WHEN json_valid(chat_history) THEN json_array_length(chat_history)
-                            ELSE 0 END AS chat_count
-                FROM sessions ORDER BY updated_at DESC
-                """
-            ).fetchall()
-        except sqlite3.OperationalError:
-            rows = conn.execute("SELECT * FROM sessions ORDER BY updated_at DESC").fetchall()
-            return [_row_to_summary(r) for r in rows]
+        rows = conn.execute(
+            """
+            SELECT id, title, custom_title, generated_title, created_at, updated_at,
+                   workspace_path, pinned, archived,
+                   CASE WHEN json_valid(segments) THEN json_array_length(segments) ELSE 0 END
+                       AS segment_count,
+                   CASE WHEN json_valid(chat_history) THEN json_array_length(chat_history)
+                        ELSE 0 END AS chat_count
+            FROM sessions ORDER BY updated_at DESC
+            """
+        ).fetchall()
     return [
         {
             "id": r["id"],
@@ -203,9 +203,9 @@ def list_session_summaries() -> list[dict]:
             "date": r["updated_at"],
             "segmentCount": int(r["segment_count"] or 0),
             "chatCount": int(r["chat_count"] or 0),
-            "workspacePath": _safe_col(r, "workspace_path", "") or "",
-            "pinned": bool(_safe_col(r, "pinned", 0)),
-            "archived": bool(_safe_col(r, "archived", 0)),
+            "workspacePath": r["workspace_path"] or "",
+            "pinned": bool(r["pinned"]),
+            "archived": bool(r["archived"]),
         }
         for r in rows
     ]
@@ -327,7 +327,8 @@ def _enforce_row_cap(history: list[dict], role: str, cap: int) -> list[dict]:
 
 
 def _enforce_backend_row_caps(history: list[dict]) -> list[dict]:
-    """Apply every backend-owned row's cap (cron_event, session_message)."""
+    """Apply every backend-owned row's cap (cron_event, agent_report, agent_answer,
+    task_report, session_message)."""
     history = _enforce_row_cap(history, "cron_event", MAX_CRON_EVENTS_PER_SESSION)
     history = _enforce_row_cap(history, "agent_report", MAX_AGENT_REPORTS_PER_SESSION)
     history = _enforce_row_cap(history, "agent_answer", MAX_AGENT_REPORTS_PER_SESSION)
@@ -388,15 +389,9 @@ def _append_message_sync(session_id: str, message: dict) -> bool:
                 if not row:
                     log.warning("append_message: session %s vanished mid-insert", session_id)
                     return False
-                try:
-                    history = json.loads(row["chat_history"]) or []
-                except (TypeError, ValueError):
-                    history = []
+                history = _stored_history(session_id, row["chat_history"])
         else:
-            try:
-                history = json.loads(row["chat_history"]) or []
-            except (TypeError, ValueError):
-                history = []
+            history = _stored_history(session_id, row["chat_history"])
         history.append(message)
         history = _enforce_backend_row_caps(history)
         conn.execute(
@@ -421,7 +416,7 @@ def get_session_meta(session_id: str) -> dict | None:
         row = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
     if not row:
         return None
-    return {"title": row["title"], "archived": bool(_safe_col(row, "archived", 0))}
+    return {"title": row["title"], "archived": bool(row["archived"])}
 
 
 def ensure_cron_inbox() -> str:
@@ -440,12 +435,8 @@ def ensure_cron_inbox() -> str:
                 )
             except sqlite3.IntegrityError:
                 pass
-    # Pin it so it floats to the top of the sidebar (column from migration 005).
-    try:
-        with _get_conn() as conn:
-            conn.execute("UPDATE sessions SET pinned = 1 WHERE id = ?", (CRON_INBOX_ID,))
-    except sqlite3.OperationalError:
-        pass
+        # Pin it so it floats to the top of the sidebar.
+        conn.execute("UPDATE sessions SET pinned = 1 WHERE id = ?", (CRON_INBOX_ID,))
     return CRON_INBOX_ID
 
 
@@ -523,10 +514,7 @@ def _upsert_session(
         merged_history = chat_history_frontend
         existing: list = []
         if existing_row is not None:
-            try:
-                existing = json.loads(existing_row["chat_history"]) or []
-            except (TypeError, ValueError):
-                existing = []
+            existing = _stored_history(session_id, existing_row["chat_history"])
             backend_owned = _ui_only_rows(existing)
             if backend_owned:
                 # Append all backend-owned rows that aren't already in
@@ -604,18 +592,8 @@ def _delete_session_sync(session_id: str) -> None:
         # session_costs rows are NOT deleted: they are the spend history the
         # Costs tab and the budget caps read, and a deleted session's calls
         # were still billed. They show as "Deleted session" there.
-        try:
-            conn.execute("DELETE FROM attachments WHERE session_id = ?", (session_id,))
-        except sqlite3.OperationalError:
-            # attachments comes from migration 011 / attachment_store's
-            # _ensure_table; a database that predates both has no rows.
-            pass
-        try:
-            conn.execute("DELETE FROM grounding WHERE session_id = ?", (session_id,))
-        except sqlite3.OperationalError:
-            # grounding comes from migration 018 / grounding_store's
-            # _ensure_table; a database that predates both has no rows.
-            pass
+        conn.execute("DELETE FROM attachments WHERE session_id = ?", (session_id,))
+        conn.execute("DELETE FROM grounding WHERE session_id = ?", (session_id,))
 
     # The texts the assistant's writes kept for the diff dialog
     # (server/workspace/edits.py) are part of the session too.
