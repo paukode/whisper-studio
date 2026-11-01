@@ -100,10 +100,8 @@ async def _call_explainer(
 ) -> dict | None:
     import boto3
 
-    from server.infrastructure.config import DEFAULTS
-
     region = config.get("bedrock_region", "us-east-1")
-    chat_models = config.get("chat_models", DEFAULTS["chat_models"])
+    chat_models = config["chat_models"]
     from server.infrastructure.auxiliary import aux_model_id
 
     haiku = aux_model_id(

@@ -182,15 +182,14 @@ def _backup_once() -> None:
 
 def _effective_text() -> str:
     """Pretty JSON of the fully merged, read-only effective config (secret
-    masked). Best-effort — an empty object if the merge somehow fails, so the
-    editor's user pane still loads."""
+    masked). When a config file cannot be read, the pane shows why instead, so
+    the editor's user pane still loads for the repair."""
     from server.workspace import get_workspace_path
 
     try:
         return json.dumps(config_mod.effective_config_view(get_workspace_path()), indent=2) + "\n"
-    except Exception as e:  # pragma: no cover - defensive
-        log.warning("Could not build effective config view: %s", e)
-        return "{\n}\n"
+    except config_mod.ConfigFileError as e:
+        return f"{e}\n"
 
 
 @router.get("/raw")

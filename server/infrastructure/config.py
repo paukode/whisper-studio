@@ -74,35 +74,48 @@ _system_cache: dict | None = None
 _system_cache_key: tuple | None = None
 
 
+class ConfigFileError(ValueError):
+    """A config file exists but cannot be used (not JSON, or not an object).
+    The message names the file and where it breaks, so the user can fix it."""
+
+
+def _read_json_object(path: str) -> dict:
+    """Parse ``path`` as a JSON object. FileNotFoundError propagates (the
+    caller decides what a missing file means); anything unusable raises
+    ConfigFileError instead of reading as an empty config, because a later
+    save would then overwrite the file with only the changed keys."""
+    with open(path) as f:
+        text = f.read()
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise ConfigFileError(
+            f"{path} is not valid JSON (line {e.lineno}, column {e.colno}: {e.msg}). "
+            "Fix the file, then restart Whisper Studio."
+        ) from None
+    if not isinstance(data, dict):
+        raise ConfigFileError(f"{path} must hold a JSON object.")
+    return data
+
+
 def _system_config() -> dict:
     """The full SYSTEM layer: config.example.json parsed as a config dict.
-    Returns {} (degraded, not a crash) if the template is missing or unreadable.
+    A missing or broken template is a broken install and raises.
     Cached on (path, mtime) so tests that swap EXAMPLE_CONFIG_PATH still work."""
     global _system_cache, _system_cache_key
     path = EXAMPLE_CONFIG_PATH
     try:
         key = (path, os.path.getmtime(path))
-    except OSError:
-        key = (path, None)
+    except FileNotFoundError:
+        raise ConfigFileError(
+            f"{path} is missing: the install is incomplete. Reinstall Whisper Studio."
+        ) from None
     if _system_cache is not None and _system_cache_key == key:
         return _system_cache
-    try:
-        with open(path) as f:
-            data = json.load(f)
-        if not isinstance(data, dict):
-            data = {}
-    except Exception:
-        data = {}
+    data = _read_json_object(path)
     _system_cache = data
     _system_cache_key = key
     return data
-
-
-def _seed_chat_models() -> dict:
-    """The chat-model catalog from the SYSTEM layer (config.example.json), used
-    as the ultimate fallback for DEFAULTS when no layer defines chat_models.
-    Returns {} (degraded, not a crash) if the template is missing/unreadable."""
-    return _system_config().get("chat_models") or {}
 
 
 DEFAULTS = {
@@ -159,14 +172,13 @@ DEFAULTS = {
         "endpointing": "MEDIUM",
     },
     # Chat-model catalog. The app-owned catalog lives in config.example.json (the
-    # SYSTEM layer); this DEFAULTS copy is sourced from it so the two can't drift,
-    # and serves only as the ultimate fallback when no layer defines chat_models.
-    # SYSTEM and USER deep-merge ADDITIVELY per key (see load_config): the shipped
+    # SYSTEM layer); the empty entry here only marks chat_models as a settable
+    # key (PUT /api/config and config_set write DEFAULTS keys). SYSTEM and USER deep-merge ADDITIVELY per key (see load_config): the shipped
     # catalog always appears and a USER entry adds a key or overrides fields of a
     # shipped one. To add/change a shipped model, edit config.example.json; users
     # add their own via config.user.json. Rich shape {key:{id,label,thinking,...}};
     # legacy flat {key:"id"} is still accepted (see _normalize_chat_models).
-    "chat_models": _seed_chat_models(),
+    "chat_models": {},
     # Model keys to HIDE from the effective catalog after the SYSTEM+USER merge.
     # Lets a user drop a shipped model they don't want without deleting it from
     # the app-owned catalog. Honored in the USER and PROJECT layers (unioned);
@@ -508,12 +520,11 @@ def _user_config_path() -> str:
 
 
 def _load_user_config() -> dict:
-    """Load the USER layer (config.user.json) from disk."""
+    """Load the USER layer (config.user.json) from disk: {} when there is no
+    file. A file that is not a JSON object raises ConfigFileError."""
     try:
-        with open(_user_config_path()) as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except Exception:
+        return _read_json_object(_user_config_path())
+    except FileNotFoundError:
         return {}
 
 
@@ -543,12 +554,11 @@ def _load_project_config(workspace_path: str | None = None) -> dict:
         return {}
     settings_path = os.path.join(workspace_path, ".whisper", "settings.json")
     try:
-        with open(settings_path) as f:
-            stored = json.load(f)
-        # Only allow project-safe keys
-        return {k: v for k, v in stored.items() if k in PROJECT_SETTINGS_KEYS}
-    except Exception:
+        stored = _read_json_object(settings_path)
+    except FileNotFoundError:
         return {}
+    # Only allow project-safe keys
+    return {k: v for k, v in stored.items() if k in PROJECT_SETTINGS_KEYS}
 
 
 def _env_overlay() -> dict:
@@ -590,9 +600,7 @@ def load_config(workspace_path: str | None = None) -> dict:
         # DEFAULTS → SYSTEM → USER. Because _deep_merge recurses into nested
         # dicts, chat_models merges ADDITIVELY per key/field with no special
         # case: SYSTEM's shipped catalog stays, and a USER entry adds a key or
-        # overrides individual fields of a shipped one. (DEFAULTS' catalog is
-        # sourced from SYSTEM, so merging it first is a harmless no-op and only
-        # matters as the fallback when SYSTEM has none.)
+        # overrides individual fields of a shipped one.
         user_merged = _deep_merge(DEFAULTS, system_stored)
         user_merged = _deep_merge(user_merged, user_stored)
         # Hide-list: drop the models the USER asked to hide from the merged
@@ -940,9 +948,7 @@ def unfiltered_chat_models() -> tuple[dict, dict]:
     serving a disabled model so its weights stay manageable — disabling only
     hides a model from the composer picker, it never strands gigabytes on disk.
     The picker path (/api/models via load_config) keeps the filtered view."""
-    system_cm = _system_config().get("chat_models")
-    if not isinstance(system_cm, dict) or not system_cm:
-        system_cm = DEFAULTS.get("chat_models") or {}
+    system_cm = _system_config().get("chat_models") or {}
     user_cm = _load_user_config().get("chat_models")
     merged = _deep_merge(system_cm, user_cm) if isinstance(user_cm, dict) else dict(system_cm)
     return _normalize_chat_models(merged)
@@ -954,9 +960,7 @@ def _merged_rich_chat_models(workspace_path: str | None = None) -> dict:
     logic exactly — additive SYSTEM+USER deep-merge, user hide-list, project
     wholesale-replace, project hide-list — so the editor's effective view shows
     entries the user can copy down verbatim to override."""
-    system_cm = _system_config().get("chat_models")
-    if not isinstance(system_cm, dict) or not system_cm:
-        system_cm = DEFAULTS.get("chat_models") or {}
+    system_cm = _system_config().get("chat_models") or {}
 
     user_stored = _load_user_config()
     user_cm = user_stored.get("chat_models")

@@ -443,3 +443,67 @@ def test_raw_load_infers_supports_ultracode_for_legacy_config(split_env):
     assert meta["flat5"]["supports_ultracode"] is expected
     # Explicit false wins over inference.
     assert meta["muted5"]["supports_ultracode"] is False
+
+
+# ── A config file that cannot be read fails, it never reads as empty ─────────
+
+
+def test_a_malformed_user_config_raises_and_is_never_overwritten(tmp_path, monkeypatch):
+    import pytest
+
+    from server.infrastructure import config as cfg
+
+    path = tmp_path / "config.user.json"
+    broken = '{"bedrock_region": "eu-west-1", "chat_models": {"mine": {"id": "x"}},}'
+    path.write_text(broken)
+    monkeypatch.setattr(cfg, "_user_config_path", lambda: str(path))
+    cfg._invalidate_cache()
+    try:
+        with pytest.raises(cfg.ConfigFileError, match="line 1"):
+            cfg.load_config()
+        with pytest.raises(cfg.ConfigFileError):
+            cfg._apply_config_update({"brief_mode": True})
+        assert path.read_text() == broken
+    finally:
+        cfg._invalidate_cache()
+
+
+def test_a_user_config_that_is_not_an_object_raises(tmp_path, monkeypatch):
+    import pytest
+
+    from server.infrastructure import config as cfg
+
+    path = tmp_path / "config.user.json"
+    path.write_text("[]")
+    monkeypatch.setattr(cfg, "_user_config_path", lambda: str(path))
+    with pytest.raises(cfg.ConfigFileError, match="JSON object"):
+        cfg._load_user_config()
+
+
+def test_a_missing_user_config_is_an_empty_layer(tmp_path, monkeypatch):
+    from server.infrastructure import config as cfg
+
+    monkeypatch.setattr(cfg, "_user_config_path", lambda: str(tmp_path / "none.json"))
+    assert cfg._load_user_config() == {}
+
+
+def test_a_malformed_project_settings_file_raises(tmp_path):
+    import pytest
+
+    from server.infrastructure import config as cfg
+
+    (tmp_path / ".whisper").mkdir()
+    (tmp_path / ".whisper" / "settings.json").write_text("{nope")
+    with pytest.raises(cfg.ConfigFileError, match="settings.json"):
+        cfg._load_project_config(str(tmp_path))
+    assert cfg._load_project_config(str(tmp_path / "elsewhere")) == {}
+
+
+def test_a_missing_template_is_a_broken_install(tmp_path, monkeypatch):
+    import pytest
+
+    from server.infrastructure import config as cfg
+
+    monkeypatch.setattr(cfg, "EXAMPLE_CONFIG_PATH", str(tmp_path / "config.example.json"))
+    with pytest.raises(cfg.ConfigFileError, match="install is incomplete"):
+        cfg._system_config()

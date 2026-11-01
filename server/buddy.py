@@ -330,7 +330,7 @@ async def buddy_fact():
 
     import boto3
 
-    from server.infrastructure.config import DEFAULTS, load_config
+    from server.infrastructure.config import load_config
 
     fallback = "A day on Venus is longer than its entire year."
     try:
@@ -341,7 +341,7 @@ async def buddy_fact():
         if refusal:
             # Local mode never calls Bedrock: no fact, only why.
             return {"reason": refusal}
-        chat_models = config.get("chat_models", DEFAULTS["chat_models"])
+        chat_models = config["chat_models"]
         model = (
             chat_models.get("haiku")
             or chat_models.get("sonnet5.5")

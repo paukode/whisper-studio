@@ -183,9 +183,8 @@ async def classify_tool_call(
     rules = get_effective_rules(cfg)
     system = _build_classifier_prompt(rules)
     region = cfg.get("bedrock_region", "us-east-1")
-    from server.infrastructure.config import DEFAULTS
 
-    chat_models = cfg.get("chat_models", DEFAULTS["chat_models"])
+    chat_models = cfg["chat_models"]
     from server.infrastructure.auxiliary import aux_model_id
 
     haiku = aux_model_id(
