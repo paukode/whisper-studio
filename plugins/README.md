@@ -2,6 +2,9 @@
 
 Drop `.py` files here to add custom tools and executors.
 
+Plugins are **opt-in**: a new file starts off. Enable it in
+Settings > Tools and automation > Skills and plugins > Plugins.
+
 ## Plugin interface
 
 ```python

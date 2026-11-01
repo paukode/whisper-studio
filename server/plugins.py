@@ -123,10 +123,7 @@ def plugin_tools() -> list[dict]:
     gate on the persisted enabled set (plus PROTECTED_PLUGINS) so a plugin can
     never leak a tool into the pool while disabled — the enabled flag is the
     source of truth the pool consults each turn."""
-    try:
-        enabled = set(load_plugins_config().get("enabled", [])) | PROTECTED_PLUGINS
-    except Exception:
-        enabled = set(PROTECTED_PLUGINS)
+    enabled = set(load_plugins_config()["enabled"]) | PROTECTED_PLUGINS
     out: list[dict] = []
     for name, tools in _plugin_tools.items():
         if name in enabled:
@@ -151,51 +148,36 @@ def unload_plugin(name: str) -> dict:
     return side
 
 
-def load_plugins_config() -> dict:
-    """Load the plugin config. Schema is opt-in via ``enabled: [...]``.
+class PluginsConfigError(ValueError):
+    """plugins_config.json exists but is not a usable config."""
 
-    Backward compatibility: configs written with the old opt-out
-    ``disabled: [...]`` schema are migrated lazily — see
-    ``_migrate_disabled_to_enabled``. The migration runs on the first
-    ``init_plugins`` after the upgrade so existing users keep whatever
-    plugins they currently have loaded, and any NEW plugin file
-    dropped into ``plugins/`` afterwards is OFF until they explicitly
-    enable it (instead of silently auto-loading).
-    """
+
+def load_plugins_config() -> dict:
+    """Load the plugin config. Schema is opt-in via ``enabled: [...]``: a
+    plugin not listed there is off. A missing file enables nothing; a file
+    that is not ``{"enabled": [names]}`` raises PluginsConfigError (it is
+    never read as empty, so a later toggle cannot overwrite it)."""
     try:
         with open(PLUGINS_CONFIG_PATH) as f:
-            return json.load(f)
-    except Exception:
+            text = f.read()
+    except FileNotFoundError:
         return {"enabled": []}
+    try:
+        config = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise PluginsConfigError(
+            f"{PLUGINS_CONFIG_PATH} is not valid JSON (line {e.lineno}, column {e.colno})."
+        ) from None
+    if not isinstance(config, dict) or not isinstance(config.get("enabled", []), list):
+        raise PluginsConfigError(f'{PLUGINS_CONFIG_PATH} must be {{"enabled": [plugin names]}}.')
+    config.setdefault("enabled", [])
+    return config
 
 
 def save_plugins_config(config: dict):
     os.makedirs(os.path.dirname(PLUGINS_CONFIG_PATH), exist_ok=True)
     with open(PLUGINS_CONFIG_PATH, "w") as f:
         json.dump(config, f, indent=2)
-
-
-def _migrate_disabled_to_enabled(config: dict, discovered: list[dict]) -> dict:
-    """One-shot upgrade: old `disabled: []` config → new `enabled: []`.
-
-    Preserves the current observable state: anything that WOULD have
-    loaded under opt-out (i.e. discovered minus disabled) becomes the
-    new ``enabled`` set. After this the plugin loader is purely opt-in;
-    dropping a new file into ``plugins/`` no longer auto-executes it.
-    """
-    if "enabled" in config:
-        return config  # already on new schema
-    disabled = set(config.get("disabled", []))
-    enabled = sorted(p["name"] for p in discovered if p["name"] not in disabled)
-    migrated = {"enabled": enabled}
-    save_plugins_config(migrated)
-    log.info(
-        "plugins: migrated %d plugin(s) from opt-out 'disabled' schema "
-        "to opt-in 'enabled' schema (carried over: %s)",
-        len(enabled),
-        enabled,
-    )
-    return migrated
 
 
 def discover_plugins() -> list[dict]:
@@ -214,7 +196,7 @@ def discover_plugins() -> list[dict]:
     return plugins
 
 
-def load_plugin(plugin_info: dict, app: FastAPI = None) -> bool:
+def load_plugin(plugin_info: dict, app: FastAPI) -> bool:
     """Load and register a single plugin.
 
     Diffs the executor registry (and the hook/route counts) across
@@ -243,7 +225,7 @@ def load_plugin(plugin_info: dict, app: FastAPI = None) -> bool:
             "status": "loaded",
         }
 
-        if hasattr(module, "register") and app is not None:
+        if hasattr(module, "register"):
             from server.executors import EXECUTORS
             from server.infrastructure import plugin_hooks
 
@@ -275,7 +257,7 @@ def load_plugin(plugin_info: dict, app: FastAPI = None) -> bool:
         return False
 
 
-def init_plugins(app: FastAPI = None):
+def init_plugins(app: FastAPI):
     """Initialize explicitly enabled plugins at startup.
 
     Opt-in: only plugins whose name appears in
@@ -287,31 +269,10 @@ def init_plugins(app: FastAPI = None):
     # Stash the app so the toggle endpoint can live-load a plugin later.
     global _app
     _app = app
-    # Ensure plugins directory and README exist
     os.makedirs(PLUGINS_DIR, exist_ok=True)
-    readme = os.path.join(PLUGINS_DIR, "README.md")
-    if not os.path.exists(readme):
-        with open(readme, "w") as f:
-            f.write(
-                "# Whisper Studio Plugins\n\n"
-                "Drop `.py` files here to add custom tools and executors.\n\n"
-                "Plugins are **opt-in**. After dropping a file here you must\n"
-                "explicitly enable it in Settings → Plugins (or restart with\n"
-                "the name added to `data/plugins_config.json`:`enabled`).\n\n"
-                "## Plugin interface\n\n"
-                "```python\n"
-                "__version__ = '1.0.0'\n"
-                "__description__ = 'My custom plugin'\n\n"
-                "def register(app, executor_registry):\n"
-                "    # Register a new executor tool\n"
-                "    def my_tool(tool_input, transcript, attachments):\n"
-                "        return 'Hello from plugin!'\n"
-                "    executor_registry['my_tool'] = my_tool\n"
-                "```\n"
-            )
 
     discovered = discover_plugins()
-    config = _migrate_disabled_to_enabled(load_plugins_config(), discovered)
+    config = load_plugins_config()
     # PROTECTED_PLUGINS are loaded even if the user hand-removed them from
     # the config file — they are part of the product's safety contract,
     # not user-configurable. Union (not intersection) so a missing config
@@ -332,12 +293,19 @@ def init_plugins(app: FastAPI = None):
 # --- API Routes ---
 
 
+def _readable_plugins_config() -> dict:
+    """load_plugins_config for a route: a broken file answers 409 with its
+    reason (like a broken mcp_servers.json) instead of being overwritten."""
+    try:
+        return load_plugins_config()
+    except PluginsConfigError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from None
+
+
 @router.get("")
 async def list_plugins():
     discovered = discover_plugins()
-    # Migrate-on-read so the API surface reflects the new schema even
-    # if init_plugins hasn't run yet in this process (e.g. tests).
-    config = _migrate_disabled_to_enabled(load_plugins_config(), discovered)
+    config = _readable_plugins_config()
     enabled = set(config.get("enabled", []))
     result = []
     for p in discovered:
@@ -388,8 +356,8 @@ async def toggle_plugin(name: str):
     info = next((p for p in discovered if p["name"] == name), None)
     if info is None:
         raise HTTPException(status_code=404, detail=f"Plugin '{name}' not found.")
-    config = _migrate_disabled_to_enabled(load_plugins_config(), discovered)
-    enabled = list(config.get("enabled", []))
+    config = _readable_plugins_config()
+    enabled = list(config["enabled"])
 
     if name in enabled:
         # --- Disable: persist, then live-unload executors/tools. ---
@@ -410,16 +378,6 @@ async def toggle_plugin(name: str):
     enabled.append(name)
     config["enabled"] = enabled
     save_plugins_config(config)
-    if _app is None:
-        # No app reference (e.g. init never ran). The flag is set; a restart
-        # will load it. This should not happen in the running server.
-        return {
-            "name": name,
-            "enabled": True,
-            "loaded": False,
-            "restartRequired": True,
-            "note": "Enabled. Restart the server to load this plugin.",
-        }
     ok = load_plugin(info, _app)
     if not ok:
         err = _loaded_plugins.get(name, {}).get("error", "unknown error")
