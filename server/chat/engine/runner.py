@@ -325,7 +325,7 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
     # just the UNCACHED remainder, which with caching on is near zero.
     total_prompt_tokens = 0
 
-    # Completion gate (WS-E): how many times the gate forced this turn to keep
+    # Completion gate: how many times the gate forced this turn to keep
     # going. Capped so a stuck check can't loop forever.
     stop_blocks_used = 0
     from server.goals import DEFAULT_MAX_CONSECUTIVE_BLOCKS
@@ -847,7 +847,7 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
 
                 _mid_pending = ctx.midturn_inbox and _inbox.has_pending(session_id)
 
-                # Completion gate (WS-E): Stop hooks + goal judge. A block
+                # Completion gate: Stop hooks + goal judge. A block
                 # injects the feedback and loops again, bounded by the cap. A
                 # pending message goes first: the turn is not over yet. The
                 # gate gets one call AT the cap so it can emit goal_cap_reached

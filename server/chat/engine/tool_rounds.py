@@ -215,7 +215,7 @@ async def run_tool_round(
             inject_reminder(messages, f"[completion gate] {_claim_note}")
 
         # Proactive compaction: char estimate, supplemented by TOKEN truth
-        # (the per-round usage crossed 80% of the window).
+        # (the per-round usage crossed COMPACT_NUDGE_FRACTION of the window).
         from server.chat.loop_hints import should_nudge_compaction
 
         if estimate_message_size(messages) > thresholds_for(ctx.model_key)[

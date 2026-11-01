@@ -79,8 +79,8 @@ class TurnContext:
     # extensions): {"rounds": int, "seconds": float} added to the policy's
     # round cap and deadline, read again at every round start.
     budget_extension: dict | None = None
-    # True for a turn with no human attending it (subagents today; any future
-    # unattended caller). Threaded into execute_tool_batch/process_tool_results
+    # True for a turn with no human attending it (agents, cron, unattended
+    # headless runs). Threaded into execute_tool_batch/process_tool_results
     # so approval-gated and pause-inducing tools resolve without a human:
     # WS_APPROVAL executes inline, WS_WORKSPACE_PROMPT and ask_user_question
     # refuse instead of pausing, and every dispatched call is stamped
@@ -88,12 +88,11 @@ class TurnContext:
     unattended: bool = False
     # Alternate key for turn-scoped, session_id-keyed global state (goal
     # store, the auto-mode circuit breaker, the paused-turn store, and the
-    # loop-hints context tracker). None (every existing caller today) means
-    # "key on session_id exactly as before", byte-identical behavior. Set
-    # this when the real session_id is shared with a concurrently in-flight
-    # turn (e.g. a subagent's inner turn running while the parent chat turn
-    # that spawned it is still streaming): without it, the subagent's turn
-    # would reset the PARENT's in-flight goal tracking / auto-mode breaker
+    # loop-hints context tracker). None keys on session_id. Agents and cron
+    # set it because their real session_id is shared with a concurrently
+    # in-flight turn (e.g. a subagent's inner turn running while the parent
+    # chat turn that spawned it is still streaming): without it, the
+    # subagent's turn would reset the PARENT's in-flight goal tracking / auto-mode breaker
     # and collide with its paused-approval slot.
     turn_scope_id: str | None = None
     # Channel the turn's agent progress is published on and drained from.
@@ -104,7 +103,7 @@ class TurnContext:
     # _assemble_round_tools(ctx) to get (tools, core_count): lets a caller
     # (e.g. the agent runtime) supply its own filtered/precomputed tool pool
     # without the engine reaching into chat-specific tool_pool/tool_partition
-    # modules. None (every existing caller today) keeps current behavior.
+    # modules. Agents and cron set it; None uses _assemble_round_tools.
     tool_catalog: Callable[[], tuple[list[dict], int | None]] | None = None
     # What an agent run may execute (server.agents.tool_access.ToolScope): the
     # tool batch refuses every other name. None (every other turn): unscoped.

@@ -1,11 +1,9 @@
 """Per-session inbox for text that reaches a chat turn while it is running.
 
 A NEW turn (not an approval continuation) that arrives at POST /api/chat while
-the session is already streaming used to get HTTP 409 SESSION_BUSY and go
-nowhere: the composer either blocked sending or the text was silently
-dropped. That is not what a user typing "stop, just give me what you have" or
-extra context mid-run wants: they want the RUNNING turn to take it into
-account, the way Claude Code folds a message sent mid-turn into the turn
+the session is already streaming is delivered here: a user typing "stop, just
+give me what you have" or extra context mid-run wants the RUNNING turn to take
+it into account, the way Claude Code folds a message sent mid-turn into the turn
 that's already in flight instead of starting a separate one.
 
 Three producers push here:

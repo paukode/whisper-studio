@@ -7,7 +7,7 @@ Owns everything GPT/mantle-specific:
     fidelity (assistant ``tool_use`` blocks become ``function_call`` items and
     tool_result user messages become ``function_call_output`` items, so the
     call linkage survives round-tripping through the engine's canonical
-    format — the old path degraded history tool calls to plain text)
+    format)
   - the two mantle stream adaptations, verified live: EARLY RELEASE (mantle
     can hold the stream open for seconds after the output before
     ``completed``; the round moves on once a ``final_answer`` message or every

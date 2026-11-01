@@ -1,7 +1,6 @@
 """server.chat.engine.midturn_inbox: the per-session queue that lets a message
-sent while a turn is already running reach that SAME turn instead of being
-refused (old behavior: HTTP 409 SESSION_BUSY) or silently dropped by the
-composer. See server/chat/routes.py's SESSION_BUSY short-circuit and
+sent while a turn is already running reach that SAME turn. See the
+same-session guard at the top of server/chat/routes.py's chat_endpoint and
 runner.py's per-round drain."""
 
 from server.chat.engine import midturn_inbox

@@ -1,17 +1,21 @@
 """FastAPI HTTP handlers for the chat package.
 
-Four endpoints:
-- GET  /api/models           — list configured chat models + the default
-- POST /api/generate-title   — one-shot Bedrock call to title a conversation
-- POST /api/chat/btw         — quick side question, no history mutation
-- POST /api/chat             — the main streaming chat endpoint
+Endpoints:
+- POST /api/chat/sessions/{id}/reset: drop a session's in-memory turn state
+- GET  /api/models: the configured chat models and the default
+- /api/local-model/*: load, cancel a load, status, download, unload
+- POST /api/generate-title: one-shot call to title a conversation
+- POST /api/teams/{team_id}/stop: stop a running team or agent run
+- POST /api/subagent/stream: run a /subagent task
+- POST /api/chat/btw: quick side question, no history mutation
+- POST /api/chat: the main streaming chat endpoint
 
-The big one (``/api/chat``) is turn ASSEMBLY only: request parsing, model
-resolution, transcript condensation, grounding, attachment re-injection,
-system prompt building, and the local/OpenAI dispatch split. The agentic
-loop itself — rounds, compaction, tool execution, pauses — lives in
-``server/chat/engine`` (one loop shared by every provider) and is handed
-the assembled TurnContext at the end of this endpoint.
+``/api/chat`` is turn ASSEMBLY only: request parsing, model resolution,
+transcript condensation, grounding, attachment re-injection, system prompt
+building, and the local/cloud dispatch split. The agentic loop itself
+(rounds, compaction, tool execution, pauses) lives in ``server/chat/engine``
+(one loop shared by every provider) and is handed the assembled TurnContext
+at the end of this endpoint.
 """
 
 import asyncio
@@ -263,8 +267,8 @@ def _resume_messages(messages: list, answers: list[dict], paused: dict | None) -
     the assistant message carrying the tool_use is gone with it, so a
     tool_result block here would be an orphan — sanitize_tool_pairs strips it
     and the model would answer a turn with neither the tool call nor its
-    outcome in context, which reads as a confident non-answer rather than the
-    loud error the old comment promised. Replay the outcome as plain text
+    outcome in context, which reads as a confident non-answer rather than an
+    error. Replay the outcome as plain text
     instead: well-formed for every provider, and the client-rebuilt `history`
     in ``messages`` gives it the conversation it belongs to.
     """
@@ -469,7 +473,7 @@ async def models_endpoint():
                 "effort_levels": levels,
                 "default_effort": default_effort_for(m, k),
                 "supports_ultracode": "ultracode" in levels,
-                # OpenAI-on-Bedrock (GPT-5.x) exposes a verbosity control
+                # OpenAI-on-Bedrock (GPT) exposes a verbosity control
                 # (text.verbosity); the UI shows a picker for these models only.
                 "supports_verbosity": m.get("provider") == "openai_bedrock",
                 "default_verbosity": m.get("verbosity", "medium"),
@@ -525,9 +529,9 @@ async def local_model_load(model: str, n_ctx: int | None = None):
     if not local_llm.is_local_model(model):
         return JSONResponse({"error": "not a local model"}, status_code=400)
 
-    # Clamp defensively — never trust a client-supplied context size. The upper
-    # bound is Gemma's native maximum (256K); the UI warns above 16K because the
-    # KV cache grows fast and large windows OOM smaller machines.
+    # Clamp defensively: never trust a client-supplied context size. The upper
+    # bound is 256K tokens; the UI warns above 16K because the KV cache grows
+    # fast and large windows OOM smaller machines.
     if n_ctx is not None:
         n_ctx = max(2048, min(int(n_ctx), 262144))
 
@@ -1311,9 +1315,9 @@ async def chat_endpoint(request: Request):
     model_key = body.get("model")
     force_skill = body.get("force_skill")
     session_id = body.get("session_id", "default")
-    # Feature 16: brief mode
+    # Brief mode
     brief_mode = body.get("brief_mode", False)
-    # Feature 20: denial tracking per session (passed from frontend)
+    # Denial tracking per session (passed from frontend)
     session_denials = body.get("session_denials", {})
     # Session-scoped tool approvals (categories pre-approved by user)
     session_approvals = body.get("session_approvals", {})
@@ -1338,19 +1342,13 @@ async def chat_endpoint(request: Request):
     # any `await` past parsing the body, and before ANY of the turn's own
     # setup work (transcript condensation, attachment/PDF analysis, index
     # grounding, hooks) runs. That setup can easily take seconds on a
-    # heavier turn, and it used to be where this slot got claimed (deep
-    # inside _build_turn, well after this point) — so a message sent during
-    # that window found the slot still looking free and started its OWN
-    # independent turn instead of joining the one already running, racing it
-    # and interleaving unpredictably. Claiming immediately closes that
-    # window: the busy/queued decision below is made before either turn's
-    # setup has had a chance to run at all.
+    # heavier turn; a message sent during it must find the slot held and join
+    # the running turn instead of starting its own: the busy/queued decision
+    # below is made before either turn's setup has had a chance to run.
     #
     # A NEW turn (not an approval continuation) finding the session ALREADY
     # busy is exactly "the user sent another message while the model is
-    # working" — deliver it INTO the running turn instead of the old
-    # behavior (HTTP 409 SESSION_BUSY; the composer either blocked sending
-    # or the text was silently dropped). run_turn's per-round loop
+    # working": deliver it INTO the running turn. run_turn's per-round loop
     # (server/chat/engine/runner.py) drains server.chat.engine.midturn_inbox
     # once per round and folds the text into the live message list the same
     # way it already injects wind-down reminders, so the SAME turn keeps
@@ -1363,11 +1361,9 @@ async def chat_endpoint(request: Request):
     # passes through and which pops the slot only if it still holds THIS
     # turn's token.
     #
-    # Every turn claims the slot, continuations included. An approval resume
-    # used to skip the claim, so from the first approval card onward the
-    # session looked idle to the server: a message typed while the resumed
-    # turn kept working started a second, independent turn from the composer's
-    # minimal body (no history, default approvals) instead of being queued.
+    # Every turn claims the slot, continuations included, so a message typed
+    # while a resumed turn keeps working is queued into it instead of
+    # starting a second, independent turn from the composer's minimal body.
     #
     # ``midturn`` marks the composer's steer-the-running-turn request. When
     # nothing is running any more it is refused with a JSON 409 rather than
@@ -1663,8 +1659,8 @@ async def chat_endpoint(request: Request):
 
         # Prompt caching (cloud/Bedrock only): when enabled, build the system prompt
         # as a (static, dynamic) split so the static prefix can be cached alongside
-        # the tool definitions; otherwise a plain joined string. The local Gemma path
-        # builds its own string body in server/local/route.py and is unaffected.
+        # the tool definitions; otherwise a plain joined string. The on-device
+        # path builds its own string body in server/local/route.py.
         from server.chat.caching import resolve_system_prompt
 
         _caching_on = _is_ff_enabled("prompt_caching")
@@ -1835,7 +1831,7 @@ async def chat_endpoint(request: Request):
                     log.warning("@docs lookup timed out; answering without it")
                 except Exception as e:  # noqa: BLE001 — docs lookup is best-effort
                     log.warning("@docs lookup failed: %s", e)
-            # Index-first grounding (point I): the router at the top of turn
+            # Index-first grounding: the router at the top of turn
             # setup decided whether this turn retrieves and kicked the search
             # off in parallel with everything above. Collect it here with
             # whatever remains of its budget and inject the passages as cited
@@ -1950,9 +1946,9 @@ async def chat_endpoint(request: Request):
         # never reach it. System prompt + messages are already built above. The
         # local bridge returns a StreamingResponse for local turns (fresh or an
         # approval resume), or None to let the cloud path proceed.
-        # Strict-RAG (point #1): once this turn is grounded in injected passages,
-        # withhold the workspace file/search tools so the model answers from them
-        # instead of re-crawling files. Gated by the `strict_rag` flag (default on).
+        # Strict-RAG: carried on the TurnContext as suppress_ws_search for a
+        # grounded turn with the `strict_rag` flag on. The tool catalog is
+        # stable, and no executor refuses a workspace tool on it today.
         from server.infrastructure.feature_flags import is_enabled as _ff_enabled
 
         suppress_ws_search = grounding_active and _ff_enabled("strict_rag")
@@ -1992,10 +1988,9 @@ async def chat_endpoint(request: Request):
             )
             return _prepend_grounding_event(_local_resp, grounding_meta)
 
-        # OpenAI models (GPT-5.x) run on the SAME engine path as Claude below —
-        # the provider split happens at adapter selection. Compaction is safe for
-        # them now: its summarizer routes through one_shot with the session's own
-        # model instead of hard-calling Bedrock Anthropic.
+        # OpenAI models run on the SAME engine path as Claude below: the
+        # provider split happens at adapter selection, and the compaction
+        # summarizer routes through one_shot with the session's own model.
 
         # Tool access (analyze_document) covers EVERY attachment bound to this
         # session, not just this turn's ids — the durable store is the source of
@@ -2028,15 +2023,6 @@ async def chat_endpoint(request: Request):
         # whole request non-retryably otherwise, wedging the session. Runs on every
         # turn (fresh + approval-resume), after compaction, on the exact list sent.
         messages = sanitize_tool_pairs(messages)
-
-        # Same-session double-stream guard: `is_new_turn`/`stream_token` were
-        # already decided and (for a genuine new turn) the slot already
-        # claimed at the very top of chat_endpoint, before this turn's own
-        # setup (condensation/grounding/hooks, all of it above) ran — not
-        # here, so a message arriving DURING that setup sees the slot
-        # already held and gets queued into it instead of racing it with a
-        # second independent turn. Both names are read from that outer
-        # scope (no `nonlocal`: neither is reassigned in here).
 
         # Fire SessionStart + UserPromptSubmit hooks. Any additionalContext they
         # return (or a project's SessionStart hook loading conventions) is injected
@@ -2209,8 +2195,8 @@ async def chat_endpoint(request: Request):
                     yield chunk
                 finished = True
             else:
-                # Non-stream refusal (e.g. SESSION_BUSY): forward as an SSE
-                # error frame — the client is already reading this stream, so
+                # Non-stream refusal (e.g. UNKNOWN_MODEL): forward as an SSE
+                # error frame: the client is already reading this stream, so
                 # an HTTP status could never reach it.
                 payload = json.loads(bytes(resp.body).decode("utf-8"))
                 frame = {"error": payload.get("error", "Request failed")}

@@ -120,9 +120,8 @@ async def with_heartbeat(chunks, on_beat, interval: float = KEEPALIVE_S):
 
     The runner heartbeats once per round, but one tool call can outlast the
     stale window on its own: a team of agents working for an hour, a long
-    shell command. Judged stale, the slot refused the user's mid-turn message
-    (409, the composer kept the text) or, before 2.8.1, let a second turn
-    start on top of the running one.
+    shell command. Judged stale, the slot would refuse the user's mid-turn
+    message (409, the composer keeps the text).
 
     The pulse beats only while this wrapper waits on the turn, never while it
     is parked at ``yield`` waiting for the client to take a chunk. A client

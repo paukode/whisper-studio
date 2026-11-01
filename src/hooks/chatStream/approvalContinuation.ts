@@ -158,9 +158,8 @@ export async function sendApprovalContinuation(
     });
 
     if (!response.ok || !response.body) {
-      // Surface the server's own words (e.g. the 409 SESSION_BUSY guidance:
-      // "reset it from the chat ⋯ menu") instead of a bare "Continuation
-      // failed" the user can't act on.
+      // Surface the server's own words (e.g. an UNKNOWN_MODEL refusal)
+      // instead of a bare "Continuation failed" the user can't act on.
       const detail = await response.json()
         .then((d: { error?: string }) => d?.error)
         .catch(() => null);

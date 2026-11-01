@@ -2,13 +2,13 @@
 
 The big refactor split server/workspace.py (1932 lines), server/chat.py
 (1344), ChatInput.tsx (2039) and useChatStream.ts (1217) into focused
-modules. This test is the backstop that stops them — or any new file —
+modules. This test is the backstop that stops them (or any new file)
 from creeping back over the line.
 
 MAX_LINES is a deliberately loose ceiling (well above the current largest
 file) so it only fires on genuine regressions, not on every edit. When a
 file legitimately needs to exceed it, add it to ALLOWLIST with a reason
-rather than raising the global limit — that keeps the pressure local.
+rather than raising the global limit: that keeps the pressure local.
 """
 
 import os
@@ -18,20 +18,16 @@ import pytest
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Backstop ceiling. The pre-refactor god-modules were ~1900-2000 lines;
-# the largest file today is ~1120. 1200 blocks a relapse while leaving
-# headroom for the current code.
+# 1200 blocks a relapse.
 MAX_LINES = 1200
 
 # Files allowed to exceed MAX_LINES, each with a justification.
 ALLOWLIST: dict[str, str] = {
-    # The single coherent /api/chat state machine (turn loop, SSE streaming,
-    # tool execution, approval pause/resume) — intentionally kept intact (see
-    # the module docstring). On this branch it additionally carries on-device
-    # model routing and cloud prompt-caching wiring. The cleanly separable
-    # pieces are already extracted (server/local/route.py, server/chat/caching.py);
-    # the remainder is the streaming state machine, which splitting would only
-    # obscure.
-    "server/chat/routes.py": "Monolithic /api/chat streaming state machine + local routing + caching; cleanly separable parts already extracted.",
+    # Turn ASSEMBLY for /api/chat (request parsing, model resolution,
+    # grounding, prompt building, the local/cloud split) plus the side routes
+    # (models, local-model load/download, title, /btw, /subagent). The turn
+    # loop itself lives in server/chat/engine. Still to be split by topic.
+    "server/chat/routes.py": "/api/chat turn assembly plus side routes; the turn loop is in server/chat/engine; still to be split by topic.",
 }
 
 # Directories we never scan (vendored, generated, virtualenvs).

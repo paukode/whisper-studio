@@ -151,7 +151,7 @@ class AnthropicAdapter:
             "max_tokens": getattr(self, "max_tokens", None),
         }
 
-    # ── Request building (port of call_bedrock_stream) ───────────────────────
+    # ── Request building ─────────────────────────────────────────────────────
 
     def _build_body(self, messages, tools, core_count, round_num, is_last_round) -> dict:
         from server.infrastructure.effort import api_effort_for
