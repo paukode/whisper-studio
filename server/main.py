@@ -648,7 +648,7 @@ if __name__ == "__main__":
     import uvicorn
 
     os.chdir(BASE_DIR)
-    port = int(os.environ.get("PORT", 8000))
+    port = int(os.environ.get("PORT", 41430))
     # Bind to localhost by default so the dev server isn't exposed on
     # every coffee-shop / hotel / conference Wi-Fi the laptop joins.
     # Power users wanting LAN access set HOST=0.0.0.0 explicitly:

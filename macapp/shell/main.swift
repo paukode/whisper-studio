@@ -13,40 +13,7 @@ import Darwin
 import Foundation
 import WebKit
 
-// MARK: - Free port discovery
-
-/// Bind an IPv4 socket to 127.0.0.1:0, read back the kernel-assigned port,
-/// close the socket, and return the port.
-func findFreePort() -> UInt16? {
-    let sock = socket(AF_INET, SOCK_STREAM, 0)
-    guard sock >= 0 else { return nil }
-    defer { Darwin.close(sock) }
-
-    var reuse: Int32 = 1
-    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout<Int32>.size))
-
-    var addr = sockaddr_in()
-    addr.sin_family = sa_family_t(AF_INET)
-    addr.sin_port = 0
-    addr.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
-
-    let bindResult = withUnsafePointer(to: &addr) { ptr -> Int32 in
-        ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { saPtr in
-            Darwin.bind(sock, saPtr, socklen_t(MemoryLayout<sockaddr_in>.size))
-        }
-    }
-    guard bindResult == 0 else { return nil }
-
-    var bound = sockaddr_in()
-    var len = socklen_t(MemoryLayout<sockaddr_in>.size)
-    let nameResult = withUnsafeMutablePointer(to: &bound) { ptr -> Int32 in
-        ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { saPtr in
-            getsockname(sock, saPtr, &len)
-        }
-    }
-    guard nameResult == 0 else { return nil }
-    return UInt16(bigEndian: bound.sin_port)
-}
+// MARK: - Port selection
 
 /// Test-bind 127.0.0.1:port; true when the port is free to listen on.
 /// SO_REUSEADDR is set so a socket lingering in TIME_WAIT from our own
@@ -72,20 +39,27 @@ func portIsFree(_ portToTest: UInt16) -> Bool {
     return bindResult == 0
 }
 
-/// Stable localhost origin across launches: reuse the previous launch's port
-/// whenever it is still free, falling back to a fresh kernel-assigned one.
-/// WKWebView storage (localStorage, IndexedDB) is keyed to the page ORIGIN —
-/// http://127.0.0.1:<port> — so a random port per launch silently wiped every
-/// persisted UI flag (e.g. the first-run model-mode notice) on each restart.
-func stickyPort() -> UInt16? {
-    let key = "BackendPort"
-    let saved = UserDefaults.standard.integer(forKey: key)
-    if saved >= 1024, saved <= 65535, portIsFree(UInt16(saved)) {
-        return UInt16(saved)
+/// The app's fixed localhost port. WKWebView storage (localStorage,
+/// IndexedDB) is keyed to the page origin http://127.0.0.1:<port>, so the
+/// same port on every launch keeps every in-page preference. 41410 is not in
+/// the IANA registry and sits below macOS's ephemeral range (49152+). The
+/// source install uses 41430 (backend) and 41460 (Vite), so the two never
+/// compete.
+let preferredPort: UInt16 = 41410
+
+/// How far from preferredPort the search may go, in each direction.
+let portSearchSpan: UInt16 = 5
+
+/// The preferred port when it is free, else the nearest free one: +1, -1,
+/// +2, -2 and so on up to portSearchSpan. Nil when every port in the window
+/// is busy; the caller stops with an error instead of picking a random one.
+func choosePort() -> UInt16? {
+    if portIsFree(preferredPort) { return preferredPort }
+    for step in 1...portSearchSpan {
+        if portIsFree(preferredPort + step) { return preferredPort + step }
+        if portIsFree(preferredPort - step) { return preferredPort - step }
     }
-    guard let fresh = findFreePort() else { return nil }
-    UserDefaults.standard.set(Int(fresh), forKey: key)
-    return fresh
+    return nil
 }
 
 // MARK: - App delegate
@@ -185,8 +159,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             return
         }
 
-        guard let freePort = stickyPort() else {
-            fatalStartupAlert("Could not find a free TCP port on 127.0.0.1.")
+        guard let freePort = choosePort() else {
+            fatalStartupAlert(
+                "Ports \(preferredPort - portSearchSpan) to \(preferredPort + portSearchSpan) on 127.0.0.1 are all in use. Quit the program that holds them, then open Whisper Studio again.")
             return
         }
         port = freePort
@@ -403,7 +378,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
 
     /// Clears WebKit's HTTP caches once after the app changes (an update or
     /// a rebuild), then calls `done`. The page keeps one origin across
-    /// launches (sticky port), so a cache written by the previous build
+    /// launches (fixed port), so a cache written by the previous build
     /// could serve its page and stylesheets. Local storage (the chosen
     /// theme, layout) is kept.
     private func clearWebCacheIfAppChanged(_ done: @escaping () -> Void) {

@@ -188,9 +188,9 @@ def _control_port_deny_rules() -> list[str]:
     OPEN writes (escaping its own confinement), or flip the permission mode.
     Denying the one loopback port the backend listens on closes that, while any
     other local port (a dev server, a database) stays reachable. The port comes
-    from the environment (``PORT``, the app's own default 8000). Open
+    from the environment (``PORT``, the backend default 41430). Open
     (human-approved) commands are exempt: a person read that exact command."""
-    port = (os.environ.get("PORT") or "8000").strip()
+    port = (os.environ.get("PORT") or "41430").strip()
     if not port.isdigit():
         return []
     return [f'(deny network-outbound (remote ip "localhost:{port}"))']

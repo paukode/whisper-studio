@@ -2,7 +2,7 @@
  * Open model-authored HTML in a new tab WITHOUT granting it the app's origin.
  *
  * A `blob:` URL inherits the opener's origin, so `window.open(blobUrl)` would
- * run the HTML same-origin with the app (http://127.0.0.1:8000) and let any
+ * run the HTML same-origin with the app (http://127.0.0.1:41410) and let any
  * script in it silently call the local backend API (write files, run shell,
  * change config). Model output is attacker-influenceable via prompt injection,
  * so that is a one-click local-API takeover.

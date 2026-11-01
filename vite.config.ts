@@ -3,13 +3,11 @@ import react from '@vitejs/plugin-react';
 import { resolve } from 'path';
 
 export default defineConfig(({ command }) => {
-  // The backend port is dynamic: setup.sh starts at 8000 and increments
-  // until it finds a free port, then exports BACKEND_PORT for vite. We
-  // fall back to 8000 so plain ``npm run dev`` still works without the
-  // setup script. Bind everything to 127.0.0.1 (not ``localhost``) so
+  // setup.sh picks the backend port (41430, or the nearest free one) and
+  // exports BACKEND_PORT for vite. Plain ``npm run dev`` uses 41430. Bind everything to 127.0.0.1 (not ``localhost``) so
   // we never go through the OS resolver — guest/captive Wi-Fi, IPv6
   // ``::1`` mismatches, and stale /etc/hosts entries all stop mattering.
-  const backendPort = process.env.BACKEND_PORT || '8000';
+  const backendPort = process.env.BACKEND_PORT || '41430';
   const backendHttp = `http://127.0.0.1:${backendPort}`;
   const backendWs = `ws://127.0.0.1:${backendPort}`;
 
@@ -22,9 +20,9 @@ export default defineConfig(({ command }) => {
   },
   server: {
     host: '127.0.0.1',
-    // Honor PORT when a harness (e.g. preview tooling) assigns one; fall
-    // back to vite's default 5173 for plain ``npm run dev``.
-    port: Number(process.env.PORT) || 5173,
+    // Honor PORT when a harness (e.g. preview tooling) assigns one; plain
+    // ``npm run dev`` uses the source install's fixed UI port.
+    port: Number(process.env.PORT) || 41460,
     proxy: {
       '/api': backendHttp,
       '/static/modules': backendHttp,

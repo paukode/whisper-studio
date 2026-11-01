@@ -41,9 +41,9 @@ def test_control_port_rule_reads_the_env(monkeypatch):
 
     monkeypatch.setenv("PORT", "1234")
     assert _control_port_deny_rules() == ['(deny network-outbound (remote ip "localhost:1234"))']
-    # Empty falls back to the app's own default port.
+    # Empty means the backend default port.
     monkeypatch.setenv("PORT", "")
-    assert "8000" in _control_port_deny_rules()[0]
+    assert "41430" in _control_port_deny_rules()[0]
     # A non-numeric value adds no rule (no broken profile).
     monkeypatch.setenv("PORT", "nope")
     assert _control_port_deny_rules() == []

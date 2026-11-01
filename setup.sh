@@ -687,11 +687,28 @@ echo "  models from Settings > Models > Discover."
 echo ""
 echo "Setup complete. Starting server..."
 
-# Find an available port starting from 8000
-PORT=8000
-while lsof -i :"$PORT" >/dev/null 2>&1; do
-    PORT=$((PORT + 1))
-done
+# Fixed ports, so the browser keeps its per-origin storage (theme, layout,
+# mic permission) between runs. The source install uses 41430 (backend) and
+# 41460 (Vite); the Mac app uses 41410, so the two never compete. When the
+# preferred port is busy, try the nearest free one (+1, -1, +2, -2 ... up to
+# 5 each way) and stop with an error if all 11 are taken. Never a random port.
+pick_port() {
+    local preferred="$1" step
+    if ! lsof -nP -iTCP:"$preferred" -sTCP:LISTEN >/dev/null 2>&1; then
+        echo "$preferred"; return 0
+    fi
+    for step in 1 2 3 4 5; do
+        for candidate in $((preferred + step)) $((preferred - step)); do
+            if ! lsof -nP -iTCP:"$candidate" -sTCP:LISTEN >/dev/null 2>&1; then
+                echo "$candidate"; return 0
+            fi
+        done
+    done
+    echo "ERROR: ports $((preferred - 5)) to $((preferred + 5)) are all in use. Free one with: lsof -nP -iTCP:$preferred -sTCP:LISTEN" >&2
+    return 1
+}
+
+PORT=$(pick_port 41430)
 export PORT
 
 # Only the packaged macOS shell owns the backend parent-watchdog contract.
@@ -720,17 +737,13 @@ fi
 
 VITE_PID=""
 if [ "$PROD" -eq 0 ]; then
-    # Find an available port for Vite starting from 5173
-    VITE_PORT=5173
-    while lsof -i :"$VITE_PORT" >/dev/null 2>&1; do
-        VITE_PORT=$((VITE_PORT + 1))
-    done
+    VITE_PORT=$(pick_port 41460)
 
     # Forward the chosen backend port to vite so its proxy targets the
-    # right server when the backend lands on 8001/8002/... A separate
-    # var (not ``PORT``) because vite reads ``PORT`` as its own listen
-    # port, which would clash with ``--port``.
-    BACKEND_PORT="$PORT" npx vite --port "$VITE_PORT" &
+    # right server when the backend lands next to 41430. A separate var
+    # (not ``PORT``) because vite reads ``PORT`` as its own listen port,
+    # which would clash with ``--port``.
+    BACKEND_PORT="$PORT" npx vite --port "$VITE_PORT" --strictPort &
     VITE_PID=$!
 fi
 
