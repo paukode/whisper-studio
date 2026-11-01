@@ -340,6 +340,15 @@ def test_shell_stdout_json_deny():
     assert out.blocked and out.reason == "blocked via json"
 
 
+def test_shell_stdout_json_deny_with_an_error_key_still_denies():
+    payload = json.dumps({"decision": "deny", "reason": "blocked via json", "_error": "x"})
+    _save("PreToolUse", command=f"echo '{payload}'", matcher="*")
+    out = _run(
+        engine.run_hooks("PreToolUse", {"tool_name": "ws_write_file"}, tool_name="ws_write_file")
+    )
+    assert out.blocked and out.reason == "blocked via json"
+
+
 def test_shell_stdout_json_rewrite():
     payload = json.dumps({"decision": "rewrite", "updatedInput": {"path": "/safe.txt"}})
     _save("PreToolUse", command=f"echo '{payload}'", matcher="*")

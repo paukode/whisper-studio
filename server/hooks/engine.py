@@ -42,9 +42,6 @@ MAX_STOP_BLOCKS_PER_TURN = 3
 def _apply_control(control: dict, outcome: HookOutcome, *, allow_rewrite: bool) -> bool:
     """Fold one structured-control dict into the outcome. Returns True if it
     denied (caller short-circuits)."""
-    if control.get("_error"):
-        outcome.errors.append(control["_error"])
-        return False
     decision = (control.get("decision") or "").lower()
     if decision == "deny":
         outcome.decision = "deny"
@@ -93,7 +90,7 @@ async def run_hooks(
     allow_rewrite: bool = True,
 ) -> HookOutcome:
     """Evaluate all hooks for an event. See module docstring for the contract."""
-    from server.infrastructure.plugin_hooks import run_inprocess
+    from server.infrastructure.plugin_hooks import InProcessHookError, run_inprocess
 
     outcome = HookOutcome()
     ws = workspace or _current_workspace()
@@ -101,6 +98,9 @@ async def run_hooks(
 
     # Phase 1: in-process hooks (plugins, orchestrator gate).
     for control in await run_inprocess(event, payload):
+        if isinstance(control, InProcessHookError):
+            outcome.errors.append(control.message)
+            continue
         if _apply_control(control, outcome, allow_rewrite=allow_rewrite):
             return outcome
 

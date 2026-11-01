@@ -12,8 +12,19 @@ plugins/security_checks.py is untouched.
 """
 
 import logging
+from dataclasses import dataclass
 
 log = logging.getLogger("whisper-studio")
+
+
+@dataclass(frozen=True)
+class InProcessHookError:
+    """A crashed in-process hook on a non-PreToolUse event. A separate type,
+    not a key in a control dict, so JSON a shell hook prints can never pose
+    as one."""
+
+    message: str
+
 
 # event -> list of async callables
 _hooks: dict[str, list] = {}
@@ -25,14 +36,14 @@ def register_hook(event: str, fn) -> None:
     log.info("In-process hook registered for %s: %s", event, getattr(fn, "__qualname__", fn))
 
 
-async def run_inprocess(event: str, payload: dict) -> list[dict]:
+async def run_inprocess(event: str, payload: dict) -> list[dict | InProcessHookError]:
     """Run all in-process hooks for an event; returns their non-None results
     (structured-control dicts) in registration order. The engine merges them.
 
     A hook that raises fails closed on PreToolUse (a deny naming the hook and
     its error, so a crashed security check never lets the call through) and
-    is reported as a hook error on every other event."""
-    results: list[dict] = []
+    is reported as an InProcessHookError on every other event."""
+    results: list[dict | InProcessHookError] = []
     for hook in list(_hooks.get(event, ())):
         try:
             r = await hook(payload)
@@ -42,7 +53,7 @@ async def run_inprocess(event: str, payload: dict) -> list[dict]:
             if event == "PreToolUse":
                 results.append({"decision": "deny", "reason": f"Hook {name} failed: {e}"})
             else:
-                results.append({"_error": f"hook {name}: {e}"})
+                results.append(InProcessHookError(f"hook {name}: {e}"))
             continue
         if r is not None:
             results.append(r)
