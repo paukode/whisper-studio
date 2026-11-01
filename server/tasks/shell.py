@@ -65,7 +65,9 @@ def start_shell_task(
     """Start ``command`` in the background; returns {task_id, output_path, status}.
 
     A command that could not start (no OS sandbox, a spawn error) comes back
-    with status "failed" and an ``error`` text, and its row is failed too.
+    with status "failed" and an ``error`` text, and its row is failed too,
+    with the reason as its result text. Its output file is removed: nothing
+    ran, so there is no output to keep.
 
     ``exec_command`` is the possibly-wrapped form actually executed (cwd
     tracking, snapshot wrapping); ``command`` is what the user asked for and
@@ -112,6 +114,10 @@ def start_shell_task(
         )
     except Exception as e:
         out_file.close()
+        try:
+            os.unlink(out_path)
+        except OSError as unlink_err:
+            log.warning("tasks.shell: could not remove %s: %s", out_path, unlink_err)
         finished = registry.finish_task(
             task_id, status="failed", exit_code=-1, result_text=f"[Error: {e}]"
         )

@@ -161,6 +161,9 @@ def test_a_background_task_is_recorded_as_failed(spawned, isolated_tasks, tmp_pa
     task = registry.get_task(info["task_id"])
     assert task["status"] == "failed"
     assert SANDBOX_UNAVAILABLE_MESSAGE in task["result_text"]
+    # Nothing ran, so no empty output file is left behind.
+    assert not os.path.exists(info["output_path"])
+    assert not isolated_tasks.exists() or os.listdir(isolated_tasks) == []
     assert spawned == []
 
 
@@ -218,6 +221,29 @@ def test_the_shell_route_answers_503_with_the_reason(spawned, tmp_path, monkeypa
     )
     assert resp.status_code == 503
     assert json.loads(resp.body) == {"error": SANDBOX_UNAVAILABLE_MESSAGE}
+    assert spawned == []
+
+
+@pytest.mark.parametrize("background", [False, True])
+def test_the_shell_route_returns_a_refusal_raised_by_the_run(
+    spawned, isolated_tasks, tmp_path, monkeypatch, background
+):
+    """The pre-check passes but the run itself refuses: the client still gets
+    the reason as an error, and no output file is left behind."""
+    from server.workspace.routes import shell as shell_routes
+
+    monkeypatch.setattr(shell_routes, "get_workspace_path", lambda: str(tmp_path))
+    monkeypatch.setattr(sandbox, "sandbox_backend", lambda: "sandbox-exec")
+    resp = asyncio.run(
+        shell_routes.ws_shell_endpoint(_JsonRequest({"command": "ls", "background": background}))
+    )
+    if background:
+        assert resp["status"] == "failed"
+        assert resp["error"] == SANDBOX_UNAVAILABLE_MESSAGE
+        assert not isolated_tasks.exists() or os.listdir(isolated_tasks) == []
+    else:
+        assert resp.status_code == 503
+        assert json.loads(resp.body) == {"error": SANDBOX_UNAVAILABLE_MESSAGE}
     assert spawned == []
 
 
