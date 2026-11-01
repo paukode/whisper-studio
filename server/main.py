@@ -24,6 +24,7 @@ from server.attachments import router as attachments_router
 # handlers, so there's nothing to mount. Import elsewhere only when
 # the tool descriptors themselves are needed.
 from server.buddy import router as buddy_router
+from server.capture_helper import router as capture_helper_router
 from server.chat import router as chat_router
 from server.chat.compaction_log import router as compaction_log_router
 from server.chat.request_snapshots import router as request_snapshots_router
@@ -531,6 +532,7 @@ app.include_router(chat_router)
 app.include_router(sessions_router)
 app.include_router(ws_router)
 app.include_router(voice_router)
+app.include_router(capture_helper_router)
 app.include_router(speakers_router)
 app.include_router(permissions_router)
 app.include_router(hooks_router)
