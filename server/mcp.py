@@ -272,10 +272,8 @@ class MCPManager:
     def read_config(self) -> dict | None:
         """Read mcp_servers.json: {} when the file does not exist, None when
         it exists but is not a valid server list (a half-typed hand edit).
-
-        Backfills `enabled: true` for any server missing the flag: a
-        configured server is ON unless the user turned it off, and the file
-        is rewritten so the flag is explicit."""
+        Reading never writes the file; a server missing the `enabled` flag
+        counts as enabled (is_server_enabled)."""
         try:
             with open(MCP_CONFIG_PATH) as f:
                 data = json.load(f)
@@ -286,16 +284,6 @@ class MCPManager:
         servers = data.get("servers", {}) if isinstance(data, dict) else None
         if not isinstance(servers, dict):
             return None
-        changed = False
-        for _name, conf in servers.items():
-            if isinstance(conf, dict) and "enabled" not in conf:
-                conf["enabled"] = True
-                changed = True
-        if changed:
-            try:
-                self.save_config(servers)
-            except OSError as e:
-                log.warning("MCP backfill save failed: %s", e)
         return servers
 
     def load_config(self) -> dict:
@@ -324,9 +312,8 @@ class MCPManager:
 
     def is_server_enabled(self, name: str) -> bool:
         """Whether a server should be running and its tools advertised.
-        A configured server missing the flag counts as enabled (the
-        backfill makes it explicit on next save); an unknown server is
-        not enabled."""
+        A configured server missing the flag counts as enabled; an unknown
+        server is not enabled."""
         config = self.load_config()
         entry = config.get(name)
         if not isinstance(entry, dict):

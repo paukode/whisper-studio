@@ -106,26 +106,17 @@ def test_get_bedrock_tools_advertises_every_enabled_server(isolated_mcp):
     assert {t["name"] for t in both} == {"mcp__alpha__ping", "mcp__beta__echo"}
 
 
-def test_load_config_backfills_missing_enabled_field(isolated_mcp):
-    """A pre-existing config file without `enabled` is backfilled to TRUE
-    on first load — a configured server is on unless the user turned it
-    off (default-enabled contract)."""
+def test_reading_the_config_never_rewrites_it(isolated_mcp):
+    """A server without `enabled` counts as on, and reading the file leaves
+    it exactly as the user wrote it."""
+    raw = json.dumps({"servers": {"alpha": {"command": "x", "args": [], "env": {}}}})
     with open(isolated_mcp, "w") as f:
-        json.dump(
-            {
-                "servers": {
-                    "alpha": {"command": "x", "args": [], "env": {}},  # no enabled
-                }
-            },
-            f,
-        )
+        f.write(raw)
     mgr = MCPManager()
-    config = mgr.load_config()
-    assert config["alpha"]["enabled"] is True
-    # And it was persisted back so the file is now explicit.
+    assert "enabled" not in mgr.load_config()["alpha"]
+    assert mgr.is_server_enabled("alpha") is True
     with open(isolated_mcp) as f:
-        on_disk = json.load(f)
-    assert on_disk["servers"]["alpha"]["enabled"] is True
+        assert f.read() == raw
 
 
 def test_globally_enabled_servers_returns_only_enabled(isolated_mcp):
@@ -191,8 +182,7 @@ def test_is_server_enabled_checks_the_persisted_flag(isolated_mcp):
 
 def test_is_server_enabled_treats_missing_flag_as_enabled(isolated_mcp):
     """A configured server whose entry lacks the flag counts as ENABLED —
-    the default-enabled contract for configs written before the flag
-    existed (load_config's backfill then makes it explicit)."""
+    the default-enabled contract."""
     with open(isolated_mcp, "w") as f:
         json.dump(
             {"servers": {"alpha": {"command": "x", "args": [], "env": {}}}},

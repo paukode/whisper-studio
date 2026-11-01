@@ -1,10 +1,8 @@
 """Two MCP contracts around the persisted `enabled` flag:
 
 (A) PUT /api/mcp/servers/{name} (mcp_update_server) preserves the persisted
-    `enabled` flag when it rewrites a server entry. A rewrite that reduced the
-    entry to {command, args, env} would drop the flag, and load_config()'s
-    backfill would then persist enabled=false — unticking an enabled server on
-    every edit or rename.
+    `enabled` flag when it rewrites a server entry, so an edit or rename never
+    flips a disabled server on or an enabled one off.
 
 (B) get_bedrock_tools advertises exactly the servers whose persisted `enabled`
     flag is on. That is the same set call_tool will run, since call_tool
@@ -91,8 +89,6 @@ def test_put_edit_preserves_enabled_flag(isolated_mcp, monkeypatch):
     assert on_disk["alpha"]["command"] == "new"
     assert on_disk["alpha"]["enabled"] is True
 
-    # And a subsequent load_config must not backfill it to false (the exact
-    # chain the finding describes: dropped flag -> backfill persists false).
     assert mgr.load_config()["alpha"]["enabled"] is True
 
 
