@@ -249,7 +249,7 @@ function attachRuntimeSubscriptions(sid: string, entry: RuntimeEntry): void {
 // A background live session receives its cron events too, not just the active
 // one: non-destructive session switching does not replay them.
 
-/** Memory activity payload forwarded by /api/sessions/{id}/events. */
+/** Memory activity payload forwarded by /api/sessions/events. */
 interface MemoryEventPayload {
   action: 'recalled' | 'extracted';
   count?: number;

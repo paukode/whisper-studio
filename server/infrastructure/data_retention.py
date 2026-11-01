@@ -159,13 +159,6 @@ def retention_block_reason(model_id: str) -> str | None:
     )
 
 
-def _reset_mode_cache() -> None:
-    """Test hook."""
-    with _mode_lock:
-        _mode_cache["mode"] = None
-        _mode_cache["ts"] = 0.0
-
-
 def set_enabled(enabled: bool) -> str:
     """Flip account data retention on/off. Returns the resulting mode.
 

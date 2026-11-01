@@ -165,8 +165,7 @@ def _session_event_frame(ev: dict) -> dict | None:
     """Map an event-bus event to the SSE frame the UI renders, or None when it
     is nothing the UI shows live.
 
-    Shared by the per-session channel and the multiplexed one below so the two
-    can never drift. Agent runtime progress (server/agents/runtime.py _emit)
+    Used by the multiplexed /api/sessions/events channel below. Agent runtime progress (server/agents/runtime.py _emit)
     is forwarded as ``agent_progress`` for the agent pane, which follows a run
     through this channel whichever session or private channel the run
     publishes on; the chat's own stream still folds the same events into the
@@ -258,7 +257,7 @@ async def all_session_events(request: Request):
     match. Each frame carries ``session_id`` and the client routes it to the
     right session itself.
 
-    This replaces one stream per open session. Browsers cap concurrent
+    One stream serves every open session. Browsers cap concurrent
     connections per origin (about 6 on HTTP/1.1), and a stream per session
     plus the chat stream exhausted that budget: a file upload or a second
     session's first request then sat queued in the browser until a running
@@ -806,58 +805,6 @@ async def bulk_import_sessions(files: list[UploadFile] = File(...)):
             _import_one(name, data)
 
     return {"imported": imported, "failed": failed}
-
-
-@router.get("/api/sessions/{session_id}/events")
-async def session_events(session_id: str, request: Request):
-    """Long-lived SSE channel for out-of-band notifications scoped to a
-    chat session.
-
-    Subscribes to the agent event_bus for the entire lifetime of the
-    connection — unlike the ``/api/chat`` drainer, which only listens
-    during an in-flight tool batch. Background cron firings publish to
-    the same bus, so this is the path that lets a card appear in the
-    chat *without* the user submitting a new turn or refreshing the
-    page.
-
-    Routes exactly what the multiplexed channel routes (the frame helper
-    above is shared), so the two can never drift.
-
-    Sends a comment heartbeat every 15s so proxies don't time out.
-    """
-    from server.agents.event_bus import event_bus
-    from server.utils import ndjson_dumps
-
-    queue = event_bus.subscribe(session_id)
-
-    async def stream():
-        yield ": connected\n\n"
-        try:
-            while True:
-                if await request.is_disconnected():
-                    return
-                try:
-                    ev = await asyncio.wait_for(queue.get(), timeout=15.0)
-                except asyncio.TimeoutError:
-                    # SSE comment — keeps the connection alive without
-                    # firing a real event on the frontend.
-                    yield ": heartbeat\n\n"
-                    continue
-                frame = _session_event_frame(ev)
-                if frame is not None:
-                    yield f"data: {ndjson_dumps(frame)}\n\n"
-        finally:
-            event_bus.unsubscribe(session_id, queue)
-
-    return StreamingResponse(
-        stream(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache, no-transform",
-            "X-Accel-Buffering": "no",
-            "Connection": "keep-alive",
-        },
-    )
 
 
 @router.delete("/api/sessions/{session_id}")

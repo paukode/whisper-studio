@@ -1100,15 +1100,6 @@ async def get_config_endpoint():
     # Never expose the raw secret over the API — the UI only needs the masked
     # hint, and only sends a new key when the user types one.
     safe.pop("tavily_api_key", None)
-    # Include feature flag states
-    try:
-        from server.infrastructure.feature_flags import get_flag_states
-
-        safe["_feature_flag_states"] = get_flag_states()
-    except Exception:
-        pass
-    # Include config layer info
-    safe["_has_project_config"] = bool(_load_project_config(ws))
     return safe
 
 

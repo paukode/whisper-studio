@@ -146,54 +146,6 @@ def test_chat_drainer_skips_session_message():
     assert '"session_message",' in src
 
 
-def test_session_events_yields_session_message():
-    """The long-lived session SSE actually forwards a queued session_message
-    event as `{session_message: <payload>}` — this is the ONLY delivery path
-    for a message sent to a session with no turn in flight, so this exercises
-    the real generator rather than just checking the source mentions it."""
-    import asyncio
-
-    from server.agents.event_bus import event_bus
-    from server.infrastructure import sessions_routes as SR
-
-    class _FakeRequest:
-        async def is_disconnected(self):
-            return False
-
-    async def _run_with_patched_bus():
-        queue: asyncio.Queue = asyncio.Queue()
-        queue.put_nowait(
-            {
-                "type": "session_message",
-                "sessionMessage": {
-                    "from_session_id": "a",
-                    "from_title": "Session A",
-                    "content": "the news is done",
-                    "timestamp": "2026-08-08T00:00:00Z",
-                },
-            }
-        )
-        orig_subscribe = event_bus.subscribe
-        orig_unsubscribe = event_bus.unsubscribe
-        event_bus.subscribe = lambda sid: queue
-        event_bus.unsubscribe = lambda sid, q: None
-        try:
-            response = await SR.session_events("s1", _FakeRequest())
-            # The stream opens with a comment so the browser reports it open
-            # at once; the first event follows.
-            greeting = await response.body_iterator.__anext__()
-            chunk = await response.body_iterator.__anext__()
-        finally:
-            event_bus.subscribe = orig_subscribe
-            event_bus.unsubscribe = orig_unsubscribe
-        return greeting, chunk
-
-    greeting, chunk = asyncio.run(_run_with_patched_bus())
-    assert greeting.startswith(":")
-    assert "session_message" in chunk
-    assert "the news is done" in chunk
-
-
 def test_session_events_forwards_session_message():
     """Parity check matching the cron_progress test above: the cross-session
     message keeps its envelope, asserted on the shared mapping."""
