@@ -169,7 +169,7 @@ def _checking_claims() -> bool:
 
 def _calls_tools(content) -> bool:
     return isinstance(content, list) and any(
-        isinstance(b, dict) and b.get("type") in ("tool_use", "function_call") for b in content
+        isinstance(b, dict) and b.get("type") == "tool_use" for b in content
     )
 
 
