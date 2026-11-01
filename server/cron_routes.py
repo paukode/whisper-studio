@@ -24,16 +24,19 @@ from server import cron_scheduler as _cs
 from server.cron_schedule import (
     _default_tz_name,
     compute_next_run,
+    reject_interval_minutes,
     schedule_label,
 )
 from server.cron_schedule import (
     validate_schedule as _validate_schedule,
 )
 from server.cron_scheduler import (
+    OLD_JOB_ERROR,
     _add_job_to_scheduler,
     _apply_job_update,
     _at_job_already_fired,
     _delete_jobs,
+    _has_schedule,
     _job_public,
     _mutate_jobs,
     _next_run_iso,
@@ -69,9 +72,8 @@ async def preview_schedule(request: Request):
     """Validate a schedule and return its label + next run, no persistence."""
     body = await request.json()
     try:
-        sch = _validate_schedule(
-            body.get("schedule"), legacy_interval_minutes=body.get("interval_minutes")
-        )
+        reject_interval_minutes(body)
+        sch = _validate_schedule(body.get("schedule"))
     except ValueError as e:
         return {"error": str(e)}
     return {"label": schedule_label(sch), "next_run": compute_next_run(sch), "schedule": sch}
@@ -133,18 +135,25 @@ async def update_cron_job(job_id: str, request: Request):
                 status_code=400,
                 media_type="application/json",
             )
-    if body.get("schedule") is not None or body.get("interval_minutes") is not None:
+    if body.get("schedule") is not None or "interval_minutes" in body:
         try:
-            patch["schedule"] = _validate_schedule(
-                body.get("schedule"),
-                legacy_interval_minutes=body.get("interval_minutes"),
-            )
+            reject_interval_minutes(body)
+            patch["schedule"] = _validate_schedule(body.get("schedule"))
         except ValueError as e:
             return Response(
                 content=json.dumps({"error": str(e)}),
                 status_code=400,
                 media_type="application/json",
             )
+    # An old-format job never runs: a change that does not give it a schedule is
+    # refused, so it cannot look switched on while it never fires.
+    stored = next((j for j in load_cron_jobs() if j.get("id") == job_id), None)
+    if stored is not None and not _has_schedule(stored) and "schedule" not in patch:
+        return Response(
+            content=json.dumps({"error": OLD_JOB_ERROR, "job_id": job_id}),
+            status_code=409,
+            media_type="application/json",
+        )
     # Re-homing an orphaned job to a new session clears the orphaned flag.
     if isinstance(body.get("session_id"), str) and body["session_id"].strip():
         patch["session_id"] = body["session_id"].strip()
@@ -200,6 +209,15 @@ async def stop_cron_job(job_id: str):
 
 @router.patch("/{job_id}/toggle")
 async def toggle_cron_job(job_id: str):
+    # An old-format job never runs: refuse before any write, so the file stays
+    # as it is.
+    stored = next((j for j in load_cron_jobs() if j.get("id") == job_id), None)
+    if stored is not None and not _has_schedule(stored):
+        return Response(
+            content=json.dumps({"error": OLD_JOB_ERROR, "job_id": job_id}),
+            status_code=409,
+            media_type="application/json",
+        )
     refused = {"flag": False}
 
     def _toggle(jobs):

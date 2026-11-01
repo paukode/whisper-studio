@@ -632,8 +632,9 @@ def load_config(workspace_path: str | None = None) -> dict:
         merged["chat_models"] = ids
         merged["chat_model_meta"] = meta
 
-    # Coerce legacy/unknown effort values (e.g. the retired "auto") to a known
-    # label so downstream code and the per-model clamp never see a stale value.
+    # An unknown effort value (the retired "auto" included) runs as the default
+    # level, so downstream code and the per-model clamp never see it. The saved
+    # value stays in the user's file; old_config_notices names it.
     if "effort_level" in merged:
         merged["effort_level"] = normalize_effort(merged.get("effort_level"))
 
@@ -768,10 +769,12 @@ def seed_user_config() -> bool:
 def _value_checks() -> dict[str, tuple[set[str], str]]:
     """Settings with a fixed set of values: {key: (known values, what runs when
     the saved value is not one of them)}. The readers fall back on their own
-    (server/asr resolve_name, model_mode.current_mode, the translator pick);
+    (server/asr resolve_name, model_mode.current_mode, the translator pick,
+    effort.normalize_effort);
     this only lets startup say so. Imported here, not at module level, to keep
     config importable first."""
     from server.asr import _ALIASES, BACKENDS, DEFAULT_BACKEND
+    from server.infrastructure.effort import _LABEL_ALIASES, DEFAULT_EFFORT, EFFORT_ORDER
     from server.infrastructure.model_mode import DEFAULT_MODE, MODES
 
     return {
@@ -781,6 +784,7 @@ def _value_checks() -> dict[str, tuple[set[str], str]]:
         ),
         "translate_mode": ({"off", "canary", "apple"}, "no translation line is shown"),
         "model_mode": (set(MODES), f"the app runs in {DEFAULT_MODE} mode"),
+        "effort_level": ({*EFFORT_ORDER, *_LABEL_ALIASES}, f"{DEFAULT_EFFORT} effort is used"),
     }
 
 
@@ -896,6 +900,9 @@ RETIRED_USER_VALUES = {
         "canary": ("streaming", "Canary only translates now, so Parakeet transcribes instead"),
     },
     "translate_mode": {"auto": _OLD_TRANSLATE, "model": _OLD_TRANSLATE},
+    "effort_level": {
+        "auto": ("high", "the automatic effort level is gone, so high effort is used"),
+    },
 }
 
 

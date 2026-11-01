@@ -20,7 +20,6 @@ from server.hooks.schema import (
     HOOK_EVENTS,
     HookDef,
     build_stdin_payload,
-    canonical_event,
 )
 
 router = APIRouter(prefix="/api/hooks", tags=["hooks"])
@@ -72,7 +71,7 @@ async def get_hooks():
 
 
 def _hook_from_body(body: dict, *, hook_id: str = "") -> HookDef | JSONResponse:
-    event = canonical_event((body.get("event") or "").strip())
+    event = (body.get("event") or "").strip()
     if event not in HOOK_EVENTS:
         return _err(f"event must be one of: {list(HOOK_EVENTS)}")
     command = (body.get("command") or "").strip()
@@ -96,7 +95,10 @@ async def add_hook(request: Request):
     hook = _hook_from_body(body)
     if isinstance(hook, JSONResponse):
         return hook
-    stored = cfg.upsert_user_hook(hook)
+    try:
+        stored = cfg.upsert_user_hook(hook)
+    except cfg.OldHooksFile as e:
+        return _err(str(e), 409)
     return {"added": True, "hook": _hook_row(stored)}
 
 
@@ -111,7 +113,10 @@ async def update_hook(hook_id: str, request: Request):
     hook = _hook_from_body(body, hook_id=hook_id)
     if isinstance(hook, JSONResponse):
         return hook
-    stored = cfg.upsert_user_hook(hook)
+    try:
+        stored = cfg.upsert_user_hook(hook)
+    except cfg.OldHooksFile as e:
+        return _err(str(e), 409)
     return {"updated": True, "hook": _hook_row(stored)}
 
 
@@ -129,7 +134,9 @@ async def test_hook(request: Request):
     command = (body.get("command") or "").strip()
     if not command:
         return _err("command is required")
-    event = canonical_event(body.get("event", "PreToolUse"))
+    event = body.get("event", "PreToolUse")
+    if event not in HOOK_EVENTS:
+        return _err(f"event must be one of: {list(HOOK_EVENTS)}")
     payload = build_stdin_payload(
         event,
         session_id="test-session",
@@ -138,6 +145,19 @@ async def test_hook(request: Request):
         tool_input=body.get("tool_input", {"path": "/example.txt"}),
         tool_output=body.get("tool_output"),
     )
+    # A command that uses an old WHISPER_* variable would not run as a hook,
+    # so the Test does not run it either.
+    old_vars = cfg.old_hook_vars(command)
+    if old_vars:
+        msg = cfg.old_vars_message("This hook", old_vars)
+        return {
+            "exit_code": -1,
+            "stdout": "",
+            "stderr": msg,
+            "decision": "error",
+            "reason": msg,
+            "payload": payload,
+        }
     # dry_run spawns a sandboxed subprocess (blocking, up to the timeout).
     # Offload it so it never stalls the shared event loop.
     result = await asyncio.to_thread(

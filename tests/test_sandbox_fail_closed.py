@@ -286,13 +286,18 @@ def test_a_hook_that_cannot_run_is_a_hook_failure(spawned, tmp_path, monkeypatch
     hook = HookDef(event="PreToolUse", command="true", on_error=on_error, id="h_fc").clamp()
     monkeypatch.setattr("server.infrastructure.plugin_hooks.run_inprocess", no_inprocess)
     monkeypatch.setattr(engine, "merged_for_event", lambda event, ws: [hook])
+    warnings = []
+    monkeypatch.setattr(engine.log, "warning", lambda fmt, *a: warnings.append(fmt % a))
     outcome = asyncio.run(
         engine.run_hooks("PreToolUse", {"event": "PreToolUse"}, workspace=str(tmp_path))
     )
     if on_error == "block":
         assert outcome.blocked
         assert SANDBOX_UNAVAILABLE_MESSAGE in outcome.reason
+        assert not any("skipped" in w for w in warnings)
     else:
         assert not outcome.blocked
         assert any(SANDBOX_UNAVAILABLE_MESSAGE in e for e in outcome.errors)
+        # Skipped, but never silently: the log says so.
+        assert any("could not run and was skipped" in w for w in warnings)
     assert spawned == []

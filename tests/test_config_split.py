@@ -170,6 +170,32 @@ def test_an_old_translate_mode_runs_as_off_and_gets_a_notice(split_env, monkeypa
     assert (tmp / "config.user.json").read_text() == text
 
 
+def test_an_old_or_unknown_effort_level_runs_as_high_and_gets_a_notice(split_env, monkeypatch):
+    tmp = split_env
+    text = json.dumps({"effort_level": "auto"})
+    (tmp / "config.user.json").write_text(text)
+    _reset(monkeypatch)
+
+    assert cfg.load_config()["effort_level"] == "high"
+    [(title, message)] = cfg.old_config_notices()
+    assert title == 'effort_level "auto" is no longer offered'
+    assert "high effort is used" in message
+    assert (tmp / "config.user.json").read_text() == text
+
+    (tmp / "config.user.json").write_text(json.dumps({"effort_level": "turbo"}))
+    _reset(monkeypatch)
+    assert cfg.load_config()["effort_level"] == "high"
+    [(title, message)] = cfg.old_config_notices()
+    assert title == "Unknown setting values"
+    assert 'effort_level "turbo" (high effort is used)' in message
+
+    # A raw wire alias is known: it runs as its app label, with no notice.
+    (tmp / "config.user.json").write_text(json.dumps({"effort_level": "xhigh"}))
+    _reset(monkeypatch)
+    assert cfg.load_config()["effort_level"] == "extra"
+    assert cfg.old_config_notices() == []
+
+
 def test_unknown_values_of_fixed_list_settings_get_a_notice(split_env, monkeypatch):
     from server.infrastructure.model_mode import current_mode
 

@@ -5,8 +5,8 @@
 (2) The secret scanner catches modern OpenAI keys (sk-proj-/sk-svcacct-/
     sk-admin-) and base64url PyPI tokens, without false-positiving on prose.
 (3) Project-memory slugs are disambiguated by a realpath hash, so two
-    workspaces sharing a basename no longer collide; a legacy basename-only
-    dir is migrated to the new slug only when unambiguous.
+    workspaces sharing a basename no longer collide; a folder from the old
+    basename-only naming is left as it is and named in a notice.
 (4) memory_write / the REST save endpoint force a .md suffix and refuse
     dotfiles, so a memory can never be written into a name the scanner skips.
 
@@ -109,7 +109,7 @@ def test_check_and_block_redacts_modern_openai_key():
     assert findings
 
 
-# ── (3) slug disambiguation + legacy migration ───────────────────────────────
+# ── (3) slug disambiguation + old folders ────────────────────────────────────
 
 
 @pytest.fixture
@@ -141,39 +141,44 @@ def test_same_basename_different_paths_get_distinct_slugs(tmp_path, memory_base)
     assert os.path.isdir(dir_a) and os.path.isdir(dir_b)
 
 
-def test_legacy_basename_dir_migrated_when_unambiguous(tmp_path, memory_base):
+@pytest.fixture
+def notices(monkeypatch):
+    import server.notifications as N
+
+    seen = []
+    monkeypatch.setattr(N, "old_format_notice", lambda **kw: seen.append(kw))
+    return seen
+
+
+def test_an_old_basename_dir_is_left_alone_and_reported(tmp_path, memory_base, notices):
     ws = _make_ws(tmp_path, "a")
-    # Pre-two-tier layout: a basename-only "app" dir with a topic file.
-    legacy_dir = memory_base / "app"
-    legacy_dir.mkdir(parents=True)
-    (legacy_dir / "note.md").write_text("---\nname: N\ndescription: d\ntype: user\n---\n\nbody\n")
+    # The old layout: a basename-only "app" dir with a topic file.
+    old_dir = memory_base / "app"
+    old_dir.mkdir(parents=True)
+    (old_dir / "note.md").write_text("old")
 
     new_dir = MD.get_memory_dir(str(ws))
 
     assert os.path.basename(new_dir) == MD.get_workspace_slug(str(ws))
-    assert not legacy_dir.exists()  # renamed, not copied
-    assert (memory_base / os.path.basename(new_dir) / "note.md").read_text().endswith("body\n")
+    assert (old_dir / "note.md").read_text() == "old"  # not moved
+    assert os.listdir(new_dir) == []  # and not read into the new folder
+    [notice] = notices
+    assert notice["title"] == MD.OLD_FOLDER_NOTICE_TITLE
+    assert str(old_dir) in notice["message"] and new_dir in notice["message"]
 
 
-def test_legacy_migration_skipped_when_target_exists(tmp_path, memory_base):
-    ws = _make_ws(tmp_path, "a")
-    slug = MD.get_workspace_slug(str(ws))
+def test_no_notice_without_an_old_dir(tmp_path, memory_base, notices):
+    MD.get_memory_dir(str(_make_ws(tmp_path, "a")))
+    assert notices == []
 
-    legacy_dir = memory_base / "app"
-    legacy_dir.mkdir(parents=True)
-    (legacy_dir / "legacy.md").write_text("legacy")
 
-    # New slug dir already populated: migration must not clobber it.
-    new_dir = memory_base / slug
-    new_dir.mkdir(parents=True)
-    (new_dir / "current.md").write_text("current")
-
-    returned = MD.get_memory_dir(str(ws))
-
-    assert returned == str(new_dir)
-    assert legacy_dir.exists()  # left untouched — ambiguous, so no rename
-    assert (new_dir / "current.md").read_text() == "current"
-    assert not (new_dir / "legacy.md").exists()
+def test_a_workspace_named_default_is_not_reported(tmp_path, memory_base, notices):
+    MD.get_memory_dir(None)  # the folder for memory with no workspace
+    ws = tmp_path / "x" / "default"
+    ws.mkdir(parents=True)
+    MD.get_memory_dir(str(ws))
+    assert (memory_base / "default").is_dir()
+    assert notices == []
 
 
 # ── (4) filename normalization / dotfile rejection ───────────────────────────

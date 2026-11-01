@@ -104,6 +104,49 @@ def test_gc_keeps_the_rows_that_remember_a_notice_was_shown():
     assert notif.record_notification_once(source="config", title="Old", message="m")["deduped"]
 
 
+class _Log:
+    def __init__(self):
+        self.lines = []
+
+    def warning(self, fmt, *args):
+        self.lines.append(fmt % args)
+
+
+def test_old_format_notice_logs_once_per_process_and_shows_once(monkeypatch):
+    log = _Log()
+    monkeypatch.setattr(notif, "log", log)
+    monkeypatch.setattr(notif, "_old_format_seen", set())
+    notif.old_format_notice(title="Old hooks", message="m")
+    notif.old_format_notice(title="Old hooks", message="m")
+    assert log.lines == ["Old hooks: m"]
+    [row] = notif.list_notifications()
+    assert row["source"] == notif.OLD_FORMAT_SOURCE == "old-format"
+    assert row["status"] == "warning" and row["count"] == 1
+    assert notif.OLD_FORMAT_SOURCE in notif.ONCE_SOURCES
+
+    # The next start (a new process) logs it again but does not show it again,
+    # even after the user cleared it.
+    notif.clear_all()
+    monkeypatch.setattr(notif, "_old_format_seen", set())
+    notif.old_format_notice(title="Old hooks", message="m")
+    assert log.lines == ["Old hooks: m", "Old hooks: m"]
+    assert notif.list_notifications() == []
+
+
+def test_old_format_notice_never_raises(monkeypatch):
+    log = _Log()
+    monkeypatch.setattr(notif, "log", log)
+    monkeypatch.setattr(notif, "_old_format_seen", set())
+
+    def broken(**kw):
+        raise RuntimeError("no database")
+
+    monkeypatch.setattr(notif, "record_notification_once", broken)
+    notif.old_format_notice(title="T", message="m")
+    assert log.lines[0] == "T: m"
+    assert "no database" in log.lines[1]
+
+
 def test_http_surface(client):
     notif.record_notification(message="hello", source="agent", status="warning")
     data = client.get("/api/notifications").json()

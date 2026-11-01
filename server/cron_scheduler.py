@@ -15,10 +15,6 @@ A job's ``schedule`` is a discriminated union:
 Timezone defaults to the host system zone (from /etc/localtime) unless a
 ``cron_timezone`` config value or a per-job ``schedule.tz`` overrides it, so
 "daily at 09:00" fires at the intended local hour and stays correct across DST.
-
-Legacy jobs (``interval_minutes`` only) are migrated in memory on load to
-``{"type": "interval", "seconds": interval_minutes*60}`` with no change to
-their firing cadence.
 """
 
 import asyncio
@@ -49,6 +45,7 @@ from server.cron_schedule import (
     _zone,
     compute_next_run,
     cron_catch_up_due,
+    reject_interval_minutes,
     schedule_label,
 )
 from server.cron_schedule import (
@@ -116,9 +113,9 @@ def _at_job_already_fired(job: dict) -> bool:
 
 
 def _next_run_iso(job: dict) -> str | None:
-    """Next fire time for a job: null when disabled, else the live scheduler's
-    value (falling back to a pure projection)."""
-    if not job.get("enabled", True):
+    """Next fire time for a job: null when disabled or in the old format, else
+    the live scheduler's value (falling back to a pure projection)."""
+    if not job.get("enabled", True) or not _has_schedule(job):
         return None
     jid = job.get("id")
     if _scheduler is not None and jid:
@@ -139,30 +136,46 @@ def _next_run_iso(job: dict) -> str | None:
 
 # ── Persistence ──────────────────────────────────────────────────────────────
 
+# A job stored in the old format (interval_minutes, no schedule) is listed but
+# never scheduled or run, and the app never changes it on disk.
+OLD_JOB_NOTICE_TITLE = "Old scheduled job is not run"
+OLD_JOB_ERROR = (
+    "This job has no schedule (the old interval_minutes format), so it cannot run. "
+    "Give it a schedule, or delete it and create it again."
+)
 
-def _migrate_job(job: dict) -> dict:
-    """Backfill a job read from disk to the current shape. Idempotent.
 
-    A legacy interval_minutes-only job becomes an equivalent interval schedule
-    with NO change to its cadence (never silently reinterpreted as wall-clock).
-    """
-    if not isinstance(job.get("schedule"), dict):
-        job["schedule"] = {
-            "type": "interval",
-            "seconds": max(10, int(float(job.get("interval_minutes", 60)) * 60)),
-        }
-    job.setdefault("orphaned", False)
-    job.setdefault("schema_version", 2)
-    return job
+def _has_schedule(job: dict) -> bool:
+    """False for a job in the old format (no schedule dict)."""
+    return isinstance(job.get("schedule"), dict)
+
+
+def _report_old_jobs(jobs: list[dict]) -> None:
+    """One notice per stored job in the old format. Nothing on disk changes."""
+    from server.notifications import old_format_notice
+
+    for job in jobs:
+        if _has_schedule(job):
+            continue
+        name = job.get("name") or job.get("id") or "(unnamed)"
+        old_format_notice(
+            title=OLD_JOB_NOTICE_TITLE,
+            message=(
+                f"The job '{name}' in {CRON_PATH} has interval_minutes and no schedule, "
+                "an old format the app no longer reads, so it is not scheduled or run. "
+                "The file is left as it is. Edit the job and give it a schedule, or "
+                "delete it and create it again."
+            ),
+        )
 
 
 def load_cron_jobs() -> list[dict]:
+    """The jobs as stored, unchanged (old-format jobs included)."""
     try:
         with open(CRON_PATH) as f:
-            jobs = json.load(f).get("jobs", [])
+            return json.load(f).get("jobs", [])
     except Exception:
         return []
-    return [_migrate_job(j) for j in jobs]
 
 
 def save_cron_jobs(jobs: list[dict]):
@@ -183,11 +196,15 @@ def save_cron_jobs(jobs: list[dict]):
 
 def _mutate_jobs(fn):
     """Locked read-modify-write on cron_jobs.json. ``fn(jobs)`` mutates the list
-    in place and returns any result value, which this returns."""
+    in place and returns any result value, which this returns. The file is
+    written only when ``fn`` changed something, so a no-op (a refused change, a
+    deleted session that owned no runnable job) leaves it as it is."""
     with _CRON_FILE_LOCK:
         jobs = load_cron_jobs()
+        before = json.dumps(jobs, sort_keys=True, default=str)
         result = fn(jobs)
-        save_cron_jobs(jobs)
+        if json.dumps(jobs, sort_keys=True, default=str) != before:
+            save_cron_jobs(jobs)
         return result
 
 
@@ -331,17 +348,13 @@ async def init_scheduler():
     except Exception as exc:
         log.warning("cron: history init failed: %s", exc)
 
+    jobs = load_cron_jobs()
+    _report_old_jobs(jobs)
     try:
         from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
         _scheduler = AsyncIOScheduler()
         _scheduler.start()
-        jobs = load_cron_jobs()
-        # Normalize the on-disk file once so legacy shapes are written forward.
-        try:
-            save_cron_jobs(jobs)
-        except Exception:
-            pass
         for job in jobs:
             if job.get("enabled", True):
                 _add_job_to_scheduler(job, catch_up=True)
@@ -433,9 +446,9 @@ def _make_runner(job_id: str):
 def _add_job_to_scheduler(job: dict, *, catch_up: bool = False):
     if not _scheduler:
         return
-    if not job.get("enabled", True):
+    if not job.get("enabled", True) or not _has_schedule(job):
         return
-    sch = job.get("schedule") or {}
+    sch = job["schedule"]
     # Never re-arm a one-shot that already fired or whose instant has passed.
     if sch.get("type") == "at":
         if job.get("fired_at"):
@@ -499,6 +512,8 @@ def run_job_now(job_id: str) -> dict:
     job = next((j for j in jobs if j.get("id") == job_id), None)
     if not job:
         return {"error": "job not found"}
+    if not _has_schedule(job):
+        return {"error": OLD_JOB_ERROR}
     with _IN_PROGRESS_LOCK:
         if job_id in _in_progress:
             return {"error": "job is already running"}
@@ -516,7 +531,8 @@ def on_session_deleted(session_id: str) -> None:
     def _orphan(jobs):
         changed = []
         for j in jobs:
-            if j.get("session_id") == session_id:
+            # An old-format job never runs and is left as stored.
+            if j.get("session_id") == session_id and _has_schedule(j):
                 j["enabled"] = False
                 j["orphaned"] = True
                 changed.append(j.get("id", ""))
@@ -542,8 +558,14 @@ def _job_public(job: dict) -> dict:
     """Enrich a stored job for the API: schedule label, next run, run state,
     and owning-session presence/title."""
     out = dict(job)
-    sch = job.get("schedule") or {}
-    out["schedule_label"] = schedule_label(sch)
+    if _has_schedule(job):
+        out["schedule_label"] = schedule_label(job["schedule"])
+    else:
+        # An old-format job never runs, so the API shows it off, whatever the
+        # stored file says.
+        out["schedule_label"] = "not scheduled (old format)"
+        out["enabled"] = False
+        out["old_format"] = True
     out["next_run"] = _next_run_iso(job)
     jid = job.get("id", "")
     with _IN_PROGRESS_LOCK:
@@ -614,10 +636,6 @@ CRON_TOOLS = [
                     "description": "The instruction to execute on each trigger",
                 },
                 "schedule": _SCHEDULE_TOOL_SCHEMA,
-                "interval_minutes": {
-                    "type": "number",
-                    "description": "Deprecated shorthand for {type:'interval'}",
-                },
             },
             "required": ["name", "prompt"],
         },
@@ -736,10 +754,8 @@ def execute_cron_tool(
         if any(j.get("name") == name for j in load_cron_jobs()):
             return json.dumps({"error": f"Job '{name}' already exists. Delete it first."})
         try:
-            schedule = _validate_schedule(
-                tool_input.get("schedule"),
-                legacy_interval_minutes=tool_input.get("interval_minutes"),
-            )
+            reject_interval_minutes(tool_input)
+            schedule = _validate_schedule(tool_input.get("schedule"))
         except ValueError as e:
             return json.dumps({"error": str(e)})
         try:
@@ -781,11 +797,19 @@ def execute_cron_tool(
             patch["prompt"] = tool_input["prompt"].strip()
         if "enabled" in tool_input:
             patch["enabled"] = bool(tool_input["enabled"])
+        try:
+            reject_interval_minutes(tool_input)
+        except ValueError as e:
+            return json.dumps({"error": str(e)})
         if tool_input.get("schedule") is not None:
             try:
                 patch["schedule"] = _validate_schedule(tool_input["schedule"])
             except ValueError as e:
                 return json.dumps({"error": str(e)})
+        # An old-format job never runs: a change that does not give it a schedule
+        # is refused, so it cannot look switched on while it never fires.
+        if "schedule" not in patch and not _has_schedule(job):
+            return json.dumps({"error": OLD_JOB_ERROR})
         if tool_input.get("model") is not None:
             try:
                 patch["model"] = _validate_job_model(tool_input.get("model"))
@@ -809,6 +833,9 @@ def execute_cron_tool(
         job = next((j for j in load_cron_jobs() if j.get("name") == name), None)
         if not job:
             return json.dumps({"error": f"No cron job named '{name}'"})
+        # Refused before any approval card: an old-format job cannot run.
+        if not _has_schedule(job):
+            return json.dumps({"error": OLD_JOB_ERROR})
         # Triggering an unattended run now follows the permission mode
         # (category "cron") for the model; the HTTP route fires it inline.
         payload = {

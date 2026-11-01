@@ -322,9 +322,9 @@ def known_effort_label(value: str | None) -> str | None:
 
 
 def normalize_effort(level: str | None) -> str:
-    """Map legacy/unknown values (e.g. the retired ``'auto'``) and raw wire
-    aliases (``'xhigh'``) onto a known app label so downstream code never sees
-    a stale or provider-specific value."""
+    """Map a raw wire alias (``'xhigh'``) onto its app label and any unknown
+    value onto DEFAULT_EFFORT, so downstream code never sees a provider-specific
+    or unknown value."""
     if level in EFFORT_ORDER:
         return level
     return _LABEL_ALIASES.get(str(level or "").lower(), DEFAULT_EFFORT)

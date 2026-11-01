@@ -7,13 +7,14 @@ then user shell hooks, then trusted project shell hooks. First deny wins;
 input rewrites and context chain in declaration order.
 
 Shell contract:
-- stdin: one JSON payload (schema.build_stdin_payload). Legacy WHISPER_* env
-  vars are also set for existing hooks.
+- stdin: one JSON payload (schema.build_stdin_payload). No hook-specific env
+  vars are set: a hook reads its context from stdin. A command that uses one
+  of the old WHISPER_* variables is not run and counts as a hook failure.
 - exit 0 = pass; stdout, if JSON, may carry {decision, reason, updatedInput,
   additionalContext}; non-JSON stdout on Post/SessionStart becomes context.
 - exit 2 = block; stderr is the model-visible reason.
 - other exit / timeout / spawn error = infra error, resolved per-hook by
-  on_error ("ignore" default, "block" fail-closed).
+  on_error ("ignore" default: logged and skipped; "block": fail-closed).
 Executed via server/sandbox.run_sandboxed (deny-list, process-group kill).
 """
 
@@ -23,7 +24,13 @@ import asyncio
 import json
 import logging
 
-from server.hooks.config_loader import merged_for_event
+from server.hooks.config_loader import (
+    OLD_VARS_NOTICE_TITLE,
+    hook_label,
+    merged_for_event,
+    old_hook_vars,
+    old_vars_message,
+)
 from server.hooks.schema import HookDef, HookOutcome, build_stdin_payload, matches
 from server.infrastructure.paths import data_root
 
@@ -57,18 +64,6 @@ def _run_shell_hook(
 ) -> tuple[int, str, str]:
     from server.sandbox import run_sandboxed
 
-    # Legacy convenience vars (the full payload is also on stdin). Passed via the
-    # subprocess environment, NOT a command prefix — a `VAR=val <command>` prefix
-    # would turn any command starting with a shell compound construct
-    # (if/for/while/case/{}/()) into a /bin/sh syntax error whose exit code (2)
-    # is exactly the engine's DENY code, silently blocking every matched call.
-    env_extra = {
-        "WHISPER_EVENT": payload.get("event", ""),
-        "WHISPER_TOOL": payload.get("tool_name", "") or "",
-        "WHISPER_INPUT": json.dumps(payload.get("tool_input", {}))[:500],
-        "WHISPER_OUTPUT": str(payload.get("tool_output", ""))[:500],
-        "WHISPER_SESSION": payload.get("session_id", ""),
-    }
     # A hook runs automatically on every matched tool call with no card, so it
     # must not write the app's own data or config, or anything outside the
     # connected workspace (the user's permission contract: no silent change
@@ -80,7 +75,6 @@ def _run_shell_hook(
         cwd=cwd,
         timeout=hook.timeout,
         input_data=json.dumps(payload),
-        env_extra=env_extra,
         write_mode="workspace",
         write_root=write_root,
     )
@@ -114,6 +108,21 @@ async def run_hooks(
     for hook in merged_for_event(event, ws):
         if not matches(hook.matcher, tool_name):
             continue
+        old_vars = old_hook_vars(hook.command)
+        if old_vars:
+            # Hooks no longer get the WHISPER_* variables, so this command cannot
+            # do what it was written to do: a hook failure, resolved by on_error
+            # like any other.
+            from server.notifications import old_format_notice
+
+            msg = old_vars_message(hook_label(hook), old_vars)
+            old_format_notice(title=OLD_VARS_NOTICE_TITLE, message=msg)
+            if hook.on_error == "block":
+                outcome.decision = "deny"
+                outcome.reason = f"Hook '{hook.id}' was not run and is fail-closed. {msg}"
+                return outcome
+            outcome.errors.append(f"hook {hook.id}: {msg}")
+            continue
         hook_payload = payload
         if allow_rewrite and outcome.updated_input is not None:
             hook_payload = {**payload, "tool_input": outcome.updated_input}
@@ -126,6 +135,7 @@ async def run_hooks(
                 outcome.decision = "deny"
                 outcome.reason = f"Hook '{hook.id}' failed ({e}) and is fail-closed."
                 return outcome
+            log.warning("Hook %s could not run and was skipped (on_error=ignore): %s", hook.id, e)
             outcome.errors.append(f"hook {hook.id}: {e}")
             continue
 
@@ -138,6 +148,12 @@ async def run_hooks(
                 outcome.decision = "deny"
                 outcome.reason = (stderr or f"Hook exited {code}").strip()
                 return outcome
+            log.warning(
+                "Hook %s exited %s and was skipped (on_error=ignore): %s",
+                hook.id,
+                code,
+                stderr.strip()[:200],
+            )
             outcome.errors.append(f"hook {hook.id}: exit {code}: {stderr.strip()[:200]}")
             continue
 

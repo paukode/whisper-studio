@@ -116,8 +116,10 @@ export const HooksPanel: React.FC = () => {
       closeEditor();
       void queryClient.invalidateQueries({ queryKey: ['hooks'] });
       addToast({ type: 'success', message: editingId !== null ? 'Hook updated' : 'Hook added' });
-    } catch {
-      setError(editingId !== null ? 'Failed to update hook.' : 'Failed to add hook.');
+    } catch (e) {
+      // The server says why (an old hooks.json it will not overwrite, say).
+      const why = e instanceof Error && e.message ? ` ${e.message}` : '';
+      setError((editingId !== null ? 'Failed to update hook.' : 'Failed to add hook.') + why);
     }
   }, [form, editingId, queryClient, closeEditor, addToast]);
 
@@ -136,8 +138,9 @@ export const HooksPanel: React.FC = () => {
       await put(`/api/hooks/${encodeURIComponent(h.id)}`, { ...h, enabled: !h.enabled });
       void queryClient.invalidateQueries({ queryKey: ['hooks'] });
       addToast({ type: 'success', message: h.enabled ? 'Hook disabled' : 'Hook enabled' });
-    } catch {
-      setError('Failed to update hook.');
+    } catch (e) {
+      const why = e instanceof Error && e.message ? ` ${e.message}` : '';
+      setError(`Failed to update hook.${why}`);
     }
   }, [queryClient, addToast]);
 

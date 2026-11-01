@@ -61,27 +61,28 @@ def get_workspace_slug(ws_path: str) -> str:
     return f"{base}-{digest}"
 
 
-def _migrate_legacy_slug_dir(ws_path: str, new_dir: str) -> None:
-    """One-time rename of a pre-disambiguation (basename-only) memory dir to the
-    new realpath-hashed slug.
+OLD_FOLDER_NOTICE_TITLE = "Old memory folder is not read"
 
-    Only runs when unambiguous: the legacy dir exists AND the new dir does not.
-    The old scheme kept exactly one dir per basename, so the first workspace
-    with that basename to access memory after the upgrade adopts it, keeping a
-    single-occupant workspace's memories intact. Refusing to act when the new
-    dir already exists means we never clobber an already-migrated (or freshly
-    created) store. Best-effort: a failed rename must not break memory access.
-    """
-    legacy_slug = _sanitize_basename(ws_path)
-    legacy_dir = os.path.join(MEMORY_BASE, legacy_slug)
-    if legacy_dir == new_dir:
-        return  # the hash suffix makes these differ; guard against edge cases
-    if os.path.isdir(legacy_dir) and not os.path.exists(new_dir):
-        try:
-            os.replace(legacy_dir, new_dir)
-            log.info("Migrated legacy memory dir %s -> %s", legacy_slug, os.path.basename(new_dir))
-        except OSError as e:
-            log.warning("Failed to migrate legacy memory dir %s: %s", legacy_slug, e)
+
+def _report_old_slug_dir(ws_path: str, mem_dir: str) -> None:
+    """Notice for a folder from the old basename-only naming (before the path
+    hash). It is not read, moved or deleted."""
+    name = _sanitize_basename(ws_path)
+    old_dir = os.path.join(MEMORY_BASE, name)
+    # "default" is the folder for memory with no workspace, not an old one.
+    if name == "default" or old_dir == mem_dir or not os.path.isdir(old_dir):
+        return
+    from server.notifications import old_format_notice
+
+    old_format_notice(
+        title=OLD_FOLDER_NOTICE_TITLE,
+        message=(
+            f"Project memory for {ws_path} is kept in {mem_dir}. The folder {old_dir} "
+            "uses the old naming, so the app does not read it and leaves it as it is. "
+            "If its memories belong to this workspace, move the files you want into the "
+            "new folder, then delete the old folder."
+        ),
+    )
 
 
 def get_memory_dir(ws_path: str | None = None) -> str:
@@ -89,8 +90,7 @@ def get_memory_dir(ws_path: str | None = None) -> str:
     slug = get_workspace_slug(ws_path) if ws_path else "default"
     mem_dir = os.path.join(MEMORY_BASE, slug)
     if ws_path:
-        os.makedirs(MEMORY_BASE, exist_ok=True)
-        _migrate_legacy_slug_dir(ws_path, mem_dir)
+        _report_old_slug_dir(ws_path, mem_dir)
     os.makedirs(mem_dir, exist_ok=True)
     return mem_dir
 

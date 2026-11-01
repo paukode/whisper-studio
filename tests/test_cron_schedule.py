@@ -1,4 +1,4 @@
-"""Tests for the wall-clock cron redesign: schedule model, labels, migration,
+"""Tests for the wall-clock cron redesign: schedule model, labels, old-format jobs,
 next-run projection, and the id-based CRUD/tool surface.
 
 The DB-touching helpers (run history, session meta) are pointed at temp paths or
@@ -65,9 +65,14 @@ def test_validate_rejects_bad(bad):
         C._validate_schedule(bad)
 
 
-def test_validate_legacy_interval_minutes_fallback():
-    sch = C._validate_schedule(None, legacy_interval_minutes=1440)
-    assert sch == {"type": "interval", "seconds": 86400}
+def test_interval_minutes_is_refused():
+    # The old shorthand is no longer accepted: the caller is told to send a
+    # schedule instead of getting one guessed for it.
+    with pytest.raises(ValueError, match="interval_minutes is no longer accepted"):
+        CS.reject_interval_minutes({"interval_minutes": 1440})
+    CS.reject_interval_minutes({"schedule": {"type": "interval", "every_minutes": 5}})
+    with pytest.raises(ValueError, match="schedule is required"):
+        C._validate_schedule(None)
 
 
 # ── day_of_week range check (fix 2) ───────────────────────────────────────────
@@ -108,20 +113,6 @@ def test_schedule_label_interval_units():
 def test_schedule_label_single_day():
     sch = {"type": "cron", "hour": 8, "minute": 0, "day_of_week": "mon", "tz": "UTC"}
     assert C.schedule_label(sch).startswith("Mondays at 08:00")
-
-
-def test_migrate_job_backfills_interval():
-    job = C._migrate_job({"id": "x", "name": "legacy", "interval_minutes": 1440})
-    assert job["schedule"] == {"type": "interval", "seconds": 86400}
-    assert job["orphaned"] is False
-    assert job["schema_version"] == 2
-
-
-def test_migrate_job_idempotent():
-    job = {"id": "x", "schedule": {"type": "cron", "hour": 9}, "orphaned": True}
-    out = C._migrate_job(dict(job))
-    assert out["schedule"] == {"type": "cron", "hour": 9}
-    assert out["orphaned"] is True
 
 
 def test_compute_next_run_future_for_daily():
@@ -506,3 +497,186 @@ def test_delete_job_purges_run_history(temp_cron):
     # History rows are gone from both the per-job and recent feeds.
     assert H.list_runs(jid) == []
     assert not any(r["job_id"] == jid for r in H.recent_runs())
+
+
+# ── Old-format jobs (interval_minutes, no schedule) are never run ─────────────
+
+_OLD_JOB = {"id": "old1", "name": "legacy", "prompt": "x", "interval_minutes": 60, "enabled": True}
+
+
+def _store(jobs) -> bytes:
+    """Store jobs the way the app writes the file; return the file's bytes."""
+    C.save_cron_jobs(jobs)
+    return _stored_bytes()
+
+
+def _stored_bytes() -> bytes:
+    with open(C.CRON_PATH, "rb") as f:
+        return f.read()
+
+
+class _Req:
+    def __init__(self, body):
+        self._b = body
+
+    async def json(self):
+        return self._b
+
+
+class _FakeScheduler:
+    """Stands in for APScheduler and records every job it is asked to arm."""
+
+    def __init__(self):
+        self.added = []
+
+    def start(self):
+        pass
+
+    def add_job(self, *a, **k):
+        self.added.append(k)
+
+    def get_job(self, *a, **k):
+        return None
+
+    def remove_job(self, *a, **k):
+        pass
+
+
+@pytest.fixture
+def notices(monkeypatch):
+    import server.notifications as N
+
+    seen = []
+    monkeypatch.setattr(N, "old_format_notice", lambda **kw: seen.append(kw))
+    return seen
+
+
+def test_an_old_job_is_listed_as_stored_and_never_armed(temp_cron, monkeypatch):
+    before = _store([dict(_OLD_JOB)])
+    fake = _FakeScheduler()
+    monkeypatch.setattr(C, "_scheduler", fake)
+
+    [job] = C.load_cron_jobs()
+    assert job == _OLD_JOB  # no schedule filled in
+    public = C._job_public(job)
+    assert public["schedule_label"] == "not scheduled (old format)"
+    assert public["next_run"] is None
+    # Shown off, since it never runs, though the file says enabled.
+    assert public["enabled"] is False and public["old_format"] is True
+    C._add_job_to_scheduler(job, catch_up=True)
+    assert fake.added == []
+    assert _stored_bytes() == before
+
+
+def test_each_old_job_gets_one_notice(temp_cron, notices):
+    fresh = {
+        "id": "n1",
+        "name": "fresh",
+        "prompt": "x",
+        "schedule": {"type": "interval", "seconds": 60},
+    }
+    before = _store([dict(_OLD_JOB), fresh])
+
+    C._report_old_jobs(C.load_cron_jobs())
+
+    [notice] = notices
+    assert notice["title"] == C.OLD_JOB_NOTICE_TITLE
+    assert "'legacy'" in notice["message"] and "interval_minutes" in notice["message"]
+    assert _stored_bytes() == before
+
+
+def test_startup_reports_old_jobs_and_leaves_the_file_alone(temp_cron, monkeypatch, notices):
+    import asyncio
+
+    import apscheduler.schedulers.asyncio as aps
+
+    # monkeypatch restores both globals that init_scheduler sets.
+    monkeypatch.setattr(C, "_scheduler", None)
+    monkeypatch.setattr(C, "_server_loop", None)
+    monkeypatch.setattr(aps, "AsyncIOScheduler", _FakeScheduler)
+    before = _store([dict(_OLD_JOB)])
+
+    asyncio.run(C.init_scheduler())
+
+    assert C._scheduler.added == []
+    assert [n["title"] for n in notices] == [C.OLD_JOB_NOTICE_TITLE]
+    assert _stored_bytes() == before
+
+
+def test_an_old_job_cannot_be_switched_on_run_or_changed_without_a_schedule(temp_cron, monkeypatch):
+    import asyncio
+
+    from fastapi.responses import Response
+
+    monkeypatch.setattr(C, "_scheduler", _FakeScheduler())
+    before = _store([dict(_OLD_JOB, enabled=False)])
+
+    resp = asyncio.run(CR.toggle_cron_job("old1"))
+    assert isinstance(resp, Response) and resp.status_code == 409
+    assert json.loads(resp.body)["error"] == C.OLD_JOB_ERROR
+
+    resp = asyncio.run(CR.update_cron_job("old1", _Req({"enabled": True})))
+    assert isinstance(resp, Response) and resp.status_code == 409
+
+    resp = asyncio.run(CR.run_cron_job("old1"))
+    assert resp.status_code == 409
+    assert C.run_job_now("old1") == {"error": C.OLD_JOB_ERROR}
+
+    res = json.loads(
+        C.execute_cron_tool("cron_update", {"name": "legacy", "enabled": True}, session_id="s")
+    )
+    assert res == {"error": C.OLD_JOB_ERROR}
+    # Refused before any approval card, not after the user approves it.
+    res = json.loads(C.execute_cron_tool("cron_run", {"name": "legacy"}, session_id="s", gate=True))
+    assert res == {"error": C.OLD_JOB_ERROR}
+    assert _stored_bytes() == before
+
+
+def test_giving_an_old_job_a_schedule_makes_it_a_normal_job(temp_cron, monkeypatch):
+    import asyncio
+
+    fake = _FakeScheduler()
+    monkeypatch.setattr(C, "_scheduler", fake)
+    _store([dict(_OLD_JOB)])
+
+    body = {"schedule": {"type": "interval", "every_minutes": 60}}
+    resp = asyncio.run(CR.update_cron_job("old1", _Req(body)))
+    assert resp["updated"] is True
+    assert resp["job"]["schedule"] == {"type": "interval", "seconds": 3600}
+    assert resp["job"]["schedule_label"] != "not scheduled (old format)"
+    assert len(fake.added) == 1
+
+
+def test_deleting_the_session_leaves_an_old_job_as_stored(temp_cron):
+    # Written the way an older app or a hand edit might, not the way this app
+    # formats it, so a rewrite would show.
+    with open(C.CRON_PATH, "w") as f:
+        f.write(json.dumps({"jobs": [dict(_OLD_JOB, session_id="doomed")]}, separators=(",", ":")))
+    before = _stored_bytes()
+    C.on_session_deleted("doomed")
+    assert _stored_bytes() == before
+
+
+def test_interval_minutes_is_refused_by_the_tool_and_the_routes(temp_cron):
+    import asyncio
+
+    from fastapi.responses import Response
+
+    res = json.loads(
+        C.execute_cron_tool(
+            "cron_create", {"name": "n", "prompt": "x", "interval_minutes": 5}, session_id="s"
+        )
+    )
+    assert "interval_minutes is no longer accepted" in res["error"]
+    assert C.load_cron_jobs() == []
+
+    jid = _create_interval_job("alpha")
+    res = json.loads(
+        C.execute_cron_tool("cron_update", {"name": "alpha", "interval_minutes": 5}, session_id="s")
+    )
+    assert "interval_minutes is no longer accepted" in res["error"]
+    resp = asyncio.run(CR.update_cron_job(jid, _Req({"interval_minutes": 5})))
+    assert isinstance(resp, Response) and resp.status_code == 400
+    preview = asyncio.run(CR.preview_schedule(_Req({"interval_minutes": 5})))
+    assert "interval_minutes is no longer accepted" in preview["error"]
+    assert C.load_cron_jobs()[0]["schedule"] == {"type": "interval", "seconds": 300}

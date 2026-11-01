@@ -553,6 +553,7 @@ export const CronPanel: React.FC = () => {
   const toggleMut = useMutation({
     mutationFn: (id: string) => toggleCronJob(id),
     onSuccess: invalidate,
+    onError: (e: unknown) => addToast({ type: 'error', message: e instanceof Error ? e.message : 'Could not switch the task on or off', duration: 4000 }),
   });
 
   const deleteMut = useMutation({

@@ -32,10 +32,14 @@ STORAGE_DIR = storage_root()
 DB_PATH = os.path.join(STORAGE_DIR, "sessions.db")
 
 RETENTION_DAYS = 30
+# Source of the notices about old-format files the app no longer reads (cron
+# jobs, hooks, memory folders); see old_format_notice.
+OLD_FORMAT_SOURCE = "old-format"
 # Sources whose rows record_notification_once relies on to remember that a
 # notice was shown. gc_old keeps them: dropping one would show the notice again.
-# They are a handful of startup notices about old settings (server/main.py).
-ONCE_SOURCES = ("config",)
+# They are a handful of notices about old settings (server/main.py) and old
+# file formats (old_format_notice).
+ONCE_SOURCES = ("config", OLD_FORMAT_SOURCE)
 # Identical (source, title, message, status) rows arriving within this many
 # seconds of the previous occurrence merge into it: count += 1 and the row's
 # created_at slides forward. A steady drip of the same failure therefore
@@ -220,6 +224,29 @@ def record_notification_once(
     except sqlite3.DatabaseError as e:
         log.warning("notifications: record failed: %s", e)
         return None
+
+
+# Old-format notices this process has already handled, keyed by (title,
+# message). The checks behind them run on every load (hooks on every tool
+# call), so each notice is logged once per process and shown in the bell once.
+_old_format_seen: set[tuple[str, str]] = set()
+
+
+def old_format_notice(*, title: str, message: str) -> None:
+    """Say that old-format data on disk is not used: a log warning once per
+    process, and a bell warning the first time only (record_notification_once).
+    Nothing on disk changes. Never raises: callers are on the tool path."""
+    key = (title, message)
+    if key in _old_format_seen:
+        return
+    _old_format_seen.add(key)
+    log.warning("%s: %s", title, message)
+    try:
+        record_notification_once(
+            source=OLD_FORMAT_SOURCE, title=title, message=message, status="warning"
+        )
+    except Exception as e:  # the log line above already carries the notice
+        log.warning("Could not show the notice %r in the app: %s", title, e)
 
 
 def list_notifications(*, limit: int = 50, unread_only: bool = False) -> list[dict]:

@@ -136,17 +136,22 @@ def _norm_day_of_week(value) -> str:
     return dow
 
 
-def validate_schedule(raw: dict | None, *, legacy_interval_minutes=None) -> dict:
+def reject_interval_minutes(body: dict | None) -> None:
+    """Raise ValueError when a request sends interval_minutes, the old shorthand
+    that is no longer accepted, so the caller learns to send ``schedule``."""
+    if isinstance(body, dict) and "interval_minutes" in body:
+        raise ValueError(
+            "interval_minutes is no longer accepted: send schedule instead, "
+            'for example {"type": "interval", "every_minutes": 30}'
+        )
+
+
+def validate_schedule(raw: dict | None) -> dict:
     """Return a normalized schedule dict or raise ValueError.
 
-    Fills tz from the default (host) zone when the caller omits it. Accepts a
-    bare legacy ``interval_minutes`` (from the old tool/API shape) as a fallback
-    so nothing in flight breaks.
+    Fills tz from the default (host) zone when the caller omits it.
     """
     if not isinstance(raw, dict):
-        if legacy_interval_minutes is not None:
-            secs = max(10, int(float(legacy_interval_minutes) * 60))
-            return {"type": "interval", "seconds": secs}
         raise ValueError("schedule is required")
 
     stype = raw.get("type", "interval")
@@ -156,8 +161,6 @@ def validate_schedule(raw: dict | None, *, legacy_interval_minutes=None) -> dict
             secs = int(float(raw["every_minutes"]) * 60)
         elif raw.get("seconds") is not None:
             secs = int(float(raw["seconds"]))
-        elif legacy_interval_minutes is not None:
-            secs = int(float(legacy_interval_minutes) * 60)
         else:
             raise ValueError("interval schedule needs every_minutes or seconds")
         return {"type": "interval", "seconds": max(10, secs)}

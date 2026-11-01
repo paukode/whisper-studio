@@ -7,9 +7,8 @@ Config schema v2 (nested by event):
                         "on_error": "ignore"}],
         "Stop": [...], ...}}
 
-v1 (the legacy flat list, {event,tool,command}) is transparently normalized on
-load so existing user hooks keep working. Matcher: exact name, "*", pipe-list
-("a|b"), or "/regex/". Events without a tool (Stop, SessionStart) ignore it.
+Matcher: exact name, "*", pipe-list ("a|b"), or "/regex/". Events without a
+tool (Stop, SessionStart) ignore it.
 """
 
 from __future__ import annotations
@@ -26,8 +25,6 @@ HOOK_EVENTS = (
     "PostToolUseFailure",
     "Stop",
 )
-# TurnEnd is a config alias of Stop (spec names both; one wire point).
-_EVENT_ALIASES = {"TurnEnd": "Stop"}
 
 STDIN_SCHEMA_VERSION = 1
 DEFAULT_TIMEOUT = 10
@@ -72,10 +69,6 @@ class HookOutcome:
         return self.decision == "deny"
 
 
-def canonical_event(event: str) -> str:
-    return _EVENT_ALIASES.get(event, event)
-
-
 def matches(matcher: str, tool_name: str | None) -> bool:
     """Does a hook's matcher select this tool? Events without a tool always
     match (tool_name is None)."""
@@ -94,39 +87,10 @@ def matches(matcher: str, tool_name: str | None) -> bool:
     return tool_name == m
 
 
-def parse_v1(raw: dict | list | None, *, source: str) -> dict[str, list[HookDef]] | None:
-    """One-shot migration parser for the retired v1 flat-list format:
-    [{event, tool, command}], bare or {"hooks": [...]}-wrapped.
-
-    Returns the parsed {event: [HookDef]} when ``raw`` is v1-shaped, else
-    None. Only ``load_user_hooks`` calls this, and it immediately persists
-    the result as v2 so the old format never loads twice."""
-    items = raw if isinstance(raw, list) else None
-    if items is None and isinstance(raw, dict) and isinstance(raw.get("hooks"), list):
-        items = raw["hooks"]
-    if items is None:
-        return None
-    by_event: dict[str, list[HookDef]] = {e: [] for e in HOOK_EVENTS}
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        ev = canonical_event(item.get("event", ""))
-        if ev not in by_event:
-            continue
-        cmd = (item.get("command") or "").strip()
-        if not cmd:
-            continue
-        by_event[ev].append(
-            HookDef(event=ev, command=cmd, matcher=item.get("tool", "*"), source=source).clamp()
-        )
-    return by_event
-
-
 def normalize_config(raw: dict | list | None, *, source: str) -> dict[str, list[HookDef]]:
     """Return {event: [HookDef]} from the v2 nested dict
-    ({"hooks": {event: [{matcher, command, ...}]}}). Unknown events are
-    dropped; aliases are folded. The retired v1 flat list is not accepted
-    here — user files are upgraded once via ``parse_v1`` on load."""
+    ({"hooks": {event: [{matcher, command, ...}]}}). Events outside
+    HOOK_EVENTS are dropped; the loader reports an old file or event."""
     by_event: dict[str, list[HookDef]] = {e: [] for e in HOOK_EVENTS}
     if not raw:
         return by_event
@@ -134,8 +98,7 @@ def normalize_config(raw: dict | list | None, *, source: str) -> dict[str, list[
     hooks = raw.get("hooks", raw) if isinstance(raw, dict) else {}
     if not isinstance(hooks, dict):
         return by_event
-    for ev_raw, defs in hooks.items():
-        ev = canonical_event(ev_raw)
+    for ev, defs in hooks.items():
         if ev not in by_event or not isinstance(defs, list):
             continue
         for d in defs:
