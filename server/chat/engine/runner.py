@@ -610,7 +610,7 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
                             ev.retryable
                             and not text_streamed
                             and round_retries < _ROUND_RETRIES_MAX
-                            and round_num < max_rounds - 1
+                            and round_num < cap - 1
                         ):
                             round_retries += 1
                             log.warning(
