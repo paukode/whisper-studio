@@ -47,3 +47,15 @@ def test_a_live_run_fails_with_the_reason(no_node):
     result = asyncio.run(run.run())
     assert result["status"] == "failed"
     assert "Node.js was not found" in result["error"]
+
+
+def test_parse_reports_a_node_that_cannot_start(monkeypatch, tmp_path):
+    """A node that resolves but cannot run is reported like a missing one,
+    never as an uncaught OSError or a script problem."""
+    broken = tmp_path / "node"
+    broken.write_text("not a program")
+    broken.chmod(0o644)
+    monkeypatch.setattr(runtime, "_node_bin", lambda: str(broken))
+
+    with pytest.raises(runtime.NodeNotFoundError, match="Node.js could not start"):
+        runtime.parse_workflow(_SCRIPT)

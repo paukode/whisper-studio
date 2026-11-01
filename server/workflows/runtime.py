@@ -101,6 +101,10 @@ def parse_workflow(source: str, *, timeout: float = 10) -> dict:
         )
     except subprocess.TimeoutExpired as e:
         raise ValueError("workflow parse timed out") from e
+    except OSError as e:
+        # The node that resolved cannot start (not executable, wrong CPU
+        # type, removed since). Not a problem with the script.
+        raise NodeNotFoundError(f"Node.js could not start: {e}") from e
     for line in (proc.stdout or "").splitlines():
         line = line.strip()
         if not line:
