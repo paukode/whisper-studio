@@ -31,17 +31,17 @@ PYTHON_SHA256="aa2a054f5e04bde63ae199e3bb6bbb634e457423efd294842deeb1299e7e5932"
 LLAMA_ASSET="llama-${LLAMA_TAG}-bin-macos-arm64.tar.gz"
 LLAMA_URL="https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_TAG}/${LLAMA_ASSET}"
 
-# ffmpeg/ffprobe static arm64 release builds (ffmpeg 8.1.2) from
-# https://ffmpeg.martin-riedl.de (per-binary zips).
-FFMPEG_BUILD_ID="1783011502_8.1.2"
-FFMPEG_BASE_URL="https://ffmpeg.martin-riedl.de/download/macos/arm64/${FFMPEG_BUILD_ID}"
+# ffmpeg/ffprobe: the build in macapp/ffmpeg_pin.env, which setup.sh installs
+# for a source checkout too.
+# shellcheck source=ffmpeg_pin.env
+. "$(dirname "${BASH_SOURCE[0]}")/ffmpeg_pin.env"
 FFMPEG_ZIP_URL="${FFMPEG_BASE_URL}/ffmpeg.zip"
 FFPROBE_ZIP_URL="${FFMPEG_BASE_URL}/ffprobe.zip"
-FFMPEG_ZIP_SHA256="ef1aa60006c7b77ce170c1608c08d8e4ba1c30c5746f2ac986ded932d0ac2c3c"
-FFPROBE_ZIP_SHA256="c39787f4af7a3932502d2d48db6f6feaaa836b48a73ef78c32cc3285df61dfaf"
 
-# Node.js official arm64 macOS build (only bin/node is bundled).
-NODE_VERSION="v22.16.0"
+# Node.js official arm64 macOS build (only bin/node is bundled). The version is
+# the one in .nvmrc, which setup.sh installs into the venv too; NODE_SHA256 is
+# for that version, so a .nvmrc bump without a new checksum stops the build.
+NODE_VERSION="v$(tr -d ' \n' < "$(dirname "${BASH_SOURCE[0]}")/../.nvmrc")"
 NODE_TARBALL="node-${NODE_VERSION}-darwin-arm64.tar.gz"
 NODE_URL="https://nodejs.org/dist/${NODE_VERSION}/${NODE_TARBALL}"
 NODE_SHA256="1d7f34ec4c03e12d8b33481e5c4560432d7dc31a0ef3ff5a4d9a8ada7cf6ecc9"
