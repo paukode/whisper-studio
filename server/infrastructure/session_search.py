@@ -28,6 +28,7 @@ False and callers fall back to their pre-FTS behaviour.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -174,9 +175,14 @@ def _state(conn: sqlite3.Connection, session_id: str) -> tuple[int, dict | None]
         return seq, None
 
 
+def _digest(text: str) -> str:
+    """A short content digest: two texts of the same length still differ."""
+    return hashlib.blake2b(text.encode("utf-8"), digest_size=8).hexdigest()
+
+
 def _message_rows(session_id: str, history: list | None) -> tuple[list[tuple], list[tuple]]:
     """(rows, signatures) for every message: rows are (index, kind, role, text)
-    and a signature is (role, text length, tool length), cheap to compare
+    and a signature is (role, text digest, tool digest), cheap to compare
     across saves. Messages without indexable text still get a signature so
     positions stay aligned with the history."""
     rows: list[tuple] = []
@@ -187,7 +193,7 @@ def _message_rows(session_id: str, history: list | None) -> tuple[list[tuple], l
             continue
         text, tool = _split_content(msg.get("content"))
         text, tool = text.strip(), tool.strip()
-        sigs.append((msg["role"], len(text), len(tool)))
+        sigs.append((msg["role"], _digest(text), _digest(tool)))
         if text:
             rows.append((i, _KIND_TEXT, msg["role"], text[:MAX_INDEXED_CHARS]))
         if tool:
@@ -248,7 +254,7 @@ def reindex_session(
         seq, prev = _state(conn, session_id)
         msg_rows, msg_sigs = _message_rows(session_id, history)
         seg_texts = _segment_texts(segments)
-        seg_sigs = [len(t) for t in seg_texts]
+        seg_sigs = [_digest(t) for t in seg_texts]
         base = seq * _SPAN
 
         if prev is None:
