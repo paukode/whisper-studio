@@ -152,7 +152,6 @@ def test_output_chars_and_truncated_describe_what_the_model_received(monkeypatch
     from server.infrastructure import result_cache
 
     monkeypatch.setattr(result_cache, "write", lambda name, output: "cached.txt")
-    monkeypatch.setattr(result_cache, "relative_path", lambda name: f"result_cache/{name}")
     big = "y" * (TOOL_RESULT_BUDGET_BYTES + 100)
     small = "fine"
     events: list[dict] = []

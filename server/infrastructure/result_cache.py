@@ -44,11 +44,6 @@ def cache_dir() -> str:
     return os.path.join(data_root(), "result_cache")
 
 
-def relative_path(filename: str) -> str:
-    """The path shown in messages/UI — real and repo-relative."""
-    return f"data/result_cache/{filename}"
-
-
 def is_safe_filename(filename: str) -> bool:
     return (
         bool(_SAFE_FILENAME.match(filename))

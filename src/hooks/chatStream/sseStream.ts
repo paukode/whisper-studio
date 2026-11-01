@@ -885,7 +885,7 @@ export async function readSSEStream(
           }
 
           // ── tool_result_truncated ──
-          // Backend persists oversize tool outputs to data/result_cache/ and
+          // Backend persists oversize tool outputs to the result cache and
           // emits this event so the UI can tell the user the model saw a
           // trimmed head+tail slice. Toast links to the full output via
           // /api/result-cache/{filename}.
@@ -895,7 +895,6 @@ export async function readSSEStream(
               full_size?: number;
               kept_bytes?: number;
               cache_filename?: string | null;
-              cache_path?: string | null;
             };
             const tool = t.tool_name ?? 'tool';
             const sizeKb = t.full_size ? Math.round(t.full_size / 1024) : null;

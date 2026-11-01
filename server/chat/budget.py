@@ -64,14 +64,13 @@ def make_budget_tool_result(events: list[dict] | None):
                             "full_size": full_size,
                             "kept_bytes": len(kept.encode("utf-8")),
                             "cache_filename": fname,
-                            "cache_path": result_cache.relative_path(fname),
                         }
                     }
                 )
             return (
                 f"{kept}\n\n"
-                f"[Output truncated to head+tail — full result ({len(tool_output):,} chars) "
-                f"saved to {result_cache.relative_path(fname)}]\n"
+                f"[Output truncated to head+tail: full result ({len(tool_output):,} chars) "
+                f"saved to the result cache as '{fname}']\n"
                 f"To read the omitted middle, call read_cached_result with filename "
                 f"'{fname}' and offset/limit."
             )
@@ -85,7 +84,6 @@ def make_budget_tool_result(events: list[dict] | None):
                             "full_size": full_size,
                             "kept_bytes": len(kept.encode("utf-8")),
                             "cache_filename": None,
-                            "cache_path": None,
                         }
                     }
                 )

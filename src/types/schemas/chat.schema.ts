@@ -258,7 +258,6 @@ export const SSEEventDataSchema = z.object({
     full_size: z.number().optional(),
     kept_bytes: z.number().optional(),
     cache_filename: z.string().nullable().optional(),
-    cache_path: z.string().nullable().optional(),
   }).optional(),
 
   // Usage/tokens

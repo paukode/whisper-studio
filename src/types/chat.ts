@@ -591,13 +591,12 @@ export interface SSEEventData {
    *  cron_event. Dispatched as a fresh ChatMessage with role='session_message'. */
   session_message?: SessionMessagePayload;
 
-  // Tool result truncation (oversize tool outputs persisted to .whisper_cache/)
+  // Tool result truncation (oversize tool outputs persisted to the result cache)
   tool_result_truncated?: {
     tool_name?: string;
     full_size?: number;
     kept_bytes?: number;
     cache_filename?: string | null;
-    cache_path?: string | null;
   };
 
   // Usage/tokens
