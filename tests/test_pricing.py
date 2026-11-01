@@ -190,10 +190,10 @@ def test_anthropic_cache_buckets_are_additive():
 
 
 def test_claude_cache_write_is_the_rate_of_the_ttl_the_app_sends():
-    # Chat and cron checkpoints carry cache_ttl_for(model id), and Bedrock bills
-    # 1-hour writes at 2x input and 5-minute writes at 1.25x. A 1-hour row priced
-    # at the 5-minute rate under-counts every write by 37.5%.
-    from server.chat.caching import cache_ttl_for
+    # Chat and cron checkpoints carry CACHE_TTL, and Bedrock bills 1-hour
+    # writes at 2x input and 5-minute writes at 1.25x. A 1-hour row priced at
+    # the 5-minute rate under-counts every write by 37.5%.
+    from server.chat.caching import CACHE_TTL
     from server.openai_bedrock.runtime import is_openai_model
 
     write_multiplier = {"1h": 2.0, "5m": 1.25}
@@ -202,7 +202,7 @@ def test_claude_cache_write_is_the_rate_of_the_ttl_the_app_sends():
         if "anthropic.claude" not in str(model_id):
             continue
         rates = get_model_pricing(key)
-        ttl = cache_ttl_for(model_id)
+        ttl = CACHE_TTL
         assert rates["cache_write"] == pytest.approx(write_multiplier[ttl] * rates["input"]), (
             f"{key} gets a {ttl} TTL but cache_write is {rates['cache_write']}"
         )

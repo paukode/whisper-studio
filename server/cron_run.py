@@ -324,7 +324,7 @@ async def _execute_cron_prompt(job_id: str) -> None:
                 session_id=session_id,
             )
         else:
-            from server.chat.caching import cache_ttl_for
+            from server.chat.caching import CACHE_TTL
             from server.chat.engine.anthropic import AnthropicAdapter
 
             adapter = AnthropicAdapter(
@@ -338,7 +338,7 @@ async def _execute_cron_prompt(job_id: str) -> None:
                 system_static=system,
                 system_dynamic="",
                 caching_on=_caching_on,
-                cache_ttl=cache_ttl_for(model_id),
+                cache_ttl=CACHE_TTL,
                 effort_label=_effort_label,
                 loop=loop,
                 executor=_CRON_EXECUTOR,
