@@ -45,9 +45,8 @@ def _seed():
         conn.execute("UPDATE sessions SET title = 'Dataclasses' WHERE id = 'py'")
 
 
-def test_fts_is_available_and_mirrors_appends():
+def test_fts_mirrors_appends():
     _seed()
-    assert ss.available() is True
     hits = ss.search("kubernetes deployment")
     assert [h["session_id"] for h in hits] == ["kube"]
     assert hits[0]["title"] == "K8s rollback" and hits[0]["msg_index"] == 0

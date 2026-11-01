@@ -58,10 +58,6 @@ def execute_session_search(tool_input: dict, session_id: str = "") -> str:
         return json.dumps({"shape": "read", **view})
 
     if query:
-        if not _ss.available():
-            return json.dumps(
-                {"error": "full-text search is unavailable in this build (SQLite without FTS5)"}
-            )
         roles: tuple[str, ...] = _ss.MODEL_ROLES
         if tool_input.get("include_tool_output"):
             roles = (*roles, "tool")

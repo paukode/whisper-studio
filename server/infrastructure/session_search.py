@@ -22,8 +22,8 @@ the persisted history does not, and ``session_search`` can pull any
 summarized-away message back verbatim.
 
 FTS5 is compiled into every Python this app ships with (verified in the venv
-and the standalone macOS build); should it be missing, ``available()`` is
-False and callers fall back to their pre-FTS behaviour.
+and the standalone macOS build); a build without it fails when the mirror
+table is created.
 """
 
 from __future__ import annotations
@@ -50,7 +50,6 @@ DEFAULT_LIMIT = 5
 
 _MARK_L = "\x02"
 _MARK_R = "\x03"
-_fts_ok: bool | None = None
 
 
 def _split_content(content) -> tuple[str, str]:
@@ -101,39 +100,20 @@ _KIND_TEXT = 0
 _KIND_TOOL = 1
 
 
-def ensure_fts(conn: sqlite3.Connection) -> bool:
+def ensure_fts(conn: sqlite3.Connection) -> None:
     """Create the FTS5 mirror table (and its per-session slot table) if needed.
-    False when FTS5 is unavailable."""
-    global _fts_ok
-    try:
-        conn.execute(
-            f"CREATE VIRTUAL TABLE IF NOT EXISTS {FTS_TABLE} USING fts5("
-            "session_id UNINDEXED, msg_index UNINDEXED, role UNINDEXED, text, "
-            "tokenize='porter unicode61')"
-        )
-        conn.execute(
-            f"CREATE TABLE IF NOT EXISTS {STATE_TABLE} ("
-            "seq INTEGER PRIMARY KEY AUTOINCREMENT, "
-            "session_id TEXT NOT NULL UNIQUE, "
-            "title TEXT, msg_sigs TEXT, seg_sigs TEXT)"
-        )
-        _fts_ok = True
-    except sqlite3.OperationalError as e:
-        if _fts_ok is not False:
-            log.warning("session search: FTS5 unavailable (%s); falling back to scans", e)
-        _fts_ok = False
-    return _fts_ok
-
-
-def available(conn: sqlite3.Connection | None = None) -> bool:
-    if _fts_ok is not None and conn is None:
-        return _fts_ok
-    if conn is None:
-        from server.infrastructure.sessions import _get_conn
-
-        with _get_conn() as c:
-            return ensure_fts(c)
-    return ensure_fts(conn)
+    A SQLite without FTS5 raises sqlite3.OperationalError."""
+    conn.execute(
+        f"CREATE VIRTUAL TABLE IF NOT EXISTS {FTS_TABLE} USING fts5("
+        "session_id UNINDEXED, msg_index UNINDEXED, role UNINDEXED, text, "
+        "tokenize='porter unicode61')"
+    )
+    conn.execute(
+        f"CREATE TABLE IF NOT EXISTS {STATE_TABLE} ("
+        "seq INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "session_id TEXT NOT NULL UNIQUE, "
+        "title TEXT, msg_sigs TEXT, seg_sigs TEXT)"
+    )
 
 
 def _segment_texts(segments) -> list[str]:
@@ -237,10 +217,10 @@ def reindex_session(
     rows from the first changed position onward are rewritten. A streaming
     save that grows the last message rewrites one message; an edit to an
     early message or a compaction that rewrites the list reindexes from that
-    point. Best-effort: never raises into the caller's save."""
+    point. A failure is logged and never raises into the caller's save, so
+    the user's messages are stored even when the search mirror is not."""
     try:
-        if not ensure_fts(conn):
-            return
+        ensure_fts(conn)
         if segments is None or title is None:
             row = conn.execute(
                 "SELECT title, segments FROM sessions WHERE id = ?", (session_id,)
@@ -304,13 +284,12 @@ def reindex_session(
             (title, json.dumps(msg_sigs), json.dumps(seg_sigs), seq),
         )
     except sqlite3.Error as e:
-        log.debug("session search reindex skipped for %s: %s", session_id, e)
+        log.warning("session search reindex failed for %s: %s", session_id, e)
 
 
 def drop_session(conn: sqlite3.Connection, session_id: str) -> None:
     try:
-        if not ensure_fts(conn):
-            return
+        ensure_fts(conn)
         row = conn.execute(
             f"SELECT seq FROM {STATE_TABLE} WHERE session_id = ?", (session_id,)
         ).fetchone()
@@ -321,13 +300,12 @@ def drop_session(conn: sqlite3.Connection, session_id: str) -> None:
             )
             conn.execute(f"DELETE FROM {STATE_TABLE} WHERE session_id = ?", (session_id,))
     except sqlite3.Error as e:
-        log.debug("session search drop skipped for %s: %s", session_id, e)
+        log.warning("session search drop failed for %s: %s", session_id, e)
 
 
 def rebuild_all(conn: sqlite3.Connection) -> int:
     """Re-mirror every session from scratch. Returns the number indexed."""
-    if not ensure_fts(conn):
-        return 0
+    ensure_fts(conn)
     conn.execute(f"DELETE FROM {FTS_TABLE}")
     conn.execute(f"DELETE FROM {STATE_TABLE}")
     rows = conn.execute("SELECT id, title, segments, chat_history FROM sessions").fetchall()
@@ -402,15 +380,13 @@ def search(
 ) -> list[dict]:
     """Discovery: best hit per session, ranked. Each result carries the
     session id and title, the matched message index and role, and a short
-    plain-text snippet. Empty when FTS5 is unavailable (callers fall back).
-    ``prefix`` skips the raw-syntax attempt and matches partial words."""
+    plain-text snippet. ``prefix`` skips the raw-syntax attempt and matches partial words."""
     from server.infrastructure.sessions import _get_conn
 
     limit = max(1, min(int(limit or DEFAULT_LIMIT), 50))
     roles = tuple(roles) or MODEL_ROLES
     with _get_conn() as conn:
-        if not ensure_fts(conn):
-            return []
+        ensure_fts(conn)
         raw = (query or "").strip()
         rows = []
         if raw and not prefix:
@@ -424,11 +400,7 @@ def search(
             # the sidebar's as-you-type search).
             expr = _safe_match(raw, prefix=prefix)
             if expr:
-                try:
-                    rows = _run_match(conn, expr, roles, limit * 8)
-                except sqlite3.OperationalError as e:
-                    log.debug("session search query failed: %s", e)
-                    rows = []
+                rows = _run_match(conn, expr, roles, limit * 8)
         best: dict[str, dict] = {}
         for r in rows:
             sid = r["session_id"]
@@ -569,7 +541,6 @@ __all__ = [
     "SIDEBAR_ROLES",
     "TITLE_INDEX",
     "TRANSCRIPT_BASE",
-    "available",
     "browse",
     "drop_session",
     "ensure_fts",

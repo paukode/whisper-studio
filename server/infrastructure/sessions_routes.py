@@ -20,7 +20,6 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from server.infrastructure import sessions as _s
 from server.infrastructure.sessions import (
     CRON_INBOX_ID,
-    PROMPT_ROLES,
     _delete_session_sync,
     _get_conn,
     _lock_for,
@@ -56,97 +55,31 @@ def _message_text(content) -> str:
     return ""
 
 
-_SNIPPET_RADIUS = 40
-
-
-def _snippet(text: str, start: int, end: int) -> str:
-    """A short window of context around a match, flattened to one line."""
-    lo = max(0, start - _SNIPPET_RADIUS)
-    hi = min(len(text), end + _SNIPPET_RADIUS)
-    core = " ".join(text[lo:hi].split())
-    return ("…" if lo > 0 else "") + core + ("…" if hi < len(text) else "")
-
-
-def _search_session_row(row, pattern: re.Pattern) -> str | None:
-    """First match snippet for one session, or None.
-
-    Searches user/assistant message text first (what search users usually
-    mean by "content"), then transcript segment text. UI-only roles
-    (cron_event) never match, mirroring visible_chat_history.
-    """
-    try:
-        history = json.loads(row["chat_history"]) or []
-    except (TypeError, ValueError):
-        history = []
-    for msg in history:
-        if not isinstance(msg, dict) or msg.get("role") not in PROMPT_ROLES:
-            continue
-        text = _message_text(msg.get("content"))
-        m = pattern.search(text)
-        if m:
-            return _snippet(text, m.start(), m.end())
-    try:
-        segments = json.loads(row["segments"]) or []
-    except (TypeError, ValueError):
-        segments = []
-    for seg in segments:
-        text = seg.get("text") if isinstance(seg, dict) else None
-        if not isinstance(text, str):
-            continue
-        m = pattern.search(text)
-        if m:
-            return _snippet(text, m.start(), m.end())
-    return None
-
-
 # NOTE: declared before GET /api/sessions/{session_id}; FastAPI matches in
 # declaration order, so a later literal path would be captured as an id.
 @router.get("/api/sessions/search")
 async def search_sessions(q: str = "", limit: int = 50):
-    """Case-insensitive substring search over session content.
+    """Full-text search over session content (prefix-matched words).
 
     Backs the sidebar's optional "Search message content" toggle: the
     title-only filter stays client-side, this endpoint reports which
-    sessions ALSO match by message/transcript text, newest first, with a
-    snippet explaining the hit. Scanning every blob is fine at the current
-    scale (tens of sessions, a few hundred KB total); an FTS index is the
-    upgrade path if that ever changes.
+    sessions ALSO match by message/transcript text, with a snippet
+    explaining the hit.
     """
     needle = q.strip()
     if not needle:
         return {"results": [], "truncated": False}
     limit = max(1, min(limit, 200))
-    # FTS5 first (the same index the model's session_search tool uses); the
-    # regex scan below stays as the fallback for a build without FTS5.
+    # The same FTS5 index the model's session_search tool uses.
     from server.infrastructure import session_search as _fts
 
-    if _fts.available():
-        hits = _fts.search(needle, limit=limit, prefix=True, roles=_fts.SIDEBAR_ROLES)
-        return {
-            "results": [{"id": h["session_id"], "snippet": h["snippet"]} for h in hits],
-            "truncated": len(hits) >= limit,
-        }
-    pattern = re.compile(re.escape(needle), re.IGNORECASE)
-
-    def _all_rows():
-        with _get_conn() as conn:
-            return conn.execute(
-                "SELECT id, chat_history, segments FROM sessions ORDER BY updated_at DESC"
-            ).fetchall()
-
-    rows = await asyncio.to_thread(_all_rows)
-    results = []
-    truncated = False
-    for i, row in enumerate(rows):
-        snippet = _search_session_row(row, pattern)
-        if snippet is not None:
-            results.append({"id": row["id"], "snippet": snippet})
-            if len(results) >= limit:
-                # Unscanned rows may hold more matches; tell the client so
-                # capped results are never mistaken for a complete answer.
-                truncated = i < len(rows) - 1
-                break
-    return {"results": results, "truncated": truncated}
+    hits = await asyncio.to_thread(
+        _fts.search, needle, limit=limit, prefix=True, roles=_fts.SIDEBAR_ROLES
+    )
+    return {
+        "results": [{"id": h["session_id"], "snippet": h["snippet"]} for h in hits],
+        "truncated": len(hits) >= limit,
+    }
 
 
 def _load_session(session_id: str) -> dict | None:

@@ -17,5 +17,5 @@ DESCRIPTION = "Rebuild the session search mirror with content-digest signatures"
 def migrate(conn: sqlite3.Connection) -> None:
     from server.infrastructure.session_search import ensure_fts, rebuild_all
 
-    if ensure_fts(conn):
-        rebuild_all(conn)
+    ensure_fts(conn)
+    rebuild_all(conn)
