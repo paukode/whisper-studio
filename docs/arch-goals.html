@@ -249,7 +249,8 @@
       <code>GET / POST / DELETE /api/sessions/{session_id}/goal/gates</code>.</p>
     <ul>
       <li>Each gate runs in the workspace with a <b>300 second</b> timeout; a timeout counts as a failure
-        with no exit code.</li>
+        with no exit code. When the session's workspace folder no longer exists, the gate fails with
+        "workspace not found" and nothing runs.</li>
       <li>Each gate runs under the macOS sandbox, like a confined terminal command: it may write only in
         the workspace, the session's scratch folder and temp, and it cannot read the credential stores.
         Without the sandbox the gate is refused, nothing runs, and the gate counts as failed with the

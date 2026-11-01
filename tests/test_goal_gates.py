@@ -92,6 +92,18 @@ def test_run_gate_is_confined_to_the_workspace(tmp_path, monkeypatch):
     assert seen["write_root"] is None and seen["cwd"] == os.path.expanduser("~")
 
 
+def test_run_gate_fails_when_the_workspace_is_gone(tmp_path, monkeypatch):
+    """A set workspace that is no longer a directory fails the gate; it never
+    runs in $HOME instead."""
+    calls = []
+    monkeypatch.setattr(g, "run_sandboxed", lambda command, **kw: calls.append(kw))
+    gone = str(tmp_path / "deleted")
+    res = g.run_gate("make test", gone)
+    assert not res.passed and res.exit_code is None
+    assert res.tail == f"workspace not found: {gone}"
+    assert calls == []
+
+
 def test_run_gate_refused_without_the_sandbox(tmp_path, monkeypatch):
     from server import sandbox
 

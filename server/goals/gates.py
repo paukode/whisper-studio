@@ -52,9 +52,13 @@ def run_gate(
     """Run one gate command in the workspace under the sandbox. Never raises.
 
     Writes are confined to the workspace, ``scratch_dir`` and temp. Without a
-    workspace the gate starts in $HOME and writes no tree. When sandbox-exec
-    cannot be used the gate is refused: a failed result with the reason."""
-    ws = workspace if workspace and os.path.isdir(workspace) else None
+    workspace the gate starts in $HOME and writes no tree. A workspace path
+    that is no longer a directory fails the gate and runs nothing. When
+    sandbox-exec cannot be used the gate is refused: a failed result with the
+    reason."""
+    if workspace and not os.path.isdir(workspace):
+        return GateResult(command, False, None, f"workspace not found: {workspace}")
+    ws = workspace or None
     try:
         proc = run_sandboxed(
             command,
