@@ -250,6 +250,10 @@
     <ul>
       <li>Each gate runs in the workspace with a <b>300 second</b> timeout; a timeout counts as a failure
         with no exit code.</li>
+      <li>Each gate runs under the macOS sandbox, like a confined terminal command: it may write only in
+        the workspace, the session's scratch folder and temp, and it cannot read the credential stores.
+        Without the sandbox the gate is refused, nothing runs, and the gate counts as failed with the
+        reason as its output.</li>
       <li>On failure the feedback embeds the exit code and the last 3,000 characters of output for the
         first two failing gates, then names how many more also failed, and ends by saying the gate re-runs
         at the next turn boundary. So a gate whose input the model just repaired passes next time.</li>

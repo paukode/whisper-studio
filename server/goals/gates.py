@@ -9,12 +9,20 @@ become the continuation feedback, and the evaluator is not called at all.
 Every boundary re-runs a failed gate against the current tree, so a gate whose
 input the agent just repaired passes on the next boundary. Retries are bounded
 per gate (default 3); an exhausted gate pauses the goal instead of looping.
+
+A gate runs under the macOS sandbox like a confined terminal_run command:
+writes are confined to the workspace (plus the session's scratch folder and
+temp), the credential deny-list applies, and without sandbox-exec the gate is
+refused and nothing runs.
 """
 
 from __future__ import annotations
 
+import os
 import subprocess
 from dataclasses import dataclass
+
+from server.sandbox import SandboxUnavailableError, run_sandboxed
 
 GATE_MAX_RETRIES = 3
 GATE_TIMEOUT_SECONDS = 300
@@ -35,18 +43,29 @@ def _tail(text: str) -> str:
 
 
 def run_gate(
-    command: str, workspace: str | None, *, timeout: int = GATE_TIMEOUT_SECONDS
+    command: str,
+    workspace: str | None,
+    *,
+    timeout: int = GATE_TIMEOUT_SECONDS,
+    scratch_dir: str | None = None,
 ) -> GateResult:
-    """Run one gate command in the workspace. Never raises."""
+    """Run one gate command in the workspace under the sandbox. Never raises.
+
+    Writes are confined to the workspace, ``scratch_dir`` and temp. Without a
+    workspace the gate starts in $HOME and writes no tree. When sandbox-exec
+    cannot be used the gate is refused: a failed result with the reason."""
+    ws = workspace if workspace and os.path.isdir(workspace) else None
     try:
-        proc = subprocess.run(
+        proc = run_sandboxed(
             command,
-            shell=True,
-            cwd=workspace or None,
-            capture_output=True,
-            text=True,
+            cwd=ws or os.path.expanduser("~"),
             timeout=timeout,
+            write_mode="workspace",
+            write_root=ws,
+            scratch_dir=scratch_dir,
         )
+    except SandboxUnavailableError as e:
+        return GateResult(command, False, None, str(e))
     except subprocess.TimeoutExpired:
         return GateResult(command, False, None, f"timed out after {timeout}s")
     except Exception as e:  # noqa: BLE001
@@ -55,8 +74,10 @@ def run_gate(
     return GateResult(command, proc.returncode == 0, proc.returncode, _tail(out.strip()))
 
 
-def run_gates(commands: list[str], workspace: str | None) -> list[GateResult]:
-    return [run_gate(c, workspace) for c in commands if (c or "").strip()]
+def run_gates(
+    commands: list[str], workspace: str | None, scratch_dir: str | None = None
+) -> list[GateResult]:
+    return [run_gate(c, workspace, scratch_dir=scratch_dir) for c in commands if (c or "").strip()]
 
 
 def format_failure(results: list[GateResult]) -> str:

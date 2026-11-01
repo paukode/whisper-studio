@@ -329,8 +329,14 @@ async def run_completion_gate(ctx: GateContext) -> GateDecision:
     gates = goal_store.get_gates(ctx.session_id)
     if gates:
         from server.goals.gates import GATE_MAX_RETRIES, format_failure, run_gates
+        from server.workspace.paths import own_scratch_dir
 
-        results = await asyncio.to_thread(run_gates, [g["command"] for g in gates], ctx.workspace)
+        results = await asyncio.to_thread(
+            run_gates,
+            [g["command"] for g in gates],
+            ctx.workspace,
+            own_scratch_dir(ctx.session_id),
+        )
         updated = goal_store.record_gate_results(
             ctx.session_id, {r.command: r.passed for r in results}
         )
