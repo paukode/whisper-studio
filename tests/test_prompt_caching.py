@@ -61,7 +61,7 @@ def test_static_holds_identity_and_dynamic_holds_memory():
 
 def test_no_dynamic_layer_section_uses_prepend():
     """Byte-equality of the split relies on no dynamic-layer (>=40) section
-    using prepend (the legacy builder front-loads all prepend sections)."""
+    using prepend (the split raises on one)."""
     for section in get_registry().get_sections():
         if int(section.layer) >= int(PromptLayer.DYNAMIC):
             assert not section.prepend, f"dynamic section {section.name!r} uses prepend"

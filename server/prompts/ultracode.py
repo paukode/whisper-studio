@@ -114,13 +114,10 @@ workflow — a saved script the user approved runs by name with no card, and
 def build_ultracode_directive() -> str:
     """The directive plus a live listing of the user's saved workflows so the
     model can invoke them by name (like skills)."""
-    directive = _BASE
-    try:
-        from server.workflows import store
+    from server.workflows import store
 
-        saved = store.list_scripts()
-    except Exception:
-        saved = []
+    directive = _BASE
+    saved = store.list_scripts()
     if saved:
         lines = "\n".join(
             f"- `{s['name']}`{' (trusted)' if s.get('trusted') else ''}: {s.get('description', '')}"
