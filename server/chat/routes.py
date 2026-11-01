@@ -69,7 +69,12 @@ from .infra import (  # noqa: E402
     _get_default_model,
     _turn_catalog,
 )
-from .local_refusals import btw_refusal, subagent_refusal  # noqa: E402
+from .local_refusals import (  # noqa: E402
+    btw_refusal,
+    sse_error,
+    subagent_refusal,
+    unknown_model_message,
+)
 
 log = logging.getLogger("whisper-studio")
 
@@ -949,15 +954,20 @@ async def generate_title_endpoint(request: Request):
             source="title",
             session_id=title_session,
         )
-        text = result.get("content", [{}])[0].get("text", "New Conversation")
+        blocks = result.get("content") or [{}]
+        text = str(blocks[0].get("text") or "").strip()
+        if not text:
+            raise RuntimeError("the model returned no title")
         return _clean_title(text)
 
     try:
         title = await loop.run_in_executor(executor, _call)
-        return {"title": title}
     except Exception as e:
+        # A failed title is an error the client sees (it keeps its current
+        # title and asks again after the next exchange), never a fake title.
         log.error("Title generation error: %s", e)
-        return {"title": "New Conversation"}
+        return JSONResponse({"error": f"Title generation failed: {e}"}, status_code=502)
+    return {"title": title}
 
 
 @router.post("/api/teams/{team_id}/stop")
@@ -993,7 +1003,7 @@ async def subagent_stream_endpoint(request: Request):
 
     body = await request.json()
     task = (body.get("task") or "").strip()
-    model_key = body.get("model", _get_default_model())
+    model_key = body.get("model") or _get_default_model()
     session_id = body.get("session_id") or "subagent"
 
     if not task:
@@ -1007,11 +1017,9 @@ async def subagent_stream_endpoint(request: Request):
     if (refused := subagent_refusal(model_key)) is not None:
         return refused
     chat_models = _get_chat_models()
-    model_id = (
-        chat_models.get(model_key)
-        or chat_models.get("sonnet5.5")
-        or next(iter(chat_models.values()))
-    )
+    if model_key not in chat_models:
+        return sse_error(unknown_model_message(model_key))
+    model_id = chat_models[model_key]
 
     # The frontend supplies a stable team_id up front so its Stop button can
     # abort this exact stream; fall back to a generated id for direct callers.
@@ -1190,13 +1198,11 @@ async def btw_endpoint(request: Request):
 
     # Use up to the last 4 messages as lightweight context (read-only)
     recent_history = body.get("recent_history", [])[-4:]
-    model_key = body.get("model", _get_default_model())
+    model_key = body.get("model") or _get_default_model()
     chat_models = _get_chat_models()
-    model_id = (
-        chat_models.get(model_key)
-        or chat_models.get("sonnet5.5")
-        or next(iter(chat_models.values()))
-    )
+    if model_key not in chat_models:
+        return sse_error(unknown_model_message(model_key))
+    model_id = chat_models[model_key]
 
     from server.prompts.rules import append_rules
 
@@ -1303,7 +1309,8 @@ async def chat_endpoint(request: Request):
     transcript = body.get("transcript", "")
     chat_history = body.get("history", [])
     attachment_ids = body.get("attachment_ids", [])
-    model_key = body.get("model", _get_default_model())
+    # Resolved against the turn's catalog in _build_turn.
+    model_key = body.get("model")
     force_skill = body.get("force_skill")
     session_id = body.get("session_id", "default")
     # Feature 16: brief mode
@@ -1522,10 +1529,7 @@ async def chat_endpoint(request: Request):
         model_id = ""
         _refusal, _refusal_code = None, ""
         if model_key and model_key not in chat_models:
-            _refusal = (
-                f"{model_key} is not an available chat model (it may have been removed). "
-                "Pick one from the model menu."
-            )
+            _refusal = unknown_model_message(model_key)
             _refusal_code = "UNKNOWN_MODEL"
         elif model_key:
             # Apply model fallback chain if enabled

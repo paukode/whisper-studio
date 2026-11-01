@@ -84,3 +84,45 @@ def test_local_mode_title_of_unlabelled_text_uses_its_first_line(monkeypatch):
     title = client.post("/api/generate-title", json={"text": "\n  Fix the parser\nmore"}).json()
     assert title["title"] == _clean_title("Fix the parser")
     assert requested == []
+
+
+# ── Cloud: a failed title is an error, never a made-up name ──────────────────
+
+
+def _cloud_client(monkeypatch, invoke):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from server.chat import routes
+
+    monkeypatch.setattr("server.infrastructure.model_mode.current_mode", lambda *a, **k: "cloud")
+    monkeypatch.setattr(routes, "_get_chat_models", lambda: {"haiku": "anthropic.haiku-x"})
+    monkeypatch.setattr(routes, "_get_bedrock_client", lambda: object())
+    monkeypatch.setattr("server.costs.calls.invoke_claude", invoke)
+    app = FastAPI()
+    app.include_router(routes.router)
+    return TestClient(app)
+
+
+def test_a_failed_title_call_answers_with_an_error_status(monkeypatch):
+    def _boom(*a, **k):
+        raise RuntimeError("AccessDeniedException: no access")
+
+    client = _cloud_client(monkeypatch, _boom)
+    r = client.post("/api/generate-title", json={"text": "User: Plan the offsite"})
+    assert r.status_code == 502
+    assert "no access" in r.json()["error"]
+    assert "title" not in r.json()
+
+
+def test_an_empty_model_reply_is_an_error_not_a_default_title(monkeypatch):
+    client = _cloud_client(monkeypatch, lambda *a, **k: {"content": []})
+    r = client.post("/api/generate-title", json={"text": "User: Plan the offsite"})
+    assert r.status_code == 502
+
+
+def test_a_generated_title_is_cleaned(monkeypatch):
+    reply = {"content": [{"type": "text", "text": '"Offsite Budget Plan"'}]}
+    client = _cloud_client(monkeypatch, lambda *a, **k: reply)
+    r = client.post("/api/generate-title", json={"text": "User: Plan the offsite"})
+    assert r.json() == {"title": "Offsite Budget Plan"}

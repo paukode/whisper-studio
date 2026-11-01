@@ -29,6 +29,15 @@ def sse_error(message: str) -> StreamingResponse:
     return StreamingResponse(_frames(), media_type="text/event-stream")
 
 
+def unknown_model_message(model_key: str) -> str:
+    """The reason a request naming a model the catalog does not know is
+    refused (it is never swapped for another model)."""
+    return (
+        f"{model_key} is not an available chat model (it may have been removed). "
+        "Pick one from the model menu."
+    )
+
+
 def subagent_refusal(model_key: str) -> StreamingResponse | None:
     """In Local mode a /subagent task runs only on an installed on-device model:
     a cloud key, or a key the catalog does not know, is refused with a reason
