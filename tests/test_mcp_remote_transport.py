@@ -188,7 +188,10 @@ def test_a_missing_token_variable_fails_the_connect_with_its_name(monkeypatch):
     asyncio.run(scenario())
 
 
-def test_a_token_exported_in_the_login_shell_is_used(monkeypatch):
+def test_a_token_only_in_the_login_shell_is_not_used(monkeypatch):
+    # The bearer token comes from os.environ only. A variable exported in the
+    # shell rc (captured for stdio children, credentials scrubbed) never goes
+    # into an Authorization header: the connect fails and names the variable.
     record: dict = {}
     _install_fakes(monkeypatch, record)
     monkeypatch.delenv("SHELL_ONLY_TOKEN", raising=False)
@@ -201,7 +204,10 @@ def test_a_token_exported_in_the_login_shell_is_used(monkeypatch):
             "remote-srv",
             {"url": "https://example.com/mcp", "bearer_token_env_var": "SHELL_ONLY_TOKEN"},
         )
-        assert record["headers"] == {"Authorization": "Bearer from-zshrc"}
+        status = mgr._sessions["remote-srv"]
+        assert status["status"] == "error"
+        assert "SHELL_ONLY_TOKEN" in status["error"]
+        assert "headers" not in record
 
     asyncio.run(scenario())
 

@@ -465,10 +465,9 @@ class MCPManager:
             if token_env_var:
                 # The token itself is never persisted to mcp_servers.json:
                 # only the env var NAME is stored in config. Read the actual
-                # secret fresh at connect time, from the user's login-shell
-                # environment too (a Finder-launched app keeps the shell's
-                # exports there, not in os.environ).
-                token = {**login_shell_env(), **os.environ}.get(token_env_var, "")
+                # secret fresh at connect time, from this process's own
+                # environment only (never the captured login-shell one).
+                token = os.environ.get(token_env_var, "")
                 if not token:
                     if not ready.done():
                         ready.set_exception(
