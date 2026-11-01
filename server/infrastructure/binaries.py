@@ -1,4 +1,6 @@
-"""Resolve the external binaries the server spawns (llama-server, ffmpeg, …).
+"""Resolve the external binaries the server spawns (ffmpeg, ffprobe, node).
+
+llama-server has its own pinned resolver (server/local/llama_server.py).
 
 A packaged .app launched by Finder/launchd inherits a minimal PATH (no
 /opt/homebrew/bin, no nvm shims), so every spawn point routes through
@@ -10,7 +12,6 @@ would have.
 Resolution order:
   1. the ``env_var`` override (must point at an executable file)
   2. ``shutil.which(name)``
-  3. ``fallbacks`` — directories to probe for ``name``
 """
 
 import logging
@@ -136,7 +137,7 @@ def login_shell_env() -> dict[str, str]:
     return dict(_LOGIN_ENV)
 
 
-def resolve(name: str, env_var: str = "", fallbacks: tuple[str, ...] = ()) -> str | None:
+def resolve(name: str, env_var: str = "") -> str | None:
     """Absolute path to ``name``, or None when it can't be found."""
     if env_var:
         override = os.environ.get(env_var, "").strip()
@@ -144,11 +145,4 @@ def resolve(name: str, env_var: str = "", fallbacks: tuple[str, ...] = ()) -> st
             candidate = os.path.abspath(os.path.expanduser(override))
             if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
                 return candidate
-    found = shutil.which(name)
-    if found:
-        return found
-    for d in fallbacks:
-        candidate = os.path.join(d, name)
-        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
-            return candidate
-    return None
+    return shutil.which(name)
