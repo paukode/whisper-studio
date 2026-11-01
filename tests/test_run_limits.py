@@ -70,49 +70,6 @@ def test_the_shipped_config_carries_the_defaults_and_no_per_type_limits():
     assert not set(config_mod.RETIRED_USER_KEYS) & set(shipped)
 
 
-def test_a_saved_config_loses_the_retired_keys_once(tmp_path, monkeypatch):
-    path = tmp_path / "config.user.json"
-    path.write_text(
-        json.dumps(
-            {
-                "agent_limits": {"default": {"max_turns": 120, "deadline_seconds": 900}},
-                "cron_max_rounds": 50,
-                "whisper_language": "pl,en",
-                "transcription_backend": "canary",
-                "bedrock_region": "us-east-1",
-            }
-        )
-    )
-    monkeypatch.setattr(config_mod, "_user_config_path", lambda: str(path))
-
-    assert sorted(config_mod.retire_user_config_keys()) == sorted(
-        [*config_mod.RETIRED_USER_KEYS, "transcription_backend"]
-    )
-    # Canary only translates now: its saved transcription choice is Parakeet.
-    assert json.loads(path.read_text()) == {
-        "transcription_backend": "streaming",
-        "bedrock_region": "us-east-1",
-    }
-    assert config_mod.retire_user_config_keys() == []
-
-
-def test_a_source_checkout_loses_the_retired_keys_at_startup(monkeypatch):
-    """bootstrap_home() runs only for a packaged install, so startup is what
-    reaches a setup.sh checkout, whose config.user.json sits at the repo root
-    (the conftest gives each test its own)."""
-    import server.main as main_mod
-
-    monkeypatch.delenv("WHISPER_HOME", raising=False)
-    user = Path(config_mod.USER_CONFIG_PATH)
-    user.write_text(
-        json.dumps({"agent_limits": {"default": {"max_turns": 120}}, "bedrock_region": "us-east-1"})
-    )
-
-    main_mod._retire_config_keys()
-
-    assert json.loads(user.read_text()) == {"bedrock_region": "us-east-1"}
-
-
 # ── chat: the round limit, no time limit ────────────────────────────────────
 
 

@@ -230,9 +230,10 @@ def bootstrap_home() -> None:
     # The user's config is a two-layer split: the SYSTEM catalog + defaults ship
     # in the read-only config.example.json (repo_root()), and only the user's
     # deltas live in config.user.json. seed_user_config() writes the first-run
-    # defaults into a new config.user.json on a fresh install. It never copies
-    # the example (a full copy shadowed shipped model updates) and never reads
-    # or changes an old config.json.
+    # defaults into a new config.user.json on a fresh install (a home with only
+    # an old config.json counts as fresh). It never copies the example (a full
+    # copy shadowed shipped model updates) and never reads or changes an old
+    # config.json. After that, nothing at startup writes config.user.json.
     try:
         from server.infrastructure.config import seed_user_config
 

@@ -74,22 +74,20 @@ def test_seed_never_overwrites_an_existing_user_config(split_env):
     assert json.loads((tmp / "config.user.json").read_text()) == {"mine": True}
 
 
-def test_old_config_json_is_never_read_moved_or_seeded_over(split_env, monkeypatch):
+def test_a_home_with_only_config_json_starts_like_a_fresh_install(split_env, monkeypatch):
     tmp = split_env
-    old_text = json.dumps({"mine": True, "model_mode": "local"}, indent=4)
+    old_text = json.dumps({"mine": True, "model_mode": "cloud"}, indent=4)
     (tmp / "config.json").write_text(old_text)
 
-    # No first-run seed while config.json exists: the shipped defaults apply.
-    assert cfg.seed_user_config() is False
-    assert not (tmp / "config.user.json").exists()
+    # config.json does not block the first-run seed, and nothing comes from it.
+    assert cfg.seed_user_config() is True
+    assert json.loads((tmp / "config.user.json").read_text()) == cfg.FIRST_RUN_USER_CONFIG
     _reset(monkeypatch)
     c = cfg.load_config()
     assert "mine" not in c
-    assert c["model_mode"] == cfg.DEFAULTS["model_mode"]
+    assert c["model_mode"] == "local"
 
-    # Saving a setting creates config.user.json; config.json stays as it was.
-    cfg.save_config({"effort_level": "low"})
-    assert json.loads((tmp / "config.user.json").read_text()) == {"effort_level": "low"}
+    # config.json stays exactly as it was, under its own name.
     assert (tmp / "config.json").read_text() == old_text
     assert glob.glob(str(tmp / "config.json.*")) == []
 
@@ -102,11 +100,10 @@ def test_old_config_json_gets_a_notice_until_it_is_gone(split_env):
     [(title, message)] = cfg.old_config_notices()
     assert title == "config.json is no longer read"
     assert str(tmp / "config.json") in message
-    assert "does not exist yet" in message
 
+    # The same text once config.user.json exists, so the bell shows it once.
     (tmp / "config.user.json").write_text("{}")
-    [(_, message)] = cfg.old_config_notices()
-    assert "does not exist yet" not in message
+    assert cfg.old_config_notices() == [(title, message)]
 
     (tmp / "config.json").unlink()
     assert cfg.old_config_notices() == []
@@ -125,40 +122,144 @@ def test_local_mode_is_not_followed_and_gets_a_notice(split_env, monkeypatch):
     assert cfg.old_config_notices() == []
 
 
-def test_startup_reports_old_config_without_touching_it(monkeypatch):
+def test_retired_keys_stay_in_the_file_and_get_a_notice(split_env):
+    tmp = split_env
+    text = json.dumps(
+        {
+            "agent_limits": {"default": {"max_turns": 120}},
+            "cron_max_rounds": 50,
+            "brief_mode": True,
+            "bedrock_region": "us-east-1",
+        }
+    )
+    (tmp / "config.user.json").write_text(text)
+
+    [(title, message)] = cfg.old_config_notices()
+
+    assert title == "Old settings have no effect"
+    for key in ("agent_limits", "cron_max_rounds", "brief_mode"):
+        assert key in message
+    assert "whisper_language" not in message
+    assert (tmp / "config.user.json").read_text() == text
+
+
+def test_a_retired_value_runs_as_its_replacement_in_memory_only(split_env, monkeypatch):
+    tmp = split_env
+    text = json.dumps({"transcription_backend": "canary"})
+    (tmp / "config.user.json").write_text(text)
+    _reset(monkeypatch)
+
+    # Canary only translates now: the app records with Parakeet ("streaming").
+    assert cfg.load_config()["transcription_backend"] == "streaming"
+    [(title, message)] = cfg.old_config_notices()
+    assert title == 'transcription_backend "canary" is no longer offered'
+    assert "Parakeet" in message
+    assert (tmp / "config.user.json").read_text() == text
+
+
+@pytest.mark.parametrize("old", ["auto", "model"])
+def test_an_old_translate_mode_runs_as_off_and_gets_a_notice(split_env, monkeypatch, old):
+    tmp = split_env
+    text = json.dumps({"translate_mode": old})
+    (tmp / "config.user.json").write_text(text)
+    _reset(monkeypatch)
+
+    assert cfg.load_config()["translate_mode"] == "off"
+    [(title, _)] = cfg.old_config_notices()
+    assert title == f'translate_mode "{old}" is no longer offered'
+    assert (tmp / "config.user.json").read_text() == text
+
+
+def test_unknown_values_of_fixed_list_settings_get_a_notice(split_env, monkeypatch):
+    from server.infrastructure.model_mode import current_mode
+
+    tmp = split_env
+    text = json.dumps(
+        {
+            "transcription_backend": " Parakeet",  # read as parakeet: known
+            "translate_mode": "bogus",
+            "model_mode": "offline",
+        }
+    )
+    (tmp / "config.user.json").write_text(text)
+    _reset(monkeypatch)
+
+    [(title, message)] = cfg.old_config_notices()
+    assert title == "Unknown setting values"
+    assert 'translate_mode "bogus" (no translation line is shown)' in message
+    assert 'model_mode "offline" (the app runs in cloud mode)' in message
+    assert "transcription_backend" not in message
+    # The notice says what the readers really do.
+    assert current_mode(cfg.load_config()) == "cloud"
+    assert (tmp / "config.user.json").read_text() == text
+
+    (tmp / "config.user.json").write_text(json.dumps({"transcription_backend": "fast"}))
+    [(_, message)] = cfg.old_config_notices()
+    assert 'transcription_backend "fast" (Whisper transcribes)' in message
+
+
+def test_startup_reports_old_settings_and_never_writes_the_user_config(monkeypatch):
+    """Startup names every old setting it ignores and leaves both config.json
+    and config.user.json byte for byte as they were."""
     monkeypatch.delenv("WHISPER_HOME", raising=False)
     import server.main as main_mod
     import server.notifications as notifications
 
     legacy = Path(cfg.LEGACY_CONFIG_PATH)  # the conftest gives each test its own
-    legacy.write_text("{}")
+    legacy.write_text('{"model_mode": "local"}')
+    user = Path(cfg.USER_CONFIG_PATH)
+    user_text = json.dumps(
+        {
+            "agent_limits": {"default": {"max_turns": 120}},
+            "whisper_language": "pl,en",
+            "transcription_backend": "canary",
+            "chat_models": {
+                "local_small": {
+                    "id": "local:small",
+                    "is_local": True,
+                    "supports_tools": True,
+                    "repo_id": "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF",
+                    "filename": "Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf",
+                }
+            },
+        },
+        indent=4,
+    )
+    user.write_text(user_text)
     seen = []
-    monkeypatch.setattr(notifications, "record_notification", lambda **kw: seen.append(kw))
+    monkeypatch.setattr(notifications, "record_notification_once", lambda **kw: seen.append(kw))
 
     main_mod._report_old_config()
 
-    assert [(n["source"], n["status"]) for n in seen] == [("config", "warning")]
-    assert legacy.read_text() == "{}"
+    assert [n["title"] for n in seen] == [
+        "config.json is no longer read",
+        "Old settings have no effect",
+        'transcription_backend "canary" is no longer offered',
+        "Small models still have tool calling on",
+    ]
+    assert {(n["source"], n["status"]) for n in seen} == {("config", "warning")}
+    assert user.read_text() == user_text
+    assert legacy.read_text() == '{"model_mode": "local"}'
 
 
-def test_startup_config_steps_never_create_the_user_config(monkeypatch):
-    """The lifespan steps that touch the user layer (small-model sweep, retired
-    keys, old-config notice) leave a home with only config.json as it was."""
+def test_startup_shows_each_old_config_notice_once(monkeypatch):
     monkeypatch.delenv("WHISPER_HOME", raising=False)
     import server.main as main_mod
     import server.notifications as notifications
-    from server.model_browser.install import disable_tools_on_small_models
 
-    legacy = Path(cfg.LEGACY_CONFIG_PATH)
-    legacy.write_text('{"model_mode": "local"}')
-    monkeypatch.setattr(notifications, "record_notification", lambda **kw: None)
+    Path(cfg.LEGACY_CONFIG_PATH).write_text("{}")
 
-    disable_tools_on_small_models()
-    main_mod._retire_config_keys()
     main_mod._report_old_config()
+    main_mod._report_old_config()  # the next start
 
-    assert not Path(cfg.USER_CONFIG_PATH).exists()
-    assert legacy.read_text() == '{"model_mode": "local"}'
+    rows = notifications.list_notifications()
+    assert [(r["source"], r["title"], r["count"]) for r in rows] == [
+        ("config", "config.json is no longer read", 1)
+    ]
+    # Cleared in the bell, it stays cleared on the next start.
+    notifications.clear_all()
+    main_mod._report_old_config()
+    assert notifications.list_notifications() == []
 
 
 # ── Headline scenario: user adds a model, then the app updates ─────────────

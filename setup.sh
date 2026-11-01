@@ -333,8 +333,8 @@ for arg in "$@"; do
             echo "Usage: bash setup.sh [--new] [--dev|--prod] [--cloud|--hybrid|--local] [--no-open]"
             echo "  --new       Delete venv/, node_modules/, and static/dist/ and reinstall from scratch."
             echo "              Also backs up config.user.json (timestamped) and resets it to the same"
-            echo "              first-run defaults a fresh Mac-app install gets (not while an old"
-            echo "              config.json exists: config.json is never read or changed)."
+            echo "              first-run defaults a fresh Mac-app install gets (an old config.json"
+            echo "              is never read or changed)."
             echo "  --dev       Development mode: run the backend + Vite dev server with HMR."
             echo "  --prod      Production mode: build the frontend and serve it from the backend"
             echo "              only (no Vite dev server). This is the default."
@@ -387,12 +387,7 @@ if [ "$FRESH" -eq 1 ]; then
             echo "Backed up $cfg_file to $config_backup and reset it."
         fi
     done
-    if [ -f config.json ]; then
-        echo "  config.json exists, so nothing is re-seeded: it is no longer read, and the"
-        echo "  backend runs on the shipped defaults until you save a setting."
-    else
-        echo "  Config will be re-seeded with first-run defaults (local mode)."
-    fi
+    echo "  Config will be re-seeded with first-run defaults (local mode)."
     echo "  Re-add your Tavily API key and any custom settings in Settings (gear icon)."
     # pricing.json gets the same treatment (gitignored per-key rate overrides;
     # defaults live in pricing.example.json). Back up any existing one and
@@ -548,14 +543,14 @@ fi
 # on demand. Run the exact same code path
 # here so a setup.sh install starts identically to the Mac app's first launch.
 # An existing config.user.json is left alone, the user's settings win. An old
-# config.json is never read, moved or deleted; while one exists nothing is
-# seeded and the backend runs on the shipped defaults, with a notice, until the
-# user saves a setting (same as the Mac app).
+# config.json is never read, moved or deleted, and it does not block the seed: a
+# checkout with only config.json starts like a fresh install, in Local mode
+# (same as the Mac app), and the app shows a notice about the old file.
 if [ -f config.json ]; then
     echo "NOTE: config.json is no longer read. Settings live in config.user.json only."
     echo "  Copy what you still need from config.json into config.user.json, then delete or rename config.json."
 fi
-if [ ! -f config.json ] && [ ! -f config.user.json ]; then
+if [ ! -f config.user.json ]; then
     if python -c "from server.infrastructure.config import seed_user_config; seed_user_config()" >>"$SETUP_LOG" 2>&1 && [ -f config.user.json ]; then
         echo "Seeded config.user.json with first-run defaults (local mode) matching the Mac app's first launch."
     else

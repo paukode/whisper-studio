@@ -8,8 +8,10 @@ Config layers (lowest to highest priority):
   3. USER — config.user.json in the app home (the user owns it; survives app
      updates; the in-settings editor writes here). Holds only the user's deltas:
      added local models, region/keys/flags, per-field overrides, and a hide-list.
-     The old single-file config.json is never read or changed: while one
-     exists, startup shows a notice (old_config_notices).
+     Startup never writes it: the only write the user did not ask for is the
+     first-run seed of a home that has no config.user.json. The old
+     single-file config.json is never read or changed: while one exists,
+     startup shows a notice (old_config_notices).
   4. PROJECT — .whisper/settings.json in the workspace root (per-project)
   5. ENV — sensitive secrets from environment variables
 
@@ -635,6 +637,13 @@ def load_config(workspace_path: str | None = None) -> dict:
     if "effort_level" in merged:
         merged["effort_level"] = normalize_effort(merged.get("effort_level"))
 
+    # A value the app no longer offers runs as its replacement, in memory only:
+    # the user's file keeps what they saved, and old_config_notices says so.
+    for key, replacements in RETIRED_USER_VALUES.items():
+        value = merged.get(key)
+        if isinstance(value, str) and value in replacements:
+            merged[key] = replacements[value][0]
+
     # bedrock_region must never be empty. An empty/blank string defeats both the
     # _deep_merge default above (a present "" overwrites DEFAULTS) and dict.get's
     # default (only fires when the key is ABSENT), so it flows into
@@ -739,48 +748,67 @@ FIRST_RUN_USER_CONFIG = {
 def seed_user_config() -> bool:
     """Write FIRST_RUN_USER_CONFIG into a new config.user.json on a fresh home.
 
-    Does nothing when config.user.json already exists (the user's file is never
-    overwritten) or when an old config.json is there: config.json is not read,
-    so the app runs on the shipped defaults, with a notice, until the user saves
-    a setting. Returns True only when it wrote the file; a failed write raises.
+    Does nothing when config.user.json already exists: the user's file is never
+    overwritten. A home with only an old config.json counts as fresh: that file
+    mixed shipped values with the user's own, so nothing is carried over from
+    it, and it stays as it is (old_config_notices tells the user). Returns True
+    only when it wrote the file; a failed write raises.
     """
     # Resolve the home at CALL time (not the import-frozen module constants) so a
     # packaged boot seeds within the live WHISPER_HOME even if the module was
     # imported before the env was set.
-    home = config_dir()
-    user_path = os.path.join(home, "config.user.json")
-    if os.path.exists(user_path) or os.path.exists(os.path.join(home, "config.json")):
+    user_path = os.path.join(config_dir(), "config.user.json")
+    if os.path.exists(user_path):
         return False
     _atomic_write(user_path, json.dumps(FIRST_RUN_USER_CONFIG, indent=2) + "\n")
     _invalidate_cache()
     return True
 
 
+def _value_checks() -> dict[str, tuple[set[str], str]]:
+    """Settings with a fixed set of values: {key: (known values, what runs when
+    the saved value is not one of them)}. The readers fall back on their own
+    (server/asr resolve_name, model_mode.current_mode, the translator pick);
+    this only lets startup say so. Imported here, not at module level, to keep
+    config importable first."""
+    from server.asr import _ALIASES, BACKENDS, DEFAULT_BACKEND
+    from server.infrastructure.model_mode import DEFAULT_MODE, MODES
+
+    return {
+        "transcription_backend": (
+            {*BACKENDS, *_ALIASES},
+            f"{DEFAULT_BACKEND.capitalize()} transcribes",
+        ),
+        "translate_mode": ({"off", "canary", "apple"}, "no translation line is shown"),
+        "model_mode": (set(MODES), f"the app runs in {DEFAULT_MODE} mode"),
+    }
+
+
 def old_config_notices() -> list[tuple[str, str]]:
-    """(title, message) for each old setting the app no longer reads, so startup
-    says so instead of ignoring it quietly. Reads only; nothing on disk changes.
+    """(title, message) for each old or unknown setting the app does not use, so
+    startup says so instead of ignoring it quietly. Reads only; nothing on disk
+    changes. Each message stays the same while its cause does, so the bell shows
+    it once (record_notification_once).
 
     - An old single-file config.json next to config.user.json.
     - local_mode set in config.user.json with no model_mode: local_mode used to
       switch the app to Local mode, so the user would otherwise get the shipped
       mode without being told.
+    - RETIRED_USER_KEYS still in config.user.json: they have no effect.
+    - A RETIRED_USER_VALUES value in config.user.json: load_config runs its
+      replacement instead.
+    - A value outside the known set of a _value_checks() setting.
     """
     shipped_mode = str(_system_config().get("model_mode") or DEFAULTS["model_mode"])
     notices: list[tuple[str, str]] = []
     if os.path.exists(LEGACY_CONFIG_PATH):
-        if os.path.exists(USER_CONFIG_PATH):
-            where = f"Settings are read from {USER_CONFIG_PATH} only."
-        else:
-            where = (
-                f"{USER_CONFIG_PATH} does not exist yet, so the shipped defaults "
-                f"({shipped_mode} mode) apply until you save a setting."
-            )
         notices.append(
             (
                 "config.json is no longer read",
                 f"Whisper Studio ignores {LEGACY_CONFIG_PATH} and leaves it as it is. "
-                f"{where} Copy what you still need from config.json into "
-                "config.user.json, then delete or rename config.json to clear this notice.",
+                f"Settings are read from {USER_CONFIG_PATH} only. Copy what you still "
+                "need from config.json into config.user.json, or set it again in "
+                "Settings, then delete or rename config.json.",
             )
         )
     user = _load_user_config()
@@ -790,49 +818,85 @@ def old_config_notices() -> list[tuple[str, str]]:
                 "local_mode is no longer read",
                 f"{USER_CONFIG_PATH} sets local_mode, which the app no longer reads, and "
                 f"no model_mode, so the app runs in {shipped_mode} mode. If you want Local "
-                "mode, choose it in Settings; otherwise remove local_mode from "
-                "config.user.json. Either clears this notice.",
+                "mode, choose it in Settings; otherwise remove local_mode from that file.",
+            )
+        )
+    old_keys = [key for key in RETIRED_USER_KEYS if key in user]
+    if old_keys:
+        reasons = "; ".join(f"{key} ({RETIRED_USER_KEYS[key]})" for key in old_keys)
+        notices.append(
+            (
+                "Old settings have no effect",
+                f"{USER_CONFIG_PATH} still has settings the app no longer reads: "
+                f"{reasons}. The app leaves your file as it is; remove them from it "
+                "when you like.",
+            )
+        )
+    for key, replacements in RETIRED_USER_VALUES.items():
+        value = user.get(key)
+        if isinstance(value, str) and value in replacements:
+            notices.append(
+                (
+                    f'{key} "{value}" is no longer offered',
+                    f'{USER_CONFIG_PATH} sets {key} to "{value}": '
+                    f"{replacements[value][1]}. The app leaves your file as it is. "
+                    f"Choose again in Settings, or change {key} in that file, to save "
+                    "your own choice.",
+                )
+            )
+    unknown = []
+    for key, (known, fallback) in _value_checks().items():
+        if key not in user:
+            continue
+        value = user[key]
+        if isinstance(value, str) and value in RETIRED_USER_VALUES.get(key, {}):
+            continue  # named above, with its replacement
+        name = None
+        if isinstance(value, str):
+            # resolve_name lowercases and strips the engine name; the others
+            # compare the saved text as it is.
+            name = value.strip().lower() if key == "transcription_backend" else value
+        if name not in known:
+            unknown.append(f"{key} {json.dumps(value)} ({fallback})")
+    if unknown:
+        notices.append(
+            (
+                "Unknown setting values",
+                f"{USER_CONFIG_PATH} has values the app does not know: "
+                f"{'; '.join(unknown)}. The app leaves your file as it is. Choose "
+                "again in Settings, or fix them in that file.",
             )
         )
     return notices
 
 
-# Keys the app no longer reads: the per-type agent budgets (agent_limits) and
-# the scheduled-run round cap (cron_max_rounds) gave way to the one round limit
-# and time limit every run takes (round_limit, time_limit_minutes); the
-# transcription languages (whisper_language) gave way to each engine's own
-# detection.
-RETIRED_USER_KEYS = ("agent_limits", "cron_max_rounds", "whisper_language")
+# Keys the app no longer reads, with what replaced each: the per-type agent
+# budgets and the scheduled-run round cap gave way to the one round limit and
+# time limit every run takes; the transcription languages gave way to each
+# engine's own detection; brief replies are chosen per message. A saved one
+# stays in config.user.json (startup never edits the user's file) and
+# old_config_notices names it.
+RETIRED_USER_KEYS = {
+    "agent_limits": "the round limit and time limit in Settings replace it",
+    "cron_max_rounds": "the round limit and time limit in Settings replace it",
+    "whisper_language": "each transcription engine detects the language itself",
+    "brief_mode": "brief replies are chosen for each message in the chat",
+}
 
-# Values the app no longer offers, and what replaces them: Canary only
-# translates now, so a saved Canary transcription model becomes Parakeet.
-RETIRED_USER_VALUES = {"transcription_backend": {"canary": "streaming"}}
-
-
-def retire_user_config_keys() -> list[str]:
-    """One-time upgrade of the USER layer: drop the RETIRED_USER_KEYS a saved
-    config still carries and replace its RETIRED_USER_VALUES, so none
-    lingers as a setting that does nothing. Returns the keys it changed."""
-    with USER_CONFIG_LOCK:
-        raw = _load_user_config()
-        removed = [key for key in RETIRED_USER_KEYS if key in raw]
-        replaced = [
-            key
-            for key, values in RETIRED_USER_VALUES.items()
-            if isinstance(raw.get(key), str) and raw[key] in values
-        ]
-        if not removed and not replaced:
-            return []
-        for key in removed:
-            raw.pop(key)
-        for key in replaced:
-            raw[key] = RETIRED_USER_VALUES[key][raw[key]]
-        save_config(raw)
-    if removed:
-        log.info("Removed retired config key(s) %s: the app no longer reads them.", removed)
-    for key in replaced:
-        log.info("Config %s now %r: the old value is no longer offered.", key, raw[key])
-    return removed + replaced
+# Values the app no longer offers: {key: {old value: (what runs instead, why)}}.
+# load_config applies the replacement in memory; the saved value stays in
+# config.user.json and old_config_notices names it.
+_OLD_TRANSLATE = (
+    "off",
+    "the old automatic translation is gone, so no translation line is shown; "
+    "choose Canary or Apple in the Translate menu",
+)
+RETIRED_USER_VALUES = {
+    "transcription_backend": {
+        "canary": ("streaming", "Canary only translates now, so Parakeet transcribes instead"),
+    },
+    "translate_mode": {"auto": _OLD_TRANSLATE, "model": _OLD_TRANSLATE},
+}
 
 
 def unfiltered_chat_models() -> tuple[dict, dict]:

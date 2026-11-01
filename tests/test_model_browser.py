@@ -582,24 +582,29 @@ def test_uninstall_refuses_non_browser_key(isolated_home, monkeypatch):
         service.uninstall_model("local_gemma")  # a built-in, not a user entry
 
 
-# ── one-shot sweep: models installed before the agentic gate existed ──────────
-def _write_user_config(home, payload):
-    (home / "config.user.json").write_text(json.dumps(payload))
+# ── small models installed before the agentic gate: reported, never rewritten ──
+_SMALL_WITH_TOOLS = {
+    "id": "local:small",
+    "is_local": True,
+    "supports_tools": True,
+    "repo_id": "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF",
+    "filename": "Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf",
+}
+
+
+def _write_user_config(home, payload) -> str:
+    text = json.dumps(payload)
+    (home / "config.user.json").write_text(text)
     cfg._invalidate_cache()
+    return text
 
 
-def test_sweep_disables_tools_on_previously_installed_small_models(isolated_home):
-    _write_user_config(
+def test_small_models_with_tools_are_reported_and_the_file_is_left_alone(isolated_home):
+    text = _write_user_config(
         isolated_home,
         {
             "chat_models": {
-                "local_small": {
-                    "id": "local:small",
-                    "is_local": True,
-                    "supports_tools": True,
-                    "repo_id": "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF",
-                    "filename": "Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf",
-                },
+                "local_small": dict(_SMALL_WITH_TOOLS),
                 "local_big": {
                     "id": "local:big",
                     "is_local": True,
@@ -607,48 +612,32 @@ def test_sweep_disables_tools_on_previously_installed_small_models(isolated_home
                     "repo_id": "unsloth/Qwen3.5-9B-GGUF",
                     "filename": "Qwen3.5-9B-Q4_K_M.gguf",
                 },
+                # A cloud model has no local tool loop and is never reported.
                 "opus5.0": {"id": "cloud-model", "supports_tools": True},
             }
         },
     )
 
-    assert install.disable_tools_on_small_models() == ["local_small"]
+    assert install.small_models_with_tools() == ["local_small"]
+    [(title, message)] = install.small_model_tool_notices()
+    assert title == "Small models still have tool calling on"
+    assert "local_small" in message and "local_big" not in message
+    assert f"{compat.AGENTIC_MIN_PARAMS_B:g}B parameters" in message
+    assert (isolated_home / "config.user.json").read_text() == text
 
-    data = json.loads((isolated_home / "config.user.json").read_text())
-    assert data["chat_models"]["local_small"]["supports_tools"] is False
-    assert data["chat_models"]["local_big"]["supports_tools"] is True
-    # A cloud model has no local tool loop and must never be touched by this.
-    assert data["chat_models"]["opus5.0"]["supports_tools"] is True
 
-
-def test_sweep_runs_once_so_a_deliberate_re_enable_sticks(isolated_home):
+def test_a_small_model_turned_back_on_after_the_old_sweep_is_not_reported(isolated_home):
+    # Older versions set this flag after turning tools off themselves, so tools
+    # on now is the user's own choice.
     _write_user_config(
         isolated_home,
-        {
-            "chat_models": {
-                "local_small": {
-                    "id": "local:small",
-                    "is_local": True,
-                    "supports_tools": True,
-                    "repo_id": "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF",
-                    "filename": "Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf",
-                }
-            }
-        },
+        {"small_model_tools_swept": True, "chat_models": {"local_small": dict(_SMALL_WITH_TOOLS)}},
     )
-    assert install.disable_tools_on_small_models() == ["local_small"]
-
-    # The user turns it back on by hand — a supported choice.
-    data = json.loads((isolated_home / "config.user.json").read_text())
-    data["chat_models"]["local_small"]["supports_tools"] = True
-    _write_user_config(isolated_home, data)
-
-    assert install.disable_tools_on_small_models() == []
-    data = json.loads((isolated_home / "config.user.json").read_text())
-    assert data["chat_models"]["local_small"]["supports_tools"] is True
+    assert install.small_models_with_tools() == []
+    assert install.small_model_tool_notices() == []
 
 
-def test_sweep_leaves_an_entry_with_no_repo_id_alone(isolated_home):
+def test_an_entry_with_no_repo_id_is_not_reported(isolated_home):
     _write_user_config(
         isolated_home,
         {
@@ -661,14 +650,11 @@ def test_sweep_leaves_an_entry_with_no_repo_id_alone(isolated_home):
             }
         },
     )
-    assert install.disable_tools_on_small_models() == []
-    data = json.loads((isolated_home / "config.user.json").read_text())
-    assert data["chat_models"]["local_handrolled"]["supports_tools"] is True
+    assert install.small_models_with_tools() == []
 
 
-def test_sweep_never_creates_the_user_config(isolated_home):
-    # No config.user.json yet: nothing was installed, so nothing is written.
-    assert install.disable_tools_on_small_models() == []
+def test_no_user_config_reports_nothing_and_creates_nothing(isolated_home):
+    assert install.small_model_tool_notices() == []
     assert not (isolated_home / "config.user.json").exists()
 
 

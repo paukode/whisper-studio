@@ -78,7 +78,7 @@ def _isolate_user_config(tmp_path_factory, monkeypatch):
     collection, before _isolate_user_root pins WHISPER_USER_DIR, so in a dev
     checkout they name the developer's live config.user.json and config.json
     at the repo root. A test that saves the user layer (a Settings write, the
-    retired-key sweep, a model install) would rewrite that file. A test that
+    first-run seed, a model install) would rewrite that file. A test that
     patches the same names itself still wins."""
     import server.infrastructure.config as config
 

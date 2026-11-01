@@ -46,6 +46,28 @@ def test_empty_message_and_bad_source_handled():
     assert notif.list_notifications()[0]["source"] == "app"  # garbage → app
 
 
+def test_record_once_skips_a_notice_already_recorded_even_when_hidden():
+    first = notif.record_notification_once(
+        source="config", title="Old", message="m", status="warning"
+    )
+    assert first["deduped"] is False
+    again = notif.record_notification_once(
+        source="config", title="Old", message="m", status="warning"
+    )
+    assert again == {"id": first["id"], "deduped": True}
+    [row] = notif.list_notifications()
+    assert row["count"] == 1 and row["status"] == "warning"
+
+    # Hidden in the bell, it is still "already shown": nothing comes back.
+    notif.hide([first["id"]])
+    assert notif.record_notification_once(source="config", title="Old", message="m")["deduped"]
+    assert notif.list_notifications() == []
+
+    # A different message is a different notice; an empty one is refused.
+    assert not notif.record_notification_once(source="config", title="Old", message="m2")["deduped"]
+    assert notif.record_notification_once(source="config", message="") is None
+
+
 def test_unread_count_and_mark_read():
     for i in range(3):
         notif.record_notification(message=f"n{i}", source="chat")
@@ -66,6 +88,20 @@ def test_gc_drops_old_rows():
     assert notif.gc_old() == 1
     remaining = notif.list_notifications()
     assert [r["message"] for r in remaining] == ["fresh"]
+
+
+def test_gc_keeps_the_rows_that_remember_a_notice_was_shown():
+    for source in notif.ONCE_SOURCES:
+        notif.record_notification_once(source=source, title="Old", message="m")
+    notif.record_notification(message="old", source="chat")
+    old = (datetime.now(timezone.utc) - timedelta(days=45)).isoformat().replace("+00:00", "Z")
+    with notif._get_conn() as conn:
+        conn.execute("UPDATE notifications SET created_at=?", (old,))
+
+    assert notif.gc_old() == 1
+    assert sorted(r["source"] for r in notif.list_notifications()) == sorted(notif.ONCE_SOURCES)
+    # So the notice is still "already shown" after the retention window.
+    assert notif.record_notification_once(source="config", title="Old", message="m")["deduped"]
 
 
 def test_http_surface(client):

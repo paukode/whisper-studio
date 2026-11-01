@@ -32,6 +32,10 @@ STORAGE_DIR = storage_root()
 DB_PATH = os.path.join(STORAGE_DIR, "sessions.db")
 
 RETENTION_DAYS = 30
+# Sources whose rows record_notification_once relies on to remember that a
+# notice was shown. gc_old keeps them: dropping one would show the notice again.
+# They are a handful of startup notices about old settings (server/main.py).
+ONCE_SOURCES = ("config",)
 # Identical (source, title, message, status) rows arriving within this many
 # seconds of the previous occurrence merge into it: count += 1 and the row's
 # created_at slides forward. A steady drip of the same failure therefore
@@ -173,6 +177,51 @@ def record_notification(
         return None
 
 
+def record_notification_once(
+    *,
+    session_id: str = "",
+    source: str = "app",
+    title: str = "",
+    message: str,
+    status: str = "normal",
+) -> dict | None:
+    """Record a notice about something that stays true across restarts (an old
+    setting the app ignores) the FIRST time only. When a row with the same
+    source, title and message is already there, read, unread or hidden, nothing
+    is written, so the bell does not repeat it on every start. The memory lives
+    in this log, not in the user's files. Use a source in ONCE_SOURCES: gc_old
+    keeps those rows past RETENTION_DAYS, so the notice never comes back.
+
+    Returns {"id": ..., "deduped": ...} like record_notification, None on failure.
+    """
+    if not message:
+        return None
+    source = _slug_source(source)
+    _ensure_table()
+    title = (title or "")[:200]
+    message = message[:4000]
+    try:
+        with _get_conn() as conn:
+            row = conn.execute(
+                "SELECT id FROM notifications WHERE source=? AND title=? AND message=? "
+                "ORDER BY id DESC LIMIT 1",
+                (source, title, message),
+            ).fetchone()
+            if row:
+                return {"id": int(row["id"]), "deduped": True}
+            return _insert_or_bump(
+                conn,
+                session_id=session_id or "",
+                source=source,
+                title=title,
+                message=message,
+                status=status if status in _VALID_STATUSES else "normal",
+            )
+    except sqlite3.DatabaseError as e:
+        log.warning("notifications: record failed: %s", e)
+        return None
+
+
 def list_notifications(*, limit: int = 50, unread_only: bool = False) -> list[dict]:
     """Visible (non-hidden) notifications, newest first."""
     _ensure_table()
@@ -265,12 +314,17 @@ def clear_all() -> int:
 
 
 def gc_old(days: int = RETENTION_DAYS) -> int:
-    """Drop notifications older than the retention window (called on boot)."""
+    """Drop notifications older than the retention window (called on boot),
+    except the ONCE_SOURCES rows record_notification_once keeps as its memory."""
     _ensure_table()
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat().replace("+00:00", "Z")
+    keep = ",".join("?" for _ in ONCE_SOURCES)
     try:
         with _get_conn() as conn:
-            cur = conn.execute("DELETE FROM notifications WHERE created_at < ?", (cutoff,))
+            cur = conn.execute(
+                f"DELETE FROM notifications WHERE created_at < ? AND source NOT IN ({keep})",
+                (cutoff, *ONCE_SOURCES),
+            )
             return cur.rowcount or 0
     except sqlite3.DatabaseError:
         return 0

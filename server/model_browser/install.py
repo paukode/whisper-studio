@@ -20,7 +20,6 @@ Two hard-won rules from the config machinery are load-bearing here:
 from __future__ import annotations
 
 import logging
-import os
 import re
 
 from server.infrastructure import config as config_mod
@@ -240,35 +239,27 @@ def adopt_local_index_llm() -> bool:
     return True
 
 
-# Marker written into the user layer once the sweep below has run. Without it the
-# sweep would re-fire every boot and stomp a user who deliberately turned tools
-# back on for a small model — which is a supported choice, just not the default.
+# Set in config.user.json by older versions once they had turned tools off for
+# the small models themselves. When it is there, a small model with tools on was
+# turned back on by the user (a supported choice), so it is not reported.
 _TOOLS_SWEEP_FLAG = "small_model_tools_swept"
 
 
-@config_mod.edits_user_config
-def disable_tools_on_small_models() -> list[str]:
-    """One-shot: turn ``supports_tools`` off for already-installed local models
-    below the agentic threshold, then mark the user layer so it never runs again.
+def small_models_with_tools() -> list[str]:
+    """Keys of on-device models in config.user.json that are below the agentic
+    threshold yet still have ``supports_tools`` on. Reads only.
 
     Installs made before the threshold existed all carry ``supports_tools`` True,
-    because that was the hardcoded default — including 1-3B models that answer a
-    plain "hey" with a raw JSON tool call. Their entries are the only thing
-    keeping them broken, so they are corrected in place ONCE rather than read
-    around forever at runtime. Returns the keys it changed.
-
-    With no config.user.json (a fresh home, or one with only an old config.json)
-    nothing was installed to correct, and writing the flag would create the
-    user's file before they saved anything, so it does nothing.
+    because that was the hardcoded default, including 1-3B models that answer a
+    plain "hey" with a raw JSON tool call. New installs get the right value, and
+    startup never edits the user's file, so these are reported instead
+    (small_model_tool_notices) and the user decides.
     """
-    if not os.path.exists(config_mod._user_config_path()):
-        return []
     raw = config_mod._load_user_config()
     if raw.get(_TOOLS_SWEEP_FLAG):
         return []
-
     chat_models = raw.get("chat_models")
-    changed: list[str] = []
+    found: list[str] = []
     if isinstance(chat_models, dict):
         for key, entry in chat_models.items():
             if not isinstance(entry, dict) or not entry.get("is_local"):
@@ -279,20 +270,26 @@ def disable_tools_on_small_models() -> list[str]:
             # repo_id (hand-written, weights resolved another way) is left alone.
             if compat.is_agentic_capable(entry.get("repo_id") or "", entry.get("filename") or ""):
                 continue
-            entry["supports_tools"] = False
-            changed.append(key)
+            found.append(key)
+    return found
 
-    raw[_TOOLS_SWEEP_FLAG] = True
-    config_mod.save_config(raw)
-    if changed:
-        log.info(
-            "Turned tool calling off for %d on-device model(s) under %sB: %s. "
-            "They are chat-only; re-enable in the config if you want to try.",
-            len(changed),
-            compat.AGENTIC_MIN_PARAMS_B,
-            ", ".join(changed),
+
+def small_model_tool_notices() -> list[tuple[str, str]]:
+    """(title, message) naming the small_models_with_tools(), for startup."""
+    keys = small_models_with_tools()
+    if not keys:
+        return []
+    return [
+        (
+            "Small models still have tool calling on",
+            f"These on-device models in {config_mod.USER_CONFIG_PATH} are under "
+            f"{compat.AGENTIC_MIN_PARAMS_B:g}B parameters and have tool calling on: "
+            f"{', '.join(keys)}. They may answer a plain message with raw tool-call "
+            "JSON. To make them chat-only, set supports_tools to false for them in that "
+            "file. If you turned tools on yourself, you can ignore this. The app leaves "
+            "your file as it is.",
         )
-    return changed
+    ]
 
 
 @config_mod.edits_user_config

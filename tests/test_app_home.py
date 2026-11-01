@@ -132,6 +132,22 @@ def test_bootstrap_home_seeds_both_trees(monkeypatch, tmp_path):
     assert sorted(os.listdir(user / "skills")) == repo_skills
 
 
+def test_bootstrap_home_seeds_a_home_that_has_only_an_old_config_json(monkeypatch, tmp_path):
+    """A home with only the old config.json starts like a fresh install, in Local
+    mode, and the old file is left exactly as it was."""
+    home, user = _packaged(monkeypatch, tmp_path)
+    user.mkdir(parents=True)
+    old = '{"model_mode": "cloud", "tavily_api_key": "kept"}'
+    (user / "config.json").write_text(old)
+
+    paths.bootstrap_home()
+
+    from server.infrastructure.config import FIRST_RUN_USER_CONFIG
+
+    assert json.loads((user / "config.user.json").read_text()) == FIRST_RUN_USER_CONFIG
+    assert (user / "config.json").read_text() == old
+
+
 def test_bootstrap_home_is_idempotent_and_never_overwrites(monkeypatch, tmp_path):
     home, user = _packaged(monkeypatch, tmp_path)
     paths.bootstrap_home()

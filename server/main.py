@@ -345,32 +345,40 @@ def _seed_bundled_models() -> None:
             shutil.rmtree(dst, ignore_errors=True)  # never leave a half copy
 
 
-def _report_old_config() -> None:
-    """Say at startup that an old config file or key is ignored (a log line and a
-    bell notification) instead of skipping it quietly. Nothing on disk changes."""
-    from server.infrastructure.config import old_config_notices
-    from server.notifications import record_notification
+def _old_config_notice_list() -> list[tuple[str, str]]:
+    """Every startup notice about old settings, from the config layer and from
+    the on-device model entries. A check that fails is logged and skipped."""
+    notices: list[tuple[str, str]] = []
+    try:
+        from server.infrastructure.config import old_config_notices
 
-    for title, message in old_config_notices():
+        notices += old_config_notices()
+    except Exception as e:
+        log.warning("Checking for old config settings failed: %s", e)
+    try:
+        from server.model_browser.install import small_model_tool_notices
+
+        notices += small_model_tool_notices()
+    except Exception as e:
+        log.warning("Checking small on-device models for tool calling failed: %s", e)
+    return notices
+
+
+def _report_old_config() -> None:
+    """Say at startup that an old config file, key or value is ignored, instead
+    of skipping it quietly: a log line on every start, and a bell notification
+    the first time only (record_notification_once). Startup never writes the
+    user's config.user.json; the user decides what to change."""
+    from server.notifications import record_notification_once
+
+    for title, message in _old_config_notice_list():
         log.warning("%s: %s", title, message)
         try:
-            record_notification(source="config", title=title, message=message, status="warning")
+            record_notification_once(
+                source="config", title=title, message=message, status="warning"
+            )
         except Exception as e:  # the log line above already carries the notice
             log.warning("Could not show the notice %r in the app: %s", title, e)
-
-
-def _retire_config_keys() -> None:
-    """Drop the config keys the app no longer reads (RETIRED_USER_KEYS) from
-    the user layer, at startup in a packaged install and a source checkout
-    alike. Not at import: bootstrap_home() runs only for a packaged install,
-    and an import-time write would reach a checkout's live config whenever a
-    test collects this module."""
-    try:
-        from server.infrastructure.config import retire_user_config_keys
-
-        retire_user_config_keys()
-    except Exception as e:  # never block boot on a config tidy-up
-        log.warning("Retiring old config keys skipped: %s", e)
 
 
 @asynccontextmanager
@@ -393,18 +401,9 @@ async def lifespan(app):
         reconcile_orphans()
     except Exception as e:
         log.warning("compaction bracket reconcile failed: %s", e)
-    # Config-side one-shot: on-device models installed before the agentic-size
-    # gate existed all carry supports_tools True, which is what makes a 1-3B
-    # model answer "hey" with a raw JSON tool call. Correct those entries once,
-    # then never again (the sweep marks the user layer), so a deliberate
-    # re-enable afterwards sticks.
-    try:
-        from server.model_browser.install import disable_tools_on_small_models
-
-        disable_tools_on_small_models()
-    except Exception as e:
-        logging.getLogger("whisper-studio").warning("Small-model tool sweep skipped: %s", e)
-    _retire_config_keys()
+    # Old settings (an old config.json, retired keys and values, small on-device
+    # models still set to call tools) are reported, never rewritten: startup
+    # leaves config.user.json exactly as the user saved it.
     _report_old_config()
     init_skills()
     init_plugins(app)
