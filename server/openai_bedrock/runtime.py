@@ -286,7 +286,7 @@ def translate_tools(tool_pool: list[dict]) -> list[dict]:
 
 def _content_parts(blocks: list, role: str) -> list[dict]:
     """Anthropic-style content blocks -> Responses content parts, preserving
-    images so GPT-5.x (a vision model) sees the pixels, not just OCR text.
+    images so GPT (a vision model) sees the pixels, not just OCR text.
 
     Responses uses ``input_text``/``input_image`` for user/system/developer and
     ``output_text`` for assistant. Anthropic image blocks
@@ -343,7 +343,7 @@ def tool_result_input_items(tool_use_id: str, content) -> list[dict]:
     ``process_tool_results``) -> the caption as the ``function_call_output``
     output, FOLLOWED by a ``user`` message carrying the image as an
     ``input_image`` part. That second message is how a tool-produced image
-    reaches GPT-5.x (a vision model): ``function_call_output.output`` is
+    reaches GPT (a vision model): ``function_call_output.output`` is
     text-only on this endpoint, so ``str(content)`` would ship a stringified
     base64 blob the model can't see. Mirrors ``_content_parts`` for user
     attachments."""
