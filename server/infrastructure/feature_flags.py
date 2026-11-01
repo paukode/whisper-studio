@@ -1,19 +1,18 @@
-"""Feature flags — runtime gating for Whisper features.
+"""Feature flags: runtime gating for Whisper features.
 
-Provides a lightweight feature flag system backed by config.user.json.
-Flags can be checked at runtime to gate features on/off without code changes.
+A lightweight feature flag system backed by the ``feature_flags`` object in
+config.user.json. Flags can be checked at runtime to gate features on/off
+without code changes.
 
 Usage:
-    from server.infrastructure.feature_flags import is_enabled, get_flag
+    from server.infrastructure.feature_flags import get_flag_states, is_enabled
 
     if is_enabled("auto_memory"):
         # memory feature code
         ...
 
-    # Get flag with metadata
-    flag = get_flag("auto_memory")
-    if flag and flag.enabled:
-        ...
+    # Every flag with its metadata and current state
+    states = get_flag_states()
 """
 
 from __future__ import annotations

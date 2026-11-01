@@ -1,19 +1,19 @@
 """Configuration management with a layered merge and session-latching support.
 
 Config layers (lowest to highest priority):
-  1. DEFAULTS — built-in fallbacks (code)
-  2. SYSTEM — the bundle's config.example.json at repo_root() (read-only; ships
+  1. DEFAULTS: built-in defaults (code)
+  2. SYSTEM: the bundle's config.example.json at repo_root() (read-only; ships
      inside the .app and updates with every app version). The app-owned model
      catalog + shipped defaults.
-  3. USER — config.user.json in the app home (the user owns it; survives app
+  3. USER: config.user.json in the user root (the user owns it; survives app
      updates; the in-settings editor writes here). Holds only the user's deltas:
      added local models, region/keys/flags, per-field overrides, and a hide-list.
      Startup never writes it: the only write the user did not ask for is the
      first-run seed of a home that has no config.user.json. The old
      single-file config.json is never read or changed: while one exists,
      startup shows a notice (old_config_notices).
-  4. PROJECT — .whisper/settings.json in the workspace root (per-project)
-  5. ENV — sensitive secrets from environment variables
+  4. PROJECT: .whisper/settings.json in the workspace root (per-project)
+  5. ENV: sensitive secrets from environment variables
 
 ``chat_models`` is an ADDITIVE per-key deep-merge across SYSTEM and USER: the
 shipped catalog always appears, and a user entry adds a new key or overrides
@@ -120,7 +120,7 @@ def _system_config() -> dict:
 
 DEFAULTS = {
     # Where app data (result cache, JSON stores, DBs) lives. Empty = the
-    # default <repo>/data. Overridable so a packaged/worktree install can pin
+    # default <user_root>/data (~/.whisper/data in the app). Overridable so a packaged/worktree install can pin
     # a stable location; see server/infrastructure/paths.py.
     "data_dir": "",
     "tavily_api_key": "",
@@ -231,7 +231,7 @@ DEFAULTS = {
     # team, a background or resumed agent), start a synthesis turn on the
     # session's model that answers from them (server/agents/wake.py).
     "wake_parent_on_reports": True,
-    # Feature flags namespace — see server/feature_flags.py
+    # Feature flags namespace: see server/infrastructure/feature_flags.py
     "feature_flags": {},
 }
 
@@ -530,8 +530,8 @@ def _env_overlay() -> dict:
     """Read sensitive secrets from environment variables. These override
     anything stored in config.user.json so users can keep keys out of disk
     (e.g. export TAVILY_API_KEY=... in their shell rc, rotate via env
-    without re-editing config). Empty env values are ignored — config
-    falls back to whatever's in DEFAULTS or config.user.json.
+    without re-editing config). Empty env values are ignored: config keeps
+    whatever DEFAULTS or config.user.json hold.
     """
     overlay: dict = {}
     tavily = os.environ.get("TAVILY_API_KEY", "").strip()
@@ -995,9 +995,7 @@ def set_feature_flag(flag_name: str, enabled: bool) -> None:
 
     A flag toggle should be surgical. Re-serializing the whole file via
     save_config()/json.dump reflows formatting (e.g. collapses aligned
-    chat_models one-liners) and flattens the rich chat_models
-    shape, silently dropping fields like requires_data_retention. This patches
-    the flag's value in place inside the feature_flags object; it only falls
+    chat_models one-liners). This patches the flag's value in place inside the feature_flags object; it only falls
     back to a structured write when the file has no feature_flags block at
     all (rare/first-run). Targets the user layer (config.user.json)."""
     literal = "true" if enabled else "false"
