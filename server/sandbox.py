@@ -1,5 +1,5 @@
 """
-OS-level command sandboxing — restricts filesystem access for shell commands.
+OS-level command sandboxing: restricts filesystem access for shell commands.
 
 Uses macOS sandbox-exec with a deny profile. It is the only backend: when
 sandbox-exec cannot be used, run_sandboxed, popen_sandboxed and
@@ -16,11 +16,11 @@ with ``secret_access``, see server/security/secret_reads.py) may read the
 credential stores (the Keychain for ``security`` and ``codesign``, ~/.ssh,
 ~/.aws and the rest) but still never writes them.
 
-Two write modes:
-  - "open" (default): today's behavior — writes allowed everywhere except the
-    secret deny-list. Human-approved commands keep it: the approval card is
-    the control, and flows like saving a document to ~/Documents keep working.
-  - "workspace": Codex-style default-deny — reads stay open (minus secrets)
+Three write modes:
+  - "open" (default): writes allowed everywhere except the secret deny-list.
+    Human-approved commands keep it: the approval card is the control, and
+    flows like saving a document to ~/Documents keep working.
+  - "workspace": Codex-style default-deny: reads stay open (minus secrets)
     but writes are confined to the command's working tree (plus the git dirs
     a linked worktree needs), the calling session's own scratch folder,
     system temp, and explicit write_paths. Package caches (npm, pip, uv) are
@@ -28,6 +28,8 @@ Two write modes:
     are outside the confinement. Applied
     to agent-stamped (unattended) commands, where no human reviews each
     command: the OS, not the prompt, bounds the blast radius.
+  - "readonly": every write denied except /dev (a read-only classified
+    command, so a write its classifier missed is refused by the OS).
 """
 
 import logging
@@ -259,9 +261,10 @@ def _generate_macos_profile(
     When the active network_policy tier is non-permissive, this ALSO appends
     rules forcing outbound HTTP(S) through the egress proxy (see
     `_macos_network_restriction_rules`). With write_mode="open" the output is
-    byte-for-byte identical to the pre-egress-policy output when the tier is
-    permissive (today's default), verified by tests/test_egress_policy.py —
-    no rules are appended in that case, not even an empty line.
+    byte-for-byte identical to the output without an egress policy when the
+    tier is permissive (the default), verified by
+    tests/test_sandbox_egress_wiring.py: no rules are appended in that case,
+    not even an empty line.
     """
     deny_rules = []
     denied = "file-write*" if secret_reads else "file-read* file-write*"
@@ -419,7 +422,7 @@ _SANDBOX_ENV_DENYLIST = GITHUB_ENV_VARS
 def _network_proxy_env_vars() -> dict[str, str]:
     """HTTPS_PROXY/HTTP_PROXY vars pointing at the local egress-filtering
     proxy (server/security/egress_policy.py), or {} when the active
-    network_policy tier is "permissive" (today's default — no proxy is even
+    network_policy tier is "permissive" (the default: no proxy is even
     started in that case, let alone injected). Both-case variable names are
     set since different tools check different casings."""
     policy = egress_policy.get_active_policy()
