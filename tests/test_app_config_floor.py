@@ -223,7 +223,9 @@ def test_the_kernel_keeps_a_confined_command_off_the_config_files(home):
 # ── The tools that write config: config_set and cron ─────────────────────────
 
 
-def test_config_set_gates_only_sensitive_keys(monkeypatch, tmp_path):
+def test_config_set_always_goes_through_the_gate(monkeypatch, tmp_path):
+    """config.user.json is the user's file: every key, sensitive or not, is
+    written only after the permission mode (or a person) allows it."""
     monkeypatch.setenv("WHISPER_DATA_DIR", str(tmp_path))
     monkeypatch.setattr(
         "server.security.permissions.load_permissions", lambda: {"mode": "default", "rules": []}
@@ -234,9 +236,8 @@ def test_config_set_gates_only_sensitive_keys(monkeypatch, tmp_path):
     # The app's own request, not a plain str: the gate acts on it.
     assert is_app_request(sensitive, APPROVAL)
     assert json.loads(sensitive[len("[WS_APPROVAL]") :])["action"] == "config_set"
-    # A harmless key writes straight away (no card).
     plain = execute_config_set({"updates": {"translate_target": "pl"}})
-    assert not plain.startswith("[WS_APPROVAL]")
+    assert is_app_request(plain, APPROVAL)
     for mode in MODES:
         decision = resolve_static_decision("config_set", {"updates": {}}, "config", {}, mode)
         assert decision == TABLE[mode], mode

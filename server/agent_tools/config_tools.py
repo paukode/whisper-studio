@@ -4,27 +4,6 @@ import json
 
 from server.approval.markers import approval_request
 
-# Config keys a write to which decides what the assistant may do next or where
-# its data lives: the data root (``data_dir``), the default permission mode,
-# the permission explainer, the feature flags, the auto-mode classifier rules,
-# and the auxiliary-model routing (the classifier's own model). A config_set
-# that touches one of these follows the permission mode (the app-config table
-# in server/security/permissions.py, category "config"): a person decides it
-# in every mode but bypassPermissions, and an unattended run is refused. Every
-# other key (a language, a theme flag, a timezone) still writes with no card.
-SENSITIVE_CONFIG_KEYS = frozenset(
-    {
-        "data_dir",
-        "permission_mode",
-        "permission_explainer_enabled",
-        "feature_flags",
-        "auto_mode_allow",
-        "auto_mode_soft_deny",
-        "auto_mode_environment",
-        "auxiliary_models",
-    }
-)
-
 
 def _mask_secrets(config: dict) -> dict:
     """Return a shallow copy of ``config`` with sensitive values masked.
@@ -85,15 +64,11 @@ def _apply_config_updates(updates: dict) -> str:
 
 def execute_config_set(tool_input: dict) -> str:
     updates = tool_input.get("updates", {})
-    # A write to a sensitive key (SENSITIVE_CONFIG_KEYS: the data root, the
-    # permission mode, the classifier rules) follows the permission mode: the
-    # gate (category "config") asks in every mode but bypass, denies in
-    # dontAsk, and refuses an unattended run. The actual write runs in
-    # _do_config_set once the mode (or a person) allows it. Any other key
-    # (a language, a flag with no security weight) writes straight away.
-    if isinstance(updates, dict) and any(k in SENSITIVE_CONFIG_KEYS for k in updates):
-        return approval_request({"action": "config_set", "updates": updates})
-    return _apply_config_updates(updates)
+    # config.user.json is the user's file: every write follows the permission
+    # mode. The gate (category "config") asks in every mode but bypass, denies
+    # in dontAsk, and refuses an unattended run. The actual write runs in
+    # _do_config_set once the mode (or a person) allows it.
+    return approval_request({"action": "config_set", "updates": updates})
 
 
 async def _do_config_set(payload: dict):
