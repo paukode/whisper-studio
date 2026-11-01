@@ -202,9 +202,11 @@ export const WorkspaceContextMenu: React.FC<WorkspaceContextMenuProps> = ({
   // ── Reveal in Finder ──
 
   const handleRevealInFinder = useCallback(() => {
-    // ``open -R`` is a benign macOS action that reveals the file in Finder. It
-    // passes _validate_command (no destructive patterns), so it needs no bypass.
-    void post('/api/workspace/shell', { command: `open -R "${path}"` }).catch(() => {});
+    // The reveal route resolves the path inside the workspace and runs
+    // ``open -R`` with an argument list, so no file name reaches a shell.
+    post('/api/workspace/reveal', { path }).catch((err) => {
+      useUIStore.getState().addToast({ type: 'error', message: toError(err).message });
+    });
     onClose();
   }, [path, onClose]);
 
