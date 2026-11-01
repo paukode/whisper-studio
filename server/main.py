@@ -167,27 +167,23 @@ def _trust_system_certs() -> None:
 
     The packaged runtime is python-build-standalone, which knows nothing of the
     keychain, so behind a TLS-intercepting corporate proxy every HTTPS fetch
-    failed CERTIFICATE_VERIFY_FAILED ("self-signed certificate in chain" on
-    gov.pl and zus.pl, "unable to get local issuer" on ec.europa.eu and
-    stat.gov.pl; 85 in one log) while the same sites opened fine in the
+    failed CERTIFICATE_VERIFY_FAILED while the same sites opened fine in the
     browser. truststore swaps ssl.SSLContext for one that also consults the
     system store, so urllib (WebFetch), requests (Tavily) and httpx (the OpenAI
     SDK) all pick it up without per-call changes. Must run before any of them
-    build a context, hence module import time. Fails open to the old
-    certifi-only behavior.
+    build a context, hence module import time. A failure stops the boot with
+    its reason.
 
     The injection alone broke every Bedrock call: botocore builds the ORIGINAL
     ssl.SSLContext, whose property setters recursed once the module global
     named truststore's subclass ("maximum recursion depth exceeded" on every
     chat turn). server.infrastructure.tls repairs those setters right after
-    injecting, and undoes the injection if the repair cannot be proven.
+    injecting, and undoes the injection (then raises) if the repair cannot be
+    proven.
     """
-    try:
-        from server.infrastructure.tls import install_system_trust
+    from server.infrastructure.tls import install_system_trust
 
-        install_system_trust()
-    except Exception as exc:  # noqa: BLE001 - never block boot on TLS setup
-        log.warning("system trust store unavailable, using the bundled CA list: %s", exc)
+    install_system_trust()
 
 
 _trust_system_certs()

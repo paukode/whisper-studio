@@ -90,3 +90,34 @@ def test_bedrock_client_survives_server_import(tmp_path):
     assert proc.returncode == 0, proc.stderr[-3000:]
     assert "BEDROCK_CLIENT_OK" in proc.stdout
     assert "RecursionError" not in proc.stderr
+
+
+def test_a_repair_that_cannot_be_proven_is_undone_and_raises(monkeypatch):
+    import ssl
+
+    import truststore
+
+    calls = []
+    original = ssl.SSLContext
+
+    class _Injected(original):
+        pass
+
+    def fake_inject():
+        calls.append("inject")
+        monkeypatch.setattr(ssl, "SSLContext", _Injected)
+
+    def fake_extract():
+        calls.append("extract")
+        monkeypatch.setattr(ssl, "SSLContext", original)
+
+    def broken_rebind(_original):
+        raise RecursionError("maximum recursion depth exceeded")
+
+    monkeypatch.setattr(truststore, "inject_into_ssl", fake_inject)
+    monkeypatch.setattr(truststore, "extract_from_ssl", fake_extract)
+    monkeypatch.setattr(tls, "rebind_original_sslcontext_setters", broken_rebind)
+    with pytest.raises(RuntimeError, match="RecursionError"):
+        tls.install_system_trust()
+    assert calls == ["inject", "extract"]
+    assert ssl.SSLContext is original
