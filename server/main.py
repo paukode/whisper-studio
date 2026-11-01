@@ -295,7 +295,8 @@ def _start_parent_watchdog() -> None:
 
             serving.stop()
         except Exception:
-            pass
+            # The process exits next either way; the log keeps the reason.
+            log.exception("Stopping the on-device model server failed")
         os._exit(0)
 
     threading.Thread(target=_watch, name="parent-watchdog", daemon=True).start()
@@ -309,8 +310,9 @@ def _seed_bundled_models() -> None:
     is missing from the live models root is copied over, so those models are
     present before the first recording without a download. A dir that already
     exists is left alone (the per-model ensure functions heal partial copies).
-    Source checkouts have no models-bundled dir — setup.sh downloads the same
-    two models instead — so this is a silent no-op there."""
+    A copy that fails is removed and stops the boot with its reason. Source
+    checkouts have no models-bundled dir (setup.sh downloads the language-ID,
+    speaker-encoder and ReDimNet2 models instead), so this does nothing there."""
     import shutil
 
     from server.infrastructure.paths import models_root
@@ -327,12 +329,10 @@ def _seed_bundled_models() -> None:
             continue
         try:
             shutil.copytree(src, dst)
-            logging.getLogger("whisper-studio").info("Seeded bundled model %s", name)
-        except Exception as e:  # noqa: BLE001 — the ensure funcs can still download
-            logging.getLogger("whisper-studio").warning(
-                "Could not seed bundled model %s: %s", name, e
-            )
+        except BaseException:
             shutil.rmtree(dst, ignore_errors=True)  # never leave a half copy
+            raise
+        log.info("Seeded bundled model %s", name)
 
 
 def _old_config_notice_list() -> list[tuple[str, str]]:
@@ -385,12 +385,9 @@ async def lifespan(app):
     _seed_bundled_models()
     # Close any compaction bracket a crash left open, so the per-session
     # compaction logs never claim an in-flight compaction that died silently.
-    try:
-        from server.chat.compaction_log import reconcile_orphans
+    from server.chat.compaction_log import reconcile_orphans
 
-        reconcile_orphans()
-    except Exception as e:
-        log.warning("compaction bracket reconcile failed: %s", e)
+    reconcile_orphans()
     # Old settings (an old config.json, retired keys and values, small on-device
     # models still set to call tools) are reported, never rewritten: startup
     # leaves config.user.json exactly as the user saved it.
@@ -416,12 +413,9 @@ async def lifespan(app):
     # A previous run killed with SIGKILL (force quit / OOM) never ran the
     # shutdown hook below, leaving its on-device model server alive and holding
     # gigabytes. Reap those before anything else needs the memory.
-    try:
-        from server.local import serving
+    from server.local import serving
 
-        await asyncio.to_thread(serving.reap_orphans)
-    except Exception as e:
-        logging.getLogger("whisper-studio").debug("model server orphan reap failed: %s", e)
+    await asyncio.to_thread(serving.reap_orphans)
     cleanup_task = asyncio.create_task(cleanup_loop())
     # Starts the configured MCP servers, then keeps them matched to
     # mcp_servers.json (edits from any source apply without a restart).
@@ -444,12 +438,9 @@ async def lifespan(app):
 
     # Flip orphaned workflow runs (server died mid-run) to 'stale'; journals
     # stay resumable.
-    try:
-        from server.workflows.manager import reconcile_stale as _wf_reconcile
+    from server.workflows.manager import reconcile_stale as _wf_reconcile
 
-        _wf_reconcile()
-    except Exception as _exc:
-        log.warning("workflow reconcile failed: %s", _exc)
+    _wf_reconcile()
     # Prune notifications past the retention window (30 days).
     from server.notifications import gc_old as _notifications_gc
 
@@ -471,11 +462,9 @@ async def lifespan(app):
     # Stop the on-device model server before the loop tears down; an orphaned
     # one would keep holding its port and gigabytes of weights.
     try:
-        from server.local import serving
-
         serving.stop()
-    except Exception as e:  # never block shutdown on this
-        logging.getLogger("whisper-studio").debug("model server stop failed: %s", e)
+    except Exception:  # shutdown goes on; the log keeps the reason
+        log.exception("Stopping the on-device model server failed")
     # Stop the config watcher first so it cannot start a server while the
     # rest are being shut down.
     mcp_task.cancel()
