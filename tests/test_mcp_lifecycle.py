@@ -5,6 +5,7 @@ the server subprocess leaks. The manager owns each connection in a dedicated
 """
 
 import asyncio
+from types import SimpleNamespace
 
 import mcp
 import mcp.client.stdio
@@ -38,7 +39,8 @@ class _FakeSession:
         return False
 
     async def initialize(self):
-        pass
+        # A server that does not advertise the resources capability.
+        return SimpleNamespace(capabilities=SimpleNamespace(resources=None))
 
     async def list_tools(self, params=None):
         return _FakeToolsResult()
@@ -103,5 +105,20 @@ def test_mcp_lifecycle_exits_contexts_in_entering_task(monkeypatch):
         # Registrations are gone.
         assert "srv" not in mgr._sessions
         assert "mcp__srv__ping" not in mgr._tools
+
+    asyncio.run(scenario())
+
+
+def test_a_server_without_the_resources_capability_is_not_asked(monkeypatch):
+    """list_resources would raise on these fakes: a server that does not
+    advertise resources must connect without the call being made."""
+    record: dict = {}
+    _install_fakes(monkeypatch, record)
+    mgr = MCPManager()
+
+    async def scenario():
+        await mgr.start_server("srv", {"command": "x"})
+        assert mgr._sessions["srv"]["status"] == "connected"
+        assert mgr._sessions["srv"]["resources"] == {}
 
     asyncio.run(scenario())

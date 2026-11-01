@@ -11,6 +11,7 @@ Future, and resolve it from `resolve_elicitation` — the same hub POST
 """
 
 import asyncio
+from types import SimpleNamespace
 
 import mcp
 import mcp.client.stdio
@@ -65,7 +66,8 @@ class _FakeSession:
         return False
 
     async def initialize(self):
-        pass
+        # A server that does not advertise the resources capability.
+        return SimpleNamespace(capabilities=SimpleNamespace(resources=None))
 
     async def list_tools(self, params=None):
         return _FakeToolsResult()

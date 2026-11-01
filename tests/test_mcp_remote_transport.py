@@ -10,6 +10,7 @@ import asyncio
 import json
 import os
 import tempfile
+from types import SimpleNamespace
 
 import mcp
 import mcp.client.stdio
@@ -54,7 +55,8 @@ class _FakeSession:
         return False
 
     async def initialize(self):
-        pass
+        # A server that does not advertise the resources capability.
+        return SimpleNamespace(capabilities=SimpleNamespace(resources=None))
 
     async def list_tools(self, params=None):
         return _FakeToolsResult()
@@ -165,10 +167,11 @@ def test_bearer_token_read_from_env_and_sent_as_auth_header(monkeypatch):
     asyncio.run(scenario())
 
 
-def test_missing_env_var_connects_with_no_auth_header(monkeypatch):
+def test_a_missing_token_variable_fails_the_connect_with_its_name(monkeypatch):
     record: dict = {}
     _install_fakes(monkeypatch, record)
     monkeypatch.delenv("MISSING_TOKEN_VAR", raising=False)
+    monkeypatch.setattr("server.mcp.login_shell_env", lambda: {})
 
     mgr = MCPManager()
 
@@ -177,7 +180,28 @@ def test_missing_env_var_connects_with_no_auth_header(monkeypatch):
             "remote-srv",
             {"url": "https://example.com/mcp", "bearer_token_env_var": "MISSING_TOKEN_VAR"},
         )
-        assert record["headers"] is None
+        status = mgr._sessions["remote-srv"]
+        assert status["status"] == "error"
+        assert "MISSING_TOKEN_VAR" in status["error"]
+        assert "headers" not in record  # never connected anonymously
+
+    asyncio.run(scenario())
+
+
+def test_a_token_exported_in_the_login_shell_is_used(monkeypatch):
+    record: dict = {}
+    _install_fakes(monkeypatch, record)
+    monkeypatch.delenv("SHELL_ONLY_TOKEN", raising=False)
+    monkeypatch.setattr("server.mcp.login_shell_env", lambda: {"SHELL_ONLY_TOKEN": "from-zshrc"})
+
+    mgr = MCPManager()
+
+    async def scenario():
+        await mgr.start_server(
+            "remote-srv",
+            {"url": "https://example.com/mcp", "bearer_token_env_var": "SHELL_ONLY_TOKEN"},
+        )
+        assert record["headers"] == {"Authorization": "Bearer from-zshrc"}
 
     asyncio.run(scenario())
 

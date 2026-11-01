@@ -459,19 +459,22 @@ class MCPManager:
             headers = None
             token_env_var = (config.get("bearer_token_env_var") or "").strip()
             if token_env_var:
-                # The token itself is never persisted to mcp_servers.json —
+                # The token itself is never persisted to mcp_servers.json:
                 # only the env var NAME is stored in config. Read the actual
-                # secret from the environment fresh at connect time.
-                token = os.environ.get(token_env_var, "")
-                if token:
-                    headers = {"Authorization": f"Bearer {token}"}
-                else:
-                    log.warning(
-                        "MCP server '%s': bearer_token_env_var '%s' is not set in the "
-                        "environment; connecting without an Authorization header",
-                        name,
-                        token_env_var,
-                    )
+                # secret fresh at connect time, from the user's login-shell
+                # environment too (a Finder-launched app keeps the shell's
+                # exports there, not in os.environ).
+                token = {**login_shell_env(), **os.environ}.get(token_env_var, "")
+                if not token:
+                    if not ready.done():
+                        ready.set_exception(
+                            RuntimeError(
+                                f"bearer_token_env_var {token_env_var} is not set in the "
+                                "environment, so the server cannot authenticate."
+                            )
+                        )
+                    return
+                headers = {"Authorization": f"Bearer {token}"}
             transport_cm = streamablehttp_client(url, headers=headers)
         else:
             from mcp.client.stdio import stdio_client
@@ -505,17 +508,16 @@ class MCPManager:
                     elicitation_callback=elicitation_callback,
                     message_handler=on_message,
                 ) as session:
-                    await session.initialize()
+                    init = await session.initialize()
                     tools = await _list_all(session.list_tools, "tools")
                     server_tools, tool_registrations = self._tool_entries(name, tools)
 
-                    # Feature 19: Also discover MCP resources
+                    # Resources, from servers that advertise the capability. A
+                    # listing error fails the connect like the tools listing.
                     server_resources: dict = {}
-                    try:
+                    if getattr(init.capabilities, "resources", None):
                         for resource in await _list_all(session.list_resources, "resources"):
                             server_resources[str(resource.uri)] = resource
-                    except Exception as e:
-                        log.debug("MCP server '%s' has no resources: %s", name, e)
 
                     # Publish (start_server holds the lock while awaiting `ready`,
                     # so no other mutator interleaves with this).
