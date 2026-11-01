@@ -196,6 +196,36 @@ def test_an_old_or_unknown_effort_level_runs_as_high_and_gets_a_notice(split_env
     assert cfg.old_config_notices() == []
 
 
+def test_a_project_effort_level_auto_runs_as_high_and_gets_one_notice(split_env, monkeypatch):
+    from server import notifications
+
+    tmp = split_env
+    ws = tmp / "project"
+    (ws / ".whisper").mkdir(parents=True)
+    text = json.dumps({"effort_level": "auto"})
+    (ws / ".whisper" / "settings.json").write_text(text)
+    seen = []
+    monkeypatch.setattr(notifications, "_old_format_seen", set())
+    monkeypatch.setattr(
+        notifications,
+        "record_notification_once",
+        lambda **kw: seen.append((kw["title"], kw["message"])),
+    )
+
+    assert cfg.load_config(str(ws))["effort_level"] == "high"
+    assert cfg.load_config(str(ws))["effort_level"] == "high"
+    [(title, message)] = seen
+    assert title == 'effort_level "auto" is no longer offered'
+    assert str(ws / ".whisper" / "settings.json") in message
+    assert "high effort is used" in message
+    assert (ws / ".whisper" / "settings.json").read_text() == text
+
+    # A project with a value the app offers says nothing.
+    (ws / ".whisper" / "settings.json").write_text(json.dumps({"effort_level": "low"}))
+    assert cfg.load_config(str(ws))["effort_level"] == "low"
+    assert len(seen) == 1
+
+
 def test_unknown_values_of_fixed_list_settings_get_a_notice(split_env, monkeypatch):
     from server.infrastructure.model_mode import current_mode
 

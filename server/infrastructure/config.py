@@ -604,6 +604,8 @@ def load_config(workspace_path: str | None = None) -> dict:
 
     # Layer 4: project config (not cached — workspace can change)
     project_stored = _load_project_config(workspace_path)
+    if project_stored:
+        _project_retired_value_notices(workspace_path, project_stored)
     merged = _deep_merge(user_merged, project_stored) if project_stored else dict(user_merged)
     # Project config keeps its historical wholesale-replace semantics for the
     # catalog: a project that lists chat_models replaces the merged SYSTEM+USER
@@ -904,6 +906,29 @@ RETIRED_USER_VALUES = {
         "auto": ("high", "the automatic effort level is gone, so high effort is used"),
     },
 }
+
+
+def _project_retired_value_notices(workspace_path: str | None, project: dict) -> None:
+    """Say so, once, when a project's .whisper/settings.json sets a value the
+    app no longer offers (effort_level "auto"): load_config runs the same
+    replacement as for the user's file, which old_config_notices names at
+    startup. The project file is read on every load, so the notice goes
+    through old_format_notice (once per process, once in the bell). Nothing
+    on disk changes."""
+    from server.notifications import old_format_notice
+
+    settings_path = os.path.join(workspace_path or "", ".whisper", "settings.json")
+    for key, replacements in RETIRED_USER_VALUES.items():
+        value = project.get(key)
+        if isinstance(value, str) and value in replacements:
+            old_format_notice(
+                title=f'{key} "{value}" is no longer offered',
+                message=(
+                    f'{settings_path} sets {key} to "{value}": '
+                    f"{replacements[value][1]}. The app leaves your file as it is. "
+                    f"Change {key} in that file to save your own choice."
+                ),
+            )
 
 
 def unfiltered_chat_models() -> tuple[dict, dict]:
