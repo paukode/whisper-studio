@@ -36,12 +36,11 @@ TINY_LOCAL = {
 
 @pytest.fixture()
 def cfg_path(tmp_path, monkeypatch):
-    """Throwaway config.user.json as the active USER layer (legacy config.json
-    aimed at a nonexistent path), on top of the real SYSTEM catalog."""
+    """Throwaway config.user.json as the USER layer, on top of the real SYSTEM
+    catalog."""
     path = tmp_path / "config.user.json"
     path.write_text(json.dumps({"model_mode": "cloud"}, indent=2) + "\n")
     monkeypatch.setattr(config_mod, "USER_CONFIG_PATH", str(path))
-    monkeypatch.setattr(config_mod, "CONFIG_PATH", str(tmp_path / "config.json"))
     monkeypatch.setattr(config_raw_routes, "_backup_done", False)
     config_mod._invalidate_cache()
     yield path

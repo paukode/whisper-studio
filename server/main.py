@@ -80,7 +80,7 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("whisper-studio")
 
 # ── Packaged-app bootstrap ───────────────────────────────────────────────────
-# Runs at import, before anything reads config.json or spawns a subprocess:
+# Runs at import, before anything reads the config or spawns a subprocess:
 #  * bootstrap_home() seeds $WHISPER_HOME (config/pricing/rules/skills + the
 #    directory tree) on first run; a no-op in a dev checkout (env unset).
 #  * WHISPER_BIN_DIR (the bundle's binary dir) is prepended to PATH so
@@ -345,6 +345,20 @@ def _seed_bundled_models() -> None:
             shutil.rmtree(dst, ignore_errors=True)  # never leave a half copy
 
 
+def _report_old_config() -> None:
+    """Say at startup that an old config file or key is ignored (a log line and a
+    bell notification) instead of skipping it quietly. Nothing on disk changes."""
+    from server.infrastructure.config import old_config_notices
+    from server.notifications import record_notification
+
+    for title, message in old_config_notices():
+        log.warning("%s: %s", title, message)
+        try:
+            record_notification(source="config", title=title, message=message, status="warning")
+        except Exception as e:  # the log line above already carries the notice
+            log.warning("Could not show the notice %r in the app: %s", title, e)
+
+
 def _retire_config_keys() -> None:
     """Drop the config keys the app no longer reads (RETIRED_USER_KEYS) from
     the user layer, at startup in a packaged install and a source checkout
@@ -391,6 +405,7 @@ async def lifespan(app):
     except Exception as e:
         logging.getLogger("whisper-studio").warning("Small-model tool sweep skipped: %s", e)
     _retire_config_keys()
+    _report_old_config()
     init_skills()
     init_plugins(app)
     init_memory()

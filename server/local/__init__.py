@@ -1,7 +1,7 @@
 """On-device (local mode) backend — fully isolated from the cloud/Bedrock path.
 
 Everything specific to running local models lives under this package:
-  - registry.py      — the config-driven model registry (add a model in config.json)
+  - registry.py      — the config-driven model registry (add a model in config.user.json)
   - llama_server.py  — the llama-server subprocess manager (GGUF engine)
   - mlx_server.py    — the mlx_lm server subprocess manager (MLX engine)
   - serving.py       — engine dispatch: one facade the rest of the app calls

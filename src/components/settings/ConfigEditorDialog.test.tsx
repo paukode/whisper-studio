@@ -248,7 +248,7 @@ describe('ConfigJsonLink', () => {
       </QueryClientProvider>,
     );
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'config.json' }));
+    fireEvent.click(screen.getByRole('button', { name: 'config.user.json' }));
     expect(await screen.findByRole('dialog', { name: 'Edit your config' })).toBeInTheDocument();
     // The dialog portals to document.body — never nested inside the <p>.
     expect(screen.getByRole('dialog').closest('p')).toBeNull();

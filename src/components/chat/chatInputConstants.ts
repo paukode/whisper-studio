@@ -34,7 +34,7 @@ export interface SlashCommand {
 }
 
 // Base list — the `model` entry's `options` is hydrated inside the component
-// from useSettingsStore.models so adding a new entry in config.json surfaces
+// from useSettingsStore.models so adding a new entry in config.user.json surfaces
 // in the slash-command autocomplete without code changes here.
 //
 // KEEP THIS LIST ALPHABETICAL BY `cmd`. The autocomplete dropdown and the

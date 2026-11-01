@@ -185,7 +185,7 @@ def _warm_calls(monkeypatch, backend_name, installed=lambda entry: True):
     from server.models_manager import catalog as _catalog
 
     monkeypatch.setattr(_catalog, "is_installed", installed)
-    conf = {"transcription_backend": backend_name, "local_mode": False}
+    conf = {"transcription_backend": backend_name}
     monkeypatch.setattr(cfg, "get", lambda k, default=None: conf.get(k, default))
     main._warm_transcription_models()
     return calls

@@ -24,7 +24,7 @@ Two roots, split by who edits what:
 
 data_root() resolution order:
   1. ``WHISPER_DATA_DIR`` environment variable
-  2. ``data_dir`` key in config.json
+  2. ``data_dir`` key in config.user.json
   3. ``<user_root>/data`` (== ``<repo>/data`` in a dev checkout)
 """
 
@@ -91,7 +91,7 @@ def logs_root() -> str:
 
 
 def config_dir() -> str:
-    """Directory holding config.json / pricing.json — user-editable files, so
+    """Directory holding config.user.json / pricing.json, user-editable files, so
     they live with the rest of the user data."""
     return user_root()
 
@@ -162,9 +162,11 @@ APP_CONFIG_FILES = (
     "launch_trust.json",
 )
 
-# The user config layer (config.user.json, with the legacy config.json): the
-# ``data_dir`` key moves the whole data root and ``permission_mode`` sets the
-# default mode, so it carries the same power. It lives in the user root.
+# The user config layer (config.user.json): the ``data_dir`` key moves the whole
+# data root and ``permission_mode`` sets the default mode, so it carries the same
+# power. The old config.json is no longer read, but it is still the user's own
+# file (it can hold API keys), so it stays protected too. Both live in the user
+# root.
 _USER_ROOT_CONFIG_FILES = (
     "config.user.json",
     "config.json",
@@ -227,17 +229,16 @@ def bootstrap_home() -> None:
             log.warning("Could not create %s: %s", d, e)
     # The user's config is a two-layer split: the SYSTEM catalog + defaults ship
     # in the read-only config.example.json (repo_root()), and only the user's
-    # deltas live in config.user.json. migrate_user_config() creates an empty
-    # config.user.json on a fresh install and, on an upgrade, splits any legacy
-    # monolithic config.json into config.user.json (backing it up first). We do
-    # NOT seed config.json from the example any more — that copy is exactly what
-    # shadowed shipped model/pricing updates after first run.
+    # deltas live in config.user.json. seed_user_config() writes the first-run
+    # defaults into a new config.user.json on a fresh install. It never copies
+    # the example (a full copy shadowed shipped model updates) and never reads
+    # or changes an old config.json.
     try:
-        from server.infrastructure.config import migrate_user_config
+        from server.infrastructure.config import seed_user_config
 
-        migrate_user_config()
-    except Exception as e:  # never block boot on the config split
-        log.warning("Config migration/seed skipped: %s", e)
+        seed_user_config()
+    except Exception as e:  # never block boot on the first-run seed
+        log.warning("First-run config seed skipped: %s", e)
     # pricing.json is NOT seeded: it holds only the user's own per-key rate
     # overrides over the shipped pricing.example.json, and a full copy of the
     # template froze every rate at install time. The shipped global rules file

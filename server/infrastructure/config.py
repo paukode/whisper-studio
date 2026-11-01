@@ -8,9 +8,8 @@ Config layers (lowest to highest priority):
   3. USER — config.user.json in the app home (the user owns it; survives app
      updates; the in-settings editor writes here). Holds only the user's deltas:
      added local models, region/keys/flags, per-field overrides, and a hide-list.
-     Back-compat: when config.user.json is absent but a legacy config.json exists
-     (a dev checkout, or a packaged install that hasn't migrated yet), the legacy
-     config.json IS the user layer until migrate_user_config() runs.
+     The old single-file config.json is never read or changed: while one
+     exists, startup shows a notice (old_config_notices).
   4. PROJECT — .whisper/settings.json in the workspace root (per-project)
   5. ENV — sensitive secrets from environment variables
 
@@ -27,8 +26,8 @@ The latching system caches config snapshots per session so that mid-session
 settings changes don't disrupt an active conversation or invalidate prompt caches.
 
 Latching fields: bedrock_region, chat_models, default_chat_model, effort_level,
-brief_mode, permission_mode. These are frozen at session start and
-only refresh when a new session begins.
+permission_mode. These are frozen at session start and only refresh when a
+new session begins.
 """
 
 import functools
@@ -36,7 +35,6 @@ import json
 import logging
 import os
 import re
-import shutil
 import tempfile
 import threading
 import time
@@ -59,11 +57,11 @@ router = APIRouter(prefix="/api/config", tags=["config"])
 # install, the repo root in a dev checkout); the committed template always
 # stays with the code.
 #
-# USER_CONFIG_PATH (config.user.json) is the user layer the app writes to going
-# forward. CONFIG_PATH (config.json) is the legacy monolith: it acts as the user
-# layer only until migrate_user_config() splits it (see _active_user_config_path).
+# USER_CONFIG_PATH (config.user.json) is the user layer. LEGACY_CONFIG_PATH
+# (config.json) is the old single-file format: never read or changed, only
+# checked for so startup can tell the user it is ignored.
 USER_CONFIG_PATH = os.path.join(config_dir(), "config.user.json")
-CONFIG_PATH = os.path.join(config_dir(), "config.json")
+LEGACY_CONFIG_PATH = os.path.join(config_dir(), "config.json")
 EXAMPLE_CONFIG_PATH = os.path.join(repo_root(), "config.example.json")
 
 # The SYSTEM layer is the full config.example.json (the app-owned catalog +
@@ -173,14 +171,8 @@ DEFAULTS = {
     # unknown names are ignored. Default [] = show system models + the user's own.
     "chat_models_disabled": [],
     "default_chat_model": "gpt6-luna",
-    "brief_mode": False,
     "permission_mode": "default",  # default | auto | plan | acceptEdits | bypassPermissions | dontAsk
     "permission_explainer_enabled": True,
-    # Local mode (the `local` branch's on-device build). When on: transcription
-    # models load into memory lazily on first use and unload when the user
-    # switches engines (one resident at a time), and on-device LLMs are
-    # available. Default False so main behaves exactly as before.
-    "local_mode": False,
     # Where indexing/RAG capabilities run. "cloud" (default) = all Amazon
     # Bedrock; "local" = all on-device; "hybrid" = per-capability via "backends"
     # below. Resolved in server/infrastructure/model_mode.py. Also drives which
@@ -239,7 +231,6 @@ LATCHED_FIELDS = frozenset(
         "chat_model_meta",
         "default_chat_model",
         "effort_level",
-        "brief_mode",
         "permission_mode",
     }
 )
@@ -262,7 +253,6 @@ PROJECT_SETTINGS_KEYS = frozenset(
         "chat_models_disabled",
         "default_chat_model",
         "effort_level",
-        "brief_mode",
         "permission_explainer_enabled",
         "max_session_cost_usd",
         "max_daily_cost_usd",
@@ -308,7 +298,7 @@ def _infer_thinking_default(key: str) -> str:
     """Pick the thinking mode for a legacy flat-string entry that doesn't
     declare one. Opus 4.7+ supports adaptive thinking (no fixed budget);
     everything else uses an explicit budget. Pattern-matched so a future
-    Opus 4.9 / 5.0 in old-shape config.json also resolves correctly."""
+    Opus 4.9 / 5.0 in an old-shape entry also resolves correctly."""
     m = _OPUS_VERSION_RE.match(key)
     if m:
         major, minor = int(m.group(1)), int(m.group(2))
@@ -481,7 +471,7 @@ def _normalize_chat_models(chat_models: dict) -> tuple[dict, dict]:
                 ),
                 "max_output": _as_int(val.get("max_output")),
             }
-        # Silently skip malformed entries — a typo in config.json shouldn't
+        # Silently skip malformed entries — a typo in config.user.json shouldn't
         # take the server down. The model just won't appear in the picker.
         # When the entry does not declare orchestration capability (legacy
         # flat strings never do, rich entries may omit it), infer it from the
@@ -509,26 +499,16 @@ def _deep_merge(base: dict, overlay: dict) -> dict:
     return result
 
 
-def _active_user_config_path() -> str:
-    """The file that IS the user layer right now.
-
-    config.user.json once it exists (post-migration, or a packaged install whose
-    boot created it); otherwise the legacy config.json when only that exists (a
-    dev checkout, or a packaged install that hasn't migrated yet); otherwise
-    config.user.json — the canonical target for a first write on a clean home.
-    Reading the module attributes each call keeps it monkeypatch-friendly."""
-    if os.path.exists(USER_CONFIG_PATH):
-        return USER_CONFIG_PATH
-    if os.path.exists(CONFIG_PATH):
-        return CONFIG_PATH
+def _user_config_path() -> str:
+    """The user layer file, config.user.json. Reads the module attribute on each
+    call so tests can point it elsewhere."""
     return USER_CONFIG_PATH
 
 
 def _load_user_config() -> dict:
-    """Load the USER layer from disk (config.user.json, or the legacy config.json
-    while that is still the active user layer)."""
+    """Load the USER layer (config.user.json) from disk."""
     try:
-        with open(_active_user_config_path()) as f:
+        with open(_user_config_path()) as f:
             data = json.load(f)
         return data if isinstance(data, dict) else {}
     except Exception:
@@ -571,10 +551,10 @@ def _load_project_config(workspace_path: str | None = None) -> dict:
 
 def _env_overlay() -> dict:
     """Read sensitive secrets from environment variables. These override
-    anything stored in config.json so users can keep keys out of disk
+    anything stored in config.user.json so users can keep keys out of disk
     (e.g. export TAVILY_API_KEY=... in their shell rc, rotate via env
     without re-editing config). Empty env values are ignored — config
-    falls back to whatever's in DEFAULTS or config.json.
+    falls back to whatever's in DEFAULTS or config.user.json.
     """
     overlay: dict = {}
     tavily = os.environ.get("TAVILY_API_KEY", "").strip()
@@ -594,8 +574,8 @@ def load_config(workspace_path: str | None = None) -> dict:
 
     now = time.monotonic()
 
-    # Layers 1-3: DEFAULTS + SYSTEM (config.example.json) + USER (config.user.json
-    # or the legacy config.json). Cached together.
+    # Layers 1-3: DEFAULTS + SYSTEM (config.example.json) + USER
+    # (config.user.json). Cached together.
     with _config_cache_lock:
         if _config_cache is not None and (now - _config_cache_mtime) < _CONFIG_CACHE_TTL:
             user_merged = _config_cache
@@ -616,14 +596,6 @@ def load_config(workspace_path: str | None = None) -> dict:
         # Hide-list: drop the models the USER asked to hide from the merged
         # catalog. (Project adds its own below.)
         _apply_disabled(user_merged, _disabled_keys(user_stored))
-        # Backward compat: local_mode predates model_mode. If the user runs an
-        # on-device config (local_mode on) but never set model_mode, follow
-        # local_mode so their on-device models stay visible/usable instead of
-        # being hidden by the cloud default. Keyed on the USER layer (SYSTEM
-        # always ships model_mode, so the merged value is never "absent");
-        # an explicit user model_mode always wins.
-        if "model_mode" not in user_stored and user_merged.get("local_mode"):
-            user_merged["model_mode"] = "local"
         with _config_cache_lock:
             _config_cache = user_merged
             _config_cache_mtime = now
@@ -652,7 +624,7 @@ def load_config(workspace_path: str | None = None) -> dict:
     # the config single-source-of-truth: every callsite reads the same flat
     # {key: id} map, while /api/models and chat.py read meta from the parallel
     # chat_model_meta key. The on-disk rich shape is never re-flattened back
-    # to config.json — see update_config below for the save path.
+    # to config.user.json; see update_config below for the save path.
     if "chat_models" in merged:
         ids, meta = _normalize_chat_models(merged["chat_models"])
         merged["chat_models"] = ids
@@ -724,21 +696,18 @@ def _atomic_write(path: str, text: str) -> None:
 
 
 def save_config(config: dict):
-    """Persist the USER layer (config.user.json, or the legacy config.json while
-    that is still the active user layer). A caller that read the layer to build
-    ``config`` holds USER_CONFIG_LOCK across that read and this save."""
+    """Persist the USER layer (config.user.json). A caller that read the layer
+    to build ``config`` holds USER_CONFIG_LOCK across that read and this save."""
     with USER_CONFIG_LOCK:
-        _atomic_write(_active_user_config_path(), json.dumps(config, indent=2))
+        _atomic_write(_user_config_path(), json.dumps(config, indent=2))
         _invalidate_cache()
 
 
 def _write_config_text(text: str) -> None:
     """Persist raw USER-layer text ATOMICALLY, then drop the in-memory cache so
-    the next load_config() sees the new contents. Targets the active user layer
-    file (config.user.json going forward, or the legacy config.json until the
-    split runs)."""
+    the next load_config() sees the new contents. Targets config.user.json."""
     with USER_CONFIG_LOCK:
-        _atomic_write(_active_user_config_path(), text)
+        _atomic_write(_user_config_path(), text)
         _invalidate_cache()
 
 
@@ -767,103 +736,65 @@ FIRST_RUN_USER_CONFIG = {
 }
 
 
-def migrate_user_config() -> bool:
-    """One-time, idempotent split of a monolithic config.json into a
-    config.user.json that holds only the user's deltas.
+def seed_user_config() -> bool:
+    """Write FIRST_RUN_USER_CONFIG into a new config.user.json on a fresh home.
 
-    - If config.user.json already exists: no-op (already migrated / user layer
-      present). Never overwritten.
-    - If only a legacy config.json exists: back it up to config.json.bak.<ts>,
-      write config.user.json with the user's deltas (chat_models entries that are
-      genuinely new or that differ from the SYSTEM catalog, plus ALL non-catalog
-      keys verbatim, including chat_models_disabled), then rename the legacy file
-      to config.json.pre-split so it can't be double-read as a stale layer.
-    - If neither exists (fresh install): create config.user.json as {} — the
-      shipped catalog comes from the SYSTEM layer, so nothing is copied down.
-
-    Returns True only when it performed an actual legacy→user migration.
+    Does nothing when config.user.json already exists (the user's file is never
+    overwritten) or when an old config.json is there: config.json is not read,
+    so the app runs on the shipped defaults, with a notice, until the user saves
+    a setting. Returns True only when it wrote the file; a failed write raises.
     """
     # Resolve the home at CALL time (not the import-frozen module constants) so a
-    # packaged boot always migrates within the live WHISPER_HOME even if the
-    # module was imported before the env was set.
+    # packaged boot seeds within the live WHISPER_HOME even if the module was
+    # imported before the env was set.
     home = config_dir()
     user_path = os.path.join(home, "config.user.json")
-    legacy_path = os.path.join(home, "config.json")
-
-    if os.path.exists(user_path):
+    if os.path.exists(user_path) or os.path.exists(os.path.join(home, "config.json")):
         return False
-
-    if not os.path.exists(legacy_path):
-        # Fresh install: seed the first-run defaults (Local mode, with the dormant
-        # hybrid backends map), then never touch the file again so the user's
-        # settings win afterward. SYSTEM still supplies the chat-model catalog.
-        try:
-            _atomic_write(user_path, json.dumps(FIRST_RUN_USER_CONFIG, indent=2) + "\n")
-            _invalidate_cache()
-        except OSError as e:
-            log.warning("Could not create %s: %s", user_path, e)
-        return False
-
-    try:
-        with open(legacy_path) as f:
-            legacy = json.load(f)
-    except Exception as e:
-        log.warning("Could not read legacy config.json for migration: %s", e)
-        return False
-    if not isinstance(legacy, dict):
-        legacy = {}
-
-    # Timestamped backup (setup.sh's config.json.bak.<YYYYmmddHHMMSS> convention).
-    backup = f"{legacy_path}.bak.{time.strftime('%Y%m%d%H%M%S')}"
-    try:
-        shutil.copyfile(legacy_path, backup)
-        log.info("Backed up %s to %s before the config split.", legacy_path, backup)
-    except OSError as e:
-        log.warning("Could not back up %s before migration: %s", legacy_path, e)
-
-    system_catalog = _system_config().get("chat_models")
-    if not isinstance(system_catalog, dict):
-        system_catalog = {}
-
-    user_cfg: dict = {}
-    for key, value in legacy.items():
-        if key == "chat_models":
-            continue
-        # Every non-catalog key is user-owned — carried over verbatim (region,
-        # api keys, model_mode, flags, data_dir, chat_models_disabled, …).
-        user_cfg[key] = value
-
-    legacy_cm = legacy.get("chat_models")
-    if isinstance(legacy_cm, dict):
-        # Keep only genuine additions (key absent from SYSTEM) and real overrides
-        # (value differs deeply from the SYSTEM entry). Redundant copies of a
-        # shipped entry are dropped so future SYSTEM updates flow through.
-        delta = {
-            k: v for k, v in legacy_cm.items() if k not in system_catalog or v != system_catalog[k]
-        }
-        if delta:
-            user_cfg["chat_models"] = delta
-
-    try:
-        _atomic_write(user_path, json.dumps(user_cfg, indent=2) + "\n")
-    except OSError as e:
-        log.warning("Could not write %s during migration: %s", user_path, e)
-        return False
-
-    # Rename the legacy file out of the way so it is not read as a stale layer.
-    # The .bak already preserves the original contents.
-    try:
-        os.replace(legacy_path, f"{legacy_path}.pre-split")
-    except OSError as e:
-        log.warning("Could not rename %s after migration: %s", legacy_path, e)
-
+    _atomic_write(user_path, json.dumps(FIRST_RUN_USER_CONFIG, indent=2) + "\n")
     _invalidate_cache()
-    log.info(
-        "Migrated config.json -> config.user.json (%d top-level key(s), %d chat_models delta).",
-        len(user_cfg),
-        len(user_cfg.get("chat_models", {})),
-    )
     return True
+
+
+def old_config_notices() -> list[tuple[str, str]]:
+    """(title, message) for each old setting the app no longer reads, so startup
+    says so instead of ignoring it quietly. Reads only; nothing on disk changes.
+
+    - An old single-file config.json next to config.user.json.
+    - local_mode set in config.user.json with no model_mode: local_mode used to
+      switch the app to Local mode, so the user would otherwise get the shipped
+      mode without being told.
+    """
+    shipped_mode = str(_system_config().get("model_mode") or DEFAULTS["model_mode"])
+    notices: list[tuple[str, str]] = []
+    if os.path.exists(LEGACY_CONFIG_PATH):
+        if os.path.exists(USER_CONFIG_PATH):
+            where = f"Settings are read from {USER_CONFIG_PATH} only."
+        else:
+            where = (
+                f"{USER_CONFIG_PATH} does not exist yet, so the shipped defaults "
+                f"({shipped_mode} mode) apply until you save a setting."
+            )
+        notices.append(
+            (
+                "config.json is no longer read",
+                f"Whisper Studio ignores {LEGACY_CONFIG_PATH} and leaves it as it is. "
+                f"{where} Copy what you still need from config.json into "
+                "config.user.json, then delete or rename config.json to clear this notice.",
+            )
+        )
+    user = _load_user_config()
+    if user.get("local_mode") and "model_mode" not in user:
+        notices.append(
+            (
+                "local_mode is no longer read",
+                f"{USER_CONFIG_PATH} sets local_mode, which the app no longer reads, and "
+                f"no model_mode, so the app runs in {shipped_mode} mode. If you want Local "
+                "mode, choose it in Settings; otherwise remove local_mode from "
+                "config.user.json. Either clears this notice.",
+            )
+        )
+    return notices
 
 
 # Keys the app no longer reads: the per-type agent budgets (agent_limits) and
@@ -1003,11 +934,10 @@ def set_feature_flag(flag_name: str, enabled: bool) -> None:
     shape, silently dropping fields like requires_data_retention. This patches
     the flag's value in place inside the feature_flags object; it only falls
     back to a structured write when the file has no feature_flags block at
-    all (rare/first-run). Targets the active user layer (config.user.json, or the
-    legacy config.json until the split runs)."""
+    all (rare/first-run). Targets the user layer (config.user.json)."""
     literal = "true" if enabled else "false"
     try:
-        with open(_active_user_config_path()) as f:
+        with open(_user_config_path()) as f:
             text = f.read()
     except FileNotFoundError:
         text = ""

@@ -1,7 +1,7 @@
 """The SYSTEM/USER config split (server/infrastructure/config.py).
 
-Covers the one-time migration of a monolithic config.json into a pruned
-config.user.json, the fresh-install seed, the additive SYSTEM+USER catalog merge
+Covers the fresh-install seed, the old config.json that is no longer read, the
+additive SYSTEM+USER catalog merge
 through the live layers, and the headline goal: a user's added model survives an
 app update, and a shipped model's field change flows through to a user who never
 overrode it.
@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import glob
 import json
+from pathlib import Path
 
 import pytest
 
@@ -36,10 +37,10 @@ def split_env(tmp_path, monkeypatch):
     example = tmp_path / "config.example.json"
     example.write_text(json.dumps(SYSTEM_V1))
     monkeypatch.setenv("WHISPER_HOME", str(tmp_path))
-    monkeypatch.setenv("WHISPER_USER_DIR", str(tmp_path))  # config_dir() -> tmp (migration)
+    monkeypatch.setenv("WHISPER_USER_DIR", str(tmp_path))  # config_dir() -> tmp (seed)
     monkeypatch.setattr(cfg, "EXAMPLE_CONFIG_PATH", str(example))
     monkeypatch.setattr(cfg, "USER_CONFIG_PATH", str(tmp_path / "config.user.json"))
-    monkeypatch.setattr(cfg, "CONFIG_PATH", str(tmp_path / "config.json"))
+    monkeypatch.setattr(cfg, "LEGACY_CONFIG_PATH", str(tmp_path / "config.json"))
     _reset(monkeypatch)
     yield tmp_path
     cfg._invalidate_cache()
@@ -57,84 +58,107 @@ def _write_system(path, data):
         json.dump(data, f)
 
 
-# ── Migration ────────────────────────────────────────────────────────────
-
-
-def test_migration_prunes_redundant_keeps_additions_and_overrides(split_env, monkeypatch):
-    tmp = split_env
-    monolith = {
-        "bedrock_region": "eu-west-1",  # non-catalog user setting -> kept verbatim
-        "tavily_api_key": "tvly-user",  # kept verbatim
-        "chat_models_disabled": ["haiku"],  # kept verbatim
-        "chat_models": {
-            # Identical to SYSTEM -> redundant, must be DROPPED so updates flow.
-            "opus5.0": {"id": "global.anthropic.claude-opus-5", "label": "Opus 5"},
-            # Overrides one field of a SYSTEM entry -> real override, KEPT.
-            "haiku": {"id": "global.anthropic.claude-haiku-4-5", "label": "My Haiku"},
-            # Not in SYSTEM -> genuine addition, KEPT.
-            "my_local": {
-                "id": "local:mine",
-                "is_local": True,
-                "repo_id": "a",
-                "filename": "f",
-                "dir": "d",
-            },
-        },
-    }
-    (tmp / "config.json").write_text(json.dumps(monolith))
-
-    assert cfg.migrate_user_config() is True
-
-    user = json.loads((tmp / "config.user.json").read_text())
-    # Non-catalog keys preserved verbatim.
-    assert user["bedrock_region"] == "eu-west-1"
-    assert user["tavily_api_key"] == "tvly-user"
-    assert user["chat_models_disabled"] == ["haiku"]
-    # Redundant copy dropped; override + addition kept.
-    assert "opus5.0" not in user["chat_models"]
-    assert user["chat_models"]["haiku"]["label"] == "My Haiku"
-    assert user["chat_models"]["my_local"]["repo_id"] == "a"
-
-    # A timestamped backup of the pre-split file exists …
-    baks = glob.glob(str(tmp / "config.json.bak.*"))
-    assert len(baks) == 1
-    assert json.loads(open(baks[0]).read())["bedrock_region"] == "eu-west-1"
-    # … the legacy file was renamed out of the way so it can't be double-read …
-    assert not (tmp / "config.json").exists()
-    assert (tmp / "config.json.pre-split").exists()
-
-
-def test_migration_is_idempotent(split_env, monkeypatch):
-    tmp = split_env
-    (tmp / "config.json").write_text(json.dumps({"bedrock_region": "eu-west-1"}))
-    assert cfg.migrate_user_config() is True
-    first = (tmp / "config.user.json").read_text()
-
-    # A second run is a no-op: it never overwrites an existing config.user.json.
-    assert cfg.migrate_user_config() is False
-    assert (tmp / "config.user.json").read_text() == first
+# ── First-run seed and the old config.json ───────────────────────────────
 
 
 def test_fresh_install_seeds_first_run_user_config(split_env):
     tmp = split_env
-    # Neither config.json nor config.user.json exists.
-    assert not (tmp / "config.json").exists()
-    assert cfg.migrate_user_config() is False
-    # Fresh install seeds the first-run defaults (hybrid + on-device index).
+    assert cfg.seed_user_config() is True
     assert json.loads((tmp / "config.user.json").read_text()) == cfg.FIRST_RUN_USER_CONFIG
-    # No backup and no legacy rename on a clean home.
-    assert glob.glob(str(tmp / "config.json.bak.*")) == []
-    assert not (tmp / "config.json.pre-split").exists()
 
 
-def test_migration_never_overwrites_existing_user_config(split_env):
+def test_seed_never_overwrites_an_existing_user_config(split_env):
     tmp = split_env
     (tmp / "config.user.json").write_text(json.dumps({"mine": True}))
-    (tmp / "config.json").write_text(json.dumps({"bedrock_region": "eu-west-1"}))
-    assert cfg.migrate_user_config() is False
+    assert cfg.seed_user_config() is False
     assert json.loads((tmp / "config.user.json").read_text()) == {"mine": True}
-    # The legacy file is left untouched (not renamed) when already migrated.
-    assert (tmp / "config.json").exists()
+
+
+def test_old_config_json_is_never_read_moved_or_seeded_over(split_env, monkeypatch):
+    tmp = split_env
+    old_text = json.dumps({"mine": True, "model_mode": "local"}, indent=4)
+    (tmp / "config.json").write_text(old_text)
+
+    # No first-run seed while config.json exists: the shipped defaults apply.
+    assert cfg.seed_user_config() is False
+    assert not (tmp / "config.user.json").exists()
+    _reset(monkeypatch)
+    c = cfg.load_config()
+    assert "mine" not in c
+    assert c["model_mode"] == cfg.DEFAULTS["model_mode"]
+
+    # Saving a setting creates config.user.json; config.json stays as it was.
+    cfg.save_config({"effort_level": "low"})
+    assert json.loads((tmp / "config.user.json").read_text()) == {"effort_level": "low"}
+    assert (tmp / "config.json").read_text() == old_text
+    assert glob.glob(str(tmp / "config.json.*")) == []
+
+
+def test_old_config_json_gets_a_notice_until_it_is_gone(split_env):
+    tmp = split_env
+    assert cfg.old_config_notices() == []
+
+    (tmp / "config.json").write_text("{}")
+    [(title, message)] = cfg.old_config_notices()
+    assert title == "config.json is no longer read"
+    assert str(tmp / "config.json") in message
+    assert "does not exist yet" in message
+
+    (tmp / "config.user.json").write_text("{}")
+    [(_, message)] = cfg.old_config_notices()
+    assert "does not exist yet" not in message
+
+    (tmp / "config.json").unlink()
+    assert cfg.old_config_notices() == []
+
+
+def test_local_mode_is_not_followed_and_gets_a_notice(split_env, monkeypatch):
+    tmp = split_env
+    (tmp / "config.user.json").write_text(json.dumps({"local_mode": True}))
+    _reset(monkeypatch)
+    assert cfg.load_config()["model_mode"] == cfg.DEFAULTS["model_mode"]
+    [(title, _)] = cfg.old_config_notices()
+    assert title == "local_mode is no longer read"
+
+    # With an explicit model_mode nothing changed for this user: no notice.
+    (tmp / "config.user.json").write_text(json.dumps({"local_mode": True, "model_mode": "local"}))
+    assert cfg.old_config_notices() == []
+
+
+def test_startup_reports_old_config_without_touching_it(monkeypatch):
+    monkeypatch.delenv("WHISPER_HOME", raising=False)
+    import server.main as main_mod
+    import server.notifications as notifications
+
+    legacy = Path(cfg.LEGACY_CONFIG_PATH)  # the conftest gives each test its own
+    legacy.write_text("{}")
+    seen = []
+    monkeypatch.setattr(notifications, "record_notification", lambda **kw: seen.append(kw))
+
+    main_mod._report_old_config()
+
+    assert [(n["source"], n["status"]) for n in seen] == [("config", "warning")]
+    assert legacy.read_text() == "{}"
+
+
+def test_startup_config_steps_never_create_the_user_config(monkeypatch):
+    """The lifespan steps that touch the user layer (small-model sweep, retired
+    keys, old-config notice) leave a home with only config.json as it was."""
+    monkeypatch.delenv("WHISPER_HOME", raising=False)
+    import server.main as main_mod
+    import server.notifications as notifications
+    from server.model_browser.install import disable_tools_on_small_models
+
+    legacy = Path(cfg.LEGACY_CONFIG_PATH)
+    legacy.write_text('{"model_mode": "local"}')
+    monkeypatch.setattr(notifications, "record_notification", lambda **kw: None)
+
+    disable_tools_on_small_models()
+    main_mod._retire_config_keys()
+    main_mod._report_old_config()
+
+    assert not Path(cfg.USER_CONFIG_PATH).exists()
+    assert legacy.read_text() == '{"model_mode": "local"}'
 
 
 # ── Headline scenario: user adds a model, then the app updates ─────────────
@@ -236,7 +260,7 @@ def test_registry_sees_user_added_model(monkeypatch):
 
 
 def test_raw_load_infers_supports_ultracode_for_legacy_config(split_env):
-    """A legacy config.json whose Sonnet 5 entries lack an explicit
+    """A config.user.json whose older Sonnet 5 entries lack an explicit
     ``supports_ultracode`` exposes the same capability through a direct
     load_config() as startup resolves: inferred from the model id (True for
     Sonnet 5, flat-string and rich shapes alike). An explicit ``false`` is
@@ -252,7 +276,7 @@ def test_raw_load_infers_supports_ultracode_for_legacy_config(split_env):
             "muted5": {"id": sonnet_id, "supports_ultracode": False},
         }
     }
-    (tmp / "config.json").write_text(json.dumps(legacy))
+    (tmp / "config.user.json").write_text(json.dumps(legacy))
 
     meta = cfg.load_config()["chat_model_meta"]
     # What startup resolves for a Sonnet 5 entry that lacks the explicit field.

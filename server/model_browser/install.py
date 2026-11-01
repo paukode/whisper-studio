@@ -20,6 +20,7 @@ Two hard-won rules from the config machinery are load-bearing here:
 from __future__ import annotations
 
 import logging
+import os
 import re
 
 from server.infrastructure import config as config_mod
@@ -255,7 +256,13 @@ def disable_tools_on_small_models() -> list[str]:
     plain "hey" with a raw JSON tool call. Their entries are the only thing
     keeping them broken, so they are corrected in place ONCE rather than read
     around forever at runtime. Returns the keys it changed.
+
+    With no config.user.json (a fresh home, or one with only an old config.json)
+    nothing was installed to correct, and writing the flag would create the
+    user's file before they saved anything, so it does nothing.
     """
+    if not os.path.exists(config_mod._user_config_path()):
+        return []
     raw = config_mod._load_user_config()
     if raw.get(_TOOLS_SWEEP_FLAG):
         return []

@@ -434,7 +434,6 @@ def isolated_home(tmp_path, monkeypatch):
     monkeypatch.setenv("WHISPER_HOME", str(tmp_path))
     monkeypatch.setattr(cfg, "EXAMPLE_CONFIG_PATH", str(example))
     monkeypatch.setattr(cfg, "USER_CONFIG_PATH", str(tmp_path / "config.user.json"))
-    monkeypatch.setattr(cfg, "CONFIG_PATH", str(tmp_path / "config.json"))
     monkeypatch.setattr(cfg, "_system_cache", None)
     monkeypatch.setattr(cfg, "_system_cache_key", None)
     cfg._invalidate_cache()
@@ -665,6 +664,12 @@ def test_sweep_leaves_an_entry_with_no_repo_id_alone(isolated_home):
     assert install.disable_tools_on_small_models() == []
     data = json.loads((isolated_home / "config.user.json").read_text())
     assert data["chat_models"]["local_handrolled"]["supports_tools"] is True
+
+
+def test_sweep_never_creates_the_user_config(isolated_home):
+    # No config.user.json yet: nothing was installed, so nothing is written.
+    assert install.disable_tools_on_small_models() == []
+    assert not (isolated_home / "config.user.json").exists()
 
 
 # ── recommended: the curated Discover catalog + one-click install ─────────────

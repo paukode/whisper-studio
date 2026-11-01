@@ -113,32 +113,6 @@ def test_config_defaults_expose_model_mode():
     assert DEFAULTS["backends"] == {}
 
 
-def test_model_mode_inferred_from_local_mode_when_unset(monkeypatch):
-    # A pre-existing on-device config (local_mode on, no model_mode) follows
-    # local_mode so its on-device models aren't hidden by the cloud default.
-    from server.infrastructure import config as cfg
-
-    monkeypatch.setattr(cfg, "_load_user_config", lambda: {"local_mode": True})
-    cfg._invalidate_cache()
-    try:
-        assert cfg.load_config().get("model_mode") == "local"
-    finally:
-        cfg._invalidate_cache()
-
-
-def test_explicit_model_mode_wins_over_local_mode(monkeypatch):
-    from server.infrastructure import config as cfg
-
-    monkeypatch.setattr(
-        cfg, "_load_user_config", lambda: {"local_mode": True, "model_mode": "cloud"}
-    )
-    cfg._invalidate_cache()
-    try:
-        assert cfg.load_config().get("model_mode") == "cloud"
-    finally:
-        cfg._invalidate_cache()
-
-
 def test_fresh_config_defaults_to_cloud(monkeypatch):
     from server.infrastructure import config as cfg
 

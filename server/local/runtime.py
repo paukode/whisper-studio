@@ -8,7 +8,7 @@ resident at a time, matching the memory-constrained on-device build (e.g.
 M3/18GB).
 
 There is deliberately no in-process engine any more. llama-server is the single
-on-device backend, so a model added to config.json is served through upstream's
+on-device backend, so a model added to config.user.json is served through upstream's
 own template and tool-call parsers rather than marker code maintained here — and
 when it is unavailable, local turns fail loudly instead of silently degrading.
 """
@@ -35,7 +35,7 @@ MODELS_DIR = models_root()
 # name is kept as a LIVE VIEW for the many callsites that read it like a dict
 # (``key in LOCAL_MODELS``, ``LOCAL_MODELS[key]["ctx"]``, iteration): it resolves
 # the merged built-in + config registry on every access, so a model added to
-# config.json is picked up without a restart and without touching this file.
+# config.user.json is picked up without a restart and without touching this file.
 class _LocalModelsView(Mapping):
     """Read-only Mapping over the effective registry (built-ins + config)."""
 

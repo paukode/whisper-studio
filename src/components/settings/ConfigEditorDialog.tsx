@@ -7,10 +7,10 @@ import { useSettingsStore } from '@/stores/settingsStore';
 import { useUIStore } from '@/stores/uiStore';
 
 /**
- * In-app config editor (Settings > Models "config.json" link).
+ * In-app config editor (Settings > Models "config.user.json" link).
  *
- * Since the config split the editor edits the USER layer (config.user.json) —
- * only the user's deltas: added local models, region/keys/flags, per-field
+ * The editor edits the USER layer (config.user.json), which holds only the
+ * user's deltas: added local models, region/keys/flags, per-field
  * overrides, and a hide-list. It merges on top of the app's built-in catalog
  * (config.example.json), which updates with each release. A second, read-only
  * "Effective config (merged)" tab shows the fully merged result so the user can
@@ -266,9 +266,8 @@ export const ConfigEditorDialog: React.FC<{ onClose: () => void }> = ({ onClose 
   );
 };
 
-/** Inline "config.json" hyperlink that opens the editor dialog. Drop it into
- *  any helper sentence: "Add models by editing <ConfigJsonLink />." The label
- *  stays "config.json" (the name users know); it opens the user config layer. */
+/** Inline "config.user.json" hyperlink that opens the editor dialog. Drop it
+ *  into any helper sentence: "Add models by editing <ConfigJsonLink />." */
 export const ConfigJsonLink: React.FC = () => {
   const [open, setOpen] = useState(false);
   return (
@@ -286,7 +285,7 @@ export const ConfigJsonLink: React.FC = () => {
           cursor: 'pointer',
         }}
       >
-        config.json
+        config.user.json
       </button>
       {/* Portal: the link often sits inside a <p>, and the dialog is a <div>
           overlay — rendering it in place would be invalid DOM nesting. */}

@@ -98,7 +98,7 @@ def _get_chat_models(config: dict | None = None) -> dict:
 def _get_chat_model_meta(config: dict | None = None) -> dict:
     """Per-model metadata (label, thinking mode). Sibling of chat_models,
     populated by infrastructure.config._normalize_chat_models from the same
-    rich shape on disk. Empty dict if config.json hasn't been loaded yet.
+    rich shape on disk. Empty dict if the config hasn't been loaded yet.
     Downloaded local models without a config entry are folded in with derived
     meta so the picker can badge them and route selection through the local
     runtime. ``config`` as for ``_get_chat_models``."""

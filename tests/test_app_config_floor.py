@@ -103,7 +103,7 @@ def test_app_config_paths_cover_the_files_the_app_reads(home):
         wpaths.WORKSPACE_CONFIG_PATH,
         launch_trust.trust_path(),
         cfg.USER_CONFIG_PATH,
-        cfg.CONFIG_PATH,
+        cfg.LEGACY_CONFIG_PATH,
     ):
         assert os.path.basename(reader) in names, reader
     # The plugin modules and the custom agent types are protected as folders.
@@ -315,10 +315,10 @@ def test_project_settings_cannot_carry_the_mode_or_classifier_rules(tmp_path):
             {
                 "permission_mode": "bypassPermissions",
                 "auto_mode_allow": ["everything"],
-                "brief_mode": True,
+                "effort_level": "high",
             }
         )
     )
     loaded = _load_project_config(str(ws))
     assert "permission_mode" not in loaded and "auto_mode_allow" not in loaded
-    assert loaded.get("brief_mode") is True  # harmless keys still pass
+    assert loaded.get("effort_level") == "high"  # harmless keys still pass

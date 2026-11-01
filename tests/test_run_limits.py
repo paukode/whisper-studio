@@ -83,7 +83,7 @@ def test_a_saved_config_loses_the_retired_keys_once(tmp_path, monkeypatch):
             }
         )
     )
-    monkeypatch.setattr(config_mod, "_active_user_config_path", lambda: str(path))
+    monkeypatch.setattr(config_mod, "_user_config_path", lambda: str(path))
 
     assert sorted(config_mod.retire_user_config_keys()) == sorted(
         [*config_mod.RETIRED_USER_KEYS, "transcription_backend"]
@@ -98,19 +98,19 @@ def test_a_saved_config_loses_the_retired_keys_once(tmp_path, monkeypatch):
 
 def test_a_source_checkout_loses_the_retired_keys_at_startup(monkeypatch):
     """bootstrap_home() runs only for a packaged install, so startup is what
-    reaches a setup.sh checkout, whose user layer can still be the legacy
-    config.json at the repo root (the conftest gives each test its own)."""
+    reaches a setup.sh checkout, whose config.user.json sits at the repo root
+    (the conftest gives each test its own)."""
     import server.main as main_mod
 
     monkeypatch.delenv("WHISPER_HOME", raising=False)
-    legacy = Path(config_mod.CONFIG_PATH)
-    legacy.write_text(
+    user = Path(config_mod.USER_CONFIG_PATH)
+    user.write_text(
         json.dumps({"agent_limits": {"default": {"max_turns": 120}}, "bedrock_region": "us-east-1"})
     )
 
     main_mod._retire_config_keys()
 
-    assert json.loads(legacy.read_text()) == {"bedrock_region": "us-east-1"}
+    assert json.loads(user.read_text()) == {"bedrock_region": "us-east-1"}
 
 
 # ── chat: the round limit, no time limit ────────────────────────────────────

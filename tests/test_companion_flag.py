@@ -33,12 +33,12 @@ def test_companion_appears_in_full_registry():
 
 
 def test_is_enabled_resolves_to_default_when_unset(monkeypatch):
-    """When config.json has no `feature_flags.companion` override, the
+    """When config.user.json has no `feature_flags.companion` override, the
     resolver should fall back to the registered default (False).
 
-    Note: monkeypatching ``chdir`` is NOT enough — ``CONFIG_PATH`` is
+    Note: monkeypatching ``chdir`` is NOT enough — ``USER_CONFIG_PATH`` is
     a module-level constant computed from the file's location, so it
-    points at the project's real config.json regardless of cwd. The
+    points at the project's real config.user.json regardless of cwd. The
     old version of this test made that mistake and silently passed
     only on machines where companion was unset. We instead stub
     ``load_config`` directly to return a clean dict.

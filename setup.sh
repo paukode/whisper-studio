@@ -275,8 +275,9 @@ check_prod_prerequisites() {
     echo ""
 }
 
-# config.json handling (seed it on first run, back up and reset it on --new)
-# happens after argument parsing below, once we know whether --new was passed.
+# User config handling (seed config.user.json on first run, back it up and reset
+# it on --new) happens after argument parsing below, once we know whether --new
+# was passed. An old config.json is never read, moved or deleted.
 
 # Truncate the install log so each run starts fresh.
 : > "$SETUP_LOG"
@@ -331,8 +332,9 @@ for arg in "$@"; do
         -h|--help)
             echo "Usage: bash setup.sh [--new] [--dev|--prod] [--cloud|--hybrid|--local] [--no-open]"
             echo "  --new       Delete venv/, node_modules/, and static/dist/ and reinstall from scratch."
-            echo "              Also backs up your config (timestamped) and resets it to the same"
-            echo "              first-run defaults a fresh Mac-app install gets."
+            echo "              Also backs up config.user.json (timestamped) and resets it to the same"
+            echo "              first-run defaults a fresh Mac-app install gets (not while an old"
+            echo "              config.json exists: config.json is never read or changed)."
             echo "  --dev       Development mode: run the backend + Vite dev server with HMR."
             echo "  --prod      Production mode: build the frontend and serve it from the backend"
             echo "              only (no Vite dev server). This is the default."
@@ -375,9 +377,9 @@ if [ "$FRESH" -eq 1 ]; then
     # a timestamped backup (it holds the user's Tavily key + per-machine
     # settings), then REMOVE it so the first-run seeding below recreates
     # config.user.json with the same defaults a fresh Mac-app install gets.
-    # Both files are gitignored, so the backup is the only copy, so never delete
-    # without backing up first.
-    for cfg_file in config.json config.user.json; do
+    # It is gitignored, so the backup is the only copy: never delete without
+    # backing up first. An old config.json is left alone (it is no longer read).
+    for cfg_file in config.user.json; do
         if [ -f "$cfg_file" ]; then
             config_backup="$cfg_file.bak.$(date +%Y%m%d%H%M%S)"
             cp "$cfg_file" "$config_backup"
@@ -385,7 +387,12 @@ if [ "$FRESH" -eq 1 ]; then
             echo "Backed up $cfg_file to $config_backup and reset it."
         fi
     done
-    echo "  Config will be re-seeded with first-run defaults (local mode)."
+    if [ -f config.json ]; then
+        echo "  config.json exists, so nothing is re-seeded: it is no longer read, and the"
+        echo "  backend runs on the shipped defaults until you save a setting."
+    else
+        echo "  Config will be re-seeded with first-run defaults (local mode)."
+    fi
     echo "  Re-add your Tavily API key and any custom settings in Settings (gear icon)."
     # pricing.json gets the same treatment (gitignored per-key rate overrides;
     # defaults live in pricing.example.json). Back up any existing one and
@@ -420,7 +427,7 @@ fi
 # the read-only SYSTEM layer (catalog + defaults), and a full copy of it is
 # exactly what used to shadow shipped model/pricing updates after first run.
 # Instead, once the venv exists, the first-run seeding below calls the same
-# migrate_user_config() the packaged Mac app runs on boot, which creates a
+# seed_user_config() the packaged Mac app runs on boot, which creates a
 # config.user.json holding only the first-run defaults (local mode, with the
 # on-device index capabilities parked for a later switch to hybrid; weights
 # download on demand).
@@ -535,14 +542,21 @@ fi
 
 # ── First-run config seeding (Mac-app parity) ────────────────────────────────
 # A fresh checkout has no user config layer. The packaged app's boot creates one
-# via migrate_user_config() (bootstrap_home only runs when WHISPER_HOME is set),
+# via seed_user_config() (bootstrap_home only runs when WHISPER_HOME is set),
 # seeding the first-run defaults: local mode, with the on-device index
 # capabilities parked for a later switch to hybrid and every weight downloading
 # on demand. Run the exact same code path
 # here so a setup.sh install starts identically to the Mac app's first launch.
-# An existing config (either layer) is left alone, the user's settings win.
+# An existing config.user.json is left alone, the user's settings win. An old
+# config.json is never read, moved or deleted; while one exists nothing is
+# seeded and the backend runs on the shipped defaults, with a notice, until the
+# user saves a setting (same as the Mac app).
+if [ -f config.json ]; then
+    echo "NOTE: config.json is no longer read. Settings live in config.user.json only."
+    echo "  Copy what you still need from config.json into config.user.json, then delete or rename config.json."
+fi
 if [ ! -f config.json ] && [ ! -f config.user.json ]; then
-    if python -c "from server.infrastructure.config import migrate_user_config; migrate_user_config()" >>"$SETUP_LOG" 2>&1 && [ -f config.user.json ]; then
+    if python -c "from server.infrastructure.config import seed_user_config; seed_user_config()" >>"$SETUP_LOG" 2>&1 && [ -f config.user.json ]; then
         echo "Seeded config.user.json with first-run defaults (local mode) matching the Mac app's first launch."
     else
         echo "WARNING: could not seed the first-run config; the backend will run on shipped defaults (see $SETUP_LOG)."
@@ -550,18 +564,14 @@ if [ ! -f config.json ] && [ ! -f config.user.json ]; then
 fi
 
 # ── Persist an explicit model-mode flag ──────────────────────────────────────
-# Only when a flag was passed: write it into the ACTIVE user layer
-# (config.user.json once it exists, including the one just seeded, else the
-# legacy config.json; mirrors config._active_user_config_path). Without a flag
-# the existing config, or the seeded first-run default, decides the mode.
+# Only when a flag was passed: write it into config.user.json (the one just
+# seeded, or the user's own). Without a flag the existing config, or the seeded
+# first-run default, decides the mode.
 if [ -n "$MODE_FLAG" ]; then
     python - "$MODE_FLAG" <<'PYEOF' || true
 import json, os, sys
 mode = sys.argv[1]
-if os.path.exists("config.user.json") or not os.path.exists("config.json"):
-    target = "config.user.json"
-else:
-    target = "config.json"
+target = "config.user.json"
 cfg = {}
 if os.path.exists(target):
     try:
@@ -575,7 +585,7 @@ fi
 
 # ── On-device serving runtime: llama.cpp (llama-server) ─────────────────────
 # The ONLY on-device chat backend. llama-server owns upstream's per-model-family
-# tool-call and reasoning parsers, so a GGUF added to config.json gets tools and
+# tool-call and reasoning parsers, so a GGUF added to config.user.json gets tools and
 # a thinking channel with no code change.
 #
 # Installed in EVERY mode, matching the Mac app: a model installed later from

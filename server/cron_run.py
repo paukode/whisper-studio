@@ -206,7 +206,7 @@ async def _execute_cron_prompt(job_id: str) -> None:
                 if not chat_models:
                     raise RuntimeError(
                         "no chat models configured: chat_models is empty "
-                        "(check config.json / config.example.json)"
+                        "(check config.user.json / config.example.json)"
                     )
                 model_key, model_id = next(iter(chat_models.items()))
 

@@ -154,7 +154,7 @@ def test_bootstrap_home_is_idempotent_and_never_overwrites(monkeypatch, tmp_path
 
 
 def test_config_path_constant_follows_whisper_home(monkeypatch, tmp_path):
-    """CONFIG_PATH is frozen at import, so flipping the env needs a reload."""
+    """LEGACY_CONFIG_PATH is frozen at import, so flipping the env needs a reload."""
     import server.infrastructure.config as config
 
     home = str(tmp_path / "apphome")
@@ -163,14 +163,14 @@ def test_config_path_constant_follows_whisper_home(monkeypatch, tmp_path):
     monkeypatch.setenv("WHISPER_USER_DIR", user)
     try:
         importlib.reload(config)
-        assert config.CONFIG_PATH == os.path.join(user, "config.json")
+        assert config.LEGACY_CONFIG_PATH == os.path.join(user, "config.json")
         assert config.USER_CONFIG_PATH == os.path.join(user, "config.user.json")
         assert config.EXAMPLE_CONFIG_PATH == os.path.join(paths.repo_root(), "config.example.json")
     finally:
         monkeypatch.delenv("WHISPER_HOME", raising=False)
         monkeypatch.delenv("WHISPER_USER_DIR", raising=False)
         importlib.reload(config)
-    assert config.CONFIG_PATH == os.path.join(paths.repo_root(), "config.json")
+    assert config.LEGACY_CONFIG_PATH == os.path.join(paths.repo_root(), "config.json")
     assert config.USER_CONFIG_PATH == os.path.join(paths.repo_root(), "config.user.json")
 
 

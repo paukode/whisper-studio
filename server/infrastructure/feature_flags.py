@@ -1,6 +1,6 @@
 """Feature flags — runtime gating for Whisper features.
 
-Provides a lightweight feature flag system backed by config.json.
+Provides a lightweight feature flag system backed by config.user.json.
 Flags can be checked at runtime to gate features on/off without code changes.
 
 Usage:
@@ -45,7 +45,7 @@ class FeatureFlag:
 
 
 # Central registry of all feature flags with their metadata.
-# Adding a flag here automatically makes it available in config.json.
+# Adding a flag here automatically makes it available in config.user.json.
 _FLAG_DEFINITIONS: dict[str, FeatureFlag] = {}
 _lock = threading.Lock()
 
@@ -78,7 +78,7 @@ def is_enabled(name: str) -> bool:
 
     Resolution order:
     0. Off in Local mode for a feature with no on-device path (inactive_reason)
-    1. config.json feature_flags.<name> (user override)
+    1. config.user.json feature_flags.<name> (user override)
     2. Registered default value
     3. False (unknown flags are off)
     """
@@ -406,7 +406,7 @@ async def toggle_flag(flag_name: str, request: Request):
         return {"error": f"Unknown flag: {flag_name}"}
 
     # Surgical, format-preserving toggle — flips only this flag's boolean in
-    # config.json, leaving all other content and formatting byte-for-byte
+    # config.user.json, leaving all other content and formatting byte-for-byte
     # intact (and never flattening the rich chat_models shape).
     from server.infrastructure.config import set_feature_flag
 

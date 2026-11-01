@@ -15,7 +15,7 @@ drift from what the ensure functions actually download.
 
 The static entries are built lazily (the ASR modules import numpy) and cached;
 local-chat entries are re-read from the config-driven registry on every call so
-a model added to config.json shows up without a restart.
+a model added to config.user.json shows up without a restart.
 """
 
 from __future__ import annotations

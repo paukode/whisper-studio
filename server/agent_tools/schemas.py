@@ -9,7 +9,7 @@ teams) and are dispatched by server/tool_router.py.
 
 CONFIG_GET_TOOL = {
     "name": "config_get",
-    "description": "Read one or more Whisper Studio config values (e.g. model, region, brief_mode). Call with no keys to list all.",
+    "description": "Read one or more Whisper Studio config values (e.g. model, region, permission_mode). Call with no keys to list all.",
     "input_schema": {
         "type": "object",
         "properties": {
@@ -28,7 +28,7 @@ CONFIG_SET_TOOL = {
     "description": (
         "Write Whisper Studio config values. Any key in the server DEFAULTS is "
         'accepted; unknown keys are ignored and returned under "ignored". Common '
-        "keys: bedrock_region, default_chat_model, brief_mode, "
+        "keys: bedrock_region, default_chat_model, "
         "permission_mode, plus config-only settings with no UI: auto_mode_allow, "
         "auto_mode_soft_deny, auto_mode_environment, permission_explainer_enabled, "
         "cron_timezone."

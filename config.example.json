@@ -57,7 +57,6 @@
     }
   },
   "default_chat_model": "gpt6-luna",
-  "brief_mode": false,
   "permission_mode": "default",
   "permission_explainer_enabled": true,
   "model_mode": "cloud",

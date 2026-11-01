@@ -3,7 +3,7 @@
 Checks are performed before each Bedrock API call. When a limit is exceeded,
 the caller receives a warning or hard stop depending on configuration.
 
-Budget settings in config.json:
+Budget settings in config.user.json:
     max_session_cost_usd: 0.0    (0 = unlimited)
     max_daily_cost_usd: 0.0      (0 = unlimited; the day is the UTC day)
 

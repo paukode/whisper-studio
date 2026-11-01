@@ -314,7 +314,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
   const selectedModel = useSettingsStore((s) => s.selectedModel);
 
   // Hydrate the slash-command list with the live model keys so /model
-  // autocompletes against whatever's defined in config.json.
+  // autocompletes against whatever's defined in the config.
   const SLASH_COMMANDS: SlashCommand[] = useMemo(
     () =>
       BASE_SLASH_COMMANDS.map((c) =>
