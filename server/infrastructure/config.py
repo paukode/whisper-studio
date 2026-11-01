@@ -47,7 +47,6 @@ from server.infrastructure.effort import (
     infer_effort_tier,
     infer_supports_ultracode,
     normalize_effort,
-    openai_effort_tier_for,
 )
 from server.infrastructure.paths import config_dir, repo_root
 
@@ -405,16 +404,12 @@ def _normalize_chat_models(chat_models: dict) -> tuple[dict, dict]:
             # Whether this local model can use tools (local agentic loop).
             "supports_tools": bool(val.get("supports_tools", False)),
             # Which effort levels this model exposes (full/standard/none/
-            # openai/openai6). Explicit wins; OpenAI models default to their
-            # generation's ladder (GPT-6 has no "none" rung), everything else
-            # infers from the key. Drives the per-model effort picker and the
-            # Bedrock output_config.effort.
+            # openai6). Explicit wins; OpenAI models default to the GPT-6
+            # ladder (no "none" rung), everything else infers from the key.
+            # Drives the per-model effort picker and the Bedrock
+            # output_config.effort.
             "effort_tier": val.get("effort_tier")
-            or (
-                openai_effort_tier_for(model_id)
-                if provider == "openai_bedrock"
-                else infer_effort_tier(key, model_id)
-            ),
+            or ("openai6" if provider == "openai_bedrock" else infer_effort_tier(key, model_id)),
             # Whether this model can drive workflow orchestration. Kept
             # SEPARATE from effort_tier: the tier says which raw reasoning
             # values the provider accepts, this says whether the model can

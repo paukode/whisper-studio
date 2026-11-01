@@ -1,7 +1,7 @@
 """Provider runtime for OpenAI models on Bedrock: model detection, region +
 bearer-token auth, client construction, and request mapping.
 
-GPT-5.x (5.4 / 5.5 / 5.6) on Amazon Bedrock speak the OpenAI Responses API on
+GPT-6.x models on Amazon Bedrock speak the OpenAI Responses API on
 the bedrock-mantle endpoint. We mint a bearer token from the caller's AWS
 credentials (aws-bedrock-token-generator), cache it per region (tokens are valid
 for min(12h, session) and are NOT refreshable in place, so we re-mint well
@@ -15,7 +15,6 @@ import threading
 import time
 
 from server.infrastructure.config import load_config
-from server.infrastructure.effort import gpt_version
 
 log = logging.getLogger("whisper-studio")
 
@@ -29,12 +28,12 @@ _TOKEN_TTL_S = 45 * 60
 _token_cache: dict[str, tuple[str, float]] = {}
 _token_lock = threading.Lock()
 
-# Tools dropped from the pool for GPT-5.x: it follows instructions literally and
-# turns "think for N seconds" into an actual `sleep` call. Excluded so the model
+# Tools dropped from the pool for GPT models: they follow instructions literally and
+# turn "think for N seconds" into an actual `sleep` call. Excluded so the model
 # reasons instead of stalling on a wait tool.
 EXCLUDED_TOOLS = {"sleep"}
 
-# Appended to the (Claude-tuned) system prompt for GPT-5.x turns to curb its
+# Appended to the (Claude-tuned) system prompt for GPT turns to curb its
 # literal interpretation of timing phrases.
 GPT_INSTRUCTIONS_SUFFIX = (
     '\n\nInterpret timing phrases like "think for N seconds" as "reason '
@@ -42,24 +41,20 @@ GPT_INSTRUCTIONS_SUFFIX = (
     "satisfy them."
 )
 
-# App effort label -> OpenAI Responses reasoning effort. The GPT-5.5/5.4 ladder
-# tops at "xhigh", so the app's "extra"/"max"/"ultracode" collapse there.
-# GPT-5.6 adds a "max" tier above "xhigh" (verified live 2026-07-15; 5.5 rejects
-# it with unsupported_value), so the top labels are remapped per model — see
-# reasoning_effort_for.
+# App effort label -> OpenAI Responses reasoning effort for GPT-6 (accepted
+# values low/medium/high/xhigh/max). "extra" stays mapped: a parent agent's
+# "extra" reaches a GPT child unclamped. GPT-6 has no "none" rung (Astra
+# rejects it with unsupported_value, verified live 2026-09-09), so "none"
+# runs as "low". See effort.EFFORT_TIERS["openai6"].
 _EFFORT_MAP = {
-    "none": "none",
+    "none": "low",
     "low": "low",
     "medium": "medium",
     "high": "high",
     "extra": "xhigh",
-    "max": "xhigh",
-    "ultracode": "xhigh",
+    "max": "max",
+    "ultracode": "max",
 }
-
-# Labels that ride the model's top reasoning tier: "max" where the ladder has
-# it (GPT-5.6+), else the _EFFORT_MAP default of "xhigh".
-_TOP_TIER_LABELS = {"max", "ultracode"}
 
 
 def _model_meta(model_key: str) -> dict:
@@ -211,7 +206,7 @@ def not_found_advice(model_key: str, region: str) -> str:
 
 
 def verbosity_for(model_key: str, body: dict | None = None) -> str:
-    """GPT-5.x verbosity (text.verbosity). Per-request override wins, then the
+    """GPT verbosity (text.verbosity). Per-request override wins, then the
     model's config default, else 'medium'."""
     if body and body.get("verbosity") in ("low", "medium", "high"):
         return body["verbosity"]
@@ -219,36 +214,9 @@ def verbosity_for(model_key: str, body: dict | None = None) -> str:
     return v if v in ("low", "medium", "high") else "medium"
 
 
-def _gpt_version(model_key: str) -> tuple[int, int] | None:
-    return gpt_version(_model_meta(model_key).get("id", ""))
-
-
-def _supports_max_effort(model_key: str) -> bool:
-    """True iff the model's reasoning ladder includes "max" (GPT-5.6 and up)."""
-    ver = _gpt_version(model_key)
-    return ver is not None and ver >= (5, 6)
-
-
-def _rejects_none_effort(model_key: str) -> bool:
-    """True iff the model has no "none" rung. GPT-6 Astra rejects
-    reasoning.effort "none" with unsupported_value (verified live 2026-09-09);
-    GPT-5.x accepts it. Applied to every GPT-6 id, so "none" on GPT-6 Sol or
-    Luna degrades to "low" although OpenAI documents "none" for them; narrow
-    this to Astra once mantle is probed (see effort.EFFORT_TIERS["openai6"])."""
-    ver = _gpt_version(model_key)
-    return ver is not None and ver >= (6, 0)
-
-
 def reasoning_effort_for(model_key: str, effort_label: str | None) -> str:
     """Map the app's effort level to this model's reasoning.effort value."""
-    if not effort_label:
-        return "medium"
-    if effort_label in _TOP_TIER_LABELS and _supports_max_effort(model_key):
-        return "max"
-    effort = _EFFORT_MAP.get(effort_label, "medium")
-    if effort == "none" and _rejects_none_effort(model_key):
-        return "low"
-    return effort
+    return _EFFORT_MAP.get(effort_label or "", "medium")
 
 
 def _get_bearer_token(region: str) -> str:

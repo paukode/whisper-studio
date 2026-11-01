@@ -166,12 +166,9 @@ def test_the_us_west_2_pin_astra_once_shipped_is_no_pin_when_read_back():
 
 
 def test_gpt_6_1_sol_runs_in_us_east_1_on_the_gpt_6_ladder():
-    from server.infrastructure.effort import gpt_version, openai_effort_tier_for
-
     model_id = _meta("gpt6.1-sol")["id"]
     assert model_id == "openai.gpt-6.1-sol"
     assert oai.gpt_serving_regions(model_id) == ("us-east-1",)
-    assert gpt_version(model_id) == (6, 1)
-    assert openai_effort_tier_for(model_id) == "openai6"
+    assert _meta("gpt6.1-sol")["effort_tier"] == "openai6"
     assert oai.reasoning_effort_for("gpt6.1-sol", "max") == "max"
     assert oai.reasoning_effort_for("gpt6.1-sol", "none") == "low"

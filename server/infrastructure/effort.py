@@ -39,18 +39,13 @@ EFFORT_ORDER = ["none", "low", "medium", "high", "extra", "max", "ultracode"]
 EFFORT_TIERS = {
     "full": ["low", "medium", "high", "extra", "max"],
     "standard": ["low", "medium", "high", "max"],
-    # OpenAI-on-Bedrock (GPT-5.x). The label "max" maps to the model's top
-    # reasoning tier in openai_bedrock.runtime: "xhigh" for GPT-5.5/5.4 (their
-    # ladder tops there; "minimal" rejected — verified live), the real "max"
-    # tier for GPT-5.6 (verified live 2026-07-15).
-    "openai": ["none", "low", "medium", "high", "max"],
-    # GPT-6 Astra drops the "none" rung: bedrock-mantle rejects
-    # reasoning.effort "none" for it with unsupported_value (verified live
-    # 2026-09-09; accepted values are low/medium/high/xhigh/max). Every GPT-6
-    # id gets this ladder, but only Astra's rejection is verified: OpenAI
-    # documents a "none" rung for GPT-6 Sol and Luna. TODO: once a live mantle
-    # probe shows Sol and Luna accept "none", narrow openai_effort_tier_for
-    # and openai_bedrock.runtime._rejects_none_effort to Astra.
+    # OpenAI-on-Bedrock (GPT-6). GPT-6 Astra has no "none" rung:
+    # bedrock-mantle rejects reasoning.effort "none" for it with
+    # unsupported_value (verified live 2026-09-09; accepted values are
+    # low/medium/high/xhigh/max). Every GPT id gets this ladder, but only
+    # Astra's rejection is verified: OpenAI documents a "none" rung for GPT-6
+    # Sol and Luna. TODO: once a live mantle probe shows Sol and Luna accept
+    # "none", give them a ladder with it (and openai_bedrock.runtime's map).
     "openai6": ["low", "medium", "high", "max"],
     "none": [],
 }
@@ -58,7 +53,7 @@ EFFORT_TIERS = {
 # Tiers whose models can orchestrate a workflow unless config says otherwise.
 # A model outside these can still opt in with an explicit ``supports_ultracode``
 # in its config entry — that is how Sonnet 5 gets ultracode on a standard ladder.
-_ULTRACODE_TIERS = {"full", "openai", "openai6"}
+_ULTRACODE_TIERS = {"full", "openai6"}
 
 # Friendly label → Bedrock output_config.effort value. "ultracode" has no fixed
 # entry: it resolves per model to that model's top rung (see api_effort_for).
@@ -97,27 +92,6 @@ _SONNET_ID_VER_RE = re.compile(r"claude-sonnet-(\d+)(?:-(\d+))?", re.IGNORECASE)
 # The first Sonnet this app offers the xhigh rung on; the app keeps Sonnet 5
 # on the standard ladder.
 _SONNET_FULL_FROM = (5, 5)
-# OpenAI-on-Bedrock ids carry their version right after "gpt-": "openai.gpt-5.6-sol",
-# "openai.gpt-6-astra" (no minor). The gpt-oss ids ("openai.gpt-oss-120b") don't match.
-_GPT_ID_VER_RE = re.compile(r"openai\.gpt-(\d+)(?:\.(\d+))?", re.IGNORECASE)
-
-
-def gpt_version(model_id: str) -> tuple[int, int] | None:
-    """(major, minor) of an OpenAI-on-Bedrock model id, or None when the id is
-    not a versioned GPT id. A missing minor reads as 0 ("gpt-6" is 6.0), and a
-    wire prefix ("bedrock-mantle.openai.gpt-6-astra") is tolerated."""
-    m = _GPT_ID_VER_RE.search((model_id or "").strip())
-    if not m:
-        return None
-    return int(m.group(1)), int(m.group(2) or 0)
-
-
-def openai_effort_tier_for(model_id: str) -> str:
-    """The reasoning ladder an OpenAI-on-Bedrock model exposes when its config
-    entry does not declare one: GPT-6 and up get no "none" rung (verified for
-    Astra only; see the "openai6" tier)."""
-    ver = gpt_version(model_id)
-    return "openai6" if ver is not None and ver >= (6, 0) else "openai"
 
 
 def infer_effort_tier(key: str, model_id: str = "") -> str:
