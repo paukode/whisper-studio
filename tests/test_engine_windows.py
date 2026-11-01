@@ -5,6 +5,8 @@ context_window first, family defaults second. parse_prompt_cap classifies a
 provider's prompt-too-long rejection by its own reported cap.
 """
 
+import pytest
+
 from server.chat.engine.windows import (
     FAMILY_DEFAULTS,
     context_window,
@@ -22,20 +24,26 @@ def test_family_default_openai():
     assert context_window("gpt", {"provider": "openai_bedrock"}) == 278_528
 
 
-def test_family_default_anthropic_and_fallback():
+def test_family_default_anthropic():
     assert context_window("claude", {"provider": "anthropic"}) == 200_000
     assert context_window("mystery", {}) == 200_000
 
 
-def test_local_defers_to_runtime(monkeypatch):
-    # "Defers to runtime" means: nothing resident, no sticky request, no ctx
-    # in the meta, so the window is unknown. Both live sources are pinned
-    # because they are process globals any earlier test can leave set (and a
-    # developer with a local model server running would otherwise get its
-    # real n_ctx here).
+def test_an_unknown_provider_raises():
+    with pytest.raises(ValueError, match="unknown provider"):
+        context_window("odd", {"provider": "somewhere"})
+
+
+def test_an_uninstalled_local_model_with_no_size_raises(monkeypatch):
+    # Nothing resident, no sticky request, no ctx in the meta and not
+    # installed: the window is unknown, which is an error. Both live sources
+    # are pinned because they are process globals any earlier test can leave
+    # set (and a developer with a local model server running would otherwise
+    # get its real n_ctx here).
     monkeypatch.setattr("server.local.serving.resident_n_ctx", lambda: None)
     monkeypatch.setattr("server.local.runtime.requested_n_ctx", lambda: None)
-    assert context_window("local_gemma", {"is_local": True}) is None
+    with pytest.raises(ValueError, match="not installed"):
+        context_window("local_gemma", {"is_local": True})
 
 
 def test_parse_prompt_cap_from_mantle_error():
@@ -191,10 +199,11 @@ def test_compact_thresholds_95_and_98_percent(monkeypatch):
     assert hard == int(136_000 * 4 * 0.98)
 
 
-def test_compact_thresholds_none_for_unsized_local(monkeypatch):
+def test_compact_thresholds_raise_for_an_uninstalled_unsized_local(monkeypatch):
     from server.chat.engine.windows import compact_thresholds_chars
 
     _cfg(monkeypatch, meta={"local_x": {"is_local": True}})
     monkeypatch.setattr("server.local.serving.resident_n_ctx", lambda: None)
     monkeypatch.setattr("server.local.runtime.requested_n_ctx", lambda: None)
-    assert compact_thresholds_chars("local_x") is None
+    with pytest.raises(ValueError, match="not installed"):
+        compact_thresholds_chars("local_x")

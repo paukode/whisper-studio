@@ -4,12 +4,13 @@ The engine budgets compaction and prompt-too-long rescue against the model's
 real input cap instead of a hardcoded char guess. Resolution order:
 
   1. ``context_window`` on the model's chat_models entry (config-authoritative;
-     the example config carries the known values, e.g. 278,528 for the GPT-5.6
+     the example config carries the known values, e.g. 278,528 for the GPT
      mantle deployments).
-  2. A per-family default, so a model added without the field still budgets
-     sanely.
-  3. Local models: the live requested n_ctx (the composer's CTX chip is the
-     source of truth), never a static number.
+  2. Local models: the resident server's n_ctx, then the requested n_ctx (the
+     composer's CTX chip), then the model's own ctx (the local registry always
+     sets one).
+  3. A per-provider default, so a cloud model added without the field still
+     budgets sanely. An unknown provider is an error.
 
 ``parse_prompt_cap`` pulls the deployment's own cap out of a prompt-too-long
 rejection; the OpenAI adapter uses it to classify those errors as trimmable.
@@ -17,11 +18,8 @@ rejection; the OpenAI adapter uses it to classify those errors as trimmable.
 
 import re
 
-# Re-exported for callers; the tuple lives in infrastructure.config because
-# _lift_stale_context_window() needs it during load_config(), which can run
-# while server.chat is still importing (server.mcp init -> data_root ->
-# load_config) — importing back through the server.chat package there is
-# circular.
+# The tuple lives in infrastructure.config, which also reads it while it
+# normalizes chat_models during load_config().
 from server.infrastructure.config import ANTHROPIC_1M_MARKERS
 
 # Known input caps by provider family. VERIFIED 2026-08-29: Bedrock accepted a
@@ -35,10 +33,9 @@ FAMILY_DEFAULTS = {
     "anthropic": 200_000,
     "openai_bedrock": 278_528,
 }
-_FALLBACK = 200_000
 
 # Fractions of the input budget where compaction acts: the proactive trigger
-# and the last-resort truncation ceiling.
+# and the hard ceiling a summary must fit under.
 _TRIGGER_FRACTION = 0.95
 _HARD_FRACTION = 0.98
 _CHARS_PER_TOKEN = 4
@@ -67,34 +64,41 @@ _CAP_RE = re.compile(
 )
 
 
-def context_window(model_key: str, meta: dict | None = None) -> int | None:
-    """The model's input cap in tokens, or None when only the live runtime
-    knows (local models: ask the local runtime for the requested n_ctx)."""
+def context_window(model_key: str, meta: dict | None = None) -> int:
+    """The model's context window in tokens. Raises ValueError when the model
+    has no window: an on-device key that is not installed, or an unknown
+    provider."""
     from server.infrastructure.config import load_config
+    from server.local.runtime import LOCAL_MODELS, is_local_model
 
     cfg = load_config()
     m = meta or (cfg.get("chat_model_meta") or {}).get(model_key) or {}
     if m.get("context_window"):
         return int(m["context_window"])
-    if m.get("is_local"):
+    if m.get("is_local") or is_local_model(model_key):
         # Live truth first: the running model server's actual n_ctx, then the
-        # sticky requested size (composer CTX chip), then the registry ctx.
-        try:
-            from server.local import serving
-            from server.local.runtime import requested_n_ctx
+        # sticky requested size (composer CTX chip), then the model's ctx.
+        from server.local import serving
+        from server.local.runtime import requested_n_ctx
 
-            n = serving.resident_n_ctx() or requested_n_ctx()
-            if n:
-                return int(n)
-        except Exception:  # noqa: BLE001 — best-effort resolution
-            pass
-        return int(m["ctx"]) if m.get("ctx") else None
+        n = serving.resident_n_ctx() or requested_n_ctx()
+        if n:
+            return int(n)
+        if m.get("ctx"):
+            return int(m["ctx"])
+        if not is_local_model(model_key):
+            raise ValueError(
+                f"On-device model {model_key!r} is not installed, so its context size is unknown."
+            )
+        return int(LOCAL_MODELS[model_key]["ctx"])
     provider = m.get("provider") or "anthropic"
     if provider == "anthropic":
         mid = _wire_id(model_key, cfg).lower()
         if any(marker in mid for marker in ANTHROPIC_1M_MARKERS):
             return 1_000_000
-    return FAMILY_DEFAULTS.get(provider, _FALLBACK)
+    if provider not in FAMILY_DEFAULTS:
+        raise ValueError(f"Model {model_key!r} has an unknown provider {provider!r}.")
+    return FAMILY_DEFAULTS[provider]
 
 
 def output_reserve(model_key: str, meta: dict | None = None) -> int:
@@ -124,24 +128,19 @@ def output_reserve(model_key: str, meta: dict | None = None) -> int:
         return ceiling
 
 
-def input_budget(model_key: str, meta: dict | None = None) -> int | None:
+def input_budget(model_key: str, meta: dict | None = None) -> int:
     """Largest prompt (in tokens) a request for this model can safely carry:
     the context window minus the reserved answer, floored at a quarter of the
     window so a misconfigured max_output can never starve the prompt."""
     ctx = context_window(model_key, meta)
-    if not ctx:
-        return None
     return max(int(ctx) - output_reserve(model_key, meta), int(ctx) // 4)
 
 
-def compact_thresholds_chars(model_key: str, meta: dict | None = None) -> tuple[int, int] | None:
+def compact_thresholds_chars(model_key: str, meta: dict | None = None) -> tuple[int, int]:
     """Per-model compaction thresholds in chars: the proactive trigger at 95%
-    of the input budget and the last-resort truncation ceiling at 98%, at the
-    codebase's 4-chars/token estimate. None when the window is unresolvable
-    (an unsized local model) — callers fall back to the legacy constants."""
+    of the input budget and the hard ceiling at 98%, at the codebase's
+    4-chars/token estimate."""
     budget = input_budget(model_key, meta)
-    if not budget:
-        return None
     chars = budget * _CHARS_PER_TOKEN
     return int(chars * _TRIGGER_FRACTION), int(chars * _HARD_FRACTION)
 

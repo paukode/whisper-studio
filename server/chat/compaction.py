@@ -24,20 +24,12 @@ class CompactionError(RuntimeError):
         )
 
 
-# Legacy budgets for an unsized model, using the application's char estimate.
-MAX_CONTEXT_CHARS = 750_000
-COMPACT_TRIGGER_CHARS = 650_000
+def thresholds_for(model_key: str, meta: dict | None = None) -> tuple[int, int]:
+    """Return the estimated trigger and hard ceiling in chars for a model. A
+    model with no resolvable window raises (server/chat/engine/windows.py)."""
+    from server.chat.engine.windows import compact_thresholds_chars
 
-
-def thresholds_for(model_key: str | None, meta: dict | None = None) -> tuple[int, int]:
-    """Return estimated trigger and hard ceiling; config failures are not defaults."""
-    if model_key:
-        from server.chat.engine.windows import compact_thresholds_chars
-
-        thresholds = compact_thresholds_chars(model_key, meta)
-        if thresholds:
-            return thresholds
-    return COMPACT_TRIGGER_CHARS, MAX_CONTEXT_CHARS
+    return compact_thresholds_chars(model_key, meta)
 
 
 def _content_size(content) -> int:

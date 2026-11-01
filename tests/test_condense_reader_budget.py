@@ -34,8 +34,10 @@ _BUDGETS = {SMALL: 30_000, BIG: 872_000}
 def _clean(monkeypatch):
     mr._cache.clear()
     # Patch where _input_budget reads it (a lazy import of the windows module).
+    # Keys outside _BUDGETS (the chat turn's own model) keep the real budget.
     monkeypatch.setattr(
-        "server.chat.engine.windows.input_budget", lambda key, meta=None: _BUDGETS.get(key)
+        "server.chat.engine.windows.input_budget",
+        lambda key, meta=None: _BUDGETS[key] if key in _BUDGETS else _real_input_budget(key, meta),
     )
     monkeypatch.setattr("server.local.runtime.is_local_model", lambda k: k == "local_gemma")
     yield
