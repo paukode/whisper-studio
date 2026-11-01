@@ -41,7 +41,6 @@ from server.hooks.routes import router as hooks_router
 from server.index import init_index_scheduler
 from server.index import router as index_router
 from server.infrastructure.async_tasks import spawn
-from server.infrastructure.boot_status import health_payload, record_boot_error
 from server.infrastructure.config import router as config_router
 from server.infrastructure.config_raw_routes import router as config_raw_router
 from server.infrastructure.data_retention import router as data_retention_router
@@ -188,12 +187,10 @@ def _trust_system_certs() -> None:
 
 _trust_system_certs()
 
-# Import executor modules to trigger registration. Each module
-# registers tool executors as a side-effect of being imported. We do
-# this in a guarded loop so a single broken executor (e.g. a missing
-# optional dep) doesn't take down the whole app at boot — the rest of
-# the registry still loads, and the failing executor logs an error.
-import importlib  # noqa: E402 — must come after logging.basicConfig
+# Import executor modules to trigger registration. Each module registers
+# tool executors as a side effect of being imported. A module that fails to
+# import stops the boot with its traceback (every dependency is pinned).
+import importlib  # noqa: E402 (must come after logging.basicConfig)
 
 _EXECUTOR_MODULES = (
     "server.executors.web",
@@ -214,11 +211,7 @@ _EXECUTOR_MODULES = (
 )
 
 for _modname in _EXECUTOR_MODULES:
-    try:
-        importlib.import_module(_modname)
-    except Exception as _exc:  # noqa: BLE001 — boot-time best-effort
-        log.error("Executor module %s failed to register: %s", _modname, _exc)
-        record_boot_error(_modname, str(_exc))
+    importlib.import_module(_modname)
 
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 
@@ -623,7 +616,7 @@ async def favicon():
 
 @app.get("/health")
 async def health():
-    return health_payload()
+    return {"status": "ok"}
 
 
 # SPA fallback: any GET that wasn't matched by an /api, /ws, or /static route
