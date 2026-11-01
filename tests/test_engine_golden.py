@@ -66,9 +66,9 @@ def test_golden_tool_round_then_answer(monkeypatch):
 
 
 def test_golden_ask_user_pause_and_resume(monkeypatch):
-    import server.chat.routes as routes_mod
+    from server.chat.engine.pause import paused_sessions
 
-    routes_mod._paused_sessions.clear()
+    paused_sessions.clear()
     client = FakeBedrockClient(
         [
             [
@@ -85,7 +85,7 @@ def test_golden_ask_user_pause_and_resume(monkeypatch):
     )
     lines = run_chat_turn(monkeypatch, client, {"question": "deploy"})
     assert_golden("ask_user_pause", lines)
-    assert "golden-session" in routes_mod._paused_sessions
+    assert "golden-session" in paused_sessions
 
     resume_lines = run_chat_turn(
         monkeypatch,
@@ -96,7 +96,7 @@ def test_golden_ask_user_pause_and_resume(monkeypatch):
         },
     )
     assert_golden("ask_user_resume", resume_lines)
-    assert "golden-session" not in routes_mod._paused_sessions
+    assert "golden-session" not in paused_sessions
 
 
 def test_golden_mid_stream_error(monkeypatch):

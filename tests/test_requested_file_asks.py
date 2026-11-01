@@ -18,7 +18,7 @@ import pytest
 
 import server.chat.engine.runner as runner_mod
 from server.chat import routes, stream_slot
-from server.chat.engine import midturn_inbox
+from server.chat.engine import midturn_inbox, pause
 from server.chat.engine.events import RoundResult, TextDelta, Usage
 from server.chat.engine.policy import TurnPolicy
 from server.chat.engine.runner import TurnContext, _midturn_text, _remind, run_turn
@@ -343,7 +343,7 @@ def test_the_on_device_route_passes_the_typed_words_on(monkeypatch):
 
 
 def test_a_continuation_takes_the_typed_words_back_from_the_pause(monkeypatch):
-    routes._paused_sessions["route-resume"] = {
+    pause.paused_sessions["route-resume"] = {
         "messages": [
             {"role": "user", "content": "save the summary as a file"},
             {
@@ -364,5 +364,5 @@ def test_a_continuation_takes_the_typed_words_back_from_the_pause(monkeypatch):
     try:
         ctx = _route_turn(monkeypatch, body)
     finally:
-        routes._paused_sessions.pop("route-resume", None)
+        pause.paused_sessions.pop("route-resume", None)
     assert ctx.asked == "save the summary as a file"

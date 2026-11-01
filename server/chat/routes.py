@@ -244,12 +244,10 @@ async def _run_grounding(
 
 # Paused-session store: when a turn stops on a ws_approval pause, the engine
 # stashes the in-memory `messages` list plus the pre-computed placeholder
-# tool_results keyed by session_id (see server/chat/engine/pause.py — one
+# tool_results keyed by session_id (see server/chat/engine/pause.py: one
 # store shared by every provider path). The continuation turn pops this state,
 # substitutes the approved tool_use_id's real result, and resumes the loop.
-# Aliased here because the reset endpoint and several tests reach it as
-# ``routes._paused_sessions``.
-from server.chat.engine.pause import paused_sessions as _paused_sessions  # noqa: E402
+from server.chat.engine.pause import paused_sessions  # noqa: E402
 
 
 def _resume_messages(messages: list, answers: list[dict], paused: dict | None) -> list:
@@ -349,7 +347,7 @@ async def reset_chat_session(session_id: str):
     from server.chat.engine import midturn_inbox
 
     cleared_stream = stream_slot.drop(session_id)
-    cleared_paused = _paused_sessions.pop(session_id, None) is not None
+    cleared_paused = paused_sessions.pop(session_id, None) is not None
     # Text queued for the wedged turn must not surface in the next one.
     midturn_inbox.clear(session_id)
     log.info(
@@ -1801,7 +1799,7 @@ async def chat_endpoint(request: Request):
             else:
                 answers = [approved_tool_result]
 
-            paused = _paused_sessions.pop(session_id, None)
+            paused = paused_sessions.pop(session_id, None)
             asked = (paused or {}).get("asked")
             if not paused:
                 log.warning(

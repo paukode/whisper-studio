@@ -12,6 +12,7 @@ import asyncio
 import time
 
 from server.chat import routes, stream_slot
+from server.chat.engine import pause
 
 
 def test_guard_dict_membership_semantics():
@@ -160,10 +161,10 @@ def test_reset_endpoint_clears_wedged_state():
     client = TestClient(app)
 
     stream_slot.active_streams.clear()
-    routes._paused_sessions.clear()
+    pause.paused_sessions.clear()
     sid = "wedged-session"
     stream_slot.active_streams[sid] = time.monotonic()
-    routes._paused_sessions[sid] = {"messages": [], "pending_tool_results": []}
+    pause.paused_sessions[sid] = {"messages": [], "pending_tool_results": []}
     try:
         r = client.post(f"/api/chat/sessions/{sid}/reset")
         assert r.status_code == 200
@@ -173,7 +174,7 @@ def test_reset_endpoint_clears_wedged_state():
             "cleared_paused": True,
         }
         assert sid not in stream_slot.active_streams
-        assert sid not in routes._paused_sessions
+        assert sid not in pause.paused_sessions
 
         # Idempotent: a second reset is a clean no-op.
         r2 = client.post(f"/api/chat/sessions/{sid}/reset")
@@ -184,7 +185,7 @@ def test_reset_endpoint_clears_wedged_state():
         }
     finally:
         stream_slot.active_streams.clear()
-        routes._paused_sessions.clear()
+        pause.paused_sessions.clear()
 
 
 class _FakeRequest:
