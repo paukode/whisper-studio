@@ -97,8 +97,8 @@ CONFIG_POLL_S = 1.0
 _LAUNCH_KEYS = ("command", "args", "env", "url", "bearer_token_env_var")
 
 # Per-server/tool approval tiers (see MCPManager.get_tool_approval_tier).
-#   auto    — no approval needed; the tool executes immediately. Default —
-#             an unconfigured server behaves exactly as before this feature.
+#   auto    — no approval needed; the tool executes immediately. The
+#             default for a server with no approval_mode.
 #   prompt  — every call goes through the normal approval pipeline (category
 #             "mcp" in resolve_static_decision): subject to the user's
 #             permission mode, session approvals, and custom rules, same as
@@ -162,9 +162,8 @@ def _unwrap_exc(e: BaseException) -> str:
     Recurse into the group's first child (groups can nest) until we reach a
     non-group leaf, and return ITS message so the UI shows something actionable
     (e.g. the underlying FileNotFoundError / connection-reset text). A plain
-    (non-group) exception is returned verbatim, preserving prior behavior.
-    Detection is via the ``exceptions`` attribute so it works on both the 3.11+
-    builtin ``ExceptionGroup`` and anyio's backport without a version import.
+    (non-group) exception is returned verbatim. Detection is via the
+    ``exceptions`` attribute (the builtin ``ExceptionGroup``).
     """
     seen: set[int] = set()
     cur: BaseException = e
@@ -375,7 +374,7 @@ class MCPManager:
             if resolved is None:
                 msg = (
                     f'Command "{command}" was not found. Install it and make sure it is on '
-                    f"your PATH, or set the full path to the executable in Settings > MCP."
+                    f"your PATH, or set the full path to the executable in Settings > Tools and automation > MCP servers."
                 )
                 log.error("MCP server '%s': %s", name, msg)
                 async with self._get_lock():
@@ -393,9 +392,9 @@ class MCPManager:
         # must be EXITED in that same task. We therefore own each connection's
         # whole lifecycle in one dedicated task (`_serve`): it enters the
         # contexts, publishes the session, waits for a stop signal, then exits
-        # the contexts itself. The old code exited them from stop_server's
-        # (different) task, which raised "cancel scope in a different task",
-        # was swallowed, and leaked the server subprocess.
+        # the contexts itself. Exiting them from stop_server's (different)
+        # task raises "cancel scope in a different task" and leaks the server
+        # subprocess.
         loop = asyncio.get_event_loop()
         ready: asyncio.Future = loop.create_future()
         stop_event = asyncio.Event()
@@ -450,9 +449,9 @@ class MCPManager:
         Transport branches on the server config: a `command` uses the local
         stdio transport (a subprocess); a `url` uses the streamable-HTTP
         transport (a remote/hosted MCP server). Both are async context
-        managers entered/exited HERE, in this same dedicated task, exactly
-        like the stdio-only code before this — the ownership discipline
-        described above does not care which transport it is.
+        managers entered/exited HERE, in this same dedicated task; the
+        ownership discipline described above does not care which transport
+        it is.
         """
         from mcp import ClientSession
 
@@ -648,7 +647,7 @@ class MCPManager:
         if task is not None:
             try:
                 await asyncio.wait_for(task, timeout=10)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 log.warning("MCP server '%s' did not shut down in 10s; cancelling", name)
                 task.cancel()
                 try:
@@ -753,9 +752,8 @@ class MCPManager:
     def get_tool_approval_tier(self, server_name: str, tool_name: str) -> str:
         """Effective approval tier for one MCP tool: `tool_overrides
         [tool_name]` (per-server config) wins over the server's own
-        `approval_mode`, which wins over the default "auto" — an
-        unconfigured server behaves exactly as it did before this feature
-        (no gating, immediate execution)."""
+        `approval_mode`, which wins over the default "auto" (no gating,
+        immediate execution). An unknown value gates as "approve"."""
         config = self.load_config()
         entry = config.get(server_name)
         if not isinstance(entry, dict):
@@ -790,14 +788,14 @@ class MCPManager:
         if not self.is_server_enabled(server_name):
             return (
                 f"[MCP] Server '{server_name}' is disabled. Enable it in "
-                "Settings → MCP to use this tool."
+                "Settings > Tools and automation > MCP servers to use this tool."
             )
         original_name = tool_info["original_name"]
         if not self._tool_is_permitted(server_name, original_name):
             return (
                 f"[MCP] Tool '{original_name}' is not enabled for server "
                 f"'{server_name}'. Adjust enabled_tools/disabled_tools in "
-                "Settings → MCP to use it."
+                "Settings > Tools and automation > MCP servers to use it."
             )
 
         # Per-server/tool approval gate. "auto" (the default for any server
@@ -841,7 +839,7 @@ class MCPManager:
         if not self.is_server_enabled(server_name):
             return (
                 f"[MCP] Server '{server_name}' is disabled. Enable it in "
-                "Settings → MCP to use this tool."
+                "Settings > Tools and automation > MCP servers to use this tool."
             )
         original_name = tool_info["original_name"]
         if not self._tool_is_permitted(server_name, original_name):
@@ -1009,7 +1007,7 @@ class MCPManager:
                 "url": url,
                 "future": future,
             }
-            # Settings > MCP renders pending elicitations from the same list,
+            # Settings > Tools and automation > MCP servers renders pending elicitations from the same list,
             # so a new one (and its answer, below) is a list change.
             self._bump()
             log.info(
@@ -1021,7 +1019,7 @@ class MCPManager:
             )
             try:
                 answer = await asyncio.wait_for(future, timeout=ELICITATION_TIMEOUT_S)
-            except (TimeoutError, asyncio.TimeoutError):
+            except TimeoutError:
                 log.warning(
                     "MCP elicitation %s from '%s' timed out after %ss; declining",
                     elicitation_id,
@@ -1068,7 +1066,7 @@ class MCPManager:
     def get_pending_elicitations(self) -> list[dict]:
         """Snapshot of every elicitation currently awaiting a human answer,
         across every connected server. Surfaced via GET /api/mcp/servers so
-        Settings → MCP can render a form for each and answer it."""
+        Settings > Tools and automation > MCP servers can render a form for each and answer it."""
         return [
             {
                 "elicitation_id": eid,
@@ -1093,7 +1091,7 @@ class MCPManager:
         matches what call_tool() will accept at execution time (it enforces
         the same flag via is_server_enabled).
 
-        Disabling now also STOPS the server at runtime (its tools leave
+        Disabling also STOPS the server at runtime (its tools leave
         _tools when the connection unwinds), so this flag check is defense
         in depth: it keeps the pool correct in the window before a slow
         disconnect finishes, or if a stop failed and left the connection up.
@@ -1148,7 +1146,7 @@ class MCPManager:
         )
 
     def get_all_resources(self) -> list[dict]:
-        """Feature 19: Return all MCP resources for @ mention autocomplete."""
+        """Every resource of every connected server (list_mcp_resources)."""
         resources = []
         for server_name, info in self._sessions.items():
             if info.get("status") != "connected":
@@ -1160,13 +1158,12 @@ class MCPManager:
                         "name": getattr(resource, "name", str(uri)),
                         "description": getattr(resource, "description", ""),
                         "server": server_name,
-                        "mention": f"@mcp:{server_name}/{getattr(resource, 'name', str(uri))}",
                     }
                 )
         return resources
 
     async def read_resource(self, server_name: str, uri: str) -> str:
-        """Feature 19: Read a specific MCP resource by URI."""
+        """Read one MCP resource by URI (read_mcp_resource)."""
         info = self._sessions.get(server_name)
         if not info or info.get("status") != "connected":
             return f"[MCP server '{server_name}' not connected]"
