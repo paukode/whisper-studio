@@ -90,6 +90,8 @@ check_prerequisites() {
     # curl: downloads and the health checks. lsof: the port search.
     command -v curl >/dev/null 2>&1 || missing+=("curl not found. It ships with macOS; check your PATH.")
     command -v lsof >/dev/null 2>&1 || missing+=("lsof not found. It ships with macOS; check your PATH.")
+    # swiftc: builds the capture helper (native mic and system audio).
+    xcrun --find swiftc >/dev/null 2>&1 || missing+=("Xcode Command Line Tools not found. Install with: xcode-select --install")
 
     if [ ${#missing[@]} -gt 0 ]; then
         echo "ERROR: prerequisites are not met."
@@ -333,6 +335,23 @@ else
     echo "$FFMPEG_BUILD_ID" > "$FFMPEG_HOME/.build"
 fi
 
+# ── Capture helper ─────────────────────────────────────────────────────────
+# The Mac app's native mic and system/app audio capture, built from the same
+# Swift files into a program the server starts for the page
+# (server/capture_helper.py). Rebuilt only when its sources change: macOS ties
+# the microphone and System Audio Recording permissions to the program, so a
+# rebuild can ask again.
+CAPTURE_HELPER="vendor/capture/whisper-capture"
+CAPTURE_SOURCES=(macapp/helper/main.swift macapp/helper/build_helper.sh macapp/shell/NativeAudioCapture.swift macapp/shell/NativeMicCapture.swift)
+CAPTURE_SHA="$(cat "${CAPTURE_SOURCES[@]}" | shasum -a 256 | awk '{print $1}')"
+if [ -x "$CAPTURE_HELPER" ] && [ "$(cat "$CAPTURE_HELPER.sha256" 2>/dev/null)" = "$CAPTURE_SHA" ]; then
+    echo "Capture helper is up to date."
+else
+    run_quiet "Building the capture helper (native mic and system audio)" \
+        bash macapp/helper/build_helper.sh "$CAPTURE_HELPER"
+    echo "$CAPTURE_SHA" > "$CAPTURE_HELPER.sha256"
+fi
+
 # Build frontend in production mode
 if [ "$PROD" -eq 1 ]; then
     run_quiet "Building frontend" npm run build
@@ -567,8 +586,9 @@ else
     echo "Whisper Studio is running at $APP_URL"
 fi
 echo ""
-echo "In the browser, Apple translation and system or per-app audio capture are not"
-echo "available (they need the Mac app). Chrome and Edge can capture a tab's audio."
+echo "In the browser, Apple translation is not available (it needs the Mac app)."
+echo "The first recording from the mic or from \"This Mac\" makes macOS ask for"
+echo "permission for this terminal app. Click Allow."
 echo ""
 
 # Auto-open the right URL in the default browser.
