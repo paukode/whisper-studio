@@ -965,8 +965,9 @@ async def generate_title_endpoint(request: Request):
     try:
         title = await loop.run_in_executor(executor, _call)
     except Exception as e:
-        # A failed title is an error the client sees (it keeps its current
-        # title and asks again after the next exchange), never a fake title.
+        # A failed title is an error the client sees, never a fake title. The
+        # client logs it, keeps its current title and does not ask again for
+        # that session in this window (src/hooks/chatStream/autoTitle.ts).
         log.error("Title generation error: %s", e)
         return JSONResponse({"error": f"Title generation failed: {e}"}, status_code=502)
     return {"title": title}

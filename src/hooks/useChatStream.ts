@@ -30,6 +30,7 @@ import { ensureRetentionEnabled } from '@/components/chat/dataRetentionConsent';
 import { _sseEventLog, committedToolUse, readSSEStream } from './chatStream/sseStream';
 import { labelCommit } from './chatStream/activityLabels';
 import { emptyResponseFallback } from './chatStream/emptyResponse';
+import { autoTitleFailed, requestAutoTitle } from './chatStream/autoTitle';
 import { pausedTurnSettings, turnModelSettings } from './chatStream/turnSettings';
 import { buildHistoryPayload } from './chatStream/history';
 import { APPROVED_ACTION_STATUS } from './chatStream/approvalLeg';
@@ -474,7 +475,10 @@ export async function sendChatTurn(question: string, opts?: SendOptions): Promis
     const msgs = store().messages;
     if (msgs.length >= 2 && activeSessionId && !isContinuation) {
       const liveSession = sessionStore().liveSessions[activeSessionId];
-      if (liveSession && !liveSession.customTitle && !liveSession.generatedTitle) {
+      if (
+        liveSession && !liveSession.customTitle && !liveSession.generatedTitle
+        && !autoTitleFailed(activeSessionId)
+      ) {
         // Role-labelled so the model titles from the user's request, not the
         // assistant's prose (mirrors how Claude names a conversation).
         const convoText = msgs
@@ -482,22 +486,8 @@ export async function sendChatTurn(question: string, opts?: SendOptions): Promis
           .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
           .join('\n')
           .slice(0, 2000);
-        void fetch('/api/generate-title', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          // session_id attributes the title call's cost to this session.
-          body: JSON.stringify({ text: convoText, session_id: activeSessionId }),
-        })
-          .then(r => {
-            // A 500 from the title endpoint still has a body
-            // (often `{error: "..."}`), and parsing it as
-            // `{title: string}` would assign undefined/garbage to
-            // the session title. Bail early on non-2xx.
-            if (!r.ok) throw new Error(`title HTTP ${r.status}`);
-            return r.json() as Promise<{ title: string }>;
-          })
-          .then(d => { if (d.title) sessionStore().updateSessionTitle(activeSessionId, d.title, false); })
-          .catch(() => { /* ignore — title is non-essential */ });
+        void requestAutoTitle(activeSessionId, convoText, title =>
+          sessionStore().updateSessionTitle(activeSessionId, title, false));
       }
     }
 
