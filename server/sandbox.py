@@ -1,10 +1,10 @@
 """
 OS-level command sandboxing — restricts filesystem access for shell commands.
 
-Uses platform-native sandboxing:
-  - macOS: sandbox-exec with a deny profile
-  - Linux: bubblewrap (bwrap) if available
-  - Fallback: no OS-level sandbox (command validators still apply)
+Uses macOS sandbox-exec with a deny profile. It is the only backend: when
+sandbox-exec cannot be used, run_sandboxed, popen_sandboxed and
+build_pty_sandbox_wrap raise SandboxUnavailableError and nothing runs (fail
+closed). Nothing that goes through this module runs without the sandbox.
 
 The sandbox denies read/write access to sensitive paths (SSH keys, cloud
 credentials, system secrets) while allowing access to the workspace and
@@ -27,9 +27,7 @@ Two write modes:
     pointed into that scratch folder, since their usual home-folder places
     are outside the confinement. Applied
     to agent-stamped (unattended) commands, where no human reviews each
-    command: the OS, not the prompt, bounds the blast radius. On Linux the
-    bwrap wrapper has always mounted the root read-only with only cwd and
-    /tmp bound writable, so "workspace" is simply macOS catching up.
+    command: the OS, not the prompt, bounds the blast radius.
 """
 
 import logging
@@ -191,8 +189,7 @@ def _control_port_deny_rules() -> list[str]:
     Denying the one loopback port the backend listens on closes that, while any
     other local port (a dev server, a database) stays reachable. The port comes
     from the environment (``PORT``, the app's own default 8000). Open
-    (human-approved) commands are exempt: a person read that exact command.
-    macOS only; the Linux bwrap path cannot deny a single port."""
+    (human-approved) commands are exempt: a person read that exact command."""
     port = (os.environ.get("PORT") or "8000").strip()
     if not port.isdigit():
         return []
@@ -359,9 +356,6 @@ def _macos_network_restriction_rules() -> list[str]:
       - A command using a non-standard HTTPS port (rare) would bypass this
         specific port-443 deny; only 80/443 are covered, matching what the
         proxy itself listens for via HTTPS_PROXY/HTTP_PROXY.
-      - Linux/bwrap enforcement is separate and weaker — see
-        `_bwrap_network_restriction_args` for what's actually implemented
-        there and its untested-on-this-machine caveat.
     """
     policy = egress_policy.get_active_policy()
     if policy.get("tier", egress_policy.TIER_PERMISSIVE) == egress_policy.TIER_PERMISSIVE:
@@ -372,72 +366,35 @@ def _macos_network_restriction_rules() -> list[str]:
     ]
 
 
-def _bwrap_deny_args(path: str) -> list[str]:
-    """bwrap args to make an existing path inaccessible. A directory is shadowed
-    with an empty tmpfs; a file is masked with /dev/null (``--tmpfs`` only works
-    on directory mountpoints, so file entries like ~/.npmrc need ro-bind)."""
-    if os.path.isdir(path):
-        return ["--tmpfs", path]
-    return ["--ro-bind", os.devnull, path]
-
-
 def _is_sandbox_exec_available() -> bool:
     return platform.system() == "Darwin" and shutil.which("sandbox-exec") is not None
-
-
-def _is_bwrap_available() -> bool:
-    return shutil.which("bwrap") is not None
-
-
-def _bwrap_network_restriction_args() -> list[str]:
-    """bwrap args enforcing the active network_policy tier on Linux.
-
-    IMPLEMENTED BUT UNTESTED ON THIS PLATFORM. This change was written and
-    verified on macOS (this repo's dev machine has no Linux box available);
-    the bwrap path below has never actually been run. Treat it as a
-    defensively-written first pass, not a verified guarantee — test it for
-    real on Linux before relying on it.
-
-    What IS implemented: `--unshare-net` when the tier is non-permissive.
-    bwrap creates a network namespace containing only a loopback interface
-    with no external connectivity — this is bwrap's own documented,
-    unprivileged behavior (it needs no capabilities beyond the user
-    namespace bwrap already uses to run without root), so this part should
-    be reliable even unverified.
-
-    What is deliberately NOT implemented: a veth pair bridging that isolated
-    namespace back to the local egress proxy so curated-tier traffic could
-    still reach allowlisted domains (mirroring the macOS story: kernel-level
-    "*:443/*:80" deny + a working proxy path). Building that correctly needs
-    one of:
-      - CAP_NET_ADMIN on the HOST network namespace to create the host side
-        of a veth pair — this process runs unprivileged by design, and
-        granting it that capability is a materially bigger change than this
-        task's scope, or
-      - an external unprivileged bridging helper (slirp4netns / pasta, as
-        used by rootless containers for exactly this problem) — plausible,
-        but wiring one in means guessing at its exact CLI surface and PID/
-        netns attach sequencing with zero ability to verify any of it here.
-        Shipping that guess would risk a subtly-broken bridge that LOOKS
-        like allowlist filtering but silently isn't — worse than being
-        upfront that it isn't there yet.
-
-    Net effect: on Linux, any non-permissive tier currently behaves like
-    "restrictive" (zero egress) rather than a domain-filtered allowlist.
-    That is a real gap versus the tier's stated intent, but it fails CLOSED
-    (no network at all) rather than open (unfiltered network) — the safe
-    direction to be wrong in. Follow-up: implement + test a real
-    slirp4netns/pasta bridge on an actual Linux host.
-    """
-    policy = egress_policy.get_active_policy()
-    if policy.get("tier", egress_policy.TIER_PERMISSIVE) == egress_policy.TIER_PERMISSIVE:
-        return []
-    return ["--unshare-net"]
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
+SANDBOX_UNAVAILABLE_MESSAGE = (
+    "The command was NOT run: the macOS sandbox (sandbox-exec) is not available "
+    "on this machine, and Whisper Studio never runs a command without it."
+)
+
+
+class SandboxUnavailableError(RuntimeError):
+    """sandbox-exec cannot be used, so the command was refused and nothing ran.
+
+    Raised by run_sandboxed, popen_sandboxed and build_pty_sandbox_wrap in
+    every write_mode: an "open" run still relies on the profile's credential
+    deny-list, so there is no unsandboxed fallback."""
+
+    def __init__(self, message: str = SANDBOX_UNAVAILABLE_MESSAGE):
+        super().__init__(message)
+
+
+def _require_sandbox_exec() -> None:
+    """Raise SandboxUnavailableError unless sandbox-exec can be used."""
+    if not _is_sandbox_exec_available():
+        raise SandboxUnavailableError()
 
 
 # Credentials that must NEVER reach a sandboxed child. The sandbox profile is
@@ -489,8 +446,8 @@ def _merged_env(env_extra: dict | None) -> dict:
 
 
 class _Cwd:
-    """The default ``write_root`` of run_sandboxed and _bwrap_argv: the run's
-    own working directory. A marker, since None already means "no tree"."""
+    """The default ``write_root`` of run_sandboxed: the run's own working
+    directory. A marker, since None already means "no tree"."""
 
 
 _CWD = _Cwd()
@@ -518,7 +475,7 @@ def run_sandboxed(
     write_paths: list[str] | None = None,
     secret_reads: bool = False,
 ) -> subprocess.CompletedProcess:
-    """Run a command with OS-level sandboxing if available.
+    """Run a command under the macOS sandbox (sandbox-exec).
 
     ``secret_reads`` lets the run read the credential stores on the
     deny-list, never write them (see the module docstring).
@@ -533,71 +490,34 @@ def run_sandboxed(
     begins with a shell compound construct like ``if``/``for``/``case``).
 
     ``write_mode="workspace"`` confines WRITES to the working tree + temp +
-    write_paths on macOS (see the module docstring); the bwrap path has always
-    behaved that way regardless of mode, and the no-sandbox fallback cannot
-    enforce it (command validators remain the only layer there).
+    write_paths (see the module docstring).
     ``scratch_dir`` is the calling session's own scratch folder: writable under
     "workspace", and home to the run's package caches (scratch_cache_env).
     ``write_root`` is the tree a "workspace" run may write in. It defaults to
     ``cwd``; None writes no tree, only the scratch folder, temp and
     write_paths (aws_cli with no workspace connected, whose cwd is $HOME).
 
-    Falls back to plain subprocess.run if no sandbox is available.
+    Raises SandboxUnavailableError, and runs nothing, when sandbox-exec
+    cannot be used.
     """
+    _require_sandbox_exec()
     env_extra = {**_scratch_env(write_mode, scratch_dir), **(env_extra or {})}
     tree = _resolve_write_root(write_root, cwd)
-    if _is_sandbox_exec_available():
-        return _run_macos_sandboxed(
-            command,
-            cwd=cwd,
-            timeout=timeout,
-            capture_output=capture_output,
-            text=text,
-            allow_paths=allow_paths,
-            input_data=input_data,
-            env_extra=env_extra,
-            write_mode=write_mode,
-            scratch_dir=scratch_dir,
-            write_root=tree,
-            write_paths=write_paths,
-            secret_reads=secret_reads,
-        )
-    if _is_bwrap_available():
-        return _run_bwrap_sandboxed(
-            command,
-            cwd=cwd,
-            timeout=timeout,
-            capture_output=capture_output,
-            text=text,
-            allow_paths=allow_paths,
-            input_data=input_data,
-            env_extra=env_extra,
-            write_mode=write_mode,
-            scratch_dir=scratch_dir,
-            write_root=tree,
-            write_paths=write_paths,
-            secret_reads=secret_reads,
-        )
-    # Fallback: no OS-level sandbox
-    from server.process_utils import kill_process_group, new_process_group
-
-    proc = subprocess.Popen(
+    return _run_macos_sandboxed(
         command,
-        shell=True,
         cwd=cwd,
-        stdin=subprocess.PIPE if input_data is not None else None,
-        stdout=subprocess.PIPE if capture_output else None,
-        stderr=subprocess.PIPE if capture_output else None,
+        timeout=timeout,
+        capture_output=capture_output,
         text=text,
-        preexec_fn=new_process_group,
-        env=_merged_env(env_extra),
+        allow_paths=allow_paths,
+        input_data=input_data,
+        env_extra=env_extra,
+        write_mode=write_mode,
+        scratch_dir=scratch_dir,
+        write_root=tree,
+        write_paths=write_paths,
+        secret_reads=secret_reads,
     )
-    try:
-        stdout, stderr = proc.communicate(input=input_data, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        kill_process_group(proc)
-        raise
-    return subprocess.CompletedProcess(command, proc.returncode, stdout, stderr)
 
 
 def _run_macos_sandboxed(
@@ -666,137 +586,6 @@ def _run_macos_sandboxed(
             pass
 
 
-def _run_bwrap_sandboxed(
-    command: str,
-    *,
-    cwd: str,
-    timeout: int,
-    capture_output: bool,
-    text: bool,
-    allow_paths: list[str] | None = None,
-    input_data: str | None = None,
-    env_extra: dict | None = None,
-    write_mode: str = "workspace",
-    scratch_dir: str | None = None,
-    write_root: str | None = None,
-    write_paths: list[str] | None = None,
-    secret_reads: bool = False,
-) -> subprocess.CompletedProcess:
-    """Run command under bubblewrap (Linux).
-
-    bwrap has always been workspace-write shaped (read-only root, rw binds
-    for the write root + /tmp), so ``write_mode="open"`` and ``"workspace"``
-    behave the same here. ``write_root`` is the resolved tree (None: no tree).
-    ``write_mode="readonly"`` drops the rw workspace bind and
-    replaces /tmp with a throwaway tmpfs, so nothing the command writes
-    survives anywhere.
-
-    Network restriction (--unshare-net when a non-permissive network_policy
-    is active) is best-effort and UNTESTED on this platform — see
-    _bwrap_network_restriction_args's docstring for exactly what that does
-    and does not cover.
-    """
-    bwrap_args = _bwrap_argv(
-        command,
-        cwd,
-        allow_paths,
-        write_mode,
-        write_root=write_root,
-        scratch_dir=scratch_dir,
-        write_paths=write_paths,
-        secret_reads=secret_reads,
-    )
-
-    from server.process_utils import kill_process_group, new_process_group
-
-    proc = subprocess.Popen(
-        bwrap_args,
-        cwd=cwd,
-        stdin=subprocess.PIPE if input_data is not None else None,
-        stdout=subprocess.PIPE if capture_output else None,
-        stderr=subprocess.PIPE if capture_output else None,
-        text=text,
-        preexec_fn=new_process_group,
-        env=_merged_env(env_extra),
-    )
-    try:
-        stdout, stderr = proc.communicate(input=input_data, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        kill_process_group(proc)
-        raise
-    return subprocess.CompletedProcess(bwrap_args, proc.returncode, stdout, stderr)
-
-
-def _bwrap_argv(
-    command: str,
-    cwd: str,
-    allow_paths: list[str] | None,
-    write_mode: str,
-    write_root: str | None | _Cwd = _CWD,
-    scratch_dir: str | None = None,
-    write_paths: list[str] | None = None,
-    secret_reads: bool = False,
-) -> list[str]:
-    """The bwrap argv that runs ``command`` in ``cwd``. Only "readonly" changes
-    the filesystem shape: no rw workspace bind, and /tmp a throwaway tmpfs.
-    ``write_root`` is the tree bound read-write (the workspace a confined
-    command may write in); it defaults to ``cwd``, and None binds no tree.
-    ``scratch_dir``, the session's own scratch folder, is bound read-write
-    beside it. The ``allow_paths`` are bound read-only on top of those, also
-    inside the tree, and the ``write_paths`` beneath them read-write (the
-    same shape as _credential_write_rules on macOS)."""
-    tree = _resolve_write_root(write_root, cwd)
-    if write_mode == "readonly":
-        fs_args = [
-            "--ro-bind",
-            "/",
-            "/",  # read-only root (covers cwd too)
-            "--tmpfs",
-            "/tmp",  # writable but ephemeral, nothing persists
-        ]
-    else:
-        fs_args = ["--ro-bind", "/", "/"]  # read-only root
-        if tree:
-            fs_args += ["--bind", tree, tree]  # read-write workspace
-        fs_args += ["--bind", "/tmp", "/tmp"]  # read-write tmp
-        if scratch_dir:
-            fs_args += ["--bind", scratch_dir, scratch_dir]  # the session's scratch
-        for path in map(os.path.expanduser, allow_paths or []):
-            if os.path.exists(path):
-                fs_args += ["--ro-bind", path, path]  # credentials, read-only
-        for path in map(os.path.expanduser, write_paths or []):
-            if os.path.exists(path):
-                fs_args += ["--bind", path, path]  # their caches
-    argv = [
-        "bwrap",
-        *fs_args,
-        "--dev",
-        "/dev",  # device nodes
-        "--proc",
-        "/proc",  # proc filesystem
-        *_bwrap_network_restriction_args(),
-    ]
-    # Deny sensitive paths by making them inaccessible, or with secret_reads
-    # bind them read-only over any writable bind instead.
-    for path in _effective_denied_paths(allow_paths):
-        if os.path.exists(path):
-            argv.extend(["--ro-bind", path, path] if secret_reads else _bwrap_deny_args(path))
-    # The app's own grant and config files stay readable and are never written
-    # by a confined command (_app_config_targets). bwrap binds a file read-only
-    # over its own writable bind; one that does not exist yet is outside every
-    # writable bind unless the tree holds the data root or the user root.
-    if write_mode == "workspace":
-        cfg_files, cfg_dirs = _app_config_targets()
-        for path in cfg_files:
-            if os.path.isfile(path):
-                argv.extend(["--ro-bind", path, path])
-        for path in cfg_dirs:
-            if os.path.isdir(path):
-                argv.extend(["--ro-bind", path, path])
-    argv.extend(["--chdir", cwd, "/bin/sh", "-c", command])
-    return argv
-
-
 def popen_sandboxed(
     command: str,
     *,
@@ -814,18 +603,19 @@ def popen_sandboxed(
     process off to a background waiter on timeout (the anti-restart handoff in
     server/tasks/handoff.py). Same deny-profile as ``run_sandboxed``.
 
-    Returns ``(proc, profile_path)``. ``profile_path`` (macOS only) must be
+    Returns ``(proc, profile_path)``. ``profile_path`` must be
     unlinked by the caller once the process exits — the profile file has to
     outlive the process, exactly the ``build_pty_sandbox_wrap`` contract.
+    Raises SandboxUnavailableError, and starts nothing, when sandbox-exec
+    cannot be used.
 
     Environment and egress: the child gets the same ``_merged_env`` as a
     ``run_sandboxed`` child, so the credential denylist holds (no GH_TOKEN for
     a prompt-injected ``curl "...?t=$GH_TOKEN"``) and, under a non-permissive
     network tier, the HTTPS_PROXY/HTTP_PROXY vars point at the allowlisting
-    proxy. It also picks up the same network-restriction rules (the macOS
-    profile via ``_generate_macos_profile``, ``--unshare-net`` on bwrap), so
-    the proxy is the only way out on ports 80 and 443. Approved and read-only
-    ws_run_command runs, their 30 s handoff and every background shell task
+    proxy. It also picks up the same network-restriction rules (the profile
+    via ``_generate_macos_profile``), so the proxy is the only way out on
+    ports 80 and 443. Approved and read-only ws_run_command runs, their 30 s handoff and every background shell task
     start here, so this is where the parity has to hold.
 
     ``write_mode`` is the ``run_sandboxed`` one: a read-only ws_run_command
@@ -840,38 +630,21 @@ def popen_sandboxed(
     """
     from server.process_utils import new_process_group
 
-    profile_path: str | None = None
-    if _is_sandbox_exec_available():
-        profile = _generate_macos_profile(
-            write_root or cwd,
-            write_mode=write_mode,
-            scratch_dir=scratch_dir,
-            secret_reads=secret_reads,
-        )
-        fd, profile_path = tempfile.mkstemp(suffix=".sb", prefix="whisper_bg_sandbox_")
-        with os.fdopen(fd, "w") as f:
-            f.write(profile)
-        argv: list | str = ["sandbox-exec", "-f", profile_path, "/bin/sh", "-c", command]
-        shell = False
-    elif _is_bwrap_available():
-        argv = _bwrap_argv(
-            command,
-            cwd,
-            None,
-            write_mode,
-            write_root=write_root or cwd,
-            scratch_dir=scratch_dir,
-            secret_reads=secret_reads,
-        )
-        shell = False
-    else:
-        argv = command
-        shell = True
+    _require_sandbox_exec()
+    profile = _generate_macos_profile(
+        write_root or cwd,
+        write_mode=write_mode,
+        scratch_dir=scratch_dir,
+        secret_reads=secret_reads,
+    )
+    fd, profile_path = tempfile.mkstemp(suffix=".sb", prefix="whisper_bg_sandbox_")
+    with os.fdopen(fd, "w") as f:
+        f.write(profile)
+    argv = ["sandbox-exec", "-f", profile_path, "/bin/sh", "-c", command]
 
     try:
         proc = subprocess.Popen(
             argv,
-            shell=shell,
             cwd=cwd,
             stdout=stdout_file,
             stderr=subprocess.STDOUT,
@@ -879,11 +652,10 @@ def popen_sandboxed(
             env=_merged_env(_scratch_env(write_mode, scratch_dir)),
         )
     except Exception:
-        if profile_path:
-            try:
-                os.unlink(profile_path)
-            except OSError:
-                pass
+        try:
+            os.unlink(profile_path)
+        except OSError:
+            pass
         raise
     return proc, profile_path
 
@@ -913,12 +685,10 @@ def build_pty_sandbox_wrap(
     once the process exits (the profile file must outlive the shell, unlike the
     one-shot run_sandboxed which deletes it immediately).
 
-    On non-macOS, or when sandbox-exec is unavailable, returns
-    ``(shell_cmd, None)`` unchanged — the PTY runs unsandboxed and command
-    validation remains the only enforcement layer.
+    Raises SandboxUnavailableError, and wraps nothing, when sandbox-exec
+    cannot be used: the shell never starts without the sandbox.
     """
-    if not _is_sandbox_exec_available():
-        return shell_cmd, None
+    _require_sandbox_exec()
     profile = _generate_macos_profile(
         write_root, write_mode=write_mode, scratch_dir=scratch_dir, secret_reads=secret_reads
     )
@@ -935,30 +705,22 @@ def build_pty_sandbox_wrap(
 
 def sandbox_backend() -> str:
     """Which OS backend `run_sandboxed` would use right now: "sandbox-exec",
-    "bwrap", or "none". A confined write_mode with backend "none" is NOT
-    enforced — callers must either fail closed (unattended runs) or disclose
-    the fact in the tool result, never silently proceed as if confined."""
-    if _is_sandbox_exec_available():
-        return "sandbox-exec"
-    if _is_bwrap_available():
-        return "bwrap"
-    return "none"
+    or "none" when it cannot be used. With "none" every sandboxed entry point
+    raises SandboxUnavailableError, so nothing runs; a caller may check this
+    first to refuse with the same message (SANDBOX_UNAVAILABLE_MESSAGE)."""
+    return "sandbox-exec" if _is_sandbox_exec_available() else "none"
 
 
 def pty_sandbox_backend() -> str:
     """Which backend `build_pty_sandbox_wrap` would use: "sandbox-exec" or
-    "none". PTY sessions are only ever confined via sandbox-exec (bwrap is not
-    wired for interactive PTYs), so this is deliberately narrower than
-    `sandbox_backend`."""
+    "none", as for `sandbox_backend`."""
     return "sandbox-exec" if _is_sandbox_exec_available() else "none"
 
 
-# Per-backend stderr dialects for "the sandbox blocked a write". Deliberately
-# NOT a cross-backend union: matching bwrap's EROFS text on macOS would
-# misattribute an ordinary read-only-volume error to the sandbox.
+# The stderr text of "the sandbox blocked a write", per backend. With no
+# backend ("none") nothing ran, so nothing is classified.
 _DENIAL_SIGNATURES = {
     "sandbox-exec": ("Operation not permitted",),
-    "bwrap": ("Read-only file system", "Permission denied"),
 }
 
 

@@ -16,8 +16,9 @@ Trust model — the script is NOT trusted, and this module is not what
 contains it:
 - It runs only AFTER the user approves the code on an approval card, the
   same gate `run_python` uses. Nothing here executes at tool-call time.
-- It runs under server/sandbox.py's OS sandbox (sandbox-exec / bwrap), which
-  is the real boundary, with the standard sensitive-path deny-list.
+- It runs under server/sandbox.py's OS sandbox (macOS sandbox-exec), which
+  is the real boundary, with the standard sensitive-path deny-list. Without
+  sandbox-exec the script does not run at all.
 - It writes into a throwaway work directory, never to the destination. The
   finished bytes come back here and the APPROVAL executor puts them in
   place, so a script cannot pick its own output location.

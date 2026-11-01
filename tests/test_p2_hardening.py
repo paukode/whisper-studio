@@ -28,7 +28,6 @@ def test_login_persistence_paths_are_sensitive():
         ".profile",
         ".zprofile",
         "Library/LaunchAgents/com.evil.plist",
-        ".config/autostart/evil.desktop",
     ):
         assert is_sensitive_path(os.path.expanduser("~/" + rel)), rel
     denied = {os.path.realpath(p) for p in expanded_sandbox_paths()}

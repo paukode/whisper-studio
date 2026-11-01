@@ -9,8 +9,7 @@ with the secret denies LAST so a workspace containing the home directory can
 never re-expose ~/.ssh. EVERY sandboxed run is workspace-confined by default
 (consent and confinement are independent knobs); the only way out is the
 per-call sandbox_permissions='danger-full-access' escalation, which always
-forces a real approval. Linux/bwrap already mounted the root read-only, so
-this is macOS catching up.
+forces a real approval.
 """
 
 import asyncio
@@ -294,6 +293,3 @@ def test_popen_profile_confines_to_the_write_root(tmp_path):
     profile = sandbox._generate_macos_profile(ws, write_mode="workspace")
     assert f'(allow file-write* (subpath "{ws}"))' in profile
     assert elsewhere not in profile
-    argv = sandbox._bwrap_argv("ls", elsewhere, None, "workspace", write_root=ws)
-    assert argv[argv.index("--bind") + 1] == ws
-    assert elsewhere not in argv[: argv.index("--chdir")]

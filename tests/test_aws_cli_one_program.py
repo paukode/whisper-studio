@@ -174,24 +174,6 @@ def test_open_mode_keeps_aws_read_only_and_readonly_mode_writes_no_cache(tmp_pat
     assert cache not in readonly
 
 
-def test_bwrap_binds_aws_read_only_inside_the_tree_and_its_cache_read_write(tmp_path):
-    home = tmp_path / "home"
-    cache = home / ".aws" / "cli" / "cache"
-    cache.mkdir(parents=True)
-    aws = str(home / ".aws")
-    argv = sandbox._bwrap_argv(
-        "ls", str(home), [aws], "workspace", write_paths=[str(cache)], write_root=str(home)
-    )
-    head = argv[: argv.index("--chdir")]
-    pairs = [(head[i], head[i + 1]) for i in range(len(head) - 1)]
-    tree = pairs.index(("--bind", str(home)))
-    ro = pairs.index(("--ro-bind", aws))
-    rw = pairs.index(("--bind", str(cache)))
-    assert tree < ro < rw
-    readonly = sandbox._bwrap_argv("ls", str(home), [aws], "readonly", write_paths=[str(cache)])
-    assert str(cache) not in readonly
-
-
 def test_the_cli_cache_is_created_only_when_aws_exists(tmp_path, monkeypatch):
     aws = tmp_path / ".aws"
     monkeypatch.setattr(code, "_AWS_DIR", str(aws))

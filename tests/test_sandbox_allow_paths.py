@@ -1,6 +1,6 @@
 """run_sandboxed's allow_paths lets cloud-credential tools reach ~/.aws while
 every other secret stays denied; build_pty_sandbox_wrap wraps a PTY shell under
-sandbox-exec on macOS (and is a no-op elsewhere)."""
+sandbox-exec, and refuses when sandbox-exec is unavailable."""
 
 import os
 
@@ -26,12 +26,9 @@ def test_allow_paths_excludes_only_allowed():
 
 def test_pty_sandbox_wrap():
     shell = ["/bin/bash", "--norc"]
+    assert _is_sandbox_exec_available()
     argv, profile = build_pty_sandbox_wrap(shell, "/tmp")
-    if _is_sandbox_exec_available():
-        assert argv[0] == "sandbox-exec"
-        assert argv[-2:] == shell
-        assert profile and os.path.exists(profile)
-        os.unlink(profile)
-    else:
-        assert argv == shell
-        assert profile is None
+    assert argv[0] == "sandbox-exec"
+    assert argv[-2:] == shell
+    assert profile and os.path.exists(profile)
+    os.unlink(profile)

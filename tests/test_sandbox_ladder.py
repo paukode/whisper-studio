@@ -6,9 +6,9 @@ Three properties under test:
   2. Escalation is per-call consent: sandbox_permissions='danger-full-access'
      resolves to "ask" no matter what blanket grants exist, requires a
      justification, and is refused outright from unattended agents.
-  3. Enforcement is a reported fact: a confined mode with no OS backend either
-     fails closed (agents) or discloses (interactive), and a sandbox write
-     denial in output is classified with an escalation hint.
+  3. Enforcement is a reported fact: with no OS backend every sandboxed run
+     is refused (fail closed, in every mode), and a sandbox write denial in
+     output is classified with an escalation hint.
 """
 
 import asyncio
@@ -92,31 +92,27 @@ def test_invalid_permissions_value_is_refused():
     assert "sandbox_permissions" in msg
 
 
-def test_confined_agent_run_fails_closed_without_backend(monkeypatch):
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"__agent__": True},
+        {},
+        {"sandbox_permissions": "read-only"},
+        {"sandbox_permissions": "danger-full-access", "justification": "x"},
+    ],
+)
+def test_every_run_fails_closed_without_backend(monkeypatch, extra):
+    """Agent or interactive, any rung: no sandbox-exec, no run."""
     monkeypatch.setattr(sandbox, "pty_sandbox_backend", lambda: "none")
 
     async def fake_run_in_sandbox(command, cwd=None, timeout=None, write_mode="open", **_):
         raise AssertionError("must not run when failing closed")
 
     monkeypatch.setattr("server.terminal.run_in_sandbox", fake_run_in_sandbox)
-    ok, msg = asyncio.run(do_terminal_run({"command": "echo hi", "__agent__": True}))
+    ok, msg = asyncio.run(do_terminal_run({"command": "echo hi", **extra}))
     assert ok is False
-    assert "cannot be enforced" in msg
-
-
-def test_confined_interactive_run_discloses_without_backend(monkeypatch):
-    monkeypatch.setattr(sandbox, "pty_sandbox_backend", lambda: "none")
-    seen = {}
-
-    async def fake_run_in_sandbox(command, cwd=None, timeout=None, write_mode="open", **_):
-        seen["write_mode"] = write_mode
-        return {"exit_code": 0, "output": "ok", "timed_out": False}
-
-    monkeypatch.setattr("server.terminal.run_in_sandbox", fake_run_in_sandbox)
-    ok, out = asyncio.run(do_terminal_run({"command": "echo hi"}))
-    assert ok is True
-    assert seen["write_mode"] == "open"
-    assert "[sandbox unavailable]" in out
+    assert msg == sandbox.SANDBOX_UNAVAILABLE_MESSAGE
+    assert "[sandbox unavailable]" not in msg
 
 
 def test_denial_classifier_names_mode_and_escalation(monkeypatch):
@@ -159,11 +155,12 @@ def test_a_setuid_program_is_no_write_denial(monkeypatch):
 
 
 def test_denial_signatures_are_per_backend(monkeypatch):
-    """bwrap's EROFS text must not be attributed to the sandbox on macOS."""
+    """An ordinary read-only-volume error is not the sandbox, and with no
+    backend nothing ran, so nothing is classified."""
     monkeypatch.setattr(sandbox, "sandbox_backend", lambda: "sandbox-exec")
     assert sandbox.classify_sandbox_denial("Read-only file system", "workspace") is None
-    monkeypatch.setattr(sandbox, "sandbox_backend", lambda: "bwrap")
-    assert sandbox.classify_sandbox_denial("Read-only file system", "workspace") is not None
+    monkeypatch.setattr(sandbox, "sandbox_backend", lambda: "none")
+    assert sandbox.classify_sandbox_denial("Operation not permitted", "workspace") is None
 
 
 @pytest.mark.skipif(

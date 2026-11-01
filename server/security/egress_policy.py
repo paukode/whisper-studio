@@ -1,7 +1,7 @@
 """Outbound-network egress policy for sandboxed command execution.
 
 DEFAULT-OFF FEATURE. Today, ``run_sandboxed`` (server/sandbox.py) opens a
-network-unrestricted sandbox: the macOS/bwrap profile is ``(allow default)``
+network-unrestricted sandbox: the macOS profile is ``(allow default)``
 with no per-domain filtering, so any sandboxed command can reach any host on
 the internet. ``_SANDBOX_ENV_DENYLIST`` in sandbox.py already stops one
 specific leak (inherited GitHub tokens); this module addresses the general
@@ -45,8 +45,7 @@ Known limitations (read before trusting this as an airtight boundary)
    ALSO adds `(deny network-outbound (remote ip "*:443"))` /
    `"*:80"` rules to the macOS profile when a non-permissive tier is active
    — forcing ALL direct outbound HTTP(S) through the kernel-level sandbox
-   boundary, not just asking nicely via an env var. See sandbox.py for the
-   Linux (bwrap) story, which is weaker (implemented but untested here).
+   boundary, not just asking nicely via an env var.
 2. Method-level restriction (``methods_only_safe``: block POST/PUT/PATCH/
    DELETE even to allowlisted domains) can only be enforced on the tiny
    sliver of traffic that arrives as plaintext HTTP (no CONNECT tunnel).
@@ -102,7 +101,7 @@ DEFAULT_NETWORK_POLICY = {
 # development sandbox legitimately needs to reach. Deliberately NOT
 # exhaustive: grow it via a user's `custom_allowed_domains` for anything
 # project-specific rather than expanding this list without bound. Grouped
-# by ecosystem for reviewability. (70 domains.)
+# by ecosystem for reviewability. (67 domains.)
 # ---------------------------------------------------------------------------
 CURATED_ALLOWLIST: frozenset[str] = frozenset(
     {
@@ -175,10 +174,6 @@ CURATED_ALLOWLIST: frozenset[str] = frozenset(
         "conda.io",
         "repo.anaconda.com",
         "conda-forge.org",
-        # Linux distro package mirrors
-        "deb.debian.org",
-        "archive.ubuntu.com",
-        "security.ubuntu.com",
         # Homebrew
         "brew.sh",
         "formulae.brew.sh",

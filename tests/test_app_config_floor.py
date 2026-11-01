@@ -211,14 +211,6 @@ def test_a_confined_command_profile_denies_the_config_files(home):
     assert "permissions.json" not in sandbox._generate_macos_profile(str(home), write_mode="open")
 
 
-def test_the_bwrap_argv_binds_the_config_files_read_only(home):
-    argv = sandbox._bwrap_argv("true", str(home), None, "workspace")
-    config = os.path.realpath(str(home / "data" / "permissions.json"))
-    at = argv.index(config)
-    assert argv[at - 1 : at + 2] == ["--ro-bind", config, config]
-    assert config not in sandbox._bwrap_argv("true", str(home), None, "open")
-
-
 @needs_sandbox_exec
 def test_the_kernel_keeps_a_confined_command_off_the_config_files(home):
     def run(command, write_mode="workspace"):

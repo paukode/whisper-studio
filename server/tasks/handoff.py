@@ -106,6 +106,8 @@ def run_with_handoff(
 
     ``write_mode``, ``write_root``, ``scratch_dir`` and ``secret_reads`` are the sandbox's (see
     ``popen_sandboxed``); a handed-off process keeps the sandbox it started in.
+    Without sandbox-exec, popen_sandboxed raises SandboxUnavailableError: it
+    propagates to the caller, nothing runs and no registry row is made.
     ``wake_on_finish``: a chat turn started it, so a handed-off command reports
     back to that chat when it finishes (server/tasks/wake.py). Work it left
     running in its group never does.
@@ -129,6 +131,14 @@ def run_with_handoff(
             scratch_dir=scratch_dir,
             secret_reads=secret_reads,
         )
+    except Exception:
+        # Nothing started: leave no empty output file behind.
+        out_file.close()
+        try:
+            os.unlink(out_path)
+        except OSError:
+            pass
+        raise
     finally:
         if not out_file.closed:
             out_file.close()

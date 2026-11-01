@@ -56,6 +56,13 @@ def test_curated_allowlist_seed_size_is_in_the_requested_range():
     assert 50 <= len(ep.CURATED_ALLOWLIST) <= 70
 
 
+def test_curated_allowlist_has_no_linux_package_mirrors():
+    # macOS only: the Debian and Ubuntu mirrors were dropped (70 to 67 hosts).
+    mirrors = {"deb.debian.org", "archive.ubuntu.com", "security.ubuntu.com"}
+    assert not mirrors & ep.CURATED_ALLOWLIST
+    assert len(ep.CURATED_ALLOWLIST) == 67
+
+
 def test_get_active_policy_merges_partial_saved_config(monkeypatch):
     # A config saved before methods_only_safe existed, or missing a key some
     # other way, should still come back with every key populated.

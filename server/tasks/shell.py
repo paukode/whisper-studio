@@ -64,6 +64,9 @@ def start_shell_task(
 ) -> dict:
     """Start ``command`` in the background; returns {task_id, output_path, status}.
 
+    A command that could not start (no OS sandbox, a spawn error) comes back
+    with status "failed" and an ``error`` text, and its row is failed too.
+
     ``exec_command`` is the possibly-wrapped form actually executed (cwd
     tracking, snapshot wrapping); ``command`` is what the user asked for and
     becomes the task title. ``write_mode``, ``write_root``, ``scratch_dir``
@@ -114,7 +117,7 @@ def start_shell_task(
         )
         if finished:
             emit_task_event(session_id, "task_failed", finished)
-        return {"task_id": task_id, "output_path": out_path, "status": "failed"}
+        return {"task_id": task_id, "output_path": out_path, "status": "failed", "error": str(e)}
     finally:
         # The child holds its own descriptor; the parent copy must not leak.
         if not out_file.closed:

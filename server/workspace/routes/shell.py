@@ -23,6 +23,13 @@ from ..commands import (
 from ..state import get_workspace_path
 
 
+def _sandbox_refusal(e: Exception) -> Response:
+    """503 with the reason: the OS sandbox is missing, so nothing ran."""
+    return Response(
+        content=json.dumps({"error": str(e)}), status_code=503, media_type="application/json"
+    )
+
+
 @router.post("/shell")
 async def ws_shell_endpoint(request: Request):
     body = await request.json()
@@ -53,6 +60,11 @@ async def ws_shell_endpoint(request: Request):
         return Response(
             content=json.dumps({"error": warning}), status_code=403, media_type="application/json"
         )
+    from server.sandbox import SandboxUnavailableError, sandbox_backend
+
+    # No OS sandbox: refuse before anything starts, foreground or background.
+    if sandbox_backend() == "none":
+        return _sandbox_refusal(SandboxUnavailableError())
     # Shell snapshot: run under the user's shell profile. wrap_command
     # re-executes under the snapshot's shell, so it must be the OUTERMOST
     # wrapper, applied per branch below after stdin/cwd wrapping.
@@ -122,6 +134,8 @@ async def ws_shell_endpoint(request: Request):
         return resp
     except subprocess.TimeoutExpired:
         return {"output": "Error: timed out (60s)", "exit_code": -1}
+    except SandboxUnavailableError as e:
+        return _sandbox_refusal(e)
     except Exception as e:
         return {"output": f"Error: {e}", "exit_code": -1}
 

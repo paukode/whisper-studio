@@ -920,7 +920,9 @@ def _start_background_command(
     secret_reads: bool = False,
     wake_on_finish: bool = False,
 ) -> str:
-    """Start a command in the background and return a status message."""
+    """Start a command in the background and return a status message.
+    Raises RuntimeError when it could not start (no OS sandbox, a spawn
+    error), so the caller reports an error, not a started task."""
     from server.tasks.shell import start_shell_task
 
     task_info = start_shell_task(
@@ -934,6 +936,8 @@ def _start_background_command(
         secret_reads=secret_reads,
         wake_on_finish=wake_on_finish,
     )
+    if task_info.get("status") == "failed":
+        raise RuntimeError(task_info.get("error") or "the background command did not start")
     return _background_started_message(
         command, task_info["task_id"], task_info["output_path"], reports_back=wake_on_finish
     )

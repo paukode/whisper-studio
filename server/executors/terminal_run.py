@@ -371,36 +371,31 @@ async def do_terminal_run(payload: dict) -> tuple[bool, str]:
         # that, so a blanket "Yes, all cli" grant can never cover it.
         write_mode = _WRITE_MODE_FOR_PERMS[perms]
 
-        from server.sandbox import pty_sandbox_backend
+        from server.sandbox import (
+            SANDBOX_UNAVAILABLE_MESSAGE,
+            SandboxUnavailableError,
+            pty_sandbox_backend,
+        )
 
-        if write_mode != "open" and pty_sandbox_backend() == "none":
-            if payload.get("__agent__"):
-                # Unattended run with no OS backend: fail closed rather than
-                # silently running unconfined with nobody watching.
-                return False, (
-                    "No OS sandbox backend is available on this machine, so the "
-                    "workspace-write confinement this unattended command requires "
-                    "cannot be enforced. Refusing to run it unconfined."
-                )
-            # Interactive (human-approved) run: proceed, but say so — silent
-            # unconfined passthrough is what this disclosure exists to prevent.
-            preamble = (
-                "[sandbox unavailable] No OS sandbox backend on this machine; "
-                "the command ran WITHOUT write confinement.\n"
-            )
-            write_mode = "open"
+        # No OS sandbox: refuse in every write mode (the deny-list guards the
+        # credentials even under danger-full-access), never run unconfined.
+        if pty_sandbox_backend() == "none":
+            return False, SANDBOX_UNAVAILABLE_MESSAGE
 
         from server.workspace.paths import own_scratch_dir
 
-        result = await run_in_sandbox(
-            command,
-            cwd=cwd,
-            timeout=timeout,
-            write_mode=write_mode,
-            scratch_dir=own_scratch_dir(payload.get("session_id")),
-            write_root=ws,
-            secret_reads=secret,
-        )
+        try:
+            result = await run_in_sandbox(
+                command,
+                cwd=cwd,
+                timeout=timeout,
+                write_mode=write_mode,
+                scratch_dir=own_scratch_dir(payload.get("session_id")),
+                write_root=ws,
+                secret_reads=secret,
+            )
+        except SandboxUnavailableError as e:
+            return False, str(e)
     else:
         session = latest_visible_session()
         if session is None:
@@ -518,11 +513,22 @@ async def do_terminal_send(payload: dict) -> tuple[bool, str]:
     if text and not text.endswith(("\n", *_CONTROL_KEYS)):
         text += "\n"
 
+    from server.sandbox import (
+        SANDBOX_UNAVAILABLE_MESSAGE,
+        SandboxUnavailableError,
+        pty_sandbox_backend,
+    )
     from server.workspace.paths import own_scratch_dir
 
-    session = get_or_open_interactive(
-        chat_session_id, cwd, scratch_dir=own_scratch_dir(chat_session_id), write_root=ws
-    )
+    # Refuse before a session (and its PTY and proxy) is opened at all.
+    if pty_sandbox_backend() == "none":
+        return False, SANDBOX_UNAVAILABLE_MESSAGE
+    try:
+        session = get_or_open_interactive(
+            chat_session_id, cwd, scratch_dir=own_scratch_dir(chat_session_id), write_root=ws
+        )
+    except SandboxUnavailableError as e:
+        return False, str(e)
     result = await send_and_wait(session, text, timeout=timeout)
 
     reason = result["wait_reason"]

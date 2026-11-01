@@ -55,7 +55,7 @@ class DevServerProcess:
     async def spawn(
         cls, command: list[str], *, cwd: str, env: dict | None = None
     ) -> DevServerProcess:
-        from server.sandbox import _merged_env, build_pty_sandbox_wrap
+        from server.sandbox import SandboxUnavailableError, _merged_env, build_pty_sandbox_wrap
         from server.security.command_validator import validate_command
 
         # Validate the RAW joined argv, not a shell-quoted form: this process
@@ -73,7 +73,10 @@ class DevServerProcess:
         if not os.path.isdir(cwd):
             raise DevServerSpawnError(f"cwd does not exist: {cwd}")
 
-        argv, profile_path = build_pty_sandbox_wrap(command, cwd)
+        try:
+            argv, profile_path = build_pty_sandbox_wrap(command, cwd)
+        except SandboxUnavailableError as e:
+            raise DevServerSpawnError(str(e)) from e
         try:
             # start_new_session=True (setsid), NOT preexec_fn=new_process_group.
             # This is the async, event-loop spawn — a preexec_fn callable forces

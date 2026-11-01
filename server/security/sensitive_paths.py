@@ -2,7 +2,7 @@
 
 Two consumers with different shapes:
   - server/sandbox.py needs expanded literal filesystem paths for the
-    OS sandbox profile (sandbox-exec / bwrap) — the real boundary.
+    OS sandbox profile (macOS sandbox-exec), the real boundary.
   - server/security/command_validator.py needs regexes matched against
     command text — defense-in-depth on paths that read naturally in
     commands.
@@ -47,7 +47,6 @@ HOME_PATHS = [
     ".profile",
     ".config/fish/config.fish",
     "Library/LaunchAgents",  # macOS per-user launch agents (login persistence)
-    ".config/autostart",  # Linux per-user autostart (login persistence)
 ]
 
 # Denied only by the OS sandbox (see module docstring).

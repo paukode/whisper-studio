@@ -46,11 +46,6 @@ def test_permissive_macos_profile_has_no_network_rules(monkeypatch):
     assert sandbox._macos_network_restriction_rules() == []
 
 
-def test_permissive_bwrap_args_are_empty(monkeypatch):
-    monkeypatch.setattr(egress_policy, "get_active_policy", _permissive_policy)
-    assert sandbox._bwrap_network_restriction_args() == []
-
-
 def test_default_permissive_matches_pre_egress_policy_behavior(monkeypatch):
     """The regression gate: with no permissions.json override (i.e. real
     defaults), _generate_macos_profile's output must be byte-for-byte
@@ -120,29 +115,6 @@ def test_macos_profile_network_rules_come_after_the_deny_paths_block(monkeypatch
     monkeypatch.setattr(egress_policy, "get_active_policy", lambda: _curated_policy())
     profile = sandbox._generate_macos_profile("/tmp/some-workspace")
     assert profile.index("allow default") < profile.index('remote ip "*:443"')
-
-
-def test_bwrap_args_include_unshare_net_when_restrictive(monkeypatch):
-    monkeypatch.setattr(
-        egress_policy,
-        "get_active_policy",
-        lambda: {"tier": "restrictive", "custom_allowed_domains": [], "methods_only_safe": False},
-    )
-    assert sandbox._bwrap_network_restriction_args() == ["--unshare-net"]
-
-
-def test_run_sandboxed_no_sandbox_fallback_still_gets_proxy_env(monkeypatch, tmp_path):
-    """Even the "no OS sandbox available" fallback path in run_sandboxed goes
-    through _merged_env, so it should still see proxy vars under a
-    non-permissive policy — sanity-checking the "no new plumbing needed at
-    the call site" wiring end to end for that branch."""
-    monkeypatch.setattr(sandbox, "_is_sandbox_exec_available", lambda: False)
-    monkeypatch.setattr(sandbox, "_is_bwrap_available", lambda: False)
-    monkeypatch.setattr(egress_policy, "get_active_policy", lambda: _curated_policy())
-    monkeypatch.setattr(egress_policy, "ensure_proxy_running", lambda: ("127.0.0.1", 54321))
-
-    result = sandbox.run_sandboxed("echo $HTTPS_PROXY", cwd=str(tmp_path), timeout=10)
-    assert result.stdout.strip() == "http://127.0.0.1:54321"
 
 
 def test_popen_sandboxed_child_gets_the_same_env_as_run_sandboxed(monkeypatch, tmp_path):

@@ -72,14 +72,6 @@ def test_package_caches_live_in_the_scratch_folder_of_a_confined_run(tmp_path):
     assert sandbox._scratch_env("workspace", None) == {}
 
 
-def test_bwrap_binds_the_scratch_folder_except_read_only(tmp_path):
-    ws, scratch = str(tmp_path / "ws"), str(tmp_path / SID)
-    argv = sandbox._bwrap_argv("ls", ws, None, "workspace", scratch_dir=scratch)
-    head = argv[: argv.index("--chdir")]
-    assert any(head[i : i + 3] == ["--bind", scratch, scratch] for i in range(len(head)))
-    assert scratch not in sandbox._bwrap_argv("ls", ws, None, "readonly", scratch_dir=scratch)
-
-
 def test_popen_sandboxed_hands_the_cache_env_to_a_confined_child(tmp_path, monkeypatch):
     seen = {}
 
@@ -89,13 +81,14 @@ def test_popen_sandboxed_hands_the_cache_env_to_a_confined_child(tmp_path, monke
             seen["argv"] = argv
 
     monkeypatch.setattr(sandbox.subprocess, "Popen", FakePopen)
-    monkeypatch.setattr(sandbox, "_is_sandbox_exec_available", lambda: False)
-    monkeypatch.setattr(sandbox, "_is_bwrap_available", lambda: False)
+    monkeypatch.setattr(sandbox, "_is_sandbox_exec_available", lambda: True)
     scratch = str(tmp_path / SID)
     with open(os.devnull, "w") as out:
-        sandbox.popen_sandboxed(
+        _, profile_path = sandbox.popen_sandboxed(
             "true", cwd=str(tmp_path), stdout_file=out, write_mode="workspace", scratch_dir=scratch
         )
+    os.unlink(profile_path)
+    assert seen["argv"][0] == "sandbox-exec"
     assert seen["env"]["npm_config_cache"] == os.path.join(scratch, "cache", "npm")
 
 

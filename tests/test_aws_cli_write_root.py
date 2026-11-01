@@ -143,17 +143,14 @@ def test_a_profile_with_no_tree_keeps_scratch_temp_and_the_aws_cache(tmp_path):
     assert '(allow file-write* (subpath "/private/tmp"))' in allows
 
 
-@pytest.mark.parametrize("backend", ["sandbox-exec", "bwrap"])
-def test_run_sandboxed_roots_at_the_cwd_unless_told_otherwise(monkeypatch, backend):
+def test_run_sandboxed_roots_at_the_cwd_unless_told_otherwise(monkeypatch):
     seen = []
 
     def runner(command, **kw):
         seen.append(kw["write_root"])
 
-    monkeypatch.setattr(sandbox, "_is_sandbox_exec_available", lambda: backend == "sandbox-exec")
-    monkeypatch.setattr(sandbox, "_is_bwrap_available", lambda: backend == "bwrap")
+    monkeypatch.setattr(sandbox, "_is_sandbox_exec_available", lambda: True)
     monkeypatch.setattr(sandbox, "_run_macos_sandboxed", runner)
-    monkeypatch.setattr(sandbox, "_run_bwrap_sandboxed", runner)
 
     sandbox.run_sandboxed("ls", cwd="/somewhere", write_mode="workspace")
     sandbox.run_sandboxed("ls", cwd="/somewhere", write_mode="workspace", write_root="/ws")
@@ -161,20 +158,7 @@ def test_run_sandboxed_roots_at_the_cwd_unless_told_otherwise(monkeypatch, backe
     assert seen == ["/somewhere", "/ws", None]
 
 
-def test_bwrap_binds_no_tree_for_none_and_the_cwd_by_default(tmp_path):
-    cwd, scratch = str(tmp_path / "home"), str(tmp_path / SID)
-
-    def binds(argv):
-        head = argv[: argv.index("--chdir")]
-        return [head[i + 1] for i, a in enumerate(head) if a == "--bind"]
-
-    none = sandbox._bwrap_argv("ls", cwd, None, "workspace", write_root=None, scratch_dir=scratch)
-    assert binds(none) == ["/tmp", scratch]
-    assert none[none.index("--chdir") + 1] == cwd
-    assert binds(sandbox._bwrap_argv("ls", cwd, None, "workspace")) == [cwd, "/tmp"]
-
-
-def test_popen_sandboxed_still_binds_its_cwd_when_no_write_root_is_given(tmp_path, monkeypatch):
+def test_popen_sandboxed_still_roots_at_its_cwd_when_no_write_root_is_given(tmp_path, monkeypatch):
     """popen_sandboxed keeps its own convention (None: the cwd)."""
     seen = {}
 
@@ -183,12 +167,18 @@ def test_popen_sandboxed_still_binds_its_cwd_when_no_write_root_is_given(tmp_pat
             seen["argv"] = argv
 
     monkeypatch.setattr(sandbox.subprocess, "Popen", FakePopen)
-    monkeypatch.setattr(sandbox, "_is_sandbox_exec_available", lambda: False)
-    monkeypatch.setattr(sandbox, "_is_bwrap_available", lambda: True)
+    monkeypatch.setattr(sandbox, "_is_sandbox_exec_available", lambda: True)
     with open(os.devnull, "w") as out:
-        sandbox.popen_sandboxed("true", cwd=str(tmp_path), stdout_file=out, write_mode="workspace")
-    argv = seen["argv"]
-    assert argv[argv.index("--bind") + 1] == str(tmp_path)
+        _, profile_path = sandbox.popen_sandboxed(
+            "true", cwd=str(tmp_path), stdout_file=out, write_mode="workspace"
+        )
+    try:
+        assert seen["argv"][:3] == ["sandbox-exec", "-f", profile_path]
+        with open(profile_path) as f:
+            profile = f.read()
+    finally:
+        os.unlink(profile_path)
+    assert f'(allow file-write* (subpath "{os.path.realpath(tmp_path)}"))' in profile
 
 
 # ── the kernel agrees ─────────────────────────────────────────────────────

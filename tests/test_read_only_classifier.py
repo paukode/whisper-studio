@@ -9,7 +9,6 @@ import shutil
 
 import pytest
 
-from server import sandbox
 from server.workspace import executors
 from server.workspace.executors import _is_read_only_command
 
@@ -306,11 +305,3 @@ def test_a_command_that_skips_approval_runs_without_write_access(tmp_path, monke
 
     executors.run_workspace_command("touch made", str(tmp_path))
     assert (tmp_path / "made").exists()
-
-
-def test_the_bwrap_read_only_sandbox_binds_nothing_writable(tmp_path):
-    argv = sandbox._bwrap_argv("ls", str(tmp_path), None, "readonly")
-    binds = [argv[i + 1] for i, a in enumerate(argv) if a == "--bind"]
-    assert binds == []
-    assert argv[argv.index("--tmpfs") + 1] == "/tmp"
-    assert str(tmp_path) in sandbox._bwrap_argv("ls", str(tmp_path), None, "open")

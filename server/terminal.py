@@ -293,20 +293,26 @@ def _create_pty_session(
     # Sandbox the hidden (terminal_run) PTY: run its shell under sandbox-exec
     # so commands typed into it inherit the same filesystem deny-list as the
     # workspace shell. Visible sessions are the user's own terminal and stay
-    # unsandboxed. No-op off macOS (validation is still applied upstream).
+    # unsandboxed. Without sandbox-exec the wrap raises SandboxUnavailableError
+    # and the hidden shell never starts.
     # A confined one may also write the chat session's own scratch folder,
     # where its npm, pip and uv caches live.
     profile_path = None
     if hidden:
         from server.sandbox import build_pty_sandbox_wrap
 
-        shell_cmd, profile_path = build_pty_sandbox_wrap(
-            shell_cmd,
-            write_root,
-            write_mode=write_mode,
-            scratch_dir=scratch_dir,
-            secret_reads=secret_reads,
-        )
+        try:
+            shell_cmd, profile_path = build_pty_sandbox_wrap(
+                shell_cmd,
+                write_root,
+                write_mode=write_mode,
+                scratch_dir=scratch_dir,
+                secret_reads=secret_reads,
+            )
+        except Exception:
+            os.close(master_fd)
+            os.close(slave_fd)
+            raise
 
     process = subprocess.Popen(
         shell_cmd,
