@@ -204,7 +204,7 @@ DEFAULTS = {
     # Cost management
     "max_session_cost_usd": 0.0,  # 0 = unlimited
     "max_daily_cost_usd": 0.0,  # 0 = unlimited
-    "model_fallback_enabled": False,  # Enable opus→sonnet→haiku fallback chain
+    "model_fallback_enabled": False,  # Downgrade to a cheaper model near a cost limit
     # The one round limit and time limit every run takes (Settings > Costs >
     # Budget); who gets which, and the exceptions: server/infrastructure/run_limits.py.
     "round_limit": 120,
