@@ -9,17 +9,10 @@ persistence. stdin_read is covered by forcing the tty-read probe.
 """
 
 import asyncio
-import platform
 import time
-
-import pytest
 
 from server import terminal as t
 from server.executors.terminal_run import do_terminal_close, do_terminal_send
-
-pytestmark = pytest.mark.skipif(
-    platform.system() not in ("Darwin", "Linux"), reason="needs a POSIX PTY"
-)
 
 
 def test_send_returns_fast_when_a_repl_goes_idle():
@@ -68,7 +61,8 @@ def test_session_exit_is_detected():
 
 def test_stdin_read_when_provable(monkeypatch):
     """When the OS positively reports a tty read, the reason is stdin_read (not
-    the weaker inferred_idle). Forced here so it holds on every platform."""
+    the weaker inferred_idle). Forced here, since macOS ps usually cannot report
+    a tty read (see the module docstring)."""
     monkeypatch.setattr(t, "_blocked_on_tty_read", lambda _pgrp: True)
 
     async def go():

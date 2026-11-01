@@ -12,17 +12,12 @@ Either way the panel is asked to show the terminal (a terminal_show frame).
 
 import asyncio
 import os
-import platform
 import time
 
 import pytest
 
 from server import terminal as t
 from server.executors.terminal_run import do_terminal_run
-
-pytestmark = pytest.mark.skipif(
-    platform.system() not in ("Darwin", "Linux"), reason="needs a POSIX PTY"
-)
 
 
 def _buffer(session) -> str:

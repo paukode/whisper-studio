@@ -14,11 +14,8 @@ forces a real approval.
 
 import asyncio
 import os
-import platform
 import shutil
 import tempfile
-
-import pytest
 
 from server import sandbox
 
@@ -118,10 +115,6 @@ def test_terminal_run_defaults_to_workspace_write(monkeypatch):
     assert seen["write_mode"] == "readonly"
 
 
-@pytest.mark.skipif(
-    platform.system() != "Darwin" or shutil.which("sandbox-exec") is None,
-    reason="needs macOS sandbox-exec",
-)
 def test_workspace_mode_blocks_writes_outside_the_tree_for_real():
     """End-to-end kernel check: in workspace mode a write outside the working
     tree fails and one inside succeeds; open mode still writes anywhere."""

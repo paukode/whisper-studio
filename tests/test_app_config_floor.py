@@ -19,8 +19,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import platform
-import shutil
 
 import pytest
 
@@ -43,10 +41,6 @@ from server.tool_executor import process_tool_results
 
 register_defaults()
 
-needs_sandbox_exec = pytest.mark.skipif(
-    platform.system() != "Darwin" or shutil.which("sandbox-exec") is None,
-    reason="needs macOS sandbox-exec",
-)
 
 ORIGINAL = '{"mode": "default", "rules": []}\n'
 MODES = (MODE_DEFAULT, MODE_ACCEPT_EDITS, MODE_AUTO, MODE_PLAN, MODE_BYPASS, MODE_DONT_ASK)
@@ -211,7 +205,6 @@ def test_a_confined_command_profile_denies_the_config_files(home):
     assert "permissions.json" not in sandbox._generate_macos_profile(str(home), write_mode="open")
 
 
-@needs_sandbox_exec
 def test_the_kernel_keeps_a_confined_command_off_the_config_files(home):
     def run(command, write_mode="workspace"):
         return sandbox.run_sandboxed(command, cwd=str(home), timeout=20, write_mode=write_mode)

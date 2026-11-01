@@ -13,7 +13,6 @@ Three properties under test:
 
 import asyncio
 import os
-import platform
 import shutil
 import tempfile
 
@@ -129,10 +128,6 @@ def test_denial_classifier_names_mode_and_escalation(monkeypatch):
     assert sandbox.classify_sandbox_denial("No such file or directory", "workspace") is None
 
 
-@pytest.mark.skipif(
-    not os.path.exists("/bin/ps") or not os.stat("/bin/ps").st_mode & 0o4000,
-    reason="needs a setuid /bin/ps (macOS)",
-)
 def test_a_setuid_program_is_no_write_denial(monkeypatch):
     """macOS never lets a sandboxed command start a setuid program such as ps.
     A field session read the old write-denial hint, escalated every ps to a
@@ -163,10 +158,6 @@ def test_denial_signatures_are_per_backend(monkeypatch):
     assert sandbox.classify_sandbox_denial("Operation not permitted", "workspace") is None
 
 
-@pytest.mark.skipif(
-    platform.system() != "Darwin" or shutil.which("sandbox-exec") is None,
-    reason="needs macOS sandbox-exec",
-)
 def test_readonly_blocks_workspace_writes_for_real():
     """Kernel check: readonly denies a write even INSIDE the working tree,
     where workspace mode would have allowed it."""

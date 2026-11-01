@@ -17,7 +17,6 @@ terminal_send and run_python.
 import asyncio
 import json
 import os
-import platform
 import shutil
 import tempfile
 
@@ -28,11 +27,6 @@ from server.workspace import paths
 from server.workspace.paths import own_scratch_dir
 
 SID = "sess-1"
-
-needs_sandbox_exec = pytest.mark.skipif(
-    platform.system() != "Darwin" or shutil.which("sandbox-exec") is None,
-    reason="needs macOS sandbox-exec",
-)
 
 
 @pytest.fixture
@@ -95,7 +89,6 @@ def test_popen_sandboxed_hands_the_cache_env_to_a_confined_child(tmp_path, monke
 # ── the kernel agrees ─────────────────────────────────────────────────────
 
 
-@needs_sandbox_exec
 def test_a_confined_command_writes_its_own_scratch_but_not_another():
     """Under the home folder, not temp: temp is writable to every confined
     run, so a probe there would pass whatever the profile says."""
@@ -127,7 +120,6 @@ def test_a_confined_command_writes_its_own_scratch_but_not_another():
         shutil.rmtree(ws, ignore_errors=True)
 
 
-@needs_sandbox_exec
 def test_terminal_run_writes_its_sessions_scratch_without_escalation(monkeypatch):
     """The field case end to end: a default terminal_run (workspace-write, no
     danger-full-access) creates and removes files in its scratch folder."""

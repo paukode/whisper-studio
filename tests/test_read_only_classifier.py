@@ -4,9 +4,6 @@ command, and any argument or redirect that writes a file or launches another
 program, needs approval. Genuine read-only commands stay direct. What it
 lets through still runs under the read-only OS sandbox."""
 
-import platform
-import shutil
-
 import pytest
 
 from server.workspace import executors
@@ -289,10 +286,6 @@ def test_list_and_print_forms_stay_direct(command):
     assert _is_read_only_command(command) is True
 
 
-@pytest.mark.skipif(
-    platform.system() != "Darwin" or shutil.which("sandbox-exec") is None,
-    reason="needs macOS sandbox-exec",
-)
 def test_a_command_that_skips_approval_runs_without_write_access(tmp_path, monkeypatch):
     # A classifier fooled into passing a writer must not be the last line: the
     # direct path runs under the read-only sandbox, approved commands do not.

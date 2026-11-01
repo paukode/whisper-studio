@@ -7,11 +7,7 @@ name: CI
 # Triggers are scoped so a PR from a same-repo branch runs each check ONCE:
 # push builds only main + version tags (post-merge / release), while
 # pull_request covers the review gate. Listing both unscoped ran every check
-# twice on PRs.
-#
-# workflow_dispatch exists for the macOS backend job below, which is skipped on
-# pull_request to keep the pricier runner off every review cycle. Dispatch this
-# workflow against a branch to run it before merging a macOS-only change.
+# twice on PRs. workflow_dispatch runs the checks on any branch by hand.
 
 on:
   push:
@@ -22,8 +18,11 @@ on:
 
 jobs:
   backend:
-    name: Backend (pytest + guardrails)
-    runs-on: ubuntu-latest
+    name: Backend (pytest on macOS)
+    # The app runs on macOS only, so its backend is tested there, on every PR:
+    # the sandbox is sandbox-exec and the open-with / reveal routes shell out
+    # to `open`. The tests that need them fail, never skip, without them.
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
@@ -32,25 +31,26 @@ jobs:
           python-version: '3.13'
           cache: pip
 
-      # The transcription / ML stack (mlx*, parakeet-mlx are Apple-silicon
-      # ONLY; torch/torchaudio/speechbrain are heavy and pull it in) is not
-      # exercised by the test suite — server.chat / server.workspace and every
-      # test import cleanly without it. Strip those lines so the Linux runner
-      # installs fast. If a future test imports server.transcription /
-      # streaming / speaker_persistence, run that suite on a macOS runner
-      # instead (those modules need the real MLX runtime).
+      # The transcription / ML stack (mlx*, parakeet-mlx, torch/torchaudio/
+      # speechbrain) is not exercised by the test suite: server.chat /
+      # server.workspace and every test import cleanly without it. Strip those
+      # lines so the install stays fast.
+      # gliner pulls torch in transitively, so the strip doesn't keep torch
+      # out; it just drops the pin, leaving CI to test a floating torch.
+      # Constrain it to the version requirements.txt pins (torch==2.11.0) so
+      # CI exercises the same torch the app ships. The paired setuptools<82
+      # cap still holds: setuptools==81.0.0 survives the grep and installs
+      # from requirements-ci.txt directly.
       - name: Install Python deps (test subset)
         run: |
           grep -vE '^(mlx|mlx-whisper|parakeet-mlx|torch|torchaudio|speechbrain)==' requirements.txt > /tmp/requirements-ci.txt
-          # gliner pulls torch in transitively, so the strip above doesn't keep
-          # torch out — it just drops the pin, leaving CI to test a floating
-          # torch. Constrain it to the version requirements.txt pins
-          # (torch==2.11.0) so CI exercises the same torch the app ships. The
-          # paired setuptools<82 cap still holds: setuptools==81.0.0 survives
-          # the grep and installs from requirements-ci.txt directly.
           printf 'torch==2.11.0\n' > /tmp/constraints-ci.txt
           python -m pip install --upgrade pip
           pip install -c /tmp/constraints-ci.txt -r /tmp/requirements-ci.txt
+
+      # Name the cause first if the runner image ever loses these tools.
+      - name: Assert the macOS tooling is present
+        run: test -x /usr/bin/open && test -x /usr/bin/sandbox-exec
 
       # Lint + format gate, mirroring the frontend's `npm run lint`. ruff is
       # pinned in requirements.txt and survives the ML-strip grep above, so it's
@@ -64,51 +64,10 @@ jobs:
       - name: Run tests
         run: python -m pytest tests/
 
-  backend-macos:
-    name: Backend (pytest on macOS)
-    # Parts of the suite can only run on a macOS host: the open-with / reveal
-    # routes shell out to `open`, and the sandbox runs under sandbox-exec
-    # rather than bwrap. Those tests skip on the ubuntu job above, so without
-    # this job a break in them reaches a release with nothing red anywhere.
-    # (create_docx used to be the main reason this job existed; it now builds
-    # through python-docx and is covered on every runner.)
-    #
-    # Scoped to push (main + version tags) and manual dispatch, NOT every PR:
-    # macOS runners bill at 10x, and this repo's flow is verify locally then
-    # merge, with CI on main as the safety net. Use workflow_dispatch to run it
-    # against a branch when a change touches the macOS-only paths.
-    if: github.event_name != 'pull_request'
-    runs-on: macos-15
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.13'
-          cache: pip
-
-      # Same strip and torch constraint as the ubuntu job: the transcription /
-      # ML stack is not exercised by the suite, and installing it here would
-      # dominate the runtime on the pricier runner. Keep the two install steps
-      # in sync.
-      - name: Install Python deps (test subset)
-        run: |
-          grep -vE '^(mlx|mlx-whisper|parakeet-mlx|torch|torchaudio|speechbrain)==' requirements.txt > /tmp/requirements-ci.txt
-          printf 'torch==2.11.0\n' > /tmp/constraints-ci.txt
-          python -m pip install --upgrade pip
-          pip install -c /tmp/constraints-ci.txt -r /tmp/requirements-ci.txt
-
-      # Guard the reason this job exists: if the macOS-only tooling ever
-      # leaves the runner image, those tests would skip here too and the job
-      # would go green while covering nothing.
-      - name: Assert the macOS-only tooling is present
-        run: test -x /usr/bin/open && test -x /usr/bin/sandbox-exec
-
-      - name: Run tests
-        run: python -m pytest tests/
-
   frontend:
     name: Frontend (tsc + vitest + build)
+    # The frontend checks do not depend on the OS, so they stay on the
+    # cheaper Linux runner.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -15,7 +15,6 @@ still roots a run at its cwd, so every other caller is unchanged.
 
 import json
 import os
-import platform
 import shutil
 import subprocess
 import tempfile
@@ -30,11 +29,6 @@ from server.workspace.paths import own_scratch_dir
 SID = "sess-aws"
 HOME = os.path.expanduser("~")
 AWS = os.path.realpath(os.path.expanduser("~/.aws"))
-
-needs_sandbox_exec = pytest.mark.skipif(
-    platform.system() != "Darwin" or shutil.which("sandbox-exec") is None,
-    reason="needs macOS sandbox-exec",
-)
 
 
 @pytest.fixture
@@ -184,7 +178,6 @@ def test_popen_sandboxed_still_roots_at_its_cwd_when_no_write_root_is_given(tmp_
 # ── the kernel agrees ─────────────────────────────────────────────────────
 
 
-@needs_sandbox_exec
 def test_aws_cli_with_no_workspace_cannot_write_into_home(monkeypatch, tmp_path):
     """The field case end to end, with a stand-in ``aws`` that writes its last
     argument: no workspace, a write to a folder under $HOME is refused, and a

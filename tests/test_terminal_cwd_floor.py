@@ -25,7 +25,6 @@ Three holes this pins shut:
 
 import asyncio
 import os
-import platform
 import shutil
 import tempfile
 
@@ -41,11 +40,6 @@ from server.security.permissions import (
 )
 
 ALL_MODES = (MODE_DEFAULT, MODE_ACCEPT_EDITS, MODE_DONT_ASK, MODE_BYPASS)
-
-needs_sandbox_exec = pytest.mark.skipif(
-    platform.system() != "Darwin" or shutil.which("sandbox-exec") is None,
-    reason="needs macOS sandbox-exec",
-)
 
 
 @pytest.fixture
@@ -282,7 +276,6 @@ def test_a_profile_with_no_workspace_writes_no_tree(tmp_path):
     )
 
 
-@needs_sandbox_exec
 def test_a_shell_started_outside_the_workspace_cannot_write_there_for_real():
     """End to end through sandbox-exec: the hidden PTY starts in a folder
     outside the workspace; a write where it started is refused, one in the

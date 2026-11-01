@@ -4,14 +4,11 @@ command strings with /bin/sh — run_sandboxed and the background shell runner a
 wrap_command must re-execute under the shell the snapshot was captured for."""
 
 import os
-import shutil
 import subprocess
-
-import pytest
 
 import server.shell_snapshot as shell_snapshot
 
-ZSH = shutil.which("zsh")
+ZSH = "/bin/zsh"  # always there on macOS
 
 # Mirrors the p10k line in a real ~/.zshrc: ${(%):-%n} is a zsh prompt
 # expansion that /bin/sh rejects as a bad substitution, aborting the whole
@@ -28,7 +25,6 @@ def _run_like_executor(command: str) -> subprocess.CompletedProcess:
     )
 
 
-@pytest.mark.skipif(not ZSH, reason="zsh not installed")
 def test_zsh_snapshot_survives_sh_executor(monkeypatch):
     monkeypatch.setattr(shell_snapshot, "get_snapshot", lambda session_id: ZSH_ONLY_SNAPSHOT)
     monkeypatch.setattr(shell_snapshot, "_detect_shell", lambda: ZSH)
@@ -38,7 +34,6 @@ def test_zsh_snapshot_survives_sh_executor(monkeypatch):
     assert "RAN" in result.stdout
 
 
-@pytest.mark.skipif(not ZSH, reason="zsh not installed")
 def test_cwd_marker_composes_with_snapshot_wrap(monkeypatch):
     # The snapshot wrap execs another shell, so it must be the outermost
     # wrapper: a cwd marker appended inside must still reach stdout, and the

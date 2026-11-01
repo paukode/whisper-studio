@@ -10,7 +10,6 @@ user's own terminal and keeps their environment.
 
 import asyncio
 import os
-import platform
 import subprocess
 
 import pytest
@@ -19,10 +18,6 @@ import server.sandbox as sandbox
 from server import terminal as t
 from server.security import egress_policy
 from server.security.sensitive_env import GITHUB_ENV_VARS
-
-pytestmark = pytest.mark.skipif(
-    platform.system() not in ("Darwin", "Linux"), reason="needs a POSIX PTY"
-)
 
 _PROXY = "http://127.0.0.1:54321"
 _PROXY_KEYS = ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy")
