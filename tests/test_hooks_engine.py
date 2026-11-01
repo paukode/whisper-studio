@@ -235,6 +235,30 @@ def test_inprocess_context_accumulates():
     assert "remember the style guide" in out.contexts
 
 
+def test_a_crashing_pre_tool_hook_blocks_the_call():
+    async def crash(payload):
+        raise TypeError("expected string or bytes-like object")
+
+    plugin_hooks.register_hook("PreToolUse", crash)
+    out = _run(
+        engine.run_hooks("PreToolUse", {"tool_name": "ws_write_file"}, tool_name="ws_write_file")
+    )
+    assert out.blocked
+    assert "crash" in out.reason and "bytes-like" in out.reason
+
+
+def test_a_crashing_hook_on_another_event_is_reported_as_an_error():
+    async def crash(payload):
+        raise RuntimeError("boom")
+
+    plugin_hooks.register_hook("PostToolUse", crash)
+    out = _run(
+        engine.run_hooks("PostToolUse", {"tool_name": "ws_read_file"}, tool_name="ws_read_file")
+    )
+    assert not out.blocked
+    assert any("boom" in e for e in out.errors)
+
+
 def test_pre_tool_backcompat_adapter():
     async def legacy(tool_name, tool_input):
         if tool_name == "ws_bash":

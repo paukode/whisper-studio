@@ -42,6 +42,9 @@ MAX_STOP_BLOCKS_PER_TURN = 3
 def _apply_control(control: dict, outcome: HookOutcome, *, allow_rewrite: bool) -> bool:
     """Fold one structured-control dict into the outcome. Returns True if it
     denied (caller short-circuits)."""
+    if control.get("_error"):
+        outcome.errors.append(control["_error"])
+        return False
     decision = (control.get("decision") or "").lower()
     if decision == "deny":
         outcome.decision = "deny"
