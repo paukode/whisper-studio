@@ -166,23 +166,37 @@ async def _run_folder_dialog() -> tuple[int, str]:
         stderr=asyncio.subprocess.PIPE,
     )
     try:
-        out, _err = await asyncio.wait_for(proc.communicate(), _PICK_FOLDER_TIMEOUT_S)
+        out, err = await asyncio.wait_for(proc.communicate(), _PICK_FOLDER_TIMEOUT_S)
     except (TimeoutError, asyncio.CancelledError):
         proc.kill()
         await proc.wait()
         raise
-    return proc.returncode or 0, out.decode(errors="replace")
+    return proc.returncode or 0, out.decode(errors="replace"), err.decode(errors="replace")
+
+
+# osascript reports the dialog's Cancel button as error -128 ("User canceled").
+_USER_CANCELED = "(-128)"
 
 
 @router.get("/pick-folder")
 async def ws_pick_folder():
-    """Open native OS folder picker dialog and return the selected path."""
+    """Open native OS folder picker dialog and return the selected path.
+
+    Cancel (or no choice within two minutes, when the dialog closes itself)
+    returns ``cancelled``. Any other osascript failure is an error with its
+    message, never a quiet cancel."""
     try:
-        returncode, stdout = await _run_folder_dialog()
+        returncode, stdout, stderr = await _run_folder_dialog()
     except TimeoutError:
         return {"path": None, "cancelled": True}
-    if returncode == 0:
-        path = stdout.strip().rstrip("/")
-        if path:
-            return {"path": path}
-    return {"path": None, "cancelled": True}
+    path = stdout.strip().rstrip("/")
+    if returncode == 0 and path:
+        return {"path": path}
+    if returncode != 0 and _USER_CANCELED in stderr:
+        return {"path": None, "cancelled": True}
+    detail = stderr.strip() or f"osascript exited with code {returncode} and no folder"
+    return Response(
+        content=json.dumps({"error": f"The folder dialog failed: {detail}"}),
+        status_code=500,
+        media_type="application/json",
+    )

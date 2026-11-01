@@ -1,3 +1,4 @@
+import { toError } from '@/utils/toError';
 import React, { useCallback, useEffect, useState } from 'react';
 import { useUIStore } from '@/stores/uiStore';
 import { settleWorkspaceOps, syncWorkspaceStatus } from '@/services/workspaceConnection';
@@ -138,7 +139,12 @@ export const WorkspacePromptCard: React.FC<WorkspacePromptCardProps> = ({
     setError(null);
     try {
       const resp = await fetch('/api/workspace/pick-folder');
-      const data = (await resp.json()) as { path?: string | null; cancelled?: boolean };
+      const data = (await resp.json()) as {
+        path?: string | null;
+        cancelled?: boolean;
+        error?: string;
+      };
+      if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
       if (data.path) {
         await connectAndResume(data.path);
       } else {
@@ -146,7 +152,7 @@ export const WorkspacePromptCard: React.FC<WorkspacePromptCardProps> = ({
       }
     } catch (err) {
       console.error('Folder picker failed:', err);
-      setError('Could not open the folder picker.');
+      setError(toError(err).message);
       setIsBusy(false);
     }
   }, [connectAndResume]);
