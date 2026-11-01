@@ -192,16 +192,13 @@ def app_config_dirs() -> list[str]:
 
 
 def _seed_file(src: str, dst: str) -> None:
-    """Copy ``src`` to ``dst`` unless ``dst`` already exists. Best-effort: a
-    missing template or an unwritable target logs instead of crashing boot."""
-    if os.path.exists(dst) or not os.path.exists(src):
+    """Copy ``src`` to ``dst`` unless ``dst`` already exists. A missing
+    shipped template or an unwritable target raises: the install is broken."""
+    if os.path.exists(dst):
         return
-    try:
-        os.makedirs(os.path.dirname(dst), exist_ok=True)
-        shutil.copyfile(src, dst)
-        log.info("Seeded %s from %s", dst, src)
-    except OSError as e:
-        log.warning("Could not seed %s from %s: %s", dst, src, e)
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    shutil.copyfile(src, dst)
+    log.info("Seeded %s from %s", dst, src)
 
 
 def bootstrap_home() -> None:
@@ -209,8 +206,9 @@ def bootstrap_home() -> None:
     ~/.whisper trees and seed the user-editable files from the read-only code
     dir. No-op when WHISPER_HOME is unset (dev checkout: everything already
     lives at the repo root). Idempotent (existing files and directories are
-    never overwritten) and safe: any single failure logs and moves on rather
-    than blocking boot."""
+    never overwritten). Any failure raises and stops the boot: a home that
+    cannot be created or seeded cannot run, and the Mac app then shows its
+    startup alert with the log."""
     if not os.environ.get("WHISPER_HOME", "").strip():
         return
     home = app_home()
@@ -223,10 +221,7 @@ def bootstrap_home() -> None:
         logs_root(),
         data_root(),
     ):
-        try:
-            os.makedirs(d, exist_ok=True)
-        except OSError as e:
-            log.warning("Could not create %s: %s", d, e)
+        os.makedirs(d, exist_ok=True)
     # The user's config is a two-layer split: the SYSTEM catalog + defaults ship
     # in the read-only config.example.json (repo_root()), and only the user's
     # deltas live in config.user.json. seed_user_config() writes the first-run
@@ -234,12 +229,9 @@ def bootstrap_home() -> None:
     # an old config.json counts as fresh). It never copies the example (a full
     # copy shadowed shipped model updates) and never reads or changes an old
     # config.json. After that, nothing at startup writes config.user.json.
-    try:
-        from server.infrastructure.config import seed_user_config
+    from server.infrastructure.config import seed_user_config
 
-        seed_user_config()
-    except Exception as e:  # never block boot on the first-run seed
-        log.warning("First-run config seed skipped: %s", e)
+    seed_user_config()
     # pricing.json is NOT seeded: it holds only the user's own per-key rate
     # overrides over the shipped pricing.example.json, and a full copy of the
     # template froze every rate at install time. The shipped global rules file
@@ -253,20 +245,13 @@ def bootstrap_home() -> None:
     # edits, deletions must not be resurrected on the next boot).
     skills_src = os.path.join(repo_root(), "skills")
     if not os.path.isdir(skills_root()):
-        try:
-            if os.path.isdir(skills_src):
-                shutil.copytree(skills_src, skills_root())
-                log.info("Seeded skills into %s", skills_root())
-            else:
-                os.makedirs(skills_root(), exist_ok=True)
-        except OSError as e:
-            log.warning("Could not seed skills into %s: %s", skills_root(), e)
+        shutil.copytree(skills_src, skills_root())
+        log.info("Seeded skills into %s", skills_root())
     # Plugins are seeded per-file, every boot: user edits survive (existing
     # files are never overwritten), but a deleted file is restored — the
     # PROTECTED security_checks plugin is part of the safety contract and
     # must not be lost when the code dir is a read-only bundle.
     plugins_src = os.path.join(repo_root(), "plugins")
-    if os.path.isdir(plugins_src):
-        for entry in os.listdir(plugins_src):
-            if entry.endswith((".py", ".md")):
-                _seed_file(os.path.join(plugins_src, entry), os.path.join(plugins_root(), entry))
+    for entry in os.listdir(plugins_src):
+        if entry.endswith((".py", ".md")):
+            _seed_file(os.path.join(plugins_src, entry), os.path.join(plugins_root(), entry))

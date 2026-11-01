@@ -18,6 +18,8 @@ import importlib
 import json
 import os
 
+import pytest
+
 from server.infrastructure import paths
 
 
@@ -251,3 +253,18 @@ def test_migration_017_rewrites_recorded_paths(monkeypatch, tmp_path):
     assert tasks["t2"] == "/somewhere/else.log"
     _m.migrate(conn)
     assert dict(conn.execute("SELECT id, source_path FROM attachments"))["a1"] == rows["a1"]
+
+
+def test_bootstrap_home_fails_when_the_home_cannot_be_created(monkeypatch, tmp_path):
+    """No silent half-seeded home: an unwritable user root stops the boot."""
+    _home, user = _packaged(monkeypatch, tmp_path)
+    user.parent.mkdir(parents=True, exist_ok=True)
+    user.write_text("a file where the user root must be")
+
+    with pytest.raises(OSError):
+        paths.bootstrap_home()
+
+
+def test_a_missing_shipped_template_fails_the_seed(tmp_path):
+    with pytest.raises(OSError):
+        paths._seed_file(str(tmp_path / "missing.md"), str(tmp_path / "out" / "rules.md"))
