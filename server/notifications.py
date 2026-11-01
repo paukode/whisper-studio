@@ -1,11 +1,13 @@
 """Persistent notification log.
 
-Two write paths land in one log: the ``notify_user`` branch in
-server/tool_router.py calls :func:`record_notification` best-effort (chat
-turns, agent runs, and cron jobs all dispatch through ``route_tool``), and
-frontend toasts POST themselves here (``POST /api/notifications``, wired
-centrally in the uiStore's addToast) so the bell keeps a reviewable history
-after the 5-second toast is gone. Each row carries an ``source`` slug
+Writers: ``notify_user`` (server/tool_router.py, for chat turns, agent runs
+and cron jobs alike), agent wake reports (server/agents/wake.py), background
+task results (server/tasks/events.py), unanswered mid-turn messages
+(server/chat/engine/midturn_inbox.py), startup notices about old settings,
+and frontend toasts, which POST themselves here (``POST /api/notifications``,
+wired centrally in the uiStore's addToast) so the bell keeps a reviewable
+history after the 5-second toast is gone. The record_* writers are
+best-effort (a failed write is logged, never raised into the caller). Each row carries an ``source`` slug
 ("chat", "cron", "app", "model-download", ...). Identical rows fired in a
 tight loop collapse into one entry with a repeat ``count`` (see
 :data:`DEDUPE_WINDOW_SECONDS`). Surfaced by the header bell
@@ -66,8 +68,8 @@ def _get_conn():
     try:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA busy_timeout=5000")
-    except sqlite3.DatabaseError:
-        pass
+    except sqlite3.DatabaseError as e:
+        log.warning("notifications: failed to set sqlite pragmas: %s", e)
     try:
         yield conn
         conn.commit()
@@ -75,40 +77,42 @@ def _get_conn():
         conn.close()
 
 
+# The database path whose table is known to exist (checked once per path).
+_table_ready_for: str | None = None
+
+
 def _ensure_table() -> None:
-    """Defensive net alongside migrations 008/010/012 (tests, fresh boots)."""
-    try:
-        with _get_conn() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS notifications (
-                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                    session_id  TEXT,
-                    source      TEXT NOT NULL,
-                    title       TEXT,
-                    message     TEXT NOT NULL,
-                    status      TEXT NOT NULL DEFAULT 'normal',
-                    created_at  TEXT NOT NULL,
-                    read_at     TEXT,
-                    hidden_at   TEXT,
-                    count       INTEGER NOT NULL DEFAULT 1
-                )
-                """
+    """Create the table and its indexes when missing, matching migrations
+    008/010/012 (tests and a fresh database use it). Runs once per path."""
+    global _table_ready_for
+    if _table_ready_for == DB_PATH:
+        return
+    with _get_conn() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS notifications (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id  TEXT,
+                source      TEXT NOT NULL,
+                title       TEXT,
+                message     TEXT NOT NULL,
+                status      TEXT NOT NULL DEFAULT 'normal',
+                created_at  TEXT NOT NULL,
+                read_at     TEXT,
+                hidden_at   TEXT,
+                count       INTEGER NOT NULL DEFAULT 1
             )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_notifications_unread "
-                "ON notifications(read_at, created_at DESC)"
-            )
-            for alter in (
-                "ALTER TABLE notifications ADD COLUMN hidden_at TEXT",
-                "ALTER TABLE notifications ADD COLUMN count INTEGER NOT NULL DEFAULT 1",
-            ):
-                try:
-                    conn.execute(alter)
-                except sqlite3.OperationalError:
-                    pass
-    except sqlite3.DatabaseError as e:
-        log.warning("notifications: ensure table failed: %s", e)
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_notifications_unread "
+            "ON notifications(read_at, created_at DESC)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_notifications_session "
+            "ON notifications(session_id, created_at DESC)"
+        )
+    _table_ready_for = DB_PATH
 
 
 def _insert_or_bump(
@@ -166,7 +170,6 @@ def record_notification(
     if not message:
         return None
     source = _slug_source(source)
-    _ensure_table()
     fields = {
         "session_id": session_id or "",
         "title": (title or "")[:200],
@@ -174,6 +177,7 @@ def record_notification(
         "status": status if status in _VALID_STATUSES else "normal",
     }
     try:
+        _ensure_table()
         with _get_conn() as conn:
             return _insert_or_bump(conn, source=source, **fields)
     except sqlite3.DatabaseError as e:
@@ -201,10 +205,10 @@ def record_notification_once(
     if not message:
         return None
     source = _slug_source(source)
-    _ensure_table()
     title = (title or "")[:200]
     message = message[:4000]
     try:
+        _ensure_table()
         with _get_conn() as conn:
             row = conn.execute(
                 "SELECT id FROM notifications WHERE source=? AND title=? AND message=? "
@@ -255,52 +259,38 @@ def list_notifications(*, limit: int = 50, unread_only: bool = False) -> list[di
     where = "WHERE hidden_at IS NULL"
     if unread_only:
         where += " AND read_at IS NULL"
-    try:
-        with _get_conn() as conn:
-            rows = conn.execute(
-                f"SELECT * FROM notifications {where} ORDER BY created_at DESC, id DESC LIMIT ?",
-                (max(1, min(int(limit), 200)),),
-            ).fetchall()
-        return [dict(r) for r in rows]
-    except sqlite3.DatabaseError as e:
-        log.warning("notifications: list failed: %s", e)
-        return []
+    with _get_conn() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM notifications {where} ORDER BY created_at DESC, id DESC LIMIT ?",
+            (max(1, min(int(limit), 200)),),
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def unread_count() -> int:
     _ensure_table()
-    try:
-        with _get_conn() as conn:
-            row = conn.execute(
-                "SELECT COUNT(*) AS n FROM notifications "
-                "WHERE read_at IS NULL AND hidden_at IS NULL"
-            ).fetchone()
-        return int(row["n"]) if row else 0
-    except sqlite3.DatabaseError:
-        return 0
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM notifications WHERE read_at IS NULL AND hidden_at IS NULL"
+        ).fetchone()
+    return int(row["n"]) if row else 0
 
 
 def mark_read(ids: list[int] | None = None) -> int:
     """Mark specific ids read, or ALL unread when ids is None/empty."""
     _ensure_table()
     now = _utc_now_iso()
-    try:
-        with _get_conn() as conn:
-            if ids:
-                placeholders = ",".join("?" for _ in ids)
-                cur = conn.execute(
-                    f"UPDATE notifications SET read_at=? WHERE id IN ({placeholders}) "
-                    "AND read_at IS NULL",
-                    (now, *ids),
-                )
-            else:
-                cur = conn.execute(
-                    "UPDATE notifications SET read_at=? WHERE read_at IS NULL", (now,)
-                )
-            return cur.rowcount or 0
-    except sqlite3.DatabaseError as e:
-        log.warning("notifications: mark_read failed: %s", e)
-        return 0
+    with _get_conn() as conn:
+        if ids:
+            placeholders = ",".join("?" for _ in ids)
+            cur = conn.execute(
+                f"UPDATE notifications SET read_at=? WHERE id IN ({placeholders}) "
+                "AND read_at IS NULL",
+                (now, *ids),
+            )
+        else:
+            cur = conn.execute("UPDATE notifications SET read_at=? WHERE read_at IS NULL", (now,))
+        return cur.rowcount or 0
 
 
 def hide(ids: list[int]) -> int:
@@ -309,35 +299,27 @@ def hide(ids: list[int]) -> int:
         return 0
     _ensure_table()
     now = _utc_now_iso()
-    try:
-        with _get_conn() as conn:
-            placeholders = ",".join("?" for _ in ids)
-            cur = conn.execute(
-                f"UPDATE notifications SET hidden_at=?, read_at=COALESCE(read_at, ?) "
-                f"WHERE id IN ({placeholders}) AND hidden_at IS NULL",
-                (now, now, *ids),
-            )
-            return cur.rowcount or 0
-    except sqlite3.DatabaseError as e:
-        log.warning("notifications: hide failed: %s", e)
-        return 0
+    with _get_conn() as conn:
+        placeholders = ",".join("?" for _ in ids)
+        cur = conn.execute(
+            f"UPDATE notifications SET hidden_at=?, read_at=COALESCE(read_at, ?) "
+            f"WHERE id IN ({placeholders}) AND hidden_at IS NULL",
+            (now, now, *ids),
+        )
+        return cur.rowcount or 0
 
 
 def clear_all() -> int:
     """Soft-hide every visible notification (the bell's "Clear all")."""
     _ensure_table()
     now = _utc_now_iso()
-    try:
-        with _get_conn() as conn:
-            cur = conn.execute(
-                "UPDATE notifications SET hidden_at=?, read_at=COALESCE(read_at, ?) "
-                "WHERE hidden_at IS NULL",
-                (now, now),
-            )
-            return cur.rowcount or 0
-    except sqlite3.DatabaseError as e:
-        log.warning("notifications: clear failed: %s", e)
-        return 0
+    with _get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE notifications SET hidden_at=?, read_at=COALESCE(read_at, ?) "
+            "WHERE hidden_at IS NULL",
+            (now, now),
+        )
+        return cur.rowcount or 0
 
 
 def gc_old(days: int = RETENTION_DAYS) -> int:
@@ -346,15 +328,12 @@ def gc_old(days: int = RETENTION_DAYS) -> int:
     _ensure_table()
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat().replace("+00:00", "Z")
     keep = ",".join("?" for _ in ONCE_SOURCES)
-    try:
-        with _get_conn() as conn:
-            cur = conn.execute(
-                f"DELETE FROM notifications WHERE created_at < ? AND source NOT IN ({keep})",
-                (cutoff, *ONCE_SOURCES),
-            )
-            return cur.rowcount or 0
-    except sqlite3.DatabaseError:
-        return 0
+    with _get_conn() as conn:
+        cur = conn.execute(
+            f"DELETE FROM notifications WHERE created_at < ? AND source NOT IN ({keep})",
+            (cutoff, *ONCE_SOURCES),
+        )
+        return cur.rowcount or 0
 
 
 # ── HTTP surface ─────────────────────────────────────────────────────────────
@@ -370,8 +349,8 @@ async def api_record(request: Request):
     """Record an app-originated (frontend toast) notification.
 
     Body: {message: str, title?: str, source?: str, status?: str,
-    session_id?: str}. Server-originated notifications (notify_user) never
-    come through here — they are recorded at the route_tool choke point.
+    session_id?: str}. Server-originated notifications never come through
+    here: their writers call record_notification directly.
     """
     try:
         body = await request.json()

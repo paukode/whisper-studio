@@ -365,3 +365,24 @@ def test_hide_and_clear_http_surface(client):
     assert client.post("/api/notifications/hide", json={"ids": ["x"]}).status_code == 400
     assert client.post("/api/notifications/clear", json={}).json() == {"cleared": 1}
     assert client.get("/api/notifications").json()["notifications"] == []
+
+
+def test_a_database_error_reaches_the_bell_instead_of_an_empty_list(monkeypatch):
+    import contextlib
+    import sqlite3
+
+    import pytest
+
+    from server import notifications as N
+
+    N._ensure_table()
+
+    @contextlib.contextmanager
+    def _locked():
+        raise sqlite3.OperationalError("database is locked")
+        yield
+
+    monkeypatch.setattr(N, "_get_conn", _locked)
+    for call in (N.list_notifications, N.unread_count, N.clear_all, N.gc_old):
+        with pytest.raises(sqlite3.OperationalError):
+            call()
