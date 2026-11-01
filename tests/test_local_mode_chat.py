@@ -195,7 +195,7 @@ def test_a_downloaded_model_stays_offered_when_the_project_replaces_the_catalog(
     cloud_key = cfg.load_config()["default_chat_model"]
     cloud_id = cfg.load_config()["chat_models"][cloud_key]
 
-    workspace({"chat_models": {cloud_key: cloud_id}})
+    workspace({"chat_models": {cloud_key: {"id": cloud_id}}})
     data = client.get("/api/models").json()
     assert [m["key"] for m in data["models"]] == ["local_gemma"]
     assert data["default"] == "local_gemma"

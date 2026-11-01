@@ -176,8 +176,7 @@ DEFAULTS = {
     # key (PUT /api/config and config_set write DEFAULTS keys). SYSTEM and USER deep-merge ADDITIVELY per key (see load_config): the shipped
     # catalog always appears and a USER entry adds a key or overrides fields of a
     # shipped one. To add/change a shipped model, edit config.example.json; users
-    # add their own via config.user.json. Rich shape {key:{id,label,thinking,...}};
-    # legacy flat {key:"id"} is still accepted (see _normalize_chat_models).
+    # add their own via config.user.json. Shape {key: {id, label, ...}}.
     "chat_models": {},
     # Model keys to HIDE from the effective catalog after the SYSTEM+USER merge.
     # Lets a user drop a shipped model they don't want without deleting it from
@@ -305,22 +304,6 @@ def edits_user_config(fn):
     return _locked
 
 
-_OPUS_VERSION_RE = re.compile(r"opus(\d+)\.(\d+)$", re.IGNORECASE)
-
-
-def _infer_thinking_default(key: str) -> str:
-    """Pick the thinking mode for a legacy flat-string entry that doesn't
-    declare one. Opus 4.7+ supports adaptive thinking (no fixed budget);
-    everything else uses an explicit budget. Pattern-matched so a future
-    Opus 4.9 / 5.0 in an old-shape entry also resolves correctly."""
-    m = _OPUS_VERSION_RE.match(key)
-    if m:
-        major, minor = int(m.group(1)), int(m.group(2))
-        if (major, minor) >= (4, 7):
-            return "adaptive"
-    return "budget"
-
-
 def _as_int(v) -> int | None:
     """Coerce a config-supplied number to int, or None if absent/malformed."""
     try:
@@ -331,10 +314,7 @@ def _as_int(v) -> int | None:
 
 # Model-id markers of the 1M-context Claude family (Fable 5, Mythos, Opus 5
 # and 4.6/4.7/4.8, Sonnet 5 and 4.6). Anything unrecognized keeps the safe
-# 200K family default. Defined HERE, not in chat.engine.windows: load_config()
-# runs during server.mcp's module init, and importing anything through the
-# server.chat package from there is circular (server.chat imports server.mcp).
-# chat.engine.windows re-exports this tuple for its callers.
+# 200K family default (server/chat/engine/windows.py reads this tuple).
 ANTHROPIC_1M_MARKERS = (
     "fable-5",
     "mythos",
@@ -386,114 +366,99 @@ def _drop_retired_pin(region: str | None, model_id: str) -> str | None:
 def _normalize_chat_models(chat_models: dict) -> tuple[dict, dict]:
     """Split a chat_models map into (ids, meta).
 
-    Accepts BOTH shapes side-by-side:
-      - Legacy flat:  {"opus4.6": "global.anthropic.claude-opus-4-6-v1"}
-      - Rich:         {"opus4.6": {"id": "...", "label": "Opus 4.6", "thinking": "budget"}}
+    Each entry is an object: {"opus5.5": {"id": "...", "label": "Opus 5.5"}}.
+    An entry without an "id" string raises ConfigFileError.
 
     Returns:
-        ids:  {key: bedrock_model_id}      — what every existing callsite uses
-        meta: {key: {label, thinking}}     — new, for /api/models and chat.py
+        ids:  {key: bedrock_model_id}
+        meta: {key: {id, label, provider, ...}} for /api/models and the engine
     """
     ids: dict[str, str] = {}
     meta: dict[str, dict] = {}
     for key, val in chat_models.items():
-        if isinstance(val, str):
-            ids[key] = val
-            meta[key] = {
-                "id": val,
-                "label": key.capitalize(),
-                "thinking": _infer_thinking_default(key),
-                "requires_data_retention": False,
-                "effort_tier": infer_effort_tier(key, val),
-                "context_window": None,
-                "max_output": None,
-            }
-        elif isinstance(val, dict) and isinstance(val.get("id"), str):
-            model_id = val["id"]
-            ids[key] = model_id
-            # Inference provider. "anthropic" (default) goes through the
-            # bedrock-runtime Converse path; "openai_bedrock" routes to the
-            # OpenAI Responses API on bedrock-mantle (server/openai_bedrock).
-            # Explicit wins; otherwise inferred from the model id so an OpenAI
-            # model added to config is as turnkey as a Claude one — just give it
-            # an ``openai.`` id and it routes correctly.
-            provider = val.get("provider") or (
-                "openai_bedrock" if model_id.startswith("openai.") else "anthropic"
-            )
-            meta[key] = {
-                # The Bedrock id, alongside the ids map. Capability inference
-                # reads it so a renamed config key ("my-sonnet5") keeps the
-                # capabilities of the model it actually points at.
-                "id": model_id,
-                "label": val.get("label") or key.capitalize(),
-                "thinking": val.get("thinking") or _infer_thinking_default(key),
-                # Mythos-class models (e.g. Fable 5) require the AWS account's
-                # Bedrock data-retention mode to be provider_data_share. The UI
-                # uses this flag to gate model selection behind a consent screen.
-                "requires_data_retention": bool(val.get("requires_data_retention", False)),
-                # On-device model (local branch) — runs via the local runtime,
-                # not Bedrock. Surfaced on /api/models for the picker badge.
-                "is_local": bool(val.get("is_local", False)),
-                # Whether this local model can use tools (local agentic loop).
-                "supports_tools": bool(val.get("supports_tools", False)),
-                # Which effort levels this model exposes (full/standard/none/
-                # openai/openai6). Explicit wins; OpenAI models default to their
-                # generation's ladder (GPT-6 has no "none" rung), everything else
-                # infers from the key. Drives the per-model effort picker and the
-                # Bedrock output_config.effort.
-                "effort_tier": val.get("effort_tier")
-                or (
-                    openai_effort_tier_for(model_id)
-                    if provider == "openai_bedrock"
-                    else infer_effort_tier(key, model_id)
-                ),
-                # Whether this model can drive workflow orchestration. Kept
-                # SEPARATE from effort_tier: the tier says which raw reasoning
-                # values the provider accepts, this says whether the model can
-                # author and run a workflow. Sonnet 5 orchestrates on a standard
-                # ladder. None ⇒ inferred (see effort.supports_ultracode).
-                "supports_ultracode": val.get("supports_ultracode"),
-                "provider": provider,
-                # OpenAI-on-Bedrock only: an optional per-model region override
-                # (absent ⇒ the account-wide bedrock_region is used, same as the
-                # Anthropic path) and the GPT-5.x verbosity (text.verbosity).
-                # Ignored by other providers.
-                "openai_region": _drop_retired_pin(val.get("openai_region"), model_id),
-                "verbosity": val.get("verbosity") or "medium",
-                # On-device weights, for is_local entries only. Carrying these on
-                # the SAME entry is what makes a new local model a one-place
-                # config change: the picker metadata above and the loader info
-                # here live together, so dropping a model into chat_models is
-                # enough for the registry to download and serve it. Absent for
-                # cloud models (and for local entries that rely on a built-in
-                # default). See server/local/registry.py.
-                "repo_id": val.get("repo_id"),
-                "filename": val.get("filename"),
-                "dir": val.get("dir"),
-                "ctx": val.get("ctx"),
-                # Which on-device engine serves the weights: absent/None ⇒ GGUF
-                # via llama-server; "mlx" ⇒ a whole-repo snapshot via mlx_lm
-                # (no filename). Dropping this here would silently reject every
-                # MLX entry downstream (the registry would demand a filename).
-                "engine": val.get("engine"),
-                # Context accounting (turn engine): the model's total input
-                # window and max output tokens. Absent ⇒ per-family defaults
-                # (see server/chat/engine/windows.py); local models resolve
-                # from the live n_ctx instead.
-                "context_window": _lift_stale_context_window(
-                    _as_int(val.get("context_window")), model_id
-                ),
-                "max_output": _as_int(val.get("max_output")),
-            }
-        # Silently skip malformed entries — a typo in config.user.json shouldn't
-        # take the server down. The model just won't appear in the picker.
-        # When the entry does not declare orchestration capability (legacy
-        # flat strings never do, rich entries may omit it), infer it from the
-        # actual model id via effort.infer_supports_ultracode so raw
+        if not (isinstance(val, dict) and isinstance(val.get("id"), str)):
+            raise ConfigFileError(f'chat_models.{key} must be an object with an "id" string.')
+        model_id = val["id"]
+        ids[key] = model_id
+        # Inference provider. "anthropic" (default) goes through the
+        # bedrock-runtime Converse path; "openai_bedrock" routes to the
+        # OpenAI Responses API on bedrock-mantle (server/openai_bedrock).
+        # Explicit wins; otherwise inferred from the model id so an OpenAI
+        # model added to config is as turnkey as a Claude one: just give it
+        # an ``openai.`` id and it routes correctly.
+        provider = val.get("provider") or (
+            "openai_bedrock" if model_id.startswith("openai.") else "anthropic"
+        )
+        meta[key] = {
+            # The Bedrock id, alongside the ids map. Capability inference
+            # reads it so a renamed config key ("my-sonnet5") keeps the
+            # capabilities of the model it actually points at.
+            "id": model_id,
+            "label": val.get("label") or key.capitalize(),
+            # Mythos-class models (e.g. Fable 5) require the AWS account's
+            # Bedrock data-retention mode to be provider_data_share. The UI
+            # uses this flag to gate model selection behind a consent screen.
+            "requires_data_retention": bool(val.get("requires_data_retention", False)),
+            # On-device model: runs via the local runtime,
+            # not Bedrock. Surfaced on /api/models for the picker badge.
+            "is_local": bool(val.get("is_local", False)),
+            # Whether this local model can use tools (local agentic loop).
+            "supports_tools": bool(val.get("supports_tools", False)),
+            # Which effort levels this model exposes (full/standard/none/
+            # openai/openai6). Explicit wins; OpenAI models default to their
+            # generation's ladder (GPT-6 has no "none" rung), everything else
+            # infers from the key. Drives the per-model effort picker and the
+            # Bedrock output_config.effort.
+            "effort_tier": val.get("effort_tier")
+            or (
+                openai_effort_tier_for(model_id)
+                if provider == "openai_bedrock"
+                else infer_effort_tier(key, model_id)
+            ),
+            # Whether this model can drive workflow orchestration. Kept
+            # SEPARATE from effort_tier: the tier says which raw reasoning
+            # values the provider accepts, this says whether the model can
+            # author and run a workflow. Sonnet 5 orchestrates on a standard
+            # ladder. None ⇒ inferred (see effort.supports_ultracode).
+            "supports_ultracode": val.get("supports_ultracode"),
+            "provider": provider,
+            # OpenAI-on-Bedrock only: an optional per-model region override
+            # (absent ⇒ the account-wide bedrock_region is used, same as the
+            # Anthropic path) and the GPT verbosity (text.verbosity).
+            # Ignored by other providers.
+            "openai_region": _drop_retired_pin(val.get("openai_region"), model_id),
+            "verbosity": val.get("verbosity") or "medium",
+            # On-device weights, for is_local entries only. Carrying these on
+            # the SAME entry is what makes a new local model a one-place
+            # config change: the picker metadata above and the loader info
+            # here live together, so dropping a model into chat_models is
+            # enough for the registry to download and serve it. Absent for
+            # cloud models (and for local entries that rely on a built-in
+            # default). See server/local/registry.py.
+            "repo_id": val.get("repo_id"),
+            "filename": val.get("filename"),
+            "dir": val.get("dir"),
+            "ctx": val.get("ctx"),
+            # Which on-device engine serves the weights: absent/None ⇒ GGUF
+            # via llama-server; "mlx" ⇒ a whole-repo snapshot via mlx_lm
+            # (no filename). Dropping this here would silently reject every
+            # MLX entry downstream (the registry would demand a filename).
+            "engine": val.get("engine"),
+            # Context accounting (turn engine): the model's total input
+            # window and max output tokens. Absent ⇒ per-family defaults
+            # (see server/chat/engine/windows.py); local models resolve
+            # from the live n_ctx instead.
+            "context_window": _lift_stale_context_window(
+                _as_int(val.get("context_window")), model_id
+            ),
+            "max_output": _as_int(val.get("max_output")),
+        }
+        # When the entry does not declare orchestration capability, infer it
+        # from the actual model id via effort.infer_supports_ultracode so raw
         # load_config() consumers match startup behavior. Explicit true/false
         # values pass through untouched.
-        entry = meta.get(key)
-        if entry is not None and entry.get("supports_ultracode") is None:
+        entry = meta[key]
+        if entry.get("supports_ultracode") is None:
             entry["supports_ultracode"] = infer_supports_ultracode(entry, key)
     return ids, meta
 

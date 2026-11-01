@@ -66,13 +66,11 @@ def test_normalizer_carries_window_metadata():
         {
             "rich": {"id": "openai.gpt-x", "context_window": 278528, "max_output": 64000},
             "plain": {"id": "global.anthropic.claude-y"},
-            "legacy": "global.anthropic.claude-z",
         }
     )
     assert meta["rich"]["context_window"] == 278528
     assert meta["rich"]["max_output"] == 64000
     assert meta["plain"]["context_window"] is None  # family default applies later
-    assert meta["legacy"]["context_window"] is None
     # Malformed values are dropped, not crashed on.
     _, meta2 = _normalize_chat_models({"bad": {"id": "x", "context_window": "lots"}})
     assert meta2["bad"]["context_window"] is None
@@ -87,6 +85,14 @@ def test_normalizer_carries_window_metadata():
 # mantle accepting a longer prompt for them (GPT-5.6 also publishes 1M and is
 # capped at 278,528 on mantle).
 _DEPLOYMENT_CAPS = {"openai.gpt-6-astra": 922_000, "openai.gpt-6.1-sol": 922_000}
+
+
+def test_a_chat_model_entry_without_an_id_object_raises():
+    from server.infrastructure.config import ConfigFileError
+
+    for bad in ("global.anthropic.claude-z", {"label": "No id"}, None):
+        with pytest.raises(ConfigFileError, match="chat_models.legacy"):
+            _normalize_chat_models({"legacy": bad})
 
 
 def test_example_config_carries_windows():

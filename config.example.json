@@ -10,40 +10,34 @@
       "id": "global.anthropic.claude-fable-5-1",
       "label": "Fable 5.1",
       "context_window": 1000000,
-      "thinking": "adaptive",
       "requires_data_retention": true
     },
     "opus5.5": {
       "id": "global.anthropic.claude-opus-5-5",
       "label": "Opus 5.5",
-      "context_window": 1000000,
-      "thinking": "adaptive"
+      "context_window": 1000000
     },
     "sonnet5.5": {
       "id": "global.anthropic.claude-sonnet-5-5",
       "label": "Sonnet 5.5",
       "context_window": 1000000,
-      "thinking": "adaptive",
       "effort_tier": "full"
     },
     "haiku": {
       "id": "global.anthropic.claude-haiku-4-5-20251001-v1:0",
       "label": "Haiku 4.5",
-      "context_window": 200000,
-      "thinking": "budget"
+      "context_window": 200000
     },
     "gpt6.1-sol": {
       "id": "openai.gpt-6.1-sol",
       "label": "GPT-6.1 Sol",
       "context_window": 922000,
-      "thinking": "adaptive",
       "provider": "openai_bedrock"
     },
     "gpt6-astra": {
       "id": "openai.gpt-6-astra",
       "label": "GPT-6 Astra",
       "context_window": 922000,
-      "thinking": "adaptive",
       "provider": "openai_bedrock",
       "effort_tier": "openai6",
       "verbosity": "medium"
@@ -52,7 +46,6 @@
       "id": "openai.gpt-6-luna",
       "label": "GPT-6 Luna",
       "context_window": 278528,
-      "thinking": "adaptive",
       "provider": "openai_bedrock"
     }
   },

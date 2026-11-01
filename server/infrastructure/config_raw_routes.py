@@ -55,12 +55,8 @@ def _validate_chat_model_entry(key: str, val, errors: list[str]) -> None:
     """Structural rules for ONE chat_models entry, mirroring what
     _normalize_chat_models and server/local/registry.py actually require."""
     where = f"chat_models.{key}"
-    if isinstance(val, str):
-        if not val.strip():
-            errors.append(f"{where}: a model id string must not be empty.")
-        return
     if not isinstance(val, dict):
-        errors.append(f'{where}: must be a model id string or an object with an "id" field.')
+        errors.append(f'{where}: must be an object with an "id" field.')
         return
 
     for field in ("id", "label"):
