@@ -413,8 +413,8 @@ def _normalize_chat_models(chat_models: dict) -> tuple[dict, dict]:
             # Whether this model can drive workflow orchestration. Kept
             # SEPARATE from effort_tier: the tier says which raw reasoning
             # values the provider accepts, this says whether the model can
-            # author and run a workflow. Sonnet 5 orchestrates on a standard
-            # ladder. None ⇒ inferred (see effort.supports_ultracode).
+            # author and run a workflow. None means inferred from the tier
+            # (see effort.supports_ultracode).
             "supports_ultracode": val.get("supports_ultracode"),
             "provider": provider,
             # OpenAI-on-Bedrock only: an optional per-model region override
