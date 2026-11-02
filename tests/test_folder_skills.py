@@ -69,12 +69,16 @@ def test_injection_resolves_paths_and_preamble(tmp_path, monkeypatch):
     d = _make_folder_skill(root)
     monkeypatch.setattr(skills, "SKILLS_DIR", root)
     skills.SKILLS = skills.load_skills(root)
-    out = skills._tool_run_skill("hello_folder", {"input": "go", "__session_id__": "s1"})
+    out = skills._tool_run_skill(
+        "hello_folder",
+        {"input": "go", "__session_id__": "s1", "__secret_reads__": True, "__agent__": True},
+    )
     real = os.path.realpath(d)
     assert f"SKILL DIRECTORY: {real}" in out
     assert f"{real}/scripts/hello.py" in out  # ${CLAUDE_SKILL_DIR} + bare ref resolved
     assert f"{real}/references/notes.md" in out
-    assert "__session_id__" not in out  # internal key stripped from USER REQUEST
+    assert "__" not in out.split("SKILL INSTRUCTIONS:")[0]  # internal keys stripped
+    assert "input: go" in out
 
 
 def test_rewrite_body_leaves_escaping_refs_untouched(tmp_path):
@@ -192,3 +196,13 @@ def test_command_runs_trusted_skill(tmp_path, monkeypatch):
     skills.save_skills_config({"disabled": [], "trusted": ["agenthub"]})
     assert skills.command_runs_trusted_skill(cmd) is True
     assert skills.command_runs_trusted_skill("python3 /etc/evil.py") is False
+
+
+def test_prompt_tools_keep_internal_markers_out_of_the_request():
+    from server.prompt_tools._render import render_prompt
+
+    out = render_prompt(
+        {"scope": "src", "__session_id__": "s1", "__secret_reads__": True, "__agent__": True},
+        "BODY",
+    )
+    assert out == "USER REQUEST:\nscope: src\n\nSKILL INSTRUCTIONS:\nBODY"

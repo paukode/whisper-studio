@@ -226,7 +226,11 @@ def _tool_run_skill(skill_name: str, tool_input: dict) -> str:
     """Generic handler for prompt-based skills (no executor)."""
     skill = SKILLS[skill_name]
     input_lines = "\n".join(
-        f"{k}: {v}" for k, v in tool_input.items() if v and k != "__session_id__"
+        # Internal markers the gate stamps on every call (__session_id__,
+        # __secret_reads__, __agent__) are not the user's request.
+        f"{k}: {v}"
+        for k, v in tool_input.items()
+        if v and not str(k).startswith("__")
     )
     body = skill["body"]
     # Folder skills: resolve ${CLAUDE_SKILL_DIR} / relative script refs to

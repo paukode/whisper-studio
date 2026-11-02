@@ -9,6 +9,10 @@ budgeter.
 
 def render_prompt(tool_input: dict, body: str) -> str:
     input_lines = "\n".join(
-        f"{k}: {v}" for k, v in tool_input.items() if v and k != "__session_id__"
+        # Internal markers the gate stamps on every call (__session_id__,
+        # __secret_reads__, __agent__) are not the user's request.
+        f"{k}: {v}"
+        for k, v in tool_input.items()
+        if v and not str(k).startswith("__")
     )
     return f"USER REQUEST:\n{input_lines}\n\nSKILL INSTRUCTIONS:\n{body}"
