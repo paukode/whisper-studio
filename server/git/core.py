@@ -30,6 +30,7 @@ def _run_git(
     timeout: int = 15,
     check: bool = False,
     env: dict[str, str] | None = None,
+    errors: str | None = None,
 ) -> subprocess.CompletedProcess:
     """Run a git command and return the CompletedProcess result.
 
@@ -43,6 +44,8 @@ def _run_git(
         timeout: Timeout in seconds (default 15)
         check: If True, raise CalledProcessError on non-zero exit
         env: Extra environment variables (for example GIT_INDEX_FILE)
+        errors: Decode error handler for stdout and stderr. None is strict
+            UTF-8; "replace" reads output that holds non-UTF-8 file content.
     """
     extra = env or {}
     env = os.environ.copy()
@@ -58,6 +61,7 @@ def _run_git(
         check=check,
         stdin=subprocess.DEVNULL,
         env=env,
+        errors=errors,
     )
 
 

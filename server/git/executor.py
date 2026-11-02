@@ -437,10 +437,10 @@ def _staged_secrets(cwd: str, add_args: list[str] | None) -> tuple[list, str]:
     import tempfile
 
     if add_args is None:
-        stdout, stderr, rc = _git(_STAGED_DIFF, cwd, timeout=60)
-        if rc != 0:
-            return [], f"could not read the staged changes: {stderr.strip()}"
-        return scan_diff(stdout), ""
+        result = _run_git(_STAGED_DIFF, cwd=cwd, timeout=60, errors="replace")
+        if result.returncode != 0:
+            return [], f"could not read the staged changes: {result.stderr.strip()}"
+        return scan_diff(result.stdout), ""
 
     stdout, stderr, rc = _git(["rev-parse", "--git-path", "index"], cwd)
     if rc != 0:
@@ -454,7 +454,7 @@ def _staged_secrets(cwd: str, add_args: list[str] | None) -> tuple[list, str]:
         result = _run_git(["add", *add_args], cwd=cwd, timeout=60, env=env)
         if result.returncode != 0:
             return [], f"staging failed: {result.stderr.strip()}"
-        result = _run_git(_STAGED_DIFF, cwd=cwd, timeout=60, env=env)
+        result = _run_git(_STAGED_DIFF, cwd=cwd, timeout=60, env=env, errors="replace")
         if result.returncode != 0:
             return [], f"could not read the staged changes: {result.stderr.strip()}"
         return scan_diff(result.stdout), ""
