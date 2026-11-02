@@ -236,3 +236,38 @@ def test_an_index_that_cannot_be_written_is_an_error(tmp_path):
     with pytest.raises(OSError, match="was not rebuilt"):
         MD.rebuild_index(str(tmp_path))
     assert not (tmp_path / (MD.ENTRYPOINT_NAME + ".tmp")).exists()
+
+
+def test_a_write_whose_index_fails_says_the_file_was_saved(write_env):
+    write_env.mkdir(parents=True, exist_ok=True)
+    (write_env / MD.ENTRYPOINT_NAME).mkdir()  # the index cannot be written
+    result = EX.execute_memory_write(
+        {"filename": "notes", "name": "Notes", "type": "user", "content": "c"}
+    )
+    assert (write_env / "notes.md").is_file()
+    assert result.startswith("Memory file saved: notes.md")
+    assert f"but {MD.ENTRYPOINT_NAME} was not rebuilt" in result
+
+
+def test_a_delete_whose_index_fails_says_the_file_was_deleted(write_env):
+    EX.execute_memory_write({"filename": "notes", "name": "Notes", "type": "user", "content": "c"})
+    (write_env / MD.ENTRYPOINT_NAME).unlink()
+    (write_env / MD.ENTRYPOINT_NAME).mkdir()  # the index cannot be written
+    (write_env / "other.md").write_text("---\nname: o\ndescription: d\ntype: user\n---\n\nx\n")
+    result = EX.execute_memory_delete({"filename": "notes.md"})
+    assert not (write_env / "notes.md").exists()
+    assert result.startswith("Memory file deleted: notes.md")
+    assert f"but {MD.ENTRYPOINT_NAME} was not rebuilt" in result
+
+
+def test_a_route_whose_index_fails_says_the_change_happened(tmp_path):
+    from fastapi import HTTPException
+
+    from server.memory.router import _rebuild_after_change
+
+    (tmp_path / "notes.md").write_text("---\nname: notes\ndescription: d\ntype: user\n---\n\nx\n")
+    (tmp_path / MD.ENTRYPOINT_NAME).mkdir()
+    with pytest.raises(HTTPException) as exc:
+        _rebuild_after_change("notes.md was saved", str(tmp_path))
+    assert exc.value.status_code == 500
+    assert exc.value.detail.startswith("notes.md was saved, but the index is stale:")

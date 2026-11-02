@@ -233,14 +233,20 @@ def execute_memory_write(
     # Ensure parent directory exists (for nested paths like subdir/file.md)
     os.makedirs(os.path.dirname(abs_path), exist_ok=True)
 
-    try:
-        with _WRITE_LOCK:
+    with _WRITE_LOCK:
+        try:
             _atomic_write(abs_path, full_content)
+        except OSError as e:
+            return f"Error writing {filename}: {e}"
+        log.info("Memory written: %s (type=%s, scope=%s)", filename, mem_type, scope)
+        try:
             rebuild_index(memory_dir)
-    except OSError as e:
-        return f"Error writing {filename}: {e}"
+        except OSError as e:
+            return (
+                f"Memory file saved: {filename} [scope: {scope}], "
+                f"but {ENTRYPOINT_NAME} was not rebuilt: {e}"
+            )
 
-    log.info("Memory written: %s (type=%s, scope=%s)", filename, mem_type, scope)
     return f"Memory file saved: {filename} [scope: {scope}]"
 
 
@@ -295,15 +301,20 @@ def execute_memory_delete(
         where = scope if scope else _searched_tiers_label()
         return f"Memory file not found in {where}: {filename}"
 
-    try:
-        with _WRITE_LOCK:
+    with _WRITE_LOCK:
+        try:
             os.remove(abs_path)
-            ws_path = get_workspace_path()
-            deleted_dir, _ = resolve_memory_dir(found_scope, ws_path)
-            if deleted_dir:
+        except OSError as e:
+            return f"Error deleting {filename}: {e}"
+        log.info("Memory deleted: %s (scope=%s)", filename, found_scope)
+        deleted_dir, _ = resolve_memory_dir(found_scope, get_workspace_path())
+        if deleted_dir:
+            try:
                 rebuild_index(deleted_dir)
-    except OSError as e:
-        return f"Error deleting {filename}: {e}"
+            except OSError as e:
+                return (
+                    f"Memory file deleted: {filename} [scope: {found_scope}], "
+                    f"but {ENTRYPOINT_NAME} was not rebuilt: {e}"
+                )
 
-    log.info("Memory deleted: %s (scope=%s)", filename, found_scope)
     return f"Memory file deleted: {filename} [scope: {found_scope}]"
