@@ -197,6 +197,20 @@ def test_turn_end_hooks_are_not_run_and_are_kept_on_save(client, notices):
     assert len(on_disk["hooks"]["Stop"]) == 1
 
 
+def test_a_hook_with_the_old_tool_key_still_guards_that_tool(client):
+    c, tmp_path = client
+    hooks_file = tmp_path / "data" / "hooks.json"
+    old = {"tool": "ws_write_file", "command": "exit 2", "on_error": "block"}
+    hooks_file.write_text(json.dumps({"version": 2, "hooks": {"PreToolUse": [old]}}))
+
+    # The guard keeps running for the tool it names, and only for that tool.
+    guards = hooks_cfg.merged_for_event("PreToolUse", None)
+    assert [(h.matcher, h.on_error) for h in guards] == [("ws_write_file", "block")]
+
+    r = c.post("/api/hooks", json={"event": "PreToolUse", "tool": "Bash", "command": "exit 2"})
+    assert r.status_code == 200 and r.json()["hook"]["matcher"] == "Bash"
+
+
 def test_test_endpoint_does_not_run_a_command_with_an_old_variable(client):
     c, _ = client
     body = c.post("/api/hooks/test", json={"command": 'test "$WHISPER_TOOL" = x'}).json()
