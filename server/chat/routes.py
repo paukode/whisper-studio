@@ -1768,9 +1768,8 @@ async def chat_endpoint(request: Request):
             )
 
         # Grounding state for this turn. Set in the fresh-turn branch below; stays
-        # None/False on approval-resume turns (grounding isn't recomputed there).
+        # None on approval-resume turns (grounding isn't recomputed there).
         grounding_meta: dict | None = None
-        grounding_active = False
 
         if approved_tool_result:
             # Continuation turn. `approved_tool_result` accepts two shapes:
@@ -1863,7 +1862,6 @@ async def chat_endpoint(request: Request):
                                 log.warning("Failed to persist grounding sources: %s", e)
                     if grounding:
                         parts.append(grounding)
-                        grounding_active = True
                 except TimeoutError:
                     grounding_note = f"timed out ({_budget:.0f}s budget)"
                     log.warning(
@@ -1934,13 +1932,6 @@ async def chat_endpoint(request: Request):
         # never reach it. System prompt + messages are already built above. The
         # local bridge returns a StreamingResponse for local turns (fresh or an
         # approval resume), or None to let the cloud path proceed.
-        # Strict-RAG: carried on the TurnContext as suppress_ws_search for a
-        # grounded turn with the `strict_rag` flag on. The tool catalog is
-        # stable, and no executor refuses a workspace tool on it today.
-        from server.infrastructure.feature_flags import is_enabled as _ff_enabled
-
-        suppress_ws_search = grounding_active and _ff_enabled("strict_rag")
-
         from server.local.route import local_chat_response
 
         _local_resp = local_chat_response(
@@ -1962,7 +1953,6 @@ async def chat_endpoint(request: Request):
             session_approvals=session_approvals,
             session_denials=session_denials,
             session_config=session_config,
-            suppress_ws_search=suppress_ws_search,
             heartbeat=_heartbeat,
             is_disconnected=request.is_disconnected,
         )
@@ -2098,7 +2088,6 @@ async def chat_endpoint(request: Request):
             mode=mode,
             ws_path=ws_path,
             ws_latch=ws_latch,
-            suppress_ws_search=suppress_ws_search,
             effort_label=effort_label,
             transcript=transcript,
             current_attachments=current_attachments,

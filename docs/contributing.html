@@ -156,7 +156,7 @@ npm run build                       # production build</code></pre></div>
     <ol class="steps">
       <li>
         <h4>Register always, refuse at execution</h4>
-        <p>The tool catalog is byte-stable across plan mode, strict-RAG, and connecting or
+        <p>The tool catalog is byte-stable across plan mode and connecting or
           disconnecting a workspace. Per-turn restrictions are enforced in
           <code class="path">server/tool_executor.py</code> and the executors, never by rewriting the
           tools array: rewriting it invalidates the prompt cache.</p>

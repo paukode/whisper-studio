@@ -96,7 +96,7 @@
         discoverable via <code>tool_search</code> from a compact index
         (<code class="path">server/chat/tool_partition.py</code>). The same partitioning applies to
         cron, subagent, and headless turns.</li>
-      <li><b>Register always, refuse at execution.</b> Plan mode, strict-RAG grounding, and workspace
+      <li><b>Register always, refuse at execution.</b> Plan mode and workspace
         connect or disconnect do not rewrite the advertised tools array. The catalogue stays
         byte-stable across those flips and the restriction is applied when the call runs, because
         rewriting the array invalidates the cached prompt prefix every time it changes.</li>

@@ -19,7 +19,7 @@ and headless runs.
 ## Invariants (review every change against these)
 
 1. **Register always, refuse at execution.** The tool catalog is byte-stable
-   across plan mode, strict-RAG, and workspace connect or disconnect. Per-turn
+   across plan mode and workspace connect or disconnect. Per-turn
    restrictions are enforced in `server/tool_executor.py` and the executors,
    never by rewriting the tools array (that invalidates the prompt cache).
 2. **Static before dynamic.** System prompt sections at or below

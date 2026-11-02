@@ -39,7 +39,6 @@ def local_chat_response(
     session_approvals: dict,
     session_denials: dict,
     session_config: dict,
-    suppress_ws_search: bool = False,
     heartbeat=None,
     is_disconnected=None,
     ws_latch=None,
@@ -162,7 +161,6 @@ def local_chat_response(
                 ws_path=ws_path,
                 # The chat route's workspace latch (see TurnContext.ws_latch).
                 ws_latch=ws_latch,
-                suppress_ws_search=suppress_ws_search,
                 transcript=transcript,
                 current_attachments=current_attachments,
                 session_denials=session_denials,

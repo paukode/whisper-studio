@@ -101,7 +101,7 @@
         (<code>annotate_messages_cache</code>, <code class="path">server/chat/caching.py</code>), so
         the conversation history caches round-over-round instead of being re-billed as uncached input.</li>
       <li><b>Build the tool catalogue.</b> The catalogue is deliberately <em>stable</em> across the
-        per-turn state flips that would otherwise rewrite it: plan mode, strict-RAG grounding, and
+        per-turn state flips that would otherwise rewrite it: plan mode and
         workspace connect or disconnect do not strip tools. The rule is <b>register always, refuse at
         execution</b>: a blocked write still has its schema, and the executor explains why it will
         not run. Rewriting the tools array instead would invalidate the prompt cache on every flip.

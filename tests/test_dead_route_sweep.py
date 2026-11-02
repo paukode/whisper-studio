@@ -28,7 +28,6 @@ def test_flags_registry_holds_only_live_flags():
         "git_context",
         "prompt_caching",
         "progressive_tools",
-        "strict_rag",
         "rag_hybrid_search",
         "rag_reranker",
         "rag_query_rewrite",

@@ -47,12 +47,12 @@
       are fail-closed: a tool is treated as unsafe unless it declares otherwise. See
       <a href="arch-tools.html">Tool dispatch &amp; executors</a> for the mechanics.</p>
     <p>The catalogue is also <b>byte-stable</b> across per-turn state, so the prompt-prefix cache
-      keeps hitting: plan mode, strict-RAG grounding, and connecting or disconnecting a workspace do not
+      keeps hitting: plan mode and connecting or disconnecting a workspace do not
       add or remove schemas. Restrictions are enforced when a tool is called. In plan mode six write tools are refused when called (<code>ws_write_file</code>,
       <code>ws_create_file</code>, <code>ws_edit_file</code>, <code>ws_delete_file</code>,
       <code>ws_run_command</code>, <code>ws_merge_worktree</code>), with a note telling the model to
-      design the plan and call <code>create_plan</code> instead. Under strict-RAG it is the injected
-      grounding block that tells the model to answer from the retrieved passages rather than re-crawl
+      design the plan and call <code>create_plan</code> instead. On a grounded turn, the injected
+      grounding block tells the model to answer from the retrieved passages rather than re-crawl
       files. Workspace, worktree, git, GitHub, and document tools stay advertised with or without a
       connected workspace, and each executor answers for itself with "no workspace connected", "not a
       git repo", or a folder picker: register always, refuse at execution.</p>

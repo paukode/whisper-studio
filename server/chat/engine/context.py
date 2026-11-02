@@ -43,7 +43,6 @@ class TurnContext:
     # reason instead of acting on whatever is connected now. None (callers
     # that pin their own root) leaves tools unlatched.
     ws_latch: Any = None
-    suppress_ws_search: bool = False
     effort_label: str | None = None
     transcript: str = ""
     current_attachments: dict = field(default_factory=dict)

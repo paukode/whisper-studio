@@ -192,13 +192,6 @@ register_flag(
 )
 
 register_flag(
-    "strict_rag",
-    description="When index grounding is injected, withhold the workspace file/search tools (semantic_search, ws_read_file, ws_grep, ws_glob, ws_list_directory) so the model answers from the retrieved passages instead of re-crawling files",
-    default=True,
-    category="chat",
-)
-
-register_flag(
     "rag_hybrid_search",
     description="Hybrid retrieval: fuse keyword/BM25 (SQLite FTS5) results with the dense vector search via reciprocal-rank fusion, so exact terms the embedding misses (filenames, ids, codes) still rank. Builds from the existing index (no re-index needed); default on",
     default=True,

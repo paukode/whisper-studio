@@ -266,10 +266,8 @@
       chip ("grounded in N folders / M passages") in the UI. The injected block also instructs the
       model to <b>ignore the passages entirely</b> (and cite nothing) when they turn out to be
       irrelevant to the message, so an off-topic retrieval degrades to a normal answer instead of a
-      forced citation. When a turn is grounded and the <code>strict_rag</code> flag is on (the
-      default), the turn is marked as strict-RAG. The tool catalog stays the same on every turn,
-      and no executor refuses the workspace file and search tools on that mark today, so the model
-      can still call them.</p>
+      forced citation. The tool catalog stays the same on a grounded turn, so the model can still
+      call the workspace file and search tools.</p>
     <p>The exact passages behind an answer are also persisted: each grounded turn saves its sources
       (path, line range, retrieval kind, matched entities, and a snippet per passage) to a
       session-scoped <code>grounding</code> table in <code class="path">sessions.db</code>
