@@ -7,7 +7,6 @@ import { CronEventCard } from '@/components/chat/CronEventCard';
 import { SessionMessageCard } from '@/components/chat/SessionMessageCard';
 import { getActiveChatStore } from '@/stores/sessionRuntimes';
 import { formatMessageTimestamp } from '@/utils/formatTimestamp';
-import { extractFlatCronPayload } from '@/components/chat/messageActions';
 
 export interface ChatMessageProps {
   message: ChatMessageType;
@@ -98,25 +97,10 @@ const ChatMessageView: React.FC<ChatMessageProps> = ({ message, index }) => {
   // chrome (edit, regenerate, copy, attachments) applies. Hooks above are
   // still called on every render so React's rules-of-hooks stay satisfied.
   // The payload was delivered either live via SSE (useChatStream ->
-  // addMessage) or by session resume (chat_history JSON).
-  //
-  // Tolerate two shapes for back-compat with already-persisted rows:
-  //   - nested:  { role: 'cron_event', cronEvent: {event_type, ...} }
-  //   - flat:    { role: 'cron_event', event_type, cron_id, cron_name, ... }
-  // Newly-emitted events use the nested shape; the flat fallback rescues
-  // rows written before that fix landed. A row with neither still shows
-  // its text.
+  // addMessage) or by session resume (chat_history JSON), always nested
+  // under cronEvent.
   if (message.role === 'cron_event') {
-    const payload = message.cronEvent ?? extractFlatCronPayload(message);
-    if (payload) return <CronEventCard event={payload} />;
-    if (!message.content) return null;
-    return (
-      <div className="chat-msg-wrap assistant-wrap">
-        <div className="chat-msg assistant">
-          <MarkdownRenderer content={message.content} />
-        </div>
-      </div>
-    );
+    return message.cronEvent ? <CronEventCard event={message.cronEvent} /> : null;
   }
 
   // The wake turn's answer to agent reports that landed with no live turn:

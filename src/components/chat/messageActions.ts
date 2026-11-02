@@ -1,30 +1,6 @@
-import type { ChatMessage as ChatMessageType, CronEventPayload } from '@/types/chat';
+import type { ChatMessage as ChatMessageType } from '@/types/chat';
 import { downloadFile } from '@/utils/downloadFile';
 import { renderMarkdownSafe } from '@/utils/sanitizeHtml';
-
-/** Rescue cron_event rows persisted under the older flat shape. Returns
- *  null if the row doesn't carry the minimum cron fields. */
-export function extractFlatCronPayload(m: ChatMessageType): CronEventPayload | null {
-  const r = m as unknown as Record<string, unknown>;
-  const ev = r['event_type'];
-  if (ev !== 'cron_created' && ev !== 'cron_fired' && ev !== 'cron_deleted') {
-    return null;
-  }
-  return {
-    event_type: ev,
-    cron_id: String(r['cron_id'] ?? ''),
-    cron_name: String(r['cron_name'] ?? ''),
-    run_id: typeof r['run_id'] === 'string' ? (r['run_id'] as string) : undefined,
-    status: r['status'] === 'ok' || r['status'] === 'failed'
-      ? (r['status'] as 'ok' | 'failed')
-      : undefined,
-    text: typeof r['text'] === 'string' ? (r['text'] as string) : undefined,
-    interval_minutes: typeof r['interval_minutes'] === 'number'
-      ? (r['interval_minutes'] as number)
-      : undefined,
-    timestamp: String(r['timestamp'] ?? m.timestamp ?? new Date().toISOString()),
-  };
-}
 
 /** The prose of an assistant turn: every row that has any, a blank line
  *  between them. What Copy takes and what an export calls the response. */
