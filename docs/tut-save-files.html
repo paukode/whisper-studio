@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Saving files and creating documents - Whisper Studio Docs</title>
-  <meta name="description" content="Ask for a Word doc, deck, spreadsheet, PDF, or plain file and it saves without ever asking where. Content is built and staged first; one approval card with the exact path moves it into place.">
+  <meta name="description" content="Ask for a Word document, a deck, a spreadsheet, a PDF, or a plain file. The app makes the full file, stages it, and asks for one approval. Then the answer gives a link to the file.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -15,214 +15,213 @@
 <body>
   <main class="doc" data-page="tut-save-files">
     <h1>Saving files and creating documents</h1>
-    <p class="subtitle">Ask for a Word doc, a deck, a spreadsheet, a PDF, or a plain file and Whisper
-      Studio saves it without ever asking where. The content is built first, staged safely, and a
-      single approval card showing the exact destination path is the only step between your request
-      and a finished, clickable file.</p>
+    <p class="subtitle">Ask for a Word document, a deck, a spreadsheet, a PDF, or a plain file.
+      Whisper Studio saves it and does not ask where. The app makes the full file first. Then one
+      approval card shows the exact destination path.</p>
 
-    <p>Say "write up these notes as a Word doc" or "save that as report.md in Downloads" and the flow
-      is the same every time: the destination is worked out from your own words (or a sensible
-      default), the complete file is built and parked in the app's sandbox, and one card asks you to
-      confirm the move. There is no folder picker, no "where should I put this?" question, and no
-      half-written file if you say no.</p>
-    <p>A file is made only when you ask for one. An answer, a summary, a plan or a report you ask
-      for in words stays in the chat, however long. Say save, store, export or download, name a file
-      or a file type (a Word doc, a PDF, a spreadsheet, a deck), or name a place on disk, and you
-      get a file.</p>
+    <p>Examples of requests are "write up these notes as a Word doc" and "save that as report.md in
+      Downloads". The app gets the destination from your words, or
+      it uses a default. The app makes the complete file and keeps it in its staging area. Then one
+      card asks you to approve the move. The app does not show a folder dialog. If you refuse, no
+      partial file stays at the destination.</p>
+    <p>The app makes a file only when you ask for one. An answer, a summary, a plan, or a report
+      stays in the chat. To get a file, use one of these words: save, store, export, or download. You
+      can also name a file, a file type (for example a Word document, a PDF, a spreadsheet, or a
+      deck), or a location on the disk.</p>
 
     <figure class="diagram-figure wide">
       <div id="save-flow-diagram" class="diagram"></div>
-      <figcaption>The direct save flow. By the time the approval card appears, the file already
-        exists in staging; approving is a single move, and the reply links straight to the result.
-        Click a box to trace the path.</figcaption>
+      <figcaption>The direct save flow. When the approval card shows, the file is already in the
+        staging area. The approval does one move, and the answer contains a link to the file. Click a
+        box to see the details of each step.</figcaption>
     </figure>
 
-    <h2 id="never-asked-where">You are never asked where</h2>
-    <p>Every file-saving tool (<code>save_file</code>, <code>ws_create_file</code>, and the four
-      document tools below) resolves its destination the same way, in this order:</p>
+    <h2 id="never-asked-where">The app does not ask where</h2>
+    <p>The file tools <code>ws_create_file</code>, <code>create_docx</code>,
+      <code>create_pptx</code>, <code>create_xlsx</code>, and <code>create_pdf</code> find the
+      destination in this sequence:</p>
     <ol class="steps">
       <li>
-        <h4>Your words win</h4>
-        <p>If you named a place, that is where it goes: "in Downloads" becomes
-          <code class="path">~/Downloads/report.docx</code>, "on my Desktop" becomes
-          <code class="path">~/Desktop/...</code>. Any absolute path works, and <code>~</code> is
-          expanded for you.</p>
+        <h4>Your words</h4>
+        <p>If you name a location, the file goes there. "in Downloads" gives
+          <code class="path">~/Downloads/report.docx</code>. "on my Desktop" gives
+          <code class="path">~/Desktop/...</code>. All absolute paths operate, and the app expands
+          <code>~</code>.</p>
       </li>
       <li>
-        <h4>Otherwise, the connected workspace</h4>
-        <p>With a <a href="tut-workspace.html">workspace</a> connected and no location named, the
-          file is created inside the project at the workspace-relative path, validated so it cannot
-          escape the workspace root.</p>
+        <h4>The connected workspace</h4>
+        <p>If a <a href="tut-workspace.html">workspace</a> is connected and you do not name a
+          location, the file goes into the project. The app makes sure that the path stays in the
+          workspace root.</p>
       </li>
       <li>
-        <h4>Otherwise, your Documents folder</h4>
-        <p>No workspace and no location named means
+        <h4>Your Documents folder</h4>
+        <p>If there is no workspace and no location, the file goes to
           <code class="path">~/Documents/&lt;filename&gt;</code>. The approval card shows the full
-          path, and the reply tells you where the file went, so the default is never a mystery.</p>
+          path. The answer tells you where the file is.</p>
       </li>
     </ol>
+    <p><code>save_file</code> does not use the workspace. It uses the location from your words. If
+      you do not name a location, it uses Documents or Downloads, and the default is Documents.</p>
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
-      <div class="callout__body"><p>Saving a file never forces you to connect a workspace. The direct
-        save flow is one-shot: the folder you saved into is remembered in a small recents list so the
-        file stays openable and revealable afterwards, but it is never connected or indexed.</p></div>
+      <div class="callout__body"><p>A save does not connect a workspace. The app keeps the
+        destination folder in a short list of recent folders. Thus you can open the file later or
+        show it in Finder. The app does not connect or index that folder.</p></div>
     </div>
 
-    <h2 id="staged-then-moved">Built first, staged, then moved</h2>
-    <p>The order of operations is the point. When the tool runs, the <em>complete</em> file content
-      is built immediately and written to a staging area inside the app's own data folder. Only then
-      does the approval card appear. Approving does not "run" anything; it performs a single
-      filesystem move of the already-finished file from staging to the destination.</p>
+    <h2 id="staged-then-moved">Make, stage, then move</h2>
+    <p>The sequence is important. When the tool runs, it makes the <em>complete</em> file
+      immediately. It writes the file to a staging area in the data folder of the app. Then the
+      approval card shows. The approval does not run a tool. The approval moves the finished file
+      from the staging area to the destination.</p>
     <ul>
-      <li><b>Approving cannot fail on content.</b> The file already exists when you see the card, so
-        a "yes" can only succeed or report a plain move error (say, a permissions problem on the
-        target folder). There is no window where a document half-builds after you approved it.</li>
-      <li><b>Declining leaves nothing behind.</b> A refused save never touches the destination. The
-        staged copy stays inside the sandbox and is garbage-collected automatically after 24 hours.</li>
-      <li><b>The card shows the real path.</b> Not a label or a folder name: the exact absolute path
-        the file will land at, plus its size.</li>
+      <li><b>The content cannot fail after approval.</b> The file exists before the card shows. Thus
+        an approval can only succeed or show a move error, for example a permission error on the
+        destination folder.</li>
+      <li><b>A refusal leaves nothing at the destination.</b> The staged copy stays in the app
+        folder. The app deletes staged files after 24 hours.</li>
+      <li><b>The card shows the real path.</b> The card shows the exact absolute path of the file
+        and its size, not only a folder name.</li>
     </ul>
 
     <figure class="shot">
       <img src="assets/img/save-approval-card.png" alt="A save approval card showing the exact destination path with Yes, Yes all save, No, and Block save buttons">
-      <figcaption><strong>The card is the only step.</strong> The file is already built and staged
-        when this appears; the card names the exact destination
-        (<code>Save notes.txt to /Users/.../Documents/notes.txt</code>) and <em>Yes</em> performs the
-        single move. <em>Yes, all save</em> waves through further saves this session, and
-        <em>Block save</em> refuses the whole category.</figcaption>
+      <figcaption><strong>The card is the only step.</strong> The file is already in the staging
+        area when the card shows. The card gives the exact destination
+        (<code>Save notes.txt to /Users/.../Documents/notes.txt</code>). <em>Yes</em> does the move.
+        <em>Yes, all save</em> approves the next saves of this session. <em>Block save</em> refuses
+        all saves of this session.</figcaption>
     </figure>
 
-    <p>Direct saves have their own approval category, <code>save</code>, separate from ordinary
-      workspace writes. That means "Yes, all writes" from an editing session does not silently cover
-      files landing in your home folders, and vice versa. You can also pin a per-category mode or a
-      rule for it; see <a href="tut-permissions.html">Permissions &amp; approvals</a>.</p>
+    <p>Direct saves have their own approval category, <code>save</code>. Workspace writes use a
+      different category. Thus "Yes, all write" does not approve files in your home folders. Bypass
+      mode also asks for a save outside the workspace. You can set a mode or a rule for the
+      <code>save</code> category. See <a href="tut-permissions.html">Permissions &amp;
+      approvals</a>.</p>
 
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
-      <div class="callout__body"><p>When the destination is <em>inside a connected workspace</em>,
-        document tools skip staging and carry the finished bytes in a regular workspace-write
-        approval instead: same single card, same "already built" guarantee, but the write lands with
-        your other workspace edits and honors "Yes, all writes". Staging-then-move is the path for
-        everything outside a workspace.</p></div>
+      <div class="callout__body"><p>When the destination is <em>in a connected workspace</em>, the
+        document tools do not use the staging area. They send the finished file in a normal workspace
+        write approval. You get the same single card, and the file is also complete before the card
+        shows. The write uses the <code>write</code> category. The staging area is only for
+        destinations outside a workspace.</p></div>
     </div>
 
-    <h2 id="document-tools">The four quick document tools</h2>
-    <p>Ask for a document in plain language ("turn this into a deck", "make me a spreadsheet of
-      these") and Claude reaches for the matching tool. Each one builds real Office or PDF bytes on
-      your machine, and each appends the right extension if it is missing, so the deliverable always
-      opens in the right app. These four are the fast path for ordinary documents; for anything with
-      specific formatting, or for editing a file you already have, see
-      <a href="#office-script">full control</a> below.</p>
+    <h2 id="document-tools">The four document tools</h2>
+    <p>Ask for a document in plain language, for example "turn this into a deck" or "make me a
+      spreadsheet of these". The assistant then uses the applicable tool. Each tool makes real Office
+      or PDF files on your Mac. Each tool adds the correct file extension if it is missing. Use these
+      four tools for usual documents. For special formats, or to edit a file that exists, see
+      <a href="#office-script">full control</a>.</p>
     <div class="table-wrap"><table>
-      <thead><tr><th>Tool</th><th>Produces</th><th>You describe</th></tr></thead>
+      <thead><tr><th>Tool</th><th>Output</th><th>Input</th></tr></thead>
       <tbody>
-        <tr><td><code>create_docx</code></td><td>A Word document (<code>.docx</code>)</td><td>The document body as HTML. Headings, paragraphs, breaks, bold, italic, underline, strikethrough, inline and preformatted code, quotes, nested lists, text color, and tables with per-cell background color are all turned into native Word formatting; an unknown tag keeps its text.</td></tr>
-        <tr><td><code>create_pptx</code></td><td>A PowerPoint deck (<code>.pptx</code>)</td><td>The slides: a title and bullet points per slide, in order.</td></tr>
-        <tr><td><code>create_xlsx</code></td><td>An Excel workbook (<code>.xlsx</code>)</td><td>One or more sheets, each a name plus rows of cell values.</td></tr>
+        <tr><td><code>create_docx</code></td><td>A Word document (<code>.docx</code>)</td><td>The document body as HTML. The tool changes headings, paragraphs, breaks, and text styles into native Word formats. It also changes code, quotes, nested lists, text color, and tables with cell colors. For an unknown tag, the tool keeps the text.</td></tr>
+        <tr><td><code>create_pptx</code></td><td>A PowerPoint deck (<code>.pptx</code>)</td><td>The slides in sequence. Each slide has a title and bullet points.</td></tr>
+        <tr><td><code>create_xlsx</code></td><td>An Excel workbook (<code>.xlsx</code>)</td><td>One or more sheets. Each sheet has a name and rows of cell values.</td></tr>
         <tr><td><code>create_pdf</code></td><td>A PDF (<code>.pdf</code>)</td><td>A title and paragraphs of text.</td></tr>
       </tbody>
     </table></div>
 
     <h3 id="standard-layout">The standard layout</h3>
-    <p>Every generated document comes out looking like a normal, professionally set-up file rather
-      than each library's quirky default. One shared standard
-      (<code class="path">server/documents/standards.py</code>) is applied on every run:</p>
+    <p>All the documents use one standard layout
+      (<code class="path">server/documents/standards.py</code>). The app applies it each time:</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Format</th><th>Standard</th></tr></thead>
       <tbody>
-        <tr><td>docx</td><td>A4 page, 1-inch margins, Calibri 11pt body with 16/13/12pt headings.</td></tr>
-        <tr><td>pptx</td><td>16:9 widescreen slides (not the ancient 4:3), Calibri theme, placeholders stretched to use the full width.</td></tr>
-        <tr><td>xlsx</td><td>Bold header row, frozen top row, and column widths fitted to content (bounded so one long cell cannot blow a column out).</td></tr>
-        <tr><td>pdf</td><td>A4 page, 1-inch margins, 11pt body with comfortable line spacing. Built on reportlab.</td></tr>
+        <tr><td>docx</td><td>A4 page, 1 in margins, Calibri 11 pt body text, and 16 pt, 13 pt, and 12 pt headings.</td></tr>
+        <tr><td>pptx</td><td>16:9 slides, the Calibri theme, and placeholders at the full width.</td></tr>
+        <tr><td>xlsx</td><td>A bold header row, a frozen top row, and column widths that fit the content. A maximum width stops one long cell from making a very wide column.</td></tr>
+        <tr><td>pdf</td><td>A4 page, 1 in margins, and 11 pt body text with comfortable line spacing. The tool uses reportlab.</td></tr>
       </tbody>
     </table></div>
 
-    <h2 id="office-script">Full control: formatting and editing</h2>
-    <p>The standard layout is a good default and a hard ceiling. The four tools above take a fixed
-      description (a document body as HTML, a title and bullets, rows of values, paragraphs of text),
-      so anything outside that vocabulary has nowhere to go: cell shading and fills, merged cells,
-      custom borders, per-word fonts and colors, shapes, text boxes, images, charts, number formats,
-      speaker notes, headers and footers, page breaks. Word documents come closest, since headings,
-      lists, tables, and even per-cell background colors all work, but merged cells, set column widths,
-      images, and page breaks are still outside it. And none of the four can touch a file that already
-      exists; they only ever create a new one.</p>
-    <p>So when you ask for something specific ("shade the header row blue", "merge those cells",
-      "color these squares to make a shape", "add our logo to slide 1"), or when you
-      point at a document you already have and ask for a change, Claude switches to
-      <code>office_script</code>: it writes real Python against your file using the same libraries
-      Word, Excel, and PowerPoint tooling everywhere else uses (python-docx, python-pptx, openpyxl).
-      Whatever those libraries can express, you can ask for. You do not need to name the tool; asking
-      for the formatting is enough.</p>
-    <p>Before editing, Claude usually calls <code>inspect_document</code> first. That is a read-only
-      look at the file's structure: which tables exist and how many rows and columns each has, which
-      sheet ranges are used and what is merged, what sits on each slide. It is how the right cells get
-      colored instead of coordinates being guessed at.</p>
+    <h2 id="office-script">Full control: formats and edits</h2>
+    <p>The four tools accept only a fixed input: a document body as HTML, titles and bullets, rows of
+      values, or paragraphs of text. Thus they cannot make these items:</p>
+    <ul>
+      <li>Cell shading and fills, merged cells, and custom borders.</li>
+      <li>Fonts and colors for each word.</li>
+      <li>Shapes, text boxes, images, and charts.</li>
+      <li>Number formats and speaker notes.</li>
+      <li>Headers, footers, and page breaks.</li>
+    </ul>
+    <p>Word documents can have headings, lists, tables, and cell background colors. But merged
+      cells, fixed column widths, images, and page breaks are not available. Also, the four tools
+      cannot change a file that exists. They only make new files.</p>
+    <p>For a special format, the assistant uses <code>office_script</code>. Examples are "shade the
+      header row blue", "merge those cells", and "add our logo to slide 1". The assistant also uses it
+      when you ask for a change to a document that exists. The tool runs Python code on your file with
+      python-docx, python-pptx, or openpyxl. You can ask for all the formats that these libraries
+      support. You do not need to name the tool.</p>
+    <p>Before an edit, the assistant usually calls <code>inspect_document</code>. This tool only
+      reads the file structure. It shows the tables with their rows and columns. It also shows the
+      used ranges, the merged cells, and the items on each slide. Thus the assistant changes the correct
+      cells.</p>
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
-      <div class="callout__body"><p>What you approve here is <em>code</em>, so the card shows you the
-        code rather than a summary, and nothing runs until you click. It then runs sandboxed, in a
-        throwaway directory, against a <em>copy</em> of your file, so your original is never opened
-        for writing and a script that goes wrong cannot damage it. Only after the script
-        succeeds is the result written to the destination. This is its own permission category
-        ("Word/Excel/PowerPoint scripts"), separate from file writes and shell commands, so
-        approving one never quietly covers the others.</p></div>
+      <div class="callout__body"><p>For this tool, you approve <em>code</em>. Thus the card shows the
+        code, and nothing runs before you click. The code runs in the sandbox, in a temporary folder,
+        on a <em>copy</em> of your file. The app does not open your original file for writing. Only
+        after the script succeeds does the app write the result to the destination. The tool has its
+        own permission category, "Word/Excel/PowerPoint scripts".</p></div>
     </div>
 
     <h2 id="plain-files">Plain files: save_file and ws_create_file</h2>
-    <p>Not everything is an Office document. Two more tools ride the same flow:</p>
+    <p>Two more tools use the same flow for files that are not Office documents:</p>
     <ul>
-      <li><b><code>save_file</code></b> saves any content as a one-shot file: Markdown notes, a CSV,
-        a script, even binary data. With no destination in your words it goes to Documents, and it
-        never consults or connects a workspace at all.</li>
-      <li><b><code>ws_create_file</code></b> is the workspace "new file" tool, but it degrades
-        gracefully: with a workspace connected it creates the file in the project behind the normal
-        diff-preview card, and without one it stages the content and requests the same
-        save-and-move approval as everything else, instead of demanding you connect a folder
-        first.</li>
+      <li><b><code>save_file</code></b> saves content as one file, for example Markdown notes, a CSV
+        file, a script, or binary data. If you do not name a location, the file goes to Documents.
+        This tool does not use or connect a workspace.</li>
+      <li><b><code>ws_create_file</code></b> is the workspace tool for new files. With a connected
+        workspace, it makes the file in the project and shows the diff card. Without a workspace, it
+        stages the content and asks for the same save approval. You do not have to connect a
+        folder.</li>
     </ul>
 
-    <h2 id="clickable-links">The link you can click</h2>
-    <p>After the move, the assistant's reply includes the new file as a clickable link. Click it and
-      the file opens with its OS default app, exactly the way a Finder double-click would: the docx
-      in Word or Pages, the xlsx in Excel or Numbers, the PDF in Preview. Cmd-click reveals the file
-      in Finder instead. Because the save flow records the destination folder, these links keep
-      working later in the session even though the folder was never connected as a workspace.</p>
+    <h2 id="clickable-links">The file link</h2>
+    <p>After the move, the answer of the assistant contains a link to the new file. Click the link
+      to open the file in its default macOS app, as with a double-click in Finder. For example, the
+      docx opens in Word or Pages, the xlsx in Excel or Numbers, and the PDF in Preview. Cmd-click the
+      link to show the file in Finder. The app keeps the destination folder, so the link operates
+      later in the session.</p>
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
-      <div class="callout__body"><p>The natural pairing: attach a document, ask questions about it,
-        then say "save that summary as a Word doc". Reading is covered in
-        <a href="tut-documents.html">Working with documents</a>; this page is the writing half.</p></div>
+      <div class="callout__body"><p>A frequent sequence: attach a document, ask questions, then say
+        "save that summary as a Word doc". <a href="tut-documents.html">Working with documents</a>
+        shows how to read documents. This page shows how to write them.</p></div>
     </div>
 
     <h2 id="one-file">One deliverable, one file</h2>
-    <p>Asking for changes to a file the assistant just saved ("make it fit one page", "tighten the
-      wording", another round of feedback) produces a new <em>version</em>, not a new <em>file</em>.
-      Each revision is written back to the same path, replacing the previous one, even when the
-      assistant takes several attempts to get there. The replacement is atomic: the new bytes are
-      written beside the target and then moved over it, so the file at that path is either the old
-      document or the new one, never a half-written mix. Your folder ends up holding one finished
-      document, not a trail of <code>report v2.docx</code> and <code>report final.docx</code> strays.
-      If you actually want a separate copy kept alongside the original, say so ("save it as a new
-      version next to it") and the assistant will pick a new name.</p>
+    <p>When you ask for changes to a file that the assistant saved, you get a new <em>version</em>,
+      not a new <em>file</em>. Examples are "make it fit one page" and "tighten the wording". The app
+      writes each version to the same path and replaces the old version. The replacement is atomic.
+      The app writes the new file next to the old file and then moves it over the old file. Thus the
+      path always contains the full old document or the full new document.</p>
+    <p>Your folder contains one finished document, not files such as <code>report v2.docx</code>
+      and <code>report final.docx</code>. If you want a separate copy, ask for it, for example "save
+      it as a new version next to it". Then the assistant uses a new name.</p>
 
     <h2 id="troubleshooting">Troubleshooting</h2>
     <div class="table-wrap"><table>
-      <thead><tr><th>Symptom</th><th>Likely cause and fix</th></tr></thead>
+      <thead><tr><th>Symptom</th><th>Cause and correction</th></tr></thead>
       <tbody>
-        <tr><td>The card is gone and approving says the staged file no longer exists</td><td>Staged entries expire after 24 hours. Ask again; the tool rebuilds and restages the file.</td></tr>
-        <tr><td>The save was refused with a "sensitive path" error</td><td>Destinations like key stores and credential files are refused outright, in every mode. Pick a normal folder.</td></tr>
-        <tr><td>No card appears and files save silently</td><td>You previously clicked <em>Yes, all save</em> this session, or the <code>save</code> category has a permissive mode set. See <a href="tut-permissions.html">Permissions &amp; approvals</a>.</td></tr>
-        <tr><td>The file went to Documents but you wanted it elsewhere</td><td>Name the place in the request ("in Downloads", "on my Desktop", or a full path); your words always win over the default.</td></tr>
+        <tr><td>The approval says that the staged file does not exist</td><td>The app deletes staged files after 24 hours. Ask again. The tool makes and stages the file again.</td></tr>
+        <tr><td>The save failed with a "sensitive path" error</td><td>The app refuses destinations such as key stores and credential files in all modes. Select a usual folder.</td></tr>
+        <tr><td>No card shows, and files save without a question</td><td>You clicked <em>Yes, all save</em> in this session, or the <code>save</code> category has its own mode or rule. See <a href="tut-permissions.html">Permissions &amp; approvals</a>.</td></tr>
+        <tr><td>The file went to Documents, but you wanted a different location</td><td>Name the location in the request, for example "in Downloads", "on my Desktop", or a full path. Your words have priority over the default.</td></tr>
       </tbody>
     </table></div>
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
       <div class="callout__body"><p><b>Related:</b> <a href="tut-documents.html">Working with documents</a>
-        (the reading half), <a href="tut-permissions.html">Permissions &amp; approvals</a> (the
-        <code>save</code> category and per-category modes), and
-        <a href="tut-workspace.html">The workspace IDE</a> (where in-project files live).</p></div>
+        (how to read documents). <a href="tut-permissions.html">Permissions &amp; approvals</a> (the
+        <code>save</code> category and the category modes). <a href="tut-workspace.html">The
+        workspace IDE</a> (files in a project).</p></div>
     </div>
   </main>
 

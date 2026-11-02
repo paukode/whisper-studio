@@ -16,8 +16,8 @@
   <main class="doc" data-page="installation">
     <h1>Installation</h1>
     <p class="subtitle">Two ways to install on macOS: drag the Mac app out of a DMG, or clone the
-      repository and run one script. This guide assumes no prior tooling, so it installs Homebrew,
-      Python, and the AWS CLI from scratch. Budget 15 to 25 minutes the first time.</p>
+      repository and run one script. This guide assumes no prior tooling, so it starts with
+      Homebrew and the Xcode Command Line Tools. Budget 15 to 25 minutes the first time.</p>
 
     <h2 id="mac-app">Install the Mac app (recommended)</h2>
     <p>The fastest path on Apple Silicon is the packaged app: no Homebrew, no Python, no cloning a
@@ -29,42 +29,28 @@
       <li>Open the DMG and drag <b>Whisper Studio</b> into <b>Applications</b>.</li>
       <li>Open it from Applications, not from the disk image.</li>
     </ol>
-    <p>Requirements: an Apple Silicon Mac (M1 or newer), macOS 14 or later. You still set your Bedrock
-      region and pick a model on first run, as described in
+    <p>Requirements: an Apple Silicon Mac (M1 or newer), macOS 14 or later. You still choose the
+      model mode, set your Bedrock region, and pick a model on first run, as described in
       <a href="first-run.html">First run &amp; verify</a>; the app skips Steps 1 to 4 below entirely.</p>
 
-    <div class="callout callout--warn">
-      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
-      <div class="callout__body"><p><b>The build is not notarized, so the first launch needs one
-        extra step.</b> macOS shows a warning such as "cannot be opened because the developer cannot
-        be verified" or "the app is damaged". You clear it once, either way:</p>
-        <ul>
-          <li><b>Without Terminal:</b> double-click the app, click <b>Cancel</b> on the warning, open
-            <b>System Settings &rarr; Privacy &amp; Security</b>, scroll down to the line about
-            Whisper Studio, and click <b>Open Anyway</b>. Confirm with your password or Touch ID, then
-            open the app again.</li>
-          <li><b>One Terminal command</b> (the most reliable):
-            <div class="code-block"><pre><code>xattr -dr com.apple.quarantine "/Applications/Whisper Studio.app"</code></pre></div>
-          </li>
-        </ul>
-        <p>The same text ships as <code class="path">read me first</code> inside the DMG.</p></div>
-    </div>
+    <p>Release DMGs are signed with a Developer ID and notarized by Apple, so the app opens like any
+      other Mac app, with no extra Gatekeeper step.</p>
 
     <h2 id="app-vs-source">Mac app or source: what is the same, what differs</h2>
     <p>Both installs run the same FastAPI backend, the same compiled frontend, the same tool catalog,
       and the same config defaults, so a feature described anywhere in these docs behaves the same in
-      both unless a page says otherwise. Two things genuinely differ: where files live, and two
-      capabilities that only a native Mac shell can provide.</p>
+      both unless a page says otherwise. Two things genuinely differ: where files live, and Apple
+      on-device translation, which only the native Mac shell can provide.</p>
     <div class="table-wrap"><table>
       <thead><tr><th></th><th>Mac app</th><th>From source</th></tr></thead>
       <tbody>
         <tr><td>Backend and frontend</td><td colspan="2">Identical. The app bundles the compiled frontend and runs the same <code>server.main</code>.</td></tr>
-        <tr><td>Python</td><td>A standalone CPython 3.13 inside the bundle. Nothing is installed on your system.</td><td>A <code class="path">venv/</code> built from your own Python 3.12 or newer.</td></tr>
-        <tr><td>Bundled binaries</td><td><code>llama-server</code>, <code>ffmpeg</code>, <code>ffprobe</code>, Node 22.16.0 and the Playwright Chromium build ship inside the app.</td><td><code>setup.sh</code> installs the same pieces: llama.cpp and ffmpeg via Homebrew, Node 22.16.0 into the venv, Playwright Chromium into the shared <code class="path">~/Library/Caches/ms-playwright</code> cache. Live preview works the same either way; the app just never downloads a browser at runtime.</td></tr>
+        <tr><td>Python</td><td>A standalone CPython 3.13 inside the bundle. Nothing is installed on your system.</td><td>A <code class="path">venv/</code> built from Homebrew's Python 3.13.</td></tr>
+        <tr><td>Bundled binaries</td><td><code>llama-server</code>, <code>ffmpeg</code>, <code>ffprobe</code>, Node and the Playwright Chromium build ship inside the app.</td><td><code>setup.sh</code> installs the same pieces: the pinned llama.cpp build into <code class="path">vendor/llama</code>, the pinned ffmpeg and ffprobe builds into <code class="path">vendor/ffmpeg</code>, Node (pinned in <code class="path">.nvmrc</code>) into the venv, Playwright Chromium into the shared <code class="path">~/Library/Caches/ms-playwright</code> cache. Live preview works the same either way; the app just never downloads a browser at runtime.</td></tr>
         <tr><td>Code tools</td><td colspan="2">Identical. ruff and pylsp run with the app's own Python (bundled, or the venv), and ruff is on the shell PATH in both; the assistant's JS/TS checks run the workspace's own ESLint with Node. Neither install ships typescript-language-server: install it with <code>npm install -g typescript-language-server typescript</code> for JS/TS in the editor. Settings &gt; Tools and automation &gt; Code tools shows what works.</td></tr>
         <tr><td>Models and defaults</td><td colspan="2">Identical. Both ship the three always-on speech models (language ID and the two speaker encoders) and no chat model; both seed the same first-run config.</td></tr>
-        <tr><td>Where your files live</td><td>Session history and logs under <code class="path">~/Library/Application Support/WhisperStudio</code>; everything user-editable (config, <code class="path">models/</code>, <code class="path">skills/</code>, <code class="path">plugins/</code>, <code class="path">agents/</code>, <code class="path">data/</code>) at <code class="path">~/.whisper</code>.</td><td>All of it at the repo root: <code class="path">config.user.json</code>, <code class="path">models/</code>, <code class="path">storage/</code>, <code class="path">data/</code>.</td></tr>
-        <tr><td>System-audio capture</td><td>Native. The headphones menu beside <b>Record</b> taps system audio or one running app (macOS 14.4 or later).</td><td>Browser only. Share a Chrome tab, or route audio through a virtual device such as BlackHole.</td></tr>
+        <tr><td>Where your files live</td><td>Session history and logs under <code class="path">~/Library/Application Support/WhisperStudio</code>; everything user-editable (config, <code class="path">models/</code>, <code class="path">skills/</code>, <code class="path">plugins/</code>, <code class="path">agents/</code>, <code class="path">data/</code>) at <code class="path">~/.whisper</code>.</td><td>All of it in the checkout: <code class="path">config.user.json</code>, <code class="path">models/</code>, <code class="path">storage/</code>, <code class="path">data/</code>.</td></tr>
+        <tr><td>Microphone and system-audio capture</td><td>Native. The headphones menu beside <b>Record</b> taps system audio or one running app (macOS 14.4 or later).</td><td>The same native capture, through the capture helper that <code>setup.sh</code> builds from the app's Swift code. macOS asks for the permissions on behalf of your terminal app.</td></tr>
         <tr><td>Apple on-device translation</td><td>Available as the <b>Apple</b> translator in the Translation Model picker, on macOS 15 or later. The OS downloads its language models on first use, behind a one-time consent sheet.</td><td>Not available. Canary translation still works.</td></tr>
         <tr><td>Git and the <code>gh</code> CLI</td><td>Not bundled. Install Command Line Tools or Homebrew on the host for the Git and GitHub tools.</td><td>Installed by <code>setup.sh</code> (Git) or already on your machine.</td></tr>
       </tbody>
@@ -79,8 +65,8 @@
 
     <h2 id="from-source">Install from source</h2>
     <p>Whisper Studio is one local process that serves both the API and the React SPA on a single
-      origin. Getting there is a short chain: install a few command-line tools, connect AWS, clone the
-      repo, run <code>setup.sh</code>, and configure two fields in the app. <b>Click a box</b> below to
+      origin. Getting there is a short chain: install two prerequisites, connect AWS (only for cloud
+      models), clone the repo, run <code>setup.sh</code>, and configure the app. <b>Click a box</b> below to
       see what each step does.</p>
 
     <figure class="diagram-figure wide">
@@ -91,21 +77,19 @@
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
-      <div class="callout__body"><p><b>Already tooled up?</b> If <code>python3 --version</code>,
-        <code>brew --version</code>, and <code>aws --version</code> all succeed, skip ahead to
-        <a href="#step-4">Step 4 - Get the code and run</a>. If any of them fails, start at Step 1.</p></div>
+      <div class="callout__body"><p><b>Already tooled up?</b> If <code>brew --version</code> and
+        <code>xcrun --find swiftc</code> both succeed, and you do not need cloud models yet, skip
+        ahead to <a href="#step-4">Step 4: Get the code and run</a>. Otherwise start at Step 1.</p></div>
     </div>
 
-    <h2 id="step-1">Step 1 - Install prerequisites</h2>
-    <p>Four command-line tools have to be present before <code>setup.sh</code> can do its work. Homebrew
-      installs the other three.</p>
+    <h2 id="step-1">Step 1: Install prerequisites</h2>
+    <p>Two things have to be present before <code>setup.sh</code> can do its work. The script
+      installs the rest (Python 3.13, Node, Git and the AWS CLI when missing, ffmpeg, llama.cpp).</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Tool</th><th>Why</th><th>Check</th></tr></thead>
       <tbody>
-        <tr><td><b>Git</b></td><td>Clone the project</td><td><code>git --version</code></td></tr>
-        <tr><td><b>Python 3.12 or newer</b></td><td>Backend runtime. The one version gate the script enforces before it touches anything.</td><td><code>python3 --version</code></td></tr>
-        <tr><td><b>Homebrew</b></td><td>Installs everything else</td><td><code>brew --version</code></td></tr>
-        <tr><td><b>AWS CLI</b></td><td>Bedrock auth for Claude, GPT and voice mode</td><td><code>aws --version</code></td></tr>
+        <tr><td><b>Homebrew</b></td><td>Supplies Python 3.13, and Git and the AWS CLI when they are missing</td><td><code>brew --version</code></td></tr>
+        <tr><td><b>Xcode Command Line Tools</b></td><td>The Swift compiler for the capture helper, and Git to clone the project</td><td><code>xcrun --find swiftc</code></td></tr>
       </tbody>
     </table></div>
 
@@ -120,35 +104,30 @@
         <code>brew: command not found</code>.</p></div>
     </div>
 
-    <p>Then install Git, Python, and the AWS CLI in one line:</p>
-    <div class="code-block"><pre><code>brew install git python@3.12 awscli</code></pre></div>
+    <p>Then install the Xcode Command Line Tools (skip this if <code>xcrun --find swiftc</code>
+      already prints a path):</p>
+    <div class="code-block"><pre><code>xcode-select --install</code></pre></div>
 
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
-      <div class="callout__body"><p><b>Node.js is handled for you.</b> You do not install Node yourself.
-        <code>setup.sh</code> installs Node 22.16.0 (pinned in <code class="path">.nvmrc</code>)
-        <em>inside</em> the project <code class="path">venv/</code> using <code>nodeenv</code>, so it
-        never touches a system Node or your other projects.</p></div>
+      <div class="callout__body"><p><b>Python and Node.js are handled for you.</b>
+        <code>setup.sh</code> installs <code>python@3.13</code> from Homebrew when it is missing and
+        builds the project <code class="path">venv/</code> from it, then installs the Node version
+        pinned in <code class="path">.nvmrc</code> <em>inside</em> that venv using
+        <code>nodeenv</code>. Your default <code>python3</code>, any system Node, and your shell files
+        are never changed.</p></div>
     </div>
 
-    <div class="callout callout--warn">
-      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
-      <div class="callout__body"><p><b>Python 3.12 is a hard floor.</b> The Bedrock bidirectional
-        streaming SDK behind voice mode installs only on 3.12 or newer, so an older interpreter would
-        silently give you an app without <b>Talk</b>. If <code>python3</code> is older or missing,
-        <code>setup.sh</code> says so, offers to run <code>brew install python@3.12</code> for you (in
-        an interactive terminal), adds it to your <code>PATH</code> in <code class="path">~/.zshrc</code>,
-        and uses it for the rest of that run. Without Homebrew or an interactive terminal it exits
-        instead of continuing.</p></div>
-    </div>
-
-    <h2 id="step-2">Step 2 - Connect AWS</h2>
-    <p>Cloud chat (Claude or GPT) runs on Amazon Bedrock, so the AWS CLI needs credentials. Run:</p>
+    <h2 id="step-2">Step 2: Connect AWS</h2>
+    <p>Cloud chat (Claude or GPT) and voice mode run on Amazon Bedrock, so they need AWS credentials.
+      Skip this step if you will use only on-device models. <code>setup.sh</code> installs the AWS
+      CLI when it is missing; you can run this step after Step 4. Run:</p>
     <div class="code-block"><pre><code>aws configure</code></pre></div>
     <p>It prompts for an access key ID, a secret access key, a default region, and an output format. For
       the full walk-through of creating keys and profiles, see the
       <a href="https://docs.aws.amazon.com/cli/latest/userguide/cli-chap-configure.html">AWS CLI
-      configuration docs</a>.</p>
+      configuration docs</a>. SSO profiles (<code>aws sso login</code>) and a Bedrock API key in
+      <code>AWS_BEARER_TOKEN_BEDROCK</code> work too.</p>
 
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
@@ -161,10 +140,10 @@
         <a href="requirements.html#voice-access">Requirements</a>.</p></div>
     </div>
 
-    <h2 id="step-3">Step 3 - (Optional) Tavily key for web search</h2>
+    <h2 id="step-3">Step 3: (Optional) Tavily key for web search</h2>
     <p>A Tavily key powers the <code>web_search</code> tool. It is optional: without one,
-      <code>web_search</code> falls back to an Amazon Bedrock AgentCore browser MCP server if you
-      have enabled one, and <code>web_fetch</code> (fetching a URL you give it) works with no key at
+      <code>web_search</code> uses an Amazon Bedrock AgentCore browser MCP server if you have enabled
+      one, and <code>web_fetch</code> (fetching a URL you give it) works with no key at
       all. Everything else (chat, transcription, the workspace tools) works regardless. You can add
       this now or any time later.</p>
     <ol class="steps">
@@ -181,92 +160,94 @@ source ~/.zshrc</code></pre></div>
     <p>See <a href="ref-env.html">Environment variables</a> for the full list of what the shell layer
       can override.</p>
 
-    <h2 id="step-4">Step 4 - Get the code and run</h2>
+    <h2 id="step-4">Step 4: Get the code and run</h2>
     <p>There are two ways to get the project onto your machine. Both finish with one command that builds
       and serves the app, so pick whichever suits you.</p>
 
-    <h3 id="option-a">Option A - Clone with Git (for developers)</h3>
+    <h3 id="option-a">Option A: Clone with Git (for developers)</h3>
     <p>Clone the repository, enter it, and run the setup script:</p>
     <div class="code-block"><pre><code>git clone https://github.com/paukode/whisper-studio.git
 cd whisper-studio
 bash setup.sh</code></pre></div>
 
-    <h3 id="option-b">Option B - Download the ZIP (no Git needed)</h3>
+    <h3 id="option-b">Option B: Download the ZIP (no Git needed)</h3>
     <p>If you would rather not touch the command line to get the code, download the project as a ZIP and
       run the same script.</p>
     <ol class="steps">
       <li><h4>Download</h4><p>On the GitHub repository page, use <b>Code &rarr; Download ZIP</b> and save
         it (for example to your Downloads folder).</p></li>
       <li><h4>Extract</h4><p>Double-click the downloaded <code>.zip</code> in Finder. It expands into a
-        <code class="path">whisper-studio</code> folder.</p></li>
-      <li><h4>Run setup.sh</h4><p>Open that folder, right-click <code class="path">setup.sh</code>, and
-        choose <b>Open With &rarr; Terminal</b>. The script runs and prints the URL when the app is ready.
-        That is it - you are good to go.</p></li>
+        <code class="path">whisper-studio-main</code> folder.</p></li>
+      <li><h4>Run setup.sh</h4><p>Open Terminal, go into that folder, and run the script there. The
+        script uses paths relative to the folder it runs in, so it must start inside the project
+        folder:</p>
+        <div class="code-block"><pre><code>cd ~/Downloads/whisper-studio-main
+bash setup.sh</code></pre></div>
+        <p>The script runs and prints the URL when the app is ready.</p></li>
     </ol>
-    <div class="callout callout--warn">
-      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
-      <div class="callout__body"><p><b>If double-clicking opens a text editor instead of running it,</b>
-        macOS has not associated <code>.sh</code> files with Terminal. Use the right-click &rarr; Open With
-        &rarr; Terminal path above, or open Terminal, type <code>bash </code> (with a trailing space), drag
-        the <code class="path">setup.sh</code> file onto the window, and press <kbd>Enter</kbd>. On the
-        first run, macOS Gatekeeper may ask you to confirm running a downloaded script.</p></div>
-    </div>
-    <p>From here on both options are identical - the rest of this guide applies either way.</p>
+    <p>From here on both options are identical: the rest of this guide applies either way.</p>
 
     <h3 id="what-setup-does">What setup.sh does, step by step</h3>
     <p>On a first run the script works through the whole provisioning pass in this order. Every noisy
       install step logs to <code class="path">setup.log</code> and prints a single progress line; if a
       step fails, the tail of that log is printed on the terminal so you do not have to go find it.</p>
     <ol class="steps">
-      <li><h4>Checks Python</h4><p>Requires <b>Python 3.12 or newer</b>. If the active
-        <code>python3</code> is older or missing, the script offers to install <code>python@3.12</code>
-        via Homebrew, persists it on your <code>PATH</code>, and uses it for the rest of the run.</p></li>
-      <li><h4>Pre-flight for a production run</h4><p>Before touching the filesystem it checks Homebrew,
-        <code>ffmpeg</code>, <code>ripgrep</code>, <code>curl</code>, and <code>lsof</code>, and
-        auto-installs ffmpeg and ripgrep through Homebrew when they are missing. Anything it cannot fix
-        is collected into one list so you can resolve everything in a single pass. Git and the AWS CLI
-        are deliberately not gated here: the script installs them itself further down.</p></li>
-      <li><h4>Creates the venv and installs Python deps</h4><p>Builds an isolated
-        <code class="path">venv/</code> and installs from <code class="path">requirements.txt</code>. It
-        needs a Python whose SQLite can load extensions (Homebrew's), because vector search uses
-        sqlite-vec; that Python is referenced by absolute path only, and setup stops with an error when
-        none is found. Your default
-        <code>python3</code> and shell config are left untouched.</p></li>
+      <li><h4>Checks the machine and the prerequisites</h4><p>It stops on anything but macOS 14 or
+        later on Apple silicon, and when <code>WHISPER_HOME</code> or <code>WHISPER_USER_DIR</code> is
+        exported (a source install keeps its data in the checkout). Before it installs or deletes
+        anything it checks Homebrew, the Xcode Command Line Tools, <code>curl</code>, and
+        <code>lsof</code>, and lists every unmet item in one pass.</p></li>
+      <li><h4>Creates the venv and installs Python deps</h4><p>Installs <code>python@3.13</code> from
+        Homebrew when it is missing, builds an isolated <code class="path">venv/</code> from it, and
+        installs from <code class="path">requirements.txt</code> (ripgrep comes from there). The Python
+        must be an arm64 build whose SQLite can load extensions, because vector search uses
+        sqlite-vec; setup stops with an error otherwise. A kept venv gets the same checks on every
+        run. Python packages are reinstalled whenever <code class="path">requirements.txt</code>
+        changes. Your default <code>python3</code> and shell config are left untouched.</p></li>
       <li><h4>Fetches Playwright Chromium</h4><p>The Playwright pip package carries no browser, so the
-        script runs <code>playwright install chromium</code> for the live-preview browser tools. It is
-        idempotent and skipped once the build is cached.</p></li>
-      <li><h4>Installs the remaining system tools</h4><p>Through Homebrew, and only when missing:
-        <code>ffmpeg</code> (audio decoding), <code>ripgrep</code> (workspace search), <code>git</code>
-        (skill and plugin cloning, the workspace Git tools), and the <code>awscli</code>. Installing the
-        AWS CLI does not configure it; you still run <code>aws configure</code> once.</p></li>
-      <li><h4>Installs Node 22.16.0 inside the venv</h4><p>Uses <code>nodeenv</code> to put the version
-        pinned in <code class="path">.nvmrc</code> into the venv, then runs <code>npm install</code>.</p></li>
+        script runs <code>playwright install chromium</code> for the live-preview browser tools. An
+        existing build is reused.</p></li>
+      <li><h4>Installs Node inside the venv</h4><p>Uses <code>nodeenv</code> to put the version
+        pinned in <code class="path">.nvmrc</code> into the venv, then runs <code>npm ci</code>
+        whenever <code class="path">package-lock.json</code> changes.</p></li>
+      <li><h4>Installs the remaining tools</h4><p><code>git</code> (skill and plugin cloning, the
+        workspace Git tools) and the <code>awscli</code> through Homebrew, only when missing.
+        Installing the AWS CLI does not configure it; you still run <code>aws configure</code> once.
+        The pinned static <code>ffmpeg</code> and <code>ffprobe</code> builds (audio decoding) go into
+        <code class="path">vendor/ffmpeg</code>.</p></li>
+      <li><h4>Builds the capture helper</h4><p>Compiles the Mac app's native microphone and system
+        audio capture code into <code class="path">vendor/capture/whisper-capture</code>. The server
+        starts it for the page, so recording in the browser works like in the Mac app. It is rebuilt
+        only when its sources change, because macOS ties the microphone and System Audio Recording
+        permissions to the program.</p></li>
       <li><h4>Builds the frontend</h4><p>In production mode (the default) it runs
         <code>npm run build</code>, so the backend can serve the compiled bundle. <code>--dev</code>
         skips the build and starts Vite instead.</p></li>
-      <li><h4>Seeds your config on a fresh install</h4><p>When neither
-        <code class="path">config.user.json</code> nor a legacy <code class="path">config.json</code>
-        exists, it calls the same <code>migrate_user_config()</code> the packaged app runs on boot. That
-        writes a <code class="path">config.user.json</code> holding the first-run defaults: <b>local
-        mode</b>, with the on-device index backends recorded for later. An existing config is never
-        touched. If you passed a mode flag, the chosen <code>model_mode</code> is written on top.</p></li>
+      <li><h4>Seeds your config on a fresh install</h4><p>When there is no
+        <code class="path">config.user.json</code>, it calls the same <code>seed_user_config()</code>
+        the packaged app runs on its first launch. That writes a
+        <code class="path">config.user.json</code> holding the first-run defaults: <b>local mode</b>,
+        with the on-device index backends recorded for later. An existing
+        <code class="path">config.user.json</code> is never read or changed. An old
+        <code class="path">config.json</code> is not read; the script prints a note about it.</p></li>
       <li><h4>Installs the on-device serving runtime</h4><p>The llama.cpp build that
         <code class="path">server/local/llama_pin.env</code> specifies (the <code>llama-server</code>
         binary), in <em>all</em> modes. It is the same release build that the Mac app bundles. The
-        script installs it into <code class="path">vendor/llama</code>, and installs it again when the
-        file specifies a different build. If you install a model from Discover after this step, you do
-        not run <code>setup.sh</code> again. The script reports a failure here, because on-device chat
-        has no other runtime.</p></li>
+        script installs it into <code class="path">vendor/llama</code>, checks its checksum, and
+        installs it again when the file specifies a different build. If you install a model from
+        Discover after this step, you do not run <code>setup.sh</code> again. GGUF models run on
+        <code>llama-server</code>; MLX models run on <code>mlx_lm</code> from the Python
+        dependencies.</p></li>
       <li><h4>Fetches the always-on speech models</h4><p>About 190 MB: the language-ID model
         (VoxLingua107) and the two speaker encoders (ReDimNet2, the default, and ECAPA, the one you can select instead).
         Every transcription path needs them and the Mac app ships the same three inside its bundle, so a
-        source install matches. The step is idempotent, and a hiccup fetching ReDimNet2 is reported
-        without failing the install (it then downloads on first use).</p></li>
-      <li><h4>Starts the backend and opens the app</h4><p>It takes the first free port from 8000
-        upward, starts <code>python -m server.main</code>, waits up to 90 seconds for
-        <code>/health</code>, prints the URL, and opens it in your default browser. In
-        <code>--dev</code> it also starts Vite on the first free port from 5173 and points you at that
-        instead. Press <kbd>Ctrl</kbd>+<kbd>C</kbd> to stop.</p></li>
+        source install matches. The step is idempotent, and a failed fetch stops the script.</p></li>
+      <li><h4>Starts the backend and opens the app</h4><p>It uses port 41430 (or the nearest free
+        port within 5 either way, and stops with an error if all are taken), starts
+        <code>python -m server.main</code>, waits up to 90 seconds for <code>/health</code>, prints the
+        URL, and opens it in your default browser. In <code>--dev</code> it also starts Vite on port
+        41460 (searched the same way) and points you at that instead. Press
+        <kbd>Ctrl</kbd>+<kbd>C</kbd> to stop.</p></li>
     </ol>
 
     <p><b>No chat, transcription, or index weights are downloaded by setup.</b> Apart from the three
@@ -278,49 +259,41 @@ bash setup.sh</code></pre></div>
 
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
-      <div class="callout__body"><p><b>Subsequent runs are fast.</b> When
-        <code class="path">venv/</code> and <code class="path">node_modules/</code> already exist, the
-        install steps are skipped. A plain <code>bash setup.sh</code> just rebuilds the frontend and
+      <div class="callout__body"><p><b>Subsequent runs are fast.</b> Each install step checks what
+        is already there and skips it when it matches: Python packages against
+        <code class="path">requirements.txt</code>, npm packages against
+        <code class="path">package-lock.json</code>, and the pinned ffmpeg, llama.cpp, and capture
+        helper builds. A plain <code>bash setup.sh</code> then mostly rebuilds the frontend and
         serves it.</p></div>
     </div>
 
     <h3 id="setup-flags">setup.sh flags</h3>
-    <p>Flags fall into three groups: what to reinstall, how to serve, and which model mode to provision.
-      With no flags you get production serving in the existing (or cloud) mode.</p>
+    <p>Flags fall into two groups: what to reinstall and how to serve. With no flags you get
+      production serving in the mode your config already has, or local mode on a fresh install.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Flag</th><th>Effect</th></tr></thead>
       <tbody>
-        <tr><td><code>--new</code> (or <code>--fresh</code>)</td><td>Wipe <code class="path">venv/</code>,
-          <code class="path">node_modules/</code>, and <code class="path">static/dist/</code>, then
-          reinstall from scratch. It also takes a timestamped backup of
-          <code class="path">config.json</code> and <code class="path">config.user.json</code> and
-          <em>removes</em> them, so the seeding step recreates a config with the first-run defaults;
-          <code class="path">pricing.json</code> (your rate overrides, if any) is backed up and
-          removed, so rates come from <code class="path">pricing.example.json</code>. Re-add your Tavily key and any custom settings
-          afterwards, or restore them from the backups (they are the only copy, since both files are
-          gitignored).</td></tr>
+        <tr><td><code>--new</code></td><td>Delete <code class="path">venv/</code>,
+          <code class="path">node_modules/</code>, <code class="path">static/dist/</code>, and
+          <code class="path">vendor/</code>, then reinstall them. <code class="path">pricing.json</code>
+          (your rate overrides, if any) is backed up with a timestamp and removed, so rates come from
+          <code class="path">pricing.example.json</code>. <code class="path">config.user.json</code> is
+          never touched.</td></tr>
         <tr><td><code>--dev</code></td><td>Development mode: run the backend plus the Vite dev server with
-          hot-module reload, on the first free port from 5173. Open the Vite URL, not the backend; the
-          script opens it for you. Mutually exclusive with <code>--prod</code>.</td></tr>
+          hot-module reload, on port 41460 (or the nearest free port). Open the Vite URL, not the
+          backend; the script opens it for you. Mutually exclusive with <code>--prod</code>.</td></tr>
         <tr><td><code>--prod</code></td><td>Production mode (<b>the default</b>): build the frontend and
           serve it from FastAPI. No Vite, no HMR.</td></tr>
-        <tr><td><code>--cloud</code></td><td>Start in cloud mode: all indexing and RAG on Amazon
-          Bedrock. Nothing on-device beyond transcription.</td></tr>
-        <tr><td><code>--hybrid</code></td><td>Start in hybrid mode: pick a backend per capability.
-          The on-device index weights download on your first index build.</td></tr>
-        <tr><td><code>--local</code></td><td>Start in local mode: everything on-device. Index weights
-          download on first index build; chat models are installed separately from Settings &rarr;
-          Models &rarr; Discover.</td></tr>
         <tr><td><code>--no-open</code></td><td>Do not auto-open the browser (also honored via the
           <code>NO_OPEN=1</code> env var). Useful for SSH or headless sessions.</td></tr>
         <tr><td><code>-h</code>, <code>--help</code></td><td>Show all options and exit.</td></tr>
       </tbody>
     </table></div>
-    <p>A mode flag writes <code>model_mode</code> into your user config, so it sticks until you change
-      it. Without one, an existing config is honored and a fresh install starts in <b>local</b> mode,
-      the same first-run default as the Mac app. The <code>--dev</code> / <code>--prod</code> and mode
-      flags combine, for example <code>bash setup.sh --dev --cloud</code>. Any other argument is
-      rejected with a pointer to <code>--help</code>.</p>
+    <p>The model mode is not a flag: a fresh install starts in <b>local</b> mode, the same first-run
+      default as the Mac app, and you change it under <b>Settings &rarr; Model mode</b>. The
+      <code>--dev</code> and <code>--new</code> flags combine, for example
+      <code>bash setup.sh --new --dev</code>. Any other argument is rejected with a pointer to
+      <code>--help</code>.</p>
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
       <div class="callout__body"><p><b>Two environment variables are worth knowing here.</b>
@@ -331,14 +304,14 @@ bash setup.sh</code></pre></div>
     </div>
 
     <h2 id="model-modes">Model modes</h2>
-    <p>Model mode controls <em>where indexing and retrieval run</em>. It is separate from your chat-model
-      choice, which lives in the toolbar. You can set the mode at install time with the flags above, or
-      change it any time under <b>Settings &rarr; Model Mode</b> (changing it prompts a reload so the app
+    <p>Model mode controls <em>where indexing and retrieval run</em>, and which chat models the picker
+      offers: Local only on-device models, Cloud only Bedrock models, Hybrid both. You change it any
+      time under <b>Settings &rarr; Model mode</b> (changing it prompts a reload so the app
       re-initializes).</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Mode</th><th>Embeddings</th><th>Reranker</th><th>Entity extraction</th><th>On-device weights</th></tr></thead>
       <tbody>
-        <tr><td><b>Cloud</b></td><td>Cohere Embed v4 (Bedrock)</td><td>Cohere Rerank 3.5</td><td>Claude Haiku</td><td>none - lean install</td></tr>
+        <tr><td><b>Cloud</b></td><td>Cohere Embed v4 (Bedrock)</td><td>Cohere Rerank 3.5</td><td>Claude Haiku</td><td>none (lean install)</td></tr>
         <tr><td><b>Hybrid</b></td><td>per-capability pick</td><td>per-capability pick</td><td>per-capability pick</td><td>downloaded on first index build</td></tr>
         <tr><td><b>Local</b> (first-run default)</td><td>Qwen3 (on-device)</td><td>Qwen3 Reranker</td><td>GLiNER</td><td>~5 GB index stack on first index build; chat models installed from Discover</td></tr>
       </tbody>
@@ -347,9 +320,9 @@ bash setup.sh</code></pre></div>
     <p>The mode alone ships no on-device chat model. To chat locally, install one first from
       <b>Settings &rarr; Models &rarr; Discover</b>, which lists a recommended set (Gemma 4 12B, Gemma
       4 Coder, Qwen3.5 9B, Ministral 3 14B) and grades each against your machine's memory before you
-      download. Until you install one, local mode still lists the cloud models in the picker, because
-      the mode filter never leaves the picker empty: you can chat on Bedrock from the first minute and
-      decide about on-device chat later.</p>
+      download. Until you install one, the picker in local mode shows an install hint, because Local
+      mode offers and runs only on-device models and refuses cloud calls. To chat on Bedrock instead,
+      switch the mode to Hybrid or Cloud.</p>
 
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
@@ -362,14 +335,16 @@ bash setup.sh</code></pre></div>
       <a href="tut-model-modes.html">Model modes</a> and the architecture page
       <a href="arch-backends.html">Model backends &amp; modes</a>.</p>
 
-    <h2 id="step-5">Step 5 - Configure in the app</h2>
-    <p>Open the URL the script printed (something like <code>http://127.0.0.1:8000</code>). A one-time
-      notice explains the three model modes and tells you that you are starting in Local mode; dismiss
-      it, or let it take you straight to the Model mode tab. Then click the gear icon, go to
-      <b>Access and usage &rarr; Keys and permissions &rarr; API keys</b>, and fill in:</p>
+    <h2 id="step-5">Step 5: Configure in the app</h2>
+    <p>Open the URL the script printed (usually <code>http://127.0.0.1:41430</code>). A one-time
+      notice explains the three model modes and tells you that you are in Local mode; dismiss it, or
+      let it take you straight to the Model mode tab. For Claude or GPT, set the mode to Hybrid or
+      Cloud. To stay on-device, install a model from <b>Settings &rarr; Models &rarr; Discover</b>
+      and skip the region. Then click the gear icon, go to <b>Access and usage &rarr; Keys and
+      permissions &rarr; API keys</b>, and fill in:</p>
     <div class="spec">
       <dt><b>Bedrock Region</b></dt><dd>The same region you used in <code>aws configure</code>, where
-        Claude is enabled. It is pre-filled with <code>us-east-1</code>.</dd>
+        Claude is enabled. The shipped default is <code>us-east-1</code>.</dd>
       <dt><b>Tavily API Key</b></dt><dd>Only if you did not set the <code>TAVILY_API_KEY</code>
         environment variable in Step 3.</dd>
     </div>
@@ -386,15 +361,16 @@ bash setup.sh</code></pre></div>
     </div>
 
     <h2 id="config-json">Where settings live</h2>
-    <p>Your settings live in <code class="path">config.user.json</code> (at the repo root for a source
+    <p>Your settings live in <code class="path">config.user.json</code> (in the checkout for a source
       install, under <code class="path">~/.whisper</code> for the Mac app). It is gitignored and holds
       your Tavily key, region, and anything else you change. It is <b>not</b> a copy of the template:
       <code class="path">config.example.json</code> stays live as a read-only system layer beneath it,
       so shipped defaults and new catalog models reach you with no sync step, and your file carries
-      only your own deltas. Environment variables override everything, and a per-project
-      <code class="path">.whisper/settings.json</code> sits between them. An older checkout that still
-      has a monolithic <code class="path">config.json</code> keeps using it as the user layer until it
-      is migrated. See <a href="configuration.html">Configuration</a> for the full layer model.</p>
+      only your own deltas. The <code>TAVILY_API_KEY</code> environment variable overrides
+      everything, and a per-project <code class="path">.whisper/settings.json</code> sits between
+      them. Startup never changes <code class="path">config.user.json</code>. An old single-file
+      <code class="path">config.json</code> is not read; the app shows a notice when one is present.
+      See <a href="configuration.html">Configuration</a> for the full layer model.</p>
 
     <h2 id="import-project">Import an existing Claude Code or Codex project</h2>
     <p>If you are coming from Claude Code or the Codex CLI, you do not have to re-create your project
@@ -406,8 +382,9 @@ bash setup.sh</code></pre></div>
         <code class="path">WHISPER.md</code> under <code class="path">~/.whisper/rules/</code>.</li>
       <li><b>Skills</b>: skill folders (the <code class="path">SKILL.md</code> convention both tools
         share) are copied into Whisper Studio's app-wide skills directory.</li>
-      <li><b>MCP servers</b>: <code class="path">.mcp.json</code> entries are translated into
-        Whisper Studio's MCP configuration.</li>
+      <li><b>MCP servers</b>: <code class="path">.mcp.json</code> entries (Claude Code) or the
+        <code>[mcp_servers]</code> tables in <code class="path">config.toml</code> (Codex) are
+        translated into Whisper Studio's MCP configuration.</li>
     </ul>
     <p>The import is copy-only: your source files are never modified, nothing it writes is executed,
       and it never overwrites an existing <code class="path">WHISPER.md</code>, skill folder, or MCP
@@ -418,19 +395,18 @@ bash setup.sh</code></pre></div>
     <div class="table-wrap"><table>
       <thead><tr><th>Symptom</th><th>Fix</th></tr></thead>
       <tbody>
-        <tr><td><code>python3: command not found</code></td><td>Run <code>brew install python@3.12</code>, then reopen Terminal.</td></tr>
         <tr><td><code>brew: command not found</code></td><td>Run the two <code>eval</code> lines the Homebrew installer printed, then reopen Terminal.</td></tr>
-        <tr><td><code>Python 3.x detected; this project requires Python 3.12 or newer</code></td><td>Accept the script's offer to install it, or run <code>brew install python@3.12</code> yourself and reopen Terminal so the updated PATH applies.</td></tr>
-        <tr><td><code>Cannot continue without Python 3.12 or newer. Exiting.</code></td><td>The script asked and you declined, or it is not running in an interactive terminal. Install Python 3.12 or newer, then re-run.</td></tr>
+        <tr><td><code>ERROR: prerequisites are not met.</code></td><td>Fix every item in the list the script printed (for example run <code>xcode-select --install</code>), then re-run.</td></tr>
+        <tr><td><code>... is not an arm64 (Apple silicon) Python</code> or <code>... cannot load SQLite extensions</code></td><td>Follow the advice in the message: delete <code class="path">venv/</code> and re-run, or <code>brew reinstall python@3.13</code>.</td></tr>
         <tr><td><code>setup.sh: Permission denied</code></td><td>Run it as <code>bash setup.sh</code>, not <code>./setup.sh</code>.</td></tr>
-        <tr><td><code>npm install</code> network errors</td><td>You are behind a proxy or firewall. Try another network, or <code>npm config set registry https://registry.npmjs.org/</code>.</td></tr>
+        <tr><td><code>npm ci</code> network errors</td><td>You are behind a proxy or firewall. Try another network, or <code>npm config set registry https://registry.npmjs.org/</code>.</td></tr>
         <tr><td>Any install step failing</td><td>Read the 40 lines the script prints from <code class="path">setup.log</code>, or open the full log at the repo root.</td></tr>
         <tr><td><code>AccessDeniedException</code> / <code>Could not invoke model</code> in chat</td><td>The AWS user lacks Bedrock permissions, or the Claude model is not enabled in your region.</td></tr>
-        <tr><td><code>You don't have access to the model with the specified model ID</code></td><td>Region mismatch - the model is enabled in a different region than Settings says. Align the Bedrock Region.</td></tr>
-        <tr><td>The <b>Talk</b> button is disabled</td><td>Hover it: the tooltip names the reason. Usually Nova 2 Sonic is not enabled in the region, the AWS credentials are missing, or the Python running the backend is older than 3.12.</td></tr>
+        <tr><td><code>You don't have access to the model with the specified model ID</code></td><td>Region mismatch: the model is enabled in a different region than Settings says. Align the Bedrock Region.</td></tr>
+        <tr><td>The <b>Talk</b> button is disabled</td><td>Hover it: the tooltip names the reason. Usually the app is in Local mode (switch to Hybrid or Cloud), the AWS credentials are missing, or <code>voice.enabled</code> is off. If Talk starts but fails, check that Nova 2 Sonic is enabled in the voice region.</td></tr>
         <tr><td>An on-device model fails with <code>unknown model architecture</code></td><td>The llama.cpp build is older than the build in <code class="path">server/local/llama_pin.env</code>. Run <code>bash setup.sh</code>.</td></tr>
-        <tr><td>Port 8000 or 5173 already in use</td><td>The script auto-increments to the next free port. Read the URL it actually prints.</td></tr>
-        <tr><td>Blank page in the browser</td><td>The frontend bundle is missing. Re-run <code>bash setup.sh</code>, or <code>bash setup.sh --new</code> for a clean rebuild.</td></tr>
+        <tr><td>Port 41430 or 41460 already in use</td><td>The script takes the nearest free port. Read the URL it actually prints.</td></tr>
+        <tr><td>The page says <code>Frontend build missing</code></td><td>The frontend bundle is missing. Re-run <code>bash setup.sh</code>, or <code>bash setup.sh --new</code> for a clean rebuild.</td></tr>
       </tbody>
     </table></div>
 
@@ -443,8 +419,8 @@ bash setup.sh</code></pre></div>
 
     <h2 id="next-steps">Next steps</h2>
     <div class="card-grid">
-      <a class="card card--link" href="requirements.html"><h3>Requirements</h3><p>The OS, Python,
-        Homebrew, AWS, and hardware each model mode expects.</p><span class="card__meta">Read Requirements &rarr;</span></a>
+      <a class="card card--link" href="requirements.html"><h3>Requirements</h3><p>The OS, the
+        prerequisites, AWS, and the hardware each model mode expects.</p><span class="card__meta">Read Requirements &rarr;</span></a>
       <a class="card card--link" href="configuration.html"><h3>Configuration</h3><p>The three config
         layers, environment variables, and every Settings field.</p><span class="card__meta">Read Configuration &rarr;</span></a>
       <a class="card card--link" href="first-run.html"><h3>First run &amp; verify</h3><p>Connect AWS,

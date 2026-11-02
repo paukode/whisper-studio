@@ -17,24 +17,26 @@
     <h1>Transcription &amp; diarization</h1>
     <p class="subtitle">Streaming audio over a single WebSocket, two on-device speech engines,
       live translation with Canary or Apple,
-      voice-activity gating, and speaker clustering that self-heals - and no byte of audio ever
+      voice-activity gating, and speaker clustering that self-heals. No byte of audio ever
       leaves your machine.</p>
 
     <p>Recording is the one part of Whisper Studio that opens a persistent, two-way channel instead of
-      a request-response call. The browser streams raw audio up; the server streams interim drafts,
+      a request-response call. The page streams raw audio up; the server streams interim drafts,
       settled transcripts, and speaker corrections back down. The whole handler is a thin orchestrator
       in <code class="path">server/websocket.py</code>: it drives one code path regardless of which ASR
       backend produced the events, and applies speaker identification on its own side so the backends
       stay ignorant of each other and of diarization.</p>
 
     <p><b>Click a box</b> below to trace where audio flows. Notice the three paths that reach the live
-      transcript: interims stream straight through, settled-and-labeled finals post immediately after
-      speaker assignment, and re-clustering corrections arrive later as a separate message.</p>
+      transcript: interims stream straight through, each final goes out at once under a provisional
+      speaker label, and the speaker labelling, turn splits and re-clustering corrections follow as
+      <code>speaker_update</code> and <code>transcript_split</code> messages.</p>
 
     <figure class="diagram-figure wide">
       <div id="transcription-diagram" class="diagram"></div>
-      <figcaption>From the browser mic to a diarized transcript. Interims flow through immediately; the
-        <em>speaker_update</em> edge is the diarizer correcting itself after re-clustering.</figcaption>
+      <figcaption>From audio capture to a diarized transcript. Interims and finals flow through
+        immediately; the <em>speaker_update</em> and <em>transcript_split</em> edges are the
+        diarizer labelling, splitting and correcting after the text was sent.</figcaption>
     </figure>
 
     <figure class="shot wide">
@@ -42,9 +44,22 @@
       <figcaption><strong>What the pipeline produces.</strong> Speaker turns from the diarizer, each with a timestamp, rendered in the transcript panel.</figcaption>
     </figure>
 
+    <h2 id="audio-sources">Audio sources</h2>
+    <p>The recorder reads the microphone natively with voice processing off, and can also capture
+      system audio or the audio of one app. In the Mac app the window's bridges do this
+      (<code class="path">macapp/shell/NativeMicCapture.swift</code> and
+      <code class="path">NativeAudioCapture.swift</code>). A source install runs in a browser and gets
+      the same capture through the capture helper that <code>setup.sh</code> builds from that code
+      (<code class="path">macapp/helper/</code>, relayed by
+      <code class="path">server/capture_helper.py</code>). When no native mic is available the page
+      uses the browser's microphone. The page converts and mixes the audio
+      (<code class="path">src/services/recordingController.ts</code>) and sends one mono stream to
+      <code>/ws</code>.</p>
+
     <h2 id="the-channel">The channel</h2>
     <p>A recording session is a WebSocket to
-      <code>/ws?session_id=...&amp;backend=...&amp;dictation=...</code>. Before the handshake completes,
+      <code>/ws?session_id=...&amp;backend=...&amp;dictation=...&amp;take=...</code>, where
+      <code>take</code> names one press of Record and the watchdog's reconnects repeat it. Before the handshake completes,
       the server rejects any cross-site origin (the HTTP origin middleware never sees WebSocket
       upgrades, so <code>is_ws_origin_allowed</code> guards it here), closing with code
       <code>1008</code>. Two frame types then flow up the socket:</p>
@@ -73,7 +88,8 @@
     </table></div>
     <p>Canary is not a transcription engine. It is only the translator (see
       <a href="#translation">Live translation</a>). A saved <code>transcription_backend: "canary"</code>
-      is rewritten to <code>"streaming"</code> (Parakeet) once at startup.</p>
+      runs as <code>"streaming"</code> (Parakeet); the saved file is not changed, and the app names
+      the old value once.</p>
     <p>Both engines run through MLX on a dedicated single-worker thread pool
       (<code>max_workers=1</code>): MLX evaluation streams are thread-local, so the model must be loaded
       and every utterance decoded on the <em>same</em> thread. On a live engine switch the outgoing
@@ -87,7 +103,7 @@
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
       <div class="callout__body"><p>The backend session is created lazily on the first audio frame, and
-        the model is only downloaded on first use into <code class="path">models/</code>. In local mode,
+        the model is only downloaded on first use into <code class="path">models/</code>. In every mode,
         loading a cold model streams a <code>model_loading</code> progress banner to the client so the
         first record is a visible ramp rather than a silent stall.</p></div>
     </div>
@@ -96,7 +112,7 @@
     <p>Audio is never sent to the model continuously. All backends push frames through the same
       <code>UtteranceBuffer</code> in <code class="path">server/audio_buffer.py</code>, which uses
       <code>webrtcvad</code> to find natural speech boundaries. The VAD is the <em>only</em> speech
-      filter: energy (RMS) gates were tried and removed, because they silently ate quiet microphones.
+      filter: there is no energy (RMS) gate, because it would eat quiet microphones.
       In front of it sits an upward-only gain rider that steers speech toward about
       <b>-24&nbsp;dBFS</b> (at most <b>12x</b>), which is what rescues a soft talker a metre from a
       laptop mic or a system-audio tap running at a third of full volume; frames below the noise floor
@@ -118,7 +134,7 @@
     <h3 id="interims">Interims vs finals</h3>
     <p>Only Parakeet streams live drafts. While an utterance is still in
       flight and no boundary has landed, the backend re-decodes the growing window and emits a volatile
-      <code>interim</code> - a word-by-word draft whose tail self-corrects as more speech arrives.
+      <code>interim</code>: a word-by-word draft whose tail self-corrects as more speech arrives.
       Parakeet decodes a draft on every chunk once the pending window has at least <b>~300 ms</b> of
       audio (a full-context <code>generate()</code> is cheap enough to keep up in real time). An unchanged draft is never
       re-sent. When silence closes the utterance, the clean, authoritative <code>final</code> is
@@ -127,8 +143,7 @@
 
     <h2 id="language-id">Language identification</h2>
     <p>Each engine handles the language of an utterance differently. There is no language
-      setting: the old <code>whisper_language</code> key is retired and is deleted from saved configs
-      at startup.</p>
+      setting.</p>
     <ul>
       <li><b>Whisper</b> detects the language per utterance with its own head, over every language it
         knows. When the strict decode pass returns nothing (the
@@ -174,8 +189,8 @@
       <code>stop</code> drains in-flight translations before <code>session_ended</code>, so the last
       line is never lost. When you <b>edit</b> a segment, the corrected text is re-translated through
       Apple's on-device <em>text</em> translator regardless of which translator produced the original
-      line - Canary translates audio, and the audio still contains the misheard word; outside the Mac
-      app the stale translation is dropped rather than left silently wrong.</p>
+      line (Canary translates audio, and the audio still contains the misheard word; outside the Mac
+      app the stale translation is dropped rather than left silently wrong).</p>
 
     <h2 id="diarization">Diarization: assign fast, refine later</h2>
     <p>Speaker identification lives in <code class="path">server/diarization/speakers.py</code>,
@@ -218,14 +233,12 @@
       </tbody>
     </table></div>
     <p>The reasoning: a wrong merge is one fixable label, while a wrong new speaker pollutes everything
-      after it. Borderline embeddings spawning phantom speakers was the historical failure mode (once,
-      74 "speakers" from 6 real ones in a three-hour session), so the ambiguous band joins the nearest
-      cluster and lets stage two clean up.</p>
+      after it. So the ambiguous band joins the nearest cluster and lets stage two clean up.</p>
 
     <h3 id="reclustering">3. Re-cluster and correct</h3>
     <p><code>maybe_recluster()</code> runs after every <b>10</b> finalized utterances
-      (<code>RECLUSTER_EVERY</code>), or sooner - after just <b>3</b>
-      (<code>RECLUSTER_AFTER_NEW</code>) - when a brand-new speaker was just created, which is exactly
+      (<code>RECLUSTER_EVERY</code>), or sooner, after just <b>3</b>
+      (<code>RECLUSTER_AFTER_NEW</code>), when a brand-new speaker was just created, which is exactly
       when assignment mistakes cluster. It re-runs average-linkage agglomerative clustering over every
       embedding seen so far, cutting the tree at the largest merge-height gap (or at the user-provided
       participant count, if set). New group ids are re-mapped onto the previous labels by greatest
@@ -237,7 +250,7 @@
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
       <div class="callout__body"><p>If you know how many people are in the call, the transcript panel's
         participant count sends <code>set_speakers</code>. Re-clustering then cuts the tree at exactly
-        that many groups and assignment never creates speakers beyond it - unless the tree is already
+        that many groups and assignment never creates speakers beyond it, unless the tree is already
         tight, meaning fewer people have actually spoken yet, in which case it declines to split
         someone.</p></div>
     </div>
@@ -246,7 +259,8 @@
     <p>The VAD buffer closes an utterance on <em>silence</em>, not on a speaker change, so a handover
       with little or no gap ("...that's my point." / "Right, but-") lands inside a single utterance.
       Labelling that whole window once files the second speaker's words under the first.
-      <code class="path">server/diarization/turns.py</code> cuts it first:</p>
+      <code class="path">server/diarization/turns.py</code> cuts it first. The
+      <code>speaker_split_turns</code> config key (default <code>true</code>) turns this on or off:</p>
     <ol>
       <li>Slide a <b>1.25 s</b> window (0.25 s hop) over the utterance and embed every window in one
         batched forward pass.</li>
@@ -259,11 +273,13 @@
       <li>Snap each surviving cut to the widest inter-word silence nearby, using the engine's word
         timestamps.</li>
     </ol>
-    <p>Each resulting turn is emitted as its own chunk with its own embedding, so the incoming speaker
-      is placed on their own audio rather than inheriting a label. The client already merges
-      consecutive same-speaker chunks into one segment and keeps differing ones apart, so nothing
-      downstream changed. A cut with no clean silence between the voices carries <code>overlap</code>,
-      and the transcript marks it rather than implying the timing is exact.</p>
+    <p>The utterance was already sent as one chunk, so the split arrives afterward as one
+      <code>transcript_split</code> message that replaces that chunk with one part per turn. The
+      first part keeps the original chunk id and the others take new ids. Each turn is labelled from
+      its own embedding, so the incoming speaker is placed on their own audio rather than inheriting
+      a label. The client merges consecutive same-speaker chunks into one segment and keeps differing
+      ones apart. A cut with no clean silence between the voices carries <code>overlap</code>, and
+      the transcript marks it rather than implying the timing is exact.</p>
     <p>Word timestamps are required, and a backend that cannot report them simply never splits: a wrong
       text cut is worse than a single label. Whisper and Parakeet both report them.</p>
 
@@ -344,12 +360,13 @@
       <thead><tr><th>Type</th><th>Fields</th><th>Meaning</th></tr></thead>
       <tbody>
         <tr><td><code>interim</code></td><td><code>text</code></td><td>A volatile word-by-word draft of the in-flight utterance (Parakeet only).</td></tr>
-        <tr><td><code>transcript</code></td><td><code>text</code>, <code>speaker</code>, <code>chunk_id</code>, <code>overlap</code>; when translating, <code>translating</code> plus <code>translate_via</code>/<code>translate_target</code> for the Apple path</td><td>A settled final (one speaker turn), labeled with its speaker and a monotonic chunk id. <code>overlap</code> marks a turn that began before the previous speaker stopped. <code>translating: true</code> tells the client to show a pending translation slot for this chunk.</td></tr>
+        <tr><td><code>transcript</code></td><td><code>text</code>, <code>speaker</code>, <code>chunk_id</code>, <code>language</code>; when translating, <code>translating</code> plus <code>translate_via</code>/<code>translate_target</code> for the Apple path</td><td>A settled final, sent at once under a provisional speaker label (the last speaker) with a monotonic chunk id. <code>language</code> is the language Whisper detected, or <code>null</code> for Parakeet. <code>translating: true</code> tells the client to show a pending translation slot for this chunk.</td></tr>
+        <tr><td><code>transcript_split</code></td><td><code>chunk_id</code>, <code>parts</code> (list of <code>chunk_id</code>, <code>text</code>, <code>speaker</code>, optional <code>overlap</code>)</td><td>Replaces an earlier final with one part per speaker turn. The first part keeps the original chunk id. <code>overlap</code> marks a turn that began before the previous speaker stopped.</td></tr>
         <tr><td><code>translation</code></td><td><code>chunk_id</code>, <code>text</code>, <code>target</code></td><td>The settled translation line for an earlier final, delivered when Canary's queued decode lands.</td></tr>
         <tr><td><code>speaker_named</code></td><td><code>names</code> (map of <code>speaker</code> to name)</td><td>An identity recovered from the voiceprint gallery, applied like a manual rename.</td></tr>
         <tr><td><code>speaker_error</code></td><td><code>message</code></td><td>Speaker labelling stopped (for example the speaker model cannot load); <code>message</code> says why. Sent once per distinct error per connection. Labels already sent stay provisional.</td></tr>
-        <tr><td><code>speaker_update</code></td><td><code>updates</code> (list of <code>chunk_id</code> to <code>speaker</code>)</td><td>Re-clustering corrections that retroactively re-label earlier segments.</td></tr>
-        <tr><td><code>model_loading</code></td><td><code>backend</code>, <code>label</code>, <code>stage</code>, <code>progress</code></td><td>Local-mode load banner, <code>stage</code> one of <code>start</code>/<code>loading</code>/<code>ready</code>.</td></tr>
+        <tr><td><code>speaker_update</code></td><td><code>updates</code> (list of <code>chunk_id</code> to <code>speaker</code>)</td><td>The label for a final whose provisional label was wrong, and re-clustering corrections that retroactively re-label earlier segments.</td></tr>
+        <tr><td><code>model_loading</code></td><td><code>backend</code>, <code>label</code>, <code>stage</code>, <code>progress</code></td><td>Load banner, <code>stage</code> one of <code>start</code>/<code>loading</code>/<code>ready</code>.</td></tr>
         <tr><td><code>model_unloaded</code></td><td><code>backend</code>, <code>label</code></td><td>The paired unload notice on an engine switch.</td></tr>
         <tr><td><code>pong</code></td><td>-</td><td>Reply to a <code>ping</code> keepalive.</td></tr>
         <tr><td><code>session_ended</code></td><td>-</td><td>Acknowledges <code>stop</code> after the last in-flight utterance is drained.</td></tr>
@@ -368,6 +385,8 @@
       <dt><code class="path">server/audio_buffer.py</code></dt><dd>The <code>UtteranceBuffer</code>: webrtcvad gating, trailing-silence settling, and the in-flight pending window.</dd>
       <dt><code class="path">server/diarization/speakers.py</code></dt><dd>Immediate assignment, per-encoder thresholds, backchannel gates, and periodic re-clustering with label re-mapping.</dd>
       <dt><code class="path">server/diarization/embedder.py</code></dt><dd>The speaker encoder behind one call: ReDimNet2 by default, ECAPA when <code>speaker_embedder</code> asks for it, batched for the turn splitter. A load failure is remembered and raised as a visible error until a new recording or an install from Settings.</dd>
+      <dt><code class="path">server/diarization/live.py</code></dt><dd>The per-connection labeller: sends each final at once, then labels it, splits it at handovers, and sends <code>speaker_update</code>, <code>transcript_split</code> and <code>speaker_error</code>.</dd>
+      <dt><code class="path">server/capture_helper.py</code></dt><dd>Relays the capture helper (native mic and system or app audio) to the page in a source install.</dd>
       <dt><code class="path">server/diarization/turns.py</code></dt><dd>Cuts one utterance at its speaker handovers using window embeddings plus the engine's word timestamps.</dd>
       <dt><code class="path">server/diarization/voiceprints.py</code></dt><dd>Named identities that outlive the session, filed per encoder.</dd>
     </div>

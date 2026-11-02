@@ -3,17 +3,17 @@ WSDiagram.mount("voice-flow-diagram", {
   title: "Voice capture to summary",
   grid: { nodeW: 168, nodeH: 60, gapX: 54, gapY: 40 },
   groups: {
-    browser: { label: "In the browser" },
+    browser: { label: "In the app" },
     transport: { label: "Same origin" },
-    local: { label: "On-device" }
+    local: { label: "On this Mac" }
   },
   nodes: [
-    { id: "mic", group: "browser", col: 0, row: 0, label: "Microphone", sub: "getUserMedia", desc: "Your default input device. An AudioWorklet turns it into raw PCM samples in the page." },
-    { id: "ws", group: "transport", col: 1, row: 0, label: "WebSocket /ws", sub: "PCM16", desc: "The page streams PCM16 audio chunks over a WebSocket to the local server. Nothing leaves your machine." },
-    { id: "whisper", group: "local", col: 2, row: 0, label: "ASR engine", sub: "on-device", desc: "The selected engine (Whisper or Parakeet) runs locally and turns audio into text. Whisper transcribes whole utterances; Parakeet streams words as you speak. An optional translator (Canary or Apple) adds a translated line per segment." },
-    { id: "diar", group: "local", col: 3, row: 0, label: "Speaker labels", sub: "diarization", desc: "Clustering assigns each segment a speaker (Speaker 1, Speaker 2). Later re-clustering can correct earlier labels." },
-    { id: "panel", group: "browser", col: 4, row: 0, label: "Live transcript", sub: "right panel", desc: "Segments and a live draft row render in the Transcript panel, grouped by speaker. It follows the newest line while you are at the bottom; scroll up and a floating arrow jumps back to the latest." },
-    { id: "ask", group: "browser", col: 5, row: 0, label: "Summarize in chat", sub: "then /export", desc: "Ask Claude to summarize the discussion. Claude sees only the text transcript, never the audio. /export downloads the conversation as a plain-text file." }
+    { id: "mic", group: "browser", col: 0, row: 0, label: "Microphone", sub: "and This Mac audio", desc: "The Mac app captures the microphone with its own code. In a source install, the capture helper that setup.sh builds does the same work for the browser page. The audio of this Mac or of one app can join the microphone." },
+    { id: "ws", group: "transport", col: 1, row: 0, label: "WebSocket /ws", sub: "PCM16", desc: "The page sends 16 kHz PCM16 audio parts over a WebSocket to the local server. No audio goes out of this Mac." },
+    { id: "whisper", group: "local", col: 2, row: 0, label: "ASR engine", sub: "on this Mac", desc: "The selected engine (Whisper or Parakeet) runs on this Mac and changes the audio into text. Whisper transcribes full sentences. Parakeet shows words during the speech. A translator (Canary or Apple) can add a translated line to each segment." },
+    { id: "diar", group: "local", col: 3, row: 0, label: "Speaker labels", sub: "diarization", desc: "The app gives each segment a speaker label (Speaker 1, Speaker 2). During a long recording, the app can correct labels that it gave before." },
+    { id: "panel", group: "browser", col: 4, row: 0, label: "Live transcript", sub: "right panel", desc: "Segments and a live row show in the Transcript panel, with the speaker labels. The panel follows the last line when you are at the bottom. If you scroll up, an arrow button moves you back to the last line." },
+    { id: "ask", group: "browser", col: 5, row: 0, label: "Summary in chat", sub: "then /export", desc: "Ask Claude for a summary of the discussion. Claude receives only the transcript text, not the audio. /export saves the conversation as a text file." }
   ],
   edges: [
     { from: "mic", to: "ws", label: "PCM16" },

@@ -20,21 +20,23 @@
       hand-edit config or understand what a toggle actually changes.</p>
 
     <p>Settings are split over three surfaces. The gear icon opens the Settings panel, whose fields
-      write config keys directly. A few controls live in the chat composer instead (model, effort,
-      response length, permission mode) because they change per session rather than per install. And
-      every key, including the ones with no field anywhere, can be edited as JSON: the
-      <b>config.json</b> link under Settings &gt; Model mode and Settings &gt; Models opens your user
-      config file in an editor that validates and applies on save. Everything below is resolved by
+      write config keys directly. A few controls live in the chat composer instead (model, thinking
+      level, answer length, permission mode) because they change per session rather than per install.
+      And every key, including the ones with no field anywhere, can be edited as JSON: the
+      <b>config.user.json</b> link in Settings &gt; Models &gt; Chat (in the Local chat section, which
+      shows even when no on-device model is installed) opens your user config file in an editor that
+      validates and applies on save. Everything below is resolved by
       <code class="path">server/infrastructure/config.py</code>, which merges several layers in
       priority order (see <a href="#layers">Config layers</a>).</p>
 
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
-      <div class="callout__body"><p>Seven keys are <b>latched per session</b>: <code>bedrock_region</code>,
-        <code>chat_models</code>, <code>chat_model_meta</code>, <code>default_chat_model</code>,
-        <code>effort_level</code>, <code>brief_mode</code> and <code>permission_mode</code> are
-        snapshotted when a chat turn first starts, so changing them mid-conversation never disrupts an
-        in-flight turn or invalidates the prompt cache. The new value applies to the next new session.
+      <div class="callout__body"><p>The model catalog (<code>chat_models</code> and
+        <code>chat_model_meta</code>), <code>default_chat_model</code> and the
+        <code>effort_level</code> fallback are <b>latched per session</b>: they are snapshotted when a
+        session's first chat turn starts, so changing them mid-conversation never disrupts an in-flight
+        turn or invalidates the prompt cache. The new value applies to the next new session. The Bedrock
+        Region and the permission mode are read live and apply on the next call.
         See <a href="arch-persistence.html">Persistence</a> for the latch details.</p></div>
     </div>
 
@@ -61,8 +63,7 @@
           <td>API keys</td>
           <td>Enables the <code>web_search</code> tool; <code>web_fetch</code> works without it. Left
             empty by default, which disables web search entirely. The API never returns the raw key
-            back to the UI; you only see a masked hint. Prefer the environment variable path (see
-            <a href="#tavily">Tavily key</a>).</td>
+            back to the UI; you only see a masked hint. See <a href="#tavily">Tavily key</a>.</td>
         </tr>
         <tr>
           <td><b>Transcription Model</b></td>
@@ -94,7 +95,7 @@
           <td><b>Per-capability backends</b></td>
           <td>Model mode</td>
           <td>Shown only in Hybrid mode: one picker each for Embeddings, Reranker, Entity extraction
-            and the indexing writer. Writes the <code>backends</code> object.</td>
+            and the <b>One-shot writer (summaries)</b>. Writes the <code>backends</code> object.</td>
         </tr>
         <tr>
           <td><b>Models &gt; Chat</b></td>
@@ -115,9 +116,10 @@
             an official model, the row gives the reason. Each row shows if your Mac
             has sufficient memory for the model. The calculation uses the file size, the KV cache of
             the model at the context window of the install, and the compute buffers. Refer to
-            <a href="tut-model-modes.html#fit-grade">Memory fit</a>. Installing a local chat model
-            also flips
-            <code>backends.index_llm</code> to it. Removing a local model deletes its weights; removing a
+            <a href="tut-model-modes.html#fit-grade">Memory fit</a>. When you install a local chat
+            model in Local or Hybrid mode while <code>backends.index_llm</code> is still
+            <code>"haiku"</code>, the install sets it to <code>"local"</code> (follow the active
+            on-device model); any other value stays as it is. Removing a local model deletes its weights; removing a
             cloud (Bedrock) model just tombstones it in the picker.</td>
         </tr>
         <tr>
@@ -128,7 +130,7 @@
             immediately. See <a href="#feature-flags">Feature flags</a>.</td>
         </tr>
         <tr>
-          <td><b>Budget Settings</b></td>
+          <td><b>Budgets</b></td>
           <td>Costs</td>
           <td>Five controls: <b>Max Session Cost (USD)</b>, <b>Max Daily Cost (USD, UTC day)</b>,
             <b>Enable model fallback</b>, <b>Round limit</b> and <b>Time limit (minutes)</b>. A blank or
@@ -152,9 +154,12 @@
           <td>One-shot migration from a Claude Code or Codex CLI project: its instructions file
             (<code class="path">CLAUDE.md</code> or <code class="path">AGENTS.md</code>) copies to
             the project's <code class="path">WHISPER.md</code> under <code class="path">~/.whisper/rules/</code>,
-            its skills copy into the skills folder, and its
-            <code class="path">.mcp.json</code> translates into MCP server config. Never overwrites a
-            file that already exists, and nothing it imports is executed as part of the import.</td>
+            its skills copy into the skills folder, and its MCP servers (a Claude Code
+            <code class="path">.mcp.json</code>, or the <code>[mcp_servers]</code> tables of a Codex
+            <code class="path">config.toml</code>) are added to the MCP server config. An existing
+            <code class="path">WHISPER.md</code> gets the imported instructions appended; no file is
+            overwritten, a server or skill that already exists is skipped, and nothing it imports is
+            executed as part of the import.</td>
         </tr>
         <tr>
           <td><b>Appearance</b></td>
@@ -170,50 +175,55 @@
 
     <h3 id="composer-controls">The composer controls</h3>
     <p>Four settings are not in the Settings panel at all. They sit on the chat composer because you
-      change them per conversation; the config key is only the value a new session starts from.</p>
+      change them per conversation. The <b>How it thinks</b> capsule holds the Model, Thinking and
+      Answers rows (and a Context row for an on-device model); the <b>Permissions</b> capsule holds
+      the permission mode.</p>
     <div class="table-wrap"><table>
-      <thead><tr><th>Control</th><th>Key it starts from</th><th>What it does</th></tr></thead>
+      <thead><tr><th>Control</th><th>Where it starts from</th><th>What it does</th></tr></thead>
       <tbody>
         <tr>
-          <td><b>Model</b> dropdown</td>
-          <td><code>default_chat_model</code></td>
+          <td><b>Model</b> row</td>
+          <td>the last model you picked in this browser, else <code>default_chat_model</code></td>
           <td>The model this session runs on: Haiku 4.5, Sonnet 5.5, Opus 5.5,
             Fable 5.1, GPT-6 Astra / Luna, GPT-6.1 Sol, or an
             on-device model you installed. The picker only shows models valid for the current model
-            mode. The shipped default is <code>gpt6-luna</code> (set in
-            <code class="path">config.example.json</code>, the SYSTEM layer every install reads);
-            the code-level fallback used if that file is unreadable is the same key.
-            Fable 5.1 requires the data-retention consent flow before they can be selected.
+            mode. The browser remembers your last pick; with no remembered pick, an installed on-device
+            model is chosen first, then <code>default_chat_model</code>. The shipped default is
+            <code>gpt6-luna</code> (set in <code class="path">config.example.json</code>, the SYSTEM
+            layer every install reads, and the same key in code).
+            Fable 5.1 requires the data-retention consent flow before it can be selected.
             Full catalog on <a href="arch-backends.html">Model backends</a>.</td>
         </tr>
         <tr>
-          <td><b>Effort</b> pill</td>
-          <td><code>effort_level</code></td>
-          <td>The reasoning budget the model is given, from lowest to highest: <code>none</code>,
-            <code>low</code>, <code>medium</code>, <code>high</code>, <code>extra</code> (sent to
-            Bedrock as <code>xhigh</code>), <code>max</code>, and <code>ultracode</code>. Higher effort
-            trades latency and cost for deeper thinking. The levels a model exposes depend on its tier:
-            Opus 5.5, Sonnet 5.5 and Fable 5.1 expose the full ladder <code>low</code> to <code>max</code>;
-            GPT-6 Astra / Luna and GPT-6.1 Sol run <code>low</code> to <code>max</code> and skip
-            <code>extra</code>; Haiku and the local
-            models have no effort control. <code>ultracode</code> is appended for any model that can
-            orchestrate a workflow, and is a session mode rather than a plain level: it sends the
-            model's own top reasoning rung plus dynamic-workflow orchestration. The value is clamped to
-            the nearest level the selected model supports when you switch models, and the retired
-            <code>auto</code> value is coerced back to a real level.</td>
+          <td><b>Thinking</b> row</td>
+          <td><code>effort_level</code> (cloud models)</td>
+          <td>The reasoning budget the model is given. For a cloud model the levels, from lowest to
+            highest, are <code>low</code>, <code>medium</code>, <code>high</code>, <code>extra</code>
+            (sent to Bedrock as <code>xhigh</code>), <code>max</code>, and <code>ultracode</code>.
+            Higher effort trades latency and cost for deeper thinking. The levels a model exposes depend
+            on its tier: Opus 5.5, Sonnet 5.5 and Fable 5.1 expose the full ladder <code>low</code> to
+            <code>max</code>; GPT-6 Astra / Luna and GPT-6.1 Sol run <code>low</code> to
+            <code>max</code> and skip <code>extra</code>; Haiku has no thinking control.
+            <code>ultracode</code> is appended for any model that can orchestrate a workflow, and is a
+            session mode rather than a plain level: it sends the model's own top reasoning rung plus
+            dynamic-workflow orchestration. The value is clamped to the nearest level the selected
+            model supports when you switch models. An on-device model that can think gets its own
+            levels, Off, Low, Medium, High and Max (default Max), read from its chat template and kept
+            apart from the cloud level.</td>
         </tr>
         <tr>
-          <td><b>Answers</b> in the "How it thinks" group</td>
-          <td><code>brief_mode</code></td>
-          <td>Brief, Normal or Detailed. On a model with native verbosity (the GPT models) the choice
-            is sent as the provider's own <code>verbosity</code> value; on every other model only the
-            Brief end does anything, as the <code>brief_mode</code> concise instruction.</td>
+          <td><b>Answers</b> row</td>
+          <td>this browser's last choice (default Normal)</td>
+          <td>Brief, Normal or Detailed, for cloud models. On a model with native verbosity (the GPT
+            models) the choice is sent as the provider's own <code>verbosity</code> value; on every
+            other model only the Brief end does anything, as a concise-reply instruction for that
+            message. No config key holds it.</td>
         </tr>
         <tr>
-          <td><b>Mode</b> dropdown</td>
+          <td><b>Permissions</b> capsule</td>
           <td><code class="path">permissions.json</code></td>
-          <td>How the assistant is gated when it wants to act: Default, Auto, Plan, Accept edits,
-            Bypass or Don't ask. Unlike the other three, this one persists globally: it writes the same
+          <td>What runs without asking: Asks first, Auto, Plan, Accept edits, Bypass or Don't ask.
+            Unlike the other three, this one persists globally: it writes the same
             <code>mode</code> in <code class="path">permissions.json</code> that Settings &gt;
             Permissions does. See <a href="#permission-modes">Permission modes</a> and
             <a href="tut-permissions.html">Permissions &amp; approvals</a>.</td>
@@ -227,22 +237,22 @@
       <code class="path">server/infrastructure/config.py</code>; where
       <code class="path">config.example.json</code> ships a different value, the row says so, because
       that file is the SYSTEM layer every install actually reads. "No field" means the key has no
-      control anywhere: edit it through the <b>config.json</b> link described above.</p>
+      control anywhere: edit it through the <b>config.user.json</b> link described above.</p>
 
     <h3 id="keys-models">Models and reasoning</h3>
     <div class="table-wrap"><table>
       <thead><tr><th>Key</th><th>Type</th><th>Default</th><th>Written by</th></tr></thead>
       <tbody>
         <tr><td><code>bedrock_region</code></td><td>string</td><td><code>"us-east-1"</code></td><td>Bedrock Region</td></tr>
-        <tr><td><code>default_chat_model</code></td><td>string</td><td><code>"gpt6-luna"</code> (shipped value and code fallback)</td><td>Model dropdown (per session)</td></tr>
-        <tr><td><code>chat_models</code></td><td>object</td><td>the catalog in <code class="path">config.example.json</code></td><td>Models &gt; Chat, config.json (the catalog behind the picker)</td></tr>
+        <tr><td><code>default_chat_model</code></td><td>string</td><td><code>"gpt6-luna"</code> (shipped value and code fallback)</td><td>No field. The Model row starts from it only when this browser has no remembered pick and the picker offers no on-device model; picking a model does not write it</td></tr>
+        <tr><td><code>chat_models</code></td><td>object</td><td>the catalog in <code class="path">config.example.json</code></td><td>Models &gt; Discover adds an entry for each installed on-device model; edit others in config.user.json (the catalog behind the picker)</td></tr>
         <tr><td><code>chat_models_disabled</code></td><td>array</td><td><code>[]</code></td><td>Models &gt; Chat visibility toggles (hides shipped models without deleting them)</td></tr>
         <tr><td><code>model_mode</code></td><td>string</td><td><code>"cloud"</code> in code and in the shipped file; a fresh install is seeded <code>"local"</code></td><td>Model mode &gt; Mode</td></tr>
         <tr><td><code>backends</code></td><td>object</td><td><code>{}</code>; a fresh install is seeded <code>{"embed":"qwen3","rerank":"qwen3","ner":"gliner","index_llm":"haiku"}</code></td><td>Model mode (hybrid only)</td></tr>
-        <tr><td><code>local_mode</code></td><td>boolean</td><td><code>false</code></td><td>No field. Legacy key, read only as a fallback when no <code>model_mode</code> is set</td></tr>
-        <tr><td><code>effort_level</code></td><td>string</td><td><code>"high"</code> code fallback; shipped value <code>"max"</code></td><td>Effort pill (per session)</td></tr>
-        <tr><td><code>brief_mode</code></td><td>boolean</td><td><code>false</code></td><td>Answers setting in the "How it thinks" group (per session)</td></tr>
+        <tr><td><code>effort_level</code></td><td>string</td><td><code>"high"</code> code fallback; shipped value <code>"max"</code></td><td>No field. The Thinking row of a cloud model starts from it; changing the level in the composer does not write it</td></tr>
         <tr><td><code>auxiliary_models</code></td><td>object</td><td><code>{}</code></td><td>No field. See <a href="#auxiliary">Auxiliary models</a></td></tr>
+        <tr><td><code>progressive_tools_core_extra</code></td><td>array</td><td>not set</td><td>No field, and not in <code class="path">config.example.json</code>. Tool names forced into the always-advertised core tool set (see the <code>progressive_tools</code> flag)</td></tr>
+        <tr><td><code>progressive_tools_defer_extra</code></td><td>array</td><td>not set</td><td>No field, and not in <code class="path">config.example.json</code>. Tool names forced out of the core tool set, so the model finds them through <code>tool_search</code></td></tr>
         <tr><td><code>model_fallback_enabled</code></td><td>boolean</td><td><code>false</code></td><td>Costs &gt; Enable model fallback. Steps the model down a cheaper chain once spend reaches 80 percent of a cost cap</td></tr>
         <tr><td><code>max_session_cost_usd</code></td><td>number</td><td><code>0.0</code> (unlimited)</td><td>Costs &gt; Max Session Cost</td></tr>
         <tr><td><code>max_daily_cost_usd</code></td><td>number</td><td><code>0.0</code> (unlimited)</td><td>Costs &gt; Max Daily Cost (the UTC day, reset at 00:00 UTC)</td></tr>
@@ -254,7 +264,7 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Key</th><th>Type</th><th>Default</th><th>Written by</th></tr></thead>
       <tbody>
-        <tr><td><code>permission_mode</code></td><td>string</td><td><code>"default"</code></td><td>No field. The live mode lives in <code class="path">permissions.json</code>, which both the composer Mode dropdown and Settings &gt; Permissions write; this config key is the fallback when that file cannot be read, and the mode a headless or scheduled run starts in</td></tr>
+        <tr><td><code>permission_mode</code></td><td>string</td><td><code>"default"</code></td><td>No field. No run reads this key. The live mode is the <code>mode</code> in <code class="path">permissions.json</code>, which both the composer Permissions capsule and Settings &gt; Permissions write. A voice run uses that mode, and an unattended run (scheduled or headless) uses <code>default</code></td></tr>
         <tr><td><code>permission_explainer_enabled</code></td><td>boolean</td><td><code>true</code></td><td>No field. When on, an approval card carries a short risk level and explanation written by a side model call, capped at 3 seconds so the card is never delayed</td></tr>
         <tr><td><code>auto_mode_allow</code></td><td>array</td><td><code>[]</code></td><td>No field. Extra patterns the <code>auto</code> classifier always allows</td></tr>
         <tr><td><code>auto_mode_soft_deny</code></td><td>array</td><td><code>[]</code></td><td>No field. Patterns the <code>auto</code> classifier should decline</td></tr>
@@ -262,7 +272,7 @@
         <tr><td><code>tool_loop_caps</code></td><td>object</td><td><code>{}</code></td><td>No field. Per-turn call caps overlaying the loop guard's own. See <a href="#loop-caps">Loop-guard caps</a></td></tr>
         <tr><td><code>round_limit</code></td><td>number</td><td><code>120</code></td><td>Costs &gt; Round limit. The most model rounds any run takes: chat turns, voice requests, every agent type, scheduled and headless runs. The memory agents keep their own small caps</td></tr>
         <tr><td><code>time_limit_minutes</code></td><td>number</td><td><code>15</code></td><td>Costs &gt; Time limit. The time budget of a run nobody is watching: agents, scheduled runs and unattended headless runs. Time an agent spends waiting on agents it started does not count, since those have their own. Chat and voice have no time limit</td></tr>
-        <tr><td><code>wake_parent_on_reports</code></td><td>boolean</td><td><code>true</code></td><td>No field. When agent reports land in a session with no turn running, start a one-round synthesis turn that answers from them. Off leaves the reports as a card until you type</td></tr>
+        <tr><td><code>wake_parent_on_reports</code></td><td>boolean</td><td><code>true</code></td><td>No field. When agent reports land in a session with no turn running, start a one-round synthesis turn that answers from them. There is no such turn when you stopped the turn that launched the agents, in Local mode, for agents that ran on an on-device model, or when the session cost cap is reached. Off, or in those cases, the reports stay as a card in the chat and your next message reads them</td></tr>
         <tr><td><code>goal_max_consecutive_blocks</code></td><td>number</td><td><code>8</code> (shipped and in code)</td><td>No field. How many times the completion gate may block a turn from ending before it gives up</td></tr>
       </tbody>
     </table></div>
@@ -271,12 +281,12 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Key</th><th>Type</th><th>Default</th><th>Written by</th></tr></thead>
       <tbody>
-        <tr><td><code>transcription_backend</code></td><td>string</td><td><code>"streaming"</code> (Parakeet)</td><td>Transcription Model, and the transcript panel header (<code>whisper</code> / <code>streaming</code>). A saved <code>"canary"</code> is rewritten to <code>"streaming"</code> once at startup</td></tr>
-        <tr><td><code>translate_mode</code></td><td>string</td><td><code>"off"</code></td><td>Translation Model (<code>off</code> / <code>canary</code> / <code>apple</code>; legacy <code>auto</code> and <code>model</code> read as <code>canary</code>)</td></tr>
+        <tr><td><code>transcription_backend</code></td><td>string</td><td><code>"streaming"</code> (Parakeet)</td><td>Transcription Model, and the transcript panel header (<code>whisper</code> / <code>streaming</code>)</td></tr>
+        <tr><td><code>translate_mode</code></td><td>string</td><td><code>"off"</code></td><td>Translation Model (<code>off</code> / <code>canary</code> / <code>apple</code>)</td></tr>
         <tr><td><code>translate_target</code></td><td>string</td><td><code>"en"</code></td><td>Translate To</td></tr>
-        <tr><td><code>speaker_embedder</code></td><td>string</td><td><code>"redimnet"</code></td><td>No field. The speaker encoder behind "Speaker N": <code>redimnet</code> (ReDimNet2-B2) or <code>ecapa</code>. ReDimNet2 downloads on first use; if it cannot load, speaker labels stop with an error and the encoder is not switched. Changing it hides stored voiceprints, which are filed per encoder, because vectors from different encoders are not comparable</td></tr>
+        <tr><td><code>speaker_embedder</code></td><td>string</td><td><code>"redimnet"</code></td><td>No field. The speaker encoder behind "Speaker N": <code>redimnet</code> (ReDimNet2-B2) or <code>ecapa</code>. ReDimNet2 ships with the Mac app, and <code>setup.sh</code> fetches it for a source install; a missing copy downloads on first use. If it cannot load, speaker labels stop with an error and the encoder is not switched. Changing it hides stored voiceprints, which are filed per encoder, because vectors from different encoders are not comparable</td></tr>
         <tr><td><code>speaker_split_turns</code></td><td>boolean</td><td><code>true</code></td><td>No field. Cut one utterance at a speaker handover instead of labelling the whole thing as one speaker. Needs word timestamps, which Whisper and Parakeet both report</td></tr>
-        <tr><td><code>speaker_voiceprints</code></td><td>boolean</td><td><code>true</code></td><td>No field. Remember named speakers across recordings, so renaming "Speaker 2" to a name once gets that person their name back in later sessions</td></tr>
+        <tr><td><code>speaker_voiceprints</code></td><td>boolean</td><td><code>false</code> (opt-in)</td><td>No field. Remember named speakers across recordings, so renaming "Speaker 2" to a name once gets that person their name back in later sessions</td></tr>
         <tr><td><code>voice</code></td><td>object</td><td><code>{"enabled": true, "model_id": "amazon.nova-2-sonic-v1:0", "region": "", "voice_id": "tiffany", "endpointing": "MEDIUM"}</code></td><td>No field. See <a href="#voice">Voice-mode keys</a></td></tr>
       </tbody>
     </table></div>
@@ -285,24 +295,15 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Key</th><th>Type</th><th>Default</th><th>Written by</th></tr></thead>
       <tbody>
-        <tr><td><code>tavily_api_key</code></td><td>string</td><td><code>""</code></td><td>Tavily API Key, or the <code>TAVILY_API_KEY</code> environment variable, which wins</td></tr>
+        <tr><td><code>tavily_api_key</code></td><td>string</td><td><code>""</code></td><td>Tavily API Key, or the <code>TAVILY_API_KEY</code> environment variable of the server process, which wins. See <a href="#tavily">The Tavily key</a></td></tr>
         <tr><td><code>cron_timezone</code></td><td>string</td><td><code>""</code></td><td>No field. The timezone wall-clock cron schedules fire in. Blank means the host timezone, read from <code>$TZ</code> then <code class="path">/etc/localtime</code>. A per-job <code>schedule.tz</code> always wins</td></tr>
         <tr><td><code>cron_max_runs_per_job</code></td><td>number</td><td><code>200</code></td><td>No field. How many past runs of one job are kept in the run history</td></tr>
         <tr><td><code>cron_misfire_grace_sec</code></td><td>number</td><td><code>3600</code></td><td>No field. How late a fire missed while the app was off may still run. Booting at 09:15 still runs a 09:00 job; booting at 11:00 skips it</td></tr>
-        <tr><td><code>data_dir</code></td><td>string</td><td><code>""</code></td><td>No field. Where app data (result cache, JSON stores, databases) lives. Blank means the default data folder under the app home. The <code>WHISPER_DATA_DIR</code> environment variable wins over it</td></tr>
-        <tr><td><code>mode_notice_seen</code></td><td>boolean</td><td><code>false</code></td><td>Set to <code>true</code> when you dismiss the first-run model-mode notice. It lives in config rather than browser storage because the Mac app serves the SPA from a fresh origin whenever its port changes</td></tr>
+        <tr><td><code>data_dir</code></td><td>string</td><td><code>""</code></td><td>No field. Where app data lives: the JSON stores (<code class="path">permissions.json</code> among them), the result cache, scratch, memory and workflows. Blank means the <code class="path">data</code> folder in your user folder: <code class="path">~/.whisper/data</code> for the Mac app, <code class="path">data/</code> in the checkout for a source install. <code class="path">sessions.db</code> and the indexes stay in the app storage folder. The <code>WHISPER_DATA_DIR</code> environment variable wins over it</td></tr>
+        <tr><td><code>mode_notice_seen</code></td><td>boolean</td><td><code>false</code></td><td>Set to <code>true</code> when you dismiss the first-run model-mode notice. It lives in config rather than browser storage because browser storage belongs to the page origin, which changes when the app has to use a port other than its usual one</td></tr>
         <tr><td><code>map_reduce_summary</code></td><td>object</td><td>the block in <code class="path">config.example.json</code></td><td>No field. See <a href="#map-reduce">Transcript condensation keys</a></td></tr>
       </tbody>
     </table></div>
-
-    <div class="callout callout--tip">
-      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
-      <div class="callout__body"><p>Older configs used <code>local_mode</code> (a plain on/off boolean)
-        before <code>model_mode</code> existed. Both are still read: if a config has
-        <code>local_mode</code> set but no explicit <code>model_mode</code>, the loader treats it as
-        <code>"local"</code> so your on-device models stay visible. An explicit <code>model_mode</code>
-        always wins.</p></div>
-    </div>
 
     <h2 id="model-selection">Model mode and backends</h2>
     <p><code>model_mode</code> picks where the index and retrieval pipeline runs; the
@@ -318,17 +319,18 @@
         <code class="path">server/infrastructure/config.py</code> seeds
         <code class="path">config.user.json</code> with <code>model_mode: "local"</code> plus a
         <code>backends</code> map of on-device embeddings and reranking (Qwen3), GLiNER entity
-        extraction, and cloud Haiku as the indexing writer. The user layer outranks SYSTEM, so
+        extraction, and cloud Haiku as the one-shot writer. The user layer outranks SYSTEM, so
         <code>"local"</code> is what a fresh Mac app or a fresh <code>setup.sh</code> install actually
         runs. That seeded <code>backends</code> map is dormant while the mode is local and takes effect
-        the moment you switch to hybrid. The seed is written once and never touched again, so your own
-        choice always wins afterwards.</p></div>
+        the moment you switch to hybrid. The seed is written only when no
+        <code class="path">config.user.json</code> exists, so your own choice always wins
+        afterwards.</p></div>
     </div>
     <div class="spec">
-      <dt><code class="path">backends.embed</code></dt><dd><code>cohere</code> or <code>qwen3</code> - the embedding model for the index.</dd>
-      <dt><code class="path">backends.rerank</code></dt><dd><code>cohere</code> or <code>qwen3</code> - the reranker applied to retrieved passages.</dd>
-      <dt><code class="path">backends.ner</code></dt><dd><code>haiku</code>, <code>gliner</code>, or an on-device model key (LLM-based NER) - entity extraction for the GraphRAG entity graph.</dd>
-      <dt><code class="path">backends.index_llm</code></dt><dd><code>haiku</code>, an on-device model key, <code>local</code> (follow whichever local model is currently active), or <code>none</code> - the model that summarizes and enriches indexed content. Installing a local chat model from Discover flips this to it automatically.</dd>
+      <dt><code class="path">backends.embed</code></dt><dd><code>cohere</code> or <code>qwen3</code>: the embedding model for the index.</dd>
+      <dt><code class="path">backends.rerank</code></dt><dd><code>cohere</code> or <code>qwen3</code>: the reranker applied to retrieved passages.</dd>
+      <dt><code class="path">backends.ner</code></dt><dd><code>haiku</code>, <code>gliner</code>, or an on-device model key (LLM-based NER): entity extraction for the GraphRAG entity graph.</dd>
+      <dt><code class="path">backends.index_llm</code></dt><dd><code>haiku</code>, an on-device model key, <code>local</code> (follow whichever local model is currently active), or <code>none</code> (Off): the <b>One-shot writer (summaries)</b>, which runs one-shot map calls such as transcript condensation. The index settings of each folder choose the models for relationship mapping and chunk headers. Installing a local chat model in Local or Hybrid mode changes a still-seeded <code>"haiku"</code> to <code>"local"</code>.</dd>
     </div>
     <p>See <a href="arch-backends.html">Model backends &amp; modes</a> and
       <a href="arch-index.html">Index / GraphRAG</a> for how each capability is used.</p>
@@ -336,7 +338,7 @@
     <h2 id="voice">Voice-mode keys</h2>
     <p>The <code>voice</code> object configures the spoken conversation the <b>Talk</b> button opens
       (Amazon Nova 2 Sonic over Bedrock). It has no Settings-panel field: edit it through the
-      config.json dialog. Effective values resolve in
+      config.user.json editor. Effective values resolve in
       <code class="path">server/voice/routes.py</code>.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Sub-key</th><th>Default</th><th>Meaning</th></tr></thead>
@@ -348,20 +350,20 @@
         <tr><td><code>endpointing</code></td><td><code>"MEDIUM"</code></td><td><code>LOW</code>, <code>MEDIUM</code> or <code>HIGH</code>: how long a pause has to be before the model takes it as the end of your turn. Anything else falls back to <code>MEDIUM</code>.</td></tr>
       </tbody>
     </table></div>
-    <p>Voice mode also needs Python 3.12 or newer (the <code>aws-sdk-bedrock-runtime</code> package)
-      and AWS credentials, the same ones chat uses. When either is missing,
-      <code>GET /api/voice/status</code> says which. See <a href="tut-voice-mode.html">Voice
-      conversations</a>.</p>
+    <p>Voice mode is not available in Local mode, which is what a fresh install runs: switch
+      Settings &gt; Model mode to Hybrid or Cloud to use it. It also needs the
+      <code>aws-sdk-bedrock-runtime</code> package (both installs include it) and AWS credentials, the
+      same ones chat uses. When something is missing, <code>GET /api/voice/status</code> says what.
+      See <a href="tut-voice-mode.html">Voice conversations</a>.</p>
 
     <h2 id="auxiliary">Auxiliary models</h2>
-    <p>Every side call the assistant makes on your behalf used to be hard-coded to Haiku. The
-      <code>auxiliary_models</code> map names the model per task instead: a value is a
-      <code>chat_models</code> key, and the special value <code>"main"</code> means the session's own
-      model. A task absent from the map keeps its historical default, so the empty default map behaves
-      exactly as before. The ten tasks, from
+    <p>The <code>auxiliary_models</code> map names the model for each side call the assistant makes
+      on your behalf: a value is a <code>chat_models</code> key, and the special value
+      <code>"main"</code> means the session's own model. A task absent from the map uses the default
+      in the table below, so the empty default map runs every task on its default. The ten tasks, from
       <code class="path">server/infrastructure/auxiliary.py</code>:</p>
     <div class="table-wrap"><table>
-      <thead><tr><th>Task</th><th>Historical default</th><th>What it does</th></tr></thead>
+      <thead><tr><th>Task</th><th>Default</th><th>What it does</th></tr></thead>
       <tbody>
         <tr><td><code>memory_recall</code></td><td>Haiku</td><td>Picks which stored memories are relevant to the turn.</td></tr>
         <tr><td><code>goal_evaluator</code></td><td>Haiku</td><td>Judges whether a cloud-model session's goal is achieved yet. An on-device session is always judged by its own model, in every mode, and ignores this key.</td></tr>
@@ -370,14 +372,19 @@
         <tr><td><code>permission_explainer</code></td><td>Haiku</td><td>Writes the risk level and explanation on an approval card.</td></tr>
         <tr><td><code>query_rewrite</code></td><td>Haiku</td><td>Rewrites a follow-up question into a standalone search query before grounding.</td></tr>
         <tr><td><code>ci_diagnose</code></td><td>Haiku</td><td>Reads a failing CI run and says what broke.</td></tr>
-        <tr><td><code>activity_label</code></td><td>Haiku</td><td>Writes a caption of maximum eight words for the tool calls of each round in a chat turn. Each round of tool calls gets its own activity group. Thus a caption goes on one group. A group from an older transcript can have calls from many rounds. That group shows the last caption. If the group failed, the failure stays the label, and the caption becomes the tail. If the caption call fails or does not return in 3 s, the group keeps its deterministic label. A round that stops for an approval or a question gets no caption. If this task uses an on-device model, the server does not write captions. A chat that uses an on-device model gets no captions, whatever model this task uses.</td></tr>
+        <tr><td><code>activity_label</code></td><td>Haiku</td><td>Writes a caption of maximum eight words for the tool calls of each round in a chat turn. Each round of tool calls gets its own activity group. Thus a caption goes on one group. If the group failed, the failure stays the label, and the caption becomes the tail. If the caption call fails or does not return in 3 s, the group keeps its deterministic label. A round that stops for an approval or a question gets no caption. If this task uses an on-device model, the server does not write captions. A chat that uses an on-device model gets no captions, whatever model this task uses.</td></tr>
         <tr><td><code>compaction</code></td><td>the session model</td><td>Summarizes older turns when the context window fills.</td></tr>
         <tr><td><code>learning_review</code></td><td>the session model</td><td>The post-turn review that turns corrections into memories and skills.</td></tr>
       </tbody>
     </table></div>
-    <p>An on-device model key works for any task that goes through the one-shot path. The three
-      Bedrock-only call sites (recall, the classifier, the explainer) fall back to their default when
-      handed a key that is not a cloud model.</p>
+    <p>An on-device model key works for the tasks that go through the one-shot path. Five tasks call
+      Bedrock directly and need a cloud model: <code>memory_recall</code>,
+      <code>auto_mode_classifier</code>, <code>permission_explainer</code>,
+      <code>query_rewrite</code> and <code>title</code>. Given an on-device key, they use their
+      default model instead. <code>activity_label</code> writes no caption when its key is an
+      on-device model. In Local mode no side task calls the cloud: a session keeps its default title,
+      the auto-mode classifier asks you, the permission explainer and query rewriting do nothing, and
+      memory recall returns the newest memories.</p>
 
     <h2 id="loop-caps">Loop-guard caps</h2>
     <p>The loop guard (<code class="path">server/chat/loop_guard.py</code>, gated by the
@@ -398,8 +405,9 @@
       advanced &gt; Feature flags. Toggling one persists it immediately. Under the hood the
       toggle is surgical: it patches only that one boolean inside the <code>feature_flags</code> object
       and leaves every other byte of the config file untouched, so it never
-      reflows your formatting or flattens the model catalog. The live state of each flag is exposed
-      to the UI through the config endpoint so the panel can show what is currently on.</p>
+      reflows your formatting or flattens the model catalog. The panel reads the live state of each
+      flag from <code>GET /api/feature-flags</code>, including the reason a flag is off or limited in
+      Local mode.</p>
 
     <p>The full registry, from <code class="path">server/infrastructure/feature_flags.py</code>:</p>
     <div class="table-wrap"><table>
@@ -409,21 +417,22 @@
         <tr><td><code>git_context</code></td><td><code>true</code></td><td>Include git status and instructions in the system prompt.</td></tr>
         <tr><td><code>prompt_caching</code></td><td><code>true</code></td><td>Cloud (Bedrock) prompt caching of tool definitions and the static system prompt, to cut input-token cost on multi-turn conversations.</td></tr>
         <tr><td><code>progressive_tools</code></td><td><code>true</code></td><td>Progressive tool disclosure: advertise a core tool set plus session-activated tools, with everything else discoverable via <code>tool_search</code> from a compact index. Cuts roughly 60-75% of tool-schema tokens per turn.</td></tr>
-        <tr><td><code>strict_rag</code></td><td><code>true</code></td><td>When index grounding is injected, withhold the workspace file/search tools so the model answers from the retrieved passages instead of re-crawling files.</td></tr>
+        <tr><td><code>strict_rag</code></td><td><code>true</code></td><td>Registered, but it has no effect at present: the tool catalog stays the same on a grounded turn, and no executor reads the flag. The grounding block itself tells the model to answer from the retrieved passages.</td></tr>
         <tr><td><code>rag_hybrid_search</code></td><td><code>true</code></td><td>Fuse keyword/BM25 (SQLite FTS5) results with dense vector search via reciprocal-rank fusion.</td></tr>
         <tr><td><code>rag_reranker</code></td><td><code>false</code></td><td>Cross-encoder reranking of fused retrieval candidates before grounding's top-k (Cohere Rerank 3.5 in cloud mode, Qwen3-Reranker-0.6B in local mode). Off by default: the local model adds seconds per grounded turn and can OOM on memory-pressured machines, for a modest gain on top of hybrid retrieval.</td></tr>
         <tr><td><code>rag_query_rewrite</code></td><td><code>false</code></td><td>Use a fast LLM (Haiku) to rewrite a follow-up question into a standalone search query before grounding. Adds one model call per grounded turn. Off in Local mode, since the rewrite runs on a cloud model; the Feature flags panel says so.</td></tr>
-        <tr><td><code>auto_memory</code></td><td><code>true</code></td><td>Two-tier auto memory with extraction and recall: global (cross-workspace) plus project (workspace-scoped). Also gates whether the <code>memory_*</code> tools appear in the catalog.</td></tr>
+        <tr><td><code>auto_memory</code></td><td><code>true</code></td><td>Two-tier auto memory with extraction and recall: global (cross-workspace) plus project (workspace-scoped). Also gates whether the <code>memory_*</code> tools appear in the catalog. In Local mode it recalls saved memories but records no new ones, because recording runs on a cloud model.</td></tr>
         <tr><td><code>session_memory</code></td><td><code>true</code></td><td>Per-session structured summaries injected into the prompt.</td></tr>
         <tr><td><code>session_search</code></td><td><code>true</code></td><td>Full-text search over past sessions: the <code>session_search</code> tool and the sidebar's content search share one SQLite FTS5 index, with no model call. Also puts a recovery pointer in every compaction summary so summarized-away messages can be read back verbatim.</td></tr>
         <tr><td><code>goal_loop</code></td><td><code>true</code></td><td>Goal loop + completion gate: a session goal (set with <code>/goal</code>) auto-continues the turn until a judge says it is achieved (the <code>goal_evaluator</code> model for a cloud session, the session's own model on-device), capped by <code>goal_max_consecutive_blocks</code> (8). See <a href="arch-goals.html">The goal loop &amp; completion gate</a>.</td></tr>
+        <tr><td><code>requested_file_check</code></td><td><code>true</code></td><td>When you asked for a file in this turn and none was made, the completion gate asks for it once before the turn ends, so a request for a document, diagram or export is not answered in chat only.</td></tr>
         <tr><td><code>deliverable_check</code></td><td><code>true</code></td><td>Check every delivery a reply claims (a file saved, a folder, a removal, an artifact card, a push, commit, pull request, merge, issue, upload, message, deploy, schedule, link, memory or setting) against the disk and the turn's successful tool calls (a recap of earlier work against what earlier replies verified), and hold back from the chat each sentence whose claim does not hold. The turn continues with the held sentences named to the model, and ends with a note on what did not happen. Off, replies stream unchecked.</td></tr>
         <tr><td><code>verify_on_stop</code></td><td><code>true</code></td><td>When a turn edited code files but no test, lint, typecheck or build command ran successfully afterwards, the completion gate asks for a real verification or an honest blocker before the turn ends. At most two nudges per turn; prose-only edits never trigger it.</td></tr>
-        <tr><td><code>activity_labels</code></td><td><code>true</code></td><td>Write a short caption for the tool calls of each round in a chat turn, with the <code>activity_label</code> model. Each round of tool calls gets its own activity group. Thus a caption goes on one group. A group from an older transcript can have calls from many rounds. That group shows the last caption. If the group failed, the failure stays the label, and the caption becomes the tail. Only a cloud model writes captions. A chat that uses an on-device model gets no captions. In Local mode, the flag is off, and the Feature flags panel shows the reason. The deterministic label stays when the caption call is refused, fails, or does not return in 3 s.</td></tr>
+        <tr><td><code>activity_labels</code></td><td><code>true</code></td><td>Write a short caption for the tool calls of each round in a chat turn, with the <code>activity_label</code> model. Each round of tool calls gets its own activity group. Thus a caption goes on one group. If the group failed, the failure stays the label, and the caption becomes the tail. Only a cloud model writes captions. A chat that uses an on-device model gets no captions. In Local mode, the flag is off, and the Feature flags panel shows the reason. The deterministic label stays when the caption call is refused, fails, or does not return in 3 s.</td></tr>
         <tr><td><code>tool_loop_guard</code></td><td><code>true</code></td><td>Refuse a tool call that repeats the same arguments after two identical results, one that already failed three times unchanged, or a repeating cycle of calls; cap runaway web searches and delegation per turn. See <a href="#loop-caps">Loop-guard caps</a>.</td></tr>
         <tr><td><code>cron_verify</code></td><td><code>true</code></td><td>Verify a cron run actually achieved its prompt before pushing an "ok" status.</td></tr>
-        <tr><td><code>dream_consolidation</code></td><td><code>true</code></td><td>Cross-session memory distillation after 24 hours and 5 sessions.</td></tr>
-        <tr><td><code>learning_review_fork</code></td><td><code>true</code></td><td>Run the post-turn memory and skill review as a fork of the live turn (same system prompt, tools and messages plus one review message), so it is a warm prompt-cache read rather than a cold re-send. Off falls back to an excerpt-based extraction agent.</td></tr>
+        <tr><td><code>dream_consolidation</code></td><td><code>true</code></td><td>Cross-session memory distillation after 24 hours and 5 sessions. Off in Local mode, because it runs on a cloud model.</td></tr>
+        <tr><td><code>learning_review_fork</code></td><td><code>true</code></td><td>Run the post-turn memory and skill review as a fork of the live turn (same system prompt, tools and messages plus one review message), so it is a warm prompt-cache read rather than a cold re-send. Off, the review runs as an excerpt-based extraction agent.</td></tr>
         <tr><td><code>skill_self_improvement</code></td><td><code>true</code></td><td>Let the assistant create and patch its own folder skills with <code>skill_manage</code>, and let the post-turn review update a skill when you corrected the workflow or a durable technique emerged.</td></tr>
         <tr><td><code>preview_tools</code></td><td><code>true</code></td><td>Assistant-controllable browser preview tools (start/stop/click/fill/eval/screenshot); they only surface once Playwright and Chromium are installed, and hide themselves again if that install goes missing.</td></tr>
       </tbody>
@@ -439,23 +448,22 @@
     <h2 id="map-reduce">Transcript condensation keys</h2>
     <p>The <code>map_reduce_summary</code> object tunes how an oversized transcript is condensed before
       it reaches <code>summarize_transcript</code> or the main model. It has no Settings-UI field, so
-      edit your user config file (or the <code class="path">config.example.json</code> template)
-      directly. Every size below is in
-      <b>characters</b> (roughly 4 characters per token), and any malformed numeric value falls back to
-      its default rather than failing the chat turn.</p>
+      edit it in your user config file (the config.user.json editor). Every size below is in
+      <b>characters</b> (roughly 4 characters per token). A numeric value that is not a number is
+      logged as a warning and replaced by its default, so it never fails the chat turn.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Sub-key</th><th>Default</th><th>Meaning</th></tr></thead>
       <tbody>
         <tr><td><code>enabled</code></td><td><code>true</code></td><td>Master switch. When false, transcripts are never condensed and pass through unchanged.</td></tr>
-        <tr><td><code>threshold_chars</code></td><td><code>600000</code></td><td>Condense only above this size (about 150k tokens). Below it the transcript passes through with no extra LLM calls.</td></tr>
+        <tr><td><code>threshold_chars</code></td><td><code>600000</code></td><td>The largest raw transcript any reading model gets (about 150k tokens). A reading model with a smaller input budget condenses sooner. Below the limit the transcript passes through with no extra LLM calls.</td></tr>
         <tr><td><code>chunk_chars</code></td><td><code>150000</code></td><td>Per-chunk size for the cloud map step (about 37k tokens).</td></tr>
         <tr><td><code>local_chunk_chars</code></td><td><code>40000</code></td><td>Per-chunk size in local mode (about 10k tokens, so it fits a 16k on-device window).</td></tr>
         <tr><td><code>overlap_chars</code></td><td><code>800</code></td><td>Overlap between adjacent chunks so nothing is lost at a boundary.</td></tr>
         <tr><td><code>map_max_tokens</code></td><td><code>1200</code></td><td>Output cap for each per-chunk extract.</td></tr>
         <tr><td><code>max_chunks</code></td><td><code>40</code></td><td>Cap on the number of chunks; the splitter re-chunks coarser before hitting it.</td></tr>
-        <tr><td><code>max_output_chars</code></td><td><code>480000</code></td><td>Cap on the aggregate condensed output in cloud mode (about 120k tokens), so the reduce turn does not overflow.</td></tr>
-        <tr><td><code>local_max_output_chars</code></td><td><code>24000</code></td><td>Tighter aggregate cap for the smaller local window.</td></tr>
-        <tr><td><code>engine</code></td><td><code>"auto"</code></td><td>Which model runs the map step. <code>"auto"</code> follows the model mode (cloud uses Haiku, local uses the on-device model); force <code>"haiku"</code> or <code>"local"</code> to override.</td></tr>
+        <tr><td><code>max_output_chars</code></td><td><code>480000</code></td><td>Cap on the aggregate condensed output for a cloud map engine (about 120k tokens), used when the reading model is unknown. A known reading model is capped by its own limit.</td></tr>
+        <tr><td><code>local_max_output_chars</code></td><td><code>24000</code></td><td>The same cap for an on-device map engine, used when the reading model is unknown.</td></tr>
+        <tr><td><code>engine</code></td><td><code>"auto"</code></td><td>Which model runs the map step. <code>"auto"</code> follows the one-shot writer (<code>backends.index_llm</code> in Hybrid mode, Haiku in Cloud mode, the on-device model in Local mode); when that is Off, the transcript is cut to what the reading model can take, with a note that says why. Force <code>"haiku"</code> or <code>"local"</code> to override; Local mode never uses <code>"haiku"</code> and maps on-device instead.</td></tr>
       </tbody>
     </table></div>
     <p>See <a href="arch-summarization.html#config">Transcript summarization</a> for how the map-reduce
@@ -464,44 +472,53 @@
     <h2 id="permission-modes">Permission modes</h2>
     <p>The permission mode controls how the assistant is gated when it wants to run a tool. The live
       value is the <code>mode</code> key in <code class="path">permissions.json</code>, written by both
-      the Mode dropdown in the chat input and Settings &gt; Permissions; the <code>permission_mode</code>
-      config key is the fallback and what a headless or scheduled run starts in. Per-tool rules under
-      Settings &gt; Permissions override the mode for specific commands, and
-      <a href="#category-modes">per-category defaults</a> below pin a mode for one kind of action.</p>
+      the Permissions capsule in the chat input and Settings &gt; Permissions. An unattended run
+      (scheduled or headless) always uses <code>default</code>. Per-tool rules under Settings &gt;
+      Permissions decide only after the always-ask floors, Bypass, trusted skills and your session
+      approvals, so a rule has no effect in Bypass. <a href="#category-modes">Per-category
+      defaults</a> below pin a mode for one kind of action.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Value</th><th>Behavior</th></tr></thead>
       <tbody>
-        <tr><td><code>default</code></td><td>Reads run freely; writes ask for approval.</td></tr>
-        <tr><td><code>auto</code></td><td>A classifier decides per-tool, per-call; it runs whenever this mode is selected (rules edited via config_set).</td></tr>
+        <tr><td><code>default</code></td><td>Asks first: reads run freely; writes ask for approval.</td></tr>
+        <tr><td><code>auto</code></td><td>A classifier decides per tool call; it runs whenever this mode is selected.</td></tr>
         <tr><td><code>plan</code></td><td>The assistant plans and comes back with a proposal. The workspace write tools (<code>ws_write_file</code>, <code>ws_create_file</code>, <code>ws_edit_file</code>, <code>ws_delete_file</code>, <code>ws_run_command</code>, <code>ws_merge_worktree</code>) are hard-blocked before dispatch; other action tools still go through the normal approval card.</td></tr>
         <tr><td><code>acceptEdits</code></td><td>File edits auto-approve; deletes and shell commands still ask.</td></tr>
         <tr><td><code>bypassPermissions</code></td><td>Everything runs without prompts.</td></tr>
         <tr><td><code>dontAsk</code></td><td>Reads auto-allow; writes are silently denied.</td></tr>
       </tbody>
     </table></div>
-    <p>The <code>auto</code> mode reads three companion keys - <code>auto_mode_allow</code>,
-      <code>auto_mode_soft_deny</code>, and <code>auto_mode_environment</code> - edited with
-      config_set in chat or in your user config file. Selecting the mode is the
+    <p>The <code>auto</code> mode reads three companion keys (<code>auto_mode_allow</code>,
+      <code>auto_mode_soft_deny</code> and <code>auto_mode_environment</code>), edited in your user
+      config file or with <code>config_set</code> in chat. A <code>config_set</code> change goes
+      through the approval gate under its own <code>config</code> category, so it follows the
+      permission mode like any other write. A project's
+      <code class="path">.whisper/settings.json</code> cannot set these keys. Selecting the mode is the
       opt-in: the classifier runs on every call that would otherwise ask. See
       <a href="arch-approval.html">Approval &amp; permissions</a> for the classifier and the pause-and-resume flow.</p>
 
     <h3 id="category-modes">Per-category approval defaults</h3>
     <p>Beyond the single global mode above, <code class="path">permissions.json</code> can carry a
       <code>category_modes</code> object: a per-category override keyed by the approval categories
-      the app declares (<code>write</code>, <code>delete</code>, <code>cli</code>, <code>save</code>,
-      <code>worktree</code>, <code>preview</code>, <code>folder-access</code>, <code>github</code>,
-      <code>github-destructive</code>, <code>mcp</code>, <code>mcp-elicit</code>), plus the
-      policy-only <code>workflow</code> entry described below. A category with no
-      entry falls back to the global mode, so you can, for example, leave the global mode at
+      the app declares (the Permissions panel shows a row for each: <code>write</code>,
+      <code>delete</code>, <code>cli</code>, <code>save</code>, <code>worktree</code>,
+      <code>preview</code>, <code>folder-access</code>, <code>github</code>,
+      <code>github-destructive</code>, <code>mcp</code>, <code>mcp-elicit</code>,
+      <code>office-script</code>, <code>cron</code>, <code>config</code> and
+      <code>secret-read</code>), plus the policy-only <code>workflow</code> entry described below. A
+      category with no entry uses the global mode, so you can, for example, leave the global mode at
       <code>default</code> while setting <code>category_modes.cli</code> to
-      <code>acceptEdits</code> so shell commands stop asking but file deletes still do.</p>
-    <p>Three things always ask, no matter what the global mode, a category override, a bypass mode, or
-      a blanket session approval says: <b><code>github-destructive</code></b> (repo or ref deletion,
-      PR merge, archive or rename, a raw API DELETE), any command that is <b><code>rm</code></b> or a
-      close cousin of it and deletes outside the connected workspace (a delete inside it follows the
-      mode), and any tool call asking for
-      <b><code>sandbox_permissions: "danger-full-access"</code></b>. An MCP server configured with
-      <code>approval_mode: "approve"</code> is a fourth floor of the same kind. Bypass itself stops
+      <code>bypassPermissions</code> so shell commands stop asking while file writes and deletes
+      still ask. The always-ask floors below still apply.</p>
+    <p>These things always ask, no matter what the global mode, a category override, a bypass mode,
+      a custom rule or a blanket session approval says: <b><code>github-destructive</code></b> (repo
+      or ref deletion, PR merge, archive or rename, a raw API DELETE), any command that is
+      <b><code>rm</code></b> or a close cousin of it and deletes outside the connected workspace and
+      the app's own folders (a delete inside them follows the mode), any tool call asking for
+      <b><code>sandbox_permissions: "danger-full-access"</code></b>, and a call to an MCP server
+      configured with <code>approval_mode: "approve"</code>. A <code>terminal_run</code> typed into
+      your visible terminal asks in every mode except <code>bypassPermissions</code>, because that
+      shell is not sandboxed. Bypass itself stops
       at the workspace boundary: a file saved to a path outside the workspace and the first reach
       into a new folder still ask in <code>bypassPermissions</code>.</p>
     <p><code>workflow</code> is the one entry that is not an approval-card category. It is read by
@@ -524,7 +541,7 @@
     <h3 id="auto-mode-breaker">The auto-mode circuit breaker</h3>
     <p>Because the <code>auto</code> classifier judges one tool call at a time, it can drift over a
       long turn. A per-turn circuit breaker in <code class="path">server/security/permissions.py</code>
-      trips auto mode back to asking - for the rest of the turn - after either <b>3 consecutive</b>
+      trips auto mode back to asking (for the rest of the turn) after either <b>3 consecutive</b>
       classifier denials or <b>5 denials in the last 10</b> classifier calls. A tripped breaker surfaces
       as an <code>AutoModeBreakerBanner</code> in the UI with a one-click <b>resume</b>; the breaker
       itself resets automatically at the start of the next new turn.</p>
@@ -548,9 +565,11 @@
     <div class="spec">
       <dt><code class="path">url</code></dt><dd>Reaches a remote server over streamable HTTP instead of spawning a local stdio child process. Mutually exclusive with <code>command</code>.</dd>
       <dt><code class="path">bearer_token_env_var</code></dt><dd>The <em>name</em> of an environment variable holding the bearer token for a remote server. Only the variable name is persisted; the actual token is read from the environment at connect time and never written to config.</dd>
-      <dt><code class="path">approval_mode</code></dt><dd>The server's default approval tier: <code>auto</code> (no approval, the default for an unconfigured server), <code>prompt</code> (every call goes through the normal approval pipeline, category <code>mcp</code>), <code>writes</code> (calls that look read-only by name auto-execute, everything else prompts), or <code>approve</code> (every call always asks - a hard floor that no bypass mode or blanket session approval can skip).</dd>
+      <dt><code class="path">approval_mode</code></dt><dd>The server's default approval tier: <code>auto</code> (no approval, the default for an unconfigured server), <code>prompt</code> (every call goes through the normal approval pipeline, category <code>mcp</code>), <code>writes</code> (calls that look read-only by name auto-execute, everything else prompts), or <code>approve</code> (every call always asks: a hard floor that no bypass mode or blanket session approval can skip).</dd>
       <dt><code class="path">tool_overrides</code></dt><dd>A map of tool name to approval tier, overriding <code>approval_mode</code> for specific tools on that server.</dd>
       <dt><code class="path">enabled_tools</code> / <code class="path">disabled_tools</code></dt><dd>Allow/deny lists of tool names for the server. An empty allowlist permits everything; <code>disabled_tools</code> wins on overlap with <code>enabled_tools</code>.</dd>
+      <dt><code class="path">enabled</code></dt><dd>Switches the whole server on or off. Default <code>true</code>.</dd>
+      <dt><code class="path">call_timeout_seconds</code></dt><dd>The time limit for one tool call on this server. Default 1800 seconds; set it higher for a tool that runs longer still.</dd>
       <dt><code class="path">read_only</code> / <code class="path">read_only_tools</code></dt><dd>Which of the server's tools a read-only agent (explore, plan, or any agent started in plan mode) may run. <code>true</code> marks every tool, <code>read_only_tools</code> names some, and <code>false</code> ignores the server's own <code>readOnlyHint</code> annotations. Unmarked tools are kept from read-only agents. A tool script (<code>run_tool_script</code>) uses the same marks.</dd>
     </div>
     <p>When a connected server asks the human a question mid-call (an <b>elicitation</b>), it is
@@ -563,18 +582,20 @@
       variable always wins:</p>
     <ol class="steps">
       <li>
-        <h4>Environment variable (preferred)</h4>
-        <p>Export <code>TAVILY_API_KEY</code> in your shell. It overrides the
-          <code>tavily_api_key</code> config value and is re-read on every config load, so a rotated
-          key applies without a restart and never touches disk.</p>
-        <div class="code-block"><pre><code>echo 'export TAVILY_API_KEY=tvly-...' &gt;&gt; ~/.zshrc</code></pre></div>
-      </li>
-      <li>
         <h4>Settings field</h4>
         <p>Paste the key into the Tavily API Key field. It is stored in your user config file.
-          The config endpoint never returns the raw value - only
-          a masked hint like <code>tvly...abcd</code> - so the UI can show that a key is set without
-          exposing it.</p>
+          The config endpoint never returns the raw value, only a masked hint like
+          <code>tvly...abcd</code>, so the UI can show that a key is set without exposing it. This is
+          the way to set the key for the Mac app.</p>
+      </li>
+      <li>
+        <h4>Environment variable</h4>
+        <p>Set <code>TAVILY_API_KEY</code> in the environment of the server process. It overrides the
+          <code>tavily_api_key</code> config value and keeps the key off disk. This works for a source
+          install started from a terminal that exports the variable. The Mac app does not read your
+          shell files, so there the variable has no effect. The server reads its own environment, so
+          a changed value applies after a restart of the backend.</p>
+        <div class="code-block"><pre><code>echo 'export TAVILY_API_KEY=tvly-...' &gt;&gt; ~/.zshrc</code></pre></div>
       </li>
     </ol>
     <p>See <a href="tut-research.html">Web research</a> to put the key to work and
@@ -586,28 +607,29 @@
     <div class="table-wrap"><table>
       <thead><tr><th>#</th><th>Layer</th><th>Source</th><th>Scope</th></tr></thead>
       <tbody>
-        <tr><td>1</td><td>Defaults</td><td>built into <code class="path">server/infrastructure/config.py</code></td><td>Fallbacks for everything, used only when the SYSTEM file below can't be read.</td></tr>
-        <tr><td>2</td><td>System</td><td><code class="path">config.example.json</code> at the repo root</td><td>The app-owned shipped defaults and model catalog. Read live on every config load, not just copied once.</td></tr>
-        <tr><td>3</td><td>User</td><td><code class="path">config.user.json</code> (or legacy <code class="path">config.json</code>) at the app home</td><td>Your own deltas on top of the shipped defaults: added local models, region/keys/flags, per-field overrides, a hide-list.</td></tr>
+        <tr><td>1</td><td>Defaults</td><td>built into <code class="path">server/infrastructure/config.py</code></td><td>Always the bottom layer. It gives every key that <code class="path">config.example.json</code> does not ship (for example <code>data_dir</code>, <code>translate_mode</code>, <code>translate_target</code>, <code>mode_notice_seen</code> and <code>voice</code>).</td></tr>
+        <tr><td>2</td><td>System</td><td><code class="path">config.example.json</code> that ships with the app (inside the app bundle, or at the root of a source checkout)</td><td>The app-owned shipped defaults and model catalog. Read live on every config load, not copied. A missing or broken file stops the app with an error.</td></tr>
+        <tr><td>3</td><td>User</td><td><code class="path">config.user.json</code> in your user folder</td><td>Your own deltas on top of the shipped defaults: added local models, region/keys/flags, per-field overrides, a hide-list.</td></tr>
         <tr><td>4</td><td>Project</td><td><code class="path">.whisper/settings.json</code> in the workspace root</td><td>Per-project overrides for a safe subset of keys.</td></tr>
-        <tr><td>5</td><td>Environment</td><td>shell env vars (e.g. <code>TAVILY_API_KEY</code>)</td><td>Secrets and deployment overrides; wins over everything.</td></tr>
+        <tr><td>5</td><td>Environment</td><td>one variable, <code>TAVILY_API_KEY</code></td><td>Wins over everything for the Tavily key. Path variables such as <code>WHISPER_DATA_DIR</code> are not config keys; see <a href="ref-env.html">Environment variables</a>.</td></tr>
       </tbody>
     </table></div>
-    <p>The <b>User</b> layer lives at the app home: the repo root in a dev checkout, or
-      <code>WHISPER_HOME</code> in a packaged install. It is not copied from the example config. On a
-      first run with no user file, both install paths call the same
-      <code>migrate_user_config()</code>, which writes a
-      <code class="path">config.user.json</code> holding only the first-run defaults (local mode plus
-      the on-device backends map) and never touches it again. Everything else keeps coming from the
-      SYSTEM layer, so a model added to <code class="path">config.example.json</code> reaches every
-      install on the next start. A legacy monolithic <code class="path">config.json</code> keeps acting
-      as the user layer until it is split on migration; either file is gitignored where it lives inside
-      the repo. A
-      project's <code class="path">.whisper/settings.json</code> overrides your user config, but only
-      for a project-safe subset of keys (region, model, effort, brief mode, permission mode, the
-      auto-mode lists, cost caps, feature flags, the model catalog and its hide-list, and the
-      permission-explainer and model-fallback toggles) - global-only secrets like the Tavily key are
-      not accepted there. Environment variables override all four config layers.</p>
+    <p>The <b>User</b> layer lives in your user folder: <code class="path">~/.whisper</code> for the
+      Mac app, the checkout root for a source install. <code>WHISPER_USER_DIR</code> overrides the
+      folder. Only your own actions write this file: a save or toggle in Settings, the
+      config.user.json editor, a model install from Discover (which can set
+      <code>backends.index_llm</code>, see above), or a <code>config_set</code> call that the
+      permission mode allows. Startup never changes it. On a
+      first run with no user file, both install paths write a
+      <code class="path">config.user.json</code> that holds only the first-run defaults (local mode
+      plus the on-device backends map). Everything else keeps coming from the SYSTEM layer, so a model
+      added to <code class="path">config.example.json</code> reaches every install on the next start.
+      A project's <code class="path">.whisper/settings.json</code> overrides your user config, but only
+      for a project-safe subset of keys (region, model, effort, cost caps, feature flags, the model
+      catalog and its hide-list, and the permission-explainer and model-fallback toggles). A project
+      file cannot set the permission mode or the auto-mode lists, so a cloned repo cannot turn on
+      Bypass or weaken the classifier, and global-only secrets like the Tavily key are not accepted
+      there. The environment variable overrides all four config layers.</p>
 
     <p>The model catalog (<code>chat_models</code>) does not simply replace wholesale at every layer.
       Across the System and User layers it deep-merges <b>additively</b>: the shipped catalog always
@@ -615,7 +637,7 @@
       shipped one, so a hand-added local model survives the next app update untouched.
       <code>chat_models_disabled</code> (a list of keys, honored in the User and Project layers) then
       drops any of those merged models you don't want to see, without deleting their definition. Only
-      the <b>Project</b> layer keeps the older wholesale-replace behavior: a project config that lists
+      the <b>Project</b> layer replaces the catalog wholesale: a project config that lists
       <code>chat_models</code> replaces the merged System+User catalog outright rather than adding to
       it.</p>
 
@@ -627,10 +649,9 @@
 
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
-      <div class="callout__body"><p><b>Secrets hygiene.</b> Your user config file is
-        gitignored where it lives inside the repo, but it sits on disk in plain JSON either way. Treat
-        it like any credential store: do not sync it to untrusted backups, rotate keys after sharing
-        your screen, and prefer the env-var path for the Tavily key.</p></div>
+      <div class="callout__body"><p><b>Secrets hygiene.</b> Your user config file sits on disk in
+        plain JSON (in a source checkout it is gitignored). Treat it like any credential store: do not
+        sync it to untrusted backups, and rotate keys after sharing your screen.</p></div>
     </div>
 
     <h2 id="pitfalls">Region and edit pitfalls</h2>
@@ -645,11 +666,11 @@
       <li><b>Unknown default model falls back.</b> If <code>default_chat_model</code> names a key that
         is not in the catalog, the loader falls back to <code>gpt6-luna</code> (or the first available
         model), so resolution never dead-ends.</li>
-      <li><b>Prefer the UI or a surgical edit for the model catalog.</b> The rich
-        <code>chat_models</code> shape carries per-model metadata; a naive re-save can flatten it. To
-        add or change a shipped model, edit <code class="path">config.example.json</code> (the canonical
-        template); to add one of your own, add it under <code>chat_models</code> in the config.json
-        dialog rather than hand-flattening the live file.</li>
+      <li><b>Edit only your user layer.</b> To add a model of your own or change a shipped one, add
+        or override its entry under <code>chat_models</code> in the config.user.json editor. Do not
+        edit the shipped <code class="path">config.example.json</code>: in the Mac app it is part of the
+        signed app bundle, and every update replaces it. It is the file a developer changes to ship
+        new defaults.</li>
       <li><b>A blank voice region is not a bug.</b> <code>voice.region</code> defaults to empty on
         purpose so voice follows <code>bedrock_region</code>. Set it only when your chat region is one
         of the many where Nova 2 Sonic is not available.</li>

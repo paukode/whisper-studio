@@ -8,17 +8,17 @@ WSDiagram.mount("chat-pipeline-diagram", {
   },
   nodes: [
     { id: "req", group: "transport", col: 0, row: 0, label: "POST /api/chat", sub: "SSE response", desc: "A chat turn arrives: question, history, model, session, attachments." },
-    { id: "setup", group: "server", col: 0, row: 1, label: "Build the turn", sub: "prompt · memory · @files", desc: "Latch session config, assemble the system prompt (WHISPER.md + memory), resolve @file mentions, expand attachments, add index grounding." },
-    { id: "route", group: "model", col: 1, row: 0.5, label: "Model routing", sub: "Anthropic / OpenAI / on-device", desc: "is_local_model() picks the local adapter; otherwise provider decides Anthropic (Claude) or OpenAI (GPT) - both on Amazon Bedrock. One shared engine loop runs the rest, whichever adapter was picked." },
+    { id: "setup", group: "server", col: 0, row: 1, label: "Build the turn", sub: "prompt · memory · @files", desc: "Latch session config, assemble the system prompt (WHISPER.md + memory), resolve @file mentions, expand attachments, add index grounding, compact an oversized history, and add SessionStart and UserPromptSubmit hook context." },
+    { id: "route", group: "model", col: 1, row: 0.5, label: "Model routing", sub: "Anthropic / OpenAI / on-device", desc: "is_local_model() picks the local adapter; otherwise provider decides Anthropic (Claude) or OpenAI (GPT), both on Amazon Bedrock. One shared engine loop runs the rest, whichever adapter was picked." },
     { id: "condense", group: "server", col: 1, row: 1.25, label: "Condense transcript", sub: "map-reduce if oversized", desc: "An oversized transcript is condensed to per-chunk extracts before it enters the prompt. See Transcript summarization." },
     { id: "stream", group: "server", col: 2, row: 0.5, label: "Streaming loop", sub: "up to the round limit", desc: "Per round: check the budget, invoke the model, stream chunks, act on the stop reason." },
-    { id: "bedrock", group: "external", kind: "external", col: 3, row: 0, label: "Adapter invoke", sub: "Bedrock or local", desc: "The routed adapter's own call: invoke_model_with_response_stream (Anthropic), the Responses API over bedrock-mantle (OpenAI), or a local llama-server or MLX request - each wrapped in retry + reactive compaction." },
+    { id: "bedrock", group: "external", kind: "external", col: 3, row: 0, label: "Adapter invoke", sub: "Bedrock or local", desc: "The routed adapter's own call: invoke_model_with_response_stream (Anthropic), the Responses API over bedrock-mantle (OpenAI), or a local llama-server or MLX request, each wrapped in retry. A prompt-too-long rejection gets one fail-closed compaction attempt." },
     { id: "parse", group: "server", col: 3, row: 1, label: "Parse chunks", sub: "text · tool_use · thinking", desc: "Content blocks are parsed as they stream: text, thinking, and tool_use." },
     { id: "sseOut", group: "transport", col: 4, row: 0.5, label: "SSE to client", sub: "tokens · events", desc: "Text, usage, skill, grounding, and team_progress events stream to the SPA." },
     { id: "toolbatch", group: "tools", col: 1, row: 2, label: "Execute tool batch", sub: "partition + permissions", desc: "Read-safe tools run in parallel; writes serialize. Each is permission-checked." },
     { id: "approve", group: "security", col: 2, row: 2, label: "Approval gate", sub: "pause + resume", desc: "Risky tools pause the turn in the server-held pause store; the client's decision resumes it, and the executor re-validates the action before running it." },
     { id: "exec", group: "tools", col: 3, row: 2, label: "Executor runs", sub: "files · git · web · code", desc: "The tool's implementation runs, sandboxed where it touches the shell." },
-    { id: "persist", group: "persist", kind: "store", col: 4, row: 2, label: "Persist session", sub: "SQLite UPSERT", desc: "On end_turn, the message is added and the session is saved to SQLite." }
+    { id: "persist", group: "persist", kind: "store", col: 4, row: 2, label: "Persist session", sub: "PUT /api/sessions", desc: "After [DONE], the SPA saves the session with PUT /api/sessions/{id}; the server UPSERTs it into SQLite under a per-session lock." }
   ],
   edges: [
     { from: "req", to: "setup" },
@@ -33,6 +33,6 @@ WSDiagram.mount("chat-pipeline-diagram", {
     { from: "toolbatch", to: "exec", label: "read" },
     { from: "approve", to: "exec", label: "approved" },
     { from: "exec", to: "stream", label: "tool_result" },
-    { from: "stream", to: "persist", label: "end_turn" }
+    { from: "stream", to: "persist", label: "[DONE], SPA saves" }
   ]
 });

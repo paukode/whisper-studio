@@ -27,7 +27,8 @@
     <figure class="diagram-figure wide">
       <div id="index-diagram" class="diagram"></div>
       <figcaption>Top row: the incremental build (walk to store). Bottom row: retrieval for one
-        question (embed, KNN, rerank, graph hop, grounding). The store feeds the KNN.</figcaption>
+        question (embed, KNN and keyword legs, graph hop, fusion with an optional rerank,
+        grounding). The store feeds the KNN.</figcaption>
     </figure>
 
     <figure class="shot wide">
@@ -74,7 +75,7 @@
         <tr><td>Text and code</td><td>Decoded directly (binary and oversized files are skipped).</td></tr>
         <tr><td>Spreadsheets (CSV / XLSX)</td><td>Small CSVs are read directly as text; small XLSX/XLS via MarkItDown; large ones of either type via a bounded, streamed schema-plus-sample so a huge grid never loads into memory.</td></tr>
         <tr><td>Rich docs (PDF / DOCX / PPTX / HTML / EPUB)</td><td>MarkItDown, with OCR for PDFs. Inlined base64 images are stripped so they do not pollute the embedding.</td></tr>
-        <tr><td>Images</td><td>OCR (Apple Vision, falling back to Haiku).</td></tr>
+        <tr><td>Images</td><td>OCR with Apple Vision. When Apple Vision fails or finds no text, Haiku reads the image, but only when AWS credentials resolve and never in Local mode.</td></tr>
         <tr><td>Audio and video</td><td>Local transcription (see <a href="arch-transcription.html">Transcription</a>).</td></tr>
       </tbody>
     </table></div>
@@ -110,9 +111,8 @@
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg></span>
       <div class="callout__body"><p>The MPS path can intermittently emit a non-finite (NaN) vector. A
         persisted NaN silently makes a document unfindable and breaks sqlite-vec, so the embedder
-        re-computes any bad row (up to three retries) and zeroes it only as a last resort. A non-finite
-        vector left over from an older index (built before this guard existed) is simply skipped at
-        read time - never matched, never ranked - rather than repaired in place.</p></div>
+        re-computes any bad row (up to three retries) and zeroes it only as a last resort. A search that meets an unusable stored vector fails
+        with an error that asks you to re-index the folder.</p></div>
     </div>
 
     <h3 id="entities-relations">Entities and relations</h3>
@@ -131,9 +131,9 @@
           <code>gliner_large-v2.5</code> is the default because it is the strongest multilingual
           option; a workspace with an English-only corpus can set <code>ner_model</code> to
           <b>GLiNER2</b> (fastino) in the Index settings panel. In cloud mode, <b>Claude Haiku</b>
-          extracts entities instead. The label set
-          is no longer fixed: an entity-type profile (business vs code) is auto-picked per file from
-          its extension, so a CV and a source file are asked for different kinds of entity. Names are
+          extracts entities instead. An
+          entity-type profile (business or code) is picked per file from its extension, so a CV and a
+          source file are asked for different kinds of entity. Names are
           stripped and deduped case-insensitively so one entity maps to one node.</p>
       </div>
       <div class="card">
@@ -141,7 +141,8 @@
         <p>When enabled per workspace, an LLM extracts typed edges from a closed vocabulary
           (<code>works_at</code>, <code>authored</code>, <code>depends_on</code>, and friends, with
           inverse phrasings normalized so "A employs B" is stored as <code>works_at(B, A)</code>) via
-          <b>Haiku</b> or <b>on-device Gemma</b>. The
+          <b>Haiku</b> or any installed <b>on-device model</b>, or GLiNER2 extracts them natively
+          with no LLM. The
           LLM may only connect two names from the already-extracted entity list, so it cannot invent
           nodes, and each relation carries a 1 to 5 strength score.</p>
       </div>
@@ -161,8 +162,8 @@
       root: they are derived data that a hand-edit in <code class="path">~/.whisper</code> must not
       be able to corrupt.</p>
     <p>The index is keyed <em>per embedding backend</em>, as sibling files inside that one directory:
-      <code class="path">index.db</code> for Qwen3 (and for any index built before the split, so
-      nothing is orphaned) and <code class="path">index-&lt;backend&gt;.db</code> for the others.
+      <code class="path">index.db</code> for Qwen3 and <code class="path">index-&lt;backend&gt;.db</code>
+      for the others.
       Switching between backends therefore uses a different file and never forces a rebuild of the
       one you left. Each database holds files, chunks, entity nodes, node-to-chunk links, typed
       relations (<code>relations2</code>, keyed by node id so an entity merge repoints rather than
@@ -202,9 +203,8 @@
       the message deserves a search at all. <code>should_ground</code> is purely lexical: the message
       is tokenized and retrieval is skipped only when <em>every</em> token is on a stoplist of
       function words, greetings, thanks, acknowledgments, and fillers, so "hey", "ok thanks", or
-      "good morning" no longer burn an embedder call (and, in local mode, no longer force an
-      embedding model load). Any token outside the list - jargon, an identifier, a name, another
-      language - counts as content, so when in doubt retrieval runs. Typing <code>@index</code>
+      "good morning" skip retrieval: no embedder call and no embedding model load. Any token
+      outside the list (jargon, an identifier, a name, another language) counts as content, so when in doubt retrieval runs. Typing <code>@index</code>
       anywhere in a message forces a search past both this gate and the connected-workspace
       deprioritization (falling back to every indexed folder when none is selected); the marker is
       stripped from the message before the model sees it. The same
@@ -214,7 +214,10 @@
 
     <h3 id="grounding">Retrieval grounding</h3>
     <p><code>retrieve_grounding</code> is what chat calls when a turn passes the gate with indexes
-      selected. It runs the query across every selected index, fuses the rankings, and returns a
+      selected. With no explicit selection, a turn grounds against every indexed folder in plain
+      chat, and against none when a workspace is connected (the model then reaches the index through
+      its tools, see <a href="#index-tools">below</a>); an explicit empty selection searches nothing.
+      It runs the query across every selected index, fuses the rankings, and returns a
       cited Markdown block. The fusion and filtering steps are careful about precision:</p>
     <ol class="steps">
       <li><h4>Global dense ranking</h4><p>Cosine is comparable across indexes, so dense matches from
@@ -223,7 +226,10 @@
         the dense list, the keyword (BM25) list, and an entity leg of entity-anchored hits; the same
         fusion then runs across the original and a conversation-contextualized query. This is how a
         keyword or filename hit with near-zero cosine is promoted in instead of being lost under the
-        score floor.</p></li>
+        score floor. With the <code>rag_query_rewrite</code> flag on (off by default, and off in
+        Local mode), a fast LLM rewrites a follow-up into a standalone query, which is used alone in
+        place of the heuristic contextualized one. The graph hop runs before fusion, from the
+        primary query's dense seeds.</p></li>
       <li><h4>Optional rerank</h4><p>Behind the <code>rag_reranker</code> flag (<b>off by
         default</b>: seconds per grounded turn and possible OOM on memory-pressured machines, for a
         modest gain on top of hybrid retrieval), a cross-encoder rescores the top candidates by
@@ -261,8 +267,9 @@
       model to <b>ignore the passages entirely</b> (and cite nothing) when they turn out to be
       irrelevant to the message, so an off-topic retrieval degrades to a normal answer instead of a
       forced citation. When a turn is grounded and the <code>strict_rag</code> flag is on (the
-      default), the workspace file and search tools are <b>suppressed</b> for that turn, so the model
-      answers from the injected passages instead of re-crawling files it has already indexed.</p>
+      default), the turn is marked as strict-RAG. The tool catalog stays the same on every turn,
+      and no executor refuses the workspace file and search tools on that mark today, so the model
+      can still call them.</p>
     <p>The exact passages behind an answer are also persisted: each grounded turn saves its sources
       (path, line range, retrieval kind, matched entities, and a snippet per passage) to a
       session-scoped <code>grounding</code> table in <code class="path">sessions.db</code>
@@ -273,10 +280,21 @@
       what it shows.</p>
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3ZM5 11a7 7 0 0 0 14 0M12 18v4"/></svg></span>
-      <div class="callout__body"><p>Grounding runs on a dedicated single-thread executor with a
-        timeout (extended on a turn's first, cold reranker load). If it times out or fails, the turn
-        answers without grounding rather than blocking, and no chip is shown.</p></div>
+      <div class="callout__body"><p>Grounding runs on a dedicated three-worker executor with a
+        budget of 8 s when the embedder is warm, 20 s when the embedder must load, and 40 s more when
+        the reranker must load. If it times out or fails, the turn answers without grounding rather
+        than blocking, no chip is shown, and the server log records why.</p></div>
     </div>
+
+    <h3 id="index-tools">Index tools the model can call</h3>
+    <p>Two tools reach the connected workspace's index on demand.
+      <code>workspace_semantic_search</code> (<code class="path">server/index/tool.py</code>) runs
+      <code>query()</code> for a query the model writes and returns the dense matches with
+      <code>path:lines</code> citations, plus the related passages from the graph hop.
+      <code>workspace_graph_query</code> (<code class="path">server/index/graph_tool.py</code>)
+      returns the typed relations recorded for one entity (optionally for one predicate), so it
+      needs typed relations turned on for the folder. Both tell the model to ask for an index
+      when the workspace has none.</p>
 
     <h3 id="docs-qa">@docs: the same machinery over the manual</h3>
     <p><code class="path">server/docs_qa.py</code> points retrieval at the app's own documentation
@@ -313,7 +331,7 @@
         <tr><td><code>GET /explore/overview</code>, <code>/explore/entities</code>, <code>/explore/entity</code>, <code>/explore/file</code></td><td>Derived words-first views for the index explorer (topic cards, entity pages, file pages).</td></tr>
         <tr><td><code>GET /engines</code></td><td>Engine choices for the index's LLM passes (typed relations, entity descriptions, chunk-context headers): Bedrock Haiku plus every on-device model, with download state for the settings picker.</td></tr>
         <tr><td><code>GET /agent</code></td><td>Status of the background refresh helper (macOS).</td></tr>
-        <tr><td><code>GET</code> / <code>PUT /settings</code></td><td>Per-workspace settings: the refresh schedule (daily / every N days / weekly / off), <code>ner_model</code> (<code>gliner</code> or <code>gliner2</code>), typed relations (engine <code>none</code> / <code>haiku</code> / <code>local</code> / <code>gliner2</code>), entity descriptions, and chunk context (mode <code>off</code> / <code>filename</code> / <code>llm</code>, engine <code>haiku</code> or <code>local</code>).</td></tr>
+        <tr><td><code>GET</code> / <code>PUT /settings</code></td><td>Per-workspace settings: the refresh schedule (daily / every N days / weekly / off), <code>ner_model</code> (<code>gliner</code> or <code>gliner2</code>), typed relations (engine <code>none</code>, <code>haiku</code>, <code>gliner2</code>, <code>local</code> or an on-device model key), entity descriptions, and chunk context (mode <code>off</code> / <code>filename</code> / <code>llm</code>, engine <code>haiku</code>, <code>local</code> or an on-device model key). <code>local</code> follows the installed on-device model: <code>local_gemma</code> when it is installed, else the first installed one.</td></tr>
       </tbody>
     </table></div>
 
@@ -325,7 +343,7 @@
       <dt><code class="path">server/infrastructure/grounding_store.py</code></dt><dd>Per-session persistence of each grounded turn's sources for the answer-sources panel.</dd>
       <dt><code class="path">server/index/embedder.py</code></dt><dd>Qwen3 / Cohere embeddings, batching, NaN guard.</dd>
       <dt><code class="path">server/index/extractor.py</code></dt><dd>GLiNER / Haiku entity extraction.</dd>
-      <dt><code class="path">server/index/relations.py</code></dt><dd>Typed relation extraction (Haiku / local Gemma).</dd>
+      <dt><code class="path">server/index/relations.py</code></dt><dd>Typed relation extraction (Haiku or an on-device model; GLiNER2 extracts natively).</dd>
       <dt><code class="path">server/index/reranker.py</code></dt><dd>Qwen3 / Cohere cross-encoder reranking.</dd>
       <dt><code class="path">server/index/store/</code></dt><dd>SQLite storage, sqlite-vec, FTS5, the entity graph, dedup.</dd>
       <dt><code class="path">server/index/chunker.py</code></dt><dd>Structure-aware, token-budgeted chunking.</dd>

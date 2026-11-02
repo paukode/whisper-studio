@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Sandbox &amp; security - Whisper Studio Docs</title>
-  <meta name="description" content="The OS sandbox (sandbox-exec / bwrap), the command validator, the secret-path deny list, and how Whisper Studio separates hard boundaries from defence-in-depth.">
+  <meta name="description" content="The macOS sandbox (sandbox-exec), the command validator, the secret-path deny list, and how Whisper Studio separates hard boundaries from defence-in-depth.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -34,41 +34,29 @@
     </figure>
 
     <h2 id="the-sandbox">The sandbox, and everything it wraps</h2>
-    <p>Every shell and code-execution path funnels through one function,
-      <code>run_sandboxed</code> in <code class="path">server/sandbox.py</code>. That includes the
-      workspace shell, <code>run_python</code>, the hidden <code>terminal_run</code> PTY session, and
-      <code>aws_cli</code>. The wrapper picks the strongest OS-level sandbox available:</p>
+    <p>Every shell and code-execution path runs under macOS <code>sandbox-exec(5)</code>.
+      <code class="path">server/sandbox.py</code> generates a temporary <code>.sb</code> profile and
+      runs <code>sandbox-exec -f profile /bin/sh -c "..."</code>. It has three entry points, and each
+      one uses the same profile generator:</p>
     <div class="table-wrap"><table>
-      <thead><tr><th>Platform</th><th>Mechanism</th><th>What it does</th></tr></thead>
+      <thead><tr><th>Entry point</th><th>Kind</th><th>Used by</th></tr></thead>
       <tbody>
-        <tr><td>macOS</td><td><code>sandbox-exec(5)</code></td><td>Generates a temporary <code>.sb</code> profile and runs <code>sandbox-exec -f profile /bin/sh -c "..."</code>.</td></tr>
-        <tr><td>Linux</td><td><code>bwrap</code> (bubblewrap)</td><td>Mounts the whole filesystem read-only (<code>--ro-bind / /</code>), rebinds the workspace and <code>/tmp</code> read-write, then masks each secret path.</td></tr>
-        <tr><td>Neither available</td><td>Plain subprocess</td><td>A graceful no-sandbox fallback. There is no OS boundary here, but the command validators still run.</td></tr>
+        <tr><td><code>run_sandboxed</code></td><td>Blocking run, output captured</td><td><code>run_python</code>, <code>aws_cli</code>, hook commands, goal quality gates, and <code>office_script</code>.</td></tr>
+        <tr><td><code>popen_sandboxed</code></td><td>Non-blocking <code>Popen</code></td><td>Every <code>ws_run_command</code> (approved and read-only), its 30 s background handoff in <code class="path">server/tasks/handoff.py</code>, and every background shell task.</td></tr>
+        <tr><td><code>build_pty_sandbox_wrap</code></td><td>Wraps a long-lived PTY</td><td>The hidden <code>terminal_run</code> shell and preview dev servers.</td></tr>
       </tbody>
     </table></div>
-    <p>The long-lived interactive PTY that backs <code>terminal_run</code> is wrapped separately by
-      <code>build_pty_sandbox_wrap</code>, which returns the same profile so an interactive shell runs
-      under the identical deny-list as a one-shot command. (On non-macOS or when
-      <code>sandbox-exec</code> is missing, it returns the command unchanged and validation becomes
-      the only enforcement.) In workspace-write mode, the write root of that shell is the connected
-      workspace, not the folder where the shell starts. With no workspace, the shell writes only in
-      its scratch folder and the temporary folders. One sibling entry point exists alongside <code>run_sandboxed</code>:
-      <code>popen_sandboxed</code>, a non-blocking <code>Popen</code> variant with the same deny
-      profile and the same egress rules, used by the background-command handoff in
-      <code class="path">server/tasks/handoff.py</code>. It inherits the parent environment, so under
-      a non-permissive egress tier those background commands get no network at all - they fail
-      closed rather than open.</p>
+    <p><code>popen_sandboxed</code> gives its child the same scrubbed environment, the same egress
+      proxy variables, and the same network rules as <code>run_sandboxed</code>. The interactive PTY
+      runs under the identical deny-list as a one-shot command. In workspace-write mode, the write
+      root of that shell is the connected workspace, not the folder where the shell starts. With no
+      workspace, the shell writes only in its scratch folder and the temporary folders.</p>
 
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
-      <div class="callout__body"><p><b>The fallback path has no OS boundary.</b> On a machine without
-        <code>sandbox-exec</code> or <code>bwrap</code>, commands run in a plain subprocess. The
-        validator still rejects the obvious dangerous patterns, but the secret-store deny-list is not
-        enforced by the kernel. On stock macOS, <code>sandbox-exec</code> is always present, so this
-        is a Linux-without-bubblewrap edge case. A command that explicitly asked for write
-        confinement, run by an unattended agent on such a machine, is <em>refused</em> rather than run
-        unconfined; an interactive run proceeds with a plain disclosure line saying the command ran
-        without write confinement.</p></div>
+      <div class="callout__body"><p><b>No sandbox, no run.</b> When <code>sandbox-exec</code> cannot be
+        used, all three entry points raise <code>SandboxUnavailableError</code> and nothing runs, in
+        every write mode. There is no unsandboxed fallback.</p></div>
     </div>
 
     <h2 id="write-modes">Three write modes</h2>
@@ -78,9 +66,9 @@
     <div class="table-wrap"><table>
       <thead><tr><th><code>write_mode</code></th><th>What the profile does</th></tr></thead>
       <tbody>
-        <tr><td><code>open</code></td><td><code>(allow default)</code> plus the secret deny block. Writes anywhere the user could write. This is the default of <code>run_sandboxed</code> itself, and what an approved <code>ws_run_command</code> gets.</td></tr>
-        <tr><td><code>workspace</code></td><td>Denies all writes, then allows back a specific set of roots: the working directory, a linked worktree's git directory and its common directory, the calling session's own scratch folder, the temp directories, and <code class="path">/dev</code>, plus anything passed as <code>allow_paths</code>. On Linux, bubblewrap binds the filesystem read-only and rebinds the workspace, the session's scratch folder, and <code class="path">/tmp</code> writable.</td></tr>
-        <tr><td><code>readonly</code></td><td>Denies all writes except <code class="path">/dev</code>. On Linux, a read-only bind with a <code>tmpfs</code> over <code class="path">/tmp</code>.</td></tr>
+        <tr><td><code>open</code></td><td><code>(allow default)</code> plus the secret deny block. Writes anywhere the user could write. Used only for a command that a person approved on its card. A command that a mode, a session answer, a rule, the classifier, or an agent approved runs in <code>workspace</code> mode.</td></tr>
+        <tr><td><code>workspace</code></td><td>Denies all writes, then allows back a specific set of roots: the working directory, a linked worktree's git directory and its common directory, the calling session's own scratch folder, the temp directories, and <code class="path">/dev</code>, plus anything passed as <code>write_paths</code> (for example the AWS CLI caches). The app's own grant and config files stay unwritable, even when the tree contains them.</td></tr>
+        <tr><td><code>readonly</code></td><td>Denies all writes except <code class="path">/dev</code>. A <code>ws_run_command</code> that the read-only classifier accepts runs in this mode, with no card.</td></tr>
       </tbody>
     </table></div>
     <p>Rule order in the generated macOS profile is load-bearing: the blanket write-deny comes first,
@@ -88,11 +76,11 @@
       workspace that happens to <em>be</em> your home directory from re-exposing
       <code class="path">~/.ssh</code> through the allow-back.</p>
     <p>A session can write only in its own scratch folder,
-      <code class="path">data/scratch/&lt;session&gt;</code>. The folder of a different session is not
+      <code class="path">~/.whisper/data/scratch/&lt;session&gt;</code>. The folder of a different session is not
       writable. A <code>workspace</code> run also keeps its package caches in that folder. The sandbox
       sets three variables: <code>npm_config_cache</code>, <code>PIP_CACHE_DIR</code>, and
       <code>UV_CACHE_DIR</code>. Each one refers to a folder in
-      <code class="path">data/scratch/&lt;session&gt;/cache</code>. The default caches in the
+      <code class="path">~/.whisper/data/scratch/&lt;session&gt;/cache</code>. The default caches in the
       home folder are outside the writable roots, so an install without these variables fails.</p>
     <p>The assistant does not choose those literals. <code>run_python</code> and
       <code>terminal_run</code> take a <code>sandbox_permissions</code> parameter with three values,
@@ -102,23 +90,26 @@
       <tbody>
         <tr><td><code>workspace-write</code></td><td><code>workspace</code></td><td>The default. Write inside the project, the session's own scratch folder, and the temp directories, nowhere else.</td></tr>
         <tr><td><code>read-only</code></td><td><code>readonly</code></td><td>Run it, change nothing.</td></tr>
-        <tr><td><code>danger-full-access</code></td><td><code>open</code></td><td>Write anywhere. Asking for this always raises an approval card, whatever the permission mode, because it is a request to drop the confinement.</td></tr>
+        <tr><td><code>danger-full-access</code></td><td><code>open</code></td><td>Write anywhere. The call must carry a <code>justification</code>. Asking for this always raises an approval card, whatever the permission mode, because it is a request to drop the confinement. A subagent or another unattended run is refused.</td></tr>
       </tbody>
     </table></div>
     <p>When a command fails under <code>workspace</code> or <code>readonly</code>,
-      <code>classify_sandbox_denial</code> recognises the platform's refusal text (macOS "Operation
-      not permitted", bubblewrap "Read-only file system" or "Permission denied") so the assistant is
+      <code>classify_sandbox_denial</code> recognises the macOS refusal text ("Operation not
+      permitted") so the assistant is
       told the sandbox refused the write rather than guessing the tool is broken.</p>
 
     <h2 id="what-it-enforces">What the sandbox actually enforces</h2>
     <p>The single most important fact about this sandbox is that it is
       <b>allow-default plus deny rules</b>, not deny-by-default. The macOS profile is literally
-      <code>(allow default)</code> followed by a block of <code>deny</code> rules; the Linux setup
-      binds everything read-only and then masks the same paths (directories with an empty tmpfs, files
-      with <code>/dev/null</code>). What it enforces, therefore, is a single thing done well:
+      <code>(allow default)</code> followed by a block of <code>deny</code> rules. Its main job is
       <b>denial of a curated secret-store list</b>. Writes to that list are denied in every mode.
       Reads are denied by default, but the permission mode can open them (see
-      <a href="#secret-reads">Secret reads by permission mode</a>).</p>
+      <a href="#secret-reads">Secret reads by permission mode</a>). Two more rules apply to a
+      confined (<code>workspace</code> or <code>readonly</code>) command, the kind no person
+      reviewed: it cannot connect to the app's own API port on loopback, so it cannot drive an
+      approval to escape its confinement, and it cannot write the app's grant and config files
+      (<code>permissions.json</code>, <code>hooks.json</code>, <code>config.user.json</code>, the
+      plugins and custom agents folders, and the rest), even when its tree contains them.</p>
     <p>That list is <code>_DENIED_PATHS</code>, built from the canonical definitions in
       <code class="path">server/security/sensitive_paths.py</code> so the OS sandbox and the command
       validator can never drift on the shared core. It covers:</p>
@@ -128,11 +119,17 @@
         <code class="path">~/.azure</code>, <code class="path">~/.docker</code>, <code class="path">~/.kube</code>.
         Note that <code class="path">~/.aws</code> is denied for generic commands but re-allowed per-call, read-only, for the AWS tools (see below).</li>
       <li><b>Git and package-registry credentials</b> - <code class="path">~/.git-credentials</code>,
-        <code class="path">~/.netrc</code>, <code class="path">~/.npmrc</code>, <code class="path">~/.pypirc</code>.</li>
+        <code class="path">~/.config/git/credentials</code>, <code class="path">~/.netrc</code>, <code class="path">~/.npmrc</code>, <code class="path">~/.pypirc</code>.</li>
       <li><b>Browser cookies and keychains</b> - Chrome / Chromium / Firefox / Brave / Safari profiles,
         <code class="path">~/Library/Cookies</code>, and <code class="path">~/Library/Keychains</code>.</li>
       <li><b>Shell history</b> - <code class="path">~/.bash_history</code>, <code class="path">~/.zsh_history</code>,
         fish history (these frequently contain pasted tokens).</li>
+      <li><b>Shell startup and login persistence</b> - <code class="path">~/.zshrc</code>,
+        <code class="path">~/.zprofile</code>, <code class="path">~/.zshenv</code>,
+        <code class="path">~/.bashrc</code>, <code class="path">~/.bash_profile</code>,
+        <code class="path">~/.profile</code>, fish <code class="path">config.fish</code>, and
+        <code class="path">~/Library/LaunchAgents</code>. A write there runs code at the next shell or
+        login, and these files often hold exported secrets.</li>
       <li><b>Password managers and other CLI token stores</b> - <code class="path">~/.password-store</code>,
         1Password / <code>op</code>, <code class="path">~/.config/gh/hosts.yml</code>, cargo, gem,
         terraform, doctl, netlify, and heroku credential files.</li>
@@ -203,21 +200,11 @@
         reaches it. Remote HTTP MCP servers are not child processes and never see your environment at
         all.</li>
       <li><b>Sandboxed shells</b> get the GitHub subset only. <code>run_python</code>,
-        <code>aws_cli</code>, <code>ws_run_command</code>, the workspace shell endpoint and preview
-        dev servers all build
-        their environment through <code>_merged_env</code>, which drops
+        <code>aws_cli</code>, <code>ws_run_command</code>, background shell tasks, and preview dev
+        servers all build their environment through <code>_merged_env</code>, which drops
         <code>GITHUB_ENV_VARS</code>. The cloud keys are deliberately left in place: sandboxed code
         authenticates to Bedrock and AWS with them.</li>
     </ul>
-    <div class="callout callout--warn">
-      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
-      <div class="callout__body"><p><b>One path is not scrubbed.</b>
-        <code>popen_sandboxed</code>, the non-blocking variant behind background shell tasks, builds
-        the same sandbox profile but does not set the child environment at all, so it inherits the
-        parent's, GitHub token included. It also gets no proxy variables, which is why a background
-        command under a non-permissive egress tier has no network rather than a filtered one: it
-        fails closed.</p></div>
-    </div>
 
     <h3 id="aws-reallow">Why ~/.aws is denied, then re-allowed</h3>
     <p><code>run_sandboxed</code> takes an <code>allow_paths</code> argument that subtracts specific
@@ -227,9 +214,11 @@
       creds, <code class="path">/etc/shadow</code>, and the rest) stays blocked for that command.
       <code>aws_boto3</code> needs no such re-allow: it calls the boto3 SDK directly in-process, never
       through <code>run_sandboxed</code> at all, so it is restricted instead by a read-only prefix
-      check rather than the filesystem sandbox. The re-allow itself is scoped to the sandboxed AWS
-      calls; a generic shell command does not see <code class="path">~/.aws</code>, unless the
-      permission mode lets it <a href="#secret-reads">read the credential stores</a>.</p>
+      check rather than the filesystem sandbox. Every <code>run_python</code> script gets the
+      re-allow, whatever the script does, so <code>aws_cli</code> and every <code>run_python</code>
+      script can read <code class="path">~/.aws</code> (read-only). Other shells
+      (<code>ws_run_command</code>, <code>terminal_run</code>) do not see it, unless the permission
+      mode lets them <a href="#secret-reads">read the credential stores</a>.</p>
     <p>The re-allow is read-only. The AWS CLI and boto3 run programs that files in
       <code class="path">~/.aws</code> name: <code>credential_process</code> in the configuration
       file, CLI aliases that start with <code>!</code>, and CLI plugins. A write to
@@ -267,12 +256,14 @@
     <h2 id="egress-policy">The network egress policy (opt-in)</h2>
     <p>Since the sandbox itself leaves the network open, an opt-in egress policy
       (<code class="path">server/security/egress_policy.py</code>) restricts <em>where</em> a
-      sandboxed command can send bytes. It is configured in <code>permissions.json</code> under
-      <code>network_policy</code> and is off by default:</p>
+      sandboxed command can send bytes. It is stored in <code>permissions.json</code> under
+      <code>network_policy</code> and is off by default. You set it in Settings &gt; Keys and
+      permissions &gt; Permissions &gt; Sandbox Network Policy, which has three controls: Tier,
+      Custom allowed domains, and Safe methods only.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Tier</th><th>Meaning</th></tr></thead>
       <tbody>
-        <tr><td><code>permissive</code></td><td>No restriction, no proxy. The default, exactly the old behavior.</td></tr>
+        <tr><td><code>permissive</code></td><td>No restriction, no proxy. The default.</td></tr>
         <tr><td><code>curated</code></td><td>A seed allowlist of common package-registry, docs, and API domains, plus any <code>custom_allowed_domains</code> the user adds.</td></tr>
         <tr><td><code>restrictive</code></td><td>Nothing outbound except the user's own <code>custom_allowed_domains</code>.</td></tr>
       </tbody>
@@ -283,12 +274,10 @@
       allowlist, and either relays the raw bytes transparently or refuses the connection. No key
       material, no decryption. The proxy is injected into <code>run_sandboxed</code>'s environment
       via <code>HTTPS_PROXY</code> / <code>HTTP_PROXY</code>, which well-behaved HTTP clients honor
-      voluntarily - so on macOS a non-permissive tier <em>also</em> appends
+      voluntarily - so a non-permissive tier <em>also</em> appends
       <code>(deny network-outbound (remote ip "*:443"))</code> and <code>"*:80"</code> rules to the
       sandbox profile, forcing raw-socket traffic through the kernel boundary rather than merely
-      asking nicely. On Linux, bwrap has no equivalent per-port rule, so the non-permissive tiers
-      degrade to <code>--unshare-net</code>: zero egress rather than a domain allowlist. Treat the Linux
-      side as untested.</p>
+      asking nicely.</p>
     <p>Two documented limitations: <code>methods_only_safe</code> (block POST/PUT/PATCH/DELETE even
       to allowed domains) can only be enforced on plaintext HTTP, since the method of HTTPS traffic
       lives inside the encrypted tunnel; and DNS on port 53 is neither restricted nor inspected, so
@@ -301,13 +290,12 @@
     <h3 id="command-validator">The command validator</h3>
     <p><code class="path">server/security/command_validator.py</code> runs a regex deny-list against
       each subcommand. <code>validate_command()</code> first strips heredoc bodies (so a Markdown table
-      full of <code>|</code> pipes is not mistaken for a pipeline), splits compound commands on
-      <code>;</code>, <code>&amp;&amp;</code>, and <code>||</code>, then runs every validator over each
-      piece. The checks include:</p>
+      full of <code>|</code> pipes is not mistaken for a pipeline), splits compound commands on every
+      unquoted <code>;</code>, <code>&amp;</code>, and <code>|</code> and their doubles, then runs
+      every validator over each piece. The checks include:</p>
     <ul>
       <li><b>Dangerous patterns</b> - <code>rm -rf /</code>, <code>mkfs</code>,
-        <code>dd of=/dev/...</code>, redirects into <code class="path">/etc/</code>, and
-        <code class="path">/proc/*/environ</code> access.</li>
+        <code>dd of=/dev/...</code>, and redirects into <code class="path">/etc/</code>.</li>
       <li><b>Command and process substitution</b> - backticks, <code>&lt;(...)</code>, and a
         <code>$(...)</code> that can contain a command the checks do not see. A <code>$(...)</code> can run a read-only
         command that passes all the checks, for example <code>test "$(git branch --show-current)" =
@@ -331,10 +319,11 @@
     </ul>
     <p>The sensitive-path check deliberately strips quote <em>characters</em> rather than quoted
       <em>contents</em>, so <code>cat '/etc/shadow'</code> is still caught.</p>
-    <p>One detector in the same module is not a validator at all. <code>is_rm_command</code> never
-      blocks anything: it recognises a deleting command (through wrappers such as <code>sudo</code>
-      or <code>xargs</code>, and including <code>find ... -delete</code>) and forces an approval card
-      no matter what the permission mode says. See
+    <p>Deletes are read by a separate module, <code class="path">server/security/delete_sites.py</code>,
+      not by the validator. It recognises a deleting command (through wrappers such as
+      <code>sudo</code> or <code>xargs</code>, and including <code>find ... -delete</code>). The
+      approval floor asks only when a delete reaches outside the workspace and the app's own folders,
+      whatever the permission mode. A delete by an unattended agent is refused. See
       <a href="arch-approval.html#decision-order">the decision order</a>.</p>
     <p>The validator is regex-based and bypassable on its own, so it is explicitly <b>defence-in-depth</b>:
       it sits in front of the sandbox, never in place of it. Approval does not skip it: the approved
@@ -361,51 +350,25 @@
       <code>del _ep.Endpoint.make_request</code> to undo it. The layer that actually contains the code
       is <code>sandbox-exec</code>, not this patch.</p>
 
-    <h3 id="render-and-network">The render path and the network edges</h3>
-    <ul>
-      <li><b>DOMPurify (3.4.6)</b> sanitizes every Markdown render before it reaches the React DOM,
-        stripping <code>&lt;script&gt;</code>, inline event handlers, and <code>javascript:</code> URLs.
-        This is a real <b>boundary</b> for the render path: without it, a prompt-injected web page fetched
-        through <code>web_fetch</code> could fire arbitrary JS in the SPA origin.</li>
-      <li><b>The <code>127.0.0.1</code> default bind</b> closes LAN reachability at the kernel level.
-        Setting <code>HOST=0.0.0.0</code> is an explicit opt-in that exposes the (unauthenticated) API to
-        the network - only do it on a trusted LAN.</li>
-      <li><b>The Origin / Host guard</b> (<code class="path">server/infrastructure/security.py</code>)
-        blocks browser-driven cross-site requests and cross-site WebSocket handshakes. It does not stop a
-        deliberate non-browser client, which is why the <code>0.0.0.0</code> warning still stands.</li>
-    </ul>
-
-    <h2 id="boundary-table">Boundary vs defence-in-depth, at a glance</h2>
-    <p>This is the table to keep in mind. A <b>boundary</b> holds even if everything above it is
-      bypassed; <b>defence-in-depth</b> raises the bar but can be defeated in isolation.</p>
-    <div class="table-wrap"><table>
-      <thead><tr><th>Layer</th><th>What it does</th><th>Classification</th></tr></thead>
-      <tbody>
-        <tr><td><code>127.0.0.1</code> default bind</td><td>Closes LAN reachability</td><td><span class="badge">Boundary</span> kernel-level</td></tr>
-        <tr><td>DOMPurify sanitization</td><td>Strips scripts and JS URLs from any HTML reaching the DOM</td><td><span class="badge">Boundary</span> for the render path</td></tr>
-        <tr><td>Approval pause</td><td>Server-side turn pause; only registered executors run on an explicit client confirm</td><td><span class="badge">Boundary</span> enforced server-side</td></tr>
-        <tr><td>Network egress policy (opt-in)</td><td>SNI-filtering proxy plus profile deny rules for outbound traffic</td><td><span class="badge">Boundary</span> on macOS when enabled; Linux degrades to <code>--unshare-net</code></td></tr>
-        <tr><td><code>validate_command</code></td><td>Regex deny-list on every command path</td><td><span class="badge badge--muted">Defence-in-depth</span> bypassable alone</td></tr>
-        <tr><td><code>run_sandboxed</code> via <code>sandbox-exec</code> / <code>bwrap</code></td><td>Secret-store deny-list around every shell + code path (writes always; reads unless Bypass or an approved read)</td><td><span class="badge">Boundary</span> the strongest layer</td></tr>
-        <tr><td><code>_AWS_READONLY_GUARD</code></td><td>Monkey-patches botocore to reject AWS writes</td><td><span class="badge badge--muted">Defence-in-depth</span> user code can <code>del</code> it</td></tr>
-        <tr><td>Plugin loader allow-list</td><td>A dropped-in <code>.py</code> does nothing until enabled</td><td><span class="badge">Boundary</span> for drive-by plugins</td></tr>
-      </tbody>
-    </table></div>
-    <p>The full version of this table, with prose on each row, lives in the
-      <a href="ref-security.html">Security model</a> reference.</p>
+    <h2 id="boundary-table">Boundary vs defence-in-depth</h2>
+    <p>The render path (DOMPurify), the <code>127.0.0.1</code> default bind, the Origin and Host
+      guard, and the full table of which layer is a boundary and which is defence-in-depth are in the
+      <a href="ref-security.html#boundary-vs-did">Security model</a> reference. This page covers
+      only the sandbox mechanics.</p>
 
     <h2 id="path-containment">Workspace path containment</h2>
     <p>File operations have their own boundary, separate from the shell sandbox. Every workspace file
       op validates its target with <code>_ws_validate_path</code>
       (<code class="path">server/workspace/paths.py</code>): it calls <code>os.path.realpath</code> and
       confirms the result stays inside the connected workspace root, also blocking
-      <code class="path">/dev</code>, <code class="path">/proc</code>, <code class="path">/sys</code>,
-      and UNC paths. Writes then go through an atomic <code>_atomic_write_text</code> (temp file plus
+      <code class="path">/dev</code> and paths that start with <code>//</code>. The file tools
+      (<code>_ws_path_allowed</code>) can also reach the calling session's own scratch folder, never
+      another session's. Writes then go through an atomic <code>_atomic_write_text</code> (temp file plus
       <code>os.replace</code>).</p>
     <p>The same module also owns the <b>save-flow staging area</b>. New standalone files (the direct
       save flow) intentionally land outside any workspace, so they bypass the workspace-root check
       via a separately audited path: <code>stage_file_bytes</code> writes the finished bytes into
-      <code class="path">data/scratch/_staging</code> (each entry in its own random subdirectory,
+      <code class="path">~/.whisper/data/scratch/_staging</code> (each entry in its own random subdirectory,
       garbage-collected after 24 hours), and the approval executor <code>_do_save_to_path</code>
       refuses any <code>staged_path</code> that fails the <code>is_staged_path</code> containment
       check - the path must resolve inside the staging root, or a forged approval payload could
@@ -413,7 +376,7 @@
       <a href="arch-approval.html#save-flow">the direct save flow</a> for the full picture.</p>
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
-      <div class="callout__body"><p><b>Accepted TOCTOU residual (S8).</b> This is a check-then-use
+      <div class="callout__body"><p><b>Accepted TOCTOU residual.</b> This is a check-then-use
         pattern, so in theory a symlink swapped between the <code>realpath</code> check and the write
         could redirect it. The atomic <code>os.replace</code> does not follow a symlink at the final
         path component (it replaces the link itself), so the realistic case is covered; only an
@@ -425,7 +388,7 @@
 
     <h2 id="key-files">Key files</h2>
     <div class="spec">
-      <dt><code class="path">server/sandbox.py</code></dt><dd><code>run_sandboxed</code> and <code>popen_sandboxed</code>, the three write modes, the macOS / Linux profile generators, and the PTY wrapper.</dd>
+      <dt><code class="path">server/sandbox.py</code></dt><dd><code>run_sandboxed</code> and <code>popen_sandboxed</code>, <code>build_pty_sandbox_wrap</code>, the three write modes, and the profile generator.</dd>
       <dt><code class="path">server/security/sensitive_env.py</code></dt><dd>The credential environment denylist shared by sandboxed shells and MCP child processes.</dd>
       <dt><code class="path">server/security/egress_policy.py</code></dt><dd>The opt-in network egress tiers and the SNI-filtering local proxy.</dd>
       <dt><code class="path">server/security/sensitive_paths.py</code></dt><dd>The single source of truth for the secret-path deny-list, shaped for both consumers.</dd>

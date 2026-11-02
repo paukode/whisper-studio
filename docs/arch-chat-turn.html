@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Anatomy of a chat turn - Whisper Studio Docs</title>
-  <meta name="description" content="The end-to-end sequence of one Whisper Studio chat turn, from keystroke to persisted message: POST, prompt build, Bedrock stream, the tool loop, approvals, [DONE], and save.">
+  <meta name="description" content="The end-to-end sequence of one Whisper Studio chat turn, from keystroke to persisted message: POST, prompt build, model stream, the tool loop, approvals, [DONE], and save.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -22,13 +22,13 @@
 
     <p>Where the pipeline page describes the parts, this page describes the <em>order</em>. Read it
       top to bottom and you have walked a complete turn. <b>Click a box</b> in the diagram to trace a
-      path, for example click <em>tool_use?</em> to see the branch that leads into the tool loop and
+      path. For example, click <em>tool_use?</em> to see the branch that leads into the tool loop and
       back.</p>
 
     <figure class="diagram-figure wide">
       <div id="chat-turn-diagram" class="diagram"></div>
       <figcaption>The main pipeline runs left to right along the top row. The tool branch drops down,
-        and <em>tool_result</em> loops back into the Bedrock invoke, which is the agentic cycle. The
+        and <em>tool_result</em> loops back into the model invoke, which is the agentic cycle. The
         turn ends at <em>[DONE]</em>, then the session is persisted.</figcaption>
     </figure>
 
@@ -40,7 +40,7 @@
       <li><h4>The user types and clicks Send</h4><p>The SPA adds the user bubble, marks the session
         streaming, and opens a <code>fetch</code> to <code>/api/chat</code>.</p></li>
       <li><h4>The server builds the turn</h4><p>It filters the history, assembles the system prompt,
-        and calls Bedrock as a streaming upstream.</p></li>
+        and calls the model (Bedrock or an on-device server) as a streaming upstream.</p></li>
       <li><h4>Chunks stream back</h4><p>Text becomes tokens; a <code>tool_use</code> stop reason
         enters the tool loop and continues.</p></li>
       <li><h4>The turn ends and persists</h4><p><code>[DONE]</code> closes the stream, the SPA
@@ -51,17 +51,20 @@
     <h2 id="the-request">1. The request leaves the browser</h2>
     <p>When you press Send, <code class="path">src/hooks/useChatStream.ts</code> binds the owning
       session (so a mid-stream tab switch never redirects where the answer lands), appends your
-      message, sets the streaming flag, and issues the POST. The JSON body carries everything the
-      server needs to construct the turn:</p>
+      message, sets the streaming flag, and issues the POST. The main fields of the JSON body:</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Field</th><th>What it is</th></tr></thead>
       <tbody>
         <tr><td><code>question</code></td><td>The text you typed (a continuation sends an empty string).</td></tr>
         <tr><td><code>history</code></td><td>Prior user/assistant turns, capped to the last 40 entries. UI-only rows are already filtered client-side.</td></tr>
-        <tr><td><code>model</code> / <code>effort_level</code> / <code>verbosity</code></td><td>The selected model and its response controls.</td></tr>
+        <tr><td><code>model</code> / <code>effort_level</code> / <code>verbosity</code> / <code>brief_mode</code></td><td>The selected model and its response controls. An approval or answer continuation sends the values recorded with its card.</td></tr>
+        <tr><td><code>transcript</code></td><td>The live transcript of the session's recording, when there is one.</td></tr>
+        <tr><td><code>selected_search_indexes</code></td><td>The indexed workspaces this session searches. Absent means all indexed folders; an empty list means none.</td></tr>
+        <tr><td><code>local_context_window</code></td><td>The composer's context size for an on-device model. Cloud models ignore it.</td></tr>
+        <tr><td><code>force_skill</code></td><td>A skill the composer asked for by name, when set.</td></tr>
         <tr><td><code>session_id</code></td><td>Which conversation this turn belongs to.</td></tr>
         <tr><td><code>attachment_ids</code></td><td>Any files dropped into the composer, resolved server-side into the prompt.</td></tr>
-        <tr><td><code>session_approvals</code></td><td>The categories you have already pre-approved (or blocked) for this session, for example <code>{"write": "allow"}</code>. The client re-sends this map on every turn; the server never stores it.</td></tr>
+        <tr><td><code>session_approvals</code> / <code>session_denials</code></td><td>The categories you have already pre-approved or blocked for this session, for example <code>{"write": "allow"}</code>. The client re-sends them on every turn; the server never stores them.</td></tr>
         <tr><td><code>approved_tool_result</code></td><td>Present only on an approval continuation. Its presence is what makes the server resume a paused turn instead of starting a fresh one.</td></tr>
         <tr><td><code>midturn</code></td><td>Set by the composer when you send while the assistant is still working. It marks the message as "steer the running turn", never "start a new one".</td></tr>
       </tbody>
@@ -118,16 +121,17 @@
       the model is ever called, the endpoint prepares the two inputs the model reads: the message
       array and the system prompt.</p>
     <ul>
-      <li><b>Latch the session config.</b> <code>latch_session()</code> freezes the model, effort
-        level, and related settings on the first turn, so a mid-conversation Settings change never
-        disrupts an in-flight session.</li>
+      <li><b>Latch the session config.</b> <code>latch_session()</code> freezes the region, the model
+        catalog, the default model, the default effort, and the permission mode on the first turn, so a
+        mid-conversation Settings change never disrupts an in-flight session. The model and effort you
+        pick in the composer apply to each turn.</li>
       <li><b>Filter the history.</b> <code>visible_chat_history()</code>
         (<code class="path">server/infrastructure/sessions.py</code>) decides which stored rows reach
         the model. <code>cron_event</code> rows are dropped: they persist on disk and render in the
-        chat, but never enter the model's context. Three roles are
-        translated instead of dropped - a <code>session_message</code> from another session and an
-        <code>agent_report</code> both become user turns, and an <code>agent_answer</code> becomes
-        the assistant's own previous message.</li>
+        chat, but never enter the model's context. Four roles are
+        translated instead of dropped: a <code>session_message</code> from another session, an
+        <code>agent_report</code>, and a <code>task_report</code> (a background command's result) become
+        user turns, and an <code>agent_answer</code> becomes the assistant's own previous message.</li>
       <li><b>Assemble the system prompt.</b> <code>resolve_system_prompt()</code> composes base
         rules, the user's instructions and rules from <code class="path">~/.whisper</code>, selected
         <a href="arch-memory.html">memories</a>, and per-session memory, split into cache-aligned
@@ -135,6 +139,9 @@
       <li><b>Resolve <code>@file</code> mentions and attachments</b> inline into the user message, and
         add <a href="arch-index.html">index grounding</a> if the turn passes the grounding intent gate
         with indexes selected (an <code>@index</code> mention forces it).</li>
+      <li><b>Run the session hooks.</b> <code>SessionStart</code> and <code>UserPromptSubmit</code>
+        <a href="arch-hooks.html">hooks</a> run, and the context they return is appended to your
+        message.</li>
       <li><b>Build the tool catalogue.</b> <code>activate_from_history</code> replays the session's
         tool activations, <code>assemble_partitioned_pool</code> splits the pool into an advertised
         core plus a deferred index, and the index is placed in the cached system block. See
@@ -142,7 +149,7 @@
     </ul>
     <p>The endpoint then hands a <code>TurnContext</code> to the unified turn engine
       (<code>run_turn</code>, <code class="path">server/chat/engine/runner.py</code>). This exact
-      sequence - minus the interactive pauses - is also what
+      sequence, minus the interactive pauses, is also what
       <a href="arch-agents.html">sub-agents</a>, <a href="arch-cron.html">cron runs</a>, and the
       Python-only <code>run_headless_turn</code> entrypoint execute.</p>
 
@@ -157,7 +164,7 @@
         accumulate them without bound.</p></div>
     </div>
 
-    <h2 id="the-stream">3. Bedrock streams, the loop turns</h2>
+    <h2 id="the-stream">3. The model streams, the loop turns</h2>
     <p>The streaming loop lives in the engine, not the endpoint: <code>chat_endpoint()</code> owns
       only turn assembly and SSE delivery. The engine's Anthropic adapter
       (<code class="path">server/chat/engine/anthropic.py</code>) calls
@@ -175,11 +182,13 @@
     <p>The turn keeps looping (invoke, stream, act on the stop reason, invoke again) until the model
       stops asking for tools <em>and</em> the completion gate lets it end. On <code>end_turn</code>
       the engine first runs <code>run_completion_gate</code>
-      (<code class="path">server/goals/gate.py</code>): the WS-I Stop hooks always run, and a WS-E
-      goal judge runs when the <code>goal_loop</code> flag is on with an active goal (the
+      (<code class="path">server/goals/gate.py</code>). The Stop hooks always run first. Then the
+      deliverable and requested-file checks compare what the reply claims with what happened, and the
+      verification check asks for a test or build run after a code edit. Last, the goal gates and the
+      goal judge run when the <code>goal_loop</code> flag is on with an active goal (the
       <code>goal_evaluator</code> model, Haiku by default, for a cloud session; the session's own
       model on-device, where the whole gate runs only while a goal is active). If a
-      Stop hook blocks or the goal is judged not achieved, the gate injects
+      check blocks or the goal is judged not achieved, the gate injects
       <code>[completion gate]</code> feedback and the loop continues; only an unblocked gate reaches
       <code>[DONE]</code>, bounded by <code>goal_max_consecutive_blocks</code> (default 8). For the
       full round-by-round state machine (budget checks, retries, reactive compaction, parallel
@@ -208,7 +217,7 @@
     <p>A read-safe or already-permitted tool runs immediately through its executor
       (<code class="path">server/executors/</code>), gated by
       <a href="arch-sandbox.html">the sandbox</a> wherever it touches the shell. Its
-      <code>tool_result</code> is appended to the messages and the loop invokes Bedrock again. No user
+      <code>tool_result</code> is appended to the messages and the loop invokes the model again. No user
       interaction, no pause.</p>
 
     <h3 id="approval-gate">Needs consent: pause and wait</h3>
@@ -230,11 +239,12 @@
     </ol>
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 6v6c0 5 3.5 8 8 10 4.5-2 8-5 8-10V6Z"/><path d="m9 12 2 2 4-4"/></svg></span>
-      <div class="callout__body"><p><b>The approval path is the only route that bypasses command
-        validation, and the pause is held server-side.</b> The client cannot fabricate consent: there
-        is no client-asserted "approved" boolean the endpoint trusts. The paused turn state lives
-        on the server, so a real, server-mediated Approve is the single legitimate way past
-        <code>_validate_command</code>. See <a href="arch-approval.html">Approval &amp; permissions</a>
+      <div class="callout__body"><p><b>Approval is the only way to run an action that needs consent,
+        and the pause is held server-side.</b> The client cannot fabricate consent: there is no
+        client-asserted "approved" boolean the endpoint trusts. The paused turn state lives on the
+        server, so a real, server-mediated Approve is the single legitimate way to run it. An approved
+        command still goes through <code>_validate_command</code> before it runs, and a command the
+        validator refuses does not run. See <a href="arch-approval.html">Approval &amp; permissions</a>
         and the <a href="ref-security.html">security model</a>.</p></div>
     </div>
 
@@ -261,7 +271,7 @@
       <li><b>An <code>ask_user_question</code></b> collapses one or more question calls into a single
         tabbed card; the card <em>is</em> the response, and your answer re-enters the endpoint as a
         continuation, exactly like an approval.</li>
-      <li><b>The completion gate refuses to end the turn.</b> A Stop-hook block, or an active goal
+      <li><b>The completion gate refuses to end the turn.</b> A Stop-hook block, a check that fails, or an active goal
         the evaluator judges not-yet-achieved (the <code>goal_loop</code> flag), re-injects feedback
         and loops again instead of ending. These decisions surface over SSE as <code>goal_eval</code>,
         <code>stop_hook_block</code>, and <code>goal_cap_reached</code> frames. See
@@ -274,7 +284,7 @@
       <li><h4>Send</h4><p>You type the request and Send. <code>POST /api/chat</code> opens the SSE
         stream.</p></li>
       <li><h4>Build + invoke</h4><p>The server filters history, builds the prompt, and invokes
-        Bedrock. Explanatory text streams back as tokens.</p></li>
+        the model. Explanatory text streams back as tokens.</p></li>
       <li><h4>tool_use</h4><p>The model emits a <code>ws_write_file</code> tool call. Under the current
         mode it needs consent, so the turn pauses server-side and an <code>approval_request</code> is
         emitted.</p></li>

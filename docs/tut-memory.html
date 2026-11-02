@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Memory &amp; WHISPER.md - Whisper Studio Docs</title>
-  <meta name="description" content="Give Claude persistent memory across sessions and project-specific context: how workspace memory, session summaries, and WHISPER.md are built and injected into prompts.">
+  <meta name="description" content="Give Claude memory across sessions and project context: workspace memory, session summaries, consolidation, and the WHISPER.md and rules files that the app adds to each turn.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -15,218 +15,265 @@
 <body>
   <main class="doc" data-page="tut-memory">
     <h1>Memory &amp; WHISPER.md</h1>
-    <p class="subtitle">Give Claude a memory that survives past the current thread, and a place to
-      write down the standing facts about your project so you never repeat them.</p>
+    <p class="subtitle">Give Claude a memory that stays after the current conversation, and a file
+      for the permanent facts of your project. Then you do not tell Claude the same facts
+      again.</p>
 
-    <p class="lead">Memory is on out of the box. Claude quietly records the facts worth keeping,
-      writes a running summary of the conversation, and reads both back on later turns. Add a
-      <code>WHISPER.md</code> to your workspace and it gets the project context you would otherwise
-      re-explain every time.</p>
+    <p class="lead">Memory is on by default. The app records the facts to keep, writes a summary
+      of the conversation, and reads both on the next turns. A project <code>WHISPER.md</code>
+      gives the project context on each turn.</p>
 
-    <p>There are three separate mechanisms here, and it helps to keep them straight from the start:
-      <b>workspace memory</b> (durable facts that carry across sessions), <b>session memory</b> (a
-      structured summary of the thread you are in), and <b>WHISPER.md</b> (a file you write by hand).
-      The diagram traces how they meet in the prompt.</p>
+    <p>This page shows three different mechanisms:</p>
+    <ul>
+      <li><b>Workspace memory</b>: permanent facts for all the sessions.</li>
+      <li><b>Session memory</b>: a summary of the current conversation.</li>
+      <li><b>WHISPER.md and rules</b>: files that you write, or that the assistant writes when you
+        ask.</li>
+    </ul>
 
     <figure class="diagram-figure">
       <div id="memory-flow-diagram" class="diagram"></div>
-      <figcaption>How memory moves. A turn ends, a background review writes to files, and those
-        files (plus <code>WHISPER.md</code>) are injected back into later turns. <b>Click a box</b> to
-        trace its path.</figcaption>
+      <figcaption>The flow of memory. A turn ends, and a review in the background writes files.
+        The app adds these files and <code>WHISPER.md</code> to the next turns. <b>Click a box</b>
+        to follow its path.</figcaption>
     </figure>
 
     <h2 id="turn-it-on">On by default, in two tiers</h2>
-    <p>Memory is <b>on out of the box</b>. The underlying flags, <code>auto_memory</code> for the
-      persistent memory and extraction and <code>session_memory</code> for the per-session summary,
-      both default on, so everything below happens automatically without you calling any tools or
-      running any commands. If you would rather turn it off, flip the <b>Memory</b> row in the
-      More menu (the round ··· button) of the composer, or type <code>/memory off</code>.</p>
-    <p>Persistent memory has two tiers, so there is always somewhere for a fact to go, workspace or no
+    <p>Memory is <b>on by default</b>. Two feature flags control it, and both are on by
+      default:</p>
+    <ul>
+      <li><code>auto_memory</code>: the permanent memory, the review that writes it, and the
+        recall.</li>
+      <li><code>session_memory</code>: the summary of each session.</li>
+    </ul>
+    <p>You do not call a tool or type a command. To disable memory, click the "More" button
+      (···) in the chat box, and then click the "Memory" row. You can also type <code>/memory
+      off</code>.</p>
+
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+      <div class="callout__body"><p><b>Local mode only reads memories.</b> A new install starts
+        in Local mode. In Local mode, the app reads the saved memories, but it does not record new
+        memories. The "Memory" row then shows "Recall only". The review after a turn and the
+        consolidation do not run. To record memories, open "Settings", then "Model mode", and
+        select Hybrid or Cloud.</p></div>
+    </div>
+
+    <p>Permanent memory has two tiers. Thus, a fact has a location with or without a
       workspace:</p>
     <ul>
-      <li><b>Global</b> memory is cross-workspace and stays alive even in plain chat with no workspace
-        open. It holds facts about you: preferences, role, and general feedback on how you like Claude
-        to work.</li>
-      <li><b>Project</b> memory is scoped to the open workspace. It holds workspace-specific facts such
-        as goals, deadlines, and repo references.</li>
+      <li><b>Global</b> memory applies in all workspaces and in a chat with no workspace. It contains facts of you: preferences, role, and feedback on how Claude must work.</li>
+      <li><b>Project</b> memory applies only in the open workspace. It contains facts of that
+        workspace, for example goals, deadlines, and repository references.</li>
     </ul>
 
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
-      <div class="callout__body"><p>Project memory lives under a slug derived from the workspace folder
-        name plus a short hash of its full path, so two projects named alike still keep separate
-        memories and never bleed into each other. Global memory sits apart from all of them, shared
-        across every chat.</p></div>
+      <div class="callout__body"><p>The folder name of a project memory is the name of the
+        workspace folder and a short hash of its full path. Thus, two projects with the same
+        folder name have separate memories. Global memory is in a separate folder, and all chats
+        share it.</p></div>
     </div>
 
-    <h2 id="workspace-memory">Workspace memory: durable facts</h2>
-    <p>Workspace memory is a small set of Markdown files that persist across every session in a
-      project. They live in <code class="path">memory/&lt;workspace-slug&gt;/</code> under the data
-      directory (see <a href="#where-it-lives">Where it all lives</a>) and are pulled into prompts on demand. Each file carries YAML frontmatter (a name, a one-line
-      description, and a type) followed by a short Markdown body. An index file,
-      <code class="path">MEMORY.md</code>, lists them one line each.</p>
+    <h2 id="workspace-memory">Workspace memory: permanent facts</h2>
+    <p>Workspace memory is a small set of Markdown files for each project. The files stay for all
+      the sessions of the project. They are in <code class="path">memory/&lt;workspace-slug&gt;/</code>
+      in the data folder (refer to <a href="#where-it-lives">Where the files are</a>).</p>
+    <p>Each file starts with YAML frontmatter: a name, a description of one line, and a type. A short Markdown
+      body follows. An index file, <code class="path">MEMORY.md</code>, lists each file on one
+      line.</p>
 
-    <p>Not everything is worth remembering. The post-turn review is deliberately selective, and it
-      saves into a closed set of four types:</p>
+    <p>The review after a turn saves only some facts. Each fact has one of four types:</p>
     <div class="table-wrap"><table>
-      <thead><tr><th>Type</th><th>What it captures</th></tr></thead>
+      <thead><tr><th>Type</th><th>Contents</th></tr></thead>
       <tbody>
-        <tr><td><code>user</code></td><td>Who you are: preferences, role, expertise.</td></tr>
-        <tr><td><code>feedback</code></td><td>Corrections and guidance on how you want Claude to work.</td></tr>
-        <tr><td><code>project</code></td><td>Project context, goals, and deadlines not already in the code.</td></tr>
-        <tr><td><code>reference</code></td><td>Pointers to external systems and resources.</td></tr>
+        <tr><td><code>user</code></td><td>Facts of you: preferences, role, and skills.</td></tr>
+        <tr><td><code>feedback</code></td><td>Corrections and instructions on how Claude must work.</td></tr>
+        <tr><td><code>project</code></td><td>Project context, goals, and deadlines that are not in the code.</td></tr>
+        <tr><td><code>reference</code></td><td>Links to external systems and resources.</td></tr>
       </tbody>
     </table></div>
 
-    <p>It deliberately does <em>not</em> save things that are already recoverable from the codebase:
-      architecture and code patterns (read the code), git history (read the log), or one-off debugging
-      fixes (the fix is already committed). It also refuses a few categories that would harden into
-      bad habits: environment problems you can fix yourself (a missing binary, an unconfigured
-      credential), claims that some tool "does not work", errors a retry resolved, and narratives of a
-      single task. The point is to remember what only you can tell it, not to duplicate the
-      repository.</p>
-
-    <h3 id="learning-review">The post-turn learning review</h3>
-    <p>Memories are written by a review that runs in the background after a turn, roughly every third
-      turn, and never blocks your reply. The review does not re-send a summary of the chat. It replays
-      the turn you just had (same system prompt, same tools, same messages) with one extra question
-      appended: what here is worth remembering? Because everything before that question is already in
-      the prompt cache, the review is cheap, and it reads the whole conversation instead of an
-      excerpt.</p>
-    <p>The review can only touch the memory store, your skills, and read-only workspace files, so it
-      can never continue or redo your task. It writes two kinds of thing:</p>
+    <p>The review does not save facts that the codebase already contains. Examples are the
+      architecture, code patterns, the git history, and a correction that is in a commit. The review also
+      does not save these items:</p>
     <ul>
-      <li><b>Memories</b> when you revealed a durable fact about yourself, your preferences, or the
-        project.</li>
-      <li><b>Skills</b> when you corrected a workflow or a repeatable procedure emerged. Memory holds
-        facts that apply everywhere; a skill holds how to do one class of task. See
-        <a href="tut-skills.html">Skills</a>.</li>
+      <li>Problems of the environment that you can correct, for example a missing program.</li>
+      <li>Statements that a tool "does not work".</li>
+      <li>Errors that a second try corrected.</li>
+      <li>The story of a single task.</li>
     </ul>
-    <p>If the model already wrote a memory itself during the turn, the review stands down for that
-      turn so the two never fight over the same file.</p>
 
-    <h3 id="recall">How memory is recalled</h3>
-    <p>Memory is read back on demand, not dumped wholesale into every prompt. On a new query the system
-      scans the memory files for a manifest. If there are five or fewer files, it simply loads them
-      all. If there are more, it runs a quick side-query on Claude Haiku that ranks the manifest
-      against your current question and picks up to five relevant files. That keeps the prompt lean:
-      only what is likely to matter is injected. On-device (local) turns skip the ranking side-query
-      to stay fully offline and just take the most recent memories instead.</p>
-    <p>Which model does that ranking is yours to choose. The <code>auxiliary_models</code> setting
-      routes side tasks like this one to a model of your choosing; leave it alone and recall stays on
-      Haiku, the cheapest Claude option. See <a href="ref-settings.html">Settings &amp; config keys</a>.</p>
+    <h3 id="learning-review">The review after a turn</h3>
+    <p>A review in the background writes the memories. It runs after every third turn, and it does
+      not stop your answer. The review does not send a summary of the chat. It sends the turn
+      again, with the same system prompt, tools, and messages, and one more question: which facts
+      must the app keep? The prompt cache already contains the turn. Thus, the review costs little,
+      and it reads the full conversation.</p>
+    <p>The review can change only the memory files and your skills. It can also read workspace
+      files. It cannot continue your task. It writes two types of items:</p>
+    <ul>
+      <li><b>Memories</b>, when you gave a permanent fact of you, your preferences, or the
+        project.</li>
+      <li><b>Skills</b>, when you corrected a work procedure, or when a procedure that you can use
+        again occurred. A memory is a fact for all tasks. A skill shows how to do one type of task.
+        Refer to <a href="tut-skills.html">Skills</a>.</li>
+    </ul>
+    <p>If the model wrote a memory during the turn, the review does not run for that turn.</p>
 
-    <h2 id="session-memory">Session memory: a running summary</h2>
-    <p>Session memory is a different animal. Rather than durable cross-session facts, it summarizes the
-      conversation you are in right now, so a long thread stays coherent without the model re-reading
-      every earlier turn. It is a single Markdown file with four fixed sections:</p>
+    <h3 id="recall">How the app reads memory</h3>
+    <p>The app does not add all the memory files to each prompt. For each new question, the app
+      reads the list of memory files:</p>
+    <ul>
+      <li>If there are 5 files or fewer, the app adds all of them.</li>
+      <li>If there are more than 5 files, a cloud model compares the list with your question and
+        selects maximum 5 files. The default model is Claude Haiku. To use a different cloud model,
+        set <code>auxiliary_models.memory_recall</code>. Refer to <a href="ref-settings.html">Settings
+        &amp; config keys</a>.</li>
+      <li>For an on-device model, and in Local mode, the app does not send the list to a
+        cloud model. It adds the 5 newest files.</li>
+    </ul>
+
+    <h3 id="consolidation">Consolidation</h3>
+    <p>The app also joins and cleans the memory files. Each memory tier has its own counter. The
+      consolidation runs for a tier when 24 hours and 5 turns are complete after the last
+      consolidation of that tier. The <code>dream_consolidation</code> feature flag controls it,
+      and it is on by default. It does not run in Local mode.</p>
+
+    <h3 id="memory-files">Read and edit the memory files</h3>
+    <ol class="steps">
+      <li><h4>Open the viewer</h4><p>Click the "More" button (···) in the chat box. Then click
+        "Memory files".</p></li>
+      <li><h4>Select a file</h4><p>The viewer shows the global memory files and the project memory
+        files.</p></li>
+      <li><h4>Change the file</h4><p>You can edit or delete the file. You can also move a project
+        memory to the global memory.</p></li>
+    </ol>
+
+    <h2 id="session-memory">Session memory: a summary of the conversation</h2>
+    <p>Session memory is different from workspace memory. It is a summary of the current
+      conversation. Thus, the model does not read all the earlier turns of a long conversation.
+      Session memory is one Markdown file with four sections:</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Section</th><th>Contents</th></tr></thead>
       <tbody>
-        <tr><td><code>## Goals</code></td><td>What you are trying to accomplish this session.</td></tr>
-        <tr><td><code>## Decisions</code></td><td>Key choices made along the way.</td></tr>
-        <tr><td><code>## Context</code></td><td>Important background that has been established.</td></tr>
-        <tr><td><code>## Blockers</code></td><td>Issues hit or problems still unresolved.</td></tr>
+        <tr><td><code>## Goals</code></td><td>The goals of this session.</td></tr>
+        <tr><td><code>## Decisions</code></td><td>The decisions of the session.</td></tr>
+        <tr><td><code>## Context</code></td><td>Important background facts.</td></tr>
+        <tr><td><code>## Blockers</code></td><td>Problems that are not solved.</td></tr>
       </tbody>
     </table></div>
-    <p>The summary is written incrementally by a background agent and injected into later turns wrapped
-      in a <code>&lt;session-memory&gt;</code> block. Because it is a compact digest rather than the raw
-      transcript, a thread that has run for hours can resume without paying to re-read everything.</p>
+    <p>An agent in the background writes the summary. The app adds the summary to the next turns
+      in a <code>&lt;session-memory&gt;</code> block. The summary is short. Thus, a conversation
+      of many hours can continue with no cost to read all the turns again.</p>
 
-    <h3 id="when-it-updates">When it updates</h3>
-    <p>The update runs as a background task after a turn, and only once the conversation has grown
-      enough to be worth re-summarizing. Cloud sessions wait for both a large size threshold and some
-      tool activity before updating; on-device sessions summarize far more often (every few turns) and
-      on the local model itself, since local chats often have no tools to gate on. Either way it never
-      blocks your reply, and if the summary fails it is simply skipped rather than disrupting the chat.
-      For the exact thresholds and the injection format, see the architecture page.</p>
+    <h3 id="when-it-updates">When the summary changes</h3>
+    <p>The summary changes after a turn, in the background. It changes only when the
+      conversation grew by a set quantity:</p>
+    <ul>
+      <li>A cloud session waits for 200,000 more characters (approximately 50,000 tokens) and 10
+        tool calls.</li>
+      <li>An on-device session waits for 6,000 more characters. It uses its own model for the
+        summary.</li>
+    </ul>
+    <p>The summary does not stop your answer. If the summary fails, the app does not change the
+      summary for that turn. Refer to the <a href="arch-memory.html">Memory system</a> page.</p>
 
     <div class="callout callout--note">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z"/></svg></span>
-      <div class="callout__body"><p>Session memory and workspace memory are stored separately.
-        Workspace memory carries facts <em>between</em> projects' sessions; session memory is a digest
-        <em>within</em> one thread. You do not have to choose, both run at once when memory is on.</p></div>
+      <div class="callout__body"><p>The app keeps session memory and workspace memory in
+        different files. Workspace memory keeps facts for all the sessions of a project. Session
+        memory is a summary of one conversation. When memory is on, both run.</p></div>
     </div>
 
-    <h2 id="whisper-md">WHISPER.md and rules: what you tell it to keep</h2>
-    <p>Everything above is automatic. The files in this section are the opposite: text you own, loaded
-      whole on <em>every</em> turn. They live in your own folder, <code class="path">~/.whisper</code>,
-      never inside a workspace, so nothing is committed into a repo and the assistant can update them
-      without an approval card (every write under <code class="path">~/.whisper</code> is silent in
-      every permission mode). If you have used the Claude Code CLI, <code>WHISPER.md</code> is the
-      same idea as <code>CLAUDE.md</code> and <code class="path">rules/</code> is the same idea as
-      <code class="path">.claude/rules/</code>.</p>
+    <h2 id="whisper-md">WHISPER.md and rules: your instructions</h2>
+    <p>The memory above is automatic. The files in this section are your files. The app adds
+      them in full on <em>each</em> turn. The files are in your user folder, not in a workspace.
+      Thus, nothing goes into a repository. The user folder is <code class="path">~/.whisper</code>
+      for the Mac app, and the checkout folder for a source install.</p>
+    <p>The assistant writes rules and <code>WHISPER.md</code> files with no approval card in all
+      permission modes except plan mode. In plan mode, a write to these files shows an approval
+      card. This applies only to rules and <code>WHISPER.md</code> files. Other files in the user
+      folder, for example configuration files, plugins, and agent types, obey the permission mode. If
+      you know the Claude Code CLI: <code>WHISPER.md</code> is the same as <code>CLAUDE.md</code>,
+      and <code class="path">rules/</code> is the same as <code class="path">.claude/rules/</code>.</p>
 
     <div class="spec">
-      <dt><code class="path">~/.whisper/WHISPER.md</code></dt><dd>Your profile: who you are, your stack and tools, how you like answers written. Prose you curate; the assistant edits it only when you ask.</dd>
-      <dt><code class="path">~/.whisper/rules/global/rules.md</code></dt><dd>Rules that apply everywhere, one imperative line each. The shipped defaults (no emoji, no em dashes) start here. Any other <code>.md</code> file in the folder loads too.</dd>
-      <dt><code class="path">~/.whisper/rules/&lt;project&gt;/WHISPER.md</code></dt><dd>The project's overview: what it is, its layout, how to build and test it. One folder per workspace, named <code>&lt;folder name&gt;-&lt;8 character hash&gt;</code>, the same name the memory store uses for that project.</dd>
-      <dt><code class="path">~/.whisper/rules/&lt;project&gt;/rules.md</code></dt><dd>Rules that apply only in that workspace.</dd>
+      <dt><code class="path">~/.whisper/WHISPER.md</code></dt><dd>Your profile: who you are, your tools, and the style of answer that you like. The assistant changes it only when you ask.</dd>
+      <dt><code class="path">~/.whisper/rules/global/rules.md</code></dt><dd>Rules for all projects, one instruction on each line. The app gives default rules (no emoji, no em dashes). The app also reads each other <code>.md</code> file in this folder.</dd>
+      <dt><code class="path">~/.whisper/rules/&lt;project&gt;/WHISPER.md</code></dt><dd>The overview of the project: its function, its layout, and how to build and test it. There is one folder for each workspace. The folder name is <code>&lt;folder name&gt;-&lt;8 character hash&gt;</code>, the same name as the memory folder of the project.</dd>
+      <dt><code class="path">~/.whisper/rules/&lt;project&gt;/rules.md</code></dt><dd>Rules for that workspace only.</dd>
     </div>
+    <p>In a source install, replace <code class="path">~/.whisper</code> with the checkout
+      folder.</p>
 
-    <p>The split to keep in mind: a <b>fact</b> about you or the project goes in a
-      <code>WHISPER.md</code>, an <b>instruction</b> the assistant must obey goes in a rules file. Keeping
-      the rules apart from the profile keeps <code>WHISPER.md</code> readable and makes it easy to see
-      what the assistant added.</p>
+    <p>Put a <b>fact</b> of you or the project in a <code>WHISPER.md</code>. Put an
+      <b>instruction</b> for the assistant in a rules file. Thus, <code>WHISPER.md</code> stays easy
+      to read, and you can see the rules that the assistant added.</p>
 
     <h3 id="remember-this">"Remember this"</h3>
-    <p>You do not have to open the files to add a rule. Say <b>remember this</b>, <b>my rule is</b>,
-      <b>from now on</b> or <b>do not do that again</b>, and the assistant condenses your words into one
-      line and appends it to the connected project's <code>rules.md</code>, creating the folder on first
-      use. Add <b>always</b>, <b>everywhere</b>, <b>all the time</b> or <b>in every project</b> and the
-      line goes to the global <code>rules.md</code> instead (so does any rule given with no workspace
-      connected). A fact you ask it to note goes to the matching <code>WHISPER.md</code>. It tells you
-      in one line which file it wrote to, and the rule applies from the next turn. Things the assistant
-      notices on its own still go to memory, never to your rules.</p>
+    <p>You can add a rule without the files. Say "remember this", "my rule is", "from now on", or
+      "do not do that again". The assistant writes your words as one line in the
+      <code>rules.md</code> of the connected project. If the folder is missing, the assistant makes
+      it.</p>
+    <p>If you add "always", "everywhere", "all the time", or "in every project", the line goes to
+      the global <code>rules.md</code>. With no workspace connected, a rule also goes to the global
+      file. A fact that you ask the assistant to note goes to the related <code>WHISPER.md</code>.
+      The assistant tells you the name of the file in one line. The rule applies from the next turn.
+      Facts that the assistant finds itself go to memory, not to your rules.</p>
 
-    <p>Good things to put in a project <code>WHISPER.md</code>:</p>
+    <p>Good contents for a project <code>WHISPER.md</code>:</p>
     <ul>
-      <li>How to run, build, and test the project (the commands you always forget to mention).</li>
-      <li>Domain vocabulary and the shape of the codebase, so Claude does not have to re-derive it.</li>
-      <li>Directories that are off limits, generated files, the branch workflow.</li>
+      <li>The commands to run, build, and test the project.</li>
+      <li>The words of the domain and the structure of the codebase.</li>
+      <li>Folders that the assistant must not change, generated files, and the branch
+        procedure.</li>
     </ul>
 
-    <p>You can edit any of these files two ways:</p>
+    <p>You can edit these files in two ways:</p>
     <ol class="steps">
-      <li><h4>The in-app editor</h4><p>Open <b>Project instructions</b> from the More menu (···) in the
-        chat toolbar to edit the connected project's <code>WHISPER.md</code> in place.</p></li>
-      <li><h4>Any editor</h4><p>They are plain markdown files under <code class="path">~/.whisper</code>,
-        so any editor works. Save and the next turn picks it up; no restart is needed.</p></li>
+      <li><h4>The editor in the app</h4><p>Connect a workspace. Click the "More" button (···) in
+        the chat box. Then click "Project memory". The row shows only when a workspace is connected.
+        The editor opens the <code>WHISPER.md</code> of the connected project.</p></li>
+      <li><h4>A text editor</h4><p>The files are Markdown files in the user folder. Open them in a
+        text editor and save them. The next turn reads the new text. You do not restart the
+        app.</p></li>
     </ol>
 
-    <h3 id="agents-md">If your repo already has an AGENTS.md</h3>
-    <p>You do not have to convert it. An <code>AGENTS.md</code> at the workspace root is read live,
-      alongside the project <code>WHISPER.md</code>, and labelled in the prompt as instructions
-      maintained for other coding tools. Where the two disagree, <code>WHISPER.md</code> wins, and
-      the app says so in the prompt rather than leaving the model to guess from ordering. If there is
-      no project <code>WHISPER.md</code>, the <code>AGENTS.md</code> simply takes its place. A
-      <code>WHISPER.md</code> inside the repo is not read: this app's instructions live in
-      <code class="path">~/.whisper</code> only.</p>
+    <h3 id="agents-md">If your repository has an AGENTS.md file</h3>
+    <p>You do not change it. The app reads an <code>AGENTS.md</code> at the workspace root on
+      each turn, together with the project <code>WHISPER.md</code>. The prompt labels it as
+      instructions for other coding tools. If the two files do not agree, <code>WHISPER.md</code>
+      has priority, and the prompt says so. If there is no project <code>WHISPER.md</code>, the
+      <code>AGENTS.md</code> is the only project instruction file. The app does not read a
+      <code>WHISPER.md</code> in the repository.</p>
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
-      <div class="callout__body"><p>Keep these files short and stable. They are read on every
-        turn, so they cost input tokens each time (each file is capped at 12,000 characters). Put
-        durable, always-true facts and rules here and let the automatic memory system handle the
-        things that change from session to session.</p></div>
+      <div class="callout__body"><p>Keep these files short. The app reads them on each turn, so
+        each turn pays for their input tokens. The app reads maximum 12,000 characters of each file.
+        Put permanent facts and rules here. Let the automatic memory keep the facts that
+        change.</p></div>
     </div>
 
+    <h2 id="where-it-lives">Where the files are</h2>
+    <p>The data folder is <code class="path">~/.whisper/data</code> for the Mac app, and <code
+      class="path">data/</code> in the checkout for a source install.</p>
     <div class="spec">
-      <dt><code class="path">memory/&lt;workspace-slug&gt;/</code></dt><dd>Durable project (workspace-scoped) memory: topic files plus the <code>MEMORY.md</code> index.</dd>
-      <dt><code class="path">global_memory/</code></dt><dd>Global (cross-workspace) memory: user and feedback facts that apply everywhere, including plain chat.</dd>
-      <dt><code class="path">session_memory/&lt;session-id&gt;.md</code></dt><dd>The running summary of one conversation.</dd>
-      <dt><code class="path">~/.whisper/rules/&lt;project&gt;/</code></dt><dd>The project's <code>WHISPER.md</code> and <code>rules.md</code>, loaded on every chat turn; <code class="path">~/.whisper/WHISPER.md</code> and <code class="path">~/.whisper/rules/global/</code> hold the global ones.</dd>
-      <dt><code class="path">server/memory/</code></dt><dd>The memory subsystem: the post-turn review, recall, session summaries, consolidation, and tools.</dd>
+      <dt><code class="path">data/memory/&lt;workspace-slug&gt;/</code></dt><dd>Project memory: the memory files and the <code>MEMORY.md</code> index.</dd>
+      <dt><code class="path">data/global_memory/</code></dt><dd>Global memory: facts for all workspaces and for a chat with no workspace.</dd>
+      <dt><code class="path">data/session_memory/&lt;session-id&gt;.md</code></dt><dd>The summary of one conversation.</dd>
+      <dt><code class="path">rules/&lt;project&gt;/</code></dt><dd>The <code>WHISPER.md</code> and <code>rules.md</code> of the project, in the user folder. The global files are <code class="path">WHISPER.md</code> and <code class="path">rules/global/</code> in the user folder.</dd>
+      <dt><code class="path">server/memory/</code></dt><dd>The code of the memory system: the review, the recall, the session summaries, the consolidation, and the tools.</dd>
     </div>
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
-      <div class="callout__body"><p><b>Related:</b> <a href="tut-first-chat.html">Your first chat</a>
-        to get talking, the <a href="arch-memory.html">Memory system</a> architecture page for exact
-        thresholds and the injection format, <a href="tut-skills.html">Skills</a> for the other half
-        of what the review writes, <a href="tut-permissions.html#app-storage">Permissions</a> for
-        why writes under <code class="path">~/.whisper</code> never ask, and
-        <a href="ref-tools.html">Agent tools</a> for the memory and rules tool reference.</p></div>
+      <div class="callout__body"><p><b>Related:</b> <a href="tut-first-chat.html">Your first chat</a>,
+        the <a href="arch-memory.html">Memory system</a> page,
+        <a href="tut-skills.html">Skills</a>,
+        <a href="tut-permissions.html#app-storage">Permissions</a>, and
+        <a href="ref-tools.html">Agent tools</a>.</p></div>
     </div>
   </main>
 

@@ -20,8 +20,8 @@
       work: chat, on-device transcription, spoken conversations, and the workspace tools.</p>
 
     <p>Whisper Studio is one process serving one origin, so there is nothing to "connect" between a
-      frontend and a backend. What is left is telling the app which AWS region to use, picking a model,
-      then exercising each subsystem once. Work through the steps in order; each one leaves you in a
+      frontend and a backend. What is left is choosing where models run, telling the app which AWS
+      region to use if you want cloud models, picking a model, then exercising each subsystem once. Work through the steps in order; each one leaves you in a
       good state for the next.</p>
 
     <div class="callout">
@@ -34,47 +34,48 @@
 
     <figure class="shot">
       <img src="assets/img/settings-api-keys.png" alt="The Settings dialog on Keys and permissions, API keys sub-tab">
-      <figcaption><strong>Settings &rarr; Keys and permissions &rarr; API keys on a fresh install.</strong> Only the Bedrock region is required for cloud chat, and it comes pre-filled with <code>us-east-1</code> from the seeded config; the Tavily key is optional, enables web search, and starts empty.</figcaption>
+      <figcaption><strong>Settings &rarr; Keys and permissions &rarr; API keys on a fresh install.</strong> Only the Bedrock region is required for cloud chat, and the field shows the shipped default <code>us-east-1</code>; the Tavily key is optional, enables web search, and starts empty.</figcaption>
     </figure>
 
     <h2 id="mode-notice">First, the Local-mode notice</h2>
-    <p>The very first launch shows a one-time dialog headed <b>You're starting in Local mode</b>. It is
+    <p>The very first launch shows a one-time dialog headed <b>You're in Local mode</b>. It is
       not an error. A fresh install is seeded with <code>model_mode: local</code>, so nothing leaves
       your machine until you choose otherwise, and the dialog explains the three modes (Local, Hybrid,
-      Cloud) and where to change them. Dismiss it, or use its button to jump straight to
-      <b>Settings &rarr; Model mode</b>. It never appears again.</p>
-    <p>Local mode does <b>not</b> stop you using cloud models. The app ships no on-device chat model, so
-      the model picker would otherwise be empty; instead it falls back to showing every model. You can
-      chat on Bedrock from the first minute, switch the mode to Hybrid or Cloud whenever you like, and
-      install an on-device model from <b>Settings &rarr; Models &rarr; Discover</b> when you want to run
-      chat locally too. See <a href="tut-model-modes.html">Model modes</a>.</p>
+      Cloud) and where to change them. Click <b>Got it</b> to dismiss it, or <b>Open model
+      settings</b> to jump straight to <b>Settings &rarr; Model mode</b>. It never appears again.</p>
+    <p>Local mode offers and runs only on-device models, and it refuses every cloud call (chat, voice
+      mode, and background work). The app ships no on-device chat model, so until you install one the
+      model picker shows an install hint instead of a list. You have two ways forward: install an
+      on-device model from <b>Settings &rarr; Models &rarr; Discover</b>, or switch
+      <b>Settings &rarr; Model mode</b> to Hybrid or Cloud to chat on Bedrock. See
+      <a href="tut-model-modes.html">Model modes</a>.</p>
 
     <h2 id="checklist">The healthy-install checklist</h2>
     <p>Six steps. The first two are one-time configuration; the rest prove each subsystem is alive. If
-      steps 3 and 4 pass, your install is healthy.</p>
+      steps 3 and 4 pass, your install is healthy. The steps below use a cloud model; with an
+      on-device model, skip the region and AWS parts.</p>
 
     <ol class="steps">
       <li>
         <h4>Open the app</h4>
         <p>From a source install, look at the end of the terminal output for a line with an address,
-          typically <code>http://127.0.0.1:8000</code>; the script also opens it for you unless you
-          passed <code>--no-open</code>. If port 8000 was busy, the script takes the next free one, so
-          read the URL it actually printed rather than assuming 8000. In <code>--dev</code> the address
-          you want is the Vite one (from 5173), not the backend. You should see the Whisper Studio
-          interface, not a blank page. (A blank page usually means the frontend bundle is missing;
+          typically <code>http://127.0.0.1:41430</code>; the script also opens it for you unless you
+          passed <code>--no-open</code>. If port 41430 was busy, the script takes the nearest free one,
+          so read the URL it actually printed. In <code>--dev</code> the address you want is the Vite
+          one (from 41460), not the backend. You should see the Whisper Studio interface. (A plain-text
+          page that says <code>Frontend build missing</code> means the frontend bundle is missing;
           re-run <code>bash setup.sh</code>, or <code>bash setup.sh --new</code> for a clean rebuild.
-          Note that <code>--new</code> backs up your config and reseeds it with the first-run defaults,
-          so you would then re-add your Tavily key and any custom settings, or restore them from the
-          backup.)</p>
+          <code>--new</code> keeps your <code>config.user.json</code>.)</p>
       </li>
       <li>
-        <h4>Set your region, then pick a model</h4>
-        <p>Click the gear icon, then go to <b>Access and usage &rarr; Keys and permissions &rarr; API
-          keys</b>:</p>
+        <h4>Choose the mode, set your region, then pick a model</h4>
+        <p>Click the gear icon. For Claude or GPT, set <b>Model mode</b> to Hybrid or Cloud first (a
+          fresh install is in Local mode, which refuses cloud models). Then go to <b>Access and usage
+          &rarr; Keys and permissions &rarr; API keys</b>:</p>
         <ul>
           <li><b>Bedrock Region</b> must match the region where your model is enabled. This is almost
             always the same region you used in <code>aws configure</code>. A mismatch here is the
-            single most common first-run error (see below). It is pre-filled with
+            single most common first-run error (see below). The shipped default is
             <code>us-east-1</code>.</li>
           <li><b>Tavily API Key</b> only if you did not export <code>TAVILY_API_KEY</code> in your
             shell. If the env var is set, the app uses it and this field can stay empty (the env var
@@ -94,8 +95,8 @@
       </li>
       <li>
         <h4>Confirm transcription: click Record</h4>
-        <p>Click <b>Record</b> in the top-right. The browser (or macOS, in the Mac app) asks for
-          microphone permission the first time; grant it once. Speak a sentence or two. A live
+        <p>Click <b>Record</b> in the top-right. macOS asks for microphone permission the first time
+          (for the Mac app, or for your terminal app in a source install); grant it once. Speak a sentence or two. A live
           transcript should appear with speaker labels attached. The first recording is slightly slower
           to start because the on-device speech model (Parakeet by default, or Whisper)
           downloads and loads into memory on first use; after that it is warm. Transcription runs
@@ -103,10 +104,11 @@
       </li>
       <li>
         <h4>Optional: confirm voice with the Talk button</h4>
-        <p>The waveform button between the microphone and Send starts a spoken conversation. If it is
-          greyed out, hover it: the tooltip names the reason, usually that Amazon Nova 2 Sonic is not
-          enabled in your Bedrock region, that no AWS credentials were found, or (source installs only)
-          that the backend's Python is older than 3.12. Click it and say something; the assistant
+        <p>The waveform button between the microphone and Send starts a spoken conversation. Voice
+          mode streams to Amazon Nova 2 Sonic on Bedrock, so it needs Hybrid or Cloud mode. If it is
+          greyed out, hover it: the tooltip names the reason, usually that the app is in Local mode,
+          that no AWS credentials were found, or that <code>voice.enabled</code> is off in the
+          config. Click it and say something; the assistant
           answers out loud and everything it says is written into the chat. See
           <a href="tut-voice-mode.html">Voice conversations</a>.</p>
       </li>
@@ -130,17 +132,20 @@
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
       <div class="callout__body"><p>If steps 3 and 4 both succeed, you have a working install. Chat and
-        transcription are the two independent subsystems, so passing both means AWS, the local model
-        runtime, and the microphone permission are all in order.</p></div>
+        transcription are the two independent subsystems, so passing both means your chat model,
+        the on-device speech runtime, and the microphone permission are all in order.</p></div>
     </div>
 
     <h2 id="doctor">Run /doctor for an automated check</h2>
     <p>Rather than eyeballing each subsystem, you can let the app check itself. Type
       <code>/doctor</code> in the chat input and send it. This runs an automated AWS-credentials and
       Bedrock-connectivity check and reports the results inline in the chat.</p>
-    <p>A healthy result confirms six things, without you having to record or connect anything:</p>
+    <p>It reports six rows, without you having to record anything. In Local mode the three AWS rows
+      say <i>Skipped</i>, because Local mode makes no AWS calls.</p>
     <ul>
-      <li><b>AWS credentials</b> resolve (from env vars or <code class="path">~/.aws/credentials</code>).</li>
+      <li><b>AWS credentials</b> resolve through the AWS provider chain (environment variables,
+        <code class="path">~/.aws</code> profiles, SSO), or a Bedrock API key is set in
+        <code>AWS_BEARER_TOKEN_BEDROCK</code>.</li>
       <li><b>Bedrock connectivity</b>: a Claude model is invocable in your configured region, so a
         chat turn can actually reach a model. (The ping uses a known-good model, not necessarily your
         configured default.)</li>
@@ -149,7 +154,8 @@
         <a href="arch-backends.html">Model backends</a>). A warning here names the models and the
         setting to change (<code>bedrock_region</code>, or <code>openai_region</code> on the model's
         entry).</li>
-      <li><b>Workspace</b>: the connected folder, if any, still exists on disk.</li>
+      <li><b>Workspace</b>: the connected folder still exists on disk. With no folder connected
+        this row is a warning, which is fine on a first run.</li>
       <li><b>Sessions DB</b>: the session store opens and answers a query.</li>
       <li><b>Config</b>: the effective config loads, reporting your model, effort, and region.</li>
     </ul>
@@ -157,17 +163,11 @@
       is faster than reading a raw exception from a failed chat turn. Run it any time later, too, if
       chat suddenly stops working after an AWS or config change.</p>
 
-    <div class="callout">
-      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
-      <div class="callout__body"><p>Backend changes do not hot-reload. If you edit a
-        <code class="path">server/*.py</code> file, restart the process before re-running
-        <code>/doctor</code>, or you will be checking the old code. The frontend, in
-        <code>--dev</code> mode, does reload on its own.</p></div>
-    </div>
-
     <h2 id="stumbles">Common first-run stumbles</h2>
-    <p>Almost every failed first chat is one of two AWS problems, and the error message tells you which
-      one. Read the text of the error before changing anything.</p>
+    <p>On a fresh install, a refused cloud chat usually means the app is still in Local mode: the
+      error says so and names the setting. After that, almost every failed first chat is one of two
+      AWS problems, and the error message tells you which one. Read the text of the error before
+      changing anything.</p>
 
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
@@ -189,34 +189,34 @@
       <thead><tr><th>Symptom</th><th>What it means and the fix</th></tr></thead>
       <tbody>
         <tr>
-          <td>Blank page in the browser</td>
+          <td>The page says <code>Frontend build missing</code></td>
           <td>The frontend bundle is missing. Re-run <code>bash setup.sh</code>, or
-            <code>bash setup.sh --new</code> for a clean rebuild. Note that <code>--new</code> backs up
-            your config and reseeds it with the first-run defaults, so re-add your keys and settings
-            afterwards.</td>
+            <code>bash setup.sh --new</code> for a clean rebuild (it keeps your
+            <code>config.user.json</code>).</td>
         </tr>
         <tr>
-          <td>The URL at 8000 does not load</td>
-          <td>Port 8000 was in use, so the script chose another port. Read the URL the script actually
-            printed rather than typing 8000 by hand.</td>
+          <td>The URL at 41430 does not load</td>
+          <td>Port 41430 was in use, so the script chose the nearest free port. Read the URL the
+            script actually printed rather than typing 41430 by hand.</td>
         </tr>
         <tr>
           <td>Microphone permission never prompts</td>
-          <td>The browser may have remembered a denial. Re-grant microphone access for the site in the
-            browser's site settings, then click Record again.</td>
+          <td>macOS may have remembered a denial. Turn microphone access back on for Whisper Studio
+            (or, for a source install, your terminal app) in <b>System Settings &rarr; Privacy &amp;
+            Security &rarr; Microphone</b>, then click Record again.</td>
         </tr>
         <tr>
           <td>Recording misses system audio</td>
-          <td>In the Mac app, open the headphones menu beside <b>Record</b> and arm <b>System audio</b>
-            or a single app; the first capture triggers the macOS System Audio Recording prompt
-            (macOS 14.4 or later). In a browser the microphone cannot hear what the Mac is playing:
-            share a Chrome tab, or route audio through a virtual device. See
+          <td>Open the headphones menu beside <b>Record</b> and arm <b>System audio</b> or a single
+            app; the first capture triggers the macOS System Audio Recording prompt (macOS 14.4 or
+            later). This works in the Mac app and in a source install, where setup.sh builds the
+            capture helper that gives the browser the same native capture. See
             <a href="tut-voice.html">Voice &amp; meetings</a>.</td>
         </tr>
         <tr>
           <td>The Talk button is greyed out</td>
-          <td>Hover it for the actual reason. Usually Amazon Nova 2 Sonic is not enabled in your
-            Bedrock region, no AWS credentials were found, or the backend's Python is older than 3.12.
+          <td>Hover it for the actual reason. Usually the app is in Local mode (switch to Hybrid or
+            Cloud), no AWS credentials were found, or <code>voice.enabled</code> is off.
             See <a href="requirements.html#voice-access">Requirements</a>.</td>
         </tr>
         <tr>

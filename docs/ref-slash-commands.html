@@ -41,7 +41,7 @@
       <tbody>
         <tr><td><code>/model &lt;name&gt;</code></td><td>Switch the chat model for the rest of the session.</td></tr>
         <tr><td><code>/effort &lt;level&gt;</code></td><td>Set thinking depth for models that support it.</td></tr>
-        <tr><td><code>/plan</code></td><td>Toggle plan mode (a read-only, research-first Claude).</td></tr>
+        <tr><td><code>/plan</code></td><td>Toggle plan mode (a read-only, research-first assistant).</td></tr>
         <tr><td><code>/verbosity &lt;level&gt;</code></td><td>Set the response length (brief, normal, or detailed).</td></tr>
         <tr><td><code>/memory on|off|status</code></td><td>Toggle cross-session memory, or report its state.</td></tr>
         <tr><td><code>/goal &lt;text&gt;</code></td><td>Set a session goal, send it as the first message, and work toward it.</td></tr>
@@ -50,10 +50,10 @@
         <tr><td><code>/btw &lt;question&gt;</code></td><td>Ask a side question that never enters the transcript.</td></tr>
         <tr><td><code>/subagent &lt;task&gt;</code></td><td>Spawn a focused one-shot subagent in the background.</td></tr>
         <tr><td><code>/workflow &lt;saved-name&gt;</code></td><td>Launch a saved ultracode workflow run in this session.</td></tr>
-        <tr><td><code>/file:&lt;path&gt; [question]</code></td><td>Reference a workspace file inline so Claude sees its contents.</td></tr>
-        <tr><td><code>/skills</code></td><td>Open the Skills panel in Settings.</td></tr>
+        <tr><td><code>/file:&lt;path&gt; [question]</code></td><td>Reference a workspace file inline so the model sees its contents.</td></tr>
+        <tr><td><code>/skills</code></td><td>Open the Skills panel in Settings (not listed in the menu or <code>/help</code>).</td></tr>
         <tr><td><code>/skills:</code></td><td>Browse available skills in an inline picker.</td></tr>
-        <tr><td><code>/mcp:</code></td><td>Browse the tools of your connected MCP servers in an inline picker.</td></tr>
+        <tr><td><code>/mcp:</code></td><td>List your MCP servers with each one's state and tool count in an inline picker.</td></tr>
         <tr><td><code>/export</code></td><td>Download the visible conversation as a text file.</td></tr>
         <tr><td><code>/clear</code></td><td>Empty this session's chat (the next save persists it empty).</td></tr>
         <tr><td><code>/rename &lt;title&gt;</code></td><td>Rename the current session.</td></tr>
@@ -61,7 +61,7 @@
         <tr><td><code>/theme &lt;mode&gt;</code></td><td>Switch between light, dark, and system mode.</td></tr>
         <tr><td><code>/notify</code></td><td>Request or check browser notification permission.</td></tr>
         <tr><td><code>/settings</code></td><td>Open the Settings panel.</td></tr>
-        <tr><td><code>/doctor</code></td><td>Run environment and AWS-access diagnostics.</td></tr>
+        <tr><td><code>/doctor</code></td><td>Run AWS, workspace, sessions database, and config diagnostics.</td></tr>
         <tr><td><code>/doctor context</code></td><td>Open a report of what the system prompt actually costs and caches.</td></tr>
         <tr><td><code>/ci [branch] | /ci autofix [branch]</code></td><td>Watch a CI run to completion, or propose an autofix for a failing one.</td></tr>
         <tr><td><code>/help</code></td><td>Show the full command reference in a dialog.</td></tr>
@@ -69,14 +69,16 @@
     </table></div>
 
     <h2 id="model-reasoning">Model &amp; reasoning</h2>
-    <p>These four commands change how Claude thinks for the rest of the session. They mirror the
+    <p>These commands change how the assistant works for the rest of the session. They mirror the
       controls under the composer, so a command and a click stay in sync.</p>
 
     <h3 id="model">/model</h3>
     <p><code>/model &lt;name&gt;</code> switches the model for every subsequent turn in this session. The
-      valid names are the keys in your configured model list, so they track whatever you have enabled:
-      <code>haiku</code>, <code>sonnet5.5</code>, <code>opus5.5</code>, <code>fable5.1</code>,
-      <code>gpt6.1-sol</code>, <code>gpt6-astra</code>, <code>gpt6-luna</code>, and any on-device model you installed. On success you
+      valid names are the keys of the models that <b>Settings &rsaquo; Model mode</b> shows: Cloud lists the
+      cloud models only (<code>haiku</code>, <code>sonnet5.5</code>, <code>opus5.5</code>,
+      <code>fable5.1</code>, <code>gpt6.1-sol</code>, <code>gpt6-astra</code>, <code>gpt6-luna</code>),
+      Local lists your installed on-device models only, and Hybrid lists both. In Local mode with no
+      on-device model installed, <code>/model</code> tells you where to get one. On success you
       get a toast confirming the version label ("Model set to Sonnet 5.5"), not the raw key. Pass an
       unknown name and the composer replies with the usage string listing the models you can pick.</p>
     <div class="callout">
@@ -98,6 +100,10 @@
       <a href="arch-ultracode.html">The ultracode workflow runtime</a>), and it is offered only on
       models that can drive a workflow. Because each model advertises its own set, the validator is
       model-aware:</p>
+    <p>On an on-device model that can think, <code>/effort</code> sets its <b>Thinking</b> level
+      instead (<code>off</code>, <code>low</code>, <code>medium</code>, <code>high</code>,
+      <code>max</code>, or only <code>off</code> and <code>max</code> on some MLX models).
+      <code>ultracode</code> is not offered on-device.</p>
     <ul>
       <li>Ask for a level the model supports and it is applied, with a toast naming the new level.</li>
       <li>Ask for a valid level the current model does <em>not</em> expose and it is
@@ -106,11 +112,13 @@
     </ul>
 
     <h3 id="plan">/plan</h3>
-    <p><code>/plan</code> toggles <b>plan mode</b>: a read-only stance where Claude investigates and
+    <p><code>/plan</code> toggles <b>plan mode</b>: a read-only stance where the assistant investigates and
       proposes a plan without writing files, running commands, or taking other write actions. The
       write tools stay advertised and are refused when called, with a note steering the model to
       <code>create_plan</code> instead. Run the command again to leave plan mode, which puts the
-      session in Auto. It is the same dial described in
+      session in Auto. To carry out the latest plan, press <b>Approve</b> on the plan card or type
+      <code>plan approved</code>: this leaves plan mode (Auto) and starts the implementation. It is the
+      same dial described in
       <a href="tut-permissions.html">Permissions &amp; approvals</a>, so any write step still surfaces
       an approval card once you leave plan mode.</p>
 
@@ -123,7 +131,7 @@
 
     <h3 id="memory">/memory</h3>
     <p><code>/memory on</code> and <code>/memory off</code> flip cross-session memory, and
-      <code>/memory status</code> reports whether it is currently on. Memory is what lets Claude carry
+      <code>/memory status</code> reports whether it is currently on. Memory is what lets the assistant carry
       durable facts between conversations; see the <a href="tut-memory.html">Memory &amp; WHISPER.md</a>
       guide for what gets remembered and how to curate it.</p>
 
@@ -156,18 +164,20 @@
 
     <h3 id="btw">/btw</h3>
     <p><code>/btw &lt;question&gt;</code> asks a quick side-channel question that <b>does not enter the
-      main transcript</b>. It sends only your question plus a few recent messages for context, streams
-      the answer into a small popup, and leaves the conversation history untouched. Use it for a fast
+      main transcript</b>. It sends only your question plus a few recent messages for context, opens
+      the answer in a small popup when it is complete, and leaves the conversation history untouched. Use it for a fast
       aside ("btw what does this acronym mean") when you do not want to spend the main thread's context
-      on it. With no question, the command just shows its usage hint.</p>
+      on it. With no question, the command just shows its usage hint. If the side question is refused
+      (for example in Local mode), a toast says why.</p>
 
     <h3 id="subagent">/subagent</h3>
     <p><code>/subagent &lt;task&gt;</code> spawns a <b>focused one-shot subagent</b> that works in the
       background with the full tool loop: web search and fetch, workspace access, code, and any enabled
-      MCP tools. It does not block the composer, so you can keep chatting while it runs. Its live
-      progress renders in a report card inside the chat, and its final answer is posted there when it
-      finishes. Press <b>Stop</b> on the card to cancel a run in flight, which marks any still-running
-      row stopped rather than leaving it spinning. It runs on the composer's current model and effort.
+      MCP tools. It does not block the composer, so you can keep chatting while it runs. Its progress
+      shows as one row per agent in the chat, and <b>Open</b> on a row shows the full feed in the
+      dock's agent pane. To stop the run, press <kbd>Esc</kbd> or the composer's <b>Stop</b> in that
+      session, or use the agent pane or the header's Background tasks list. The final answer replaces
+      the intro message when the run finishes. It runs on the composer's current model and effort.
       For coordinating several agents at once, see <a href="tut-subagents.html">Sub-agents &amp;
       teams</a>.</p>
 
@@ -188,7 +198,7 @@
       than remember exact names.</p>
 
     <h3 id="file">/file: and @file</h3>
-    <p><code>/file:&lt;path&gt;</code> references a workspace file so Claude sees its contents inline.
+    <p><code>/file:&lt;path&gt;</code> references a workspace file so the model sees its contents inline.
       There are two behaviors depending on whether you add a question:</p>
     <dl class="spec">
       <dt><code class="path">/file:path</code></dt><dd>With no trailing question, the file is attached to
@@ -205,7 +215,7 @@
       <dt><code>@skills:</code></dt><dd>Browse skills. A bare <code>@&lt;skill-name&gt;</code> works too
         and asks the model to call that skill for the message (no model is forced to call a tool);
         with no text of your own, the skill runs on the conversation so far.</dd>
-      <dt><code>@mcp:</code></dt><dd>Browse the tools of your connected MCP servers.</dd>
+      <dt><code>@mcp:</code></dt><dd>Browse your MCP servers (state and tool count).</dd>
       <dt><code>@index</code></dt><dd>Force a search of your indexed folders for this message (see
         <a href="tut-index-search.html#ask-with-grounding">Index &amp; semantic search</a>).</dd>
       <dt><code>@docs</code></dt><dd>Answer from this manual: the matching passages are retrieved and
@@ -226,7 +236,9 @@
       you type after
       the colon, which is the discoverable way to see exactly what is wired up in the current session.
       <code>/skills</code> without the colon is a different command: it opens the <b>Skills</b> panel in
-      Settings, where you enable, disable, import, and edit them.</p>
+      Settings, where you enable, disable, import, and edit them. It is not listed in the menu or in
+      <code>/help</code>, and <kbd>Enter</kbd> picks <code>/skills:</code> from the menu, so type
+      <code>/skills</code> and press <kbd>Cmd</kbd> <kbd>Enter</kbd>.</p>
 
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16v-4M12 8h.01"/><circle cx="12" cy="12" r="9"/></svg></span>
@@ -287,20 +299,22 @@
       <a href="ref-settings.html">Settings &amp; config keys</a>.</p>
 
     <h3 id="doctor">/doctor</h3>
-    <p><code>/doctor</code> runs an automated diagnostics pass and shows the results in a dialog: a set
-      of checks (dependencies, AWS access, whether each GPT model resolves to a region Bedrock serves
-      it in, and related environment health) each marked as ok, warn, or fail. It calls the <code>/api/doctor</code> endpoint served by
+    <p><code>/doctor</code> runs an automated diagnostics pass and shows the results in a dialog: AWS
+      credentials, Bedrock connectivity, whether each GPT model resolves to a region Bedrock serves it
+      in, the workspace, the sessions database, and the config, each marked as ok, warn, or error.
+      Local mode skips the AWS and GPT rows, because it makes no AWS calls. It calls the <code>/api/doctor</code> endpoint served by
       <code class="path">server/doctor.py</code>. Run it first whenever chat is not responding or a
       model call errors.</p>
     <p><code>/doctor context</code> is a separate check for prompt health: it calls
       <code>/api/doctor/context</code> (<code class="path">server/context_report.py</code>) and opens a
-      <b>Context report</b> panel showing what the model is actually sent - the per-section cost of the
+      <b>Context report</b> panel showing what the model is actually sent: the per-section cost of the
       system prompt, how much of it is cached, and any stale or duplicate tool references. Use it when
       turns feel expensive or slow to see where the tokens go.</p>
 
     <h3 id="ci">/ci</h3>
     <p><code>/ci [branch]</code> watches the branch's latest GitHub Actions run to a terminal state,
-      streaming its status into a card in the chat. <code>/ci autofix [branch]</code> goes further: it
+      streaming its status into a card in the chat. With no branch, it uses the current branch of the
+      connected workspace, which must be a git repository. <code>/ci autofix [branch]</code> goes further: it
       reads the failing logs, posts a diagnosis, and emits an <b>approvable</b> workflow that fixes the
       problem and then runs verification, using the <a href="arch-ultracode.html">ultracode workflow
       runtime</a>. Both need an open session and the GitHub CLI (<code>gh</code>) installed and
@@ -318,9 +332,10 @@
 
     <h3 id="help">/help</h3>
     <p><code>/help</code> opens a dialog listing every command grouped by category (General, AI &amp;
-      Model, Workspace, Settings, Debug) - the AI &amp; Model group is where <code>/workflow</code>,
-      <code>/ci</code>, and <code>/goal</code> appear - each with its icon and one-line description. It is
-      generated from the same command list this page documents, so it always matches your build.</p>
+      Model, Workspace, Settings, Debug). The AI &amp; Model group is where <code>/workflow</code>,
+      <code>/ci</code>, and <code>/goal</code> appear, each with its icon and one-line description. It is
+      generated from the same command list as the slash menu, so it always matches your build. The only
+      command it leaves out is <code>/skills</code> (without the colon).</p>
 
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg></span>

@@ -139,7 +139,7 @@
     var footer = h("footer", { class: "site-footer" }, [
       h("span", { html: 'Whisper Studio &middot; local-first AI workspace' }),
       h("span", { html: 'Built to run fully offline &middot; <a href="ref-glossary.html">Glossary</a>' }),
-      h("span", { class: "site-footer__legal", html: 'A personal project, not affiliated with, endorsed by, or sponsored by Amazon. Amazon, AWS, and Amazon Bedrock are trademarks of Amazon.com, Inc. or its affiliates, used here for identification only. Whisper Studio calls Amazon Bedrock, a paid AWS service billed to your own AWS account per token.' })
+      h("span", { class: "site-footer__legal", html: 'A personal project, not affiliated with, endorsed by, or sponsored by Amazon. Amazon, AWS, and Amazon Bedrock are trademarks of Amazon.com, Inc. or its affiliates, used here for identification only. In Cloud and Hybrid modes, Whisper Studio calls Amazon Bedrock, a paid AWS service billed to your own AWS account per token. Local mode makes no AWS calls.' })
     ]);
 
     document.body.insertBefore(header, document.body.firstChild);

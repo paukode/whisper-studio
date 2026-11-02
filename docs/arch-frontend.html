@@ -41,16 +41,17 @@
     <p>The layout is always fully mounted, even when a pane is hidden. Rendering
       <code>Splitter</code> conditionally around the workspace panel would put the chat pane's subtree
       at two different structural positions, so React unmounts and remounts it, and every component
-      inside it, on each workspace connect or disconnect - silently wiping local component state such
+      inside it, on each workspace connect or disconnect, silently wiping local component state such
       as an in-progress composer draft. So both children are always rendered and the hidden one is
       collapsed visually and interactively through a <code>hideFirstPane</code> or
       <code>hideSecondPane</code> flag instead of being removed from the tree
       (<code class="path">Splitter.test.tsx</code> pins the regression).</p>
     <p>The shell also mounts a persistent bottom status strip,
-      <code class="path">src/components/layout/AppStatusBar.tsx</code> (WS-H), that reads only from
-      existing stores to show the active model, effort, permission mode, git branch with dirty and
-      ahead/behind counts, a live context-window meter, per-turn tokens and cost, and a running
-      background-task pill. The <code>Header</code> carries its own running-count pill that opens the
+      <code class="path">src/components/layout/AppStatusBar.tsx</code>, that reads only from
+      existing stores to show the active model, its effort (or Thinking level on an on-device model),
+      the permission mode, the git branch with dirty and ahead/behind counts, the voice status, and a
+      running background-task pill. Tokens, cost, and the context meter live in the composer's
+      token counter instead. The <code>Header</code> carries its own running-count pill that opens the
       <code>BackgroundTasksPanel</code>.</p>
     <p>On mount, the shell fires the startup fetches in parallel:</p>
     <ul>
@@ -80,10 +81,11 @@
     <p>The right-side dock is a stack of panels rather than a fixed inspector. <code>AppShell</code>
       owns only its outer width; the panel list lives in
       <code class="path">src/stores/dockStore.ts</code> and the chrome in
-      <code class="path">src/components/preview/RightDock.tsx</code>. Five kinds of panel can be
+      <code class="path">src/components/preview/RightDock.tsx</code>. Six kinds of panel can be
       open: a <b>live preview</b> of a running dev server (titled <code>Live &middot; &lt;name&gt;</code>, or
       <b>Live preview</b> when a localhost link in the chat routed into it), a <b>plan</b>, a
-      workspace <b>file</b> opened from a citation link, <b>Tasks</b>, and <b>Documentation</b>.
+      workspace <b>file</b> opened from a citation link, <b>Tasks</b>, <b>Documentation</b>, and an
+      <b>agent</b> pane (<code class="path">src/components/preview/AgentPanel.tsx</code>).
       Panels stack vertically with their own drag handles, each header carries a colored dot for its
       kind and a close button, and closing the live panel leaves a <b>Live preview</b> chip in the
       corner to bring it back.</p>
@@ -94,17 +96,18 @@
       <b>Branches and worktrees</b>, and <b>Close Panel</b>. It keeps its height however long the
       conversation gets, because the chat and transcript split above it flexes from a zero basis
       rather than from its content.</p>
-    <p>The shell also wires the global keyboard shortcuts (<kbd>Cmd/Ctrl</kbd>+<kbd>,</kbd> for Settings,
-      <kbd>Cmd/Ctrl</kbd>+<kbd>B</kbd> to toggle the sidebar, <kbd>Cmd/Ctrl</kbd>+<kbd>K</kbd> for the
-      command palette) and the <a href="arch-approval.html">ESC kill switch</a>, which is armed only
-      while a stream is running or subagents are alive so <kbd>Esc</kbd> keeps its normal meaning
-      everywhere else.</p>
+    <p>The shell also wires the global keyboard shortcuts (<kbd>Cmd</kbd>+<kbd>,</kbd> for Settings,
+      <kbd>Cmd</kbd>+<kbd>B</kbd> to toggle the sidebar, <kbd>Cmd</kbd>+<kbd>K</kbd> for the
+      command palette) and the <a href="arch-approval.html">ESC kill switch</a>. It is armed only
+      while the viewed session has something to stop (a running stream, its own subagents, or
+      voice-delegated runs that still drain), so <kbd>Esc</kbd> keeps its normal meaning everywhere
+      else.</p>
 
     <h2 id="session-runtimes">Per-session runtimes</h2>
     <p>The registry in <code class="path">src/stores/sessionRuntimes.ts</code> is the heart of parallel
       sessions. Every live session owns a <code>RuntimeEntry</code>: its own chat store, its own
-      transcription store, its own long-lived cron/notification <code>EventSource</code>, an in-flight
-      chat <code>AbortController</code>, and self-saving subscriptions.</p>
+      transcription store, an in-flight chat <code>AbortController</code>, and self-saving
+      subscriptions. All runtimes share the app's one event channel (see below).</p>
     <p>The design rule is simple: <b>nothing is cleared on a switch.</b> The UI binds to the active
       session's stores and re-points on switch; background sessions keep streaming, keep receiving cron
       events, and keep saving themselves. This is why you can start a long answer in one session, switch
@@ -118,7 +121,7 @@
         <em>busy</em> (streaming, mid-approval, or recording) at once.</p></div>
     </div>
     <p>Eviction is LRU over idle, hydrated sessions. <code>maybeEvictIdle()</code> flushes a save first,
-      then drops the least-recently-used runtime and closes its channels. <code>isEvictable()</code>
+      then drops the least-recently-used runtime. <code>isEvictable()</code>
       guarantees it never evicts the current session, the recording owner, a streaming session, one that
       is mid-approval, or one still hydrating. Because busy sessions are never evicted, the cap is
       <em>soft</em>: the registry may briefly exceed three until one goes idle.</p>
@@ -127,13 +130,16 @@
       <dt><code class="path">getChatStore(sessionId)</code></dt><dd>The imperative getter stream code uses. Bind it <b>once</b> at send time so the stream keeps writing to its owning session regardless of switches.</dd>
       <dt><code class="path">useActiveChatStore(selector)</code></dt><dd>The reactive hook UI components use. Built on <code>useSyncExternalStore</code>, so a session switch swaps subscription and snapshot in a single commit.</dd>
       <dt><code class="path">countActiveSessions(excluding?)</code></dt><dd>Counts busy sessions for the parallelism ceiling; viewing idle sessions is never counted.</dd>
-      <dt><code class="path">dropRuntime(sessionId)</code></dt><dd>Teardown: aborts the in-flight stream, closes the EventSource, and unsubscribes.</dd>
+      <dt><code class="path">dropRuntime(sessionId)</code></dt><dd>Teardown: aborts the in-flight stream and unsubscribes. The app's event channel stays open.</dd>
     </div>
-    <p>Each runtime also carries its own cron <code>EventSource</code> to
-      <code>/api/sessions/{id}/events</code>, so a background session still receives its
-      <a href="arch-cron.html">cron events</a> and raises an unread badge on its sidebar row. Stale
-      streams (after a laptop wake or a network restore) are recycled on <code>online</code> and tab
-      refocus so leaked connection slots do not starve new <code>/api/chat</code> requests.</p>
+    <p>Out-of-band events reach every session through one multiplexed <code>EventSource</code> on
+      <code>/api/sessions/events</code>, opened at startup. Each frame carries its
+      <code>session_id</code> and is routed to that session's live runtime, so a background session
+      still receives its <a href="arch-cron.html">cron events</a> and raises an unread badge on its
+      sidebar row. A frame for a session with no live runtime is dropped; its rows are durable and
+      replay on the next hydrate. One connection instead of one per session keeps the browser's
+      per-origin connection limit free for <code>/api/chat</code> requests. A stale channel (after a
+      laptop wake or a network restore) is recycled on <code>online</code> and tab refocus.</p>
 
     <h2 id="stores">The store layer</h2>
     <p>State is <b>Zustand v5</b>. Two kinds of store live side by side. <em>Per-session factories</em>
@@ -152,8 +158,10 @@
         <tr><td><code>mcpStore</code></td><td>singleton</td><td>The one MCP server list, with live status, tool counts and pending elicitations. Settings &gt; MCP, the composer's <code>/mcp:</code> and <code>@mcp:</code> menus and the import panel all read it; the backend's <code>mcp_changed</code> events refetch it.</td></tr>
         <tr><td><code>taskStore</code>, <code>recordingStore</code>, <code>cronUnreadStore</code>, <code>subagentStore</code></td><td>singleton</td><td>The live task list, the shared mic, cron badges, and running subagents.</td></tr>
         <tr><td><code>voiceStore</code></td><td>singleton</td><td>Voice-mode state for the Talk bar: off, connecting, listening, thinking, speaking, ending, plus the draining flag that keeps background work running after you hang up.</td></tr>
+        <tr><td><code>composerAttachmentsStore</code></td><td>singleton</td><td>The composer's attachment chips, kept per session.</td></tr>
+        <tr><td><code>agentFeedStore</code></td><td>singleton</td><td>The agent pane's records: the journal read once, the live tail merged by <code>seq</code>, and the status readout.</td></tr>
         <tr><td><code>indexSearchStore</code></td><td>singleton</td><td>Per-session selection of which indexed workspaces a turn should search (<code>selected_search_indexes</code>), persisted to <code>localStorage</code> so a session's choice survives a reload.</td></tr>
-        <tr><td><code>backgroundTaskStore</code>, <code>workflowStore</code>, <code>ciStore</code>, <code>goalStore</code></td><td>singleton</td><td>The background-task registry + <code>runningCount</code> (WS-A), <a href="arch-ultracode.html">workflow</a> runs keyed by <code>run_id</code> (WS-D), CI watches keyed by <code>task_id</code> (WS-J), and the active goal + last verdict per session (WS-E).</td></tr>
+        <tr><td><code>backgroundTaskStore</code>, <code>workflowStore</code>, <code>ciStore</code>, <code>goalStore</code></td><td>singleton</td><td>The background-task registry + <code>runningCount</code>, <a href="arch-ultracode.html">workflow</a> runs keyed by <code>run_id</code>, CI watches keyed by <code>task_id</code>, and the active goal + last verdict per session.</td></tr>
       </tbody>
     </table></div>
     <div class="callout callout--warn">
@@ -214,17 +222,14 @@
         does not.</b> <code>SSEEventDataSchema</code> ends in <code>.passthrough()</code>, so a frame
         the client has never heard of reaches the reducer untouched. Every <em>nested</em> object in
         that schema is a plain <code>z.object</code>, which silently drops keys it does not declare.
-        That asymmetry has already cost real behaviour once: <code>workflow_preview.model_id</code>
-        was stripped, so every approved workflow ran, and was billed, on the config default instead of
-        the session's model. Two tests in
-        <code class="path">src/types/schemas/schemas.test.ts</code> pin it now. The rule to work by:
+        The rule to work by:
         <b>adding a field to an existing frame means adding it to
         <code class="path">chat.schema.ts</code> and to
         <code class="path">src/types/chat.ts</code></b>, or the UI never sees it. The server half of
         the same contract is <code class="path">tests/golden_fixtures/</code>, which pins the exact
-        frames six representative turns emit.</p></div>
+        frames ten representative turns emit.</p></div>
     </div>
-    <p>Each event type routes to a store action. This is a representative selection, not the full list -
+    <p>Each event type routes to a store action. This is a representative selection, not the full list;
       <code class="path">sseStream.ts</code> and the declarative-card helper
       <code class="path">sseEventCards.ts</code> route several more:</p>
     <div class="table-wrap"><table>
@@ -239,7 +244,7 @@
         <tr><td><code>ws_folder_opened</code></td><td>Flips <code>uiStore</code> to the connected state and refreshes the workspace tree when a tool call connects a workspace mid-turn.</td></tr>
         <tr><td><code>user_question</code></td><td>Collapses parallel <code>ask_user_question</code> calls into one tabbed card.</td></tr>
         <tr><td><code>team_progress</code> / <code>team_results</code></td><td>Folds live <a href="arch-agents.html">sub-agent</a> activity into a turn-local team report.</td></tr>
-        <tr><td><code>usage</code></td><td>Updates token counters and the cost estimate; also carries <code>context_used</code>/<code>context_max</code> for the status-bar context meter.</td></tr>
+        <tr><td><code>usage</code></td><td>Updates token counters and the cost estimate; also carries <code>context_used</code>/<code>context_max</code> for the composer's context meter.</td></tr>
         <tr><td><code>midturn_read</code></td><td>Commits the text and tool rows before this point as a row, then moves the message with the label "Queued" below it (<code>takeMidTurnNote</code>). The answer to the message streams in a new bubble.</td></tr>
         <tr><td><code>round_discarded</code></td><td>Removes the reasoning text of the stopped round from the answer that streams (<code>replaceLiveThinking</code>).</td></tr>
         <tr><td><code>grounding</code></td><td>Records how many folders were searched and passages injected this turn, plus the persisted-sources id that lets the chip expand into the answer-sources panel.</td></tr>
@@ -254,7 +259,7 @@
         <tr><td><code>auto_mode_breaker</code></td><td>Raises a persistent banner (not a toast) when auto mode's rolling-denial circuit breaker trips and falls back to asking, with a one-click resume.</td></tr>
         <tr><td><code>security_blocked</code></td><td>Renders a card for a tool call the egress/security policy refused outright.</td></tr>
         <tr><td><code>error</code></td><td>Logs the backend's error text and appends it inline to the response instead of losing the partial answer.</td></tr>
-        <tr><td><code>hook_blocked</code> / <code>stop_hook_block</code></td><td>Surfaces a <a href="arch-tools.html">blocking hook</a>'s veto and the completion gate's reason for continuing the turn.</td></tr>
+        <tr><td><code>hook_blocked</code> / <code>stop_hook_block</code></td><td>Surfaces a <a href="arch-hooks.html">blocking hook</a>'s veto and the completion gate's reason for continuing the turn.</td></tr>
         <tr><td><code>skill_progress</code></td><td>A tool call's arguments are still streaming; the running step shows how much has arrived (<code>7.3 KB</code>, then <code>143 KB</code>) next to its spinner.</td></tr>
         <tr><td><code>activity_label</code></td><td>Puts the caption on the activity group that holds the calls of the round, under the first call of the group (<code class="path">src/hooks/chatStream/activityLabels.ts</code>). The caption replaces the label, and the deterministic sentence becomes the tail. If the group failed, the failure stays the label, and the caption becomes the tail. A caption for a row that is in the transcript changes that row and saves the session. While the calls stream, the stream state keeps the caption, and the live row shows it immediately. When the stream commits the row, the committed row shows the same caption. This is also true when you stop the turn.</td></tr>
         <tr><td><code>budget_warning</code></td><td>The session or daily cost cap tripped. The first one announces the reserved final round; the second ends the turn.</td></tr>
@@ -262,7 +267,7 @@
         <tr><td><code>viz_artifact</code></td><td>A rendered chart or diagram, attached to the settled message as its own card.</td></tr>
         <tr><td><code>goal_eval</code> / <code>goal_cap_reached</code></td><td>Updates <code>goalStore</code> with the completion-gate verdict and attempt counter for the active goal.</td></tr>
         <tr><td><code>workflow_preview</code> / <code>workflow_started</code></td><td>Renders the ultracode <a href="arch-ultracode.html">workflow</a> phase-preview approval card, then its inline run card.</td></tr>
-        <tr><td><code>ci_started</code> / <code>ci_diagnosis</code></td><td>Renders a CI-watch status card and, on failure, autofix findings above the fix preview. These are chat-stream frames, distinct from the <code>ci_progress</code> / <code>ci_result</code> events the per-session <code>EventSource</code> carries below.</td></tr>
+        <tr><td><code>ci_started</code> / <code>ci_diagnosis</code></td><td>Renders a CI-watch status card and, on failure, autofix findings above the fix preview. These are chat-stream frames, distinct from the <code>ci_progress</code> / <code>ci_result</code> events the app's event channel carries below.</td></tr>
       </tbody>
     </table></div>
     <div class="callout callout--tip">
@@ -273,19 +278,20 @@
         browsing for one, POSTs <code>/api/workspace/connect</code> and then resumes the model with an
         explicit instruction to re-issue the original write. A one-off "save this file somewhere" request
         never reaches this card at all: the file-saving tools resolve their own destination from the
-        user's words (or a Documents default) and go straight to a normal approval card - see
+        user's words (or a Documents default) and go straight to a normal approval card. See
         <a href="arch-tools.html#results-back">Results back to the loop</a> for that staged-then-move
         flow. No card ever asks you <em>where</em> to save a file.</p></div>
     </div>
     <h3 id="other-channel">Frames that never touch the chat stream</h3>
     <p>Anything that can happen while a session is <em>not</em> streaming cannot ride the chat POST
-      response. Those frames arrive instead on the per-session <code>EventSource</code> opened in
+      response. Those frames arrive instead on the app's one event channel, opened in
       <code class="path">src/stores/sessionRuntimes.ts</code>
-      (<code>/api/sessions/{id}/events</code>), so they reach a session you are not looking at:
+      (<code>/api/sessions/events</code>, routed by <code>session_id</code>), so they reach a session
+      you are not looking at:
       <code>cron_event</code>, <code>task_event</code> (the header's task list, global across
       sessions), <code>agent_progress</code> (the dock's agent pane), <code>memory_event</code>,
       <code>session_message</code>, <code>team_progress</code>, <code>ci_progress</code>,
-      <code>ci_result</code>, and the two agent-report frames below. A frame that does not parse as
+      <code>ci_result</code>, and the frames below. A frame that does not parse as
       JSON is dropped, which is how the channel's own heartbeats are ignored.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Event</th><th>Effect</th></tr></thead>
@@ -297,26 +303,28 @@
         <tr><td><code>terminal_show</code></td><td>App-wide. The assistant runs a command in a visible terminal. The terminal panel opens on the tab of that terminal. If the panel has no tab for that terminal, it adds one.</td></tr>
       </tbody>
     </table></div>
-    <p>Both are stored as real session rows (<code>role: 'agent_report'</code> and
-      <code>role: 'agent_answer'</code>), so they survive a reload and are translated for the model's
+    <p>Agent reports, agent answers, and task reports are stored as real session rows
+      (<code>role: 'agent_report'</code>, <code>'agent_answer'</code>, and <code>'task_report'</code>),
+      so they survive a reload and are translated for the model's
       context on the next turn. See <a href="arch-agent-recorder.html">the agent flight
       recorder</a>.</p>
     <p>An approval is not a dead end, and there are two entry points onto the same resume channel. A full
-      <a href="arch-approval.html">approval card</a>'s accept/deny buttons call
-      <code>sendApprovalContinuation</code>, which POSTs a single
+      <a href="arch-approval.html">approval card</a>'s accept/deny buttons go through
+      <code class="path">src/hooks/chatStream/approvalLeg.ts</code>, which runs the approved action and
+      then calls <code>sendApprovalContinuation</code>
+      (<code class="path">approvalContinuation.ts</code>). That POSTs a single
       <code>approved_tool_result</code> object (<code>tool_use_id</code>, <code>content</code>,
-      <code>accepted</code>) back to <code>/api/chat</code> and feeds the continuation response straight
-      back into <code>readSSEStream</code>; the two functions are mutually recursive, which is why they
-      share one module. <code>UserQuestionCard</code> and <code>WorkspacePromptCard</code> instead
+      <code>accepted</code>) back to <code>/api/chat</code> and feeds the continuation response back
+      into <code>readSSEStream</code>. <code>UserQuestionCard</code> and <code>WorkspacePromptCard</code> instead
       dispatch a <code>whisper-submit-answer</code> DOM event carrying an <code>answers</code> array of
       <code>tool_use_id</code> / <code>content</code> pairs, which
       <code>useComposerChatEvents</code> routes into <code>chatStream.send('', &#123; approvedToolResult:
-      answers &#125;)</code> - the same request-body field, just array-shaped, so either path reaches
+      answers &#125;)</code>: the same request-body field, just array-shaped, so either path reaches
       <code class="path">server/chat/routes.py</code>'s <code>approved_tool_result</code> branch and
       restores the same stashed paused-turn state. A bare answer string sent any other way is treated as
       a brand-new chat message and never resumes anything. The
-      <a href="arch-approval.html">ESC kill switch</a> stops the viewed session's stream and every running
-      subagent synchronously, and a <code>wasKillFinalized</code> guard stops the read loop from
+      <a href="arch-approval.html">ESC kill switch</a> stops the viewed session's stream and that
+      session's own subagents (or, when only they remain, its voice-delegated runs) synchronously, and a <code>wasKillFinalized</code> guard stops the read loop from
       resurrecting an answer after a kill.</p>
 
     <h2 id="readable-transcript">A readable transcript</h2>
@@ -332,8 +340,8 @@
         a base to each <code>round</code> of a request. The base is 1 more than the highest
         <code>round</code> of the turn, or 0 if no call in the turn has a <code>round</code>
         (<code>nextRoundBase</code> in <code class="path">src/hooks/chatStream/sseStream.ts</code>).
-        A call without a <code>round</code> does not start a new row. Examples are a refusal card,
-        which stays with the call that it blocked, and a row from an older transcript. A card comes
+        A call without a <code>round</code> does not start a new row. An example is a refusal card,
+        which stays with the call that it blocked. A card comes
         after the call that it blocked. Thus, when a row holds only cards, the next call with a
         <code>round</code> starts a new row. The collapsed row is one
         line with a label that shows what the group did, for example <b>Read 3 files</b> or
@@ -384,9 +392,9 @@
         <a href="arch-agent-recorder.html">the agent flight recorder</a>.</dd>
     </div>
     <p><code class="path">src/components/chat/ChatMessage.tsx</code> shows the user bubble and
-      four card roles that do not use the normal bubble: <code>cron_event</code>,
-      <code>session_message</code>, <code>agent_report</code>, and
-      <code>agent_answer</code> (an assistant bubble labelled "Answered from the agents' reports",
+      five card roles that do not use the normal bubble: <code>cron_event</code>,
+      <code>session_message</code>, <code>agent_report</code>, <code>task_report</code>
+      (<code>TaskReportCard</code>), and <code>agent_answer</code> (an assistant bubble labelled "Answered from the agents' reports",
       with the team name appended when there is one).</p>
 
     <h2 id="rendering-safety">Rendering safety</h2>
@@ -415,14 +423,15 @@
       <li><b>Citation links</b> from index/semantic search use a
         <code>#wsfile=&lt;url-encoded path&gt;&amp;L=&lt;start&gt;-&lt;end&gt;</code> fragment (chosen
         because a fragment survives HTML sanitization). A plain click opens the file in the dock at
-        those lines, deduping by path; a modifier-click (Cmd/Ctrl/Alt) reveals it in Finder/Explorer via
+        those lines, deduping by path; a modifier-click (Cmd or Alt) reveals it in Finder via
         <code>POST /api/workspace/reveal</code> instead.</li>
       <li><b>Created-file links</b> mark a file the assistant just wrote rather than an existing one it is
         citing: <code>created_file_link()</code> in <code class="path">server/index/citations.py</code>
-        (emitted from the save/approval paths in <code class="path">server/approval/bootstrap.py</code>)
+        (emitted from the save and approval paths in <code class="path">server/approval/executors.py</code>
+        and <code class="path">server/documents/approval.py</code>)
         produces the same scheme with <code>&amp;open=os</code> instead of an <code>&amp;L=</code> range.
-        A plain click opens it with the OS default app - there is no in-app dock view to fall back to for
-        a brand-new file - while a modifier-click still reveals it, for consistency with every other
+        A plain click opens it with the default macOS app (there is no in-app dock view for a brand-new
+        file), while a modifier-click still reveals it, for consistency with every other
         <code>#wsfile=</code> link.</li>
       <li><b>Path mentions</b> are workspace paths that the assistant writes as plain text, for
         example <code>server/goals/gate.py:40-44</code>. Before <code>marked</code> parses the text,
@@ -444,10 +453,12 @@
     <h2 id="glue">The rest of the glue</h2>
     <ul>
       <li><b>Providers.</b> The app is wrapped with TanStack Query (for cached, non-streaming server
-        reads) and a theme provider that mirrors the light/dark toggle you see in these docs.</li>
+        reads) and a theme provider that applies System, Light, or Dark mode and the color palette
+        chosen in Settings &gt; Appearance.</li>
       <li><b>Validated API client.</b> The client in <code class="path">src/api/client.ts</code>
-        validates responses with Zod schemas, so a shape drift shows up as a clear error rather than a
-        silent <code>undefined</code> deep in a component.</li>
+        validates responses that pass a Zod schema. A schema mismatch logs a console warning and the
+        raw response is still returned, so check the console when a component reads
+        <code>undefined</code>.</li>
       <li><b>Reference-counted recording.</b> The chat-input mic and the meeting recorder share a single
         <code>MediaStream</code> through the recording controller, so two features can hold the microphone
         without fighting over the device. See <a href="arch-transcription.html">Transcription &amp;
@@ -468,10 +479,11 @@
     <h2 id="key-files">Key files</h2>
     <div class="spec">
       <dt><code class="path">src/components/layout/AppShell.tsx</code></dt><dd>Top-level layout and the startup sequence.</dd>
-      <dt><code class="path">src/components/layout/AppStatusBar.tsx</code></dt><dd>Persistent bottom status strip (WS-H): model, effort, permission mode, git, context meter, tokens/cost, background-task pill.</dd>
-      <dt><code class="path">src/stores/sessionRuntimes.ts</code></dt><dd>The per-session runtime registry: stores, event streams, LRU eviction; also routes <code>task_event</code>/<code>ci_progress</code>/<code>ci_result</code>.</dd>
+      <dt><code class="path">src/components/layout/AppStatusBar.tsx</code></dt><dd>Persistent bottom status strip: model, effort or Thinking level, permission mode, git, voice status, background-task pill.</dd>
+      <dt><code class="path">src/stores/sessionRuntimes.ts</code></dt><dd>The per-session runtime registry: stores, LRU eviction, and the app's one event channel, which routes <code>task_event</code>/<code>ci_progress</code>/<code>ci_result</code> and the other out-of-band frames.</dd>
       <dt><code class="path">src/hooks/useChatStream.ts</code></dt><dd>The send path: bind the owning session, POST, commit atomically.</dd>
       <dt><code class="path">src/hooks/chatStream/sseStream.ts</code></dt><dd>The SSE parser.</dd>
+      <dt><code class="path">src/hooks/chatStream/approvalLeg.ts</code></dt><dd>An approval card's buttons: run the approved action, then resume the turn.</dd>
       <dt><code class="path">src/hooks/chatStream/approvalContinuation.ts</code></dt><dd>The approval-continuation pump.</dd>
       <dt><code class="path">src/hooks/chatStream/sseEventCards.ts</code></dt><dd>Declarative one-card-per-frame SSE events split out of <code>sseStream.ts</code> (<code>plan_blocked</code>, <code>security_blocked</code>, <code>hook_blocked</code>, <code>goal_eval</code>, and more).</dd>
       <dt><code class="path">src/utils/sanitizeHtml.ts</code></dt><dd>Safe Markdown rendering (marked + DOMPurify).</dd>

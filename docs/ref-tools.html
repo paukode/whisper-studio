@@ -23,8 +23,7 @@
       <code>progressive_tools</code>, default on) the model is advertised only a core set plus the
       tools this session has activated; every other tool lives as a one-line entry in a deferred
       index and loads on demand via <code>tool_search</code>. The same partition applies uniformly
-      to interactive chat, sub-agents, cron runs, and headless turns; there is no separate
-      full-catalogue path left when the flag is on. Tools that write your files, run commands, or
+      to interactive chat, sub-agents, cron runs, and headless turns. Tools that write your files, run commands, or
       change git or GitHub state pause for your approval before they take effect; read-only tools run
       without prompting. A default install carries a catalogue of about 120 tools, plus whatever your
       enabled skills, plugins, and MCP servers add.</p>
@@ -39,18 +38,17 @@
       and headless turns go through the same partition as interactive chat (sub-agents additionally
       filter the pool by agent type). For cloud models the schemas bill as input tokens (a cost
       concern, not a speed one); local models run through the same unified engine and get the same
-      partition, where fewer schema tokens also speed the on-device prefill. There is no per-model
-      Tools dropdown any more: a tool-capable local model always gets the full treatment, with
-      always-on thinking, a 32K context floor, and a per-turn CTX slider in the composer.</p>
+      partition, where fewer schema tokens also speed the on-device prefill. A tool-capable local
+      model gets the same tools, a 32K context floor, a per-turn CTX slider in the composer, and, for
+      a model that can think, a Thinking level in the composer (Off to Max, default Max).</p>
     <p>Dispatch itself is a pure name-to-function mapping. Each executor is registered with safety
-      metadata (<code>read_only</code>, <code>concurrent_safe</code>, <code>destructive</code>) that
+      metadata (<code>read_only</code>, <code>concurrent_safe</code>) that
       the tool loop uses to decide what can run in parallel and what must pause for consent. Defaults
       are fail-closed: a tool is treated as unsafe unless it declares otherwise. See
       <a href="arch-tools.html">Tool dispatch &amp; executors</a> for the mechanics.</p>
-    <p>The catalogue is also <b>byte-stable</b> across the per-turn state that used to rewrite it, so
-      the prompt-prefix cache keeps hitting: plan mode, strict-RAG grounding, and connecting or
-      disconnecting a workspace no longer add or remove schemas. Enforcement moved to execution time.
-      In plan mode six write tools are refused when called (<code>ws_write_file</code>,
+    <p>The catalogue is also <b>byte-stable</b> across per-turn state, so the prompt-prefix cache
+      keeps hitting: plan mode, strict-RAG grounding, and connecting or disconnecting a workspace do not
+      add or remove schemas. Restrictions are enforced when a tool is called. In plan mode six write tools are refused when called (<code>ws_write_file</code>,
       <code>ws_create_file</code>, <code>ws_edit_file</code>, <code>ws_delete_file</code>,
       <code>ws_run_command</code>, <code>ws_merge_worktree</code>), with a note telling the model to
       design the plan and call <code>create_plan</code> instead. Under strict-RAG it is the injected
@@ -80,8 +78,8 @@
       </div>
       <div class="card">
         <h3><span class="badge badge--muted">no prompt</span> Changes state, no card</h3>
-        <p>A few tools change something (a memory file, a skill, a config value, a cron job, a
-          worktree, a running agent) without pausing. They write inside the app's own storage or start
+        <p>A few tools change something (a memory file, a skill, a worktree, a running agent)
+          without pausing. They write inside the app's own storage or start
           work you can stop, so they report what they did instead of asking first.</p>
       </div>
       <div class="card">
@@ -97,8 +95,11 @@
       outright when the call carries the agent stamp (<code>refuse_if_agent</code> in
       <code class="path">server/approval/spec.py</code>): GitHub mutations through <code>github</code>
       and <code>github_api_write</code>, granting access to a new folder (<code>ws_open_folder</code>),
-      answering an MCP elicitation, and any <code>rm</code>-class delete run through
-      <code>ws_run_command</code> or <code>terminal_run</code>. The refusal tells the agent to ask the
+      scheduling, changing or running a cron job, any <code>config_set</code> write, a read of a
+      credential store outside <code>bypassPermissions</code>, an MCP tool call that its approval tier
+      sends to a card, answering an MCP elicitation, a write to the app's own config and grant files,
+      a <code>sandbox_permissions: "danger-full-access"</code> request, and any <code>rm</code>-class
+      delete run through <code>ws_run_command</code> or <code>terminal_run</code>. The refusal tells the agent to ask the
       top-level session, where you can approve it yourself.</p>
 
     <h2 id="workspace-files">Workspace &amp; files</h2>
@@ -108,10 +109,10 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Tool</th><th>What it does</th><th>Approval</th></tr></thead>
       <tbody>
-        <tr><td><code>ws_read_file</code> <span class="badge">★ Core</span></td><td>Read a file from the connected codebase, with line numbers. Reads the whole file by default.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>ws_read_file</code> <span class="badge">★ Core</span></td><td>Read a file from the connected codebase, with line numbers, or any other readable file on this Mac by absolute path. Reads the whole file by default. Reads never ask, except a read of a <a href="ref-security.html#headlines">credential store</a>, which follows the mode.</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>ws_grep</code> <span class="badge">★ Core</span></td><td>Search file contents with a regex, powered by ripgrep.</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>ws_glob</code> <span class="badge">★ Core</span></td><td>Find files by glob pattern, sorted by modification time (most recent first).</td><td><span class="badge badge--muted">read</span></td></tr>
-        <tr><td><code>ws_list_directory</code> <span class="badge">★ Core</span></td><td>List files and directories in a workspace directory.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>ws_list_directory</code> <span class="badge">★ Core</span></td><td>List files and directories in a workspace directory, or in any other readable folder on this Mac by absolute path.</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>workspace_semantic_search</code> <span class="badge">★ Core</span></td><td>Semantic search over the indexed workspace by meaning, not keywords. See <a href="arch-index.html">Index / GraphRAG</a>.</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>workspace_graph_query</code></td><td>Look up typed relationships about a specific entity (person, organization, project) in the indexed knowledge graph, with a confidence and source citation for each fact. Prefer it over semantic search for direct relationship questions. Needs the workspace indexed with typed relations. See <a href="arch-index.html">Index / GraphRAG</a>.</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>ws_edit_file</code> <span class="badge">★ Core</span></td><td>Edit an existing file by replacing a specific string.</td><td><span class="badge">approval</span></td></tr>
@@ -119,7 +120,7 @@
         <tr><td><code>ws_create_file</code> <span class="badge">★ Core</span></td><td>Create a new file. With a workspace connected the path is workspace-relative; without one it follows the direct-save flow below (a <code>destination_path</code> resolved from your words, defaulting to <code class="path">~/Documents/&lt;filename&gt;</code>).</td><td><span class="badge">approval</span></td></tr>
         <tr><td><code>save_file</code></td><td>Save a file directly to your disk in one call, plain text or base64 binary, only when you ask for one (save, store, export or download it, or a named file, file type or place on disk); anything else you ask for is answered in the chat. Uses the direct-save flow below; <code>ws_create_file</code> remains the tool for files that belong in the connected workspace.</td><td><span class="badge">approval</span></td></tr>
         <tr><td><code>ws_delete_file</code></td><td>Delete a file.</td><td><span class="badge">approval</span></td></tr>
-        <tr><td><code>ws_run_command</code> <span class="badge">★ Core</span></td><td>Run a shell command in the workspace directory. Sandboxed where it touches the shell.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>ws_run_command</code> <span class="badge">★ Core</span></td><td>Run a shell command. It starts in the workspace folder, and a <code>cd</code> carries over to later calls. A command the read-only classifier accepts runs with no card under the read-only sandbox; any other command follows the permission mode. Always sandboxed.</td><td><span class="badge">approval</span></td></tr>
         <tr><td><code>ws_open_folder</code></td><td>Connect a specific folder as the workspace. The card appears the first time you reach into a folder you have not granted before; the grant is remembered afterwards, for that folder and everything beneath it, and approving it also connects the folder.</td><td><span class="badge">approval</span></td></tr>
         <tr><td><code>ws_create_worktree</code></td><td>Create an isolated task worktree for multi-file changes, under <code class="path">&lt;repo&gt;/.worktrees/&lt;name&gt;</code> on branch <code>whisper/&lt;name&gt;</code>.</td><td><span class="badge badge--muted">no prompt</span></td></tr>
         <tr><td><code>ws_diff_worktree</code></td><td>Show the diff between the worktree branch and the main branch.</td><td><span class="badge badge--muted">read</span></td></tr>
@@ -140,17 +141,14 @@
       Saved and created files render in the reply as clickable links that open with your OS default
       app.</p>
 
-    <h3 id="session-worktrees">Session worktrees</h3>
-    <p>Separate from the <code>ws_*_worktree</code> task worktrees above, a chat session can be
-      pinned into its own worktree via the <code>enter_worktree</code> / <code>exit_worktree</code>
-      approval actions (approval category <code>worktree</code>; these are approval-card actions, not
-      tools). Entering creates or reuses
-      <code class="path">&lt;repo&gt;/.whisper/worktrees/&lt;slug&gt;</code> on branch
-      <code>worktree-&lt;slug&gt;</code> and persists across restarts
-      (<code class="path">server/git/worktree_session.py</code>); collisions are prevented by git itself,
-      which allows a branch in only one worktree at a time - a session must <code>cd</code> in for its
-      shell commands to follow, and file tools never do. Worktree-isolated sub-agents get a third
-      variant that does redirect file tools automatically: see <a href="#sub-agents">Sub-agents</a>.</p>
+    <h3 id="session-worktrees">Agent worktrees</h3>
+    <p>Separate from the <code>ws_*_worktree</code> task worktrees above, a sub-agent spawned with
+      <code>isolation: 'worktree'</code> gets its own worktree at
+      <code class="path">&lt;repo&gt;/.whisper/worktrees/agent-&lt;id&gt;</code> on branch
+      <code>worktree-agent-&lt;id&gt;</code> (<code class="path">server/git/worktree_session.py</code>).
+      Its file tools and commands work in that copy, and git itself allows a branch in only one
+      worktree at a time, so parallel agents cannot collide. See <a href="#sub-agents">Sub-agents</a>
+      for what happens to the changes when the agent finishes.</p>
 
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg></span>
@@ -256,8 +254,8 @@
     <p>Two read-only tools for reaching the live internet. <code>web_search</code> is backed by
       Tavily and needs an API key, set in Settings or as <code>TAVILY_API_KEY</code>; without one it
       explains the fallbacks instead of returning nothing, so an empty-looking answer means setup, not
-      a dead search. <code>web_fetch</code> fetches the URL directly (with an SSRF guard against
-      localhost, private, and cloud-metadata addresses), does not run JavaScript, and works without any
+      a dead search. <code>web_fetch</code> fetches the URL directly (an SSRF guard allows only globally
+      routable addresses, so localhost, private networks and cloud metadata are refused), does not run JavaScript, and works without any
       key. See
       <a href="tut-research.html">Web research</a> for how to prompt for cited answers, and
       <a href="ref-env.html">environment variables</a> for the key.</p>
@@ -278,21 +276,26 @@
     <h2 id="rules">Rules and instructions</h2>
     <p>The user's own rules and instructions live under <code class="path">~/.whisper</code> (see
       <a href="tut-memory.html#whisper-md">Memory &amp; WHISPER.md</a>). One tool writes them; it is
-      always in the catalogue and core in chat, so "remember this" never waits behind
-      <code>tool_search</code>. Writes under <code class="path">~/.whisper</code> need no approval in
-      any mode.</p>
+      always in the catalogue and core in every run, so "remember this" never waits behind
+      <code>tool_search</code>. It runs with no card, except in plan mode, where it shows the change as
+      a diff and asks. In general, writes under <code class="path">~/.whisper</code> need no card, but
+      the app's own config and grant files there (<code class="path">config.user.json</code>,
+      <code class="path">permissions.json</code>, <code class="path">mcp_servers.json</code>,
+      <code class="path">plugins/</code>, <code class="path">agents/</code> and the others) follow the
+      permission mode.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Tool</th><th>What it does</th><th>Approval</th></tr></thead>
       <tbody>
-        <tr><td><code>rules_write</code> <span class="badge">★ Core</span></td><td>Append one or more rule lines, or rewrite a file, in one of four targets: <code>project_rules</code> (default while a workspace is connected), <code>global_rules</code> (always, everywhere, no workspace), <code>project_whisper_md</code> and <code>global_whisper_md</code> (facts, not rules). Lines already present are skipped.</td><td><span class="badge badge--muted">no prompt</span></td></tr>
+        <tr><td><code>rules_write</code> <span class="badge">★ Core</span></td><td>Append one or more rule lines, or rewrite a file, in one of four targets: <code>project_rules</code> (default while a workspace is connected), <code>global_rules</code> (always, everywhere, no workspace), <code>project_whisper_md</code> and <code>global_whisper_md</code> (facts, not rules). Lines already present are skipped.</td><td><span class="badge badge--muted">no prompt</span> (asks in plan mode)</td></tr>
       </tbody>
     </table></div>
 
     <h2 id="memory">Memory</h2>
     <p>Read and write the workspace memory store, which the assistant injects into the system prompt on
       later turns. These four are in the catalogue only while the <code>auto_memory</code> feature
-      flag is on (its default), and are core whenever they are, so the post-turn learning review can
-      call them. See <a href="arch-memory.html">Memory system</a> and
+      flag is on (its default). They are core in chat and voice turns, so the post-turn learning
+      review can call them, and deferred behind <code>tool_search</code> in agent, cron and headless
+      runs. See <a href="arch-memory.html">Memory system</a> and
       <a href="tut-memory.html">Memory &amp; WHISPER.md</a>.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Tool</th><th>What it does</th><th>Approval</th></tr></thead>
@@ -323,7 +326,7 @@
         <tr><td><code>task_status</code> <span class="badge">★ Core</span></td><td>Check background tasks (shell commands, detached agents, or workflow/CI runs, not the todo list). No id lists them; with an id, full status.</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>task_output</code> <span class="badge">★ Core</span></td><td>Read a background task's output tail: shell output, or an agent's journaled progress. An agent's registry row and its on-disk journal share one id, so <code>task_output &lt;agent id&gt;</code> reads that run's events even after it finished or the app restarted. Defaults to the last 200 lines; a large output is budgeted, with the full text behind <code>read_cached_result</code>.</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>task_cancel</code></td><td>Stop a running background task. Mutating, and distinct from the todo tracker's <code>task_stop</code>. It can only touch this session's own tasks.</td><td><span class="badge badge--muted">no prompt</span></td></tr>
-        <tr><td><code>cron_create</code></td><td>Schedule a recurring or one-time task that runs a prompt on a schedule (wall-clock times included, for example daily at 9am).</td><td><span class="badge badge--muted">no prompt</span></td></tr>
+        <tr><td><code>cron_create</code></td><td>Schedule a recurring or one-time task that runs a prompt on a schedule (wall-clock times included, for example daily at 9am). Follows the permission mode (category <code>cron</code>); an unattended run cannot schedule a job.</td><td><span class="badge">approval</span></td></tr>
         <tr><td><code>cron_list</code></td><td>List all scheduled cron jobs with their schedules and next run.</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>cron_delete</code></td><td>Delete a scheduled cron job by name.</td><td><span class="badge badge--muted">no prompt</span></td></tr>
       </tbody>
@@ -331,9 +334,10 @@
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4l3 2"/><circle cx="12" cy="12" r="9"/></svg></span>
       <div class="callout__body"><p>The scheduler also exposes <code>cron_update</code> (edit a job's prompt,
-        schedule, or enabled state) and <code>cron_run</code> (run a job once, off its schedule). Both
-        change the job store without a card, like the two above. The three listed in the table are the
-        ones surfaced in the primary Tasks &amp; scheduling group.</p></div>
+        schedule, or enabled state) and <code>cron_run</code> (run a job once, off its schedule). Like
+        <code>cron_create</code>, both follow the permission mode (category <code>cron</code>), and an
+        unattended run cannot do them. Only <code>cron_delete</code> changes the job store with no
+        card.</p></div>
     </div>
 
     <h2 id="sub-agents">Sub-agents</h2>
@@ -341,7 +345,7 @@
       coordinate them as a team. The same group holds the cross-session tools: listing your other
       chats, messaging one, and searching what was said in any of them. The built-in agent types are
       <code>general</code> (full tool
-      access), <code>explore</code> (read-only, fast model), <code>plan</code> (read-only,
+      access), <code>explore</code> (read-only, code search and analysis), <code>plan</code> (read-only,
       structured plans), <code>verify</code> (runs tests, returns a PASS/FAIL/PARTIAL verdict), and
       <code>coordinator</code> (orchestrates other agents, no direct file access). Any custom type
       saved under <code class="path">.whisper/agents/&lt;name&gt;.md</code> also works as
@@ -350,7 +354,7 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Tool</th><th>What it does</th><th>Approval</th></tr></thead>
       <tbody>
-        <tr><td><code>spawn_agent</code> <span class="badge">★ Core</span></td><td>Spawn one independent agent to handle a subtask. Options: <code>agent_type</code> (built-in or custom), <code>agent_definition</code> (define an ephemeral type inline), <code>detach</code>, and <code>isolation</code>.</td><td><span class="badge badge--muted">no prompt</span></td></tr>
+        <tr><td><code>spawn_agent</code> <span class="badge">★ Core</span></td><td>Spawn one independent agent to handle a subtask. Options: <code>agent_type</code> (built-in or custom), <code>agent_definition</code> (define an ephemeral type inline), <code>model</code> (a <code>chat_models</code> key; the default is the session's model), <code>context</code> (background for the agent), <code>detach</code>, and <code>isolation</code>.</td><td><span class="badge badge--muted">no prompt</span></td></tr>
         <tr><td><code>promote_agent_type</code></td><td>Save an ephemeral agent type used earlier this session as a persistent custom type at <code class="path">.whisper/agents/&lt;name&gt;.md</code> (project scope) or user-wide.</td><td><span class="badge badge--muted">no prompt</span></td></tr>
         <tr><td><code>list_agents</code></td><td>List active agents in the session with their IDs, types, and status.</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>send_message</code></td><td>Send a message to another agent by ID, or broadcast to all agents in the session. If the target is no longer running but still has an on-disk record, the message <b>resumes</b> it instead: the agent keeps its id and its stored context, the run is detached from the current turn, and its reply arrives as an agent report card in the chat.</td><td><span class="badge badge--muted">read</span></td></tr>
@@ -363,8 +367,10 @@
     </table></div>
     <p>Each brief you write for <code>spawn_agent</code> or a <code>team_create</code> member must be
       self-contained: the agent sees none of the parent conversation, so restate the objective, scope,
-      constraints, and expected output. A spawned agent inherits the session-selected model rather than
-      an agent-type default.</p>
+      constraints, and expected output. A spawned agent runs on the session-selected model, never an
+      agent-type default, unless the call names a <code>model</code>. A key that is unknown, or an
+      on-device model that cannot call tools, runs the agent on the session model, and the tool result
+      carries a <code>model_warning</code> that says so.</p>
     <p>Three <code>spawn_agent</code> options deserve detail. <code>agent_definition</code> defines a
       new type inline (name, description, system prompt, optional tool whitelist) when no registered
       type fits; it goes through the same write-tool safety filtering as any other type, and when
@@ -403,23 +409,29 @@
       servers spawned as stdio child processes, and <b>remote HTTP servers</b> reached over streamable
       HTTP (a <code>url</code> plus an optional bearer token read from an environment variable named
       by <code>bearer_token_env_var</code>, never stored raw in config). Each server also carries its
-      own trust settings: a per-server <code>approval_mode</code>, where <code>"approve"</code> is a
-      hard approval floor that no bypass mode, trusted skill, or session approval can skip, and
-      per-server <code>enabled_tools</code> / <code>disabled_tools</code> allow/deny lists
+      own trust settings: a per-server <code>approval_mode</code> and per-tool
+      <code>tool_overrides</code>. With no <code>approval_mode</code> (the <code>auto</code> tier) a
+      server's tools run with no card in every permission mode. <code>prompt</code> follows the mode,
+      <code>writes</code> runs tools whose names look read-only and sends the others through the mode,
+      and <code>approve</code> is a hard approval floor that no bypass mode, trusted skill, or session
+      approval can skip (see <a href="ref-security.html#mcp-trust">the MCP trust surface</a>). There
+      are also per-server <code>enabled_tools</code> / <code>disabled_tools</code> allow/deny lists
       (<code>disabled_tools</code> wins on overlap). When an MCP server asks the human for input
       mid-call (an <b>elicitation</b>), the question is surfaced through the approval pipeline
       (category <code>mcp-elicit</code>) rather than answered silently. See
       <a href="ref-settings.html#mcp-fields">the per-server MCP fields</a>.</p>
 
-    <h2 id="builtin-tools">Built-in core tools</h2>
+    <h2 id="builtin-tools">Built-in execution and content tools</h2>
     <p>These ship as native tools, schemas in code next to their executors
       (<code class="path">server/executors/tools.py</code> and <code class="path">server/prompt_tools/</code>),
-      always in the pool, and never listed or editable in the Skills panel:</p>
+      and are never listed or editable in the Skills panel. They are always in the catalogue but not in
+      the core set, so each one is deferred until <code>tool_search</code> activates it:</p>
     <ul>
       <li><b>Command, code, and cloud execution</b> - <code>terminal_run</code>, <code>run_python</code>,
         <code>aws_cli</code>, and <code>aws_boto3</code>. These run commands, Python, or AWS calls; all
         of them pause for approval except <code>aws_boto3</code>, which is restricted to read-only API
-        calls (methods whose names start with list, get, describe, head, or query).</li>
+        calls (methods whose names start with list, get, describe, head, query, search, lookup,
+        batch_get, scan, or select).</li>
       <li><b>The interactive terminal</b> - <code>terminal_send</code> and <code>terminal_close</code>.
         <code>terminal_send</code> types into a persistent terminal this chat keeps between calls
         (variables, working directory, and shell history survive), which is how the assistant drives a
@@ -474,7 +486,7 @@
       <thead><tr><th>Tool</th><th>What it does</th><th>Approval</th></tr></thead>
       <tbody>
         <tr><td><code>config_get</code></td><td>Read one or more Whisper Studio config values (empty = list all, with secrets masked).</td><td><span class="badge badge--muted">read</span></td></tr>
-        <tr><td><code>config_set</code></td><td>Write config values. Only known keys are accepted (for example <code>bedrock_region</code>, <code>default_chat_model</code>, <code>permission_mode</code>). Unknown keys are ignored and reported back under "ignored".</td><td><span class="badge badge--muted">no prompt</span></td></tr>
+        <tr><td><code>config_set</code></td><td>Write config values to <code class="path">config.user.json</code>. Only known keys are accepted (for example <code>bedrock_region</code> or <code>default_chat_model</code>). Unknown keys are ignored and reported back under "ignored". Every write follows the permission mode (category <code>config</code>), and an unattended run cannot change config.</td><td><span class="badge">approval</span></td></tr>
         <tr><td><code>ask_user_question</code> <span class="badge">★ Core</span></td><td>Ask you a multiple-choice question and pause the turn for the answer.</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>notify_user</code> <span class="badge">★ Core</span></td><td>Send a proactive, formatted message card (task done, a blocker, a finding).</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>create_artifact</code></td><td>Render a self-contained artifact as an inline card in chat (live preview plus download).</td><td><span class="badge badge--muted">read</span></td></tr>
@@ -490,12 +502,14 @@
     </table></div>
 
     <h2 id="preview">Live preview &amp; browser</h2>
-    <p>A dev-server-plus-headless-browser session for building and checking web UIs. The read-only
+    <p>A dev-server-plus-headless-browser session for building and checking web UIs. The 14 preview
+      tools are in the catalogue only while the <code>preview_tools</code> feature flag is on (its
+      default) and the Playwright and Chromium install is present; otherwise they are absent. The read-only
       tools (logs, snapshots, inspection) run freely; anything that starts a server or drives the page
       follows the permission mode, except that a named <code class="path">.whisper/launch.json</code>
       config whose command you approved once starts without asking (see <code>preview_start</code>
-      below). Note that <code>preview_eval</code> is marked <em>destructive</em> since it
-      runs arbitrary page JavaScript. See <a href="arch-preview.html">Live preview &amp; browser</a>.</p>
+      below). <code>preview_eval</code> runs arbitrary page JavaScript, so it follows the permission
+      mode like the other tools that drive the page. See <a href="arch-preview.html">Live preview &amp; browser</a>.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Tool</th><th>What it does</th><th>Approval</th></tr></thead>
       <tbody>
@@ -522,13 +536,16 @@
       only when ultracode is active (<code>assemble_full_catalog(ultracode=True)</code>), which is why
       the count above does not include them. When present they are all in the core set, never deferred
       behind <code>tool_search</code>.
-      <code>workflow_run</code> and <code>ci_autofix</code> return an approval preview card: the
-      generated workflow runs only after you approve it. See
+      A new, untrusted script from <code>workflow_run</code> follows the <code>workflow</code> category
+      mode: a preview card, a launch with no card (<code>bypassPermissions</code>, or <code>auto</code>
+      within its token budget), or a refusal (<code>dontAsk</code>). A script approved this session or
+      a trusted saved workflow launches directly. <code>ci_autofix</code> always returns the preview
+      card, and its fix workflow runs only after you approve it. See
       <a href="arch-ultracode.html">Ultracode workflow runtime</a>.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Tool</th><th>What it does</th><th>Approval</th></tr></thead>
       <tbody>
-        <tr><td><code>workflow_run</code> <span class="badge">★ Core</span></td><td>Launch a deterministic multi-agent workflow from a JS orchestration script (or a saved workflow by name). A new script is shown for approval before it runs; runs detached from the turn.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>workflow_run</code> <span class="badge">★ Core</span></td><td>Launch a deterministic multi-agent workflow from a JS orchestration script (or a saved workflow by name). A new script follows the <code>workflow</code> category mode (card, launch, or refusal); a trusted saved workflow launches directly. Runs detached from the turn.</td><td><span class="badge">approval</span></td></tr>
         <tr><td><code>workflow_status</code> <span class="badge">★ Core</span></td><td>Get a run's status, phase/agent journal tail, and spend. Omit the run id to list this session's runs.</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>workflow_save</code> <span class="badge">★ Core</span></td><td>Save a named, reusable workflow script. Saving itself asks nothing: a script you already approved this session is saved trusted, and any other is saved untrusted, so the first run by name shows the preview card and approving it trusts the workflow durably.</td><td><span class="badge badge--muted">no prompt</span></td></tr>
         <tr><td><code>workflow_list</code> <span class="badge">★ Core</span></td><td>List saved workflows and this session's recent runs.</td><td><span class="badge badge--muted">read</span></td></tr>
@@ -559,7 +576,7 @@
       <dt><code class="path">server/executors/tools.py</code></dt><dd><code>CORE_EXECUTOR_TOOLS</code>: command, code, AWS, web, and content tools shipped as native built-ins.</dd>
       <dt><code class="path">server/memory/tools.py</code></dt><dd>The <code>memory_*</code> tools.</dd>
       <dt><code class="path">server/preview/tools.py</code></dt><dd>The <code>preview_*</code> dev-server and browser tools.</dd>
-      <dt><code class="path">server/executors/__init__.py</code></dt><dd>The executor registry and per-tool safety metadata (<code>read_only</code>, <code>concurrent_safe</code>, <code>destructive</code>).</dd>
+      <dt><code class="path">server/executors/__init__.py</code></dt><dd>The executor registry and per-tool safety metadata (<code>read_only</code>, <code>concurrent_safe</code>).</dd>
     </div>
 
     <div class="callout callout--tip">

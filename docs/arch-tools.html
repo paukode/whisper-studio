@@ -76,13 +76,13 @@
       <tbody>
         <tr><td><code>read_only</code></td><td>The executor only reads; no side effects.</td><td><code>False</code></td></tr>
         <tr><td><code>concurrent_safe</code></td><td>Safe to run in parallel with other tools.</td><td><code>False</code></td></tr>
-        <tr><td><code>destructive</code></td><td>Can cause irreversible changes.</td><td><code>False</code></td></tr>
+        <tr><td><code>emits_prompt</code></td><td>The result is a model prompt (instructions wrapped around the user's input), so it skips the result budget.</td><td><code>False</code></td></tr>
       </tbody>
     </table></div>
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
       <div class="callout__body"><p>The defaults are <b>fail-closed</b>. A tool with no registered
-        metadata is treated as not read-only, not concurrent-safe, and not destructive, so an unknown
+        metadata is treated as not read-only and not concurrent-safe, so an unknown
         or unannotated tool serializes by default rather than racing. You opt into parallelism
         explicitly with <code>@register_executor(name, concurrent_safe=True)</code>.</p></div>
     </div>
@@ -93,6 +93,12 @@
       original stays intact for the Bedrock message history, one clone is passed to hooks (observed,
       never mutated), and one clone is passed to execution (which handlers may mutate).</p>
     <ol class="steps">
+      <li><h4>Agent tool scope</h4><p>In an agent run, a call to a tool outside the agent's own set is
+        refused first, with no argument processing, and counts toward the agent's refused-call
+        limit.</p></li>
+      <li><h4>Workspace latch</h4><p>Every call in the batch runs under the workspace the turn was
+        assembled against. If you disconnected that workspace, or switched to another, since the turn
+        began, workspace tools see no workspace and are refused at execution with the reason.</p></li>
       <li><h4>Sibling abort</h4><p>If an earlier command tool (<code>ws_run_command</code> or
         <code>run_python</code>) already failed this batch, subsequent non-safe tools are skipped with a
         "prior command failed" note rather than acting on broken state.</p></li>
@@ -123,9 +129,9 @@
         <code>PostToolUse</code> fires and may return <code>additionalContext</code> that is folded
         back into the tool result the model reads next; on an exception,
         <code>PostToolUseFailure</code> fires. A separate <code>Stop</code> gate
-        (<code>check_stop_hooks</code>) runs at end of turn via the completion gate, shared by every
-        chat loop (Claude, GPT, and local) and cron runs; sub-agents and headless turns run with it
-        off.</p></li>
+        (<code>check_stop_hooks</code>) runs at end of turn via the completion gate: on every cloud
+        chat turn, and on an on-device chat turn only while a goal is active. Sub-agents, cron runs,
+        and headless turns run with it off.</p></li>
       <li><h4>Dispatch</h4><p>Only now is <code>route_tool</code> called. Any exception is caught,
         logged, and returned to the model as a <code>[Tool Error]</code> string, so one failing tool
         never crashes the turn. Errors from command tools cascade to later writes via the sibling-abort
@@ -140,31 +146,16 @@
       <code>AppRequest</code>. Tool output from outside the app that starts with the marker stays
       text. The executor looks up the registered <code>ApprovalSpec</code> for the action and
       calls <code>resolve_static_decision()</code>
-      (<code class="path">server/security/permissions.py</code>), whose precedence is:</p>
-    <ol>
-      <li><code>github-destructive</code> - always asks. Destructive GitHub mutations (repo/ref
-        delete, PR merge, archive/rename, API DELETE) require an explicit human approval; no mode,
-        rule, or session approval can cover them.</li>
-      <li>An <code>rm</code>-class command - always asks. <code>is_rm_command</code> parses the
-        command with <code>shlex</code>, sees through wrappers such as <code>sudo</code>,
-        <code>env</code>, <code>xargs</code>, and catches <code>find ... -delete</code> and
-        <code>find ... -exec rm</code>. A parse failure is treated as rm-like, so it fails toward
-        asking.</li>
-      <li>A command that asked for <code>sandbox_permissions: "danger-full-access"</code> - always
-        asks, because that request is exactly a request to leave the sandbox's write confinement.</li>
-      <li>MCP per-server floor - a server or tool marked <code>approval_mode: "approve"</code> in
-        <code>mcp_servers.json</code> always asks; also absolute.</li>
-      <li>Per-category <code>category_modes</code> - a category-level override of the effective mode
-        (for example "always confirm deletes" even when the global mode is more permissive). It
-        applies before everything below, including <code>bypassPermissions</code>.</li>
-      <li><code>bypassPermissions</code> - everything allowed, no prompts.</li>
-      <li>Trusted-skill scripts - a trusted skill running its own bundled command.</li>
-      <li>Session approvals - category-level pre-approvals from the frontend (for example
-        <code>{"write": "allow"}</code>).</li>
-      <li>Custom rules, then <code>dontAsk</code>, then <code>acceptEdits</code> (writes only).</li>
-      <li><code>auto</code> - defer to the classifier (below).</li>
-      <li>Otherwise, <code>ask</code>.</li>
-    </ol>
+      (<code class="path">server/security/permissions.py</code>). It checks, first match wins: the
+      hard floors (a destructive GitHub mutation, a delete that reaches outside the workspace and the
+      app's folders, a request for <code>danger-full-access</code>, a visible terminal command
+      outside bypass, an MCP server marked <code>approve</code>), a write to the app's own grant
+      and config files, a write under <code class="path">~/.whisper</code>, the per-category
+      override, <code>bypassPermissions</code> (which still asks for a save outside the workspace
+      and a reach into an ungranted folder), trusted-skill scripts, session approvals, custom rules,
+      an approved named <code>launch.json</code> preview, and finally the mode. The full order, with
+      what each step does, is in <a href="arch-approval.html#decision-order">How a decision is
+      resolved</a>.</p>
     <p>Custom rules can carry an optional <code>justification</code> that is surfaced with the rule,
       and <code>POST /api/permissions/rules/test</code> dry-runs a candidate rule against a sample
       tool call before you commit it.</p>
@@ -176,16 +167,19 @@
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
       <div class="callout__body"><p>When a batch pauses on approval, Bedrock still requires a
-        <code>tool_result</code> for every <code>tool_use</code> in the preceding message. The executor
-        fills the remaining calls with "[Not executed]" placeholders so the next request's message array
-        stays well-formed, then re-issues them after the approval resolves. See
+        <code>tool_result</code> for every <code>tool_use</code> in the preceding message. A sibling
+        that already ran keeps its real result, and a sibling that was refused keeps its own refusal.
+        Each canceled call gets a "[Not executed]" placeholder that tells the model to re-issue it
+        after the approval resolves, so the next request's message array stays well-formed. The
+        executor itself re-issues nothing. See
         <a href="arch-approval.html">Approval &amp; permissions</a>.</p></div>
     </div>
 
     <h3 id="auto-mode">Auto mode and the classifier</h3>
     <p>In <code>auto</code> mode, when nothing static resolves the decision and a Bedrock model is
-      available, <code>classify_tool_call()</code> asks a fast model (Haiku, falling back to Sonnet) to
-      judge the call and returns <code>allow</code> or <code>ask</code>. The classifier also receives
+      available, <code>classify_tool_call()</code> asks the
+      <code>auto_mode_classifier</code> auxiliary model (Haiku by default, never the session model)
+      to judge the call and returns <code>allow</code> or <code>ask</code>. The classifier also receives
       <code>recent_messages</code>, a bounded slice of the turn so far, so it judges the pattern of
       the turn rather than each call in isolation. The classifier is only invoked
       for actions that actually need approval; read-only tools never reach it, and the offline local
@@ -208,9 +202,9 @@
         <tr><td>Todo tracker</td><td>Inline task handlers</td><td><code>task_create</code>, <code>task_update</code>, <code>task_list</code>, <code>task_get</code>, <code>task_stop</code> emit a <code>todo_update</code>.</td></tr>
         <tr><td>Background tasks</td><td><code>execute_background_task_tool</code></td><td><code>task_status</code>, <code>task_output</code>, <code>task_cancel</code> over the unified registry (<code class="path">server/tasks/tools.py</code>); distinct from the todo tracker.</td></tr>
         <tr><td>Cron</td><td>Cron handlers</td><td>Run via <a href="arch-cron.html">the scheduler</a>.</td></tr>
-        <tr><td>Workflows &amp; CI</td><td><code class="path">server/workflows/tools.py</code>, <code class="path">server/ci/tools.py</code></td><td><b>Ultracode-only.</b> <code>workflow_run</code>/<code>workflow_status</code>/<code>workflow_save</code>/<code>workflow_list</code> and <code>ci_watch</code>/<code>ci_status</code>/<code>ci_autofix</code>. See <a href="arch-ultracode.html">Ultracode workflow runtime</a>.</td></tr>
+        <tr><td>Workflows &amp; CI</td><td><code class="path">server/workflows/tools.py</code>, <code class="path">server/ci/tools.py</code></td><td><b>Ultracode-only.</b> <code>workflow_run</code>/<code>workflow_status</code>/<code>workflow_save</code>/<code>workflow_list</code>/<code>workflow_delete</code> and <code>ci_watch</code>/<code>ci_status</code>/<code>ci_autofix</code>. See <a href="arch-ultracode.html">Ultracode workflow runtime</a>.</td></tr>
         <tr><td>LSP &amp; worktree</td><td><code>execute_lsp_tool</code>, worktree handlers</td><td>Run on the thread-pool executor. See <a href="arch-git-lsp.html">Git &amp; LSP</a>.</td></tr>
-        <tr><td>Sub-agents &amp; teams</td><td><code>spawn_agent</code>, <code>send_message</code>, <code>receive_messages</code>, <code>complete_coordination</code>, <code>list_agents</code>, <code>promote_agent_type</code>, <code>team_create</code></td><td>The agent runtime; the caller's id, depth, and team ride an ambient <code>agent_nesting_ctx</code>. See <a href="arch-agents.html">Sub-agents</a>.</td></tr>
+        <tr><td>Sub-agents &amp; teams</td><td><code>spawn_agent</code>, <code>send_message</code>, <code>receive_messages</code>, <code>complete_coordination</code>, <code>list_agents</code>, <code>promote_agent_type</code>, <code>team_create</code>, <code>team_delete</code>, <code>list_sessions</code>, <code>send_session_message</code></td><td>The agent runtime; the caller's id, depth, and team ride an ambient <code>agent_nesting_ctx</code>. See <a href="arch-agents.html">Sub-agents</a>.</td></tr>
         <tr><td>Documents</td><td>Registry executors (<code class="path">server/documents/</code>)</td><td><code>create_docx</code> (HTML via python-docx), <code>create_pptx</code> (python-pptx), <code>create_xlsx</code> (openpyxl), <code>create_pdf</code> (reportlab), all normalized to the standard layout in <code class="path">server/documents/standards.py</code>. With no workspace connected (or an absolute <code>destination_path</code>), the bytes go through the staged <code>save_to_path</code> flow below; with a workspace connected they go straight into a <code>create_document</code> approval instead, same trust tier as an ordinary workspace write, no staging.</td></tr>
         <tr><td><code>skill_invoke</code></td><td>Runs a general agent</td><td>Delegates the named skill to a full sub-agent tool loop.</td></tr>
         <tr><td>Memory</td><td>Registry executor</td><td>Looked up in <code>EXECUTORS</code>. See <a href="arch-memory.html">Memory</a>.</td></tr>
@@ -228,7 +222,7 @@
       Each one is an <code>AppRequest</code> that the app made:</p>
     <dl class="spec">
       <dt><code>[WS_APPROVAL]</code></dt><dd>Needs consent; resolved through the precedence chain above.</dd>
-      <dt><code>[WS_WORKSPACE_PROMPT]</code></dt><dd>A modify or delete of an <em>existing</em> file (<code>ws_write_file</code>, <code>ws_edit_file</code>, <code>ws_delete_file</code>) fired with no connected workspace; a folder picker is shown and the turn pauses. New-file creation never triggers it, and neither does a path outside a connected workspace: the <code>ws_*</code> file tools reach the workspace and the session's own scratch folder (<code class="path">data/scratch/&lt;session&gt;</code>, by absolute path, never the folder of a different session), a new file anywhere else goes through the <code>save_to_path</code> approval, and a modify or delete anywhere else is a plain refusal the model can act on.</dd>
+      <dt><code>[WS_WORKSPACE_PROMPT]</code></dt><dd>A modify or delete of an <em>existing</em> file (<code>ws_write_file</code>, <code>ws_edit_file</code>, <code>ws_delete_file</code>) fired with no connected workspace; a folder picker is shown and the turn pauses. New-file creation never triggers it, and neither does a path outside a connected workspace: the <code>ws_*</code> file tools reach the workspace and the session's own scratch folder (<code class="path">~/.whisper/data/scratch/&lt;session&gt;</code>, by absolute path, never the folder of a different session), a new file anywhere else goes through the <code>save_to_path</code> approval, and a modify or delete anywhere else is a plain refusal the model can act on.</dd>
       <dt><code>save_to_path</code></dt><dd>The staged-then-move save flow for <code>ws_create_file</code>, <code>save_file</code>, and the document tools when there is no connected workspace (or the model resolved an absolute path). With a workspace connected, <code>ws_create_file</code> and the document tools use the plain <code>create</code>/<code>create_document</code> approval instead - no staging. The tool never asks where to save: <code>resolve_write_destination</code> (<code class="path">server/workspace/state.py</code>) uses the model-resolved <code>destination_path</code> from the user's own words, else a workspace-relative path, else <code>~/Documents/&lt;filename&gt;</code>. The content is fully built and staged in the app sandbox first (<code>stage_file_bytes</code>, <code class="path">server/workspace/paths.py</code>, with a 24-hour staging GC), and approving the card <em>moves</em> the staged file into place with a staging-root containment check.</dd>
       <dt><code>[WS_PREVIEW_IMAGE]</code></dt><dd>A screenshot; returned as an Anthropic image content block (never budget-truncated) so the model sees pixels, not base64 text.</dd>
     </dl>
@@ -245,7 +239,8 @@
       written to the result cache (<code class="path">server/infrastructure/result_cache.py</code>,
       kept 7 days under the data root), a <code>tool_result_truncated</code> frame names the cache
       file, and the model can read the rest with <code>read_cached_result</code> by filename, offset,
-      and limit. Outputs flagged via <code>produces_model_prompt</code> (folder/prompt skills,
+      and limit. Outputs whose executor sets <code>emits_prompt</code>, read through
+      <code>produces_model_prompt</code> (folder/prompt skills,
       <code>summarize_transcript</code>, <code>analyze_document</code>) skip <code>budget_fn</code>
       entirely, so a head-truncation can never silently strip their trailing instructions.</p>
 
@@ -307,8 +302,8 @@
       values. A download keeps the values that are on the screen at that time.</p>
 
     <h2 id="the-catalogue">The tool catalogue</h2>
-    <p>Whisper Studio's <em>full</em> tool pool runs to <b>120 tools plus the skill-backed and MCP
-      tools</b> - grouped by purpose: workspace &amp; files, git, GitHub, LSP, web, memory,
+    <p>Whisper Studio's <em>full</em> tool pool runs to <b>about 120 built-in tools plus the
+      skill-backed and MCP tools</b> - grouped by purpose: workspace &amp; files, git, GitHub, LSP, web, memory,
       tasks &amp; scheduling, sub-agents, skills / notebooks / MCP, documents, config &amp;
       interaction, and live preview. No consumer ships all of those schemas every turn. With
       <b>progressive tool disclosure</b> (feature flag <code>progressive_tools</code>, default
@@ -324,8 +319,8 @@
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
       <div class="callout__body"><p>Cloud Claude is trimmed automatically by progressive
-        disclosure (core plus session-activated tools); on-device model modes can trim the exposed
-        set further with the local Tools dropdown. For the complete, grouped list of every tool the assistant can
+        disclosure (core plus session-activated tools). A tool-capable on-device model gets the full
+        pool. For the complete, grouped list of every tool the assistant can
         call, see the <a href="ref-tools.html">Agent tools reference</a>.</p></div>
     </div>
 
@@ -352,10 +347,10 @@
       <dt><code>CORE_TOOLS</code></dt><dd>A curated always-advertised set in
         <code class="path">tool_partition.py</code>: workspace primitives, the discovery tools
         (<code>tool_search</code> can never be deferred - it is the way back), the todo and
-        background-task tools, orchestration, the workflow / CI tools when present, and the four
-        memory tools while <code>auto_memory</code> puts them in the catalogue.
-        <code>core_names()</code> adds <code>skill_manage</code> while
-        <code>skill_self_improvement</code> is on. The post-turn learning review replays a turn's
+        background-task tools, orchestration, and the workflow / CI tools when present.
+        <code>core_names()</code> adds the four memory tools (while <code>auto_memory</code> puts
+        them in the catalogue) and <code>skill_manage</code> (while
+        <code>skill_self_improvement</code> is on), in chat and voice turns only. The post-turn learning review replays a turn's
         tools array and cannot load a deferred tool, so what it saves with has to be core.</dd>
       <dt>Session activation</dt><dd>Tools this session has pulled in via <code>tool_search</code> or
         history replay, tracked in <code class="path">server/chat/tool_activation.py</code> and

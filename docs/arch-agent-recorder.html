@@ -15,8 +15,8 @@
 <body>
   <main class="doc" data-page="arch-agent-recorder">
     <h1>Agent flight recorder</h1>
-    <p class="subtitle">An agent's work used to live only in the tool result its parent read once. The
-      flight recorder makes the on-disk record primary: every run is journaled from its first round,
+    <p class="subtitle">The flight recorder makes the on-disk record of an agent run primary, not the
+      tool result its parent reads once: every run is journaled from its first round,
       every run ends with a report, and a report that arrives with nobody waiting for it still reaches
       you.</p>
 
@@ -44,9 +44,9 @@
     events.jsonl    every progress event as it happened
     messages.json   the API message list, rewritten at every round start
     report.md       the final report: the model's own, or a salvage one</code></pre></div>
-    <p>A team also gets <code>teams/&lt;team_id&gt;.json</code> in the same session directory: a manifest
-      of which agents made up the team, so a restart can find every member's journal from the team id
-      alone. Storage lives under the app data root, not
+    <p>Storage lives under the app home's <code class="path">storage/</code> folder
+      (<code class="path">~/Library/Application Support/WhisperStudio/storage</code> in the Mac app,
+      the checkout's <code class="path">storage/</code> in a source install), not
       <code class="path">~/.whisper</code>, so a hand-edit in the user directory cannot destroy it. See
       <a href="arch-persistence.html">Sessions &amp; persistence</a>.</p>
 
@@ -61,9 +61,9 @@
       </tbody>
     </table></div>
     <p>The terminal write is idempotent: the first one wins. A cancelled run's salvage report can never
-      be overwritten by a later teardown. Every journal write is best-effort by contract, wrapped so it
-      can never take the run down, and a disk that cannot be written to simply means the run has no
-      journal rather than no run.</p>
+      be overwritten by a later teardown. A journal write that fails logs a warning (once per kind of
+      write) and the run goes on: a disk that cannot be written to means the run has no journal, not
+      that the run stops.</p>
 
     <p>Because the registry row exists from the first round, <code>task_output &lt;agent_id&gt;</code>
       tails a live agent's progress log and returns a finished one's report, regardless of how it ended
@@ -85,11 +85,12 @@
       <b>one line</b> the caller can quote. The template ends by telling the agent the caller has seen
       nothing it wrote before that message.</p>
 
-    <p>That final round has to happen inside the budget, not after it. Three limits start it:</p>
+    <p>That final round has to happen inside the budget, not after it. Four triggers start it:</p>
     <ul>
       <li><b>The turn cap.</b> A wind-down reminder fires with five rounds left ("consolidate, do not open
-        new lines of work"), and on the last round the report template rides along with it. That round is sent
-        with tool choice set to none, so it genuinely produces an answer instead of another tool call.</li>
+        new lines of work"), and on the last round the report template rides along with it. That round
+        is sent without tools for Claude, and with tool choice set to <code>none</code> for GPT and
+        on-device models, so it produces an answer instead of another tool call.</li>
       <li><b>Time.</b> The wall-clock deadline is reached at <b>90 percent</b> of the budget
         (<code>SOFT_LIMIT_FRACTION</code>). The last tenth is reserved for writing the report, so the
         report is written inside the budget rather than after it, where an outer limit could still kill
@@ -99,6 +100,9 @@
         template; the second ends the run. The same soft check governs the main chat turn, so a capped
         conversation also gets a last round to answer. See <a href="arch-costs.html">Cost tracking
         &amp; budgets</a>.</li>
+      <li><b>Refused calls.</b> Three refused tool calls in a row
+        (<code>REFUSAL_STREAK_LIMIT</code>) make the next round the last one, with the report
+        template.</li>
     </ul>
 
     <div class="callout">
@@ -120,6 +124,7 @@
         <tr><td><code>turn_limit</code></td><td>The round cap was reached. The capped round wrote the report.</td></tr>
         <tr><td><code>deadline</code></td><td>The wall-clock budget hit its soft limit. The reserved round wrote the report.</td></tr>
         <tr><td><code>cost_cap</code></td><td>The session or daily cost cap was reached. The final round wrote the report.</td></tr>
+        <tr><td><code>refused_calls</code></td><td>Three refused tool calls in a row made the next round the last. That round wrote the report.</td></tr>
         <tr><td><code>cancelled</code></td><td>The run was killed (Stop, the parent stream closing, a shutdown). The runtime assembled a salvage report.</td></tr>
         <tr><td><code>error</code></td><td>The run raised. The runtime assembled a salvage report with the error in it.</td></tr>
       </tbody>
@@ -148,8 +153,8 @@
       record.</p>
 
     <h3 id="no-live-turn">When no turn is waiting</h3>
-    <p>Reports also arrive when nothing is listening: you pressed Stop, the app restarted, the agent ran
-      detached, or it was resumed after it had stopped. The backend writes those reports into the
+    <p>Reports also arrive when nothing is listening: you pressed Stop, the agent ran detached, or it
+      was resumed after it had stopped. The backend writes those reports into the
       session as an <b>agent report row</b> (role <code>agent_report</code>). The chat shows the row as
       a report card. The card starts as one closed line, and the line of a team opens to one line for
       each agent. Each agent line gives the stop reason in a chip and opens to the report as markdown.
@@ -164,7 +169,9 @@
       loses a report.</p>
 
     <h2 id="wake">Waking the parent</h2>
-    <p>A row in the chat is not an answer. Once reports land, the parent gets its turn anyway:</p>
+    <p>A row in the chat is not an answer. When a detached or resumed agent's reports land, the
+      parent gets its turn anyway. Reports from a turn you stopped wake nobody: they stay as a row
+      for your next message.</p>
     <ol class="steps">
       <li><h4>A turn is still live</h4><p>The reports are pushed into the <b>mid-turn inbox</b>, exactly
         like a message you type while the assistant is working, and folded into the running turn at its
@@ -174,17 +181,22 @@
         the agents themselves ran on (resolved from a member's journal, falling back to the default chat
         model). Its prompt is the original request, the assistant's last message before the agents
         finished, and the reports. Its system hint says the turn was started by the runtime, not by you,
-        and that it must answer from the reports without calling tools or starting agents.</p></li>
+        and that it must answer from the reports without calling tools or starting agents. The wake
+        turn runs on a cloud model only: in Local mode, or when the agents ran on an on-device model,
+        no wake turn runs and a notification says the reports are in the chat.</p></li>
       <li><h4>The answer lands as an assistant bubble</h4><p>The reply is persisted as an
         <code>agent_answer</code> row and rendered as a normal assistant message with a small label
         reading <b>"Answered from the agents' reports"</b> plus the team name. A notification is recorded
         too. On later turns the model reads the row back as its own previous assistant message, so the
         conversation stays coherent.</p></li>
     </ol>
-    <p>The guards are deliberate. Only <b>one wake per session at a time</b>. If the session cost budget
+    <p>The guards are deliberate. Only <b>one wake per session at a time</b>: reports that land while
+      a wake turn runs get one follow-up wake when it ends. A wake never runs beside a chat turn: when
+      you send a message, a running wake is cancelled and its reports go to your turn. If the session cost budget
       is already reached the wake is skipped and a notification says so, pointing out that the reports
-      are in the chat and your next message can use them. If the synthesis turn produces nothing, the row
-      still gets a plain line saying so rather than staying silent. And the whole behaviour is behind the
+      are in the chat and your next message can use them. If the synthesis turn fails or produces
+      nothing, no row is written: a warning notification says the automatic answer failed and that the
+      reports are in the chat. And the whole behaviour is behind the
       <code>wake_parent_on_reports</code> config key (default <b>true</b>); turn it off and reports still
       land as rows, they just do not get answered on their own.</p>
     <p><code>agent_answer</code> rows are capped per session at the same
@@ -219,41 +231,42 @@
     <p>Because <code>messages.json</code> is checkpointed at every round start, a finished or interrupted
       agent can be picked up where it stopped.</p>
     <dl class="spec">
-      <dt><b>Resume</b> - <code>send_message</code> to a stopped agent</dt>
+      <dt><b>Resume</b>: <code>send_message</code> to a stopped agent</dt>
       <dd>When <code>send_message</code> targets an agent that is not running but has a journal, the
         runtime resumes it instead of dropping the message into a mailbox nobody drains. The agent keeps
         its id and its record; the stored messages are replayed and the sender's text is appended as a
         follow-up user turn. The resumed run is detached (the caller's turn does not wait), and its reply
         comes back as an agent report row, which then wakes the parent like any other. The tool result
         says so explicitly and names <code>task_output</code> for progress.</dd>
-      <dt><b>Extend</b> - more budget for a run that is still going</dt>
-      <dd>A run's cap and deadline are fixed when it starts, so a slow agent had to stop at the limit and
-        be resumed later with a cold context. <code>POST /api/agents/{agent_id}/extend</code> grants a
-        <em>running</em> agent extra rounds or seconds while its context is still hot. The turn engine
+      <dt><b>Extend</b>: more budget for a run that is still going</dt>
+      <dd><code>POST /api/agents/{agent_id}/extend</code> grants a <em>running</em> agent extra rounds
+        or seconds while its context is still loaded. The turn engine
         re-reads the extension dict at every round start, so a grant applies to the very next round. The
         endpoint accepts at most 200 extra rounds and four extra hours per call, refuses a request with
         neither, and returns 404 for an agent that is not running (a finished agent is resumed, not
-        extended). The <b>Extend</b> button on an agent row asks for <b>20 rounds</b>.</dd>
+        extended). The <b>Extend +20</b> button in the agent pane's status line (the dock) asks for
+        <b>20 rounds</b>.</dd>
     </dl>
 
     <h2 id="budget-readout">The budget readout</h2>
     <p>Every <code>turn_start</code> event is stamped with the run's budget state, computed by
       <code>budget_readout</code> from values passed in rather than read from ambient state, so a
-      reloaded history renders exactly the same bars. The fields:</p>
+      reloaded history gives the same readout. The fields:</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Field</th><th>What it carries</th></tr></thead>
       <tbody>
         <tr><td><code>max_turns</code></td><td>The round cap including any live extension.</td></tr>
-        <tr><td><code>elapsed_s</code></td><td>Seconds since the run started, to one decimal.</td></tr>
-        <tr><td><code>deadline_s</code></td><td>The wall-clock budget including any extension, or absent when the type has no time limit.</td></tr>
-        <tr><td><code>cost_usd</code></td><td>Estimated spend so far from the run's own token usage. Absent rather than zero when the model has no price entry.</td></tr>
-        <tr><td><code>budget_state</code></td><td><code>finishing</code> once the next round is the last one (the cap, 90 percent of the time budget, or a cost cap already tripped), otherwise <code>working</code>.</td></tr>
+        <tr><td><code>elapsed_s</code></td><td>The run's own seconds, to one decimal, without the time spent waiting on agents it started.</td></tr>
+        <tr><td><code>deadline_s</code></td><td>The Settings time limit including any extension. Always set.</td></tr>
+        <tr><td><code>cost_usd</code></td><td>Estimated spend so far from the run's own token usage. Always a number ($0 for a model with no price entry).</td></tr>
+        <tr><td><code>budget_state</code></td><td><code>finishing</code> once the next round is the last one (the cap, 90 percent of the time budget, a cost cap already tripped, or three refused calls in a row), otherwise <code>working</code>.</td></tr>
       </tbody>
     </table></div>
-    <p>The card turns those into one thin bar per dimension with the reserved final tenth drawn as a
-      hatched slice, and a pill that reads <b>working</b>, <b>finishing up</b>, <b>done</b>, <b>hit
-      limit</b>, <b>salvaged</b> or <b>failed</b>. Nothing in the pill or the bars is computed from the
-      browser's own clock.</p>
+    <p>The agent pane's status line shows the state in words (<b>running</b>, <b>finishing up</b>,
+      <b>done</b>, <b>stopped at the turn limit</b>, <b>stopped after repeated refused calls</b>,
+      <b>failed</b> and similar), the model, rounds against the cap, the elapsed time and the
+      estimated cost. The elapsed time is wall time from the browser's clock while the run is
+      going.</p>
 
     <h2 id="key-files">Key files</h2>
     <div class="spec">

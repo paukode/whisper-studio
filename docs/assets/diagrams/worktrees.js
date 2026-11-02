@@ -1,31 +1,31 @@
-/* Tutorial - one repo, several isolated worktrees, sessions that never collide */
+/* Tutorial: one repo, three kinds of worktree, each on its own branch */
 WSDiagram.mount("worktrees-diagram", {
-  title: "One shared repo, one worktree per session",
+  title: "One shared repo, three kinds of worktree",
   grid: { nodeW: 176, nodeH: 60, gapX: 64, gapY: 40 },
   groups: {
-    sessions: { label: "Sessions" },
-    worktrees: { label: "Per-session worktrees" },
+    sources: { label: "Who makes it" },
+    worktrees: { label: "Worktrees" },
     repo: { label: "Shared repository" }
   },
   nodes: [
-    { id: "s1", group: "sessions", col: 0, row: 0, label: "Session A", sub: "chat", desc: "A chat session records which worktree it entered (for the UI chip); the session must cd into it for shell commands to follow - file tools never do." },
-    { id: "s2", group: "sessions", col: 0, row: 1, label: "Session B", sub: "chat", desc: "A second session, entirely independent. Nothing it does can be seen by or collide with Session A's files." },
-    { id: "s3", group: "sessions", col: 0, row: 2, label: "Sub-agent C", sub: "spawn_agent isolation: 'worktree'", desc: "A worktree-isolated sub-agent gets the same treatment automatically, keyed by its own agent id." },
-    { id: "w1", group: "worktrees", col: 1, row: 0, label: "Worktree A", sub: ".whisper/worktrees/a", desc: "Its own checkout, its own index, its own HEAD, on branch worktree-a. Editing files here never touches the main checkout." },
-    { id: "w2", group: "worktrees", col: 1, row: 1, label: "Worktree B", sub: ".whisper/worktrees/b", desc: "Same shape, a different slug and branch (worktree-b). Git refuses to let two worktrees share one branch, so the two can never step on each other." },
-    { id: "w3", group: "worktrees", col: 1, row: 2, label: "Worktree agent-C", sub: ".whisper/worktrees/agent-c", desc: "Namespaced agent-<id> slug and branch. On a clean finish its changes are harvested back uncommitted; a stopped-early run keeps the worktree for inspection." },
-    { id: "store", group: "repo", kind: "store", col: 2, row: 0.5, label: "Git object store", sub: ".git (shared)", desc: "One object database and ref namespace for the whole repo. Every worktree's commits land in the same store, nothing is duplicated on disk." },
-    { id: "main", group: "repo", col: 2, row: 2, label: "Main checkout", sub: "your original branch", desc: "The working directory you started in. It sits untouched while other sessions work in their own worktrees, until a merge (or a harvest) brings changes back." }
+    { id: "s1", group: "sources", col: 0, row: 0, label: "The assistant", sub: "ws_create_worktree", desc: "During a conversation, the assistant makes a task branch to keep a change with many files out of your working tree until the merge." },
+    { id: "s2", group: "sources", col: 0, row: 1, label: "Agent runtime", sub: "spawn_agent isolation: 'worktree'", desc: "The runtime makes a worktree for each isolated subagent automatically. If it cannot, the agent runs read-only." },
+    { id: "s3", group: "sources", col: 0, row: 2, label: "You", sub: "terminal Worktrees menu", desc: "In the terminal panel, + Add worktree makes a worktree for a branch that you name." },
+    { id: "w1", group: "worktrees", col: 1, row: 0, label: "Task branch", sub: ".worktrees/<name>", desc: "Its own checkout on branch whisper/<name>. Edits here do not change the main checkout." },
+    { id: "w2", group: "worktrees", col: 1, row: 1, label: "Agent worktree", sub: ".whisper/worktrees/agent-<id>", desc: "Branch worktree-agent-<id>. After a clean finish, harvest applies its changes uncommitted. A run that stopped early keeps the worktree." },
+    { id: "w3", group: "worktrees", col: 1, row: 2, label: "Terminal worktree", sub: "../<repo>-<branch>", desc: "A worktree next to the main checkout, on a new or existing branch. You merge its branch with git." },
+    { id: "store", group: "repo", kind: "store", col: 2, row: 0.5, label: "Git object store", sub: ".git (shared)", desc: "One object database for the full repository. The commits of each worktree go into the same store. Git does not let two worktrees check out the same branch." },
+    { id: "main", group: "repo", col: 2, row: 2, label: "Main checkout", sub: "the connected workspace", desc: "The folder that all chat sessions use. It does not change until a merge or a harvest brings changes back." }
   ],
   edges: [
-    { from: "s1", to: "w1", label: "enter" },
-    { from: "s2", to: "w2", label: "enter" },
-    { from: "s3", to: "w3", label: "enter" },
+    { from: "s1", to: "w1", label: "create" },
+    { from: "s2", to: "w2", label: "create" },
+    { from: "s3", to: "w3", label: "add" },
     { from: "w1", to: "store", label: "commit" },
     { from: "w2", to: "store", label: "commit" },
     { from: "w3", to: "store", label: "commit" },
-    { from: "w1", to: "main", label: "merge back" },
-    { from: "w2", to: "main", label: "merge back" },
-    { from: "w3", to: "main", label: "merge back (harvest)" }
+    { from: "w1", to: "main", label: "ws_merge_worktree" },
+    { from: "w2", to: "main", label: "harvest" },
+    { from: "w3", to: "main", label: "git merge" }
   ]
 });

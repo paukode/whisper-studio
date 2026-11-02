@@ -25,7 +25,8 @@
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14ZM21 21l-4.3-4.3"/></svg></span>
       <div class="callout__body"><p>Looking for something specific? Press <kbd>/</kbd> (or click the
-        search box in the sidebar) to filter every page, including this one, by term.</p></div>
+        search box in the sidebar) to find a page by its title or description. To find a term on this
+        page, use your browser's find (<kbd>Cmd</kbd>+<kbd>F</kbd>).</p></div>
     </div>
 
     <h2 id="a-b">A - B</h2>
@@ -55,9 +56,10 @@
         </tr>
         <tr>
           <td>agent report card</td>
-          <td>The chat card that appears when agent reports arrive with no turn running, because you
-            pressed Stop or the app restarted. It lists each agent's report and comes with a
-            notification. The parent then <b>wakes</b> (see that entry) to actually answer from them.</td>
+          <td>The chat card that appears when agent reports arrive with no turn running. It lists
+            each agent's report and comes with a notification. After a detached or resumed agent
+            finishes, the parent <b>wakes</b> (see that entry) to answer from them. After you press Stop
+            there is no wake: your next message reads the reports.</td>
         </tr>
         <tr>
           <td>approval pause</td>
@@ -79,10 +81,10 @@
           <td>auxiliary models</td>
           <td>The map that names which model runs each side task the assistant does on your behalf:
             memory recall, the goal evaluator, session titling, the auto-mode classifier, the
-            permission explainer, query rewriting, CI diagnosis, compaction and the post-turn learning
-            review. Values are <code>chat_models</code> keys, and <code>"main"</code> means the
-            session's own model. An empty map (the default) leaves every task on its historical
-            default. See <a href="ref-settings.html#auxiliary">Settings &amp; config keys</a>.</td>
+            permission explainer, query rewriting, CI diagnosis, the activity captions, compaction and
+            the post-turn learning review. Values are <code>chat_models</code> keys, and
+            <code>"main"</code> means the session's own model. An empty map (the default) runs every
+            task on its default model. See <a href="ref-settings.html#auxiliary">Settings &amp; config keys</a>.</td>
         </tr>
         <tr>
           <td><code>Bedrock</code></td>
@@ -99,17 +101,20 @@
         </tr>
         <tr>
           <td><code>BlackHole</code></td>
-          <td>A macOS virtual audio driver used to route system audio into a recording. Paired with an
-            Aggregate Device, it lets a meeting recording capture both your microphone and whatever
-            macOS is playing. Install with <code>brew install blackhole-2ch</code>. See
+          <td>A third-party macOS virtual audio driver. You do not need it on macOS 14.4 or later: the
+            Mac app, and a source install through its capture helper, record system audio or one app
+            natively from the menu beside Record. On an older macOS, BlackHole paired with an Aggregate
+            Device lets a meeting recording capture both your microphone and whatever macOS is playing.
+            Install with <code>brew install blackhole-2ch</code>. See
             <a href="tut-voice.html">Voice &amp; meetings</a>.</td>
         </tr>
         <tr>
           <td>busy slot</td>
           <td>The per-session claim that says a turn is running. Every turn takes it, continuations
-            after an approval included, so a second turn cannot start on top of one in flight: it gets
-            a <code>409</code>, or, when it is a mid-turn message, is queued into the
-            <b>mid-turn inbox</b>. A heartbeat refreshes the slot while the turn is silent, so an hour
+            after an approval included, so a second turn cannot start on top of one in flight: a
+            message you send while a turn runs is queued into that turn through the
+            <b>mid-turn inbox</b>. A <code>409</code> comes back only when a mid-turn send finds that
+            the turn has already ended. A heartbeat refreshes the slot while the turn is silent, so an hour
             of agents or one long shell command does not look abandoned; a slot with no heartbeat for
             15 minutes is reclaimed as stale. See <a href="arch-chat-turn.html">Anatomy of a chat
             turn</a>.</td>
@@ -188,26 +193,26 @@
         </tr>
         <tr>
           <td><code>DOMPurify</code></td>
-          <td>The HTML sanitizer (version 3.4.6) that every Markdown render passes through before it
+          <td>The HTML sanitizer that every Markdown render passes through before it
             reaches the React DOM. It strips <code>&lt;script&gt;</code>, inline event handlers, and
             <code>javascript:</code> URLs, so a prompt-injected page fetched by <code>web_fetch</code>
             cannot run arbitrary JS in the SPA origin. See <a href="ref-security.html">Security model</a>.</td>
         </tr>
 <tr>
           <td><code>ECAPA</code></td>
-          <td>ECAPA-VoxCeleb, the speaker encoder Whisper Studio used before ReDimNet2. It loads only
-            when you select it with <code>speaker_embedder: "ecapa"</code>; it is not a fallback for
-            ReDimNet2. A separate ECAPA
+          <td>ECAPA-VoxCeleb, the speaker encoder you can choose with
+            <code>speaker_embedder: "ecapa"</code> instead of the default ReDimNet2. It loads only when
+            you select it. A separate ECAPA
             model does spoken-<b>language ID</b>; the two share an architecture, not a job.</td>
         </tr>
         <tr>
           <td>effort level</td>
           <td>How much reasoning budget the model spends per turn: <code>low</code>, <code>medium</code>,
             <code>high</code>, <code>extra</code> (the raw name <code>xhigh</code> is an alias),
-            <code>max</code>, or <code>ultracode</code>. The former <code>auto</code> level is retired
-            (coerced back to a real level). <code>ultracode</code> is a session mode that pairs top
+            <code>max</code>, or <code>ultracode</code>. An on-device model that can think has its own
+            levels, from Off to Max. <code>ultracode</code> is a session mode that pairs top
             reasoning effort with dynamic-workflow orchestration. Set it with the <code>/effort</code>
-            command or in Settings. See <a href="ref-settings.html">Settings &amp; config keys</a> and
+            command or in the Thinking row of the composer's How it thinks capsule. See <a href="ref-settings.html">Settings &amp; config keys</a> and
             <a href="arch-ultracode.html">The ultracode workflow runtime</a>.</td>
         </tr>
         <tr>
@@ -272,8 +277,10 @@
           <td>goal / goal gate</td>
           <td>A per-session objective the assistant works toward. Set it with <code>/goal</code> (and
             <code>/goal clear</code> to end it); it is stored on the session row and a goal banner shows
-            above the composer. After each turn a <b>completion gate</b> - a cheap evaluator in
-            <code class="path">server/goals/gate.py</code> - judges whether the goal is met, and if not
+            above the composer. After each turn the <b>completion gate</b>
+            (<code class="path">server/goals/gate.py</code>) asks a judge whether the goal is met (the
+            <code>goal_evaluator</code> model for a cloud session, the session's own model for an
+            on-device one), and if not
             the goal loop auto-continues the turn, capped at 8 consecutive blocks
             (<code>goal_max_consecutive_blocks</code>). Gated by the <code>goal_loop</code> feature
             flag. See <a href="arch-goals.html">The goal loop &amp; completion gate</a>, and compare
@@ -303,9 +310,12 @@
       <tbody>
         <tr>
           <td>hook</td>
-          <td>A user-defined gate that runs at a fixed point in a turn: <code>PreToolUse</code> (can deny
-            or rewrite a tool call), <code>PostToolUse</code> (can inject additional context), and a
-            <code>Stop</code> gate, wired across chat, sub-agents, and cron
+          <td>A user-defined gate that runs at a fixed point in a turn, for example
+            <code>PreToolUse</code> (can deny or rewrite a tool call), <code>PostToolUse</code> (can
+            inject additional context) and the <code>Stop</code> gate. The six events are
+            <code>SessionStart</code>, <code>UserPromptSubmit</code>, <code>PreToolUse</code>,
+            <code>PostToolUse</code>, <code>PostToolUseFailure</code> and <code>Stop</code>, wired
+            across chat, sub-agents, and cron
             (<code class="path">server/hooks/</code>). User hooks live in <code class="path">hooks.json</code>;
             a workspace may also ship trust-gated project hooks in
             <code class="path">.whisper/settings.json</code> that stay inert until explicitly trusted.
@@ -315,11 +325,11 @@
         <tr>
           <td>hybrid mode</td>
           <td>One of three model modes. In hybrid mode you pick a backend per capability (embeddings,
-            reranker, entity extraction, the indexing writer), mixing cloud and on-device; the
+            reranker, entity extraction, the one-shot writer), mixing cloud and on-device; the
             on-device weights download on first use. A fresh install is seeded to <b>local</b>, not
             hybrid, but with the hybrid backend map already filled in, so switching to hybrid picks up
             on-device embeddings and reranking (Qwen3), GLiNER entity extraction and cloud Haiku as the
-            writer. Compare cloud and local. See
+            one-shot writer. Compare cloud and local. See
             <a href="tut-model-modes.html">Model modes</a> and
             <a href="arch-backends.html">Model backends &amp; modes</a>.</td>
         </tr>
@@ -328,9 +338,11 @@
           <td>A one-shot migration from a Claude Code or Codex CLI project into Whisper Studio: its
             instructions file (<code class="path">CLAUDE.md</code> or <code class="path">AGENTS.md</code>)
             copies to the project's <code class="path">WHISPER.md</code> under
-            <code class="path">~/.whisper/rules/</code>, its skills copy across, and its
-            <code class="path">.mcp.json</code> translates into MCP server config. Never overwrites
-            existing files, and nothing imported runs as part of the import. Run it from Settings &gt;
+            <code class="path">~/.whisper/rules/</code>, its skills copy across, and its MCP servers
+            (a Claude Code <code class="path">.mcp.json</code> or a Codex
+            <code class="path">config.toml</code>) are added to the MCP server config. An existing
+            <code class="path">WHISPER.md</code> gets the instructions appended; no file is overwritten,
+            and nothing imported runs as part of the import. Run it from Settings &gt;
             Tools and automation &gt; Import project. See
             <a href="ref-settings.html#fields">Settings &amp; config keys</a>.</td>
         </tr>
@@ -455,7 +467,7 @@
         <tr>
           <td>One-shot completion</td>
           <td>A single non-streaming prompt and response, used by the map step of map-reduce
-            condensation. It is mode-aware - Claude Haiku in the cloud, the resident model on-device - and
+            condensation. It is mode-aware (Claude Haiku in the cloud, the resident model on-device), and
             raises on failure so the condenser can fall back to a truncated transcript instead of
             returning nothing. See <a href="arch-summarization.html">Transcript summarization &amp;
             condensation</a>.</td>
@@ -482,9 +494,12 @@
             ask), <code>auto</code> (a classifier decides per call), <code>plan</code> (workspace
             writes hard-blocked, a proposal comes back), <code>acceptEdits</code> (edits auto-approve),
             <code>bypassPermissions</code> (no prompts), or <code>dontAsk</code> (reads allow, writes
-            silently deny). Per-tool rules override any mode, and three things ask no matter what:
-            destructive GitHub actions, an <code>rm</code>-class command, and a request to escape the
-            sandbox. See <a href="tut-permissions.html">Permissions &amp; approvals</a>.</td>
+            silently deny). Per-tool rules decide only after the always-ask floors, Bypass and your
+            session approvals. These ask no matter what: destructive GitHub actions, an
+            <code>rm</code>-class command that deletes outside the workspace and the app's own folders,
+            a request to escape the sandbox, and a call to an MCP server marked
+            <code>approve</code>. A command typed into your visible terminal asks in every mode except
+            Bypass. See <a href="tut-permissions.html">Permissions &amp; approvals</a>.</td>
         </tr>
         <tr>
           <td>plugin</td>
@@ -513,7 +528,8 @@
             and is cached; anything that varies per request has to ride <code>DYNAMIC</code> or later.
             Parking session-stable text on a dynamic layer re-bills it every round, and rewriting the
             static block mid-session throws the cache away, which is why plan mode deliberately sits on
-            the uncached tail and why seven config keys are <b>latched</b> per session. Cache
+            the uncached tail and why the model catalog, the default model and the effort level are
+            <b>latched</b> per session. Cache
             checkpoints are then placed on the tool block and on the static system block. See
             <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a>.</td>
         </tr>
@@ -569,11 +585,13 @@
         </tr>
         <tr>
           <td><code>sandbox-exec</code></td>
-          <td>The macOS kernel-level sandbox (<code>sandbox-exec(5)</code>) that wraps every shell and
-            code-execution path, including the terminal PTY. It is the security boundary the project
+          <td>The macOS kernel-level sandbox (<code>sandbox-exec(5)</code>) that wraps the assistant's
+            command and code-execution paths, including the hidden <code>terminal_run</code> shell. Your
+            visible terminal is not sandboxed; a command the assistant types there is covered by the
+            visible-terminal approval floor instead. It is the security boundary the project
             trusts last and most; a curated deny-list masks secret stores (SSH/GPG keys, cloud and git
             credentials, browser cookies, shell history). Writes to them are denied in every mode;
-            reads are allowed only in Bypass or after a person approves the read. On Linux the equivalent is <code>bwrap</code>.
+            reads are allowed only in Bypass or after a person approves the read.
             See <a href="arch-sandbox.html">Sandbox &amp; security</a>.</td>
         </tr>
         <tr>
@@ -598,9 +616,9 @@
         <tr>
           <td>skill</td>
           <td>A Markdown-defined capability the assistant loads when relevant, bundled as files in
-            <code class="path">skills/</code> (catch-up, meeting notes, presentation builder, translate
-            text, and more). The former built-in skills - web search, Python execution, transcript
-            summarization, document analysis - are native tools now, not skills; see
+            <code class="path">skills/</code>: catch-up, meeting notes, presentation builder and
+            translate text. Web search, Python execution, transcript summarization and document
+            analysis are native tools, not skills; see
             <a href="ref-tools.html#builtin-tools">Built-in core tools</a>. Invoke or list your own
             skills with <code>skill_invoke</code> and <code>skill_list</code>. See
             <a href="tut-skills.html">Skills</a>.</td>
@@ -648,6 +666,7 @@
           <td>stop reason</td>
           <td>Why an agent run ended, recorded in its journal and shown on its row: <code>completed</code>,
             <code>turn_limit</code>, <code>deadline</code>, <code>cost_cap</code>,
+            <code>refused_calls</code> (stopped after repeated refused calls),
             <code>cancelled</code> or <code>error</code>. A team result carries each member's full
             report with its stop reason and a pointer to its record, so "stopped at the time limit,
             report written" reads differently from "cancelled, report salvaged". See
@@ -669,18 +688,18 @@
       <tbody>
         <tr>
           <td>task registry / background task</td>
-          <td>The unified store of long-running background jobs - shell commands, agents, workflows, and
-            CI watches - in the <code>agent_tasks</code> table (<code class="path">server/tasks/</code>).
+          <td>The unified store of long-running background jobs (shell commands, agents, workflows, and
+            CI watches) in the <code>agent_tasks</code> table (<code class="path">server/tasks/</code>).
             Exposed at <code>/api/background-tasks</code> and surfaced as a running-count pill in the
-            header; it replaced the older <code>server/background_tasks.py</code>. See
+            header. See
             <a href="arch-agents.html">Sub-agents &amp; the event bus</a>.</td>
         </tr>
         <tr>
           <td>Tavily</td>
           <td>The web-search provider behind the <code>web_search</code> tool. It is optional: without a
             <code>TAVILY_API_KEY</code>, web search is unavailable and everything else, including
-            <code>web_fetch</code>, still works. The env var overrides any key stored in your user
-            config file. See <a href="tut-research.html">Web research</a> and
+            <code>web_fetch</code>, still works. Set the key in Settings &gt; API keys; a
+            <code>TAVILY_API_KEY</code> environment variable of the server process overrides it. See <a href="tut-research.html">Web research</a> and
             <a href="https://app.tavily.com">app.tavily.com</a>.</td>
         </tr>
         <tr>
@@ -695,8 +714,8 @@
           <td>The library Whisper Studio installs at boot so TLS verification consults your macOS
             keychain <em>as well as</em> the bundled certifi CA list. Without it, a site behind a
             corporate or government root fails to verify in the app while opening fine in your browser.
-            It widens which roots are trusted, not whether certificates are checked, and it fails open
-            to certifi-only if it cannot install cleanly. See
+            It widens which roots are trusted, not whether certificates are checked. If it cannot be
+            installed, the app does not start and shows the reason. See
             <a href="ref-security.html">Security model</a>.</td>
         </tr>
         <tr>
@@ -755,7 +774,7 @@
             conservative, needing both a high similarity and a clear margin over the runner-up, because
             putting the wrong name on somebody is worse than leaving them as "Speaker 3". Entries are
             filed per encoder, since ReDimNet2 and ECAPA vectors are not comparable. Controlled by
-            <code>speaker_voiceprints</code>, on by default.</td>
+            <code>speaker_voiceprints</code>, off by default (opt-in).</td>
         </tr>
       </tbody>
     </table></div>
@@ -766,14 +785,15 @@
       <tbody>
         <tr>
           <td>wake (answering from reports)</td>
-          <td>What happens when agent reports land in a session with no turn to read them, because you
-            pressed Stop or the app restarted. If a turn is still running, the reports go in through
-            the <b>mid-turn inbox</b> like a message you typed. If none is, a one-round synthesis turn
+          <td>What happens when reports from detached or resumed agents land after the turn that
+            started them has ended. If a turn is still running, the reports go in through
+            the <b>mid-turn inbox</b>, marked as agent output rather than as something you said. If none is, a one-round synthesis turn
             starts on the session's model with the original request plus the reports, and posts its
             answer as an assistant bubble labelled "Answered from the agents' reports". It never opens
-            new work: one round, no tools. One wake per session at a time, skipped with a notification
-            when the session cost cap is reached, and turned off entirely by
-            <code>wake_parent_on_reports</code>. See <a href="arch-agent-recorder.html">The agent
+            new work: one round, no tools. One wake per session at a time. There is no wake after you
+            press Stop, in Local mode, for agents that ran on an on-device model, or when the session
+            cost cap is reached: a notification says the reports are in the chat for your next message.
+            <code>wake_parent_on_reports</code> turns it off entirely. See <a href="arch-agent-recorder.html">The agent
             flight recorder</a>.</td>
         </tr>
         <tr>
@@ -805,7 +825,7 @@
             Node-22 harness (<code class="path">harness.mjs</code>, <code class="path">guards.mjs</code>,
             <code class="path">api.mjs</code>); the <code>workflow_runs</code> table; and the
             <code>workflow_run</code> / <code>workflow_status</code> / <code>workflow_save</code> /
-            <code>workflow_list</code> tools, available only in ultracode mode. See
+            <code>workflow_list</code> / <code>workflow_delete</code> tools, available only in ultracode mode. See
             <a href="arch-ultracode.html">The ultracode workflow runtime</a>.</td>
         </tr>
         <tr>

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Index &amp; semantic search - Whisper Studio Docs</title>
-  <meta name="description" content="Index a connected folder so Claude can search it semantically and ground its answers in the retrieved passages, with an explorer over the people, topics, and connections it found.">
+  <meta name="description" content="Build an index of a connected folder. Claude then searches the folder and answers from the passages that it finds, with links to the sources and an explorer of the entities in the files.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -15,237 +15,251 @@
 <body>
   <main class="doc" data-page="tut-index-search">
     <h1>Index &amp; semantic search</h1>
-    <p class="subtitle">Attaching one file lets Claude read one file. Indexing a folder lets Claude
-      search the whole thing and answer from the passages it finds, citing them, without re-reading
-      every file.</p>
+    <p class="subtitle">An attached file lets Claude read one file. An index of a folder lets Claude
+      search all the folder. Claude then answers from the passages that the search finds, and it
+      gives the source of each passage.</p>
 
-    <p class="lead">You have a folder of CVs, invoices, notes, or a whole codebase, and you want to
-      ask questions across all of it at once. Build an index for the folder, select it in chat, and
-      your answers get grounded in the specific passages that matter, with links back to the source
-      files.</p>
+    <p class="lead">An index is useful for a folder of CVs, invoices, notes, or a full codebase.
+      With an index, you can ask questions on all the files at the same time. Build an index for the
+      folder and select the index in the chat. The answers then use the related passages and
+      contain links to the source files.</p>
 
     <figure class="diagram-figure">
       <div id="index-flow-diagram" class="diagram"></div>
-      <figcaption>Build once, then ask many times. Indexing (left) walks and embeds the folder and
-        builds an entity graph; a question (bottom) is embedded, matched against the index, and the
-        retrieved passages ground the streamed answer.</figcaption>
+      <figcaption>Build the index one time, then ask many questions. The build (left) reads the
+        folder, makes embeddings, and makes an entity graph. A question (bottom) goes to the index,
+        and the passages that the search finds are the base of the answer.</figcaption>
     </figure>
 
     <figure class="shot wide">
       <img src="assets/img/index-explorer.png" alt="The index explorer's file page: the entities a file mentions, the files that share them spelled out in words, extracted facts with quoted evidence, and a labeled diagram of the file's strongest connections">
-      <figcaption><strong>Files linked by shared entities.</strong> The file page names the exact entities two files have in common, states each extracted fact as a sentence above its verbatim quote, and draws the file's strongest connections with the shared name written on every line.</figcaption>
+      <figcaption><strong>Files that share entities.</strong> The file page shows the entities that
+        two files share. It shows each fact as a sentence above its exact quote. A diagram shows the
+        strongest connections of the file, with the shared name on each line.</figcaption>
     </figure>
 
     <h2 id="the-goal">The goal</h2>
-    <p>Search across a whole workspace instead of one attached file. Once a connected folder is
-      indexed, Claude can run <b>semantic search</b> over it and answer from the retrieved passages
-      rather than opening files one by one. The result is faster, cheaper (fewer file reads), and
-      cited: every answer that leans on the index ends with a Sources list of file links.</p>
-    <p>The loop is: build the index once, keep it fresh as files change, then ask as many questions
-      as you like with the folder selected.</p>
+    <p>An index lets Claude search a full workspace, not only one attached file. When a connected
+      folder has an index, Claude can use <b>semantic search</b> on it. Claude then answers from
+      the passages that the search finds, and does not open each file. This method is faster and
+      costs less, because Claude reads fewer files. Each answer from the index ends with a list of
+      sources.</p>
+    <p>Build the index one time. Build it again when the files change. Then ask questions with the
+      folder selected.</p>
 
     <h2 id="build-an-index">Build an index for a folder</h2>
-    <p>Indexing is driven from the <b>workspace connect dialog</b>, the same folder browser you use
-      to connect a folder. You point it at a folder and start a build.</p>
+    <p>You build an index from the workspace connect dialog. This is the same dialog that you use
+      to connect a folder.</p>
     <ol class="steps">
       <li>
         <h4>Open the workspace connect dialog</h4>
-        <p>Open the folder browser you use to connect a workspace. It lists your recent and indexed
-          folders with their index status, offers a build trigger and an index-on-connect option, and
-          hosts the per-folder <b>Index settings</b> panel (refresh schedule, engines, and the NER
-          model). If you have not connected a folder yet, see the
-          <a href="tut-workspace.html">workspace IDE</a>.</p>
+        <p>The dialog shows your recent folders and the index state of each folder. If you did not
+          connect a folder before, refer to <a href="tut-workspace.html">the workspace IDE</a>.</p>
+      </li>
+      <li>
+        <h4>Optional: change the index settings</h4>
+        <p>Click "Folder options" on the folder row. The menu shows the index settings of that
+          folder: the refresh schedule, the engines, and the model for entity extraction.</p>
       </li>
       <li>
         <h4>Start the build</h4>
-        <p>Pick the folder and start indexing. Whisper Studio walks the tree, turns each indexable
-          file into text, chunks it, and embeds the chunks. Common noise directories like
-          <code>.git</code>, <code>node_modules</code>, <code>venv</code>, and build output are
-          skipped, as are dotfiles.</p>
+        <p>In the same menu, click "Index this folder". For a folder with an index, the item is
+          "Reindex now". When you connect a new folder, you can also select "Index this folder for
+          semantic search on connect".</p>
       </li>
       <li>
-        <h4>Watch the status</h4>
-        <p>A status shows build progress as files are processed, and reports the indexed stats when
-          it finishes, for example the number of files and chunks, and how many changed this run.
-          Builds for the same folder are serialized, so a manual build and that folder's scheduled
-          refresh never collide (two different folders can build at the same time). Each indexed
-          folder carries its own refresh schedule, daily, every N days, or weekly on a weekday, at an
-          hour you pick in its index settings.</p>
+        <h4>Read the state</h4>
+        <p>The dialog shows the progress of the build. At the end, it shows the number of files
+          and passages, and the number of files that changed.</p>
       </li>
     </ol>
-    <p>Builds are <b>incremental</b>. On the first run every file is embedded; after that, a cheap
-      size-and-modified-time check skips unchanged files, and only new or edited files are
-      re-embedded. Files that have been deleted from the folder are dropped from the index. Re-running
-      a build is therefore fast and safe to do whenever your files change.</p>
+    <p>The build reads the folder tree. It changes each file into text, divides the text into
+      passages, and makes an embedding of each passage. The build skips these items:</p>
+    <ul>
+      <li>All hidden folders, for example <code class="path">.git</code>, <code
+        class="path">.next</code>, and <code class="path">.cache</code>.</li>
+      <li>The folders <code class="path">node_modules</code>, <code class="path">venv</code>,
+        <code class="path">__pycache__</code>, <code class="path">dist</code>, <code
+        class="path">build</code>, <code class="path">target</code>, and <code
+        class="path">models</code>.</li>
+      <li>Files with an extension that the app cannot read.</li>
+    </ul>
+    <p>The build does not skip hidden files. For example, it reads <code
+      class="path">.eslintrc.json</code>, because the app can read the <code>.json</code>
+      extension.</p>
+    <p>Each build after the first build is <b>incremental</b>. The build compares the size and
+      the time of change of each file. It makes embeddings again only for new and changed files.
+      It removes deleted files from the index. Thus, a new build is fast.</p>
+    <p>One folder has one build at a time. Thus, a manual build and the scheduled refresh of the
+      same folder cannot run at the same time. Two different folders can build at the same time.
+      Each folder has its own refresh schedule: daily, every N days, or weekly on one day, at an
+      hour that you select.</p>
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
-      <div class="callout__body"><p>The index covers more than plain text and code. Spreadsheets are
-        indexed as a schema plus sample, rich documents (PDF, Word, PowerPoint, HTML, EPUB) are
-        converted to text, images are OCR'd, and audio or video is transcribed locally, so a folder
-        of mixed file types all becomes searchable. See
-        <a href="arch-extraction.html">Attachment extraction</a> for the per-type routing.</p></div>
+      <div class="callout__body"><p>The index contains more than text and code. The app reads a
+        spreadsheet as a schema and a sample. It changes PDF, Word, PowerPoint, HTML, and EPUB files
+        into text. It uses OCR on images, and it transcribes audio and video on this Mac. Refer to
+        <a href="arch-extraction.html">Attachment extraction</a>.</p></div>
     </div>
 
-    <h2 id="ask-with-grounding">Ask a question, grounded in the folder</h2>
-    <p>Once a folder is indexed, it becomes selectable as a search target in chat. With one or more
-      indexes selected, Claude searches them first and grounds its answer in what it retrieves.</p>
+    <h2 id="ask-with-grounding">Ask a question on the folder</h2>
+    <p>After the build, you can select the folder as a search target in the chat. When one or
+      more indexes are selected, Claude searches them first. Claude then answers from the passages
+      that the search finds.</p>
     <ol class="steps">
       <li>
-        <h4>Select which folders to search</h4>
-        <p>The composer remembers a per-session choice of which indexed folders to search. With no
-          workspace connected, a new session defaults to searching every indexed folder; you can
-          narrow it to one. With a workspace connected the default selection is empty, and Claude
-          instead reaches the index on demand through the <code>workspace_semantic_search</code>
-          tool. Either way the selection is saved per session, so it survives a reload.</p>
+        <h4>Select the folders to search</h4>
+        <p>In the chat box, click the "More" button (···). Click "Index search". The row shows
+          the number of selected indexes, for example "1/3". Select the folders under "Search these
+          indexes".</p>
       </li>
       <li>
-        <h4>Ask in plain English</h4>
-        <p>Type a question and press <kbd>Enter</kbd>. Your question (and, for a follow-up, a little
-          of the prior turn) is searched against the selected indexes before the model is called.
-          Retrieval is hybrid by default: the vector search is fused with a keyword (BM25) search,
-          and an optional cross-encoder reranker (off by default) reorders the combined candidates.
-          Smalltalk is exempt: a message with no content words at all ("hey", "ok thanks") skips the
-          search entirely, so a greeting never burns a retrieval pass. To force a search - for a
-          message the gate would skip, or when a connected workspace would normally take priority -
-          put <b><code>@index</code></b> anywhere in the message (it is also offered by the
-          composer's <code>@</code> autocomplete, and is stripped before the model sees your
-          text).</p>
+        <h4>Ask the question</h4>
+        <p>Type the question and press <kbd>Enter</kbd>. The app searches the selected indexes
+          before it calls the model.</p>
       </li>
       <li>
         <h4>Read the answer and its sources</h4>
-        <p>The matching passages are injected into the prompt as the source of truth. Claude answers
-          from them and ends with a <b>Sources</b> section, one link per file it drew on. The links
-          point at the exact file and line range so you can open the original.</p>
+        <p>Claude answers from the passages and ends with a "Sources" section. Each link opens the
+          file at the related lines.</p>
       </li>
     </ol>
-    <p>A worked example over a folder of CVs:</p>
+    <p>The app keeps the selection for each session. With no workspace connected, a new session
+      searches all the indexed folders. With a workspace connected, a new session has no selected
+      index. Claude then uses the <code>workspace_semantic_search</code> tool when it must search
+      the index.</p>
+    <p>The search is hybrid by default. The app joins the results of a vector search and of a
+      keyword (BM25) search. A reranker can sort the results again. The reranker is off by
+      default. A message with no content words, for example "hey" or "ok thanks", does not start a
+      search.</p>
+    <p>To force a search, type <b><code>@index</code></b> in the message. The <code>@</code> menu
+      of the chat box also shows <code>@index</code>. The app removes <code>@index</code> from the
+      text before the model reads it. Use <code>@index</code> when the app skips the search, or when
+      a connected workspace has priority.</p>
+    <p>An example for a folder of CVs:</p>
     <div class="code-block"><pre><code>Which candidates have Kubernetes experience, and for how long?</code></pre></div>
-    <p>Instead of re-reading every CV, Claude searches the index, pulls the relevant passages from
-      the CVs that mention Kubernetes, and answers from them with a Sources list linking each CV.</p>
+    <p>Claude searches the index and gets the passages of the CVs that contain Kubernetes. Claude
+      answers from these passages and gives a link to each CV.</p>
 
-    <h2 id="grounding-chip">The grounding chip and answer sources</h2>
-    <p>When a turn is grounded in the index, a <b>grounding chip</b> appears under the response. It
-      tells you the search actually ran and what it touched: how many folders were searched and how
-      many passages were retrieved. If the chip shows no matches, nothing in the selected folders
-      scored above the relevance floor, and Claude falls back to its normal tools rather than
-      inventing a citation.</p>
-    <p>There is a second, blunter guard behind that. A nearest-neighbour search always returns
-      <em>something</em>, however unrelated, so if the closest passage in the whole corpus is still a
-      poor match for your question, the turn treats the folder as off-topic and injects nothing at
-      all. That is the difference between "your files have nothing on this" and a confident answer
-      built from the least-bad paragraph. Forcing a search with <code>@index</code> overrides it,
-      which is the right move when you know the answer is in there and the wording is just
-      unusual.</p>
-    <p>The chip is also a button: <b>click it to see the exact passages behind the answer</b>. Each
-      source row shows the file and line range (click it to open the file right there), a
-      plain-words note on <em>why</em> it was retrieved - "matched your words" (keyword), "similar
-      meaning" (semantic), or "linked through shared entities" (the GraphRAG hop, with entity chips
-      that jump into the index explorer) - and a snippet of the passage text. Sources are kept per
-      session, so the panel still opens on an answer from days ago.</p>
+    <h2 id="grounding-chip">The grounding chip and the sources</h2>
+    <p>When an answer uses the index, a <b>grounding chip</b> shows below the answer. The chip
+      shows that the search ran. It shows the number of searched folders and the number of
+      passages. If the chip shows no matches, no passage in the selected folders was related to
+      the question. Claude then uses its usual tools and does not make a citation.</p>
+    <p>There is a second check. A vector search always returns a nearest passage, also when the
+      passage is not related. If the best passage in the full index is not a good match, the app
+      adds no passage to the prompt. A search with <code>@index</code> ignores this check. Use
+      <code>@index</code> when you know that the answer is in the files.</p>
+    <p>Click the chip to see the passages of the answer. Each source row shows these items:</p>
+    <ul>
+      <li>The file and the line range. Click it to open the file.</li>
+      <li>The reason for the match: "matched your words" (keyword), "similar meaning" (semantic),
+        or "linked through shared entities" (the GraphRAG step). The GraphRAG step also shows entity
+        chips that open the index explorer.</li>
+      <li>A part of the passage text.</li>
+    </ul>
+    <p>The app keeps the sources for each session. Thus, the panel also opens for an old
+      answer.</p>
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
-      <div class="callout__body"><p>The chip is your signal that the answer is grounded, not guessed.
-        If you expected a folder to be searched and the chip does not show it, check that the folder
-        is both indexed and selected for this session - or force it with <code>@index</code>.</p></div>
+      <div class="callout__body"><p>The chip shows that the answer comes from your files. If a
+        folder is not in the chip, make sure that the folder has an index. Then select the folder for this
+        session in "Index search". Or type <code>@index</code> in the message.</p></div>
     </div>
 
     <h2 id="at-docs">@docs: ask this manual</h2>
-    <p>The same retrieval machinery is pointed at the app's own documentation, the pages you are
-      reading now. Put <b><code>@docs</code></b> anywhere in a message and the question is matched
-      against the manual's sections, and the passages are injected under a strict contract: answer
-      only from the manual, cite the pages you used, and say the manual does not cover it rather than
-      guessing. The citations open in the docs viewer in the right pane.</p>
-    <p>Use it for questions about Whisper Studio itself ("<code>@docs</code> how do cron jobs pick a
-      timezone?"). It is separate from <code>@index</code>, which searches your own folders, and it
-      needs no setup: the section index is built on first use and rebuilt automatically when the app
-      updates. That first build takes a moment while it embeds the manual; after that it is
-      instant.</p>
+    <p>The same search can use the documentation of the app, which is this manual. Type
+      <b><code>@docs</code></b> in a message. The app searches the sections of the manual and adds
+      the passages to the prompt. Claude must answer only from the manual and give the pages that
+      it used. If the manual does not contain the answer, Claude tells you. The citations open in
+      the docs viewer in the right pane.</p>
+    <p>Use <code>@docs</code> for questions on Whisper Studio, for example "<code>@docs</code> how
+      do cron jobs pick a timezone?". <code>@index</code> searches your own folders. <code>@docs</code>
+      has no settings. The app builds the section index at the first use, and builds it again
+      after an app update. The first build uses some seconds.</p>
 
     <h2 id="entity-graph">The index explorer</h2>
-    <p>Indexing does more than embed text. As it processes files, it extracts <b>named entities</b>
-      (people, organizations, topics, and so on) from each passage and collapses case, spacing, and
-      punctuation variants into a single canonical name, so you get one entry per person or topic
-      rather than five spellings of the same name. Which entity types it looks for is picked
-      automatically per file from its extension, so a CV and a source file get different profiles
-      (business vs code). The local extractor is GLiNER by default, which is the strongest on
-      multilingual documents; a workspace can switch to GLiNER2 from the Index settings panel for an
-      English-only corpus. In cloud mode Claude Haiku does the extraction instead.</p>
-    <p>The <b>index explorer</b> is the browsable result, in plain words instead of a node diagram.
-      It opens from the compass button in the workspace panel header, from a file's right-click
-      "Show connections", from the command palette, or from an indexed folder's menu in the connect
-      dialog. The overview names each detected group of files by the entities they mention together
-      and lists what stands out most; clicking a name opens its page, with everything the documents
-      say about it, each relationship written as a sentence ("Dana works at Northwind Bank,
-      confirmed in 3 files") above the verbatim quote and a citation that opens the file at that
-      line. Clicking a file shows what it mentions and which files mention the same things, with the
-      shared names spelled out and a small labeled diagram of its strongest connections.</p>
-    <p>The explorer is not just for browsing. At query time, after the vector search finds the
-      closest passages, retrieval takes one hop along shared entities to pull in <b>related
-      passages</b>, so an answer can surface a relevant passage that never contained your exact
-      search words but is linked to one that did. Those related passages appear under a "Related
-      passages" heading in the grounding block.</p>
+    <p>The build also extracts <b>named entities</b> from each passage, for example persons,
+      organizations, and topics. The app joins different spellings of one name into one entry.
+      The app selects the entity types for each file from its extension. Thus, a CV and a source
+      file get different types.</p>
+    <p>On this Mac, the default extractor is "GLiNER large (multilingual)". For an English corpus,
+      you can select "GLiNER2 (English-focused, faster)" in the index settings of the folder. In
+      Cloud mode, Claude Haiku extracts the entities.</p>
+    <p>The <b>index explorer</b> shows the result in words. To open the explorer, use one of these
+      controls:</p>
+    <ul>
+      <li>The compass button in the header of the workspace panel.</li>
+      <li>"Show connections" in the right-click menu of a file.</li>
+      <li>The command palette.</li>
+      <li>The menu of an indexed folder in the connect dialog.</li>
+    </ul>
+    <p>The overview shows groups of files and the entities that they share. Click a name to open
+      its page. The page shows each relation as a sentence, for example "Dana works at Northwind
+      Bank, confirmed in 3 files". Below the sentence is the exact quote and a link to the line in
+      the file. Click a file to see its entities and the files that share them.</p>
+    <p>The search also uses the entities. After the vector search finds the nearest passages, the
+      search follows the shared entities one step. Thus, an answer can contain a passage without
+      your search words. That passage shares an entity with a passage that matched. These passages show
+      under the heading "Related passages".</p>
 
-    <h2 id="one-index-per-backend">Each backend keeps its own index</h2>
-    <p>Where indexing and retrieval run is set by <a href="tut-model-modes.html">model mode</a>
-      (cloud, hybrid, or local), and the embedding model differs by mode (the reranker column
-      applies only when the <code>rag_reranker</code> feature flag is on; it is off by
-      default):</p>
+    <h2 id="one-index-per-backend">Each backend has its own index</h2>
+    <p>The <a href="tut-model-modes.html">model mode</a> sets where the index build and the search
+      run. Each mode uses a different embedding model. The reranker column applies only when the
+      <code>rag_reranker</code> feature flag is on. It is off by default.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Mode</th><th>Embeddings</th><th>Reranker</th><th>Entity extraction</th></tr></thead>
       <tbody>
         <tr><td><b>Cloud</b></td><td>Cohere Embed v4 (Bedrock)</td><td>Cohere Rerank 3.5</td><td>Claude Haiku</td></tr>
-        <tr><td><b>Hybrid</b></td><td>per-capability pick</td><td>per-capability pick</td><td>per-capability pick</td></tr>
-        <tr><td><b>Local</b></td><td>Qwen3 (on-device)</td><td>Qwen3 Reranker</td><td>GLiNER (on-device)</td></tr>
+        <tr><td><b>Hybrid</b></td><td>Your selection for each capability</td><td>Your selection for each capability</td><td>Your selection for each capability</td></tr>
+        <tr><td><b>Local</b></td><td>Qwen3 (on this Mac)</td><td>Qwen3 Reranker</td><td>GLiNER (on this Mac)</td></tr>
       </tbody>
     </table></div>
-    <p>Because different embedders produce incompatible vectors, <b>each embedding backend keeps its
-      own index</b>. On disk that is a separate database file inside the same per-folder directory,
-      so switching model mode never rebuilds or overwrites the other mode's index. It also means a
-      folder indexed under one backend is not searchable under another until you index it there. If
-      you switch modes and a folder stops turning up in searches, re-index it once under the new
-      backend.</p>
+    <p>Vectors from different embedding models do not match. Thus, <b>each embedding backend
+      has its own index</b>. Each index is a separate database file in the same folder. A change of
+      model mode does not delete or change the index of the other mode. But a folder that has an
+      index for one backend has no index for a different backend.</p>
     <div class="callout callout--warn">
-      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 20h20L12 2Z"/><path d="M12 9v5M12 17h.01"/></svg></span>
-      <div class="callout__body"><p>If a freshly indexed folder returns nothing after a mode switch,
-        it is almost always because the index belongs to the other backend. Re-index the folder once
-        in the current mode and it will be searchable again.</p></div>
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+      <div class="callout__body"><p>If a folder returns no results after you change the model
+        mode, the index is for the other backend. Build the index again in the current mode.</p></div>
     </div>
 
-    <h2 id="tips">Tips that make this smoother</h2>
+    <h2 id="tips">Tips</h2>
     <div class="card-grid">
       <div class="card">
-        <h3>Index once, ask often</h3>
-        <p>Building is the one-time cost. After that, every question over the folder is a fast search,
-          and re-builds only touch changed files.</p>
+        <h3>Build one time, ask many times</h3>
+        <p>The first build costs the most time. After that, each question is a fast search. A new
+          build reads only the changed files.</p>
       </div>
       <div class="card">
-        <h3>Narrow the search</h3>
-        <p>If you have several indexed folders, select just the one you mean for a session so the
-          grounding stays focused on the right corpus.</p>
+        <h3>Select one folder</h3>
+        <p>If you have more than one index, select only the related folder for the session. The
+          answers then use only that folder.</p>
       </div>
       <div class="card">
-        <h3>Trust the chip</h3>
-        <p>The grounding chip tells you how many folders and passages the answer used, and clicking
-          it opens the exact passages. No matches means the answer was not grounded in the index.</p>
+        <h3>Read the chip</h3>
+        <p>The grounding chip shows the number of folders and passages of the answer. Click it to
+          see the passages. "no matches" tells you that the answer did not use the index.</p>
       </div>
       <div class="card">
-        <h3>Attach vs index</h3>
-        <p>For a single file you just want to ask about, an attachment is simpler. Index when you want
-          to search across a whole folder. See <a href="tut-documents.html">Working with documents</a>.</p>
+        <h3>Attachment or index</h3>
+        <p>For a question on one file, attach the file. Use an index to search a full folder. Refer
+          to <a href="tut-documents.html">Working with documents</a>.</p>
       </div>
     </div>
 
-    <h2 id="go-deeper">Go deeper</h2>
-    <p>This tutorial stays at the "what you click" level. For the internals, how chunks are embedded,
-      the reranker, entity extraction and deduping, the sqlite-vec vector store, the GraphRAG hop,
-      and exactly how retrieved passages are assembled into the grounding block, read
-      <a href="arch-index.html">Index / GraphRAG &amp; search</a>. For where indexing runs and how to
-      switch backends, see <a href="tut-model-modes.html">Model modes</a>.</p>
+    <h2 id="go-deeper">More information</h2>
+    <p>This tutorial shows the controls. For the internal steps, read
+      <a href="arch-index.html">Index / GraphRAG &amp; search</a>. That page shows the embeddings,
+      the reranker, the entity extraction, the sqlite-vec vector store, the GraphRAG step, and the
+      prompt block of the passages. For the model modes, read <a href="tut-model-modes.html">Model
+      modes</a>.</p>
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
       <div class="callout__body"><p><b>Related:</b> <a href="tut-workspace.html">The workspace IDE</a>,
-        <a href="tut-model-modes.html">Model modes</a>, and the architecture deep-dive
+        <a href="tut-model-modes.html">Model modes</a>, and
         <a href="arch-index.html">Index / GraphRAG &amp; search</a>.</p></div>
     </div>
   </main>
