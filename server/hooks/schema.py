@@ -13,12 +13,9 @@ tool (Stop, SessionStart) ignore it.
 
 from __future__ import annotations
 
-import logging
 import re
 import uuid
 from dataclasses import dataclass, field
-
-log = logging.getLogger("whisper-studio")
 
 HOOK_EVENTS = (
     "SessionStart",
@@ -100,12 +97,6 @@ def matches(matcher: str, tool_name: str | None) -> bool:
     return tool_name == m
 
 
-def uses_old_tool_key(d: object) -> bool:
-    """A hook entry that names its tool with the old "tool" key and has no
-    "matcher". It is not run: read as "*" it would run on every tool."""
-    return isinstance(d, dict) and "tool" in d and "matcher" not in d
-
-
 def normalize_config(raw: dict | list | None, *, source: str) -> dict[str, list[HookDef]]:
     """Return {event: [HookDef]} from the v2 nested dict
     ({"hooks": {event: [{matcher, command, ...}]}}). Events outside
@@ -125,14 +116,6 @@ def normalize_config(raw: dict | list | None, *, source: str) -> dict[str, list[
                 continue
             cmd = (d.get("command") or "").strip()
             if not cmd:
-                continue
-            if uses_old_tool_key(d):
-                log.warning(
-                    'Hook not run: the %s %s hook "%s" uses the old "tool" key; set "matcher"',
-                    source,
-                    ev,
-                    cmd,
-                )
                 continue
             by_event[ev].append(
                 HookDef(
