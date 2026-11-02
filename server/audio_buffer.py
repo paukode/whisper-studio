@@ -13,12 +13,8 @@ streaming backend can decode a growing window before the boundary arrives.
 
 from __future__ import annotations
 
-import logging
-
 import numpy as np
 import webrtcvad
-
-log = logging.getLogger("whisper-studio")
 
 # ── Audio format constants (must match the pcm-processor worklet and the
 # native capture format: PCM16 mono 16 kHz) ──
