@@ -63,20 +63,12 @@ models/
 *.swp
 *.swo
 
-# OS
-Thumbs.db
-
 # Local tooling artifacts
 .claude/
 # Agent/session worktrees live inside the repo; never track or status-list them.
 .whisper/
 # Lockfile from `uv`; the project installs via pip + requirements.txt.
 uv.lock
-
-# Per-user project memory file edited via the in-app WHISPER.md editor.
-# The editor writes ${workspace}/WHISPER.md as user-specific context
-# for the model. Different users want different contents — don't track.
-WHISPER.md
 
 # macOS app packaging (macapp/build_app.sh) work dirs and output
 build-app/
