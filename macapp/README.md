@@ -94,15 +94,15 @@ Int16 with `AVAudioConverter` and pushed to the SPA over a WKWebView bridge
 
 The aggregate device contains NO physical sub-devices: including the real
 output device opens an IO path to the user's speakers/headphones (Bluetooth
-headsets flip into call mode and the app shows up in the audio chain). Only
-if the tap-only aggregate fails does the shell fall back to including the
-default output device, and then every output buffer is zero-filled in the
-IOProc and the tap's input buffers are located by format rather than assumed
-at index 0. The default input/output devices are never modified.
+headsets flip into call mode and the app shows up in the audio chain). If
+the tap-only aggregate cannot be created or started, the capture fails and
+the UI shows the error. The default input/output devices are never modified.
 
 **Requirements and permission**
 
-- macOS **14.4 or later** (the taps API). On older systems the shell injects
+- macOS **14.4 or later** (the taps API), and the private
+  `responsibility_get_pid_responsible_for_pid` symbol that keeps the app's own
+  WebKit helpers out of the global tap. Without either, the shell injects
   `available:false` and the menu shows no native section.
 - TCC: the first capture start triggers the OS **System Audio Recording**
   prompt (`NSAudioCaptureUsageDescription` in `Info.plist`). If denied, the
