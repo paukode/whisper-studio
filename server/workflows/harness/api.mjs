@@ -38,7 +38,20 @@ export function makeApi(rpcCall, notify, meta, args) {
     },
   });
 
-  // Each item runs through ALL stages independently — NO barrier between
+  // Errors that end the whole run, not one item: the budget or agent cap is
+  // spent, or the run was cancelled. pipeline() and parallel() rethrow them so
+  // the script can catch them; any other item error becomes null and is
+  // logged to the run log.
+  const RUN_ERRORS = new Set(["BudgetExceededError", "AgentCapError", "CancelledError"]);
+
+  function itemFailed(fn, index, e) {
+    if (e && (RUN_ERRORS.has(e.type) || e.message === "CancelledError")) throw e;
+    const message = e && e.message ? e.message : String(e);
+    notify("log", { message: `[error] ${fn} item ${index}: ${message}` });
+    return null;
+  }
+
+  // Each item runs through ALL stages independently, with NO barrier between
   // stages. A stage that throws drops that item to null and skips its rest.
   async function pipeline(items, ...stages) {
     if (!Array.isArray(items)) throw new Error("pipeline(items, ...stages): items must be an array");
@@ -50,19 +63,23 @@ export function makeApi(rpcCall, notify, meta, args) {
             prev = await stage(prev, item, index);
           }
           return prev;
-        } catch {
-          return null;
+        } catch (e) {
+          return itemFailed("pipeline", index, e);
         }
       }),
     );
   }
 
-  // Barrier: awaits all thunks. A thunk that throws resolves to null (never
-  // rejects the whole call) so callers can filter(Boolean).
+  // Barrier: awaits all thunks. A thunk that throws resolves to null so
+  // callers can filter(Boolean).
   async function parallel(thunks) {
     if (!Array.isArray(thunks)) throw new Error("parallel(thunks): thunks must be an array");
     return Promise.all(
-      thunks.map((t) => Promise.resolve().then(() => t()).catch(() => null)),
+      thunks.map((t, index) =>
+        Promise.resolve()
+          .then(() => t())
+          .catch((e) => itemFailed("parallel", index, e)),
+      ),
     );
   }
 
