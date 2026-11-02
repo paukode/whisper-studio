@@ -1,4 +1,4 @@
-"""Install flow for the live-preview feature's Playwright dependency.
+"""Install flow for the live-preview feature's Chromium download.
 
 Mirrors server/index/routes.py's background-thread + polling-status pattern
 rather than inventing a streaming mechanism — there's only ever one
@@ -12,8 +12,8 @@ contract every other feature flag in this app already has.
 
 Packaged installs (the macOS .app) never run this install: the bundle ships
 playwright and its Chromium builds in Resources/ (PLAYWRIGHT_BROWSERS_PATH is
-set by the shell), the code tree is signed and read-only, and a pip install or
-browser download into it would fail — or break the bundle seal if it didn't.
+set by the shell), the code tree is signed and read-only, and a browser
+download into it would fail, or break the bundle seal if it didn't.
 There, "Enable" just flips the feature flag when the bundled browser is
 present, and a missing browser is reported as a broken install to fix by
 reinstalling the app, not by downloading.
@@ -66,18 +66,10 @@ def _run_step(args: list[str]) -> bool:
 
 def _run_install() -> None:
     try:
+        # playwright itself is pinned in requirements.txt (setup.sh installs
+        # it); only its Chromium builds are downloaded here.
         with _lock:
-            _INSTALL.update(stage="pip install playwright", error=None)
-        if not _run_step([sys.executable, "-m", "pip", "install", "playwright"]):
-            with _lock:
-                _INSTALL.update(
-                    installing=False,
-                    error="pip install playwright failed — check network/PyPI access",
-                )
-            return
-
-        with _lock:
-            _INSTALL.update(stage="playwright install chromium")
+            _INSTALL.update(stage="playwright install chromium", error=None)
         if not _run_step([sys.executable, "-m", "playwright", "install", "chromium"]):
             with _lock:
                 _INSTALL.update(
@@ -99,7 +91,7 @@ def _run_install() -> None:
         set_feature_flag("preview_tools", True)
         with _lock:
             _INSTALL.update(installing=False, stage="done", error=None)
-        log.info("Live preview: Playwright + Chromium install complete; preview_tools enabled")
+        log.info("Live preview: Chromium install complete; preview_tools enabled")
     except Exception as e:  # noqa: BLE001 — surface to the UI, don't crash the thread
         log.exception("Live preview install failed")
         with _lock:
