@@ -15,7 +15,13 @@ import logging
 import os
 import re
 
-from server.hooks.schema import HOOK_EVENTS, HookDef, normalize_config, serialize_v2
+from server.hooks.schema import (
+    HOOK_EVENTS,
+    HookDef,
+    normalize_config,
+    serialize_v2,
+    uses_old_tool_key,
+)
 from server.infrastructure.paths import data_root
 
 log = logging.getLogger("whisper-studio")
@@ -24,6 +30,7 @@ log = logging.getLogger("whisper-studio")
 V1_NOTICE_TITLE = "Old hooks.json format is not read"
 PROJECT_V1_NOTICE_TITLE = "Old project hooks format is not read"
 TURN_END_NOTICE_TITLE = "TurnEnd hooks are not run"
+TOOL_KEY_NOTICE_TITLE = 'Hook not run: old "tool" key'
 OLD_VARS_NOTICE_TITLE = "Hook not run: old WHISPER_ variable"
 
 # The variables hooks used to get, and the stdin JSON field that replaces each.
@@ -73,6 +80,25 @@ def _report_turn_end(raw, where: str) -> None:
             'so they are not run. The file is left as it is. Move them to the "Stop" '
             "event, which runs at the end of each turn.",
         )
+
+
+def _report_tool_key(raw, where: str) -> None:
+    """Notice for hooks that name their tool with the old "tool" key and have
+    no "matcher". They are not run (read as "*" they would run on every tool)."""
+    hooks = raw.get("hooks", raw) if isinstance(raw, dict) else None
+    if not isinstance(hooks, dict):
+        return
+    for ev, defs in hooks.items():
+        if ev not in HOOK_EVENTS or not isinstance(defs, list):
+            continue
+        for d in defs:
+            if uses_old_tool_key(d) and (d.get("command") or "").strip():
+                _notice(
+                    TOOL_KEY_NOTICE_TITLE,
+                    f'{where} has a {ev} hook "{d["command"]}" that names its tool with '
+                    'the old "tool" key, which the app no longer reads, so it is not run. '
+                    'The file is left as it is. Rename "tool" to "matcher" to run it.',
+                )
 
 
 def old_hook_vars(command: str) -> list[str]:
@@ -142,12 +168,14 @@ def load_user_hooks() -> dict[str, list[HookDef]]:
         )
         return normalize_config(None, source="user")
     _report_turn_end(raw, path)
+    _report_tool_key(raw, path)
     return normalize_config(raw, source="user")
 
 
 def save_user_hooks(by_event: dict[str, list[HookDef]]) -> None:
     """Write the user layer as v2. Refuses to overwrite a v1 file, and keeps
-    event keys the app does not read (an old "TurnEnd") as they are."""
+    what the app does not read as it is: event keys like an old "TurnEnd" and
+    hooks that still use the old "tool" key."""
     path = hooks_path()
     try:
         raw = _read_json(path)
@@ -165,8 +193,14 @@ def save_user_hooks(by_event: dict[str, list[HookDef]]) -> None:
     stored = raw.get("hooks", raw) if isinstance(raw, dict) else None
     if isinstance(stored, dict):
         for ev, defs in stored.items():
-            if ev not in HOOK_EVENTS and isinstance(defs, list):
+            if not isinstance(defs, list):
+                continue
+            if ev not in HOOK_EVENTS:
                 doc["hooks"][ev] = defs
+                continue
+            kept = [d for d in defs if uses_old_tool_key(d)]
+            if kept:
+                doc["hooks"].setdefault(ev, []).extend(kept)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
     with open(tmp, "w") as f:
@@ -287,6 +321,7 @@ def load_project_hooks(workspace: str | None) -> dict[str, list[HookDef]]:
         )
         return normalize_config(None, source="project")
     _report_turn_end(raw, where)
+    _report_tool_key(raw, where)
     return normalize_config(raw, source="project")
 
 

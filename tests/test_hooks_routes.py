@@ -197,6 +197,31 @@ def test_turn_end_hooks_are_not_run_and_are_kept_on_save(client, notices):
     assert len(on_disk["hooks"]["Stop"]) == 1
 
 
+def test_an_old_tool_key_hook_is_not_run_and_is_kept_on_save(client, notices):
+    c, tmp_path = client
+    hooks_file = tmp_path / "data" / "hooks.json"
+    old = {"tool": "Bash", "command": "exit 2", "on_error": "block"}
+    hooks_file.write_text(json.dumps({"version": 2, "hooks": {"PreToolUse": [old]}}))
+
+    # Not widened to "*": the guard is not listed and not run, and a notice says so.
+    assert c.get("/api/hooks").json()["hooks"]["PreToolUse"] == []
+    assert hooks_cfg.merged_for_event("PreToolUse", None) == []
+    assert {n["title"] for n in notices} == {hooks_cfg.TOOL_KEY_NOTICE_TITLE}
+
+    # Saving another hook keeps the old entry as the user wrote it.
+    r = c.post("/api/hooks", json={"event": "PreToolUse", "matcher": "x", "command": "exit 0"})
+    assert r.status_code == 200
+    on_disk = json.loads(hooks_file.read_text())["hooks"]["PreToolUse"]
+    assert old in on_disk and len(on_disk) == 2
+
+
+def test_a_body_with_the_old_tool_key_is_refused(client):
+    c, _ = client
+    r = c.post("/api/hooks", json={"event": "PreToolUse", "tool": "Bash", "command": "exit 2"})
+    assert r.status_code == 400 and '"tool"' in r.json()["error"]
+    assert all(len(v) == 0 for v in c.get("/api/hooks").json()["hooks"].values())
+
+
 def test_test_endpoint_does_not_run_a_command_with_an_old_variable(client):
     c, _ = client
     body = c.post("/api/hooks/test", json={"command": 'test "$WHISPER_TOOL" = x'}).json()
