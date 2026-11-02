@@ -91,3 +91,25 @@ def _app_for():
     app = FastAPI()
     app.include_router(router)
     return app
+
+
+def test_a_corrupt_index_is_an_error_not_a_clean_tree(client):
+    """`git status` failing used to read as a clean tree with no files."""
+    c, work = client
+    (work / ".git" / "index").write_bytes(b"junk")
+
+    res = c.get("/api/git/status")
+    assert res.status_code == 500
+    assert "git status failed" in res.json()["detail"]
+    assert c.get("/api/git/changes").status_code == 500
+
+
+def test_the_status_prompt_says_status_is_unavailable(client):
+    from server.git.prompts import build_git_status_prompt
+
+    _c, work = client
+    (work / ".git" / "index").write_bytes(b"junk")
+
+    text = build_git_status_prompt(str(work))
+    assert "Status: unavailable (git status failed:" in text
+    assert "(clean)" not in text

@@ -4,13 +4,14 @@ Git prompts — inject git context into system prompts.
 Generates the git status block and the git tool instructions block.
 """
 
+import subprocess
+
 from server.git.core import (
     _run_git,
     find_git_root,
     get_branch,
     get_default_branch,
     get_file_status,
-    get_is_clean,
 )
 
 
@@ -26,7 +27,6 @@ def build_git_status_prompt(workspace_path: str) -> str:
 
     branch = get_branch(workspace_path)
     default = get_default_branch(workspace_path)
-    clean = get_is_clean(workspace_path)
 
     lines = [
         "# Git Status",
@@ -34,10 +34,12 @@ def build_git_status_prompt(workspace_path: str) -> str:
         f"Main branch (for PRs): {default}",
     ]
 
-    if clean:
-        lines.append("Status: (clean)")
-    else:
+    try:
         status = get_file_status(workspace_path)
+    except (RuntimeError, subprocess.TimeoutExpired) as e:
+        first = str(e).strip().splitlines()[0] if str(e).strip() else type(e).__name__
+        lines.append(f"Status: unavailable ({first})")
+    else:
         tracked = len(status["tracked"])
         untracked = len(status["untracked"])
         parts = []
@@ -45,17 +47,20 @@ def build_git_status_prompt(workspace_path: str) -> str:
             parts.append(f"{tracked} files modified")
         if untracked:
             parts.append(f"{untracked} untracked")
-        lines.append(f"Status: {', '.join(parts)}")
+        lines.append(f"Status: {', '.join(parts)}" if parts else "Status: (clean)")
 
-    # Recent commits
+    # Recent commits (a repository with no commit yet has none to show).
     try:
         result = _run_git(["log", "-5", "--oneline"], cwd=git_root, timeout=5)
-        if result.returncode == 0 and result.stdout.strip():
-            lines.append("Recent commits:")
-            for commit_line in result.stdout.strip().split("\n"):
-                lines.append(f"  {commit_line}")
-    except Exception:
-        pass
+    except subprocess.TimeoutExpired:
+        lines.append("Recent commits: unavailable (git log timed out)")
+        return "\n".join(lines) + "\n"
+    if result.returncode == 0 and result.stdout.strip():
+        lines.append("Recent commits:")
+        for commit_line in result.stdout.strip().split("\n"):
+            lines.append(f"  {commit_line}")
+    elif result.returncode != 0 and "does not have any commits" not in result.stderr:
+        lines.append(f"Recent commits: unavailable ({result.stderr.strip()})")
 
     return "\n".join(lines) + "\n"
 

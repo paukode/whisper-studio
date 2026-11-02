@@ -25,7 +25,9 @@ def _fake_git(stdout: str):
     def run(args, cwd, **_kwargs):
         if args == STATUS_PORCELAIN_ARGS:
             return subprocess.CompletedProcess(args, 0, stdout=stdout, stderr="")
-        return subprocess.CompletedProcess(args, 1, stdout="", stderr="no upstream")
+        return subprocess.CompletedProcess(
+            args, 128, stdout="", stderr="fatal: no upstream configured for branch 'main'"
+        )
 
     return run
 

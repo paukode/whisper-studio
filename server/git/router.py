@@ -77,11 +77,24 @@ def _require_git_workspace() -> str:
     return ws
 
 
+# rev-list's answers when there is no upstream to compare with.
+_NO_UPSTREAM = ("no upstream configured", "HEAD does not point to a branch", "no such branch")
+
+
+def _status_or_500(ws: str):
+    """`git status` for the workspace; a failure (corrupt index, "dubious
+    ownership") is an HTTP 500 with git's message, never an empty clean list."""
+    result = _run_git(STATUS_PORCELAIN_ARGS, cwd=ws)
+    if result.returncode != 0:
+        raise HTTPException(status_code=500, detail=f"git status failed: {result.stderr.strip()}")
+    return result
+
+
 @router.get("/status")
 def git_status_endpoint():
     """Quick status for UI indicators, includes per-file status."""
     ws = _require_git_workspace()
-    result = _run_git(STATUS_PORCELAIN_ARGS, cwd=ws)
+    result = _status_or_500(ws)
     files = []
     changed = 0
     untracked = 0
@@ -100,19 +113,17 @@ def git_status_endpoint():
                 files.append({"path": filename, "status": "R"})
             else:
                 files.append({"path": filename, "status": "M"})
-    # Sync state vs the branch's upstream: "+ahead -behind". No upstream (or
-    # any git error) reports zeros rather than failing the whole status.
+    # Sync state vs the branch's upstream: "+ahead -behind". A branch with no
+    # upstream (or a detached HEAD) reports zeros; any other git error fails.
     ahead = behind = 0
-    try:
-        sync = _run_git(
-            ["--no-optional-locks", "rev-list", "--left-right", "--count", "@{upstream}...HEAD"],
-            cwd=ws,
-        )
-        parts = sync.stdout.strip().split()
-        if len(parts) == 2:
-            behind, ahead = int(parts[0]), int(parts[1])
-    except Exception:
-        pass
+    sync = _run_git(
+        ["--no-optional-locks", "rev-list", "--left-right", "--count", "@{upstream}...HEAD"],
+        cwd=ws,
+    )
+    if sync.returncode == 0:
+        behind, ahead = (int(n) for n in sync.stdout.split())
+    elif not any(m in sync.stderr for m in _NO_UPSTREAM):
+        raise HTTPException(status_code=500, detail=f"git rev-list failed: {sync.stderr.strip()}")
     return {
         "branch": get_branch(ws),
         "clean": changed == 0 and untracked == 0,
@@ -230,7 +241,7 @@ def git_changes_endpoint():
         return cached[1]
 
     # status
-    result = _run_git(STATUS_PORCELAIN_ARGS, cwd=ws)
+    result = _status_or_500(ws)
     files = []
     for code, filename in parse_porcelain_status(result.stdout):
         if code == "??":
@@ -338,7 +349,9 @@ def git_worktrees_endpoint():
     ws = _require_git_workspace()
     result = _run_git(["worktree", "list", "--porcelain"], cwd=ws, timeout=10)
     if result.returncode != 0:
-        return {"worktrees": [], "current": ws}
+        raise HTTPException(
+            status_code=500, detail=f"git worktree list failed: {result.stderr.strip()}"
+        )
 
     worktrees: list[dict] = []
     current: dict = {}

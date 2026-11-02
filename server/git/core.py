@@ -295,32 +295,24 @@ def parse_porcelain_status(stdout: str) -> list[tuple[str, str]]:
     return entries
 
 
-def get_is_clean(path: str) -> bool:
-    """Check if working tree is clean (no uncommitted changes)."""
-    try:
-        result = _run_git(["--no-optional-locks", "status", "--porcelain"], cwd=path)
-        return result.stdout.strip() == ""
-    except Exception:
-        return True
-
-
 def get_file_status(path: str) -> dict:
     """Get tracked and untracked file lists.
 
-    Returns: {"tracked": [...], "untracked": [...]}
+    Returns: {"tracked": [...], "untracked": [...]}. Raises RuntimeError with
+    git's message when `git status` fails (a corrupt index, a "dubious
+    ownership" refusal), so a broken repository never reads as clean.
     """
-    try:
-        result = _run_git(STATUS_PORCELAIN_ARGS, cwd=path)
-        tracked = []
-        untracked = []
-        for status, filename in parse_porcelain_status(result.stdout):
-            if status == "??":
-                untracked.append(filename)
-            else:
-                tracked.append(filename)
-        return {"tracked": tracked, "untracked": untracked}
-    except Exception:
-        return {"tracked": [], "untracked": []}
+    result = _run_git(STATUS_PORCELAIN_ARGS, cwd=path)
+    if result.returncode != 0:
+        raise RuntimeError(f"git status failed: {result.stderr.strip()}")
+    tracked = []
+    untracked = []
+    for status, filename in parse_porcelain_status(result.stdout):
+        if status == "??":
+            untracked.append(filename)
+        else:
+            tracked.append(filename)
+    return {"tracked": tracked, "untracked": untracked}
 
 
 # --- Private helpers ---
