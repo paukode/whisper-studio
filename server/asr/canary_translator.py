@@ -76,8 +76,9 @@ def is_loaded() -> bool:
 
 def load() -> None:
     """Load the model into memory (mirrors mlx-audio's base_load_model steps,
-    minus its quantization/remapping branches the fp16 repo never hits). Run
-    on ``executor``."""
+    minus its quantization/remapping branches the fp16 repo never hits). The
+    weights load strictly: a key-mapping break raises instead of leaving
+    layers at random init. Run on ``executor``."""
     global _model
     if _model is not None:
         return
@@ -91,12 +92,9 @@ def load() -> None:
 
         log.info("Loading Canary model from %s ...", model_dir)
         config = json.loads((model_dir / "config.json").read_text())
-        config["model_path"] = str(model_dir)
         model = Model(ModelConfig.from_dict(config))
-        weights = mx.load(str(model_dir / "model.safetensors"))
-        if hasattr(model, "sanitize"):
-            weights = model.sanitize(weights)
-        model.load_weights(list(weights.items()), strict=False)
+        weights = model.sanitize(mx.load(str(model_dir / "model.safetensors")))
+        model.load_weights(list(weights.items()), strict=True)
         mx.eval(model.parameters())
         model.eval()
         # Loads the SentencePiece tokenizer from the model dir.
