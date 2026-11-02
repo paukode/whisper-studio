@@ -87,6 +87,33 @@ def test_status_no_upstream_degrades_to_zero(client, tmp_path, monkeypatch):
     assert data["behind"] == 0
 
 
+def test_status_with_a_pruned_upstream_reports_zero(client, tmp_path):
+    """A branch whose upstream was deleted on the remote and pruned (the state
+    after a merged PR) still returns status with 0/0, not a 500."""
+    c, work = client
+    origin = tmp_path / "origin"
+    _git(["push", "-q", "origin", "HEAD:feat"], work)
+    _git(["checkout", "-q", "-b", "feat"], work)
+    _git(["branch", "--set-upstream-to=origin/feat"], work)
+    _git(["push", "-q", "origin", "--delete", "feat"], work)
+    _git(["fetch", "-q", "--prune"], work)
+    assert origin.exists()
+
+    res = c.get("/api/git/status")
+    assert res.status_code == 200
+    assert res.json()["ahead"] == 0
+    assert res.json()["behind"] == 0
+
+
+def test_status_on_a_detached_head_reports_zero(client):
+    c, work = client
+    _git(["checkout", "-q", "--detach"], work)
+
+    res = c.get("/api/git/status")
+    assert res.status_code == 200
+    assert (res.json()["ahead"], res.json()["behind"]) == (0, 0)
+
+
 def _app_for():
     app = FastAPI()
     app.include_router(router)

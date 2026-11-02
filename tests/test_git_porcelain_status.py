@@ -20,11 +20,14 @@ UNSTAGED_FIRST = " M first.txt\0 M second.txt\0M  staged.txt\0"
 
 
 def _fake_git(stdout: str):
-    """Answer the status call with `stdout`; any other git call fails."""
+    """Answer the status call with `stdout`, the upstream probe as a branch
+    with no upstream (exit 1, no output); any other git call fails."""
 
     def run(args, cwd, **_kwargs):
         if args == STATUS_PORCELAIN_ARGS:
             return subprocess.CompletedProcess(args, 0, stdout=stdout, stderr="")
+        if "rev-parse" in args and "@{upstream}" in args:
+            return subprocess.CompletedProcess(args, 1, stdout="", stderr="")
         return subprocess.CompletedProcess(
             args, 128, stdout="", stderr="fatal: no upstream configured for branch 'main'"
         )

@@ -74,10 +74,6 @@ def _require_git_workspace() -> str:
     return ws
 
 
-# rev-list's answers when there is no upstream to compare with.
-_NO_UPSTREAM = ("no upstream configured", "HEAD does not point to a branch", "no such branch")
-
-
 def _status_or_500(ws: str):
     """`git status` for the workspace; a failure (corrupt index, "dubious
     ownership") is an HTTP 500 with git's message, never an empty clean list."""
@@ -85,6 +81,34 @@ def _status_or_500(ws: str):
     if result.returncode != 0:
         raise HTTPException(status_code=500, detail=f"git status failed: {result.stderr.strip()}")
     return result
+
+
+def _ahead_behind(ws: str) -> tuple[int, int]:
+    """(behind, ahead) vs the branch's upstream for the bar.
+
+    `rev-parse --verify -q @{upstream}` exits 1 with no output when there is
+    nothing to compare with: no upstream set, a detached HEAD, or an upstream
+    branch that was deleted and pruned. That reads as 0/0 without matching
+    git's (localized) error text. Any other rev-parse exit, or a rev-list
+    failure once the upstream resolved, is an HTTP 500 with git's message.
+    """
+    upstream = _run_git(
+        ["--no-optional-locks", "rev-parse", "--verify", "-q", "@{upstream}"], cwd=ws
+    )
+    if upstream.returncode == 1:
+        return 0, 0
+    if upstream.returncode != 0:
+        raise HTTPException(
+            status_code=500, detail=f"git rev-parse failed: {upstream.stderr.strip()}"
+        )
+    sync = _run_git(
+        ["--no-optional-locks", "rev-list", "--left-right", "--count", "@{upstream}...HEAD"],
+        cwd=ws,
+    )
+    if sync.returncode != 0:
+        raise HTTPException(status_code=500, detail=f"git rev-list failed: {sync.stderr.strip()}")
+    behind, ahead = (int(n) for n in sync.stdout.split())
+    return behind, ahead
 
 
 @router.get("/status")
@@ -110,17 +134,7 @@ def git_status_endpoint():
                 files.append({"path": filename, "status": "R"})
             else:
                 files.append({"path": filename, "status": "M"})
-    # Sync state vs the branch's upstream: "+ahead -behind". A branch with no
-    # upstream (or a detached HEAD) reports zeros; any other git error fails.
-    ahead = behind = 0
-    sync = _run_git(
-        ["--no-optional-locks", "rev-list", "--left-right", "--count", "@{upstream}...HEAD"],
-        cwd=ws,
-    )
-    if sync.returncode == 0:
-        behind, ahead = (int(n) for n in sync.stdout.split())
-    elif not any(m in sync.stderr for m in _NO_UPSTREAM):
-        raise HTTPException(status_code=500, detail=f"git rev-list failed: {sync.stderr.strip()}")
+    behind, ahead = _ahead_behind(ws)
     return {
         "branch": get_branch(ws),
         "clean": changed == 0 and untracked == 0,
