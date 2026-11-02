@@ -60,7 +60,6 @@ python-lsp-server==1.14.0
 nodeenv==1.10.0
 ripgrep==15.1.0
 APScheduler==3.11.2
-tzdata==2025.2
 mlx-whisper==0.4.3
 mlx==0.32.4
 parakeet-mlx==0.5.2
