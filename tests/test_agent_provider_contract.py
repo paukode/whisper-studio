@@ -318,13 +318,13 @@ def test_every_claude_model_runs_an_agent_with_a_cached_prefix(monkeypatch):
             _check_claude_effort(body, meta, key)
         _check_claude_cached_rounds(first, second, key)
         # The structured call: one emit_result tool, offered (never forced),
-        # its schema the object schema the caller gave, and its prefix cached.
+        # its schema the object schema the caller gave, and no cache write
+        # (its tools never match the agent loop prefix, so nothing reads it).
         distill_body = invoke.requests[-1]
         assert [t["name"] for t in distill_body["tools"]] == ["emit_result"], key
         assert distill_body["tools"][0]["input_schema"] == _SCHEMA, key
         assert distill_body["tool_choice"] == {"type": "auto"}, key
-        assert "cache_control" in distill_body["system"][0], key
-        assert _breakpoints(distill_body) <= 4, key
+        assert _breakpoints(distill_body) == 0, key
         # Cache reads and writes reach the run's usage and the cost log.
         assert result.usage["cache_read_tokens"] == 30, key
         assert result.usage["cache_creation_tokens"] == 30, key
@@ -513,79 +513,47 @@ def test_a_claude_parent_with_a_gpt_child_override(monkeypatch, parent_effort):
 # ── the provider adapters on their own (structured call, tool parsing) ──────
 
 
-def test_the_claude_structured_retry_reuses_the_cached_prefix(monkeypatch):
+def test_the_claude_structured_retry_sends_no_cache_writes(monkeypatch):
+    """The production distill path: a first emit_result that fails the
+    schema, then a corrected one. Neither attempt writes the cache, the
+    retry carries attempt 1 unchanged at its head, and the shared transcript
+    is never changed."""
+    from server.agents.config import AgentConfig
     from server.agents.providers.anthropic import AnthropicBedrockAdapter
+    from server.agents.providers.base import TurnUsage
+    from server.agents.runtime_support import _distill_structured
 
-    tools = [{"name": "ws_grep", "description": "grep", "input_schema": {"type": "object"}}]
+    monkeypatch.setattr("server.agents.runtime_support._record_distill_call", lambda *a, **k: None)
     for key, model_id, _, _ in _claude_models():
-        fake = _FakeInvoke(
-            [
-                {
-                    "stop_reason": "tool_use",
-                    "content": [
-                        {"type": "tool_use", "id": "u1", "name": "ws_grep", "input": {"q": 1}}
-                    ],
-                    "usage": {"input_tokens": 9, "output_tokens": 1},
-                },
-                {
-                    "stop_reason": "end_turn",
-                    "content": [{"type": "text", "text": "done"}],
-                    "usage": {
-                        "input_tokens": 2,
-                        "output_tokens": 1,
-                        "cache_read_input_tokens": 9,
-                    },
-                },
-            ]
-        )
+        fake = _FakeInvoke([_emit_payload({"answer": "four"}), _emit_payload({"answer": 4})])
         adapter = AnthropicBedrockAdapter(model_key=key, model_id=model_id)
         adapter._bedrock = fake
-        history = [{"role": "user", "content": "go"}]
-        snapshot = copy.deepcopy(history)
-        turn1 = asyncio.run(
-            adapter.invoke(system="sys prompt", messages=history, tools=tools, max_tokens=100)
-        )
-        assert [c["name"] for c in turn1.tool_calls] == ["ws_grep"], key
-        # The shared history never carries a cache marker.
-        assert history == snapshot, key
-        history2 = [
-            *history,
-            {"role": "assistant", "content": turn1.assistant_blocks},
-            {
-                "role": "user",
-                "content": [{"type": "tool_result", "tool_use_id": "u1", "content": "hit"}],
-            },
+        transcript = [
+            {"role": "user", "content": "find the answer"},
+            {"role": "assistant", "content": [{"type": "text", "text": "It is 4."}]},
         ]
-        turn2 = asyncio.run(
-            adapter.invoke(system="sys prompt", messages=history2, tools=tools, max_tokens=100)
+        snapshot = copy.deepcopy(transcript)
+        result = asyncio.run(
+            _distill_structured(
+                adapter,
+                "sys prompt",
+                transcript,
+                _SCHEMA,
+                AgentConfig(max_tokens=100),
+                TurnUsage(),
+                session_id=f"distill-{key}",
+                model_key=key,
+                source="agent",
+            )
         )
-        assert turn2.usage.cache_read_tokens == 9, key
+        assert result == {"answer": 4}, key
+        assert transcript == snapshot, key
         first, second = fake.requests
-        _check_claude_cached_rounds(first, second, key)
-
-
-def test_caching_off_sends_no_checkpoints(monkeypatch):
-    from server.agents.providers.anthropic import AnthropicBedrockAdapter
-
-    monkeypatch.setattr(
-        "server.infrastructure.feature_flags.is_enabled",
-        lambda name: name != "prompt_caching",
-    )
-    key, model_id, _, _ = _claude_models()[0]
-    fake = _FakeInvoke([_emit_payload({"answer": 1})])
-    adapter = AnthropicBedrockAdapter(model_key=key, model_id=model_id)
-    adapter._bedrock = fake
-    asyncio.run(
-        adapter.invoke(
-            system="sys",
-            messages=[{"role": "user", "content": "go"}],
-            tools=None,
-            max_tokens=50,
-            force_structured=_SCHEMA,
-        )
-    )
-    assert "cache_control" not in json.dumps(fake.requests[0])
-    assert fake.requests[0]["system"] == "sys"
+        assert _breakpoints(first) == 0 and _breakpoints(second) == 0, key
+        assert first["system"] == second["system"] == "sys prompt", key
+        assert second["tools"] == first["tools"], key
+        assert second["messages"][: len(first["messages"])] == first["messages"], key
+        assert len(second["messages"]) == len(first["messages"]) + 2, key
 
 
 def test_every_gpt_adapter_parses_tool_calls(monkeypatch):
