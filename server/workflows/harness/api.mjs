@@ -18,8 +18,8 @@ export function makeApi(rpcCall, notify, meta, args) {
 
   // Programmatic tool calling: `tool(name, args)` (or the ergonomic
   // `tools.<name>(args)` proxy) runs ONE read-only host tool via RPC and
-  // resolves to its string output. Non-read-only tools are refused server-side
-  // — the program orchestrates reads/searches, keeping every intermediate
+  // resolves to its string output. Non-read-only tools are refused server-side.
+  // The program orchestrates reads/searches, keeping every intermediate
   // result in its own variables instead of the model's context.
   async function tool(name, toolArgs = {}) {
     if (typeof name !== "string" || !name.trim()) {
