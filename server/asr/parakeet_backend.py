@@ -105,12 +105,9 @@ def _get_model():
 
             # Warm up MLX graph compilation so the first real utterance
             # doesn't eat the cold ~1.8 s compile mid-conversation.
-            try:
-                silent = mx.array(np.zeros(int(5.0 * SAMPLE_RATE), dtype=np.float32))
-                mel = get_logmel(silent, model.preprocessor_config)
-                _ = model.generate(mel)
-            except Exception as e:  # warmup is best-effort
-                log.debug("Parakeet warmup skipped: %s", e)
+            silent = mx.array(np.zeros(int(5.0 * SAMPLE_RATE), dtype=np.float32))
+            mel = get_logmel(silent, model.preprocessor_config)
+            _ = model.generate(mel)
 
             _get_logmel = get_logmel
             _model = model
