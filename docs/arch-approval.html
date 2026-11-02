@@ -399,7 +399,12 @@
       capped at 3 seconds and never allowed to raise, and its result (a LOW / MEDIUM / HIGH risk
       level plus a sentence of prose) rides the <code>approval_request</code> event as
       <code>explanation</code>. It runs only on the <em>ask</em> branch, and only when the turn has a
-      cloud model to ask, so an offline local-model turn simply shows the card without one. The
+      cloud model to ask, so an offline local-model turn simply shows the card without one.
+      The explainer reads only the fields the card shows. Server stamps (keys that start with
+      <code>__</code>, <code>session_id</code>, the workspace root) do not go to it, and
+      <code>secret_access</code> goes only with a card that asks for a credential-store read.
+      Long input values are cut at a word boundary. The explanation, the reasoning and the risk
+      are cut at a word boundary too, and the card shows each one as its own paragraph. The
       config key <code>permission_explainer_enabled</code> (default <code>true</code>) turns it off;
       there is no toggle in Settings, it is a <code class="path">config.user.json</code> key that
       <code>config_set</code> in chat can also change. The separate

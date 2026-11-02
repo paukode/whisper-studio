@@ -26,10 +26,12 @@ Your job is to assess the risk of allowing this action and explain it clearly.
 Respond with ONLY a JSON object with these exact fields:
 {
   "riskLevel": "LOW" | "MEDIUM" | "HIGH",
-  "explanation": "<1-2 sentences describing what the action does>",
-  "reasoning": "<starting with 'I need to...', explains why the assistant wants to do this>",
+  "explanation": "<1-2 sentences, under 40 words, describing what the action does>",
+  "reasoning": "<one sentence, under 30 words, starting with 'I need to...', explains why the assistant wants to do this>",
   "risk": "<under 15 words summarising the risk>"
 }
+
+Write complete sentences that fit those limits; longer text is cut.
 
 Do not use em dashes or en dashes; prefer commas, parentheses, a colon, or a short spaced hyphen.
 
@@ -38,6 +40,57 @@ Risk levels:
 - MEDIUM: writes to important files, installs packages, config changes
 - HIGH: deletes, irreversible changes, external service calls, credentials
 """
+
+
+# Field limits of the explanation the card shows (characters).
+_EXPLANATION_CHARS = 300
+_REASONING_CHARS = 200
+_RISK_CHARS = 100
+# Limits of the tool input sent to the explainer: each string value, then the
+# whole input as JSON.
+_INPUT_VALUE_CHARS = 400
+_INPUT_CHARS = 1200
+
+
+def clip_words(text: str, limit: int) -> str:
+    """``text`` at most ``limit`` characters long, cut at a word boundary
+    with an ellipsis, never inside a word. Text that fits is unchanged."""
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    head = text[: limit - 1]
+    cut = max(head.rfind(" "), head.rfind("\n"))
+    if cut > limit // 2:
+        head = head[:cut]
+    return head.rstrip(" \n,;:-") + "\u2026"
+
+
+def _clip_input(value):
+    """The tool input with every long string value clipped at a word
+    boundary, so the JSON the explainer reads stays valid and readable."""
+    if isinstance(value, str):
+        return clip_words(value, _INPUT_VALUE_CHARS)
+    if isinstance(value, dict):
+        return {k: _clip_input(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_clip_input(v) for v in value]
+    return value
+
+
+def _input_text(tool_input: dict) -> str:
+    text = json.dumps(_clip_input(tool_input), default=str)
+    if len(text) <= _INPUT_CHARS:
+        return text
+    # Still too long (many fields): drop whole fields from the end, so no
+    # key or value is cut in half.
+    kept: dict = {}
+    for key, value in tool_input.items():
+        trial = json.dumps(_clip_input({**kept, key: value}), default=str)
+        if len(trial) > _INPUT_CHARS:
+            break
+        kept[key] = value
+    kept["..."] = "more fields not shown"
+    return json.dumps(_clip_input(kept), default=str)
 
 
 def _build_user_message(tool_name: str, tool_input: dict, recent_messages: list[dict]) -> str:
@@ -56,7 +109,7 @@ def _build_user_message(tool_name: str, tool_input: dict, recent_messages: list[
     return (
         f"{context}"
         f"Tool: {tool_name}\n"
-        f"Input: {json.dumps(tool_input, default=str)[:500]}\n\n"
+        f"Input: {_input_text(tool_input)}\n\n"
         "Assess the risk of approving this action."
     )
 
@@ -149,7 +202,7 @@ async def _call_explainer(
 
     return {
         "riskLevel": risk_level,
-        "explanation": str(parsed.get("explanation", ""))[:300],
-        "reasoning": str(parsed.get("reasoning", ""))[:200],
-        "risk": str(parsed.get("risk", ""))[:100],
+        "explanation": clip_words(str(parsed.get("explanation", "")), _EXPLANATION_CHARS),
+        "reasoning": clip_words(str(parsed.get("reasoning", "")), _REASONING_CHARS),
+        "risk": clip_words(str(parsed.get("risk", "")), _RISK_CHARS),
     }

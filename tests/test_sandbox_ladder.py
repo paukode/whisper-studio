@@ -128,7 +128,7 @@ def test_denial_classifier_names_mode_and_escalation(monkeypatch):
     assert hint is not None
     assert "workspace-write" in hint
     assert "danger-full-access" in hint
-    # Open mode is never classified — the same string is an ordinary error there.
+    # Open mode never classifies a plain write denial: the same string is an ordinary error there.
     assert sandbox.classify_sandbox_denial("Operation not permitted", "open") is None
     # Unrelated failures are not misattributed to the sandbox.
     assert sandbox.classify_sandbox_denial("No such file or directory", "workspace") is None
@@ -146,13 +146,41 @@ def test_a_setuid_program_is_no_write_denial(monkeypatch):
     ):
         hint = sandbox.classify_sandbox_denial(out, "readonly")
         assert "setuid" in hint and "pgrep" in hint, out
-        assert "danger-full-access" not in hint, out
+        assert "retry the same command" not in hint, out
     # A real write denial beside it keeps its own hint.
     both = sandbox.classify_sandbox_denial(
         "/bin/sh: /bin/ps: Operation not permitted\ntouch: /Users/x/y: Operation not permitted",
         "workspace",
     )
-    assert "pgrep" in both and "danger-full-access" in both
+    assert "pgrep" in both and "retry the same command" in both
+
+
+def test_a_nested_sandbox_gets_its_own_hint_in_every_mode(monkeypatch):
+    """A test suite that starts its own sandbox-exec fails inside ours with
+    "sandbox_apply: Operation not permitted" (exit 71). A field session read
+    it as a write denial and escalated, which still runs under sandbox-exec.
+    The hint names the cause, says escalating does not help, and points to
+    Bypass, in every write mode (an escalated "open" run included)."""
+    monkeypatch.setattr(sandbox, "sandbox_backend", lambda: "sandbox-exec")
+    out = "sandbox-exec: sandbox_apply: Operation not permitted"
+    for mode in ("workspace", "readonly", "open"):
+        hint = sandbox.classify_sandbox_denial(out, mode)
+        assert hint is not None, mode
+        assert "nested sandbox-exec" in hint and "Bypass" in hint, mode
+        assert "escalating does not help" in hint, mode
+        assert "retry the same command" not in hint, mode
+    # A real write denial beside it keeps its own hint in a confined mode only.
+    both = out + "\ntouch: /Users/x/y: Operation not permitted"
+    assert "retry the same command" in sandbox.classify_sandbox_denial(both, "workspace")
+    assert "retry the same command" not in sandbox.classify_sandbox_denial(both, "open")
+
+
+def test_an_escalated_run_still_names_a_setuid_program(monkeypatch):
+    """danger-full-access lifts the write limits but stays sandboxed, so ps
+    still cannot start; the hint says so instead of nothing."""
+    monkeypatch.setattr(sandbox, "sandbox_backend", lambda: "sandbox-exec")
+    hint = sandbox.classify_sandbox_denial("/bin/sh: /bin/ps: Operation not permitted", "open")
+    assert "pgrep" in hint and "still sandboxed" in hint
 
 
 def test_denial_signatures_are_per_backend(monkeypatch):

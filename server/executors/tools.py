@@ -159,14 +159,16 @@ RUN_PYTHON_TOOL = {
                     "Filesystem confinement. Omit for the default workspace-write "
                     "(writes limited to the workspace, this session's scratch folder, "
                     "temp, and ~/.aws). read-only "
-                    "denies all writes. danger-full-access runs unconfined, requires "
-                    "justification, and always triggers a per-call approval prompt."
+                    "denies all writes. danger-full-access lifts the write limits but "
+                    "still runs inside the OS sandbox (setuid programs such as ps and a "
+                    "nested sandbox-exec still fail), requires justification, and "
+                    "always triggers a per-call approval prompt."
                 ),
             },
             "justification": {
                 "type": "string",
                 "description": (
-                    "One line explaining why full filesystem access is needed. "
+                    "One line explaining why writes outside the workspace are needed. "
                     "Required with sandbox_permissions='danger-full-access'; shown "
                     "verbatim on the user's approval card."
                 ),
@@ -247,8 +249,10 @@ TERMINAL_RUN_TOOL = {
                     "Filesystem confinement for sandbox mode. Omit for the default "
                     "workspace-write (writes limited to the workspace, this session's "
                     "scratch folder and temp, not to cwd). read-only denies "
-                    "all writes. danger-full-access runs unconfined, requires "
-                    "justification, and always triggers a per-call approval prompt; "
+                    "all writes. danger-full-access lifts the write limits but still "
+                    "runs inside the OS sandbox (setuid programs such as ps and a "
+                    "nested sandbox-exec still fail), requires justification, and "
+                    "always triggers a per-call approval prompt; "
                     "use it only after a workspace-write run was blocked by the "
                     "sandbox, or when the task clearly requires writing outside the "
                     "workspace and the scratch folder."
@@ -257,7 +261,7 @@ TERMINAL_RUN_TOOL = {
             "justification": {
                 "type": "string",
                 "description": (
-                    "One line explaining why full filesystem access is needed. "
+                    "One line explaining why writes outside the workspace are needed. "
                     "Required with sandbox_permissions='danger-full-access'; shown "
                     "verbatim on the user's approval card."
                 ),

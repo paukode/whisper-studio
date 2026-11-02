@@ -134,7 +134,7 @@
       <tbody>
         <tr><td><code>workspace-write</code></td><td><code>workspace</code></td><td>The default. Write inside the project, the session's own scratch folder, and the temp directories, nowhere else.</td></tr>
         <tr><td><code>read-only</code></td><td><code>readonly</code></td><td>Run it, change nothing.</td></tr>
-        <tr><td><code>danger-full-access</code></td><td><code>open</code></td><td>Write anywhere. The call must carry a <code>justification</code>. Asking for this raises an approval card in every permission mode except Bypass, because it is a request to drop the confinement. In Bypass there is no sandbox, so the app ignores the request with no card. A subagent or another unattended run is refused.</td></tr>
+        <tr><td><code>danger-full-access</code></td><td><code>open</code></td><td>Write anywhere. The command still runs under <code>sandbox-exec</code> (the profile is <code>(allow default)</code> plus the deny rules), so setuid programs and a nested <code>sandbox-exec</code> still fail. The call must carry a <code>justification</code>. Asking for this raises an approval card in every permission mode except Bypass, because it is a request to lift the write limits. The card title starts with "WRITES ANYWHERE (STILL SANDBOXED)". In Bypass there is no sandbox, so the app ignores the request with no card. A subagent or another unattended run is refused.</td></tr>
       </tbody>
     </table></div>
     <p>When a command fails under <code>workspace</code> or <code>readonly</code>,
@@ -221,8 +221,15 @@
       <code>/bin/ps</code> or <code>/usr/bin/top</code>. The kernel refuses it, and no profile or
       permission mode changes this. When a confined command fails for this cause,
       <code>classify_sandbox_denial</code> adds a hint that names the program. The hint tells the
-      model to use <code>pgrep -fl</code>, which runs in the sandbox. It does not tell the model to
-      ask for <code>danger-full-access</code>.</p>
+      model to use <code>pgrep -fl</code>, which runs in the sandbox. It tells the model that an
+      escalated run is still sandboxed, so escalation does not help.</p>
+    <p>macOS does not let a sandboxed process start a second sandbox. A command that calls
+      <code>sandbox-exec</code> itself (for example a test suite) fails with
+      "sandbox_apply: Operation not permitted" and exit code 71. This also occurs in an escalated
+      (<code>danger-full-access</code>) run. <code>classify_sandbox_denial</code> adds a hint for
+      this failure in every write mode. The hint tells the model that retrying or escalating does
+      not help. It tells the model that commands in Bypass mode run with no sandbox, and that
+      otherwise it must skip the step or ask the user to run it in their own terminal.</p>
     <h3 id="env-scrub">The credential denylist</h3>
     <p>Denying a file does nothing if the same secret is sitting in an environment variable. The
       denylist lives in <code class="path">server/security/sensitive_env.py</code> as two named sets:

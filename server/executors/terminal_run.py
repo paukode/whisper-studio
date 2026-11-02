@@ -113,8 +113,8 @@ def _resolve_sandbox_permissions(payload: dict) -> tuple[str, str, str]:
     Returns (permissions, justification, error). error is "" when valid.
     Empty/missing permissions default to workspace-write. danger-full-access
     requires a non-empty justification and is refused outright for unattended
-    (agent-stamped) payloads — the whole point of the escalation is that a
-    human reads the justification before the command runs unconfined, and the
+    (agent-stamped) payloads: the whole point of the escalation is that a
+    human reads the justification before the command writes anywhere, and the
     agent auto-approve path has no human."""
     perms = (payload.get("sandbox_permissions") or "workspace-write").strip()
     justification = (payload.get("justification") or "").strip()
@@ -441,12 +441,14 @@ async def do_terminal_run(payload: dict) -> tuple[bool, str]:
             )
     output = result.get("output") or "(no output)"
 
-    # A failed confined run whose output looks like an OS write denial gets a
+    # A failed sandboxed run whose output looks like an OS write denial gets a
     # hint naming the effective mode and the escalation path, so the model can
-    # tell "the sandbox said no" from "the command itself is broken".
+    # tell "the sandbox said no" from "the command itself is broken". An
+    # escalated ("open") run is still sandboxed: it is checked for a setuid
+    # program or a nested sandbox-exec the sandbox refused.
     denial_hint = ""
     if (
-        write_mode in ("workspace", "readonly")
+        mode == "sandbox"
         and result.get("exit_code") not in (0, None)
         and not bypass_sandbox.active()
     ):
