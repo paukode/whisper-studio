@@ -144,7 +144,8 @@ def test_import_one_copies_skips_symlinks_and_dedupes(tmp_path, monkeypatch):
     assert r2["status"] == "conflict"
     r3 = skills_import._import_one(str(checkout), "eng/arch", overwrite=True)
     assert r3["status"] == "imported"
-    assert any(p.name.startswith("arch.bak-") for p in dest_root.iterdir())
+    # No backup is left in the skills folder, where it would load as a skill.
+    assert [p.name for p in dest_root.iterdir()] == ["arch"]
 
 
 def test_import_refuses_reserved_name(tmp_path, monkeypatch):

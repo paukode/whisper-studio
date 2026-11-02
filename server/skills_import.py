@@ -18,7 +18,6 @@ import os
 import shutil
 import subprocess
 import tempfile
-import time
 
 from server import folder_skills
 from server.git.executor import _GIT_URL_RE
@@ -334,22 +333,32 @@ def _import_one(tmp: str, subpath: str, overwrite: bool) -> dict:
     if not dest:
         return {"subpath": subpath, "status": "error", "reason": "invalid destination name"}
 
+    if os.path.exists(dest) and not overwrite:
+        return {
+            "subpath": subpath,
+            "name": skill["name"],
+            "status": "conflict",
+            "reason": "already exists",
+        }
+    # The old version waits OUTSIDE the skills folder: a backup inside it
+    # would load as a skill of the same name and replace the new one.
+    backup_dir = ""
     if os.path.exists(dest):
-        if not overwrite:
-            return {
-                "subpath": subpath,
-                "name": skill["name"],
-                "status": "conflict",
-                "reason": "already exists",
-            }
-        backup = f"{dest}.bak-{int(time.time())}"
-        shutil.move(dest, backup)
+        backup_dir = tempfile.mkdtemp(prefix="whisper_skillbackup_")
+        shutil.move(dest, os.path.join(backup_dir, "skill"))
 
     try:
         _copy_skill_folder(src, dest)
-    except SkillImportError as e:
+    except BaseException as e:
         shutil.rmtree(dest, ignore_errors=True)
-        return {"subpath": subpath, "name": skill["name"], "status": "error", "reason": str(e)}
+        if backup_dir:
+            shutil.move(os.path.join(backup_dir, "skill"), dest)
+            shutil.rmtree(backup_dir)
+        if isinstance(e, SkillImportError):
+            return {"subpath": subpath, "name": skill["name"], "status": "error", "reason": str(e)}
+        raise
+    if backup_dir:
+        shutil.rmtree(backup_dir)
     return {
         "subpath": subpath,
         "name": skill["name"],

@@ -94,6 +94,30 @@ def test_import_local_conflict_then_overwrite(skills_dir):
     assert [r["name"] for r in forced["imported"]] == ["alpha"]
 
 
+def test_overwrite_keeps_no_backup_that_could_shadow_the_new_version(skills_dir):
+    old = [("pack/alpha/SKILL.md", _skill_md("alpha", "old version"))]
+    new = [("pack/alpha/SKILL.md", _skill_md("alpha", "new version"))]
+    assert si.import_local(old, ["pack/alpha"])["imported"]
+    assert si.import_local(new, ["pack/alpha"], overwrite=True)["imported"]
+    assert sorted(p.name for p in skills_dir.iterdir()) == ["alpha"]
+    loaded = skills_mod.load_skills(str(skills_dir))
+    assert loaded["alpha"]["description"] == "new version"
+
+
+def test_a_failed_overwrite_restores_the_old_version(skills_dir, monkeypatch):
+    old = [("pack/alpha/SKILL.md", _skill_md("alpha", "old version"))]
+    assert si.import_local(old, ["pack/alpha"])["imported"]
+
+    def broken(src, dest):
+        raise si.SkillImportError("copy failed")
+
+    monkeypatch.setattr(si, "_copy_skill_folder", broken)
+    res = si.import_local(old, ["pack/alpha"], overwrite=True)
+    assert res["errors"] and res["errors"][0]["reason"] == "copy failed"
+    assert sorted(p.name for p in skills_dir.iterdir()) == ["alpha"]
+    assert "old version" in (skills_dir / "alpha" / "SKILL.md").read_text()
+
+
 def test_import_local_rejects_path_escape(skills_dir):
     tree = [("../evil/SKILL.md", _skill_md("evil"))]
     with pytest.raises(si.SkillImportError):
