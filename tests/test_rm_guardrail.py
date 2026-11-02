@@ -601,6 +601,45 @@ def test_rm_of_the_filesystem_root_is_refused_in_bypass_too():
         assert validate_command(command), command
 
 
+ROOT_DELETE_SPELLINGS = (
+    "rm -fr /",
+    "rm -Rf /",
+    "rm -r -f /",
+    "rm --recursive --force /",
+    'rm -rf "/"',
+    "rm -rf '/'",
+    "find / -delete",
+    "find / -name '*.log' -exec rm {} +",
+    "rm -rf ~",
+    "rm -rf ~/",
+    "rm -rf ~/*",
+    "rm -rf /Users",
+    "rm -rf /System",
+    "sudo rm -rf /",
+    "sh -c 'rm -rf /'",
+    "cd / && rm -rf usr",
+    "cd ~ && rm -rf .",
+)
+
+
+@pytest.mark.parametrize("command", ROOT_DELETE_SPELLINGS)
+def test_every_spelling_of_a_root_delete_is_refused_in_every_mode(command):
+    # The hard block reads the operand, not one spelling: lifting the rm
+    # floor in Bypass (the user's decision of 2026-11-02) leaves this block
+    # as the only line, so flag order, quotes, find -delete and ~ all meet it.
+    from server.security.command_validator import validate_command
+
+    assert validate_command(command, secret_reads=True), command
+    assert validate_command(command), command
+
+
+def test_a_delete_below_a_protected_root_is_not_the_hard_blocks():
+    from server.security.command_validator import validate_command
+
+    for command in ("rm -rf ~/old", "rm -rf /tmp/build", "rm -rf dist", "rm -rf $BUILD"):
+        assert validate_command(command, secret_reads=True) is None, command
+
+
 def test_a_category_row_that_asks_keeps_the_rm_floor_in_bypass(monkeypatch, tmp_path):
     ws = tmp_path / "project"
     ws.mkdir()
@@ -722,7 +761,7 @@ def test_an_agents_rm_of_the_filesystem_root_is_refused_in_bypass(app_mode, work
     payload = {"__agent__": True, "command": "rm -rf /", "secret_access": True}
     outcome = asyncio.run(_do_command(payload))
     assert outcome.ok is False
-    assert "dangerous pattern" in (outcome.error or "")
+    assert "Blocked" in (outcome.error or "")
 
 
 def test_refuse_if_agent_rm_blocks_unattended_rm(app_mode):
