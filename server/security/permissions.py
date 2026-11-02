@@ -26,8 +26,7 @@ category_modes (optional, in permissions.json):
   server/approval/bootstrap.py (write, delete, cli, worktree, preview,
   github, github-destructive, ...) plus the policy-only "workflow" category
   (new workflow-script launches; resolved by
-  server/workflows/launch_policy.py). A category with no entry (including a
-  legacy permissions.json with no "category_modes" key at all) falls back
+  server/workflows/launch_policy.py). A category with no entry falls back
   to the global mode. Two exceptions always ask no matter what a category
   mode (or bypassPermissions, or a blanket session approval) says — see
   resolve_static_decision below: "github-destructive", and any command
@@ -575,9 +574,8 @@ def resolve_static_decision(
     # Per-category default overrides the global mode for everything that
     # follows (including the bypassPermissions check right below) — that's
     # the point: e.g. "always confirm deletes" can hold even when the global
-    # mode is more permissive. A legacy permissions.json with no
-    # "category_modes" key at all, or no entry for this category, behaves as
-    # if no override exists and `mode` is left as the caller passed it.
+    # mode is more permissive. No entry for this category (or a
+    # "category_modes" of null) leaves `mode` as the caller passed it.
     category_mode = (load_permissions().get("category_modes") or {}).get(category)
     if category_mode in VALID_MODES:
         mode = category_mode

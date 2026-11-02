@@ -365,18 +365,8 @@ def _recv_until(sock: socket.socket, marker: bytes, max_bytes: int) -> tuple[byt
     `(head, leftover)` where `head` ends exactly at (and includes) the
     marker and `leftover` is any bytes read PAST it.
 
-    That split matters: a single `recv()` call can return more than one
-    logical message's worth of bytes (e.g. a client that pipelines its
-    CONNECT request and its ClientHello back-to-back, with no delay, is
-    common — some HTTP libraries don't wait for the 200 before starting the
-    TLS handshake). Early versions of this function returned the whole
-    accumulated buffer and callers only ever looked at the first line,
-    silently discarding `leftover` — which then meant the "peek the
-    ClientHello" step in `_handle_connect` blocked on a fresh `recv()` for
-    bytes that had, in fact, already arrived and been read (just dropped),
-    hanging until its own timeout fired. Caught by
-    tests/test_egress_policy.py flaking intermittently; fixed by threading
-    `leftover` through to whichever handler needs it next.
+    The leftover bytes belong to the next message (a pipelined ClientHello
+    after a CONNECT, or a request body), so the caller must forward them.
 
     Raises ValueError/ConnectionError on abuse or hangup — callers treat
     both as "can't service this connection, close it".
