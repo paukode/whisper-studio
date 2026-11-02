@@ -19,6 +19,7 @@
 //   shell → page marker (documentStart, main frame only):
 //       window.__WHISPER_NATIVE_SHELL = true
 
+import AppKit
 import Foundation
 import WebKit
 
@@ -42,20 +43,40 @@ final class ExternalHTMLBridge: NSObject, WKScriptMessageHandler {
         guard message.name == Self.messageHandlerName, message.frameInfo.isMainFrame,
             let html = message.body as? String
         else { return }
-        writeAndOpen(html)
+        if let failure = writeAndOpen(html) {
+            FileHandle.standardError.write(Data("[openExternalHtml] \(failure)\n".utf8))
+            showError(failure, in: message.webView)
+        }
     }
 
-    private func writeAndOpen(_ html: String) {
+    /// Write the HTML to a throwaway file and open it. Returns the failure
+    /// text, or nil when the browser was asked to open it.
+    private func writeAndOpen(_ html: String) -> String? {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("WhisperStudioArtifacts", isDirectory: true)
         let file = dir.appendingPathComponent("artifact-\(UUID().uuidString).html")
         do {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             try html.write(to: file, atomically: true, encoding: .utf8)
-            NSWorkspace.shared.open(file)
         } catch {
-            FileHandle.standardError.write(
-                Data("[openExternalHtml] failed: \(error.localizedDescription)\n".utf8))
+            return "Could not write the page to open: \(error.localizedDescription)"
+        }
+        guard NSWorkspace.shared.open(file) else {
+            return "macOS could not open the page in the default browser."
+        }
+        return nil
+    }
+
+    /// Show the failure as an error toast through the page's
+    /// window.__whisperShellToast hook (src/services/shellToastBridge.ts).
+    private func showError(_ text: String, in webView: WKWebView?) {
+        let js =
+            "window.__whisperShellToast(\(jsStringLiteral(text)), { type: \(jsStringLiteral("error")) });"
+        webView?.evaluateJavaScript(js) { _, error in
+            if let error {
+                FileHandle.standardError.write(
+                    Data("[openExternalHtml] toast failed: \(error.localizedDescription)\n".utf8))
+            }
         }
     }
 }
