@@ -8,7 +8,7 @@ import { recordingController } from '@/services/recordingController';
 import { applyVoiceEvent, mergeSpoken } from '@/services/voiceEvents';
 import { buildHistoryPayload } from '@/hooks/chatStream/history';
 import { VoiceServerEventSchema, VoiceStatusSchema } from '@/types/schemas/voice.schema';
-import { reportConnectWarnings, settleWorkspaceOps } from './workspaceConnection';
+import { reportConnectWarnings, settleWorkspaceOps, syncWorkspaceStatus } from './workspaceConnection';
 import type { ChatMessage, TeamReportData, ToolUseEvent } from '@/types/chat';
 
 /**
@@ -371,17 +371,28 @@ class VoiceController {
     try {
       // A disconnect clicked just before must reach the server first.
       await settleWorkspaceOps();
-      const data = await post<{ path?: string; warnings?: string[] }>('/api/workspace/connect', { path });
-      const connected = data?.path || path;
-      reportConnectWarnings(data?.warnings);
+      const data = await post<{ path: string; warnings?: string[] }>('/api/workspace/connect', { path });
+      const connected = data.path;
+      reportConnectWarnings(data.warnings);
       useUIStore.getState().setWsConnected(true, connected);
       useUIStore.getState().addToast({
         type: 'success',
         message: `Connected to ${connected.split('/').pop() ?? connected}`,
         duration: 2500,
       });
-    } catch {
-      useUIStore.getState().setWsConnected(true, path);
+    } catch (err) {
+      // Say so, and show what the server really holds: never a folder it
+      // refused to connect.
+      useUIStore.getState().addToast({
+        type: 'error',
+        message: `Could not connect ${path}: ${err instanceof Error ? err.message : String(err)}`,
+      });
+      await syncWorkspaceStatus().catch((e: unknown) => {
+        useUIStore.getState().addToast({
+          type: 'error',
+          message: `Could not read the workspace status: ${e instanceof Error ? e.message : String(e)}`,
+        });
+      });
     }
   }
 
