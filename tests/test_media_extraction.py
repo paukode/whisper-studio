@@ -82,6 +82,30 @@ def test_diarize_single_speaker(monkeypatch):
     assert media._diarize(audio, segs) == ["Speaker 1", "Speaker 1", "Speaker 1"]
 
 
+def test_diarize_uses_the_loaded_encoders_thresholds(monkeypatch):
+    """Two similar but different voices (cross similarity about 0.4, inside
+    ReDimNet2's different-speaker band) stay two speakers: file transcription
+    clusters with the loaded encoder's calibration, not ECAPA's numbers."""
+    pytest.importorskip("scipy")
+    import server.diarization.speakers as sp
+    from server.diarization import embedder
+
+    def unit(v):
+        v = np.asarray(v, dtype=np.float32)
+        return v / np.linalg.norm(v)
+
+    e = 0.229  # within-speaker cosine about 0.9
+    a = [unit([1.0, 0.0, e]), unit([1.0, 0.0, -e])]
+    b = [unit([0.43, 0.903, e]), unit([0.43, 0.903, -e])]
+    vecs = iter([a[0], b[0], a[1], b[1], a[0], b[1]])
+    monkeypatch.setattr(sp, "embed", lambda clip: next(vecs))
+    monkeypatch.setattr(embedder, "active_name", lambda: embedder.NAME_REDIMNET)
+    audio = np.zeros(16000 * 20, dtype=np.float32)
+    segs = [{"start": 3 * i, "end": 3 * i + 3} for i in range(6)]
+    labels = media._diarize(audio, segs)
+    assert labels == ["Speaker 1", "Speaker 2"] * 3
+
+
 def test_diarize_falls_back_when_no_embeddings(monkeypatch):
     import server.diarization.speakers as sp
 

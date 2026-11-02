@@ -446,7 +446,8 @@ def _agglomerative(
     matrix: np.ndarray,
     distance_threshold: float,
     expected: int | None = None,
-    single_cluster_dist: float = SINGLE_CLUSTER_DIST,
+    *,
+    single_cluster_dist: float,
 ) -> list[int]:
     """Average-linkage agglomerative clustering on normalized embeddings.
 

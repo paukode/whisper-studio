@@ -2,7 +2,8 @@
 
 Audio is transcribed locally with mlx-whisper (large-v3) into a
 timestamped, speaker-labeled markdown transcript. Speaker labels reuse the
-ECAPA embedding + agglomerative clustering already in server/diarization. Video
+configured speaker encoder (ReDimNet2 by default) and the agglomerative
+clustering already in server/diarization. Video
 uses ffmpeg (via mlx-whisper's loader) for the audio track, and additionally
 samples keyframes whose on-screen text is OCR'd with Apple Vision and merged in
 as timestamped notes. Those same frames are also RETAINED as downscaled JPEGs
@@ -149,7 +150,7 @@ def _diarize(audio, segments) -> list:
     extract_media reports it."""
     import numpy as np
 
-    from server.diarization.speakers import MATCH_THRESHOLD, _agglomerative, embed
+    from server.diarization.speakers import _agglomerative, _thresholds, embed
 
     n = len(segments)
 
@@ -166,10 +167,15 @@ def _diarize(audio, segments) -> list:
     if len(embeddings) < 2:
         return labels
 
+    # The loaded encoder's calibration (read after embedding, so the encoder
+    # is loaded): one encoder's numbers on another's vectors merge distinct
+    # voices into one speaker.
+    t = _thresholds()
     groups = _agglomerative(
         np.stack(embeddings),
-        distance_threshold=1.0 - MATCH_THRESHOLD,
+        distance_threshold=1.0 - t["match"],
         expected=None,
+        single_cluster_dist=t["single"],
     )
 
     # Number speakers by first appearance so labels read in order.
