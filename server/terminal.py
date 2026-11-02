@@ -129,20 +129,12 @@ class _PtySession:
         # reader's read returns). Instead the reader owns the close — it exits
         # once it sees _closing (or the shell dies) and closes the fd after its
         # final read returns. See _pty_reader.
-        had_reader = self._reader_task is not None
         self._closing = True
         try:
             os.kill(self.process.pid, signal.SIGHUP)
         except (ProcessLookupError, OSError):
             pass
         self._reader_task = None
-        if not had_reader:
-            # No reader was ever started (defensive): nobody else will close the
-            # fd, so close it here. Normal sessions always have a reader.
-            try:
-                os.close(self.master_fd)
-            except OSError:
-                pass
         if self.profile_path:
             try:
                 os.unlink(self.profile_path)
@@ -245,7 +237,7 @@ def _create_pty_session(
     Visible sessions use the user's login shell (`zsh -l`) so the prompt
     looks normal. Sandbox sessions use a minimal shell with no rc files
     — predictable PATH, no theming, no plugin output mixed into command
-    results. Falls back to /bin/sh if zsh/bash aren't available.
+    results.
     """
     session_id = uuid.uuid4().hex[:12]
 
@@ -256,15 +248,10 @@ def _create_pty_session(
     fcntl.ioctl(master_fd, termios.TIOCSWINSZ, winsize)
 
     if hidden:
-        # Minimal, deterministic shell for sandbox runs. zsh -f / bash
-        # --norc skip all per-user dotfiles so a fancy prompt theme can't
-        # pollute command output.
-        if os.path.exists("/bin/bash"):
-            shell_cmd = ["/bin/bash", "--noprofile", "--norc"]
-        elif os.path.exists("/bin/zsh"):
-            shell_cmd = ["/bin/zsh", "-f"]
-        else:
-            shell_cmd = ["/bin/sh"]
+        # Minimal, deterministic shell for sandbox runs: bash --norc skips all
+        # per-user dotfiles so a fancy prompt theme can't pollute command
+        # output. /bin/bash ships with every macOS release.
+        shell_cmd = ["/bin/bash", "--noprofile", "--norc"]
     else:
         shell = os.environ.get("SHELL", "/bin/zsh")
         shell_cmd = [shell, "-l"]

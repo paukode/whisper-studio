@@ -122,18 +122,19 @@ def test_kill_defers_fd_close_to_reader(monkeypatch):
     assert 4242 not in closed
 
 
-def test_kill_closes_fd_when_no_reader(monkeypatch):
+def test_a_second_kill_never_closes_the_fd(monkeypatch):
+    # The reader owns the close; a repeated kill() must not close a number
+    # that may already belong to another session or socket.
     sent, closed = [], []
     monkeypatch.setattr(T.os, "kill", lambda pid, sig: sent.append((pid, sig)))
     monkeypatch.setattr(T.os, "close", lambda fd: closed.append(fd))
 
     sess = _mk_session(7777)
-    sess._reader_task = None  # no reader was ever started
+    sess._reader_task = object()
+    sess.kill()
     sess.kill()
 
-    assert sess._closing is True
-    # With no reader to own the close, kill() closes the fd itself.
-    assert 7777 in closed
+    assert 7777 not in closed
 
 
 def test_reader_closes_fd_on_shutdown_flag():
