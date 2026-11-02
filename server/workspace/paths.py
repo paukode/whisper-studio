@@ -339,3 +339,18 @@ def _ws_path_allowed(filepath: str, ws_root: str, session_id: str | None = None)
     if _is_system_path(filepath):
         return False
     return in_own_scratch(filepath, session_id)
+
+
+def ws_path_changeable(filepath: str, ws_root: str, session_id: str | None, bypass: bool) -> bool:
+    """Whether a ws_* file tool may write, edit or delete ``filepath``.
+
+    Outside bypassPermissions: the workspace and the session's own scratch
+    folder (_ws_path_allowed). In bypassPermissions: anywhere on the machine
+    (the user's decision of 2026-11-02: Bypass works like Claude Code's
+    bypass), except the kernel pseudo-filesystems and the scratch folders of
+    other sessions, which no tool may reach in any mode."""
+    if _ws_path_allowed(filepath, ws_root, session_id):
+        return True
+    if not bypass or _is_system_path(filepath):
+        return False
+    return not in_other_scratch(filepath, session_id)

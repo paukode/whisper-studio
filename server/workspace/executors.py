@@ -25,6 +25,7 @@ from server import file_state
 from server.approval.markers import approval_request
 from server.executors import register_executor
 from server.security import secret_reads as secret_reads_policy
+from server.security.permissions import bypass_call
 
 from .commands import (
     _apply_stdin_redirect,
@@ -43,6 +44,7 @@ from .paths import (
     in_other_scratch,
     own_scratch_dir,
     stage_file_bytes,
+    ws_path_changeable,
 )
 from .read_only import _is_read_only_command
 from .state import (
@@ -400,7 +402,7 @@ def _exec_ws_write_file(tool_input, transcript, current_attachments):
     path = tool_input.get("path", "")
     content = _normalize_lf(tool_input.get("content", ""))
     full = os.path.join(ws, path)
-    if not _ws_path_allowed(full, ws, session_id):
+    if not ws_path_changeable(full, ws, session_id, bypass_call(tool_input)):
         return outside_roots_error(path, ws, session_id)
     if not os.path.isfile(full):
         return f"File not found: {path}. Use ws_create_file for new files."
@@ -467,7 +469,7 @@ def _exec_ws_edit_file(tool_input, transcript, current_attachments):
         return "Error: old_string and new_string are identical."
 
     full = os.path.join(ws, path)
-    if not _ws_path_allowed(full, ws, session_id):
+    if not ws_path_changeable(full, ws, session_id, bypass_call(tool_input)):
         return outside_roots_error(path, ws, session_id)
     if not os.path.isfile(full):
         return f"File not found: {path}"
@@ -682,7 +684,7 @@ def _exec_ws_delete_file(tool_input, transcript, current_attachments):
     session_id = tool_input.pop("__session_id__", "")
     path = tool_input.get("path", "")
     full = os.path.join(ws, path)
-    if not _ws_path_allowed(full, ws, session_id):
+    if not ws_path_changeable(full, ws, session_id, bypass_call(tool_input)):
         return outside_roots_error(path, ws, session_id)
     if not os.path.exists(full):
         return f"File not found: {path}"
