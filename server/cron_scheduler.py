@@ -30,15 +30,11 @@ from fastapi import APIRouter
 from server.approval.markers import approval_request
 
 # The run loop lives in cron_run.py (kept out of this file for the size
-# budget) — an asyncio coroutine over the shared chat/engine turn loop,
-# scheduled as a tracked task via _spawn_cron_run below. Re-exported here so
-# the existing names read unchanged. cron_run reaches back for
-# load_cron_jobs / _push_result / _server_loop / the in-progress state
+# budget): an asyncio coroutine over the shared chat/engine turn loop,
+# scheduled as a tracked task via _spawn_cron_run below. cron_run reaches back
+# for load_cron_jobs / _push_result / _server_loop / the in-progress state
 # LAZILY, so this module-level import is not a cycle.
-from server.cron_run import (
-    _assemble_cron_tools,  # noqa: F401  (re-exported for callers/tests)
-    _execute_cron_prompt,
-)
+from server.cron_run import _execute_cron_prompt
 from server.cron_schedule import (
     _parse_dt,
     _zone,
@@ -712,7 +708,6 @@ def _create_job(name, prompt, schedule, session_id, model: str = "") -> dict:
         "schedule": schedule,
         "enabled": True,
         "orphaned": False,
-        "schema_version": 2,
         "run_count": 0,
         "created_at": _utc_now_iso(),
         "last_run": None,
