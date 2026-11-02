@@ -15,7 +15,7 @@ import json
 import logging
 import os
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from server.infrastructure.paths import data_root
 
@@ -247,7 +247,13 @@ def _bones_of(c: dict) -> dict:
 
 @router.get("")
 async def get_buddy():
-    companion = load_buddy()
+    try:
+        companion = load_buddy()
+    except (OSError, ValueError) as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"The companion file {BUDDY_CONFIG_PATH} cannot be read: {exc}",
+        ) from exc
     if not companion:
         bones = roll_companion()
         return {
