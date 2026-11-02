@@ -273,11 +273,12 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
         }
         void (async () => {
           try {
-            const result = await get<Record<string, unknown>>('/api/doctor');
-            const status = String(result.status ?? 'ok');
-            const checks = Array.isArray(result.checks)
-              ? (result.checks as Array<{ check: string; status: string; detail?: string }>)
-              : [];
+            // server/doctor.py always answers {status, checks}.
+            const result = await get<{
+              status: 'ok' | 'warn' | 'error';
+              checks: Array<{ check: string; status: string; detail?: string }>;
+            }>('/api/doctor');
+            const { status, checks } = result;
 
             const sIcon = status === 'ok' ? '✓' : status === 'warn' ? '⚠' : '✗';
             const sColor = status === 'ok' ? 'var(--success)' : status === 'warn' ? 'var(--warning)' : 'var(--danger)';
@@ -286,29 +287,13 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
             const rowStyle: React.CSSProperties = { display: 'flex', alignItems: 'flex-start', gap: 10, padding: '7px 12px', borderBottom: '1px solid var(--border)' };
             const dotStyle = (c: string): React.CSSProperties => ({ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, marginTop: 3, background: c });
 
-            let rows: React.ReactNode[];
-            if (checks.length > 0) {
-              rows = checks.map((c, i) => (
-                <div key={i} style={rowStyle}>
-                  <span style={dotStyle(dotColor(c.status))} />
-                  <span style={{ fontWeight: 500, minWidth: 120, flexShrink: 0 }}>{c.check}</span>
-                  <span style={{ color: 'var(--text-muted)', wordBreak: 'break-all' }}>{c.detail ?? ''}</span>
-                </div>
-              ));
-            } else {
-              rows = Object.entries(result)
-                .filter(([k]) => k !== 'status' && k !== 'checks')
-                .map(([k, v]) => {
-                  const detail = typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v);
-                  return (
-                    <div key={k} style={rowStyle}>
-                      <span style={dotStyle('var(--success)')} />
-                      <span style={{ fontWeight: 500, minWidth: 120, flexShrink: 0 }}>{k}</span>
-                      <span style={{ color: 'var(--text-muted)', wordBreak: 'break-all' }}>{detail}</span>
-                    </div>
-                  );
-                });
-            }
+            const rows = checks.map((c, i) => (
+              <div key={i} style={rowStyle}>
+                <span style={dotStyle(dotColor(c.status))} />
+                <span style={{ fontWeight: 500, minWidth: 120, flexShrink: 0 }}>{c.check}</span>
+                <span style={{ color: 'var(--text-muted)', wordBreak: 'break-all' }}>{c.detail ?? ''}</span>
+              </div>
+            ));
 
             const body = (
               <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden', fontSize: 13 }}>
@@ -449,7 +434,7 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
               type: 'error',
               message: untrusted
                 ? `Workflow '${wfName}' needs one approval first: run it from chat and approve its preview card.`
-                : `Could not run workflow '${wfName}'. Is it saved?`,
+                : `Could not run workflow '${wfName}': ${toError(e).message}`,
               duration: 4000,
             });
           }
