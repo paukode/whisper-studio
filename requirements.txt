@@ -1,15 +1,25 @@
 fastapi==0.136.3
+# Some routes import starlette (server/voice/routes.py) and pydantic request
+# models directly; fastapi only sets a floor for both.
+starlette==1.10.0
+pydantic==2.14.2
 uvicorn[standard]==0.49.0
 # The workspace watcher behind the live file tree (server/workspace/watcher.py).
 # uvicorn[standard] brings it in already; pinned because the app imports it.
 watchfiles==1.2.0
 websockets==16.0
 boto3==1.43.25
+# server/infrastructure/errors.py imports urllib3 (botocore's transport) directly.
+urllib3==2.8.0
 # Voice mode (Nova 2 Sonic) speaks Bedrock's bidirectional stream, which boto3
 # cannot; this Smithy-based SDK (Developer Preview) can, over the awscrt HTTP/2
 # transport (the default aiohttp one has no duplex streaming). Needs Python 3.12+,
 # the app's floor.
 aws-sdk-bedrock-runtime[awscrt]==0.11.0
+# server/voice/sonic_client.py imports the SDK's smithy layers directly; keep
+# them on the release line aws-sdk-bedrock-runtime requires.
+smithy-aws-core==0.11.0
+smithy-http==0.5.0
 numpy==2.4.6
 python-multipart==0.0.32
 Pillow==12.2.0
@@ -18,12 +28,17 @@ markitdown[all]==0.1.6
 pypdfium2==5.9.0
 ocrmac==1.0.1
 # Document-creation tools (create_pdf): pure Python, no system libraries needed.
-# python-pptx and openpyxl (create_pptx/create_xlsx) are already pulled in
-# transitively by markitdown[all], so only reportlab needs adding here.
 reportlab==5.0.0
-# office_script / inspect_document: the Word half of the trio. python-pptx and
-# openpyxl arrive with markitdown above, but nothing pulls in python-docx, and
-# without it a .docx is the one format the model cannot edit.
+# create_pptx/create_xlsx, office_script and inspect_document import these
+# directly; markitdown[all] also pulls them in, pinned here so the document
+# tools do not depend on that extra's tree.
+python-pptx==1.0.2
+openpyxl==3.1.5
+# The docs Q&A HTML reader (server/docs_qa.py).
+beautifulsoup4==4.15.0
+# office_script / inspect_document: the Word half of the trio. Nothing else
+# pulls in python-docx, and without it a .docx is the one format the model
+# cannot edit.
 python-docx==1.2.0
 # SVG geometry lint (create_visual) parses model-authored XML; defusedxml
 # blocks entity-expansion payloads. Already transitive via markitdown, but
@@ -32,6 +47,8 @@ defusedxml==0.7.1
 mcp==1.27.2
 # Runtime tool-input validation against the issued JSON Schema, before execution.
 jsonschema==4.26.0
+# server/tool_inputs.py builds its schema Registry with referencing directly.
+referencing==0.37.0
 tavily-python==0.7.25
 # TLS verification against the OS trust store (macOS keychain), not only the
 # bundled certifi list: the packaged runtime failed every HTTPS fetch behind a
@@ -60,12 +77,18 @@ python-lsp-server==1.14.0
 nodeenv==1.10.0
 ripgrep==15.1.0
 APScheduler==3.11.2
+# SKILL.md front matter (server/folder_skills.py).
+pyyaml==6.0.3
 mlx-whisper==0.4.3
 mlx==0.32.4
 parakeet-mlx==0.5.2
 # MLX-format chat models (server/local/mlx_server.py).
 mlx-lm==0.32.2
 speechbrain==1.1.0
+# Speaker clustering (server/diarization/speakers.py) and the Canary tokenizer
+# (server/asr/canary/tokenizer.py) import these directly.
+scipy==1.18.1
+sentencepiece==0.2.2
 huggingface_hub==1.18.0
 
 # Live browser preview: the assistant-driven preview tools (preview_start/
