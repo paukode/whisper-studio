@@ -98,8 +98,9 @@
     "index_llm": "haiku"
   }
 }</code></pre></div>
-    <p>So a new install starts in <b>local</b> mode: nothing leaves the machine until you switch to
-      hybrid or cloud, and a one-time notice in the app explains the three modes and points at
+    <p>So a new install starts in <b>local</b> mode: none of your data leaves the machine until you
+      switch to hybrid or cloud (the only automatic request is an update check that sends no user
+      data, see <a href="ref-security.html#what-leaves">What leaves the machine</a>), and a one-time notice in the app explains the three modes and points at
       <b>Settings &rarr; Model mode</b>. The <code>backends</code> map is dormant in local mode and
       takes effect the moment you switch to hybrid. Note that the shipped
       <code class="path">config.example.json</code> carries <code>"model_mode": "cloud"</code>, but it

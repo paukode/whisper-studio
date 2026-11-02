@@ -361,8 +361,9 @@ bash setup.sh</code></pre></div>
     </div>
 
     <h2 id="updates">Update to a new release</h2>
-    <p>The app checks GitHub for the newest release. It does this when it starts, and at most a few
-      times each day. The check sends no user data. If the check fails, for example with no network,
+    <p>The app checks GitHub for the newest release. It does this when it starts, and at most once
+      every 6 hours. It does this in every model mode, Local included. The check sends no user data.
+      GitHub sees your IP address. If the check fails, for example with no network,
       the app shows nothing.</p>
     <p>When your version is older than the newest release, a notice shows below the header:
       <i>A newer version of Whisper Studio is available</i>, with the new version number.</p>
