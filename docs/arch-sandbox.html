@@ -34,7 +34,7 @@
     </figure>
 
     <h2 id="the-sandbox">The sandbox, and everything it wraps</h2>
-    <p>Every shell and code-execution path runs under macOS <code>sandbox-exec(5)</code>.
+    <p>Outside Bypass, every shell and code-execution path runs under macOS <code>sandbox-exec(5)</code>.
       <code class="path">server/sandbox.py</code> generates a temporary <code>.sb</code> profile and
       runs <code>sandbox-exec -f profile /bin/sh -c "..."</code>. It has three entry points, and each
       one uses the same profile generator:</p>
@@ -56,8 +56,40 @@
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
       <div class="callout__body"><p><b>No sandbox, no run.</b> When <code>sandbox-exec</code> cannot be
         used, all three entry points raise <code>SandboxUnavailableError</code> and nothing runs, in
-        every write mode. There is no unsandboxed fallback.</p></div>
+        every write mode. There is no unsandboxed fallback. Bypass is not a fallback: it does not
+        use the sandbox at all (see <a href="#bypass">Bypass runs with no sandbox</a>).</p></div>
     </div>
+
+    <h2 id="bypass">Bypass runs with no sandbox</h2>
+    <p>In Bypass (<code>bypassPermissions</code>), commands run with no <code>sandbox-exec</code> and
+      no write limits. This is the same as the bypass mode of Claude Code. All other modes keep the
+      sandbox. Nothing changes for them.</p>
+    <p>The three entry points read a scope in
+      <code class="path">server/security/bypass_sandbox.py</code>. When the scope is on, they run
+      <code>/bin/sh -c "..."</code> directly. They write no profile, and they do not need
+      <code>sandbox-exec</code>. The environment does not change: the GitHub tokens stay removed,
+      and the egress proxy variables and the scratch package caches stay as they are.</p>
+    <p>These commands run with no sandbox in a Bypass turn:</p>
+    <ul>
+      <li><code>ws_run_command</code>, also its read-only path, its 30 s handoff, and its background
+        shells.</li>
+      <li>The hidden shell of <code>terminal_run</code> and the interactive shell of
+        <code>terminal_send</code>. A shell that a confined turn opened is closed and opened again
+        for a Bypass turn, and the other way around.</li>
+      <li><code>run_python</code>, <code>aws_cli</code>, and <code>office_script</code>.</li>
+      <li>Hooks (SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Stop) and goal quality
+        gates.</li>
+      <li>The commands of the subagents and workflows that the Bypass turn starts. A workflow keeps
+        the scope of the turn or the person that started it.</li>
+      <li>A command on an approval card that you approve while the app is in Bypass.</li>
+    </ul>
+    <p>These runs keep the sandbox: all modes other than Bypass, a scheduled cron job (also when a
+      Bypass turn made the job), and a headless run that no Bypass turn started.</p>
+    <p>Because there is no sandbox, setuid programs such as <code>/bin/ps</code> run, a nested
+      <code>sandbox-exec</code> runs (for example the test suite of a project that uses it), and a
+      write outside the workspace succeeds. <code>sandbox_permissions="danger-full-access"</code>
+      has no meaning in Bypass. The executors accept it and ignore it, with no justification
+      check. A failed command in Bypass does not get a sandbox-denial hint.</p>
 
     <h2 id="write-modes">Three write modes</h2>
     <p>The deny-list above is only half the profile. The other half is how much of the filesystem the
@@ -149,7 +181,7 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Permission mode</th><th>Read of a credential store</th></tr></thead>
       <tbody>
-        <tr><td>Bypass (<code>bypassPermissions</code>)</td><td>Every read tool and every command reads the stores with no card. The sandbox keeps a write-only deny on them, so nothing writes them.</td></tr>
+        <tr><td>Bypass (<code>bypassPermissions</code>)</td><td>Every read tool and every command reads the stores with no card. Commands run with no sandbox in Bypass, so the write deny does not apply to them (see <a href="#bypass">Bypass runs with no sandbox</a>).</td></tr>
         <tr><td>Don't ask (<code>dontAsk</code>)</td><td>Refused.</td></tr>
         <tr><td>Asks first, Accept edits, Plan, Auto</td><td>A person approves each read, every time. The Auto classifier never decides it, and a remembered "Yes, all" for commands never covers it.</td></tr>
         <tr><td>Unattended runs (subagents, scheduled cron jobs), outside Bypass</td><td>Refused, because no person can answer the card. Agents and cron run in default mode, so in practice they never read secrets.</td></tr>
@@ -392,6 +424,7 @@
       <dt><code class="path">server/security/sensitive_env.py</code></dt><dd>The credential environment denylist shared by sandboxed shells and MCP child processes.</dd>
       <dt><code class="path">server/security/egress_policy.py</code></dt><dd>The opt-in network egress tiers and the SNI-filtering local proxy.</dd>
       <dt><code class="path">server/security/sensitive_paths.py</code></dt><dd>The single source of truth for the secret-path deny-list, shaped for both consumers.</dd>
+      <dt><code class="path">server/security/bypass_sandbox.py</code></dt><dd>The scope that runs the commands of a Bypass turn with no sandbox, and who sets it.</dd>
       <dt><code class="path">server/security/secret_reads.py</code></dt><dd>The policy for reads of the credential stores, per permission mode.</dd>
       <dt><code class="path">server/security/command_validator.py</code></dt><dd>The regex validators and <code>validate_command()</code>.</dd>
       <dt><code class="path">server/executors/code.py</code></dt><dd>The AWS read-only guard and the sandboxed <code>run_python</code> / <code>aws_cli</code> executors.</dd>

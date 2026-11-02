@@ -105,7 +105,7 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Mode</th><th>Read of a credential store</th></tr></thead>
       <tbody>
-        <tr><td><b>Bypass</b></td><td>All read tools and commands read them without a card.</td></tr>
+        <tr><td><b>Bypass</b></td><td>All read tools and commands read them without a card. Commands run with no sandbox, so they can also write them.</td></tr>
         <tr><td><b>"Don't ask"</b></td><td>Refused.</td></tr>
         <tr><td><b>Asks first</b>, <b>Accept edits</b>, <b>Plan</b>, <b>Auto</b></td><td>You approve each read. The Auto classifier does not decide it. A "Yes, all" for commands does not approve it.</td></tr>
       </tbody>
@@ -114,8 +114,8 @@
       <code>codesign</code>, or <code>notarytool</code>, which use the login Keychain. For these
       commands, the card summary starts with "READS THE KEYCHAIN AND CREDENTIAL STORES:". This card
       does not keep your answer for the session. Subagents and scheduled jobs cannot read the stores
-      outside Bypass, because no person can answer the card. No mode lets a tool write to a credential
-      store.</p>
+      outside Bypass, because no person can answer the card. Outside Bypass, no mode lets a tool write
+      to a credential store.</p>
 
     <h2 id="category-modes">Per-category modes</h2>
     <p>The global mode applies to all actions. To set a different mode for one <em>type</em> of
@@ -328,15 +328,19 @@
 
     <h2 id="hard-guards">The guards that stay on</h2>
     <p>Modes and rules control <em>consent</em>: if the app asks you or not. Below them are two
-      guards that apply in all modes, also <code>bypassPermissions</code>. These guards are the real
-      security boundary.</p>
+      guards. These guards are the real security boundary. The command validator applies in all
+      modes. The sandbox applies in all modes except <code>bypassPermissions</code>.</p>
     <div class="cols-2">
       <div class="card">
-        <h3>All commands run in the sandbox</h3>
+        <h3>Commands run in the sandbox, except in Bypass</h3>
         <p>Each shell command and each Python run is in the macOS kernel sandbox
           (<code>sandbox-exec</code>). The sandbox applies the file and network policy at the OS level.
           An approval lets a command <em>run</em>. It does not remove the sandbox. If the sandbox is
           not available, the app does not run the command.</p>
+        <p>In Bypass, commands run with no sandbox, the same as in Claude Code. The subagents and
+          workflows that a Bypass chat starts also run with no sandbox. Scheduled jobs keep the
+          sandbox. Thus in Bypass a command can run <code>/bin/ps</code>, run a test suite that uses
+          <code>sandbox-exec</code>, and write outside the workspace.</p>
       </div>
       <div class="card">
         <h3>The app blocks destructive patterns</h3>
@@ -416,7 +420,7 @@
       <dt><code class="path">acceptEdits</code></dt><dd>Use it for a long edit task. You trust the edits, but you want a question before deletes and commands.</dd>
       <dt><code class="path">auto</code></dt><dd>Use it for fewer questions. The classifier approves the safe writes.</dd>
       <dt><code class="path">dontAsk</code></dt><dd>Use it for read-only work. The assistant does not write, and the app does not ask you.</dd>
-      <dt><code class="path">bypassPermissions</code></dt><dd>Use it only for a scratch workspace. Do not use it for important work.</dd>
+      <dt><code class="path">bypassPermissions</code></dt><dd>Use it only for a scratch workspace. Do not use it for important work. Commands run with no OS sandbox in this mode.</dd>
     </dl>
 
     <h2 id="how-it-fits">How this fits the pipeline</h2>
