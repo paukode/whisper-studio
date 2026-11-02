@@ -191,12 +191,15 @@ log "[b] Python runtime ($PYTHON_TARBALL)"
 PY_DIR="$BUILD_DIR/python"
 PY_BIN="$PY_DIR/bin/python3"
 download "$PYTHON_URL" "$DL_DIR/$PYTHON_TARBALL" "$PYTHON_SHA256"
-if [[ -x "$PY_BIN" ]]; then
+# The stamp names the extracted tarball, so a new pin re-extracts instead of
+# reusing the previous runtime.
+if [[ -x "$PY_BIN" && "$(cat "$PY_DIR/.tag" 2>/dev/null)" == "$PYTHON_TARBALL" ]]; then
     substep "runtime already extracted: $PY_DIR"
 else
     rm -rf "$PY_DIR"
     tar -xzf "$DL_DIR/$PYTHON_TARBALL" -C "$BUILD_DIR"   # tarball root is python/
     [[ -x "$PY_BIN" ]] || die "python3 missing after extracting $PYTHON_TARBALL"
+    echo "$PYTHON_TARBALL" > "$PY_DIR/.tag"
 fi
 
 REQ_STAMP="$PY_DIR/.requirements.sha256"
@@ -310,6 +313,11 @@ fi
 
 log "[d] ffmpeg + ffprobe ($FFMPEG_BUILD_ID)"
 FFMPEG_DIR="$BUILD_DIR/ffmpeg"
+# The stamp names the build, so a new pin unzips again instead of reusing the
+# previous binaries.
+if [[ "$(cat "$FFMPEG_DIR/.tag" 2>/dev/null)" != "$FFMPEG_BUILD_ID" ]]; then
+    rm -rf "$FFMPEG_DIR"
+fi
 mkdir -p "$FFMPEG_DIR"
 download "$FFMPEG_ZIP_URL" "$DL_DIR/ffmpeg-$FFMPEG_BUILD_ID.zip" "$FFMPEG_ZIP_SHA256"
 download "$FFPROBE_ZIP_URL" "$DL_DIR/ffprobe-$FFMPEG_BUILD_ID.zip" "$FFPROBE_ZIP_SHA256"
@@ -325,6 +333,7 @@ for tool in ffmpeg ffprobe; do
         || die "$tool failed to run ($tool -version)"
     substep "$tool ok ($("$FFMPEG_DIR/$tool" -version 2>/dev/null | head -1 | cut -d' ' -f1-3))"
 done
+echo "$FFMPEG_BUILD_ID" > "$FFMPEG_DIR/.tag"
 
 # ---------------------------------------------------------------------------
 # Stage e: node (bin/node only)
@@ -333,7 +342,9 @@ done
 log "[e] node ($NODE_VERSION)"
 NODE_DIR="$BUILD_DIR/node"
 download "$NODE_URL" "$DL_DIR/$NODE_TARBALL" "$NODE_SHA256"
-if [[ -x "$NODE_DIR/node" ]]; then
+# The stamp names the version, so a new .nvmrc pin re-extracts instead of
+# reusing the previous node.
+if [[ -x "$NODE_DIR/node" && "$(cat "$NODE_DIR/.tag" 2>/dev/null)" == "$NODE_VERSION" ]]; then
     substep "already extracted: $NODE_DIR/node"
 else
     rm -rf "$NODE_DIR"
@@ -341,6 +352,7 @@ else
     tar -xzf "$DL_DIR/$NODE_TARBALL" -C "$NODE_DIR" --strip-components=2 \
         "node-${NODE_VERSION}-darwin-arm64/bin/node"
     [[ -x "$NODE_DIR/node" ]] || die "node missing after extraction"
+    echo "$NODE_VERSION" > "$NODE_DIR/.tag"
 fi
 
 # ---------------------------------------------------------------------------
