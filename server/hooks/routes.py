@@ -80,7 +80,7 @@ def _hook_from_body(body: dict, *, hook_id: str = "") -> HookDef | JSONResponse:
     return HookDef(
         event=event,
         command=command,
-        matcher=body.get("matcher", body.get("tool", "*")) or "*",
+        matcher=body.get("matcher") or "*",
         timeout=int(body.get("timeout", DEFAULT_TIMEOUT) or DEFAULT_TIMEOUT),
         enabled=bool(body.get("enabled", True)),
         on_error=body.get("on_error", "ignore"),

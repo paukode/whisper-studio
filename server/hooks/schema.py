@@ -110,7 +110,7 @@ def normalize_config(raw: dict | list | None, *, source: str) -> dict[str, list[
                 HookDef(
                     event=ev,
                     command=cmd,
-                    matcher=d.get("matcher", d.get("tool", "*")),
+                    matcher=d.get("matcher", "*"),
                     timeout=d.get("timeout", DEFAULT_TIMEOUT),
                     enabled=d.get("enabled", True),
                     on_error=d.get("on_error", "ignore"),
