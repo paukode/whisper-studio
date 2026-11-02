@@ -18,7 +18,7 @@ Every call goes through the [WS_APPROVAL] → approval_request pipeline.
 The approval card shows the literal command + mode.
 
 Non-interactive only. Commands that wait for stdin (vim, less, ssh password
-prompts) get caught by `_LOOKS_INTERACTIVE` and refused at validation, so
+prompts) get caught by `_looks_interactive` and refused at validation, so
 they never reach the PTY and can't hang the chat turn.
 """
 
@@ -363,8 +363,9 @@ async def do_terminal_run(payload: dict) -> tuple[bool, str]:
     write_mode = "open"
     if mode == "sandbox":
         # The harness confines by default: every sandboxed run is
-        # workspace-write (writes limited to cwd + temp by the OS), whether a
-        # human approved it or an agent auto-ran it. Consent (approval) and
+        # workspace-write (writes limited by the OS to the workspace, this
+        # session's scratch folder and temp), whether a human approved it or
+        # an agent auto-ran it. Consent (approval) and
         # confinement (sandbox) are independent — approving a command does not
         # widen the sandbox; only an explicit danger-full-access escalation
         # does, and resolve_static_decision forces a per-call approval for

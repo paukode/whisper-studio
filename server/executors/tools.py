@@ -1,15 +1,9 @@
 """Native tool schemas for the executor-backed core tools.
 
-Pure data — no imports, no side effects (mirrors server/agent_tools/schemas.py).
-The implementations live in sibling modules (code.py, web.py, terminal_run.py)
-and are dispatched by name through the bare-executor fallthrough in
-server/skills.execute_tool.
-
-These tools used to be defined as executor-backed skill files under /skills/,
-which made core product capabilities editable and deletable from the Skills
-panel while the permission, sandbox, and approval layers referenced their
-names in code. Their model-facing schemas now ship here, next to their
-executors; /skills/ holds only user-authored prompt skills.
+Pure data: no imports, no side effects (mirrors server/agent_tools/schemas.py).
+The implementations live in sibling modules (code.py, content.py, web.py,
+terminal_run.py, tool_script.py) and are dispatched by name through the
+bare-executor fallthrough in server/skills.execute_tool.
 """
 
 # The ``secret_access`` property of the command tools (run_python,

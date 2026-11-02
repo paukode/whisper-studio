@@ -171,7 +171,8 @@ def _python_write_mode(payload: dict) -> tuple[str, str]:
 
 def do_run_python(payload: dict) -> tuple[bool, str]:
     """Execute previously approved Python under the OS sandbox (the real
-    boundary — see module docstring). Returns (ok, output_or_error)."""
+    boundary: see the guard comment above _AWS_READ_PREFIXES). Returns
+    (ok, output_or_error)."""
     code = payload.get("code", "")
     if not code:
         return False, "no code provided"
