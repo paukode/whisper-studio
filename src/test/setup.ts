@@ -10,7 +10,6 @@ import '@testing-library/jest-dom';
 import './mocks/localStorage';
 import './mocks/broadcastChannel';
 import './mocks/webSocket';
-import './mocks/mediaRecorder';
 import './mocks/matchMedia';
 import './mocks/resizeObserver';
 

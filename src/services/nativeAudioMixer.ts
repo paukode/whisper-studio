@@ -84,10 +84,4 @@ export class NativeAudioMixer {
     return micFrame;
   }
 
-  reset(): void {
-    this.chunks = [];
-    this.length = 0;
-    this.readOffset = 0;
-    this.overflowLogged = false;
-  }
 }
