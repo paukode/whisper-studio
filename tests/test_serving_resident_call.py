@@ -352,6 +352,36 @@ def test_one_shot_raises_instead_of_returning_empty(monkeypatch):
         serving.complete("model_a", "sys", "user", 120)
 
 
+def test_a_prose_caller_keeps_an_answer_cut_off_at_its_budget(monkeypatch):
+    """Chunk context and entity descriptions used the cut-off text before
+    (and still do on the Haiku path); only they pass allow_truncated."""
+    _one_shot(monkeypatch, lambda body: _answer("partial", finish="length"))
+    assert serving.complete("model_a", "sys", "user", 120, allow_truncated=True) == "partial"
+    _one_shot(monkeypatch, lambda body: _answer("", finish="length"))
+    with pytest.raises(serving.ResidentCallError, match="empty"):
+        serving.complete("model_a", "sys", "user", 120, allow_truncated=True)
+
+
+@pytest.mark.parametrize("module", ["contextualize", "descriptions"])
+def test_the_index_prose_callers_accept_a_cut_off_answer(monkeypatch, module):
+    import importlib
+
+    from server.index import engines
+
+    mod = importlib.import_module(f"server.index.{module}")
+    seen = {}
+
+    def fake_complete(key, system, user, max_tokens=1500, *, allow_truncated=False):
+        seen["allow_truncated"] = allow_truncated
+        return "text"
+
+    monkeypatch.setattr(engines, "resolve_local_model", lambda engine: "model_a")
+    monkeypatch.setattr(runtime, "is_downloaded", lambda key: True)
+    monkeypatch.setattr(runtime, "complete", fake_complete)
+    assert mod._complete("sys", "user", "local") == "text"
+    assert seen["allow_truncated"] is True
+
+
 def test_runtime_complete_refuses_a_cloud_key():
     with pytest.raises(ValueError, match="not an on-device model"):
         runtime.complete("sonnet5", "sys", "user")

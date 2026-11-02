@@ -67,7 +67,9 @@ def _complete(system: str, user: str, engine: str) -> str:
             if not local_rt.is_downloaded(local_key):
                 log.warning("entity descriptions: %s not downloaded; skipping", local_key)
                 return ""
-            return local_rt.complete(local_key, system, user, max_tokens=1200)
+            # Descriptions cut off at the budget are still used, as on the
+            # Haiku path below.
+            return local_rt.complete(local_key, system, user, max_tokens=1200, allow_truncated=True)
         from server.chat.infra import _get_bedrock_client, _get_chat_models
 
         model_id = _get_chat_models().get("haiku")

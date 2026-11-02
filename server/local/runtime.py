@@ -212,9 +212,17 @@ def loaded_key() -> str | None:
     return serving.resident_key()
 
 
-def complete(key: str, system_prompt: str, user: str, max_tokens: int = 1500) -> str:
+def complete(
+    key: str,
+    system_prompt: str,
+    user: str,
+    max_tokens: int = 1500,
+    *,
+    allow_truncated: bool = False,
+) -> str:
     """One-shot, NON-streaming generation; returns the assistant text and
-    raises on any failure (see ``serving.complete``). Blocking: starts the
+    raises on any failure (see ``serving.complete``, which also explains
+    ``allow_truncated``). Blocking: starts the
     model server if needed, so call it off the event loop.
 
     The entry point for non-chat callers (workspace-index relations,
@@ -225,7 +233,7 @@ def complete(key: str, system_prompt: str, user: str, max_tokens: int = 1500) ->
         raise ValueError(f"{key} is not an on-device model")
     from server.local import serving
 
-    return serving.complete(key, system_prompt, user, max_tokens)
+    return serving.complete(key, system_prompt, user, max_tokens, allow_truncated=allow_truncated)
 
 
 _LOCAL_SYSTEM_BASE = (

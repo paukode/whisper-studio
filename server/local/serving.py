@@ -460,7 +460,12 @@ def _server_error_message(r) -> str:
     return (r.text or "").strip()[:200] or "no message"
 
 
-def _resident_answer(r, max_tokens: int) -> str:
+def _resident_answer(r, max_tokens: int, *, allow_truncated: bool = False) -> str:
+    """The answer text of a non-streaming chat-completions response. Raises
+    ResidentCallError for an HTTP error, a malformed or empty answer, and,
+    unless ``allow_truncated``, an answer that ran past ``max_tokens``.
+    ``allow_truncated`` is for prose callers that use a cut-off answer as it
+    is; JSON callers keep the default, since a cut-off JSON does not parse."""
     if r.status_code >= 400:
         raise ResidentCallError(
             f"the model server answered HTTP {r.status_code}: {_server_error_message(r)}"
@@ -472,7 +477,7 @@ def _resident_answer(r, max_tokens: int) -> str:
     choices = (data.get("choices") if isinstance(data, dict) else None) or []
     if not choices or not isinstance(choices[0], dict):
         raise ResidentCallError("the model server returned no answer")
-    if choices[0].get("finish_reason") == "length":
+    if choices[0].get("finish_reason") == "length" and not allow_truncated:
         raise ResidentCallError(f"the answer ran past its {max_tokens}-token budget")
     msg = choices[0].get("message") or {}
     text = llama_server._strip_reasoning_markers(msg.get("content") or "")
@@ -557,7 +562,14 @@ async def complete_on_resident(
         end_turn()
 
 
-def complete(key: str, system_prompt: str, user: str, max_tokens: int = 1500) -> str:
+def complete(
+    key: str,
+    system_prompt: str,
+    user: str,
+    max_tokens: int = 1500,
+    *,
+    allow_truncated: bool = False,
+) -> str:
     """One-shot, NON-streaming generation; returns the assistant text.
     Blocking: starts the model server if it isn't already serving ``key``, so
     call it off the event loop.
@@ -569,7 +581,9 @@ def complete(key: str, system_prompt: str, user: str, max_tokens: int = 1500) ->
     temperature 0 and thinking off for a thinking model, so a small budget is
     not spent on reasoning. Raises (the server could not start, an HTTP error,
     ResidentCallError for an answer that ran out of budget or held only
-    reasoning); it never returns an empty string.
+    reasoning); it never returns an empty string. ``allow_truncated`` returns
+    an answer cut off at ``max_tokens`` instead of raising, for prose callers
+    (chunk context, entity descriptions) that use it as it is.
     """
     import httpx
 
@@ -589,4 +603,4 @@ def complete(key: str, system_prompt: str, user: str, max_tokens: int = 1500) ->
     if thinking.caps_for(key).can_think:
         body.update(thinking.off_fields(mlx=engine_of(key) == "mlx"))
     r = httpx.post(f"{url}/v1/chat/completions", json=body, timeout=_ONESHOT_TIMEOUT)
-    return _resident_answer(r, max_tokens)
+    return _resident_answer(r, max_tokens, allow_truncated=allow_truncated)
