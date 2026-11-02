@@ -24,7 +24,7 @@ def test_backends_expose_contract():
         mod = asr.get_backend(name)
         assert hasattr(mod, "executor"), name
         assert callable(mod.create_session), name
-        assert callable(mod.preload), name
+    assert callable(asr.get_backend("parakeet").preload)
 
 
 class _StubBuffer:
@@ -170,7 +170,6 @@ def _warm_calls(monkeypatch, backend_name, installed=lambda entry: True):
 
     calls: list[str] = []
     monkeypatch.setattr(pk, "preload", lambda: calls.append("parakeet"))
-    monkeypatch.setattr(wh, "preload", lambda: calls.append("whisper"))
     monkeypatch.setattr(wh, "_ensure_model", lambda: calls.append("whisper-download"))
     try:
         import server.diarization as diar

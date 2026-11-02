@@ -9,14 +9,17 @@ Every backend is a self-contained module exposing:
         session call through this executor and never runs model code on
         the event loop.
 
-    create_session() -> AsrSession
+    create_session()
         Build one per-connection decoding session. Called on ``executor``
         so model load/warmup happens on the right thread.
 
-    preload() -> None
-        Optional eager model load for startup warmup. Best-effort.
+Parakeet also exposes ``preload()``, the eager load server/main.py runs at
+startup when it is the configured engine.
 
-Sessions are duck-typed to the protocol below. Events are plain dicts:
+Sessions are duck-typed: ``process(raw_pcm: bytes) -> list[dict]`` feeds one
+PCM16 mono 16 kHz chunk and returns ordered events, ``finish() -> list[dict]``
+flushes any in-flight utterance as final (stop / backend switch), and
+``close()`` releases decoder state (disconnect). Events are plain dicts:
 
     {"kind": "interim", "text": str}
         Volatile word-by-word draft of the in-flight utterance. May
@@ -50,7 +53,6 @@ registry line — nothing else imports backend internals.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Protocol
 
 
 def withdrawal(
@@ -71,17 +73,3 @@ def withdrawal(
     if error is not None:
         return {"draft": draft, "reason": "final decode failed", "error": error}
     return {"draft": draft, "reason": "no words in the final decode", "decoded": list(decoded)}
-
-
-class AsrSession(Protocol):
-    def process(self, raw_pcm: bytes) -> list[dict]:
-        """Feed one PCM16 mono 16 kHz chunk; return ordered events."""
-        ...
-
-    def finish(self) -> list[dict]:
-        """Flush any in-flight utterance as final (stop / backend switch)."""
-        ...
-
-    def close(self) -> None:
-        """Release decoder state (disconnect)."""
-        ...

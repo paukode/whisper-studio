@@ -70,10 +70,6 @@ def _ensure_model() -> str:
     return os.path.abspath(CANARY_MODEL_DIR)
 
 
-def is_loaded() -> bool:
-    return _model is not None
-
-
 def load() -> None:
     """Load the model into memory (mirrors mlx-audio's base_load_model steps,
     minus its quantization/remapping branches the fp16 repo never hits). The
@@ -100,22 +96,6 @@ def load() -> None:
         # Loads the SentencePiece tokenizer from the model dir.
         _model = Model.post_load_hook(model, model_dir)
         log.info("Canary model loaded.")
-
-
-def unload() -> None:
-    """Release the weights."""
-    global _model
-    _model = None
-    try:
-        import mlx.core as mx
-
-        mx.clear_cache()
-    except Exception as e:
-        log.debug("Canary mx cache clear on unload failed: %s", e)
-    import gc
-
-    gc.collect()
-    log.info("Canary model unloaded.")
 
 
 def _lid(audio: np.ndarray, candidates: tuple[str, ...]) -> tuple[str | None, float]:

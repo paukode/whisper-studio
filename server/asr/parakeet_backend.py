@@ -152,28 +152,6 @@ def load() -> None:
     _get_model()
 
 
-def unload() -> None:
-    """Release the model from memory (local mode, on engine switch).
-
-    Call AFTER any session holding a reference has been dropped, otherwise
-    the weights aren't freed until that reference goes away. Runs on
-    ``executor`` so the MLX free happens on the owning thread.
-    """
-    global _model, _get_logmel
-    _model = None
-    _get_logmel = None
-    try:
-        import mlx.core as mx
-
-        mx.clear_cache()
-    except Exception as e:  # best-effort
-        log.debug("Parakeet cache clear on unload failed: %s", e)
-    import gc
-
-    gc.collect()
-    log.info("Parakeet model unloaded.")
-
-
 def _words_from_result(result) -> list[dict]:
     """AlignedResult -> [{text, start, end}] at WORD granularity.
 

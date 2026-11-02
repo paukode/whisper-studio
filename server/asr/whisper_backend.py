@@ -218,18 +218,6 @@ def _ensure_model() -> str:
     return os.path.abspath(WHISPER_MODEL_DIR)
 
 
-def preload() -> None:
-    """Eagerly load the model into memory (startup warmup, best-effort).
-
-    Runs ``load()`` on ``executor`` so mlx-whisper's ModelHolder is populated
-    on the same thread its sessions decode on — the first real utterance is
-    then instant. Mirrors Parakeet's ``preload()`` so the configured engine is
-    memory-resident at startup whichever backend is selected (not merely on
-    disk). ``load()`` ensures the weights are downloaded first.
-    """
-    executor.submit(load).result()
-
-
 def _model_holder():
     """mlx-whisper caches the loaded model on a class (transcribe.ModelHolder
     with class-level `model`/`model_path`), not an lru_cache — this is the

@@ -1,9 +1,7 @@
 """Vendored-support shims for the Canary module (see __init__.py provenance).
 
-``STTOutput`` mirrors mlx_audio/stt/models/base.py; ``load_audio`` delegates
-to mlx-whisper's ffmpeg-backed loader (already bundled) instead of pulling in
-mlx-audio's miniaudio/soundfile stack. The backend always feeds float32
-arrays, so ``load_audio`` only runs when a caller passes a file path.
+``STTOutput`` mirrors mlx_audio/stt/models/base.py. The backend always feeds
+float32 arrays, so no audio file loader is vendored.
 """
 
 from __future__ import annotations
@@ -22,10 +20,3 @@ class STTOutput:
     prompt_tps: float = 0.0
     generation_tps: float = 0.0
     total_time: float = 0.0
-
-
-def load_audio(path, sample_rate: int = 16000):
-    import mlx.core as mx
-    from mlx_whisper.audio import load_audio as whisper_load_audio
-
-    return mx.array(whisper_load_audio(str(path), sr=sample_rate))
