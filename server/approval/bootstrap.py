@@ -262,7 +262,7 @@ def register_defaults() -> None:
         mode = p.get("mode") or "sandbox"
         if (p.get("sandbox_permissions") or "").strip() == "danger-full-access":
             reason = (p.get("justification") or "no justification given").strip()
-            return f"FULL FILESYSTEM ACCESS: {reason} (terminal_run [{mode}]: {cmd})"
+            return f"WRITES ANYWHERE (STILL SANDBOXED): {reason} (terminal_run [{mode}]: {cmd})"
         return f"terminal_run [{mode}]: {cmd}"
 
     def _terminal_run_command(p: dict) -> str:
@@ -275,8 +275,9 @@ def register_defaults() -> None:
             preview="command",
             summary=_terminal_run_summary,
             # Sandbox runs are workspace-write confined by default; an
-            # escalated (danger-full-access) run is unconfined, so its card
-            # says so in the summary and carries the model's justification.
+            # escalated (danger-full-access) run may write anywhere (it still
+            # runs under sandbox-exec), so its card says so in the summary and
+            # carries the model's justification.
             executor=_do_terminal_run,
             risk_hint="medium",
             payload_fields=[
@@ -527,7 +528,7 @@ def register_defaults() -> None:
         label = "Run Python: " + first[:80] + ("…" if len(first) > 80 else "")
         if (p.get("sandbox_permissions") or "").strip() == "danger-full-access":
             reason = (p.get("justification") or "no justification given").strip()
-            return f"FULL FILESYSTEM ACCESS: {reason} ({label})"
+            return f"WRITES ANYWHERE (STILL SANDBOXED): {reason} ({label})"
         return label
 
     register(
