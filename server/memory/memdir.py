@@ -240,7 +240,8 @@ def rebuild_index(memory_dir: str) -> None:
     capped at the entrypoint line limit. Called after every memory write or
     delete, so the index can never drift from the store. Direct writes to
     MEMORY.md stay blocked in the executor; this is the only writer.
-    Best-effort: an unwritable index must never fail the memory operation.
+    Raises OSError when the index cannot be written or removed, so the
+    caller reports that the index is stale.
     """
     from server.memory.scan import scan_memory_files
 
@@ -268,7 +269,7 @@ def rebuild_index(memory_dir: str) -> None:
         except FileNotFoundError:
             pass
         except OSError as e:
-            log.warning("Failed to remove empty memory index %s: %s", path, e)
+            raise OSError(f"the memory index {path} was not removed: {e}") from e
         return
 
     content = (
@@ -283,8 +284,8 @@ def rebuild_index(memory_dir: str) -> None:
             f.write(content)
         os.replace(tmp_path, path)
     except OSError as e:
-        log.warning("Failed to rebuild memory index %s: %s", path, e)
         try:
             os.remove(tmp_path)
-        except OSError:
+        except FileNotFoundError:
             pass
+        raise OSError(f"the memory index {path} was not rebuilt: {e}") from e

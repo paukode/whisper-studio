@@ -243,33 +243,26 @@ def _fork_route(fork) -> bool:
     on, the provider can be forked, and ``auxiliary_models.learning_review``
     is unset, "main", or the turn's own model. A different configured model
     means the user wants the cheaper excerpt-based agent on that model."""
-    try:
-        from server.infrastructure.auxiliary import MAIN, aux_model_key
-        from server.infrastructure.feature_flags import is_enabled
-        from server.memory.review_fork import supports_fork
+    from server.infrastructure.auxiliary import MAIN, aux_model_key
+    from server.infrastructure.feature_flags import is_enabled
+    from server.memory.review_fork import supports_fork
 
-        if not is_enabled("learning_review_fork") or not supports_fork(fork.adapter):
-            return False
-        key = aux_model_key("learning_review", MAIN)
-        return key in (MAIN, fork.model_key)
-    except Exception as e:  # noqa: BLE001
-        log.debug("review fork routing failed (%s); using the extraction agent", e)
+    if not is_enabled("learning_review_fork") or not supports_fork(fork.adapter):
         return False
+    key = aux_model_key("learning_review", MAIN)
+    return key in (MAIN, fork.model_key)
 
 
 def _review_model_override(model_id: str) -> str | None:
     """Explicit model for the excerpt-based agent when ``learning_review`` names
     a chat_models key other than the session model; None keeps ``model_id``."""
-    try:
-        from server.chat.infra import _get_chat_models
-        from server.infrastructure.auxiliary import MAIN, aux_model_key
+    from server.chat.infra import _get_chat_models
+    from server.infrastructure.auxiliary import MAIN, aux_model_key
 
-        key = aux_model_key("learning_review", MAIN)
-        if key == MAIN:
-            return None
-        return _get_chat_models().get(key) or None
-    except Exception:  # noqa: BLE001
+    key = aux_model_key("learning_review", MAIN)
+    if key == MAIN:
         return None
+    return _get_chat_models().get(key) or None
 
 
 async def _run_review_fork(
@@ -316,25 +309,25 @@ async def _run_review_fork(
 
 def _skills_snapshot() -> dict[str, tuple]:
     """(skill name) -> (mtime, size) of every skill's markdown, for change detection."""
-    out: dict[str, tuple] = {}
-    try:
-        import server.skills as _sk
+    import server.skills as _sk
 
-        for name, skill in (_sk.SKILLS or {}).items():
-            path = None
-            if skill.get("skill_dir"):
-                for fn in ("SKILL.md", "skill.md"):
-                    cand = os.path.join(skill["skill_dir"], fn)
-                    if os.path.isfile(cand):
-                        path = cand
-                        break
-            if path:
+    out: dict[str, tuple] = {}
+    for name, skill in (_sk.SKILLS or {}).items():
+        path = None
+        if skill.get("skill_dir"):
+            for fn in ("SKILL.md", "skill.md"):
+                cand = os.path.join(skill["skill_dir"], fn)
+                if os.path.isfile(cand):
+                    path = cand
+                    break
+        if path:
+            try:
                 st = os.stat(path)
-                out[name] = (st.st_mtime, st.st_size)
-            else:
-                out[name] = (0, len(skill.get("body") or ""))
-    except Exception:  # noqa: BLE001
-        pass
+            except FileNotFoundError:
+                continue  # deleted since the isfile check
+            out[name] = (st.st_mtime, st.st_size)
+        else:
+            out[name] = (0, len(skill.get("body") or ""))
     return out
 
 
@@ -458,12 +451,8 @@ def publish_memory_event(session_id: str, **payload) -> None:
 
     Extraction finishes after the chat SSE closed, so the per-turn stream
     cannot carry this; the /api/sessions/{id}/events channel (also used for
-    cron events) outlives the turn. Best-effort: an event bus hiccup must
-    never affect the extraction itself.
+    cron events) outlives the turn. A failure reaches the caller's handler.
     """
-    try:
-        from server.agents.event_bus import event_bus
+    from server.agents.event_bus import event_bus
 
-        event_bus.publish(session_id, {"type": "memory_event", "memoryEvent": payload})
-    except Exception as e:
-        log.debug("memory event publish skipped: %s", e)
+    event_bus.publish(session_id, {"type": "memory_event", "memoryEvent": payload})

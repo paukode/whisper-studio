@@ -228,3 +228,11 @@ def test_normalize_helper_direct():
     assert MD.normalize_memory_filename("MEMORY.MD") == ("MEMORY.md", "")
     fixed, err = MD.normalize_memory_filename(".env")
     assert fixed == "" and err
+
+
+def test_an_index_that_cannot_be_written_is_an_error(tmp_path):
+    (tmp_path / "notes.md").write_text("---\nname: notes\ndescription: d\ntype: user\n---\n\nx\n")
+    (tmp_path / MD.ENTRYPOINT_NAME).mkdir()  # a directory cannot be replaced by a file
+    with pytest.raises(OSError, match="was not rebuilt"):
+        MD.rebuild_index(str(tmp_path))
+    assert not (tmp_path / (MD.ENTRYPOINT_NAME + ".tmp")).exists()

@@ -111,23 +111,22 @@ async def _dispatch(fork: ReviewFork, tool_use: dict, tool_schemas: dict) -> str
 
 
 def _record_usage(fork: ReviewFork, round_num: int, usage: Any) -> None:
-    try:
-        from server.costs.tracker import record_turn
+    """Record one billed review round. A failure ends the review and reaches
+    the extraction's outer handler, which logs it."""
+    from server.costs.tracker import record_turn
 
-        record_turn(
-            session_id=fork.session_id,
-            turn_number=REVIEW_TURN_BASE + round_num,
-            model=fork.model_key,
-            input_tokens=usage.input_tokens,
-            output_tokens=usage.output_tokens,
-            cache_read_tokens=usage.cache_read_tokens,
-            cache_creation_tokens=usage.cache_write_tokens,
-            source="memory",
-            estimated=usage.estimated,
-            detail=usage.detail,
-        )
-    except Exception as e:  # noqa: BLE001
-        log.debug("review fork usage not recorded: %s", e)
+    record_turn(
+        session_id=fork.session_id,
+        turn_number=REVIEW_TURN_BASE + round_num,
+        model=fork.model_key,
+        input_tokens=usage.input_tokens,
+        output_tokens=usage.output_tokens,
+        cache_read_tokens=usage.cache_read_tokens,
+        cache_creation_tokens=usage.cache_write_tokens,
+        source="memory",
+        estimated=usage.estimated,
+        detail=usage.detail,
+    )
 
 
 async def run_review(
@@ -189,7 +188,7 @@ async def run_review(
             try:
                 unfinished = probe() if result is None and callable(probe) else None
             except Exception as e:  # noqa: BLE001 - a cost read never breaks the review
-                log.debug("review fork inflight usage unreadable: %s", e)
+                log.warning("review fork inflight usage unreadable, not billed: %s", e)
                 unfinished = None
             if unfinished is not None:
                 _record_usage(fork, round_num, unfinished)
