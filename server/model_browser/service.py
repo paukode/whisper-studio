@@ -470,12 +470,11 @@ def _delete_weights(key: str) -> tuple[bool, bool]:
     try:
         result = manager.delete(entry)
         return bool(result.get("stopped_llama_server")), bool(result.get("deleted"))
-    except manager.ModelBusy:
-        # Answering in a chat: refuse the whole removal, config entry included.
-        raise
-    except manager.Conflict:
-        # Nothing on disk to delete — fine.
+    except manager.NotOnDisk:
         return False, False
+    # Any other Conflict (answering in a chat, a folder shared with another
+    # entry, a download that would not cancel) refuses the whole removal,
+    # config entry included, so no weights are left without an entry.
 
 
 def uninstall_model(key: str) -> dict:

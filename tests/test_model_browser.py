@@ -847,6 +847,32 @@ def test_remove_from_list_refuses_a_model_answering_in_a_chat(isolated_home, mon
     assert key in data.get("chat_models", {}), "the entry was dropped while the model answered"
 
 
+def test_remove_from_list_keeps_the_entry_when_the_folder_is_shared(isolated_home, monkeypatch):
+    """A shared-folder refusal used to read as 'nothing on disk': the entry
+    went and the weights stayed behind with no entry."""
+    from server.models_manager import manager
+
+    _stub_hf_and_queue(monkeypatch)
+    key = service.install_model("unsloth/Qwen3-0.6B-GGUF", "Qwen3-0.6B-Q4_K_M.gguf")["key"]
+    monkeypatch.setattr("server.models_manager.catalog.get_entry", lambda k: object())
+    monkeypatch.setattr(manager, "cancel", lambda e: None)
+
+    def shared(entry):
+        raise manager.Conflict("This model shares its folder with another entry.")
+
+    monkeypatch.setattr(manager, "delete", shared)
+    with pytest.raises(manager.Conflict, match="shares its folder"):
+        service.remove_from_list(key)
+    data = json.loads((isolated_home / "config.user.json").read_text())
+    assert key in data.get("chat_models", {})
+
+    def gone(entry):
+        raise manager.NotOnDisk("Nothing to delete: this model is not on disk.")
+
+    monkeypatch.setattr(manager, "delete", gone)
+    assert service.remove_from_list(key)["removed_entry"] is True
+
+
 @pytest.mark.parametrize("path", ["/api/models/browse/k1/entry", "/api/models/browse/k1"])
 def test_remove_and_uninstall_answer_409_with_the_reason(monkeypatch, path):
     from fastapi import FastAPI

@@ -120,11 +120,11 @@ async def browse_remove_entry(key: str):
     of the ``/{key}`` uninstall."""
     import asyncio
 
-    from server.models_manager.manager import ModelBusy
+    from server.models_manager.manager import Conflict
 
     try:
         result = await asyncio.to_thread(service.remove_from_list, key)
-    except ModelBusy as e:
+    except Conflict as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
     return {**result, "message": "Model removed from the list."}
 
@@ -134,12 +134,12 @@ async def browse_uninstall(key: str):
     """Uninstall a browser-installed model: stop it, delete files, drop config."""
     import asyncio
 
-    from server.models_manager.manager import ModelBusy
+    from server.models_manager.manager import Conflict
 
     try:
         result = await asyncio.to_thread(service.uninstall_model, key)
     except service.InstallError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
-    except ModelBusy as e:
+    except Conflict as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
     return {**result, "message": "Model uninstalled."}

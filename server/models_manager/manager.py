@@ -60,6 +60,12 @@ class Conflict(Exception):
     """A request that is valid but impossible right now (HTTP 409)."""
 
 
+class NotOnDisk(Conflict):
+    """Nothing of the model is on disk to delete. The one Conflict a removal
+    may treat as done: every other refusal (downloading, a shared folder, a
+    busy model) keeps the config entry so its weights never become orphans."""
+
+
 class ModelBusy(Conflict):
     """The model is answering in a chat (or a local agent) right now, so
     deleting it would kill that turn mid-answer. Distinct from the other
@@ -559,7 +565,7 @@ def delete(entry: ModelEntry) -> dict:
             # Honoring the delete meant dequeuing; with nothing on disk that
             # was the whole job — report it as done rather than a conflict.
             return {"deleted": False, "dequeued": True, "stopped_llama_server": False}
-        raise Conflict("Nothing to delete: this model is not on disk.")
+        raise NotOnDisk("Nothing to delete: this model is not on disk.")
 
     stopped = False
     if entry.group == GROUP_LOCAL_CHAT:
