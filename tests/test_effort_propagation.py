@@ -209,6 +209,9 @@ class TestWorkflowLaunchEffort:
         yield
         manager._live.clear()
         manager._task_ids.clear()
+        # A grant left behind auto-approves the next file's launch of the
+        # same script in session "s1".
+        launch_policy._session_grants.clear()
 
     def _client(self):
         from server.workflows.routes import router
