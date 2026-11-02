@@ -235,7 +235,8 @@
         state because it creates the workspace. Destructive
         GitHub mutations (repo or ref deletion, PR merge, archive or rename, raw API DELETE) carry the
         <code>github-destructive</code> approval category and <b>always ask</b>: no permission mode,
-        bypass, category override, or blanket session approval can cover them
+        bypass, category override, or blanket session approval can cover them. In Don't ask they are
+        denied, because that mode never shows a card
         (<code class="path">server/security/permissions.py</code>).</p></div>
     </div>
 

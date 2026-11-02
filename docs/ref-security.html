@@ -75,7 +75,8 @@
         <code>sandbox_permissions: "danger-full-access"</code>; and any call to an MCP server or tool
         set to <code>approval_mode: "approve"</code>. Each is a hard floor: no permission
         mode, category override, bypass mode, trusted skill, or blanket session approval can skip it
-        (<code class="path">server/security/permissions.py</code>). A fifth floor depends on the mode:
+        (<code class="path">server/security/permissions.py</code>). In Don't ask, a destructive GitHub
+        action is denied instead, because that mode never shows a card. A fifth floor depends on the mode:
         a command typed into your visible terminal asks in every mode except
         <code>bypassPermissions</code>. A delete that stays inside the workspace follows the mode like
         any other command.</li>

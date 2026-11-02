@@ -196,8 +196,8 @@
       it with no card, Don't ask refuses it, an unattended run (a subagent or a scheduled task)
       refuses it, and the other modes show the card. A DANGER mutation
       (<code>github-destructive</code>: a pull request merge, a close, a delete, an API DELETE)
-      always shows a card, in every mode, Bypass and Don't ask included. An unattended run refuses
-      it too. A
+      always shows a card, Bypass included. Don't ask denies it, because that mode never shows a
+      card. An unattended run refuses it too. A
       <code>github_api_write</code> card shows the method, the path, and the whole request body. The
       tools use the <code>gh</code> sign-in on this Mac (or <code>GH_TOKEN</code>). When
       <code>gh</code> is not installed, or is not signed in, the call fails with a message that says

@@ -282,6 +282,51 @@ def test_destructive_github_still_always_asks_in_bypass(gate_env):
     assert sent == []
 
 
+def test_destructive_github_is_denied_in_dont_ask(gate_env):
+    """Don't ask never shows a card, so a call that needs a person is denied."""
+    root, sent = gate_env
+    merge = gx._exec_github({"args": ["pr", "merge", "2"]}, None, None)
+    out, request = _gate("github", merge, str(root), mode=MODE_DONT_ASK)
+    assert request is None and "[Denied" in out
+    delete = gx._exec_github_api_write(
+        {"endpoint": "repos/o/r/git/refs/heads/x", "method": "DELETE"}, None, None
+    )
+    out, request = _gate("github_api_write", delete, str(root), mode=MODE_DONT_ASK)
+    assert request is None and "[Denied" in out
+    # The same DELETE is a destructive call: in Bypass it still shows the card.
+    _out, request = _gate("github_api_write", delete, str(root), mode=MODE_BYPASS)
+    assert request is not None and request["always_asks"] is True
+    assert sent == []
+
+
+def test_destructive_github_asks_in_every_card_mode(gate_env):
+    root, sent = gate_env
+    for mode in CARD_MODES:
+        merge = gx._exec_github({"args": ["pr", "merge", "2"]}, None, None)
+        _out, request = _gate("github", merge, str(root), mode=mode)
+        assert request is not None and request["always_asks"] is True, mode
+    assert sent == []
+
+
+def test_destructive_github_dont_ask_category_row_denies(gate_env, monkeypatch):
+    """A Don't ask row for the category is stricter than the floor's card, so it
+    holds; any other row leaves the card in place."""
+    from server.security.permissions import resolve_static_decision
+
+    payload = {"command": "gh pr merge 2"}
+    for row, want in ((MODE_DONT_ASK, "deny"), (MODE_BYPASS, "ask"), (None, "ask")):
+        monkeypatch.setattr(
+            "server.security.permissions.load_permissions",
+            lambda row=row: {
+                "mode": MODE_DEFAULT,
+                "rules": [],
+                "category_modes": {"github-destructive": row} if row else {},
+            },
+        )
+        got = resolve_static_decision("github", payload, "github-destructive", {}, MODE_DEFAULT)
+        assert got == want, row
+
+
 # -- missing gh and missing sign-in ------------------------------------------------
 
 

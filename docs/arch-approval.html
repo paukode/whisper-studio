@@ -158,7 +158,9 @@
     <ol class="steps">
       <li><h4>github-destructive</h4><p>A destructive GitHub mutation (repo or ref delete, PR merge,
         archive or rename, API DELETE) always returns ask. No mode, session approval, trusted skill,
-        or category override can cover it, given the irreversibility and remote blast radius.</p></li>
+        or category override can cover it, given the irreversibility and remote blast radius. In
+        <code>dontAsk</code> (the global mode or the category's own row) it returns deny instead,
+        because that mode never shows a card.</p></li>
       <li><h4>An rm-class command reaching outside the workspace</h4><p>A command that deletes
         anything beyond the connected workspace and the app's own folder always returns ask,
         whatever the mode; a delete that stays inside them is an ordinary command and follows the
@@ -273,7 +275,8 @@
       <code>VALID_MODES</code> per key on <code>PUT /api/permissions</code>, and the override is
       applied before the mode checks run, so it holds even over a global
       <code>bypassPermissions</code>. The one category it can never touch is
-      <code>github-destructive</code>, which ignores overrides entirely. A category with no entry
+      <code>github-destructive</code>: an override never lets it run with no card, and only a
+      <code>dontAsk</code> row changes it, to deny. A category with no entry
       follows the global mode.</p>
     <p>One key in that map is not an approval category at all. <code>workflow</code> is read outside
       this resolver by <code class="path">server/workflows/launch_policy.py</code>, which gates
@@ -514,7 +517,8 @@
       unattended agent can never answer an elicitation on your behalf.</p>
     <p>For <b>GitHub</b>, ordinary mutations live in the <code>github</code> category and follow the
       normal mode and rule pipeline, while <code>github-destructive</code> (deletes, merges,
-      archive or rename, raw API DELETE) always asks, as the very first check in the decision order.
+      archive or rename, raw API DELETE) always asks, as the very first check in the decision order
+      (in <code>dontAsk</code> it is denied).
       <code>refuse_if_agent</code> (<code class="path">server/approval/spec.py</code>) additionally
       refuses agent-originated executions of the high-blast-radius actions outright.</p>
 

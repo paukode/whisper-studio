@@ -288,7 +288,9 @@ def approval_floor(
     or default decides it. Returns which floor ("github-destructive", "rm",
     "sandbox-escalation", "visible-terminal", "mcp-approve"). Any floor marks
     the approval card's request ``always_asks``, so the card never offers a
-    remember-for-session choice that would then be ignored.
+    remember-for-session choice that would then be ignored. One floor is
+    stricter in dontAsk: resolve_static_decision denies a github-destructive
+    call there, since that mode never shows a card.
 
     ``mode`` is the session's permission mode. One floor depends on it: the
     visible terminal asks in every mode but bypassPermissions (the user's rule
@@ -540,7 +542,8 @@ def resolve_static_decision(
 
     Evaluation order: hard floors (github-destructive, a delete outside the
     workspace, sandbox escalation, a visible terminal run outside bypass, MCP
-    server marked approve; see approval_floor) → app storage (a write under ~/.whisper is
+    server marked approve; see approval_floor; github-destructive is denied
+    instead when the mode is dontAsk) → app storage (a write under ~/.whisper is
     allowed in every mode, a delete there only in bypassPermissions; see
     targets_app_storage) → category mode override → bypassPermissions
     (absolute inside the workspace; a save to a path outside it and reach into
@@ -550,7 +553,16 @@ def resolve_static_decision(
     config (allow) → dontAsk → acceptEdits (write category only) → auto
     (defer) → ask.
     """
-    if approval_floor(tool_name, tool_input, category, mode) is not None:
+    floor = approval_floor(tool_name, tool_input, category, mode)
+    if floor is not None:
+        # A destructive GitHub call never runs without a person, and Don't ask
+        # means nobody is there to ask, so it is denied there (stricter than
+        # the card). The mode is the global one or the category's own row.
+        if floor == "github-destructive" and MODE_DONT_ASK in (
+            mode,
+            (load_permissions().get("category_modes") or {}).get(category),
+        ):
+            return "deny"
         return "ask"
 
     # The app's own grant and config files (server.infrastructure.paths.
