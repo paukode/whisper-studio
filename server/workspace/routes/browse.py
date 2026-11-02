@@ -80,6 +80,31 @@ def _browse(path: str) -> dict:
     }
 
 
+def _mkdir_roots(ws: str | None) -> list[str]:
+    """The folders a new folder may go in: ~/Documents, ~/Downloads, and the
+    connected workspace. Real paths, so a symlink cannot stand in for one."""
+    roots = [os.path.expanduser("~/Documents"), os.path.expanduser("~/Downloads")]
+    if ws:
+        roots.append(ws)
+    return [os.path.realpath(r) for r in roots]
+
+
+def _inside(path: str, root: str) -> bool:
+    return os.path.commonpath([path, root]) == root
+
+
+def _mkdir_refused(ws: str | None) -> Response:
+    if ws:
+        places = f"~/Documents, ~/Downloads, or the connected workspace ({ws})"
+    else:
+        places = "~/Documents or ~/Downloads (no workspace is connected)"
+    return Response(
+        content=json.dumps({"error": f"New folders can only be made inside {places}."}),
+        status_code=403,
+        media_type="application/json",
+    )
+
+
 @router.post("/mkdir")
 async def ws_mkdir(request: Request):
     body = await request.json()
@@ -90,9 +115,13 @@ async def ws_mkdir(request: Request):
             status_code=400,
             media_type="application/json",
         )
-    # Support both absolute paths (for workspace creation) and relative paths (for in-workspace dirs)
+    # An absolute path (or ~) names the folder outright; a relative path is
+    # inside the connected workspace.
     ws = get_workspace_path()
-    if ws and not os.path.isabs(path):
+    path = os.path.expanduser(path)
+    if not os.path.isabs(path):
+        if not ws:
+            return _mkdir_refused(ws)
         full = os.path.join(ws, path)
         if not _ws_validate_path(full, ws):
             return Response(
@@ -101,16 +130,21 @@ async def ws_mkdir(request: Request):
                 media_type="application/json",
             )
     else:
-        full = os.path.expanduser(path)
-    if os.path.exists(full):
+        full = path
+    # realpath resolves symlinks and ".." from left to right, so a link or a
+    # ".." cannot carry the new folder out of an allowed place.
+    real = os.path.realpath(full)
+    if not any(_inside(real, root) for root in _mkdir_roots(ws)):
+        return _mkdir_refused(ws)
+    if os.path.lexists(full) or os.path.exists(real):
         return Response(
             content=json.dumps({"error": "Already exists"}),
             status_code=409,
             media_type="application/json",
         )
     try:
-        os.makedirs(full)
-        return {"path": os.path.realpath(full), "created": True}
+        os.makedirs(real)
+        return {"path": real, "created": True}
     except Exception as e:
         return Response(
             content=json.dumps({"error": str(e)}), status_code=500, media_type="application/json"
