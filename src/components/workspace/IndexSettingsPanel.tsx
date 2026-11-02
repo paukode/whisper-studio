@@ -219,12 +219,12 @@ export const IndexSettingsPanel: React.FC<IndexSettingsPanelProps> = ({ settings
     <label className="ws-menu-line">
       <input
         type="checkbox"
-        checked={s.entity_descriptions?.enabled ?? false}
+        checked={s.entity_descriptions.enabled}
         onChange={(e) => onChange({ entity_descriptions: { enabled: e.target.checked } })}
       />
       Write short AI descriptions for people, companies, and topics
     </label>
-    {s.entity_descriptions?.enabled && (
+    {s.entity_descriptions.enabled && (
       <label className="ws-menu-line" style={{ marginLeft: 22 }}>
         Written by
         <EngineSelect
@@ -235,8 +235,8 @@ export const IndexSettingsPanel: React.FC<IndexSettingsPanelProps> = ({ settings
         />
       </label>
     )}
-    {s.entity_descriptions?.enabled && noModels && <NoModelsNote />}
-    {s.entity_descriptions?.enabled && (
+    {s.entity_descriptions.enabled && noModels && <NoModelsNote />}
+    {s.entity_descriptions.enabled && (
       <span className="ws-menu-hint">
         One-line summaries shown on entities in the knowledge graph, written at
         the end of the next index refresh.
@@ -245,7 +245,7 @@ export const IndexSettingsPanel: React.FC<IndexSettingsPanelProps> = ({ settings
     <label className="ws-menu-line">
       Contextual headers
       <select
-        value={s.chunk_context?.mode ?? 'filename'}
+        value={s.chunk_context.mode}
         onChange={(e) => onChange({ chunk_context: { mode: e.target.value as IndexSettings['chunk_context']['mode'] } })}
       >
         <option value="off">Off</option>
@@ -253,7 +253,7 @@ export const IndexSettingsPanel: React.FC<IndexSettingsPanelProps> = ({ settings
         <option value="llm">AI-written (richer)</option>
       </select>
     </label>
-    {s.chunk_context?.mode === 'llm' && (
+    {s.chunk_context.mode === 'llm' && (
       <label className="ws-menu-line" style={{ marginLeft: 22 }}>
         Written by
         <EngineSelect
@@ -263,14 +263,14 @@ export const IndexSettingsPanel: React.FC<IndexSettingsPanelProps> = ({ settings
         />
       </label>
     )}
-    {s.chunk_context?.mode === 'llm' && noModels && <NoModelsNote />}
+    {s.chunk_context.mode === 'llm' && noModels && <NoModelsNote />}
     <span className="ws-menu-hint">
       Adds the filename (or an AI-written summary) to each passage before embedding, so filename and topic queries match. Changing the mode re-indexes the whole folder (AI-written also runs the model over every passage).
     </span>
     <label className="ws-menu-line">
       Entity extractor
       <select
-        value={s.ner_model ?? 'gliner'}
+        value={s.ner_model}
         onChange={(e) => onChange({ ner_model: e.target.value as IndexSettings['ner_model'] })}
       >
         <option value="gliner">GLiNER large (multilingual)</option>
