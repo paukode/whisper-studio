@@ -6,7 +6,8 @@
  */
 import React, { useEffect } from 'react';
 import { getRun, stopRun, subscribeRun } from '@/api/workflows';
-import { useSessionStore } from '@/stores/sessionStore';
+import { useUIStore } from '@/stores/uiStore';
+import { toError } from '@/utils/toError';
 import { useWorkflowStore } from '@/stores/workflowStore';
 import { AgentRow } from '@/components/chat/AgentRows';
 import { ICON } from '@/components/chat/activityIcons';
@@ -20,7 +21,6 @@ const STATUS_COLOR: Record<string, string> = {
 };
 
 export const WorkflowRunCard: React.FC<{ runId: string; name?: string }> = ({ runId, name }) => {
-  const sessionId = useSessionStore((s) => s.currentSessionId);
   const run = useWorkflowStore((s) => s.runs[runId]);
   const act = useWorkflowStore((s) => s.activity[runId]);
 
@@ -51,11 +51,18 @@ export const WorkflowRunCard: React.FC<{ runId: string; name?: string }> = ({ ru
   const cost = Math.max(run?.cost_usd ?? 0, act?.cost_usd ?? 0);
   const phase = act?.phase ?? '';
 
-  const resume = async () => {
-    if (!sessionId) return;
-    // Resume is offered in the Workflows panel (which posts a resume run); here
-    // we just refetch the snapshot to reflect the final state.
-    void getRun(runId).then((r) => useWorkflowStore.getState().upsertRun(r)).catch(() => {});
+  const report = (what: string, err: unknown) =>
+    useUIStore.getState().addToast({ type: 'error', message: `Could not ${what} the workflow: ${toError(err).message}` });
+
+  // Refetch the run snapshot (resume lives in the Workflows panel).
+  const refresh = () => {
+    getRun(runId)
+      .then((r) => useWorkflowStore.getState().upsertRun(r))
+      .catch((err: unknown) => report('refresh', err));
+  };
+
+  const stop = () => {
+    stopRun(runId).catch((err: unknown) => report('stop', err));
   };
 
   return (
@@ -81,10 +88,10 @@ export const WorkflowRunCard: React.FC<{ runId: string; name?: string }> = ({ ru
       {run?.error && <div className="workflow-card-meta workflow-err">{run.error}</div>}
       <div className="workflow-card-actions">
         {status === 'running' && (
-          <button type="button" className="btn btn-sm" onClick={() => void stopRun(runId)}>Stop</button>
+          <button type="button" className="btn btn-sm" onClick={stop}>Stop</button>
         )}
         {(status === 'failed' || status === 'stopped' || status === 'stale') && (
-          <button type="button" className="btn btn-sm" onClick={() => void resume()}>Refresh</button>
+          <button type="button" className="btn btn-sm" onClick={refresh}>Refresh</button>
         )}
       </div>
     </div>

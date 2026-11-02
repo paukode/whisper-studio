@@ -18,6 +18,7 @@ import { ApprovalBanner } from './ApprovalBanner';
 import { AutoModeBreakerBanner } from './AutoModeBreakerBanner';
 import { formatMessageTimestamp, formatSegmentTimestamp } from '@/utils/formatTimestamp';
 import { downloadFile } from '@/utils/downloadFile';
+import { toError } from '@/utils/toError';
 import { useTaskStore } from '@/stores/taskStore';
 import { fetchSessionTasks } from '@/api/tasks';
 import { permissionModeLabel } from '@/utils/permissionModes';
@@ -183,7 +184,7 @@ export const ChatPanel: React.FC = () => {
   // resolves to [] instead of each message falling back to its own partial
   // per-turn snapshot. The one exception is a turn that is actively streaming:
   // its live `todo_update` is the fresher source, so a slow GET must not
-  // clobber it. Fire-and-forget.
+  // clobber it. A failed read says so (one keyed toast).
   useEffect(() => {
     if (!currentSessionId) return;
     let active = true;
@@ -193,7 +194,14 @@ export const ChatPanel: React.FC = () => {
         if (getChatStore(currentSessionId).getState().isStreaming) return;
         useTaskStore.getState().setTasks(currentSessionId, tasks);
       })
-      .catch(() => {});
+      .catch((err: unknown) => {
+        if (!active) return;
+        useUIStore.getState().addToast({
+          type: 'error',
+          key: 'tasks-hydrate',
+          message: `Could not load this session's tasks: ${toError(err).message}`,
+        });
+      });
     return () => { active = false; };
   }, [currentSessionId]);
 

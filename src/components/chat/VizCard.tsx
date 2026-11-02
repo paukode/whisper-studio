@@ -101,7 +101,7 @@ function inlineScript(source: string): string {
 function loadChartHost(): Promise<string> {
   hostHtmlPromise ??= Promise.all(
     HOST_ASSETS.map((url) =>
-      fetch(url).then((r) => (r.ok ? r.text() : Promise.reject(new Error(url)))),
+      fetch(url).then((r) => (r.ok ? r.text() : Promise.reject(new Error(`${url} answered HTTP ${r.status}`)))),
     ),
   )
     .then(([html, vega, vegaLite]) =>
@@ -116,9 +116,10 @@ function loadChartHost(): Promise<string> {
           inlineScript(vegaLite),
         ),
     )
-    .catch(() => {
+    .catch((err: unknown) => {
+      // Drop the cached failure so the next chart tries again.
       hostHtmlPromise = null;
-      return '';
+      throw err;
     });
   return hostHtmlPromise;
 }
@@ -181,9 +182,13 @@ export const VizCard: React.FC<VizCardProps> = ({ viz, size: savedSize, onResize
   useEffect(() => {
     if (viz.kind !== 'chart') return;
     let live = true;
-    void loadChartHost().then((html) => {
-      if (live) setHostHtml(html || null);
-    });
+    loadChartHost()
+      .then((html) => {
+        if (live) setHostHtml(html);
+      })
+      .catch((err: unknown) => {
+        if (live) setChartError(`Could not load the chart runtime: ${err instanceof Error ? err.message : String(err)}`);
+      });
     return () => {
       live = false;
     };
