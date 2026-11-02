@@ -21,6 +21,18 @@ import { useCronUnreadStore } from './cronUnreadStore';
 import { refreshSessionUsage } from './sessionUsage';
 import { toError } from '@/utils/toError';
 
+/** Say that a session could not be stored. One toast per session (keyed),
+ *  so the 30 s retries of a lasting failure collapse into a counter instead
+ *  of a stack; the session stays unsaved and the next save tries again. */
+function reportSaveFailure(id: string, what: 'create' | 'save', err: unknown): void {
+  console.warn(`Failed to ${what} session:`, err);
+  useUIStore.getState().addToast({
+    type: 'error',
+    key: `session-save-${id}`,
+    message: `Could not ${what} this session, so recent changes are not stored yet: ${toError(err).message}`,
+  });
+}
+
 
 /** Deleting a session that owns the live recording must stop the engine
  *  first (websocket, mic worklet, watchdog), or it would keep streaming
@@ -270,7 +282,7 @@ export const useSessionStore = create<SessionState>()(persist((set, get) => ({
       () => {
         if (created && get().liveSessions[id]) serverCopies.set(id, created);
       },
-      (err) => console.warn('Failed to create session:', err),
+      (err) => reportSaveFailure(id, 'create', err),
     );
 
     // Note: a live recording deliberately SURVIVES new-session creation
@@ -624,7 +636,7 @@ export const useSessionStore = create<SessionState>()(persist((set, get) => ({
       () => {
         if (get().liveSessions[id]) serverCopies.set(id, sources);
       },
-      (err) => console.warn('Failed to save session:', err),
+      (err) => reportSaveFailure(id, 'save', err),
     );
     return saving;
   },
