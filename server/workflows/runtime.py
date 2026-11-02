@@ -147,9 +147,8 @@ class WorkflowRun:
         self.effort_label = effort_label
         # The canonical workspace root every agent this run spawns resolves
         # against, frozen at launch (server.workflows.manager.
-        # resolve_workflow_workspace) — None only for a pre-migration row or a
-        # launch with nothing connected and no explicit path, matching the
-        # fully-unpinned legacy behavior.
+        # resolve_workflow_workspace); None for a launch with nothing
+        # connected and no explicit path.
         self.workspace_path = workspace_path
         self.budget_tokens = budget_tokens
         self.depth = depth

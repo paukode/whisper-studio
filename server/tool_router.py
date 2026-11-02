@@ -550,13 +550,9 @@ async def route_tool(
         return "\n".join(f"[From {m.from_id}]: {m.content}" for m in msgs), side_effects
 
     if tool_name == "complete_coordination":
-        # Agent-runtime-only tool. The pre-migration inline loop returned
-        # immediately on seeing this call (a hard turn-stop); routed through
-        # the shared executor there is no such mid-round short-circuit, so
-        # it resolves as a normal tool_result carrying the summary — the
-        # coordinator's next round then naturally ends the turn once it has
-        # nothing further to do (one extra round versus the old immediate
-        # stop, not a behavior loss).
+        # Agent-runtime-only tool. It resolves as a normal tool_result
+        # carrying the summary; the coordinator's next round then ends the
+        # turn once it has nothing further to do.
         return tool_input.get("summary", "Coordination complete."), side_effects
 
     if tool_name == "list_agents":

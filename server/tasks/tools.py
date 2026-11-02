@@ -1,8 +1,7 @@
 """Model-facing tools for the unified background-task registry.
 
-``task_status`` and ``task_output`` resurrect what the dead ``get_task`` never
-delivered: a structured way for the model to check on background work instead
-of cat-ing an output file on faith. ``task_cancel`` stops a running task.
+``task_status`` and ``task_output`` give the model a structured way to check
+on background work instead of reading an output file directly. ``task_cancel`` stops a running task.
 
 Named ``task_cancel`` (not ``task_stop``) because ``task_stop`` belongs to the
 unrelated in-conversation todo tracker (server/tasks_tracker.py); descriptions

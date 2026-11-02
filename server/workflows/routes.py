@@ -247,8 +247,3 @@ async def run_events(run_id: str, request: Request):
             event_bus.unsubscribe(f"workflow:{run_id}", queue)
 
     return StreamingResponse(gen(), media_type="text/event-stream")
-
-
-# No /saved REST surface: the Settings library UI is gone. The saved-workflow
-# store is managed from chat (workflow_save / workflow_delete / workflow_list)
-# and trust comes from approving the preview card above.

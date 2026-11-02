@@ -38,14 +38,10 @@ _TASK_TERMINAL = {
 
 
 def _register_task(run_id: str, name: str, session_id: str, model_key: str) -> str:
-    """Mirror a launched run into the unified background-task registry.
-
-    The registry has allowed ``kind="workflow"`` since it was written and
-    completion_inject already reports finished workflow tasks back to the model
-    on the next turn — but nothing ever created such a row, so both were dead
-    code and a detached run notified nobody: no row in the header's task list,
-    no next-turn report. Best-effort by design; a registry hiccup must never
-    stop the run itself.
+    """Mirror a launched run into the unified background-task registry, so it
+    shows in the header's task list and completion_inject reports it back to
+    the model on the next turn. A registry hiccup must never stop the run
+    itself.
     """
     try:
         from server.tasks import registry
@@ -159,8 +155,7 @@ def resolve_workflow_effort(effort_label: str | None, model_key: str) -> str | N
 def resolve_workflow_workspace(raw: str | None) -> tuple[str | None, str]:
     """Resolve the workspace a run is pinned to. Returns (path, error) — path
     is ``None`` with error set on a bad explicit path, or ``None`` with no
-    error when nothing is connected and none was given (the fully-legacy,
-    unpinned case — nothing to pin to).
+    error when nothing is connected and none was given (nothing to pin to).
 
     An explicit path (the model resolved one from the user's own words, e.g.
     "check ~/Downloads/project1") must already exist: silently creating it, or

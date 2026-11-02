@@ -19,8 +19,6 @@ log = logging.getLogger("whisper-studio")
 
 _git_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="agent-git")
 
-# Ambient nesting context for a spawn_agent/send_message/receive_messages/
-
 
 def _enter_agent_worktree(agent_id: str, session_id: str, repo_root: str | None = None):
     """Create (or resume) an isolated git worktree for this agent.

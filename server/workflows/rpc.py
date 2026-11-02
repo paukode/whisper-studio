@@ -1,7 +1,7 @@
 """ndjson JSON-RPC framing between the Python orchestrator and the Node harness.
 
 One compact JSON object per line over the harness's stdio. The harness sends
-requests (``agent``/``workflow``/``budget_spent``, with an ``id``) and
+requests (``agent``/``tool``/``workflow``/``budget_spent``, with an ``id``) and
 notifications (``phase``/``log``/``meta``/``done``/``fatal``, no ``id``); the
 orchestrator replies ``{id, result}`` or ``{id, error}`` and pushes
 ``start``/``cancel`` control messages. Request/response correlation and the pump
@@ -16,7 +16,7 @@ import json
 # reader (a giant tool_result is sliced upstream long before this).
 MAX_LINE_BYTES = 10 * 1024 * 1024
 
-# Error-type strings shared with the harness (it maps them to typed JS errors).
+# Error-type strings shared with the harness (it sets them as error.type).
 ERR_BUDGET = "BudgetExceededError"
 ERR_AGENT_CAP = "AgentCapError"
 ERR_CANCELLED = "CancelledError"

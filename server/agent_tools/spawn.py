@@ -333,10 +333,8 @@ async def execute_spawn_agent(
         # the parent's own depth + 1 so run_agent's MAX_DEPTH recursion guard
         # actually holds (every OTHER call through this function defaults to
         # depth=0, which would let an agent-spawns-agent chain recurse
-        # forever). Mirrors the pre-migration inline _handle_spawn_agent
-        # exactly: no detach, no ephemeral agent_definition, no isolation — a
-        # nested spawn never supported those, and this preserves that scope
-        # rather than quietly widening it.
+        # forever). A nested spawn has no detach, no ephemeral
+        # agent_definition and no isolation.
         _budget_msg = _budget_exceeded_message(session_id)
         if _budget_msg:
             return _budget_msg

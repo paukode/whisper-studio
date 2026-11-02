@@ -49,8 +49,7 @@ log = logging.getLogger("whisper-studio")
 # the chat/engine path, so a smaller number here silently capped the
 # workflow runtime's 16-way fan-out no matter what the scheduler admitted.
 _agent_executor = ThreadPoolExecutor(max_workers=AGENT_CALL_CONCURRENCY)
-# Separate small pool for git/worktree harvesting so a burst of finishing
-# agents doing git ops can't head-of-line-block model calls on _agent_executor.
+# Ambient nesting context for a spawn_agent/send_message/receive_messages/
 # complete_coordination tool call dispatched from INSIDE this unattended
 # loop, as opposed to interactive chat. server.tool_router.route_tool reads
 # this so a nested call threads the CALLING agent's real id/depth/team/event-
@@ -737,9 +736,8 @@ async def _run_agent_loop(
             model_key=model_key,
             model_id=model_id,
             system_prompt=system,
-            # Agents don't use prompt-cache checkpoints (the pre-migration
-            # loop never did either) — system_static/system_dynamic only
-            # matter when caching_on is True.
+            # Agents do not use prompt-cache checkpoints; system_static and
+            # system_dynamic only matter when caching_on is True.
             system_static="",
             system_dynamic="",
             caching_on=False,
@@ -757,10 +755,8 @@ async def _run_agent_loop(
     # subagent that "delivers" via notify_user has that content (and its links)
     # silently dropped before the parent ever sees it.
     notifications: list[str] = []
-    # complete_coordination is now a normal tool call (server/tool_router.py)
-    # rather than a hard mid-round stop — capture its summary so it becomes
-    # the coordinator's definitive output, same as the pre-migration inline
-    # handler's immediate return did.
+    # complete_coordination is a normal tool call (server/tool_router.py):
+    # capture its summary so it becomes the coordinator's output.
     coordination_summary: str | None = None
 
     def _finalize(text: str) -> str:
@@ -878,9 +874,8 @@ async def _run_agent_loop(
         # Offline invariant for local runs: no permission-explainer model.
         tool_exec_model_id=("" if _is_local_agent else model_id),
         effort_label=effort_label,
-        # Agents don't run interactive chat's post-turn memory hooks (auto
-        # memory / session memory / dream consolidation) — the pre-migration
-        # loop never fired them either.
+        # Agents do not run interactive chat's post-turn memory hooks (auto
+        # memory, session memory, dream consolidation).
         memory_hooks=lambda msgs: None,
         unattended=True,
         turn_scope_id=f"agent:{agent_id}",
@@ -903,8 +898,8 @@ async def _run_agent_loop(
     # VOCABULARY (see its own module docstring on golden-fixture pinning) —
     # a future frame rename/reshape needs a matching update here. Kept
     # deliberately minimal: text (buffered per round, flushed on the round's
-    # usage frame — mirroring the pre-migration loop's one "text" event per
-    # turn, not one per streamed delta), the running usage total, tool call/
+    # usage frame, so one "text" event per round, not one per streamed
+    # delta), the running usage total, tool call/
     # result previews for progress events, and notify_user/complete_coordination
     # payloads folded into the returned output.
     turn_start = time.monotonic()
@@ -1075,12 +1070,11 @@ async def _run_agent_loop(
     elapsed = time.monotonic() - turn_start
     # run_turn's own last-round handling (the max_rounds cap, or a deadline
     # hit — both force tools off for that round, see server/chat/engine/
-    # runner.py) already produces a genuine best-effort final answer; there is
-    # no separate "out of budget, finalize now" call to make here, unlike the
-    # pre-migration loop. stopped_early can't be read directly off the drained
-    # frames (no frame says "this was the capped round"), so it is inferred
-    # exactly the way the pre-migration loop's own limit detection worked:
-    # the round budget was exhausted, or the wall-clock deadline passed.
+    # runner.py) already produces a best-effort final answer; there is no
+    # separate "out of budget, finalize now" call to make here. stopped_early
+    # cannot be read off the drained frames (no frame says "this was the
+    # capped round"), so it is inferred: the round budget was exhausted, or
+    # the wall-clock deadline passed.
     _ext = extension or {}
     _cap = config.max_turns + int(_ext.get("rounds") or 0)
     _deadline_total = (

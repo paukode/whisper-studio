@@ -302,8 +302,8 @@ def list_tasks(
 def _prune_finished_locked(conn) -> None:
     """Drop finished rows past the TTL and cap the finished backlog.
 
-    Output files on disk are left alone (same policy as the old in-memory
-    registry); GC of data/background_output is a separate concern.
+    Output files on disk are left alone; GC of data/background_output is a
+    separate concern.
     """
     cutoff = (
         datetime.fromtimestamp(time.time() - FINISHED_TTL_S, tz=timezone.utc)

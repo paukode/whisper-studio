@@ -9,8 +9,9 @@ immediately). Safe to call from any thread; no-ops the persist if the server
 loop hasn't been captured yet.
 
 Rows carried this way: ``cron_event`` (via cron_scheduler's delegate),
-``agent_report`` and ``agent_answer`` (server/agents/wake.py) and
-``session_message`` (server/agent_tools/cross_session.py). ``PROMPT_ROLES`` in
+``agent_report`` and ``agent_answer`` (server/agents/wake.py), ``task_report``
+(server/tasks/wake.py) and ``session_message``
+(server/agent_tools/cross_session.py). ``PROMPT_ROLES`` in
 server/infrastructure/sessions.py decides which of them the model reads.
 
 Background-task lifecycle (``emit_task_event``) is the exception: it is

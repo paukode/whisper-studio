@@ -193,10 +193,7 @@ class AgentConfig:
             server/agents/custom_config.py). Every built-in AGENT_TYPES entry
             leaves this None. NOT consulted by model resolution: the model is
             always the session-selected one (run_agent's model_id_override or
-            the config default) so a whole agent tree stays on one model (see
-            _handle_spawn_agent); wiring a per-type override is a possible
-            follow-up, deliberately left inert here to avoid guessing whether
-            it should be a chat_models catalog key or a raw provider id.
+            the config default) so a whole agent tree stays on one model.
         internal: True for a preset the app runs for itself (the memory
             agents), never a type the user or the model spawns. It keeps its
             own small round cap instead of the Settings round limit: a

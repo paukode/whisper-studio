@@ -9,7 +9,7 @@ teams) and are dispatched by server/tool_router.py.
 
 CONFIG_GET_TOOL = {
     "name": "config_get",
-    "description": "Read one or more Whisper Studio config values (e.g. model, region, permission_mode). Call with no keys to list all.",
+    "description": "Read one or more Whisper Studio config values (e.g. default_chat_model, bedrock_region, permission_mode). Call with no keys to list all.",
     "input_schema": {
         "type": "object",
         "properties": {
@@ -296,7 +296,7 @@ SPAWN_AGENT_TOOL = {
         "Spawn an independent agent to handle a subtask with full tool access. "
         "The agent runs a complete tool loop and returns results. Agent types:\n"
         "- general: Full tool access, good for implementation tasks\n"
-        "- explore: Read-only, uses fast model — best for code search and analysis\n"
+        "- explore: Read-only, for code search and analysis\n"
         "- plan: Read-only — produces structured implementation plans\n"
         "- verify: Runs tests and checks, returns PASS/FAIL/PARTIAL verdict\n"
         "- coordinator: Orchestrates other agents, no direct file access\n"

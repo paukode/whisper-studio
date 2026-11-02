@@ -1,9 +1,4 @@
-"""Foreground wait with live hand-off to background — the anti-restart fix.
-
-The old flow ran a read-only command with ``run_sandboxed(timeout=30)``, which
-KILLED the process group on timeout, then re-ran the same command from zero as
-a background task: the first 30 seconds of work were discarded, and any side
-effects ran twice.
+"""Foreground wait with live hand-off to background.
 
 ``run_with_handoff`` starts the process exactly once (``popen_sandboxed``
 streaming to the task output file), waits up to the foreground budget, and on
