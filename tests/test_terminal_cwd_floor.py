@@ -239,9 +239,13 @@ def test_the_interactive_terminal_reopens_for_a_new_workspace(monkeypatch):
             self.id = f"pty{len(opened)}"
             self.write_root = write_root
             self.alive = True
+            # A sandboxed hidden shell has a profile; a Bypass one has none.
+            self.profile_path = None if bypass_sandbox.active() else "/tmp/fake.sb"
 
         def kill(self):
             self.alive = False
+
+    from server.security import bypass_sandbox
 
     def fake_create(cwd, *, hidden, write_mode, scratch_dir, write_root):
         session = FakeSession(write_root)
@@ -257,9 +261,16 @@ def test_the_interactive_terminal_reopens_for_a_new_workspace(monkeypatch):
     second = terminal.get_or_open_interactive("chat", "/b", write_root="/b")
     assert second is not first and second.write_root == "/b"
     assert not first.alive
+    # A Bypass turn never reuses a sandboxed shell, nor the other way round.
+    with bypass_sandbox.entered(True):
+        free = terminal.get_or_open_interactive("chat", "/b", write_root="/b")
+        assert free is not second and free.profile_path is None
+        assert terminal.get_or_open_interactive("chat", "/b", write_root="/b") is free
+    confined = terminal.get_or_open_interactive("chat", "/b", write_root="/b")
+    assert confined is not free and not free.alive
     with terminal._sessions_lock:
         assert first.id not in terminal._sessions
-        terminal._sessions.pop(second.id, None)
+        terminal._sessions.pop(confined.id, None)
 
 
 def test_a_profile_with_no_workspace_writes_no_tree(tmp_path):
