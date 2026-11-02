@@ -54,3 +54,25 @@ def test_a_changed_encoder_choice_is_loaded_fresh(fresh, monkeypatch):
     monkeypatch.setattr(embedder, "_load_ecapa", lambda: object())
     assert embedder._get_encoder() is not None
     assert embedder.active_name() == embedder.NAME_ECAPA
+
+
+def test_a_new_recording_tries_a_failed_load_again(fresh, monkeypatch):
+    from server.diarization.live import LiveLabeller
+
+    state = {"online": False}
+
+    def load():
+        if not state["online"]:
+            raise OSError("hub unreachable")
+        return object()
+
+    monkeypatch.setattr(embedder, "_load_redimnet", load)
+    with pytest.raises(RuntimeError):
+        embedder._get_encoder()
+    state["online"] = True
+
+    async def send(_frame):
+        return None
+
+    LiveLabeller(object(), split_turns=False, send=send, new_chunk_id=lambda: 0)
+    assert embedder._get_encoder() is not None

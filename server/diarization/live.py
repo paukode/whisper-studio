@@ -15,7 +15,8 @@ connection, which works through the sentences in order on its own task:
 
 A labelling failure (the speaker model cannot load, an embed error) keeps
 the provisional label and sends ``speaker_error`` with the message, once per
-distinct error per connection.
+distinct error per connection. Each new connection clears a remembered
+speaker model load failure, so a new recording tries the load again.
 
 ``drain`` lets `stop` wait for every label before the client saves.
 """
@@ -71,6 +72,8 @@ class LiveLabeller:
         # The last labelling error sent to the client, so a failure that
         # repeats on every sentence shows once, not once per sentence.
         self._reported_error: str | None = None
+        # A new recording tries a failed speaker model load again.
+        diarization.embedder.forget_load_error()
 
     def provisional_label(self) -> str:
         """The label a sentence is sent under before it is labelled."""

@@ -63,9 +63,18 @@ _encoder_name: str | None = None
 # The last load failure, as (encoder name, message). A failed load is not
 # retried on every sentence (each ReDimNet2 attempt is a torch.hub network
 # call): the same error is raised again until the encoder is installed from
-# Settings or the configured encoder changes.
+# Settings, the configured encoder changes, or a new recording starts
+# (forget_load_error).
 _load_error: tuple[str, str] | None = None
 _lock = threading.Lock()
+
+
+def forget_load_error() -> None:
+    """Let the next embed try the load again. Called once per recording
+    connection, so "start a new recording" in the error message is a retry."""
+    global _load_error
+    with _lock:
+        _load_error = None
 
 
 def configured_name() -> str:
