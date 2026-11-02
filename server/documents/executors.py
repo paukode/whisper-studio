@@ -271,6 +271,9 @@ def _exec_office_script(tool_input, transcript, current_attachments):
             "code": code,
             "source_path": source_path,
             "summary": str(tool_input.get("summary") or "").strip(),
+            # The calling session rides along: a workspace-style path may be
+            # its own scratch folder (see _resolve_destination).
+            "session_id": tool_input.get("__session_id__", ""),
         }
     )
     return approval_request(payload)
