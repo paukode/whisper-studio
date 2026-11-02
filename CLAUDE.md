@@ -2,7 +2,8 @@
 
 Instructions for coding assistants and developers working on this repository.
 The user-facing product docs live in `docs/`; the assistant's own prompt rules
-live in `rules/global/rules.md`, seeded into `~/.whisper/rules/global/` on first run.
+live in `rules/global/rules.md`, seeded into `~/.whisper/rules/global/` on the Mac
+app's first run (a source install reads it from the checkout).
 This file is about how to change the code safely.
 
 ## What it is
@@ -36,16 +37,17 @@ and headless runs.
 5. **SSE frames are pinned.** `tests/golden_fixtures` pins the frame
    vocabulary (`GOLDEN_RECORD=1` re-records on purpose). The frontend Zod
    schema (`src/types/schemas/chat.schema.ts`) is `.passthrough()` at the top
-   level, so a brand-new frame survives unvalidated, but every nested
-   `z.object` drops keys it does not declare. A new field inside an existing
-   frame is therefore invisible to the UI until it is added there and in
-   `src/types/chat.ts`.
+   level, so a brand-new frame survives unvalidated, but most nested
+   `z.object`s drop keys they do not declare (check the frame's schema). A new
+   field inside an existing frame is therefore invisible to the UI until it is
+   added there and in `src/types/chat.ts`.
 6. **Import boundaries.** `server/infrastructure/config.py` never imports
    through `server.chat`. `server/tool_router.py` is pure dispatch; lifecycle
    lives in `tool_executor.py`.
 7. **One deliverable, one file.** File-producing tools overwrite the same path
    atomically; never create `_v2` or `_final` strays.
-8. **User files live in `~/.whisper`**, app storage under the data root.
+8. **User files live in the user root** (`~/.whisper` for the Mac app, the
+   checkout for a source install), app storage under the data root.
    Tests pin `WHISPER_USER_DIR` and redirect every import-time DB path
    (`tests/conftest.py::_DB_MODULES`). A new sqlite table needs a numbered
    migration in `server/migrations/`, the same schema in the module's own
@@ -75,7 +77,7 @@ server/agents/           subagent runtime, agent types, tool filtering, journal.
 server/tasks/            task registry, session events, detached agent runs
 server/voice/            Nova Sonic bidirectional stream, voice tools, approvals aloud
 server/costs/            per-turn cost log, budgets, the soft cap that reserves a round
-server/infrastructure/   config, sessions store, session_search, auxiliary models, one_shot
+server/infrastructure/   config, sessions store, session_search, auxiliary models, oneshot
 server/skills.py         skill loader; skills_routes.py (HTTP); agent_tools/ (model tools)
 src/hooks/useSlashCommands.tsx   slash commands; src/types/schemas/chat.schema.ts SSE schema
 macapp/                  build_app.sh then make_dmg.sh (packages dist-app/)
@@ -91,17 +93,18 @@ venv/bin/ruff check . && venv/bin/ruff format --check .
 npx tsc --noEmit && npm test && npm run lint && npm run build
 ```
 
-- Python 3.12 is the floor (the voice SDK pins it); the packaged app ships
-  3.13. Only Node 24 is installed locally; do not assume other versions.
+- Python 3.12 is the code's floor (the voice SDK pins it); the packaged app
+  and `setup.sh` use 3.13. The project pins Node in `.nvmrc` (22.16.0), and
+  `setup.sh` installs it into `venv/`; the system Node on this Mac is 24, so
+  use `venv/bin/node` when the version matters.
 - Run the full pytest suite with the DEFAULT environment and expect it green.
-  The local-model resolver tests that used to be red on some Macs read the
-  live on-device registry instead of a fixture; they pin it now, so a failure
-  there is a real one. Gate on the exit code, and never trust a piped
-  `pytest | tail` exit status.
-- The live runtime config is the gitignored `config.user.json` (or the legacy
-  `config.json`) at the repo root, merged over `config.example.json` and
-  `DEFAULTS`. A fresh install is seeded from `FIRST_RUN_USER_CONFIG`, which is
-  local mode, for the packaged app and `setup.sh` alike.
+  Gate on the exit code, and never trust a piped `pytest | tail` exit status.
+- The live runtime config is the gitignored `config.user.json` at the repo
+  root (in `~/.whisper` for the Mac app), merged over `config.example.json`
+  and `DEFAULTS`. It is the only user layer: an old `config.json` is not read,
+  and nothing at startup writes `config.user.json`. A fresh install is seeded
+  from `FIRST_RUN_USER_CONFIG`, which is local mode, for the packaged app and
+  `setup.sh` alike.
 - Several sessions may share this checkout and hold ports. Never kill
   processes by name; find the owner by port with `lsof -i :PORT`. Ship from a
   scratchpad worktree, never by switching branches in a shared tree.
