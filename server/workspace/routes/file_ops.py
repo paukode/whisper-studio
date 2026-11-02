@@ -12,8 +12,6 @@ import os
 from fastapi import Request
 from fastapi.responses import Response
 
-from server import file_state
-
 from .. import router
 from ..paths import (
     _WS_BINARY_EXTS,
@@ -234,7 +232,6 @@ async def ws_write_endpoint(request: Request):
         )
     path = body.get("path", "")
     content = _normalize_lf(body.get("content", ""))
-    session_id = body.get("session_id", "")
     full = os.path.join(ws, path)
     if not _ws_validate_path(full, ws):
         return Response(
@@ -242,15 +239,6 @@ async def ws_write_endpoint(request: Request):
             status_code=403,
             media_type="application/json",
         )
-    # Staleness re-check at write time (file may have changed since approval)
-    if session_id and os.path.isfile(full):
-        allowed, reason = file_state.check_write_allowed(session_id, full)
-        if not allowed:
-            return Response(
-                content=json.dumps({"error": reason}),
-                status_code=409,
-                media_type="application/json",
-            )
     if os.path.isfile(full):
         try:
             with open(full, errors="replace") as f:
@@ -258,8 +246,6 @@ async def ws_write_endpoint(request: Request):
         except Exception:
             pass
     _atomic_write_text(full, content)
-    if session_id:
-        file_state.record_write(session_id, full)
     return {"path": path, "written": True, "size": len(content)}
 
 
