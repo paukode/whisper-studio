@@ -152,6 +152,23 @@ def test_a_v1_file_is_not_read_or_overwritten(client, notices):
     assert hooks_file.read_bytes() == before
 
 
+def test_an_unreadable_file_is_not_overwritten(client):
+    c, tmp_path = client
+    hooks_file = tmp_path / "data" / "hooks.json"
+    # A trailing comma: the guard in it cannot be read, so it is not run.
+    hooks_file.write_text(
+        '{"version": 2, "hooks": {"PreToolUse": [{"command": "exit 2", "on_error": "block"},]}}'
+    )
+    before = hooks_file.read_bytes()
+
+    assert c.get("/api/hooks").json()["hooks"]["PreToolUse"] == []
+    # Saving would replace the file and drop the guard, so it is refused.
+    r = c.post("/api/hooks", json={"event": "Stop", "command": "exit 0"})
+    assert r.status_code == 409
+    assert "cannot be read" in r.json()["error"]
+    assert hooks_file.read_bytes() == before
+
+
 def test_turn_end_hooks_are_not_run_and_are_kept_on_save(client, notices):
     c, tmp_path = client
     hooks_file = tmp_path / "data" / "hooks.json"

@@ -97,7 +97,7 @@ async def add_hook(request: Request):
         return hook
     try:
         stored = cfg.upsert_user_hook(hook)
-    except cfg.OldHooksFile as e:
+    except cfg.HooksFileNotSaved as e:
         return _err(str(e), 409)
     return {"added": True, "hook": _hook_row(stored)}
 
@@ -114,7 +114,7 @@ async def update_hook(hook_id: str, request: Request):
         return hook
     try:
         stored = cfg.upsert_user_hook(hook)
-    except cfg.OldHooksFile as e:
+    except cfg.HooksFileNotSaved as e:
         return _err(str(e), 409)
     return {"updated": True, "hook": _hook_row(stored)}
 

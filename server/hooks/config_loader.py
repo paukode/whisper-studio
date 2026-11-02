@@ -39,8 +39,17 @@ OLD_HOOK_VARS = {
 _OLD_VAR_RE = re.compile(r"\b(" + "|".join(OLD_HOOK_VARS) + r")\b")
 
 
-class OldHooksFile(Exception):
+class HooksFileNotSaved(Exception):
+    """hooks.json is left as it is: the app does not overwrite it."""
+
+
+class OldHooksFile(HooksFileNotSaved):
     """hooks.json is in the old v1 format, so the app does not overwrite it."""
+
+
+class UnreadableHooksFile(HooksFileNotSaved):
+    """hooks.json exists but cannot be read or parsed, so the app does not
+    overwrite it (that would drop every hook in it)."""
 
 
 def _notice(title: str, message: str) -> None:
@@ -100,11 +109,23 @@ def trust_path() -> str:
     return os.path.join(data_root(), "hooks_trust.json")
 
 
-def _load_json(path: str):
+def _read_json(path: str):
+    """The parsed file, or None when it does not exist. Raises on a file that
+    cannot be read or parsed."""
     try:
         with open(path) as f:
             return json.load(f)
-    except Exception:
+    except FileNotFoundError:
+        return None
+
+
+def _load_json(path: str):
+    """The parsed file, or None when it does not exist or cannot be read (its
+    hooks are then not run; the failure is logged)."""
+    try:
+        return _read_json(path)
+    except (OSError, ValueError) as e:
+        log.warning("Hooks file %s not read: %s", path, e)
         return None
 
 
@@ -128,7 +149,13 @@ def save_user_hooks(by_event: dict[str, list[HookDef]]) -> None:
     """Write the user layer as v2. Refuses to overwrite a v1 file, and keeps
     event keys the app does not read (an old "TurnEnd") as they are."""
     path = hooks_path()
-    raw = _load_json(path)
+    try:
+        raw = _read_json(path)
+    except (OSError, ValueError) as e:
+        raise UnreadableHooksFile(
+            f"{path} cannot be read ({e}), so it is not changed. Fix or move it, "
+            "then add the hook again."
+        ) from e
     if _is_v1(raw):
         raise OldHooksFile(
             f"{path} is in the old v1 format, so it is not changed. "
