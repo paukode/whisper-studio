@@ -82,19 +82,29 @@ def is_sensitive(path: str) -> bool:
     )
 
 
-def load_grants() -> list[str]:
-    """Canonical folder paths the user has already approved. Missing or
-    unreadable file means no grants, never an error — a permission store
-    that fails closed is the safe direction."""
+def _read_grants() -> list[str]:
+    """The approved folders in the file; [] when there is no file. Raises
+    OSError or ValueError when the file cannot be read or parsed."""
     try:
         with _lock, open(GRANTS_PATH) as f:
             data = json.load(f)
-    except Exception:
+    except FileNotFoundError:
         return []
     if not isinstance(data, dict):
-        return []
+        raise ValueError(f"{GRANTS_PATH} does not hold a JSON object")
     out = data.get("granted")
     return [p for p in out if isinstance(p, str)] if isinstance(out, list) else []
+
+
+def load_grants() -> list[str]:
+    """Canonical folder paths the user has already approved. An unreadable
+    file means no grants (logged): a permission store that fails closed is
+    the safe direction, so the user is asked again."""
+    try:
+        return _read_grants()
+    except (OSError, ValueError) as e:
+        log.warning("folder grants not read, asking again: %s", e)
+        return []
 
 
 def _save_grants(paths: list[str]) -> None:
@@ -136,7 +146,11 @@ def grant(path: str) -> tuple[bool, str]:
         )
     if not os.path.isdir(real):
         return False, f"'{path}' does not exist or is not a directory."
-    grants = load_grants()
+    try:
+        grants = _read_grants()
+    except (OSError, ValueError) as e:
+        # Saving now would replace the file and drop every earlier grant.
+        return False, f"The folder grants file cannot be read ({e}), so it is not changed."
     if any(_is_within(real, _canonical(g)) for g in grants):
         return True, ""  # already covered by this or a broader grant
     # Drop any existing grants this one now subsumes, so the file stays a

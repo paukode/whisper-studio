@@ -33,6 +33,22 @@ def test_grant_then_no_longer_asks(tmp_path):
     assert needs_grant(str(target)) is False
 
 
+def test_an_unreadable_grants_file_asks_again_and_is_not_overwritten(tmp_path):
+    from server.security import folder_grants as fg
+
+    earlier = tmp_path / "earlier"
+    earlier.mkdir()
+    target = tmp_path / "project1"
+    target.mkdir()
+    path = tmp_path / "folder_grants.json"
+    path.write_text('{"granted": ["' + str(earlier) + '"],}')
+    before = path.read_bytes()
+    assert fg.needs_grant(str(earlier)) is True
+    ok, err = fg.grant(str(target))
+    assert not ok and "cannot be read" in err
+    assert path.read_bytes() == before
+
+
 def test_grant_covers_children_but_not_siblings_or_parent(tmp_path):
     from server.security.folder_grants import grant, needs_grant
 
