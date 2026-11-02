@@ -317,7 +317,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
       BASE_SLASH_COMMANDS.map((c) =>
         c.cmd === 'model '
           // Show the version label ("Sonnet 5.5") in the picker but insert the
-          // model key ("sonnet5.5") the /model handler validates against — so the
+          // model key ("sonnet5.5") the /model handler validates against, so the
           // autocomplete matches the model box under the composer.
           ? { ...c, options: models.map((m) => ({ label: m.name, value: m.key })) }
           : c,
