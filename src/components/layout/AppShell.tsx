@@ -33,7 +33,6 @@ import { BuddyWidget } from '@/components/common/BuddyWidget';
 import { MemoryEditorModal } from '@/components/settings/MemoryEditorModal';
 import { MemoryViewerModal } from '@/components/settings/MemoryViewerModal';
 import { ErrorBoundary } from '@/components/common/ErrorBoundary';
-import { BtwPopup } from '@/components/chat/BtwPopup';
 import { EditDiffViewer } from '@/components/chat/EditDiffViewer';
 import { DialogHost } from '@/components/common/Dialog';
 import { ModelModeNotice } from '@/components/common/ModelModeNotice';
@@ -69,9 +68,6 @@ const AppShell: React.FC = () => {
   // Memory editor modal state
   const memoryEditorOpen = useUIStore((s) => s.memoryEditorOpen);
   const memoryViewerOpen = useUIStore((s) => s.memoryViewerOpen);
-
-  // /btw popup state
-  const btwPopup = useUIStore((s) => s.btwPopup);
 
   // ── Layout split fractions (single source of truth, persisted) ──
   // No refs, no DOM mutation, no drag math here. The Splitter components
@@ -440,16 +436,6 @@ const AppShell: React.FC = () => {
           Live preview
         </button>
       )}
-
-      {/* /btw popup */}
-      {btwPopup && (
-        <BtwPopup
-          question={btwPopup.question}
-          answer={btwPopup.answer}
-          onClose={() => useUIStore.getState().setBtwPopup(null)}
-        />
-      )}
-
     </div>
   );
 };

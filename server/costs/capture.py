@@ -184,17 +184,6 @@ class ClaudeStreamUsage:
             return estimated_counts(request_chars, received_chars)
         return self._with_output(merged, received_chars)
 
-    def partial(self, received_chars: int, *, label: str) -> dict | None:
-        """Counts for a round that ended before message_stop (a mid-stream
-        error, a Stop): the prompt counts message_start reported, the output
-        as characters / 4 of what arrived unless its count already came.
-        None before message_start: nothing shows the prompt was ever
-        processed."""
-        if not self.started:
-            return None
-        merged = _merge(self._reported(), self._bedrock, label=label) or counts()
-        return self._with_output(merged, received_chars)
-
 
 def claude_invoke_counts(response: dict, payload: dict, request_body: str, *, label: str) -> dict:
     """Counts of one non-streaming Bedrock invoke_model call with an

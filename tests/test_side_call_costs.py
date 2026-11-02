@@ -3,8 +3,7 @@
 The turn engine records chat, agent, workflow, cron, voice and headless
 rounds. Titles, compaction summaries, the auto-mode classifier, the
 permission explainer, memory recall, query rewriting, the goal evaluator,
-index passes, OCR, condensation, the /btw side question and structured-output
-distillation call Bedrock themselves; each is billed, so each is logged.
+index passes, OCR, condensation and structured-output distillation call Bedrock themselves; each is billed, so each is logged.
 """
 
 import asyncio
@@ -181,36 +180,6 @@ def test_an_unknown_source_is_refused_before_the_call(cloud):
     with pytest.raises(ValueError):
         calls.invoke_claude(cloud, model_id="m", body="{}", source="mystery")
     assert cloud.calls == 0
-
-
-def _btw_events():
-    return [
-        {"type": "message_start", "message": {"usage": {"input_tokens": 40, "output_tokens": 1}}},
-        {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "An answer."}},
-        {"type": "message_delta", "usage": {"output_tokens": 7}},
-        {"type": "message_stop"},
-    ]
-
-
-def test_a_side_question_stream_is_logged_once_complete_or_abandoned():
-    haiku_id = _get_chat_models()["haiku"]
-    done = calls.ClaudeStreamRecorder(model_id=haiku_id, body="{}", source="btw", session_id="b1")
-    for ev in _btw_events():
-        done.observe(ev)
-        done.received(ev.get("delta", {}).get("text", ""))
-    done.finish()
-    done.finish()  # idempotent
-    row = _only_row("b1")
-    assert (row["input_tokens"], row["output_tokens"], row["source"]) == (40, 7, "btw")
-
-    cut = calls.ClaudeStreamRecorder(model_id=haiku_id, body="{}", source="btw", session_id="b2")
-    for ev in _btw_events()[:2]:
-        cut.observe(ev)
-        cut.received(ev.get("delta", {}).get("text", ""))
-    cut.finish()
-    row = _only_row("b2")
-    assert row["input_tokens"] == 40 and row["estimated_fields"] == "output"
-    assert row["output_tokens"] == capture.estimate_tokens(len("An answer."))
 
 
 def test_the_title_endpoint_logs_the_call_against_the_session(cloud):

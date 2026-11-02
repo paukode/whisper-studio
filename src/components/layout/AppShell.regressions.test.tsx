@@ -40,7 +40,6 @@ vi.mock('@/components/workspace/explorer/IndexExplorer', () => ({ IndexExplorer:
 vi.mock('@/components/common/BuddyWidget', () => ({ BuddyWidget: () => <div data-testid="buddy" /> }));
 vi.mock('@/components/settings/MemoryEditorModal', () => ({ MemoryEditorModal: () => <div data-testid="mem-edit" /> }));
 vi.mock('@/components/settings/MemoryViewerModal', () => ({ MemoryViewerModal: () => <div data-testid="mem-view" /> }));
-vi.mock('@/components/chat/BtwPopup', () => ({ BtwPopup: () => <div data-testid="btw" /> }));
 vi.mock('@/components/common/Dialog', () => ({ DialogHost: () => <div data-testid="dialogs" /> }));
 vi.mock('@/components/common/CommandPalette', () => ({ CommandPalette: () => <div data-testid="palette" /> }));
 vi.mock('@/hooks/useDockLiveWatcher', () => ({ useDockLiveWatcher: () => {} }));

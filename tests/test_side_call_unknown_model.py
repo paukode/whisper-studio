@@ -1,4 +1,4 @@
-"""/btw and /subagent refuse a model the catalog does not know, like /api/chat,
+"""/subagent refuses a model the catalog does not know, like /api/chat,
 instead of running the request on another model."""
 
 import json
@@ -35,7 +35,6 @@ def _frames(r) -> list:
 @pytest.mark.parametrize(
     "path, body",
     [
-        ("/api/chat/btw", {"question": "what is X", "model": "gone-model"}),
         ("/api/subagent/stream", {"task": "look into X", "model": "gone-model"}),
     ],
 )

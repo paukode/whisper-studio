@@ -41,7 +41,6 @@ export interface SlashCommand {
 // /help dialog render in array order, so alphabetical entries make commands
 // easy to scan and find. When adding a command, insert it in sorted position.
 export const BASE_SLASH_COMMANDS: SlashCommand[] = [
-  { cmd: 'btw ', icon: '💬', desc: 'Ask a side question', category: 'ai' },
   { cmd: 'ci ', icon: '🧪', desc: 'Watch CI for a branch, or `ci autofix` a failing run', category: 'ai' },
   { cmd: 'clear ', icon: '🧹', desc: 'Clear chat display', category: 'general' },
   { cmd: 'doctor ', icon: '🩺', desc: 'Run diagnostics', category: 'debug' },

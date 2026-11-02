@@ -6,7 +6,6 @@ Endpoints:
 - /api/local-model/*: load, cancel a load, status, download, unload
 - POST /api/generate-title: one-shot call to title a conversation
 - POST /api/subagent/stream: run a /subagent task
-- POST /api/chat/btw: quick side question, no history mutation
 - POST /api/chat: the main streaming chat endpoint
 
 ``/api/chat`` is turn ASSEMBLY only: request parsing, model resolution,
@@ -73,7 +72,6 @@ from .infra import (  # noqa: E402
     _turn_catalog,
 )
 from .local_refusals import (  # noqa: E402
-    btw_refusal,
     sse_error,
     subagent_refusal,
     unknown_model_message,
@@ -1162,134 +1160,6 @@ async def subagent_stream_endpoint(request: Request):
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(_stream(), media_type="text/event-stream")
-
-
-@router.post("/api/chat/btw")
-async def btw_endpoint(request: Request):
-    """
-    /btw side question — ask Claude a quick question without modifying the main
-    chat history. Streams the response as SSE. The last few messages are sent as
-    lightweight context so the answer is still relevant, but nothing is persisted.
-    Nothing is persisted to session history.
-    """
-    body = await request.json()
-    question = body.get("question", "").strip()
-    if not question:
-        from fastapi.responses import Response
-
-        return Response(
-            content=json.dumps({"error": "question required"}),
-            status_code=400,
-            media_type="application/json",
-        )
-
-    if (refused := btw_refusal()) is not None:
-        return refused
-
-    # Use up to the last 4 messages as lightweight context (read-only)
-    recent_history = body.get("recent_history", [])[-4:]
-    model_key = body.get("model") or _get_default_model()
-    chat_models = _get_chat_models()
-    if model_key not in chat_models:
-        return sse_error(unknown_model_message(model_key))
-    model_id = chat_models[model_key]
-
-    from server.prompts.rules import append_rules
-
-    system = append_rules(
-        "You are a helpful assistant. Answer the user's side question concisely. "
-        "This is a quick aside - the user hasn't left the main conversation. "
-        "Be direct and brief (1-3 sentences unless more depth is needed)."
-    )
-
-    messages = []
-    for m in recent_history:
-        messages.append({"role": m["role"], "content": m.get("content", "")})
-    messages.append({"role": "user", "content": question})
-
-    btw_body = json.dumps(
-        {
-            "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": 2048,
-            "system": system,
-            "messages": messages,
-        }
-    )
-    btw_session = str(body.get("session_id") or "")
-
-    async def _btw_stream():
-        from server.chat.engine.anthropic import tighten_read_timeout
-        from server.costs.calls import ClaudeStreamRecorder
-
-        bedrock = _get_bedrock_client()
-        loop = asyncio.get_event_loop()
-        # The side question is billed like any call: logged once, whether the
-        # stream completes, fails or the client goes away.
-        cost = ClaudeStreamRecorder(
-            model_id=model_id, body=btw_body, source="btw", session_id=btw_session
-        )
-
-        def _stream():
-            return bedrock.invoke_model_with_response_stream(
-                modelId=model_id,
-                contentType="application/json",
-                accept="application/json",
-                body=btw_body,
-            )
-
-        # Invoke on the shared executor so the (blocking) request setup never
-        # parks the event loop.
-        try:
-            response = await loop.run_in_executor(executor, _stream)
-        except Exception as e:
-            yield f"data: {ndjson_dumps({'error': str(e)})}\n\n"
-            yield "data: [DONE]\n\n"
-            return
-
-        # botocore's EventStream iteration does BLOCKING socket reads. Run it on
-        # a worker thread and hand decoded chunks to the event loop through a
-        # queue so the async generator never blocks the loop (mirrors the main
-        # chat streaming path). A None sentinel signals end-of-stream; an
-        # Exception instance forwards a reader-thread failure.
-        q = asyncio.Queue()
-
-        def _read_stream(response=response, q=q):
-            try:
-                stream = response.get("body")
-                for n, event in enumerate(stream):
-                    if n == 0:
-                        tighten_read_timeout(stream)
-                    chunk = event.get("chunk")
-                    if not chunk:
-                        continue
-                    data = json.loads(chunk["bytes"].decode())
-                    loop.call_soon_threadsafe(q.put_nowait, data)
-                loop.call_soon_threadsafe(q.put_nowait, None)
-            except Exception as e:
-                loop.call_soon_threadsafe(q.put_nowait, e)
-
-        loop.run_in_executor(executor, _read_stream)
-
-        try:
-            while True:
-                data = await q.get()
-                if data is None:
-                    break
-                if isinstance(data, Exception):
-                    yield f"data: {ndjson_dumps({'error': str(data)})}\n\n"
-                    break
-                cost.observe(data)
-                event_type = data.get("type", "")
-                if event_type == "content_block_delta":
-                    text = data.get("delta", {}).get("text", "")
-                    cost.received(text)
-                    if text:
-                        yield f"data: {ndjson_dumps({'text': text})}\n\n"
-        finally:
-            cost.finish()
-        yield "data: [DONE]\n\n"
-
-    return StreamingResponse(_btw_stream(), media_type="text/event-stream")
 
 
 @router.post("/api/chat")

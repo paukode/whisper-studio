@@ -163,30 +163,3 @@ def test_stall_limit_does_not_outlive_the_stream(bedrock_server):
     assert next_stream._raw_stream.connection.sock is sock  # the pooled connection
     assert sock.gettimeout() == _CLIENT_READ_TIMEOUT_S
     assert len(list(next_stream)) == len(answer)
-
-
-def test_silent_side_question_stream_ends_with_an_error(monkeypatch, bedrock_server):
-    """/btw has no round retry, but a dead stream still ends at the stall
-    limit with an error, not after the client's read_timeout."""
-    from fastapi import FastAPI
-    from fastapi.testclient import TestClient
-
-    import server.chat.routes as routes_mod
-
-    monkeypatch.setattr(anthropic_mod, "_STREAM_STALL_TIMEOUT_S", 0.5)
-    monkeypatch.setattr(routes_mod, "btw_refusal", lambda: None)
-    client = _client(bedrock_server.server_address[1])
-    monkeypatch.setattr(routes_mod, "_get_bedrock_client", lambda: client)
-    bedrock_server.rounds = [([msg_start(), *text_block("partial")], True)]
-    app = FastAPI()
-    app.include_router(routes_mod.router)
-
-    started = time.monotonic()
-    with TestClient(app).stream("POST", "/api/chat/btw", json={"question": "q"}) as resp:
-        raw = b"".join(resp.iter_raw()).decode()
-    elapsed = time.monotonic() - started
-
-    assert "partial" in raw
-    assert "Read timed out" in raw
-    assert raw.rstrip().endswith("data: [DONE]")
-    assert elapsed < _CLIENT_READ_TIMEOUT_S / 3

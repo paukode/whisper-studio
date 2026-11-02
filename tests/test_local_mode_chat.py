@@ -10,7 +10,7 @@ Local mode promises that nothing leaves this Mac. The contracts pinned here:
 * A model the live catalog gained after the session latched (a Discover
   install mid-session, or weights on disk with no config entry) runs in that
   session instead of being swapped for the latched cloud default.
-* Side paths that would reach Bedrock (/btw, /subagent) stay local.
+* /subagent, a side path that would reach Bedrock, stays local.
 
 The user layer and the on-device registry are patched where production reads
 them (``config._load_user_config`` and ``server.local.registry.local_models``),
@@ -275,14 +275,6 @@ def test_hybrid_mode_lets_a_cloud_model_through_the_gate(
 
 
 # ── side paths ───────────────────────────────────────────────────────────────
-
-
-def test_local_mode_btw_is_refused_without_calling_bedrock(user_layer, no_cloud, client):
-    user_layer["model_mode"] = "local"
-    with client.stream("POST", "/api/chat/btw", json={"question": "what time is it"}) as r:
-        raw = b"".join(r.iter_raw()).decode()
-    frames = [json.loads(ln[6:]) for ln in raw.splitlines() if ln.startswith("data: {")]
-    assert frames and "Local mode" in frames[0]["error"]
 
 
 def test_local_mode_subagent_refuses_a_cloud_model(user_layer, registry, monkeypatch, client):

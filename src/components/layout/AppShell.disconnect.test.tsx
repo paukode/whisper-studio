@@ -31,7 +31,6 @@ vi.mock('@/components/workspace/explorer/IndexExplorer', () => ({ IndexExplorer:
 vi.mock('@/components/common/BuddyWidget', () => ({ BuddyWidget: () => <div /> }));
 vi.mock('@/components/settings/MemoryEditorModal', () => ({ MemoryEditorModal: () => <div /> }));
 vi.mock('@/components/settings/MemoryViewerModal', () => ({ MemoryViewerModal: () => <div /> }));
-vi.mock('@/components/chat/BtwPopup', () => ({ BtwPopup: () => <div /> }));
 vi.mock('@/components/common/Dialog', () => ({ DialogHost: () => <div /> }));
 vi.mock('@/components/common/CommandPalette', () => ({ CommandPalette: () => <div /> }));
 vi.mock('@/hooks/useDockLiveWatcher', () => ({ useDockLiveWatcher: () => {} }));

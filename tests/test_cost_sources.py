@@ -71,7 +71,7 @@ def test_an_estimated_round_is_recorded_as_estimated():
     assert row["estimated_fields"] == "input,output"
 
 
-@pytest.mark.parametrize("source", ["", "unattributed", "made-up"])
+@pytest.mark.parametrize("source", ["", "unattributed", "btw", "made-up"])
 def test_record_turn_refuses_an_unlabelled_source(source):
     with pytest.raises(ValueError):
         tracker.record_turn("s", 0, "haiku", 1, 1, source=source)
@@ -201,3 +201,10 @@ def test_migration_021_leaves_a_current_table_alone(tmp_path):
     m021.migrate(conn)
     conn.commit()
     assert _rows(conn) == before
+
+
+def test_a_history_only_source_still_labels_its_old_rows():
+    from server.costs.sources import HISTORY_ONLY, source_label
+
+    for source in HISTORY_ONLY:
+        assert source_label(source) != source

@@ -393,7 +393,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
     onAttachWorkspaceFile: attachWorkspaceFileAsChip,
   });
 
-  // Slash-command dispatcher (/effort, /model, /doctor, /help, /btw, …).
+  // Slash-command dispatcher (/effort, /model, /doctor, /help, …).
   const { handleSlashCommand } = useSlashCommands({
     models,
     setVerbosity,

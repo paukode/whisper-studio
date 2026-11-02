@@ -59,7 +59,7 @@ export interface UseSlashCommandsResult {
 
 /**
  * Slash-command dispatcher for the chat composer: interprets `/effort`,
- * `/model`, `/doctor`, `/help`, `/btw`, `/rename`, `/subagent`, `/file:…`,
+ * `/model`, `/doctor`, `/help`, `/rename`, `/subagent`, `/file:…`,
  * and the rest. Side effects go through the store actions and the chat
  * stream; this hook owns the (large) switch so ChatInput stays readable.
  */
@@ -316,62 +316,6 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
       }
       case 'skills': {
         openSettings('skills');
-        return true;
-      }
-      case 'btw': {
-        if (!arg) {
-          addToast({ type: 'info', message: 'Usage: /btw <question>', duration: 3000, persist: false });
-          return true;
-        }
-        const fullQuestion = input.slice(5).trim();
-        addToast({ type: 'info', message: `Asking: ${fullQuestion}…`, duration: 3000, persist: false });
-        void (async () => {
-          try {
-            const response = await fetch('/api/chat/btw', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                question: fullQuestion,
-                model: selectedModel,
-                // Attributes the side question's cost to this session.
-                session_id: sessionId,
-                recent_history: getChatStore(sessionId).getState().messages.slice(-4).map(m => ({ role: m.role, content: m.content })),
-              }),
-            });
-            if (!response.ok || !response.body) throw new Error('BTW request failed');
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder();
-            let buffer = '';
-            let btwContent = '';
-            let btwError = '';
-            for (;;) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              buffer += decoder.decode(value, { stream: true });
-              const lines = buffer.split('\n');
-              buffer = lines.pop() ?? '';
-              for (const line of lines) {
-                const trimmedLine = line.trim();
-                if (!trimmedLine.startsWith('data: ')) continue;
-                const payload = trimmedLine.slice(6);
-                if (payload === '[DONE]') continue;
-                try {
-                  const evt: Record<string, unknown> = JSON.parse(payload);
-                  if (typeof evt.text === 'string') btwContent += evt.text;
-                  else if (typeof evt.error === 'string') btwError = evt.error;
-                } catch { /* skip malformed JSON */ }
-              }
-            }
-            if (btwContent) {
-              useUIStore.getState().setBtwPopup({ question: fullQuestion, answer: btwContent });
-            } else if (btwError) {
-              // A refusal (for example Local mode) says why instead of going silent.
-              addToast({ type: 'error', message: btwError, duration: 6000 });
-            }
-          } catch {
-            addToast({ type: 'error', message: 'BTW request failed.', duration: 3000 });
-          }
-        })();
         return true;
       }
       case 'rename': {

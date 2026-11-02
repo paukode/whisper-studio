@@ -20,8 +20,7 @@
       autocomplete.</p>
 
     <p>Slash commands are shortcuts the composer intercepts <em>before</em> anything is sent to the
-      model. They tune the session (model, thinking depth, response length), run side tasks (a subagent,
-      a one-off side question), or drive the UI (open Settings, clear the view, rename the session).
+      model. They tune the session (model, thinking depth, response length), run side tasks (a subagent), or drive the UI (open Settings, clear the view, rename the session).
       Most take effect instantly and confirm with a small toast; a few open a dialog. They are handled
       client-side in <code class="path">src/hooks/useSlashCommands.tsx</code>, with the list itself
       defined in <code class="path">src/components/chat/chatInputConstants.ts</code>.</p>
@@ -47,7 +46,6 @@
         <tr><td><code>/goal &lt;text&gt;</code></td><td>Set a session goal, send it as the first message, and work toward it.</td></tr>
         <tr><td><code>/goal clear</code></td><td>End the active goal.</td></tr>
         <tr><td><code>/goal gate [add|remove|clear]</code></td><td>List or edit the shell commands that must pass before the goal counts as done.</td></tr>
-        <tr><td><code>/btw &lt;question&gt;</code></td><td>Ask a side question that never enters the transcript.</td></tr>
         <tr><td><code>/subagent &lt;task&gt;</code></td><td>Spawn a focused one-shot subagent in the background.</td></tr>
         <tr><td><code>/workflow &lt;saved-name&gt;</code></td><td>Launch a saved ultracode workflow run in this session.</td></tr>
         <tr><td><code>/file:&lt;path&gt; [question]</code></td><td>Reference a workspace file inline so the model sees its contents.</td></tr>
@@ -161,14 +159,6 @@
 
     <h2 id="side-tasks">Side tasks &amp; agents</h2>
     <p>These run work alongside the main conversation without derailing it.</p>
-
-    <h3 id="btw">/btw</h3>
-    <p><code>/btw &lt;question&gt;</code> asks a quick side-channel question that <b>does not enter the
-      main transcript</b>. It sends only your question plus a few recent messages for context, opens
-      the answer in a small popup when it is complete, and leaves the conversation history untouched. Use it for a fast
-      aside ("btw what does this acronym mean") when you do not want to spend the main thread's context
-      on it. With no question, the command just shows its usage hint. If the side question is refused
-      (for example in Local mode), a toast says why.</p>
 
     <h3 id="subagent">/subagent</h3>
     <p><code>/subagent &lt;task&gt;</code> spawns a <b>focused one-shot subagent</b> that works in the

@@ -5,7 +5,7 @@ import React from 'react';
  * an activity row, the delivery chips, the agent card and the agent report
  * card, the state marks (chevrons, check, alert, stop), the thinking block's
  * marks, and the marks of the chat's cards and banners (approval, cron, CI,
- * workflow, goal, the cross-session message, the /btw popup). Every icon is a
+ * workflow, goal, the cross-session message). Every icon is a
  * 12px feather-style SVG drawn in currentColor, so the surrounding slot sets
  * its size and colour: the chrome of the transcript (bubbles, rows, cards,
  * banners) draws no emoji and no text glyph. The composer's command menu

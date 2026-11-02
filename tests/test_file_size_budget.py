@@ -25,7 +25,7 @@ MAX_LINES = 1200
 ALLOWLIST: dict[str, str] = {
     # Turn ASSEMBLY for /api/chat (request parsing, model resolution,
     # grounding, prompt building, the local/cloud split) plus the side routes
-    # (models, local-model load/download, title, /btw, /subagent). The turn
+    # (models, local-model load/download, title, /subagent). The turn
     # loop itself lives in server/chat/engine. Still to be split by topic.
     "server/chat/routes.py": "/api/chat turn assembly plus side routes; the turn loop is in server/chat/engine; still to be split by topic.",
 }
