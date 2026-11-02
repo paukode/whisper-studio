@@ -640,36 +640,17 @@ def do_git_push_pr(payload: dict) -> tuple[bool, str]:
     if rc != 0:
         return False, f"push failed: {stderr.strip()}"
 
-    gh_args = ["gh", "pr", "create", "--title", title]
+    from server.git.gh_common import run_gh
+
+    gh_args = ["pr", "create", "--title", title]
     if body:
         gh_args.extend(["--body", body])
     if base:
         gh_args.extend(["--base", base])
-    try:
-        result = subprocess.run(
-            gh_args,
-            capture_output=True,
-            text=True,
-            cwd=cwd,
-            timeout=30,
-            stdin=subprocess.DEVNULL,
-        )
-    except FileNotFoundError:
-        return True, (
-            f"Pushed to origin/{branch} successfully.\n\n{push_output}\n\n"
-            f"PR creation skipped: 'gh' CLI not found. Install it from https://cli.github.com/"
-        )
-    except Exception as e:
-        return True, (
-            f"Pushed to origin/{branch} successfully.\n\n{push_output}\n\nPR creation failed: {e}"
-        )
-
-    pr_output = (result.stdout + result.stderr).strip()
-    if result.returncode != 0:
-        return True, (
-            f"Pushed to origin/{branch} successfully.\n\n{push_output}\n\n"
-            f"But PR creation failed: {result.stderr.strip()}\n"
-            f"You can create the PR manually or ensure 'gh' CLI is installed and authenticated."
+    rc, pr_output = run_gh(gh_args, cwd=cwd, timeout=30, approved=True)
+    if rc != 0:
+        return False, (
+            f"Pushed to origin/{branch}, but the PR was not created: {pr_output}\n\n{push_output}"
         )
     return True, f"Pushed to origin/{branch} and created PR:\n\n{pr_output}"
 
