@@ -410,9 +410,10 @@ class AgentJournal:
             self._warn("event", e)
         return self._seq
 
-    def checkpoint(self, messages: list, round_num: int) -> None:
+    def checkpoint(self, round_num: int, messages: list) -> None:
         """Snapshot the API message list so a killed run can be resumed from
-        its last round; called by the runner at every round start."""
+        its last round; called by the runner at every round start with the
+        TurnContext.on_round arguments (round number, then messages)."""
         try:
             _write_atomic(self.messages_path, json.dumps(messages, ensure_ascii=False, default=str))
             self._meta["rounds"] = max(int(self._meta.get("rounds") or 0), round_num)
