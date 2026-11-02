@@ -142,7 +142,7 @@ def test_terminal_send_refuses_and_keeps_no_session(spawned):
     from server import terminal
     from server.executors.terminal_run import do_terminal_send
 
-    ok, msg = asyncio.run(do_terminal_send({"__session_id__": "sess-fc", "input": "echo hi"}))
+    ok, msg = asyncio.run(do_terminal_send({"session_id": "sess-fc", "input": "echo hi"}))
     assert ok is False
     assert msg == SANDBOX_UNAVAILABLE_MESSAGE
     assert "sess-fc" not in terminal._interactive_ptys

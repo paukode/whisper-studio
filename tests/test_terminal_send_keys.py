@@ -28,7 +28,7 @@ def typed(monkeypatch):
 
 
 def _send(text: str) -> tuple[bool, str]:
-    return asyncio.run(do_terminal_send({"__session_id__": "c1", "input": text}))
+    return asyncio.run(do_terminal_send({"session_id": "c1", "input": text}))
 
 
 @pytest.mark.parametrize("keys", ["\x03", "\x04", "\x11", "\x03\x03"])

@@ -478,7 +478,7 @@ async def do_terminal_send(payload: dict) -> tuple[bool, str]:
     finish. Use this to drive REPLs and prompts. Returns (ok, text)."""
     from server.terminal import get_or_open_interactive, send_and_wait
 
-    chat_session_id = (payload.get("__session_id__") or payload.get("session_id") or "").strip()
+    chat_session_id = (payload.get("session_id") or "").strip()
     if not chat_session_id:
         return False, "no chat session id to key the interactive terminal"
 
@@ -540,7 +540,7 @@ async def do_terminal_send(payload: dict) -> tuple[bool, str]:
 async def do_terminal_close(payload: dict) -> tuple[bool, str]:
     from server.terminal import close_interactive
 
-    chat_session_id = (payload.get("__session_id__") or payload.get("session_id") or "").strip()
+    chat_session_id = (payload.get("session_id") or "").strip()
     if not chat_session_id:
         return False, "no chat session id"
     closed = close_interactive(chat_session_id)

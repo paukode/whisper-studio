@@ -100,15 +100,15 @@ def test_interactive_tool_persists_state_across_calls():
     async def go():
         sid = "chat-persist-1"
         try:
-            await do_terminal_send({"__session_id__": sid, "input": "python3 -q", "timeout": 15})
-            await do_terminal_send({"__session_id__": sid, "input": "x = 21*2", "timeout": 15})
+            await do_terminal_send({"session_id": sid, "input": "python3 -q", "timeout": 15})
+            await do_terminal_send({"session_id": sid, "input": "x = 21*2", "timeout": 15})
             ok, out = await do_terminal_send(
-                {"__session_id__": sid, "input": "print(x)", "timeout": 15}
+                {"session_id": sid, "input": "print(x)", "timeout": 15}
             )
             assert ok and "42" in out
             assert out.startswith("wait_reason:")
         finally:
-            await do_terminal_close({"__session_id__": sid})
+            await do_terminal_close({"session_id": sid})
 
     asyncio.run(go())
 
@@ -118,11 +118,11 @@ def test_interactive_tool_validates_first_command_line():
         sid = "chat-validate-1"
         try:
             ok, msg = await do_terminal_send(
-                {"__session_id__": sid, "input": "cat ~/.ssh/id_rsa", "timeout": 3}
+                {"session_id": sid, "input": "cat ~/.ssh/id_rsa", "timeout": 3}
             )
             assert ok is False and msg
         finally:
-            await do_terminal_close({"__session_id__": sid})
+            await do_terminal_close({"session_id": sid})
 
     asyncio.run(go())
 
@@ -130,9 +130,9 @@ def test_interactive_tool_validates_first_command_line():
 def test_close_is_idempotent():
     async def go():
         sid = "chat-close-1"
-        await do_terminal_send({"__session_id__": sid, "input": "echo hi", "timeout": 10})
-        ok1, _ = await do_terminal_close({"__session_id__": sid})
-        ok2, msg2 = await do_terminal_close({"__session_id__": sid})
+        await do_terminal_send({"session_id": sid, "input": "echo hi", "timeout": 10})
+        ok1, _ = await do_terminal_close({"session_id": sid})
+        ok2, msg2 = await do_terminal_close({"session_id": sid})
         assert ok1 is True
         assert ok2 is True and "No interactive terminal" in msg2
 
@@ -143,10 +143,10 @@ def test_empty_input_reads_pending_output_without_error():
     async def go():
         sid = "chat-empty-1"
         try:
-            await do_terminal_send({"__session_id__": sid, "input": "echo marker", "timeout": 10})
-            ok, out = await do_terminal_send({"__session_id__": sid, "input": "", "timeout": 3})
+            await do_terminal_send({"session_id": sid, "input": "echo marker", "timeout": 10})
+            ok, out = await do_terminal_send({"session_id": sid, "input": "", "timeout": 3})
             assert ok is True
         finally:
-            await do_terminal_close({"__session_id__": sid})
+            await do_terminal_close({"session_id": sid})
 
     asyncio.run(go())
