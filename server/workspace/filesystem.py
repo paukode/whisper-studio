@@ -17,30 +17,30 @@ def _ws_list_dir(root: str, rel_path: str = "") -> list[dict]:
       - path: relative path from workspace root
       - type: "file" or "directory"
       - binary: True if file has a binary extension (files only)
+
+    A folder the OS will not let the app read raises PermissionError, so the
+    caller shows the reason instead of an empty folder.
     """
     target = os.path.join(root, rel_path) if rel_path else root
     target = os.path.realpath(target)
     if not os.path.isdir(target):
         return []
     entries = []
-    try:
-        for name in sorted(os.listdir(target)):
-            full = os.path.join(target, name)
-            entry_rel = os.path.join(rel_path, name) if rel_path else name
-            if os.path.isdir(full):
-                entries.append({"name": name, "path": entry_rel, "type": "directory"})
-            elif os.path.isfile(full):
-                ext = os.path.splitext(name)[1].lower()
-                entries.append(
-                    {
-                        "name": name,
-                        "path": entry_rel,
-                        "type": "file",
-                        "binary": ext in _WS_BINARY_EXTS,
-                    }
-                )
-    except PermissionError:
-        pass
+    for name in sorted(os.listdir(target)):
+        full = os.path.join(target, name)
+        entry_rel = os.path.join(rel_path, name) if rel_path else name
+        if os.path.isdir(full):
+            entries.append({"name": name, "path": entry_rel, "type": "directory"})
+        elif os.path.isfile(full):
+            ext = os.path.splitext(name)[1].lower()
+            entries.append(
+                {
+                    "name": name,
+                    "path": entry_rel,
+                    "type": "file",
+                    "binary": ext in _WS_BINARY_EXTS,
+                }
+            )
     return entries
 
 

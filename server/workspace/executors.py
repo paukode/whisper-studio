@@ -37,7 +37,6 @@ from .commands import (
 from .filesystem import _ws_list_dir
 from .paths import (
     _WS_BINARY_EXTS,
-    WORKSPACE_BACKUPS,
     _is_system_path,
     _normalize_lf,
     _ws_path_allowed,
@@ -47,13 +46,10 @@ from .paths import (
 )
 from .read_only import _is_read_only_command
 from .state import (
-    CONFIG_LOCK,
     _workspace_prompt_payload,
+    connect_workspace,
     get_workspace_path,
-    load_workspace_config,
     resolve_write_destination,
-    save_recent_workspace,
-    save_workspace_config,
     workspace_lost_message,
 )
 
@@ -136,7 +132,7 @@ def open_folder_now(path: str) -> str:
     """Create the folder if needed, connect it, and return connection info.
 
     The part of ws_open_folder that actually DOES the thing, split out so the
-    approval executor (server/approval/bootstrap.py::_do_folder_access) can
+    approval executor (server/approval/executors.py::_do_folder_access) can
     complete the very action the user approved instead of only recording the
     permission for it. ``path`` must already be expanded and realpath'd.
 
@@ -148,16 +144,15 @@ def open_folder_now(path: str) -> str:
         return json.dumps({"error": lost})
     try:
         os.makedirs(path, exist_ok=True)
-    except Exception as e:
+    except OSError as e:
         return json.dumps({"error": f"Could not create folder: {e}"})
-    # Connect workspace (serialized with the connect/disconnect handlers)
-    with CONFIG_LOCK:
-        config = load_workspace_config()
-        config["path"] = path
-        config.pop("mode", None)  # retired field; scrub it from old configs
-        save_workspace_config(config)
-    save_recent_workspace(path)
-    WORKSPACE_BACKUPS.clear()
+    # The same connect as the UI's (config, recents, backups, the git and
+    # workspace watchers, and on a switch the old workspace's cwds and
+    # worktrees), as a tool: a turn that lost its workspace is refused.
+    try:
+        path = connect_workspace(path)
+    except ValueError as e:
+        return json.dumps({"error": str(e)})
     entries = _ws_list_dir(path)
     return json.dumps(
         {

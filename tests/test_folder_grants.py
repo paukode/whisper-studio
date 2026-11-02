@@ -196,9 +196,6 @@ def test_ws_open_folder_proceeds_silently_once_granted(tmp_path, monkeypatch):
     from server.workspace.executors import execute_ws_open_folder
 
     monkeypatch.setattr("server.workspace.executors.get_workspace_path", lambda: None)
-    monkeypatch.setattr("server.workspace.executors.save_workspace_config", lambda c: None)
-    monkeypatch.setattr("server.workspace.executors.load_workspace_config", lambda: {})
-    monkeypatch.setattr("server.workspace.executors.save_recent_workspace", lambda p: None)
     target = tmp_path / "project1"
     target.mkdir()
 
@@ -219,9 +216,6 @@ def _wire_workspace_to_tmp(monkeypatch, tmp_path):
 
     monkeypatch.setattr(S, "WORKSPACE_CONFIG_PATH", str(tmp_path / "workspace.json"))
     monkeypatch.setattr(S, "RECENT_WORKSPACES_PATH", str(tmp_path / "recent.json"))
-    monkeypatch.setattr(E, "load_workspace_config", S.load_workspace_config)
-    monkeypatch.setattr(E, "save_workspace_config", S.save_workspace_config)
-    monkeypatch.setattr(E, "save_recent_workspace", S.save_recent_workspace)
     monkeypatch.setattr(E, "get_workspace_path", S.get_workspace_path)
     return S
 

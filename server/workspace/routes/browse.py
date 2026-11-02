@@ -20,7 +20,19 @@ async def ws_browse(path: str = ""):
     # The scan runs on a worker thread: a big folder, or one on a slow or
     # network volume, held the event loop (every session's stream and a
     # Disconnect click with it) for as long as the listing took.
-    return await asyncio.to_thread(_browse, path)
+    try:
+        return await asyncio.to_thread(_browse, path)
+    except PermissionError as e:
+        return _permission_denied(e)
+
+
+def _permission_denied(e: PermissionError) -> Response:
+    """403 with the OS reason: a folder the app may not read is not empty."""
+    return Response(
+        content=json.dumps({"error": f"Cannot read {e.filename}: {e.strerror}"}),
+        status_code=403,
+        media_type="application/json",
+    )
 
 
 def _browse(path: str) -> dict:
@@ -38,22 +50,19 @@ def _browse(path: str) -> dict:
     # full count is returned separately so the UI can say "showing N of M".
     files: list[dict] = []
     FILE_CAP = 250
-    try:
-        for name in sorted(os.listdir(target)):
-            if name.startswith("."):
-                continue
-            full = os.path.join(target, name)
-            # Rich shape with mtime so the UI can offer sort-by-modified.
-            try:
-                mtime = os.path.getmtime(full)
-            except OSError:
-                mtime = 0.0
-            if os.path.isdir(full):
-                entries.append({"name": name, "mtime": mtime})
-            elif os.path.isfile(full):
-                files.append({"name": name, "mtime": mtime})
-    except PermissionError:
-        pass
+    for name in sorted(os.listdir(target)):
+        if name.startswith("."):
+            continue
+        full = os.path.join(target, name)
+        # Rich shape with mtime so the UI can offer sort-by-modified.
+        try:
+            mtime = os.path.getmtime(full)
+        except OSError:
+            mtime = 0.0
+        if os.path.isdir(full):
+            entries.append({"name": name, "mtime": mtime})
+        elif os.path.isfile(full):
+            files.append({"name": name, "mtime": mtime})
     # When a folder has more files than the cap, keep the most-recently-modified
     # ones: capping the alphabetical scan order would make the UI's "newest
     # first" sort lie (the genuinely-newest could sit in the unsent tail). The
@@ -126,7 +135,10 @@ async def ws_list_dir_endpoint(path: str = ""):
                 status_code=404,
                 media_type="application/json",
             )
-    entries = await asyncio.to_thread(_ws_list_dir, ws, path)
+    try:
+        entries = await asyncio.to_thread(_ws_list_dir, ws, path)
+    except PermissionError as e:
+        return _permission_denied(e)
     return {"entries": entries}
 
 

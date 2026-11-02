@@ -41,7 +41,14 @@ async def ws_connect(request: Request):
         )
     # by_user: switching away from a workspace here releases it for any turn
     # still running in it, the same as a disconnect.
-    real = connect_workspace(path, by_user=True)
+    try:
+        real = connect_workspace(path, by_user=True)
+    except ValueError as e:
+        return Response(
+            content=json.dumps({"error": str(e)}),
+            status_code=403,
+            media_type="application/json",
+        )
     # The config write above stays on the loop so a Disconnect clicked right
     # after is applied in order; the listing is only a read, so it goes to a
     # worker thread instead of holding every other session's stream.

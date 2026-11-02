@@ -28,8 +28,8 @@ from .paths import (
 log = logging.getLogger("whisper-studio")
 
 # Serializes every read-modify-write of workspace_config.json: the REST
-# connect/disconnect handlers on the event loop, and connect_workspace /
-# open_folder_now called from tool threads. Held only around the small file
+# connect/disconnect handlers on the event loop, and connect_workspace called
+# from tool threads (git_clone, ws_open_folder). Held only around the small file
 # read and the atomic replace, never across anything a turn does, so taking
 # it on the loop costs microseconds.
 CONFIG_LOCK = threading.Lock()
@@ -206,7 +206,6 @@ def _set_connected_path(path: str | None) -> str | None:
         config = load_workspace_config()
         previous = config.get("path")
         config["path"] = path
-        config.pop("mode", None)  # retired field; scrub it from old configs
         save_workspace_config(config)
     return previous
 
@@ -527,6 +526,12 @@ def connect_workspace(path: str, *, by_user: bool = False) -> str:
     real = os.path.realpath(path)
     if not os.path.isdir(real):
         raise ValueError(f"Directory not found: {real}")
+    try:
+        os.listdir(real)
+    except PermissionError as e:
+        # macOS refused the read (Files and Folders access): connecting would
+        # show an empty tree with no reason.
+        raise ValueError(f"Cannot read {real}: {e.strerror}") from e
     previous = _set_connected_path(real)
     switched = bool(previous) and os.path.realpath(previous) != real
     if switched and by_user:
