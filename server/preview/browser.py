@@ -148,8 +148,8 @@ class BrowserSession:
             try:
                 resp = await request.response()
                 entry["status"] = resp.status if resp else None
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as e:  # noqa: BLE001 (kept on the entry, shown by preview_network)
+                entry["error"] = str(e)
         self.network_log.append(entry)
         if len(self.network_log) > _NETWORK_CAP:
             del self.network_log[: len(self.network_log) - _NETWORK_CAP]
@@ -173,7 +173,10 @@ class BrowserSession:
         rows = []
         for e in entries:
             status = "FAILED" if e["failed"] else str(e["status"] or "?")
-            rows.append(f"{status:>6}  {e['method']:<6} {e['url']}")
+            row = f"{status:>6}  {e['method']:<6} {e['url']}"
+            if e.get("error"):
+                row += f"  (response unreadable: {e['error']})"
+            rows.append(row)
         return "\n".join(rows)
 
     async def close(self):
