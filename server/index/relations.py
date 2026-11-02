@@ -1,12 +1,13 @@
 """Typed relationship extraction (optional, per-workspace setting).
 
-For each changed file, ask an LLM to extract typed entity↔entity relations
-(works_at, cites, depends_on, …) from the file text given its already-extracted
-GLiNER entities. This (local) build can use EITHER engine, chosen per workspace
-in that folder's ⋯ menu and passed to ``extract_relations(..., engine=...)``:
-  - "haiku": Bedrock Claude Haiku (cloud, faster; needs AWS creds; never in
-    Local mode, where it extracts nothing).
-  - "local": the on-device Gemma model (private, runs offline; slower).
+For each changed file, ask an LLM to extract typed entity-to-entity relations
+(works_at, depends_on, ...) from the file text given its already-extracted
+entities. The engine is chosen per workspace in that folder's menu and passed to
+``extract_relations(..., engine=...)``:
+  - "haiku": Bedrock Claude Haiku (cloud; needs AWS creds; never in Local mode,
+    where it extracts nothing).
+  - "local" (follow the installed on-device model, engines.resolve_local_model)
+    or a specific on-device model key.
 Endpoints are validated against the known entity list so the LLM can't invent
 nodes, and anything that fails returns [] so indexing never breaks.
 """
@@ -36,8 +37,6 @@ _SYSTEM = (
 )
 
 
-# Default on-device model used when the "local" engine is selected. Gemma 4 12B
-# (the general instruct model), not the coder variant.
 def extract_relations(
     text: str, entity_names: list[str], engine: str = "haiku"
 ) -> list[tuple[str, str, str, float]]:

@@ -9,8 +9,8 @@ import os
 
 from server.infrastructure.paths import models_root
 
-# Local model directories — weights cached under the app-home models/ dir like
-# whisper/parakeet, downloaded at setup. Sentinels are the real weight/config
+# Local model directories: weights download into models_root() on first use or
+# from Settings > Models, like whisper/parakeet. Sentinels are the real weight/config
 # files (verified against the repo layout) so the "already present" check can't
 # drift.
 MODELS_DIR = models_root()
@@ -77,7 +77,7 @@ def dim_for_backend(backend: str) -> int:
 # ── GLiNER (zero-shot NER → knowledge-graph nodes) ───────────────────────────
 # gliner_large-v2.5 (gliner-community, Apache-2.0). ~2x the params of a -medium
 # build, so per-chunk CPU latency rises; override to a *-medium-v2.5 build via
-# the env var if latency-bound. On first index it downloads into ./models.
+# the env var if latency-bound. It downloads into models_root() on first use.
 GLINER_MODEL = os.environ.get("WHISPER_INDEX_GLINER_MODEL", "gliner-community/gliner_large-v2.5")
 # GLiNER2 model id (fastino), used when a workspace selects ner_model="gliner2".
 # large-v1 is the English-strongest tier; -base-v1 (205M) is faster, -multi-v1 is
@@ -308,9 +308,9 @@ PL_STOPWORDS = frozenset(
 
 # ── Typed relationships (optional, OFF by default) ───────────────────────────
 # When enabled, each changed file's text + its GLiNER entities are sent to an
-# LLM to extract typed entity↔entity relations (works_at, cites, depends_on, …).
-# Adds one LLM call per changed file at index time (Bedrock Haiku on the cloud
-# build). GLiNER co-occurrence edges remain the default graph either way.
+# LLM to extract typed entity-to-entity relations (works_at, depends_on, ...).
+# Adds one LLM call per changed file at index time (Haiku or an on-device model,
+# per the folder's engine). Shared-entity file edges remain the default graph.
 # The on/off switch is per-workspace, in the "typed_relations" section of
 # wssettings.get_settings(ws) ({"enabled", "engine"}). It is persisted in the
 # index meta table and updated via PUT /api/workspace/index/settings. Only the

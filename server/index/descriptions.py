@@ -2,15 +2,14 @@
 
 After dedup, ask an LLM to write a one-sentence description for each canonical
 entity from the chunks it appears in. This turns bare ``(name, label)`` nodes
-into disambiguating summaries — the single biggest "meaningfulness" upgrade over
-NER + co-occurrence (it distinguishes two functions both named ``process`` and
-gives the entity-pivot view real content). Runs PER CANONICAL ENTITY (thousands
-of entities, not per chunk), so the token cost is a fraction of full LLM
-extraction, and it keeps GLiNER as the fast, hallucination-free NER backbone.
+into disambiguating summaries (it distinguishes two functions both named
+``process`` and gives the entity page in the explorer real content). Runs PER
+CANONICAL ENTITY (thousands of entities, not per chunk), so the token cost is a
+fraction of full LLM extraction.
 
-Same engine switch as ``relations.py``: "haiku" (Bedrock, cloud) or "local"
-(on-device Gemma). Best-effort — any failure yields no descriptions and never
-breaks indexing.
+Same engine values as ``relations.py``: "haiku" (Bedrock, cloud), "local"
+(follow the installed on-device model) or an on-device model key. Best-effort:
+any failure yields no descriptions and never breaks indexing.
 """
 
 import json

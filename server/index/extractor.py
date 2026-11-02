@@ -1,10 +1,12 @@
-"""GLiNER entity extraction — chunk text → knowledge-graph nodes/edges.
+"""Entity extraction: chunk text to knowledge-graph nodes.
 
-Zero-shot NER: GLiNER is asked for the entity types in ``ENTITY_LABELS`` and
-returns spans it believes match. Each distinct entity becomes a graph node;
-entities that co-occur in the same chunk get an edge (weight = co-occurrence
-count). That's the lightweight, fully-local GraphRAG graph for v1 — no LLM call
-per chunk. Lazy-loaded and ``unload()``-able like the embedder.
+Routes to the active NER backend: zero-shot GLiNER (or GLiNER2) on-device,
+Haiku on Bedrock, or an on-device chat model. The entity types come from the
+file's entity profile (``labels_for_profile(profile_for_ext(ext))``). Each
+distinct entity becomes a graph node linked to the chunks that mention it;
+file-to-file edges are derived at read time (graph_views). GLiNER2 also
+extracts typed relations natively. The models load lazily and can be freed
+with ``unload()`` like the embedder.
 """
 
 from __future__ import annotations
@@ -158,7 +160,7 @@ def _extract_via_local_llm(snippet: str, labels: list[str], model_key: str) -> l
 
 
 def ensure_gliner_model() -> str:
-    """Download the GLiNER model into ./models if absent (idempotent).
+    """Download the GLiNER model into models_root() if absent (idempotent).
 
     GLiNER loads its transformer backbone's tokenizer/config by HF repo id (the
     snapshot bundles the backbone *weights* but not the tokenizer), so we also
@@ -173,9 +175,7 @@ def ensure_gliner_model() -> str:
         from huggingface_hub import snapshot_download
 
         log.info("Downloading GLiNER model %s ...", GLINER_MODEL)
-        snapshot_download(
-            repo_id=GLINER_MODEL, local_dir=GLINER_MODEL_DIR, local_dir_use_symlinks=False
-        )
+        snapshot_download(repo_id=GLINER_MODEL, local_dir=GLINER_MODEL_DIR)
         # Pre-cache the backbone tokenizer/config (not its weights) so the load
         # is offline-clean. Best-effort — _load falls back to an online fetch if
         # this is skipped or the backbone changes.
@@ -286,17 +286,15 @@ def _load():
 
 
 def ensure_gliner2_model() -> str:
-    """Download the GLiNER2 model into ./models if absent (idempotent). Mirrors
-    ensure_gliner_model so setup.sh can pre-pull it like the other weights."""
+    """Download the GLiNER2 model into models_root() if absent (idempotent).
+    Called on first use and from Settings > Models."""
     import os
 
     if not os.path.exists(GLINER2_SENTINEL):
         from huggingface_hub import snapshot_download
 
         log.info("Downloading GLiNER2 model %s ...", GLINER2_MODEL)
-        snapshot_download(
-            repo_id=GLINER2_MODEL, local_dir=GLINER2_MODEL_DIR, local_dir_use_symlinks=False
-        )
+        snapshot_download(repo_id=GLINER2_MODEL, local_dir=GLINER2_MODEL_DIR)
         log.info("GLiNER2 model download complete.")
     return GLINER2_MODEL_DIR
 

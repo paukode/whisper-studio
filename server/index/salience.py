@@ -13,8 +13,7 @@ Two jobs, both language-independent and free (no LLM):
      boilerplate hubs (an entity in a large fraction of all chunks). The score is
      persisted on ``nodes.salience`` and consumed by retrieval expansion, the
      graph views, and entity descriptions. Nodes are downweighted, never deleted
-     (a refresh would only re-extract the same junk), so old index DBs upgrade in
-     place on their next build.
+     (a refresh would only re-extract the same junk).
 """
 
 from __future__ import annotations
@@ -30,7 +29,9 @@ log = logging.getLogger("whisper-studio")
 # ── extract-time hard-junk rules ─────────────────────────────────────────────
 
 # Generic category words + pronouns that carry no relationship signal, in the two
-# corpus languages (English + Polish). Superset of store._GENERIC_ENTITY_NAMES.
+# corpus languages (English + Polish). It overlaps store._GENERIC_ENTITY_NAMES,
+# the read-time filter, but is not a superset: template words such as "status"
+# or "version" pass this gate and are filtered only when read.
 _HARD_STOPWORDS = frozenset(
     (
         # English generic / category words GLiNER tags as entities
@@ -245,9 +246,9 @@ def salience(shape: float, conf: float, idf_n: float) -> float:
 def recompute(ws_path: str) -> None:
     """Recompute and persist ``nodes.df`` and ``nodes.salience`` for a workspace.
 
-    Pure function of the tables (chunk fanout + GLiNER span confidence + IDF), so
-    it needs no backfill migration — a normal refresh backfills every node. Runs
-    once per build, after entity dedup."""
+    Pure function of the tables (chunk fanout + span confidence + IDF), so a
+    normal refresh recomputes every node. Runs once per build, after entity
+    dedup."""
     from . import store
 
     conn = store._connect(ws_path)

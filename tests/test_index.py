@@ -408,22 +408,21 @@ def test_entity_leg_matches_names_with_internal_punctuation():
     assert salience.entity_leg(ws, "the S&P 500 index", k=5), "S&P 500 should match"
 
 
-def test_node_salience_migration_is_idempotent():
-    ws = "/fake/ws-migrate"
+def test_index_schema_has_the_salience_columns():
+    ws = "/fake/ws-schema"
     store.replace_file(
         ws,
         "a.md",
         {"hash": "h", "size": 1, "mtime": 1.0},
         [{"start_line": 1, "end_line": 1, "text": "a", "vec": _unit(1), "entities": []}],
     )
-    # _connect runs the idempotent ALTERs every time; a second open must not raise
-    # and the new columns must be present.
+    # _connect runs the schema script on every open; a second open must not raise.
     for _ in range(2):
         conn = store._connect(ws)
         cols = {r[1] for r in conn.execute("PRAGMA table_info(nodes)").fetchall()}
         nc_cols = {r[1] for r in conn.execute("PRAGMA table_info(node_chunks)").fetchall()}
         conn.close()
-    assert {"salience", "df", "canonical_id", "llm_verdict", "judged_gen"} <= cols
+    assert {"description", "salience", "df"} <= cols
     assert "score" in nc_cols
 
 

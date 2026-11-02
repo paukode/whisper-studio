@@ -44,16 +44,14 @@ _lock = threading.Lock()
 
 
 def ensure_embed_model() -> str:
-    """Download Qwen3-Embedding into ./models if absent (idempotent, download-only)."""
+    """Download Qwen3-Embedding into models_root() if absent (idempotent, download-only)."""
     import os
 
     if not os.path.exists(EMBED_SENTINEL):
         from huggingface_hub import snapshot_download
 
         log.info("Downloading embedding model %s ...", EMBED_MODEL)
-        snapshot_download(
-            repo_id=EMBED_MODEL, local_dir=EMBED_MODEL_DIR, local_dir_use_symlinks=False
-        )
+        snapshot_download(repo_id=EMBED_MODEL, local_dir=EMBED_MODEL_DIR)
         log.info("Embedding model download complete.")
     return EMBED_MODEL_DIR
 

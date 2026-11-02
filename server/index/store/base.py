@@ -130,17 +130,22 @@ CREATE TABLE IF NOT EXISTS chunks (
     end_line INTEGER, text TEXT, vec BLOB
 );
 CREATE INDEX IF NOT EXISTS idx_chunks_path ON chunks(path);
+-- salience NULL means "not computed yet" (a cancelled build skips the pass);
+-- readers COALESCE it to a neutral 0.5. node_chunks.score is the extractor's
+-- span confidence per mention, averaged into salience.
 CREATE TABLE IF NOT EXISTS nodes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, label TEXT, UNIQUE(name, label)
+    id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, label TEXT, description TEXT,
+    salience REAL, df INTEGER, UNIQUE(name, label)
 );
 CREATE TABLE IF NOT EXISTS node_chunks (
-    node_id INTEGER, chunk_id INTEGER, PRIMARY KEY(node_id, chunk_id)
+    node_id INTEGER, chunk_id INTEGER, score REAL, PRIMARY KEY(node_id, chunk_id)
 );
 CREATE INDEX IF NOT EXISTS idx_nc_chunk ON node_chunks(chunk_id);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 -- Typed entity↔entity relations: keyed by NODE ID (survives entity merges via repointing),
--- carrying verbatim evidence + line provenance so a fact is citable, with
--- evidence_hash collapsing the same fact re-stated across duplicate files.
+-- carrying verbatim evidence + line provenance so a fact is citable. evidence_hash
+-- keys on the source path, so each file keeps its own row for a fact and reads
+-- aggregate them.
 CREATE TABLE IF NOT EXISTS relations2 (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     src_node_id INTEGER NOT NULL, tgt_node_id INTEGER NOT NULL,
@@ -169,28 +174,6 @@ def _connect(ws_path: str) -> sqlite3.Connection:
         "ulower", 1, lambda s: s.lower() if isinstance(s, str) else s, deterministic=True
     )
     conn.executescript(_SCHEMA)
-    # Columns added after the original schema. ALTER on an already-present column
-    # raises OperationalError, which we ignore — keeps this idempotent and lets
-    # older index DBs upgrade in place without a rebuild.
-    for _stmt in (
-        "ALTER TABLE nodes ADD COLUMN description TEXT",
-        # Entity salience layer (statistical noise defense). salience NULL means
-        # "not yet computed" — readers COALESCE it to a neutral 0.5 so old index
-        # DBs behave as before until the next build backfills. canonical_id NULL
-        # means self-canonical; it is reserved for the LLM canonicalization pass
-        # and is unset in the statistical-only path.
-        "ALTER TABLE nodes ADD COLUMN salience REAL",
-        "ALTER TABLE nodes ADD COLUMN df INTEGER",
-        "ALTER TABLE nodes ADD COLUMN canonical_id INTEGER",
-        "ALTER TABLE nodes ADD COLUMN llm_verdict TEXT",
-        "ALTER TABLE nodes ADD COLUMN judged_gen INTEGER",
-        # GLiNER span confidence per (node, chunk) mention — averaged into salience.
-        "ALTER TABLE node_chunks ADD COLUMN score REAL",
-    ):
-        try:
-            conn.execute(_stmt)
-        except sqlite3.OperationalError:
-            pass
     return conn
 
 
@@ -229,12 +212,7 @@ def _delete_file_rows(cur: sqlite3.Cursor, path: str) -> None:
 
 
 def _clean_orphan_nodes(cur: sqlite3.Cursor) -> None:
-    # Keep canonical targets alive even if they hold no direct mentions: an alias
-    # node's canonical_id may point at them (LLM canonicalization pass).
-    cur.execute(
-        "DELETE FROM nodes WHERE id NOT IN (SELECT DISTINCT node_id FROM node_chunks) "
-        "AND id NOT IN (SELECT canonical_id FROM nodes WHERE canonical_id IS NOT NULL)"
-    )
+    cur.execute("DELETE FROM nodes WHERE id NOT IN (SELECT DISTINCT node_id FROM node_chunks)")
 
 
 def _bump_write_gen(cur: sqlite3.Cursor) -> None:

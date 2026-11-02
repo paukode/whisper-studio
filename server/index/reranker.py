@@ -88,17 +88,15 @@ _SUFFIX = "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
 
 
 def ensure_rerank_model() -> str:
-    """Download Qwen3-Reranker into ./models if absent (idempotent, download-only).
-    Called from setup.sh alongside the other model pulls."""
+    """Download Qwen3-Reranker into models_root() if absent (idempotent,
+    download-only). Called on first use and from Settings > Models."""
     import os
 
     if not os.path.exists(RERANK_SENTINEL):
         from huggingface_hub import snapshot_download
 
         log.info("Downloading reranker model %s ...", RERANK_MODEL)
-        snapshot_download(
-            repo_id=RERANK_MODEL, local_dir=RERANK_MODEL_DIR, local_dir_use_symlinks=False
-        )
+        snapshot_download(repo_id=RERANK_MODEL, local_dir=RERANK_MODEL_DIR)
         log.info("Reranker model download complete.")
     return RERANK_MODEL_DIR
 

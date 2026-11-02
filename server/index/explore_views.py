@@ -285,7 +285,7 @@ def entity_page_impl(ws_path: str, name: str, label: str = "") -> dict:
     conn = store._connect(ws_path)
     try:
         # Canonical display variant: the most common stored (name, label) whose
-        # name case-folds to the query (same rule the old entity pivot used).
+        # name case-folds to the query.
         params: list = [key]
         label_clause = ""
         if label:

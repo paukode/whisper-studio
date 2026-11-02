@@ -1,4 +1,4 @@
-"""Per-workspace index settings: schedule, typed relations, background refresh.
+"""Per-workspace index settings: schedule, LLM passes, NER model, background refresh.
 
 Each indexed workspace stores its own settings in its index ``meta`` table, so
 they travel with the index and are independent per folder. Values are validated
@@ -9,9 +9,14 @@ Shape::
     {
       "schedule": {"enabled": bool, "hour": 0-23, "frequency": "daily|every_n_days|weekly",
                    "interval_days": 1-30, "weekday": "mon".."sun"},
-      "typed_relations": {"enabled": bool, "engine": "none|haiku|local|gliner2"},
+      "typed_relations": {"enabled": bool, "engine": "none|haiku|local|<model key>|gliner2"},
+      "entity_descriptions": {"enabled": bool, "engine": "none|haiku|local|<model key>"},
+      "chunk_context": {"mode": "off|filename|llm", "engine": "haiku|local|<model key>"},
+      "ner_model": "gliner|gliner2",
       "refresh_when_closed": bool,
     }
+
+Engine values are resolved by server/index/engines.py.
 """
 
 from __future__ import annotations
@@ -60,7 +65,7 @@ _DEFAULTS = {
     # Contextual chunk headers prepended before embedding (improves retrieval for
     # filename/section-relevant queries). "off" = embed content only; "filename" =
     # prepend the file path (free, offline); "llm" = an LLM writes a situating
-    # line per chunk (engine: haiku=cloud, local=on-device Gemma).
+    # line per chunk (engine: haiku, local or an on-device model key).
     "chunk_context": {"mode": "filename", "engine": "local"},
     # Which on-device NER model runs for ENTITIES only (relations are chosen
     # separately via typed_relations.engine): "gliner" (default, gliner_large-v2.5,

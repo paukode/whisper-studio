@@ -82,7 +82,7 @@ def file_graph_impl(ws_path: str, max_edges: int = 300) -> dict:
         # (below the salience floor — the corpus-adaptive filter that also catches
         # Polish generics a static list can't), ultra-common boilerplate (in >
         # _MAX_NODE_FANOUT chunks, kept as an absolute bound), and the generic
-        # category words (a NULL-salience fallback for un-migrated DBs). ``deg`` is
+        # category words (for nodes a cancelled build left without salience). ``deg`` is
         # each file's distinct good-entity count, used to PMI-normalize the edge so
         # a pair sharing entities merely because both files are entity-dense is
         # down-weighted. Edges are ranked by the normalized score, not raw count.

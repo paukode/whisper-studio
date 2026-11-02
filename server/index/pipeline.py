@@ -356,7 +356,7 @@ def _build_locked(ws_path: str, ws_root: str, progress) -> dict:
     changed = 0
     cancelled = False
     # Read this workspace's typed-relations setting once per build (enabled +
-    # which engine: cloud Haiku or on-device Gemma). Local mode skips the Haiku
+    # which engine: cloud Haiku or an on-device model). Local mode skips the Haiku
     # passes here, once, for every pass below.
     _ws_settings = wssettings.settings_for_build(ws_path)
     _tr = _ws_settings["typed_relations"]
@@ -373,10 +373,8 @@ def _build_locked(ws_path: str, ws_root: str, progress) -> dict:
     # set (business docs vs source code) is picked per file from its extension
     # inside the loop below, so mixed folders tag each file with the right labels.
     ner_model = _ws_settings.get("ner_model", "gliner")
-    # Treat a pre-feature index (no stamp) as "off": its chunks were embedded
-    # header-less, so explicitly choosing filename/llm MUST re-embed. (The earlier
-    # "grandfather None → never force" logic silently skipped a user's explicit
-    # switch, stamping the new mode while leaving the old header-less vectors.)
+    # No context_mode stamp counts as "off": those chunks were embedded
+    # header-less, so choosing filename/llm must re-embed them.
     _prev_meta = store.get_meta(ws_path)
     _prev_cc = _prev_meta.get("context_mode") or "off"
     force_ctx_reembed = _prev_cc != cc_mode
@@ -492,8 +490,6 @@ def _build_locked(ws_path: str, ws_root: str, progress) -> dict:
                 # Node-id-keyed store (survives entity merges, assistant-queryable
                 # via workspace_graph_query). Attach a verbatim evidence line so
                 # each fact cites the exact lines via the #wsfile &L anchor.
-                # (The legacy name-keyed `relations` table is no longer written;
-                # graph_views still reads it for pre-relations2 DBs.)
                 facts = []
                 for s, t, ty, sc in rels:
                     sl, el, ev = relstore.evidence_line(text, s, t)
@@ -872,9 +868,8 @@ def retrieve_grounding(
 
     # Graph hop, from the primary query's surviving dense seeds only. On auto
     # turns seeds must additionally clear the on-topic floor — a weak seed's
-    # entity neighborhood is noise squared. (This expansion historically ran
-    # inside query() off the raw pre-floor top-k, which is how an off-topic
-    # question dragged a dozen "related" passages into the prompt.)
+    # entity neighborhood is noise squared. Expanding from the raw pre-floor
+    # top-k would drag off-topic "related" passages into the prompt.
     seed_floor = ground_floor if forced else on_topic_floor
     if leg_sets:
         seeds_by_ws: dict[str, list[int]] = {}
@@ -1014,9 +1009,9 @@ def retrieve_grounding(
     # "invoice (1).pdf") reappears as supporting context.
     chosen = {_key(m) for m in matches}
     related_uniq: list[dict] = []
-    # Rank by the salience/IDF-weighted graph score (falling back to the raw
-    # shared-entity count for un-migrated indexes) so a link through a rare,
-    # discriminative entity outranks one through a common word.
+    # Rank by the salience/IDF-weighted graph score (the shared-entity count only
+    # breaks ties) so a link through a rare, discriminative entity outranks one
+    # through a common word.
     for r in sorted(
         related,
         key=lambda r: (r.get("graph_score", 0.0), r.get("shared_entities", 0)),

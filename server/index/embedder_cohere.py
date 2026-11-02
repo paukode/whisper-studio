@@ -79,9 +79,8 @@ def _invoke(texts: list[str], input_type: str) -> np.ndarray:
         payload = invoke_input_billed(
             client, model_id=COHERE_EMBED_MODEL_ID, body=body, source="index"
         )
-        emb = payload.get("embeddings")
-        # v4 with embedding_types returns {"float": [[...]]}; tolerate a bare list.
-        rows = emb.get("float") if isinstance(emb, dict) else emb
+        # Embed v4 with embedding_types returns {"embeddings": {"float": [[...]]}}.
+        rows = payload["embeddings"]["float"]
         if not rows or len(rows) != len(chunk):
             raise RuntimeError(f"Cohere embed returned {len(rows or [])} of {len(chunk)} vectors")
         out.extend(rows)

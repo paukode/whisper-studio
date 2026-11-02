@@ -4,12 +4,9 @@ Index data lives under the app's ``storage/`` dir (alongside sessions.db), one
 subdirectory per workspace named ``<folder-name>-<hash>`` so you can tell at a
 glance which is which (e.g. ``04_Career-98309860``). The hash suffix (first 8
 of a sha1 of the absolute path) keeps two folders with the same basename apart.
-Each workspace dir holds:
-
-    index.db — SQLite: files manifest, chunks (text + 1024-d vector BLOB),
-               graph nodes/edges, and meta (workspace, last_indexed_at, …).
-
-(There is no separate vectors file — vectors are stored as BLOBs inside index.db.)
+Each workspace dir holds one SQLite DB per embed backend (``index.db`` for
+qwen3, ``index-<backend>.db`` for the others): files manifest, chunks (text +
+vector BLOB), graph nodes and relations, and meta (workspace, last_indexed_at).
 """
 
 import hashlib
@@ -37,12 +34,12 @@ def workspace_index_dir(ws_path: str) -> str:
     return os.path.join(INDEX_DATA_DIR, f"{_slug(ws_path)}-{_hash(ws_path)}")
 
 
-def _db_filename(embed_backend: str | None) -> str:
+def _db_filename(embed_backend: str) -> str:
     """The index DB filename for an embed backend. Vectors from different
     embedders aren't comparable, so each backend gets its OWN db file inside the
-    workspace dir. qwen3 (and the legacy default) keep ``index.db`` so existing
-    indexes are never orphaned; other backends get a sibling ``index-<b>.db``."""
-    if embed_backend in (None, "", "qwen3"):
+    workspace dir: ``index.db`` for qwen3, a sibling ``index-<b>.db`` for the
+    others."""
+    if embed_backend == "qwen3":
         return "index.db"
     safe = re.sub(r"[^a-z0-9]+", "", embed_backend.lower()) or "x"
     return f"index-{safe}.db"

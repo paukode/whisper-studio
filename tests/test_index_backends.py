@@ -25,9 +25,7 @@ def _resp(payload):
 
 def test_db_path_partitions_by_embed_backend():
     ws = "/tmp/some/workspace"
-    # qwen3 (and the legacy default) keep the original index.db for back-compat.
     assert paths.db_path(ws, "qwen3").endswith("/index.db")
-    assert paths.db_path(ws, None).endswith("/index.db") or True  # None routes via mode
     # Other backends get a sibling file in the SAME workspace dir.
     cohere = paths.db_path(ws, "cohere")
     assert cohere.endswith("/index-cohere.db")

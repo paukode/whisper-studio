@@ -112,7 +112,7 @@ def route_grounding(
     ``(indexes_to_search, reason)``; an empty list means go straight to the
     model, and ``reason`` feeds the per-turn setup log line.
 
-    Selection semantics (unchanged from the historical inline logic):
+    Selection semantics:
     an ABSENT selection grounds against every indexed folder in plain chat but
     against nothing when a workspace is connected (the model reaches the index
     through workspace_semantic_search on demand); an explicit EMPTY list means

@@ -15,8 +15,8 @@ may run at all (``turn_model_refusal``). The per-capability resolution covers
 the four index/RAG capabilities.
 
 The per-capability resolution here is the single source of truth the
-embedder/reranker/NER factories read. The per-index backend stamp records what
-ACTUALLY ran, so a mode flip queues a rebuild only where the stamp differs.
+embedder/reranker/NER factories read. Each embed backend keeps its own index DB
+(server/index/paths.py), so a mode flip never mixes vectors from two embedders.
 """
 
 from __future__ import annotations

@@ -54,7 +54,8 @@ def expand(ws_path: str, chunk_ids: list[int], limit: int = 4) -> list[dict]:
     rare, discriminative entity outweighs a ubiquitous one. Junk entities (below
     the salience floor, generic names, or boilerplate hubs above _MAX_NODE_FANOUT)
     are excluded so a word appearing in hundreds of chunks can't flood the hop.
-    Robust to un-migrated DBs: salience defaults to 0.5 and df is computed live."""
+    A node a cancelled build left without salience counts as 0.5; df is
+    computed live."""
     if not chunk_ids:
         return []
     conn = _connect(ws_path)

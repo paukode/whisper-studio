@@ -113,7 +113,7 @@ export interface IndexStatus {
 
 /** An engine value for the index's LLM passes: 'haiku' (cloud), any on-device
  *  model key from the config ('local_gemma', 'local_qwen35_9b', ...), the
- *  legacy 'local' alias for local_gemma, or the pass-specific sentinels
+ *  'local' alias (follow the installed on-device model), or the pass-specific sentinels
  *  'none' / 'gliner2'. The catalog comes from GET /api/workspace/index/engines. */
 export type IndexEngine = string;
 
