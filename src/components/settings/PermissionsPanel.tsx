@@ -4,6 +4,7 @@ import { get, put, post, del } from '@/api/client';
 import { PERMISSION_MODES } from '@/utils/permissionModes';
 import { useSaveStatus } from '@/hooks/useSaveStatus';
 import { SaveStatus } from '@/components/common/SaveStatus';
+import { toError } from '@/utils/toError';
 
 // Select options: the shared friendly label plus a short reminder of what the
 // mode does (the full behavior text lives in the shared module's `help`).
@@ -129,14 +130,21 @@ export const PermissionsPanel: React.FC = () => {
   // but not widen reach); listed so a grant is never an invisible one-way
   // door.
   const [folderGrants, setFolderGrants] = useState<string[]>([]);
+  const [folderGrantsError, setFolderGrantsError] = useState<string | null>(null);
   const folderGrantStatus = useSaveStatus();
+
+  // The saved permissions must be on screen before anything can be saved:
+  // every Save writes the panel's state back, so saving the defaults of a
+  // failed load would overwrite the user's mode, rules and network tier.
+  const [loadState, setLoadState] = useState<'loading' | 'ready' | { error: string }>('loading');
 
   const loadFolderGrants = useCallback(async () => {
     try {
       const data = await get<{ granted: string[] }>('/api/permissions/folder-grants');
       setFolderGrants(Array.isArray(data.granted) ? data.granted : []);
-    } catch {
-      setFolderGrants([]);
+      setFolderGrantsError(null);
+    } catch (err) {
+      setFolderGrantsError(toError(err).message);
     }
   }, []);
 
@@ -164,8 +172,10 @@ export const PermissionsPanel: React.FC = () => {
         const np = { ...DEFAULT_NETWORK_POLICY, ...(data.network_policy ?? {}) };
         setNetworkPolicy(np);
         setCustomDomainsText((np.custom_allowed_domains ?? []).join('\n'));
+        setLoadState('ready');
       } catch (err) {
-        console.warn('Failed to load permissions:', err);
+        if (!cancelled) setLoadState({ error: toError(err).message });
+        return;
       }
       if (!cancelled) await loadFolderGrants();
     })();
@@ -296,6 +306,21 @@ export const PermissionsPanel: React.FC = () => {
       setCategoryModes(data.category_modes ?? {});
     }, { saving: 'Saving…', saved: 'Category settings saved', error: 'Failed to save category settings' });
   }, [categoryModes, categoryModeStatus]);
+
+  if (loadState !== 'ready') {
+    return (
+      <div className="settings-panel permissions-panel">
+        <h3>Permissions</h3>
+        {loadState === 'loading' ? (
+          <p className="settings-empty">Loading permissions…</p>
+        ) : (
+          <p className="settings-empty" role="alert">
+            Could not load the permissions: {loadState.error}. Nothing can be saved until they load; reopen Settings to try again.
+          </p>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="settings-panel permissions-panel">
@@ -450,7 +475,10 @@ export const PermissionsPanel: React.FC = () => {
           <SaveStatus status={folderGrantStatus} style={{ marginRight: 'auto' }} />
         </div>
         <div className="settings-list">
-          {folderGrants.length === 0 && (
+          {folderGrantsError !== null && (
+            <p className="settings-empty" role="alert">Could not load the approved folders: {folderGrantsError}</p>
+          )}
+          {folderGrantsError === null && folderGrants.length === 0 && (
             <p className="settings-empty">
               No folders approved yet. Approvals appear here after you allow one.
             </p>
