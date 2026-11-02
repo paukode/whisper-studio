@@ -25,6 +25,43 @@ SKILLS_CONFIG_PATH = os.path.join(DATA_DIR, "skills_config.json")
 SKILLS: dict = {}
 TOOLS: list[dict] = []
 
+
+def skill_name_key(name: str) -> str:
+    """The identity of a skill name: case and '-' versus '_' do not count, so
+    'Foo-Bar' and 'foo_bar' are the same skill (and the same file on APFS)."""
+    return (name or "").strip().lower().replace("-", "_")
+
+
+def skill_name_taken(name: str, ignore: str = "") -> str | None:
+    """The loaded skill that already holds ``name``, or None. ``ignore`` is the
+    skill being edited or renamed, which may keep its own name. Every save,
+    rename and import refuses a taken name: two skills with one name would
+    load as one and silently replace the other."""
+    key = skill_name_key(name)
+    if not key:
+        return None
+    ignore_key = skill_name_key(ignore)
+    for existing in SKILLS:
+        existing_key = skill_name_key(existing)
+        if existing_key == key and existing_key != ignore_key:
+            return existing
+    return None
+
+
+def frontmatter_name(content: str) -> str:
+    """The ``name:`` value of a skill file's frontmatter, or "" when it has none.
+    It is the name the skill loads under, whatever the file is called."""
+    if not content.startswith("---"):
+        return ""
+    end = content.find("---", 3)
+    if end < 0:
+        return ""
+    for line in content[3:end].split("\n"):
+        if line.startswith("name:"):
+            return line.split(":", 1)[1].strip()
+    return ""
+
+
 # Transcript-driven skills whose primary text argument can overflow the context
 # window and therefore may need map-reduce condensation (see
 # server.summarize.mapreduce). Applies only to tools loaded from the skills

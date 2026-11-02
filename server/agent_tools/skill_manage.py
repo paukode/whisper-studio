@@ -183,8 +183,11 @@ def _create(name: str, tool_input: dict) -> str:
         return _err(
             f"description must be at most {MAX_DESCRIPTION_CHARS} characters; it is the index line"
         )
-    if _skill_dir_for(name) or _flat_skill_file(name) or name in _sk.SKILLS:
-        return _err(f"a skill named '{name}' already exists; use patch or append to change it")
+    taken = _sk.skill_name_taken(name)
+    if taken or _skill_dir_for(name) or _flat_skill_file(name):
+        return _err(
+            f"a skill named '{taken or name}' already exists; use patch or append to change it"
+        )
     triggers_raw = tool_input.get("triggers") or []
     if isinstance(triggers_raw, str):
         triggers_raw = [t for t in triggers_raw.split(",")]

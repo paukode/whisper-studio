@@ -235,7 +235,6 @@ async def import_skills_endpoint(request: Request):
         result = skills_import.import_skills(
             body.get("url", ""),
             body.get("subpaths", []),
-            bool(body.get("overwrite", False)),
         )
     except skills_import.SkillImportError as e:
         return _json_error(str(e), 400)
@@ -285,11 +284,11 @@ async def import_local_preview(files: list[UploadFile] = File(...)):
 async def import_local_endpoint(
     files: list[UploadFile] = File(...),
     subpaths: str = Form("[]"),
-    overwrite: str = Form("false"),
 ):
     """Copy selected skill folders from an uploaded local tree into /skills/ and
-    hot-reload — no app restart. ``subpaths`` is a JSON array of the folders the
-    user selected in the preview; ``overwrite`` is "true"/"false"."""
+    hot-reload, no app restart. ``subpaths`` is a JSON array of the folders the
+    user selected in the preview. An installed skill of the same name is never
+    replaced; it comes back as a conflict."""
     from server import skills_import
 
     try:
@@ -298,10 +297,9 @@ async def import_local_endpoint(
             raise ValueError("subpaths must be a JSON array")
     except (ValueError, TypeError):
         return _json_error("invalid subpaths (expected a JSON array)", 400)
-    overwrite_flag = str(overwrite).strip().lower() in ("1", "true", "yes", "on")
     try:
         tree = await _read_upload_tree(files)
-        result = skills_import.import_local(tree, selected, overwrite_flag)
+        result = skills_import.import_local(tree, selected)
     except skills_import.SkillImportError as e:
         return _json_error(str(e), 400)
     except Exception as e:
@@ -328,6 +326,21 @@ def _safe_skill_filepath(name: str) -> str | None:
     return None
 
 
+def _name_clash(names: list[str], ignore: str = "") -> Response | None:
+    """409 when any of ``names`` (the requested name and the frontmatter name
+    the file loads under) is already another skill's name. A save never
+    replaces another skill; the user picks a different name."""
+    for candidate in names:
+        taken = _sk.skill_name_taken(candidate, ignore=ignore)
+        if taken:
+            return Response(
+                content=json.dumps({"error": f"A skill named {taken} already exists"}),
+                status_code=409,
+                media_type="application/json",
+            )
+    return None
+
+
 @router.post("")
 async def create_skill(request: Request):
     body = await request.json()
@@ -346,9 +359,12 @@ async def create_skill(request: Request):
             status_code=400,
             media_type="application/json",
         )
+    clash = _name_clash([name, _sk.frontmatter_name(content)])
+    if clash:
+        return clash
     if os.path.exists(filepath):
         return Response(
-            content=json.dumps({"error": "Skill file already exists"}),
+            content=json.dumps({"error": f"A skill named {name} already exists"}),
             status_code=409,
             media_type="application/json",
         )
@@ -385,6 +401,9 @@ async def update_skill(name: str, request: Request):
             status_code=404,
             media_type="application/json",
         )
+    clash = _name_clash([new_name, _sk.frontmatter_name(new_content)], ignore=name)
+    if clash:
+        return clash
     if new_name and new_name != name:
         new_filepath = _safe_skill_filepath(new_name)
         if not new_filepath:

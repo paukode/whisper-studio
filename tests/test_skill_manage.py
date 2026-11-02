@@ -143,3 +143,16 @@ def test_no_traversal_in_create_name(_skills_dir):
     out = _call(action="create", name="a..b", description="d", content="c")
     assert "error" in out
     assert not os.path.exists(os.path.join(str(_skills_dir), "a..b"))
+
+
+def test_create_refuses_a_name_another_skill_holds(_skills_dir, monkeypatch):
+    """'deploy-staging' is the same name as an installed 'deploy_staging'."""
+    (_skills_dir / "deploy_staging.md").write_text(
+        "---\nname: deploy_staging\ndescription: d\n---\n\nbody\n"
+    )
+    monkeypatch.setattr(_sk, "SKILLS", _sk.load_skills(str(_skills_dir)))
+
+    out = _call(action="create", name="deploy-staging", description="d", content="c")
+
+    assert out["error"].startswith("a skill named 'deploy_staging' already exists")
+    assert not (_skills_dir / "deploy-staging").exists()
