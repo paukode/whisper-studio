@@ -125,6 +125,21 @@ def test_path_escaping_the_workspace_is_rejected(client):
     assert data["error"] == "Invalid path."
 
 
+def test_sibling_folder_with_the_same_name_prefix_is_rejected(client):
+    """``work-old`` starts with ``work``; a bare prefix check let it through
+    and returned the sibling file's whole text."""
+    c, work = client
+    sibling = work.parent / f"{work.name}-old"
+    sibling.mkdir()
+    (sibling / ".env").write_text("TOKEN=secret\n")
+
+    data = c.get("/api/git/file-diff", params={"path": f"../{work.name}-old/.env"}).json()
+
+    assert data["mode"] == "error"
+    assert data["error"] == "Invalid path."
+    assert "secret" not in str(data)
+
+
 def test_large_file_falls_back_to_hunks(client, monkeypatch):
     """Past the client's alignment budget git does the diff instead, and
     the payload carries hunks rather than whole blobs."""

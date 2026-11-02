@@ -25,6 +25,7 @@ from server.git.core import (
 )
 from server.git.diff import fetch_git_diff
 from server.git.file_diff import build_file_diff
+from server.git.filesystem import path_inside
 from server.workspace import get_workspace_path
 
 router = APIRouter(prefix="/api/git", tags=["git"])
@@ -310,18 +311,17 @@ def git_file_diff_endpoint(path: str):
 def git_restore_endpoint(req: RestoreRequest):
     """Undo changes to a single file."""
     ws = _require_git_workspace()
-    full_path = os.path.normpath(os.path.join(ws, req.path))
-    if not full_path.startswith(os.path.normpath(ws)):
+    full_path = path_inside(ws, req.path, follow_leaf=False)
+    if full_path is None:
         raise HTTPException(status_code=400, detail="Invalid path.")
-    # Check if untracked
-    check = _run_git(["ls-files", "--error-unmatch", req.path], cwd=ws)
-    if check.returncode != 0:
-        # Untracked path — could be a file or a directory (e.g. a newly
-        # added folder). ``os.remove`` raises IsADirectoryError on dirs
-        # and the UI would think restore succeeded while the path
-        # remained on disk. Use rmtree for directories.
+    check = _run_git(["ls-files", "--error-unmatch", "--", req.path], cwd=ws)
+    if check.returncode not in (0, 1):
+        raise HTTPException(status_code=400, detail=check.stderr.strip())
+    if check.returncode == 1:
+        # Untracked path: a file or a directory (a newly added folder).
+        # ``os.remove`` raises IsADirectoryError on a directory, so use rmtree.
         if os.path.isdir(full_path) and not os.path.islink(full_path):
-            shutil.rmtree(full_path, ignore_errors=True)
+            shutil.rmtree(full_path)
         elif os.path.exists(full_path) or os.path.islink(full_path):
             os.remove(full_path)
         return {"success": True}

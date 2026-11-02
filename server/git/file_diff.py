@@ -20,6 +20,7 @@ import re
 from dataclasses import asdict, dataclass, field
 
 from server.git.core import _run_git
+from server.git.filesystem import path_inside
 
 # --- Constants ---
 
@@ -86,8 +87,8 @@ def build_file_diff(workspace: str, rel_path: str) -> dict:
     already shows (``server.git.diff`` uses ``git diff HEAD --numstat``).
     Staged and unstaged edits therefore both appear.
     """
-    abs_path = os.path.normpath(os.path.join(workspace, rel_path))
-    if not abs_path.startswith(os.path.normpath(workspace)):
+    abs_path = path_inside(workspace, rel_path)
+    if abs_path is None:
         return asdict(_error(rel_path, "Invalid path."))
 
     tracked = _is_tracked(workspace, rel_path)

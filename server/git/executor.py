@@ -17,7 +17,7 @@ from server.git.core import (
     get_default_branch,
 )
 from server.git.diff import fetch_single_file_git_diff
-from server.git.filesystem import is_safe_ref_name
+from server.git.filesystem import is_safe_ref_name, path_inside
 from server.git.security import contains_secret_files
 from server.workspace import get_workspace_path
 
@@ -139,7 +139,9 @@ def _exec_git_diff(tool_input, transcript, current_attachments):
 
     # Single file diff (PR-like, against merge base)
     if single_file:
-        abs_file = os.path.join(cwd, single_file)
+        abs_file = path_inside(cwd, single_file)
+        if abs_file is None:
+            return f"Error: file must be a path inside the repository ({cwd}): {single_file}"
         result = fetch_single_file_git_diff(cwd, abs_file)
         if not result:
             return f"No diff for {single_file} (file may be unchanged or not found)."
