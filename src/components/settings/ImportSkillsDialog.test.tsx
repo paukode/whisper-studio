@@ -14,7 +14,7 @@ function renderDialog(props: Partial<React.ComponentProps<typeof ImportSkillsDia
   return { onClose, onImported };
 }
 
-describe('ImportSkillsDialog — backdrop dismissal', () => {
+describe('ImportSkillsDialog: backdrop dismissal', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('closes on a genuine backdrop press (mousedown + click on the overlay)', () => {
@@ -55,7 +55,7 @@ function fileWithRelPath(relPath: string, content = 'x'): File {
   return f;
 }
 
-describe('ImportSkillsDialog — local folder mode', () => {
+describe('ImportSkillsDialog: local folder mode', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('scans a picked folder and lists detected skills without git', async () => {
@@ -237,7 +237,7 @@ describe('ImportSkillsDialog — local folder mode', () => {
   });
 });
 
-describe('ImportSkillsDialog — git mode', () => {
+describe('ImportSkillsDialog: git mode', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('sends the overwrite choice in the JSON body', async () => {
