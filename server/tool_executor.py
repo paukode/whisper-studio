@@ -499,7 +499,13 @@ async def execute_tool_batch(
         _ro_token = read_only_scope.set(plan_mode or read_only_scope.get())
         # An agent waiting on agents it started is not using its own time:
         # each of them has its own limits (ToolScope.waited).
+        # A task_wait on a shell command is the agent's own work
+        # (server/tasks/wait.py::waits_on_agents).
         _waits = tool_scope is not None and tool_name in WAITS_ON_AGENTS
+        if _waits and tool_name in ("task_wait", "workflow_wait"):
+            from server.tasks.wait import waits_on_agents
+
+            _waits = waits_on_agents(tool_name, call_input)
         _started = time.monotonic()
         try:
             try:

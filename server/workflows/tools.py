@@ -486,7 +486,13 @@ def _wait_view(run_id: str) -> dict:
 
 
 async def execute_workflow_wait(tool_input, session_id) -> str:  # noqa: ARG001
-    from server.tasks.wait import wait_for, wait_ids, wait_seconds
+    from server.tasks.wait import (
+        bounded_timeout,
+        user_message_waiting,
+        wait_for,
+        wait_ids,
+        wait_seconds,
+    )
 
     ids = wait_ids(tool_input.get("run_ids"))
     if not ids:
@@ -495,7 +501,8 @@ async def execute_workflow_wait(tool_input, session_id) -> str:  # noqa: ARG001
         ids,
         _wait_view,
         mode=str(tool_input.get("mode") or "all"),
-        timeout=wait_seconds(tool_input.get("timeout_seconds")),
+        timeout=bounded_timeout(wait_seconds(tool_input.get("timeout_seconds")), True),
+        interrupted=user_message_waiting(),
     )
     return json.dumps(result, indent=2, default=str)
 

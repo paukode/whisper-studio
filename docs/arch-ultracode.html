@@ -222,7 +222,13 @@ return { confirmed: results.flat().filter(f =&gt; f.verdict?.isReal) }</code></p
       <code>task_wait</code> for detached agents). One call waits until the runs end or a timeout
       passes (600 seconds by default, 1800 at most). The server reads the stores once a second inside
       that call, so the model spends no rounds while it waits. Both tools are in
-      <code>WAITS_ON_AGENTS</code>, so the wait does not count against an agent's time limit. The loop
+      <code>WAITS_ON_AGENTS</code>, so a wait on agents or workflows does not count against an
+      agent's time limit. A <code>task_wait</code> on a shell command is the agent's own work: that
+      time counts (<code>waits_on_agents</code> in <code class="path">server/tasks/wait.py</code>).
+      A wait that counts, and every wait in a cron or headless run (no <code>ToolScope</code>), stops
+      at the run's soft time limit (<code>WaitBounds.deadline</code>). In the chat turn, a message
+      from the user stops the wait at once with <code>interrupted: "user_message"</code>, so the
+      next round reads it. The loop
       guard caps <code>sleep</code> at 10 calls a turn, and from the third call it points at the wait
       tools.</p>
     <p>While a run is live, <code>workflow_status</code> reads the counters (agents, tokens, cost) from
