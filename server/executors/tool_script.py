@@ -75,8 +75,11 @@ async def do_run_tool_script(payload: dict) -> tuple[bool, str]:
     except asyncio.TimeoutError:
         try:
             await run.cancel()
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001 - reported with the timeout
+            log.exception("tool script %s could not be stopped after its timeout", run_id)
+            return False, (
+                f"tool script timed out after {_SCRIPT_TIMEOUT_S}s and could not be stopped: {e}"
+            )
         return False, f"tool script timed out after {_SCRIPT_TIMEOUT_S}s"
     except Exception as e:  # noqa: BLE001
         return False, f"tool script failed to run: {e}"
@@ -90,10 +93,7 @@ async def do_run_tool_script(payload: dict) -> tuple[bool, str]:
     elif isinstance(result, str):
         text = result
     else:
-        try:
-            text = json.dumps(result, ensure_ascii=False, indent=2, default=str)
-        except Exception:
-            text = str(result)
+        text = json.dumps(result, ensure_ascii=False, indent=2, default=str)
     if len(text) > _MAX_RESULT_CHARS:
         text = text[:_MAX_RESULT_CHARS] + "\n... (truncated)"
     return True, text

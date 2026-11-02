@@ -169,12 +169,6 @@ def _python_write_mode(payload: dict) -> tuple[str, str]:
     return "open", ""
 
 
-def _interpreter() -> str:
-    """The Python this server runs on, or plain python3 when unknown."""
-    exe = sys.executable or ""
-    return exe if exe and os.path.isfile(exe) else "python3"
-
-
 def do_run_python(payload: dict) -> tuple[bool, str]:
     """Execute previously approved Python under the OS sandbox (the real
     boundary — see module docstring). Returns (ok, output_or_error)."""
@@ -195,7 +189,9 @@ def do_run_python(payload: dict) -> tuple[bool, str]:
 
     cwd = get_workspace_path() or "/tmp"
     if not os.path.isdir(cwd):
-        cwd = "/tmp"
+        # Never run somewhere else: relative reads and writes would land in
+        # a folder the user did not pick.
+        return False, f"the workspace folder {cwd} no longer exists"
     # A fresh private directory, not shared /tmp: nobody can pre-plant a sibling
     # module next to the script. And run with -P so the script's own directory
     # is never prepended to sys.path, so even a planted module there cannot
@@ -209,7 +205,7 @@ def do_run_python(payload: dict) -> tuple[bool, str]:
         # venv in dev), never the machine's python3: it is the one that has
         # pandas, openpyxl, python-docx, python-pptx and friends installed.
         result = run_sandboxed(
-            f"{shlex.quote(_interpreter())} -P {shlex.quote(script_path)} < /dev/null",
+            f"{shlex.quote(sys.executable)} -P {shlex.quote(script_path)} < /dev/null",
             cwd=cwd,
             timeout=RUN_PYTHON_TIMEOUT_S,
             allow_paths=_CLOUD_CRED_PATHS,

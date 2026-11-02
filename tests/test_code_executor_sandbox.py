@@ -96,3 +96,15 @@ def test_run_python_runs_sandboxed_and_cleans_temp(monkeypatch):
         .strip("'\"")
     )
     assert not os.path.exists(path), "temp script should be cleaned up"
+
+
+def test_run_python_refuses_a_workspace_folder_that_is_gone(monkeypatch, tmp_path):
+    def fake(*_a, **_k):
+        raise AssertionError("must not run anywhere else")
+
+    monkeypatch.setattr(codemod, "run_sandboxed", fake)
+    gone = str(tmp_path / "gone")
+    monkeypatch.setattr("server.workspace.get_workspace_path", lambda: gone)
+    ok, msg = codemod.do_run_python({"code": "print('hi')"})
+    assert ok is False
+    assert gone in msg and "no longer exists" in msg
