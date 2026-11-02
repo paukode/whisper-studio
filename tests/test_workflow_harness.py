@@ -31,7 +31,11 @@ pytestmark = pytest.mark.skipif(
 
 def _drive(source, *, mode="run", args=None, agent_responder=None, timeout=15):
     """Run the harness for one script; return (events, final) where final is the
-    done/fatal message. agent_responder(params, seq) -> result dict."""
+    done/fatal message. agent_responder(params, seq) -> result dict. ``args``
+    is the params.args object the runtime sends (default: no value and a
+    600000-token budget)."""
+    if args is None:
+        args = {"value": None, "__budget_total__": 600000}
     proc = subprocess.Popen(
         [NODE, HARNESS],
         stdin=subprocess.PIPE,
@@ -234,3 +238,13 @@ def test_run_errors_reach_the_script(helper, error_type):
     events, final = _drive(src, agent_responder=responder)
     assert final["method"] == "done", final
     assert final["params"]["result"] == f"caught {error_type}"
+
+
+def test_args_global_is_the_value_passed_to_workflow_run():
+    src = (
+        "export const meta = { name: 'a', description: 'args', phases: [] }\n"
+        "return { topic: args.topic, frozen: Object.isFrozen(args), total: budget.total }\n"
+    )
+    events, final = _drive(src, args={"value": {"topic": "cats"}, "__budget_total__": 1})
+    assert final["method"] == "done", final
+    assert final["params"]["result"] == {"topic": "cats", "frozen": True, "total": 1}

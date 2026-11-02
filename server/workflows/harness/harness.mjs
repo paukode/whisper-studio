@@ -112,10 +112,9 @@ async function runScript({ source, args, meta }) {
   // wrapper, and the script's top-level `await`/`return` work in the async IIFE.
   const body = source.replace(/\bexport\s+const\s+meta\b/, "const meta");
 
-  const api = makeApi(rpcCall, notify, meta, {
-    value: args,
-    __budget_total__: args?.__budget_total__ ?? null,
-  });
+  // args is {value, __budget_total__} as the runtime sends it; the script's
+  // `args` global is its value.
+  const api = makeApi(rpcCall, notify, meta, args);
 
   const sandbox = Object.assign(Object.create(null), {
     agent: api.agent,
