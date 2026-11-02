@@ -47,7 +47,6 @@ def test_db_path_routes_to_active_backend(monkeypatch):
 def test_dim_for_backend():
     assert config.dim_for_backend("qwen3") == config.EMBED_DIM
     assert config.dim_for_backend("cohere") == config.COHERE_EMBED_DIM == 1536
-    assert config.dim_for_backend(None) == config.EMBED_DIM
 
 
 def test_profile_for_ext_auto_selects():

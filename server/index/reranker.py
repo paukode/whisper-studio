@@ -29,12 +29,9 @@ log = logging.getLogger("whisper-studio")
 
 
 def _rerank_backend() -> str:
-    try:
-        from server.infrastructure.model_mode import resolve_backend
+    from server.infrastructure.model_mode import resolve_backend
 
-        return resolve_backend("rerank")
-    except Exception:
-        return "qwen3"
+    return resolve_backend("rerank")
 
 
 def _rerank_cohere(query: str, passages: list[str]) -> list[float]:

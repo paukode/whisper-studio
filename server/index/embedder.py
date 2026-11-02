@@ -31,14 +31,10 @@ log = logging.getLogger("whisper-studio")
 
 
 def _embed_backend() -> str:
-    """The active embed backend for index/query. Defaults to qwen3 if the mode
-    resolver is unavailable (e.g. early import)."""
-    try:
-        from server.infrastructure.model_mode import resolve_backend
+    """The active embed backend for index/query."""
+    from server.infrastructure.model_mode import resolve_backend
 
-        return resolve_backend("embed")
-    except Exception:
-        return "qwen3"
+    return resolve_backend("embed")
 
 
 _model = None
@@ -136,9 +132,9 @@ def _embed(texts: list[str]) -> np.ndarray:
 
     Guards against the intermittent non-finite (NaN/inf) vectors the MPS path can
     emit: any bad row is recomputed (the glitch is transient, so a retry almost
-    always clears it) and zeroed only as a last resort. A persisted NaN vector
-    silently makes a document unfindable for every query AND breaks sqlite-vec,
-    so this never returns one."""
+    always clears it). A row still non-finite after the retries raises: a
+    persisted NaN or zero vector silently makes a document unfindable for every
+    query, so this never returns one."""
     with _lock:
         _load()
         out_vecs: list[np.ndarray] = []
@@ -157,11 +153,10 @@ def _embed(texts: list[str]) -> np.ndarray:
                     arr[j] = _forward_batch([texts[j]])[0]
             bad = ~np.isfinite(arr).all(axis=1)
             if bad.any():
-                log.error(
-                    "Embedding still non-finite for %d text(s) after retries; zeroing",
-                    int(bad.sum()),
+                raise RuntimeError(
+                    f"Embedding returned non-finite values for {int(bad.sum())} "
+                    "text(s) after 3 retries"
                 )
-                arr[bad] = 0.0
         return arr
 
 

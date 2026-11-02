@@ -55,12 +55,9 @@ def _accept(name: str, label: str, score: float) -> bool:
 
 
 def _ner_backend() -> str:
-    try:
-        from server.infrastructure.model_mode import resolve_backend
+    from server.infrastructure.model_mode import resolve_backend
 
-        return resolve_backend("ner")
-    except Exception:
-        return "gliner"
+    return resolve_backend("ner")
 
 
 def _llm_ner_system(labels: list[str]) -> str:
@@ -396,12 +393,16 @@ def extract_entities(
     eng = backend or _ner_backend()
     if eng == "haiku":
         return _extract_via_haiku(text[:_HAIKU_MAX_CHARS], labels)
-    if eng not in ("gliner", "gliner2"):
+    if eng != "gliner":
         from . import engines as _engines
 
         _llm_key = _engines.resolve_local_model(eng)
-        if _llm_key:
-            return _extract_via_local_llm(text[:_HAIKU_MAX_CHARS], labels, _llm_key)
+        if not _llm_key:
+            raise RuntimeError(
+                f"The entity extraction engine {eng!r} is not an installed on-device "
+                "model. Pick another engine in Settings > Models."
+            )
+        return _extract_via_local_llm(text[:_HAIKU_MAX_CHARS], labels, _llm_key)
     if ner_model == "gliner2":
         return _extract_via_gliner2(text, labels)
     best: dict[str, dict] = {}  # name.lower() -> best-scoring accepted span

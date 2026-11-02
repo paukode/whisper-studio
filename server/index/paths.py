@@ -49,14 +49,10 @@ def _db_filename(embed_backend: str | None) -> str:
 
 
 def _active_embed_backend() -> str:
-    """The embed backend selected by the current model mode (defaults to qwen3
-    if the resolver is unavailable, e.g. very early import)."""
-    try:
-        from server.infrastructure.model_mode import resolve_backend
+    """The embed backend selected by the current model mode."""
+    from server.infrastructure.model_mode import resolve_backend
 
-        return resolve_backend("embed")
-    except Exception:
-        return "qwen3"
+    return resolve_backend("embed")
 
 
 def db_path(ws_path: str, embed_backend: str | None = None) -> str:

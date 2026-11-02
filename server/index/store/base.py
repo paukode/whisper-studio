@@ -1,11 +1,10 @@
 """Connection, caches, schema, and low-level vector primitives shared by every
 store submodule.
 
-The SQLite connection factory (``_connect``), the in-process caches
-(``_VEC_CACHE`` / ``_DERIVED_CACHE``), the sqlite-vec probe (``_vec_loadable``),
-and the brute-force matrix builder (``_matrix``) all live here so the topical
-modules (files, entities, meta, search, graph) share one cache and one write-gen
-protocol. Everything else imports these from here rather than duplicating state.
+The SQLite connection factory (``_connect``), the derived-view cache
+(``_DERIVED_CACHE``) and the sqlite-vec KNN search (``_vec_search``) all live
+here so the topical modules (files, entities, meta, search, graph) share one
+cache and one write-gen protocol. Everything else imports these from here rather than duplicating state.
 """
 
 from __future__ import annotations
@@ -18,7 +17,6 @@ import threading
 import numpy as np
 
 from ..config import (
-    EMBED_DIM,
     dim_for_backend,
 )
 from ..paths import db_path, workspace_index_dir
@@ -28,30 +26,19 @@ def _active_dim() -> int:
     """Embedding width for the active embed backend. Each per-backend index DB
     holds vectors of exactly one width, and db_path routes to that backend's DB,
     so the dim used for the matrix / sqlite-vec table must match it."""
-    try:
-        from server.infrastructure.model_mode import resolve_backend
+    from server.infrastructure.model_mode import resolve_backend
 
-        return dim_for_backend(resolve_backend("embed"))
-    except Exception:
-        return EMBED_DIM
+    return dim_for_backend(resolve_backend("embed"))
 
 
 log = logging.getLogger("whisper-studio")
 
-# Cached (chunk_ids, matrix) per workspace db path; invalidated on write.
-_VEC_CACHE: dict[str, tuple[list[int], np.ndarray]] = {}
 # Recomputable derived views (search hits + graph/projection/community layouts)
-# memoized per (db_path, key). Purged alongside _VEC_CACHE on any index write
+# memoized per (db_path, key). Purged on any index write
 # (see _invalidate), so a stale view is never returned; capped to bound memory.
 _DERIVED_CACHE: dict[tuple, object] = {}
 _DERIVED_CACHE_MAX = 256
 _cache_lock = threading.Lock()
-
-# Vector search backend: sqlite-vec (indexed KNN) when the interpreter can load
-# SQLite extensions — true on a Homebrew-Python venv, which setup.sh builds; the
-# python.org framework build cannot, so we fall back to a brute-force numpy
-# matrix. Probed once per process.
-_VEC_OK: bool | None = None
 
 # Entities appearing in more chunks than this are treated as boilerplate and
 # excluded from file_graph edges (they'd blow up the self-join and aren't a
@@ -214,7 +201,6 @@ def _connect(ws_path: str) -> sqlite3.Connection:
 def _invalidate(ws_path: str) -> None:
     with _cache_lock:
         dp = db_path(ws_path)
-        _VEC_CACHE.pop(dp, None)
         for k in [k for k in _DERIVED_CACHE if k[0] == dp]:
             _DERIVED_CACHE.pop(k, None)
 
@@ -265,46 +251,6 @@ def _bump_write_gen(cur: sqlite3.Cursor) -> None:
     )
 
 
-def _matrix(ws_path: str) -> tuple[list[int], np.ndarray]:
-    key = db_path(ws_path)
-    with _cache_lock:
-        cached = _VEC_CACHE.get(key)
-        if cached is not None:
-            return cached
-    conn = _connect(ws_path)
-    try:
-        rows = conn.execute("SELECT id, vec FROM chunks ORDER BY id").fetchall()
-    finally:
-        conn.close()
-    ids = [r[0] for r in rows]
-    if rows:
-        mat = np.vstack([np.frombuffer(r[1], dtype=np.float32) for r in rows])
-    else:
-        mat = np.zeros((0, _active_dim()), dtype=np.float32)
-    with _cache_lock:
-        _VEC_CACHE[key] = (ids, mat)
-    return ids, mat
-
-
-def _vec_loadable() -> bool:
-    """Whether this interpreter can load the sqlite-vec extension (probed once)."""
-    global _VEC_OK
-    if _VEC_OK is None:
-        try:
-            import sqlite_vec
-
-            c = sqlite3.connect(":memory:")
-            c.enable_load_extension(True)
-            c.load_extension(sqlite_vec.loadable_path())
-            c.execute("SELECT vec_version()").fetchone()
-            c.close()
-            _VEC_OK = True
-        except Exception as e:
-            log.info("sqlite-vec unavailable (%s); using numpy vector search", e)
-            _VEC_OK = False
-    return _VEC_OK
-
-
 def _vec_search(ws_path: str, query_vec: np.ndarray, k: int) -> list[tuple[int, float]]:
     """Indexed KNN via sqlite-vec. The ``vchunks`` vec0 table is (re)built from
     the chunk BLOBs whenever the write generation advanced, so it self-heals
@@ -326,10 +272,6 @@ def _vec_search(ws_path: str, query_vec: np.ndarray, k: int) -> list[tuple[int, 
             conn.execute("BEGIN")
             conn.execute("DELETE FROM vchunks")
             for cid, blob in conn.execute("SELECT id, vec FROM chunks").fetchall():
-                # Skip non-finite vectors (a transient NaN from a past index run):
-                # vec0 MATCH chokes on them, and they can't match anything anyway.
-                if blob is None or not np.isfinite(np.frombuffer(blob, dtype=np.float32)).all():
-                    continue
                 conn.execute("INSERT INTO vchunks(chunk_id, emb) VALUES (?,?)", (cid, blob))
             conn.execute(
                 "INSERT OR REPLACE INTO meta(key, value) VALUES('vec_built_gen', ?)", (write_gen,)

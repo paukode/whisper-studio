@@ -585,7 +585,7 @@ def test_dedupe_entities_semantic_merge_catches_spelling_variants(monkeypatch):
 def test_file_graph_assigns_communities(monkeypatch):
     """file_graph nodes carry a `community` index and edge `degree`: two
     entity-disjoint file clusters land in different communities, and nodes within
-    a cluster share one. (Leiden when available, networkx Louvain otherwise.)"""
+    a cluster share one (Leiden)."""
     monkeypatch.setattr("server.index.store.entities.ENTITY_SEMANTIC_MERGE", False)
     ws = "/fake/ws-comm"
     clusters = {

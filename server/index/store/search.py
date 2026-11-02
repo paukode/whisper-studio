@@ -7,19 +7,16 @@ import hashlib
 import logging
 import math
 import re
-import sqlite3
 
 import numpy as np
 
-from ..config import FTS_SCHEMA_VER, PL_STOPWORDS, SALIENCE_JUNK_FLOOR
+from ..config import PL_STOPWORDS, SALIENCE_JUNK_FLOOR
 from .base import (
     _GENERIC_ENTITY_NAMES,
     _MAX_NODE_FANOUT,
     _cached_derived,
     _connect,
     _fetch_chunks,
-    _matrix,
-    _vec_loadable,
     _vec_search,
 )
 
@@ -36,44 +33,16 @@ def search(ws_path: str, query_vec: np.ndarray, k: int = 8) -> list[dict]:
 
 
 def _search_impl(ws_path: str, query_vec: np.ndarray, k: int = 8) -> list[dict]:
-    """Top-k chunks by cosine similarity to ``query_vec`` (already normalized).
-
-    Uses sqlite-vec (indexed KNN) when the extension can load, else a brute-force
-    numpy matrix — same ranking, since both compare L2-normalized vectors."""
-    if _vec_loadable():
-        try:
-            hits = _vec_search(ws_path, query_vec, k)  # [(chunk_id, cosine_distance)]
-            by_id = {r["chunk_id"]: r for r in _fetch_chunks(ws_path, [c for c, _ in hits])}
-            out = []
-            for cid, dist in hits:
-                r = by_id.get(cid)
-                if r:
-                    r = dict(r)
-                    r["score"] = 1.0 - dist  # cosine distance → similarity
-                    out.append(r)
-            return out
-        except Exception as e:
-            log.warning("sqlite-vec search failed (%s); falling back to numpy", e)
-    ids, mat = _matrix(ws_path)
-    if mat.shape[0] == 0:
-        return []
-    q = np.asarray(query_vec, dtype=np.float32).ravel()
-    scores = mat @ q
-    # A non-finite stored vector (transient NaN from a past run) yields a NaN
-    # score; push those to -inf so they never rank and never poison argsort.
-    scores[~np.isfinite(scores)] = -np.inf
-    k = min(k, len(ids))
-    top = np.argsort(-scores)[:k]
-    rows = _fetch_chunks(ws_path, [ids[i] for i in top])
-    by_id = {r["chunk_id"]: r for r in rows}
+    """Top-k chunks by cosine similarity to ``query_vec`` (already normalized),
+    through the sqlite-vec index."""
+    hits = _vec_search(ws_path, query_vec, k)  # [(chunk_id, cosine_distance)]
+    by_id = {r["chunk_id"]: r for r in _fetch_chunks(ws_path, [c for c, _ in hits])}
     out = []
-    for i in top:
-        if not np.isfinite(scores[i]):
-            continue
-        r = by_id.get(ids[i])
+    for cid, dist in hits:
+        r = by_id.get(cid)
         if r:
             r = dict(r)
-            r["score"] = float(scores[i])
+            r["score"] = 1.0 - dist  # cosine distance to similarity
             out.append(r)
     return out
 
@@ -281,7 +250,7 @@ def fts_search(ws_path: str, query_text: str, k: int = 8) -> list[dict]:
     generation advanced — same self-healing pattern as the vec index — so it
     needs no separate sync and no re-index to come online. Returns chunk dicts
     (each with a ``_bm25`` relevance score, more-negative = better) in BM25 rank
-    order; empty if FTS5 is unavailable or the query has no content terms.
+    order; empty if the query has no content terms.
 
     Indexing the path means a filename token (e.g. "buddy" in buddy.json) is
     matchable even when the content never mentions it. Stopwords are stripped so
@@ -298,29 +267,11 @@ def fts_search(ws_path: str, query_text: str, k: int = 8) -> list[dict]:
     match_expr = " OR ".join(_term_expr(t) for t in terms)
     conn = _connect(ws_path)
     try:
-        # Rebuild the FTS table when its tokenizer version changed (v2 folds
-        # diacritics for Polish). Clearing fts_built_gen makes the self-healing
-        # rebuild below repopulate it.
-        try:
-            ver_row = conn.execute("SELECT value FROM meta WHERE key='fts_schema_ver'").fetchone()
-            if (ver_row[0] if ver_row else None) != str(FTS_SCHEMA_VER):
-                conn.execute("DROP TABLE IF EXISTS fts_chunks")
-                conn.execute("DELETE FROM meta WHERE key='fts_built_gen'")
-                conn.execute(
-                    "INSERT OR REPLACE INTO meta(key, value) VALUES('fts_schema_ver', ?)",
-                    (str(FTS_SCHEMA_VER),),
-                )
-                conn.commit()
-        except sqlite3.OperationalError:
-            pass  # locked mid-migration; a later query retries
-        try:
-            conn.execute(
-                "CREATE VIRTUAL TABLE IF NOT EXISTS fts_chunks "
-                'USING fts5(chunk_id UNINDEXED, text, path, tokenize="unicode61 remove_diacritics 2")'
-            )
-        except sqlite3.OperationalError as e:
-            log.info("FTS5 unavailable (%s); keyword search disabled", e)
-            return []
+        # remove_diacritics folds Polish letters (ą/ę/ó/ś/ż match their ASCII forms).
+        conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS fts_chunks "
+            'USING fts5(chunk_id UNINDEXED, text, path, tokenize="unicode61 remove_diacritics 2")'
+        )
         # BEGIN IMMEDIATE takes the write lock up front, so the write_gen read
         # below can't race a concurrent build into stamping a wrong fts_built_gen.
         built_row = conn.execute("SELECT value FROM meta WHERE key='fts_built_gen'").fetchone()
@@ -344,9 +295,6 @@ def fts_search(ws_path: str, query_text: str, k: int = 8) -> list[dict]:
             "WHERE fts_chunks MATCH ? ORDER BY s LIMIT ?",
             (match_expr, k),
         ).fetchall()
-    except sqlite3.OperationalError as e:  # malformed MATCH, locked db, etc.
-        log.warning("FTS keyword query failed (%s)", e)
-        return []
     finally:
         conn.close()
     if not rows:

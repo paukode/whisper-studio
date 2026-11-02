@@ -69,9 +69,9 @@ COHERE_EMBED_DIM = int(
 EMBED_DIMS = {"qwen3": EMBED_DIM, "cohere": COHERE_EMBED_DIM}
 
 
-def dim_for_backend(backend: str | None) -> int:
-    """Embedding vector width for an embed backend (defaults to the Qwen3 dim)."""
-    return EMBED_DIMS.get(backend or "qwen3", EMBED_DIM)
+def dim_for_backend(backend: str) -> int:
+    """Embedding vector width for an embed backend."""
+    return EMBED_DIMS[backend]
 
 
 # ── GLiNER (zero-shot NER → knowledge-graph nodes) ───────────────────────────
@@ -260,9 +260,6 @@ GROUND_REL_FLOOR = float(os.environ.get("WHISPER_INDEX_GROUND_REL_FLOOR", 0.55))
 GROUND_ON_TOPIC_FLOORS = {"qwen3": 0.40, "cohere": 0.28}
 
 # ── FTS5 keyword index ───────────────────────────────────────────────────────
-# Bumped when the fts_chunks tokenizer changes so the derived table is dropped
-# and rebuilt (v2 folds diacritics: ą/ę/ó/ś/ż match their ASCII forms in PL text).
-FTS_SCHEMA_VER = 2
 # Polish stopwords, merged with the English set in the store's keyword leg so a
 # chunk sharing only "i"/"w"/"jest" with a Polish query isn't a keyword hit.
 PL_STOPWORDS = frozenset(

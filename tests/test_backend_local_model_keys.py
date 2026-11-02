@@ -86,3 +86,18 @@ def test_extract_entities_local_llm_skips_when_model_missing(monkeypatch):
         "Acme hired Bob.", labels=["Company", "Person"], backend="local_qwen35_9b"
     )
     assert out == []
+
+
+def test_extract_entities_refuses_an_uninstalled_engine(monkeypatch):
+    """An NER engine that names no installed model fails the call instead of
+    silently running GLiNER."""
+    from server.index import extractor
+
+    monkeypatch.setattr(reg, "local_models", lambda: {})
+
+    def boom():
+        raise AssertionError("GLiNER must not load for an unknown engine")
+
+    monkeypatch.setattr(extractor, "_load", boom)
+    with pytest.raises(RuntimeError, match="not an installed on-device model"):
+        extractor.extract_entities("Acme hired Bob.", labels=["Company"], backend="local_gone")

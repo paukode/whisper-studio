@@ -650,9 +650,6 @@ def query(ws_path: str, text: str, k: int = 8, graph_hop: bool = True) -> dict:
 # supporting context, so they get a shorter excerpt.
 _GROUND_MATCH_CHARS = 1500
 _GROUND_RELATED_CHARS = 600
-# Drop vector matches below this cosine score: they're noise that only dilutes
-# the grounding block (and tempts the model to distrust the passages).
-_GROUND_SCORE_FLOOR = 0.15
 # Max chunks any single file may contribute to the grounding block (matches AND
 # graph-hop related combined), so one large document (e.g. a 300-chunk book)
 # can't monopolise the slots and crowd out the small-but-relevant file (e.g. a
@@ -780,14 +777,11 @@ def retrieve_grounding(
         seen_roots.add(root)
         valid_roots.append((p, root))
 
-    # Per-backend cosine floor — score distributions differ across embedders.
-    try:
-        from server.infrastructure.model_mode import resolve_backend
+    # Per-backend cosine floor: score distributions differ across embedders.
+    from server.infrastructure.model_mode import resolve_backend
 
-        _embed_backend = resolve_backend("embed")
-    except Exception:
-        _embed_backend = "qwen3"
-    ground_floor = GROUND_SCORE_FLOORS.get(_embed_backend, _GROUND_SCORE_FLOOR)
+    _embed_backend = resolve_backend("embed")
+    ground_floor = GROUND_SCORE_FLOORS[_embed_backend]
 
     # Dedup on the FULL normalized text (not a prefix): a duplicate file is
     # byte-identical so it collapses, while two distinct invoices that merely
@@ -807,7 +801,7 @@ def retrieve_grounding(
     legs_by_key: dict[tuple, set] = {}
     ent_names_by_key: dict[tuple, list] = {}
 
-    on_topic_floor = GROUND_ON_TOPIC_FLOORS.get(_embed_backend, 0.40)
+    on_topic_floor = GROUND_ON_TOPIC_FLOORS[_embed_backend]
     best_dense = 0.0  # best raw cosine seen across queries/indexes (pre-floor)
 
     # Per query, build THREE global lists (across all indexes): the dense list,
