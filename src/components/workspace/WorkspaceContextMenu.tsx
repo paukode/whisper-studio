@@ -37,13 +37,13 @@ let _compareSelection: string | null = null;
  *  nodes (not HTML strings), so building JSX here both renders correctly and
  *  auto-escapes the paths/snippets — no manual HTML escaping needed. Shared by
  *  Find File References and the in-folder search. */
-function renderRefList(results: Array<{ path: string; line: number; text: string }>): React.ReactNode {
+function renderRefList(results: Array<{ path: string; line: number; content: string }>): React.ReactNode {
   return (
     <div style={{ maxHeight: '50vh', overflow: 'auto', fontSize: 13 }}>
       {results.map((r, i) => (
         <div key={`${r.path}:${r.line}:${i}`} style={{ padding: '4px 0', borderBottom: '1px solid var(--border)' }}>
           <code style={{ color: 'var(--accent)' }}>{r.path}:{r.line}</code>{' '}
-          <span style={{ color: 'var(--text-muted)' }}>{r.text.trim()}</span>
+          <span style={{ color: 'var(--text-muted)' }}>{r.content.trim()}</span>
         </div>
       ))}
     </div>
@@ -302,7 +302,7 @@ export const WorkspaceContextMenu: React.FC<WorkspaceContextMenuProps> = ({
   const handleFindFileReferences = useCallback(async () => {
     onClose();
     try {
-      const data = await get<{ results?: Array<{ path: string; line: number; text: string }> }>(
+      const data = await get<{ results?: Array<{ path: string; line: number; content: string }> }>(
         `/api/workspace/grep?pattern=${encodeURIComponent(escapeRegExp(fileName))}&scope=.&limit=50`,
       );
       const results = data.results ?? [];
@@ -453,7 +453,7 @@ export const WorkspaceContextMenu: React.FC<WorkspaceContextMenuProps> = ({
     }) as Record<string, string | boolean> | null;
     if (!result || !result.pattern) return;
     try {
-      const data = await get<{ results?: Array<{ path: string; line: number; text: string }> }>(
+      const data = await get<{ results?: Array<{ path: string; line: number; content: string }> }>(
         `/api/workspace/grep?pattern=${encodeURIComponent(String(result.pattern))}&scope=${encodeURIComponent(path)}&limit=50`,
       );
       const results = data.results ?? [];

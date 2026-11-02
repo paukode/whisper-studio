@@ -59,4 +59,18 @@ describe('WorkspaceContextMenu errors', () => {
       message: 'Timeline failed: fatal: not a git repository',
     });
   });
+
+  it('lists the hits the grep route returns', async () => {
+    const pushDialog = vi.fn();
+    useUIStore.setState({ addToast, pushDialog } as never);
+    h.get.mockResolvedValue({ results: [{ path: 'src/b.ts', line: 3, content: '  import a  ' }] });
+    openMenu();
+    fireEvent.click(screen.getByText('Find references to this file'));
+
+    await waitFor(() => expect(pushDialog).toHaveBeenCalled());
+    expect(addToast).not.toHaveBeenCalled();
+    render(<>{pushDialog.mock.calls[0][0].body}</>);
+    expect(screen.getByText('src/b.ts:3')).toBeTruthy();
+    expect(screen.getByText('import a')).toBeTruthy();
+  });
 });
