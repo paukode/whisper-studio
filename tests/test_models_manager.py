@@ -897,3 +897,13 @@ def test_download_failure_reasons_name_the_cause():
     )
     assert _short_reason(httpx.ConnectError("refused")) == "network error reaching Hugging Face"
     assert _short_reason(ValueError("bad shard")) == "ValueError: bad shard"
+
+
+def test_an_offline_download_is_not_called_a_missing_file():
+    """LocalEntryNotFoundError subclasses EntryNotFoundError, so an offline
+    download used to be reported as 'file not found in the repository'."""
+    from huggingface_hub.errors import LocalEntryNotFoundError
+
+    from server.models_manager.worker import _short_reason
+
+    assert _short_reason(LocalEntryNotFoundError("offline")).startswith("could not reach")

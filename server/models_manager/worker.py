@@ -48,10 +48,11 @@ def _short_reason(exc: BaseException) -> str:
         return "repository not found on Hugging Face (check repo_id, or that it is public)"
     if isinstance(exc, GatedRepoError):
         return "this repository is gated; accept its license and set an HF token"
-    if isinstance(exc, EntryNotFoundError):
-        return "file not found in the repository (check the filename)"
+    # LocalEntryNotFoundError subclasses EntryNotFoundError, so it goes first.
     if isinstance(exc, LocalEntryNotFoundError):
         return "could not reach Hugging Face and no local copy is cached (network error?)"
+    if isinstance(exc, EntryNotFoundError):
+        return "file not found in the repository (check the filename)"
     if isinstance(exc, HfHubHTTPError):
         return f"Hugging Face request failed: {exc}"
     # huggingface_hub 1.x talks to the Hub through httpx.
