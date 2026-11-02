@@ -46,9 +46,12 @@ def _agent_log_path() -> str:
 
 # ── app-running detection (PID file written by the server lifespan) ──────────
 def mark_app_running() -> None:
+    """Write the PID file atomically, so the worker never reads it half written."""
     os.makedirs(_STORAGE, exist_ok=True)
-    with open(_PID_PATH, "w") as f:
+    tmp = f"{_PID_PATH}.{os.getpid()}.tmp"
+    with open(tmp, "w") as f:
         f.write(str(os.getpid()))
+    os.replace(tmp, _PID_PATH)
 
 
 def mark_app_stopped() -> None:
@@ -61,8 +64,17 @@ def mark_app_stopped() -> None:
 def _app_running() -> bool:
     try:
         with open(_PID_PATH) as f:
-            pid = int(f.read().strip())
+            raw = f.read().strip()
     except FileNotFoundError:
+        return False
+    try:
+        pid = int(raw)
+    except ValueError:
+        log.error(
+            "Index agent: the app PID file %s is unreadable (%r); treating the app as not running.",
+            _PID_PATH,
+            raw[:40],
+        )
         return False
     try:
         os.kill(pid, 0)

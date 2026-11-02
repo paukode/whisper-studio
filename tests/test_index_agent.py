@@ -69,6 +69,18 @@ def test_app_running_detection(monkeypatch, tmp_path):
     pid_file.write_text("99999999")  # not a live process
     assert agent._app_running() is False
 
+    for unreadable in ("", "12ab"):  # empty or garbage: not a crash
+        pid_file.write_text(unreadable)
+        assert agent._app_running() is False
+
+
+def test_mark_app_running_writes_the_pid_atomically(monkeypatch, tmp_path):
+    monkeypatch.setattr(agent, "_STORAGE", str(tmp_path))
+    monkeypatch.setattr(agent, "_PID_PATH", str(tmp_path / ".server.pid"))
+    agent.mark_app_running()
+    assert (tmp_path / ".server.pid").read_text() == str(os.getpid())
+    assert [p.name for p in tmp_path.iterdir()] == [".server.pid"]
+
 
 def test_run_skips_when_app_is_running(monkeypatch):
     monkeypatch.setattr(agent, "_app_running", lambda: True)
