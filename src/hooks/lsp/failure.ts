@@ -15,7 +15,7 @@
 const MESSAGE_TYPE_ERROR = 1;
 
 /** The `source` the proxy puts on its own failure notification. */
-export const PROXY_FAILURE_SOURCE = 'whisper-studio';
+const PROXY_FAILURE_SOURCE = 'whisper-studio';
 
 /** Normal closure: the editor or the server ended the session on purpose. */
 const CLOSE_NORMAL = 1000;
