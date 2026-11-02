@@ -253,7 +253,9 @@ def test_a_detached_agent_runs_its_tools_as_its_own_work(monkeypatch, tmp_path):
 
     async def _fake_run_agent(task, **kwargs):
         seen["owner"] = owner.current()
-        return SimpleNamespace(output="done", status="completed")
+        return SimpleNamespace(
+            output="done", status="completed", stop_reason="completed", turns_used=1
+        )
 
     monkeypatch.setattr("server.agents.runtime.run_agent", _fake_run_agent)
     monkeypatch.setattr(tagents, "emit_agent_report", lambda *a, **k: None)

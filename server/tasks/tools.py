@@ -105,7 +105,7 @@ def _public_view(task: dict) -> dict:
 
 @register_executor("task_status", read_only=True, concurrent_safe=True)
 def _exec_task_status(tool_input, transcript, current_attachments):
-    session_id = tool_input.pop("__session_id__", "") or tool_input.get("session_id", "")
+    session_id = tool_input.pop("__session_id__", "")
     task_id = (tool_input.get("task_id") or "").strip()
     if task_id:
         task = registry.get_task(task_id)

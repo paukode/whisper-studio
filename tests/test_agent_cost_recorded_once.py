@@ -46,6 +46,7 @@ def _fake_run_agent_recording_one_round(session_rows: list):
             agent_id="a1",
             agent_type="general",
             status="completed",
+            stop_reason="completed",
             turns_used=1,
             tools_called=[],
             usage=dict(_USAGE),

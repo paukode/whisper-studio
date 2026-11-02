@@ -364,7 +364,7 @@ async def execute_spawn_agent(
             session_id, task, tool_input.get("agent_type", "general"), model_id, result
         )
         warning_line = f"[model override] {model_warning}\n" if model_warning else ""
-        stop_reason = getattr(result, "stop_reason", result.status)
+        stop_reason = result.stop_reason
         return (
             f"{warning_line}"
             f"[Agent {result.agent_id} ({result.agent_type})] "
@@ -546,7 +546,7 @@ async def execute_spawn_agent(
         "agent_type": result.agent_type,
         "team_id": team_id,
         "status": result.status,
-        "stop_reason": getattr(result, "stop_reason", result.status),
+        "stop_reason": result.stop_reason,
         "turns_used": result.turns_used,
         "tools_called": result.tools_called,
         "usage": result.usage,

@@ -226,7 +226,7 @@ async def execute_team_create(
                 # head is what the parent and the card need, not the tail.
                 "result": result.output[:REPORT_CHARS],
                 "status": result.status,
-                "stop_reason": getattr(result, "stop_reason", result.status),
+                "stop_reason": result.stop_reason,
                 "turns_used": result.turns_used,
             }
         except asyncio.CancelledError:
