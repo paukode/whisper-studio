@@ -81,7 +81,8 @@ _RULE_DEFS: list[tuple[str, str, str]] = [
     (
         "private-key-header",
         "Private Key",
-        r"(-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----)",
+        # RSA, EC, DSA, OPENSSH, ENCRYPTED, PGP ("PRIVATE KEY BLOCK") and PKCS#8.
+        r"(-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----)",
     ),
     (
         "jwt-secret",
@@ -97,6 +98,10 @@ _RULE_DEFS: list[tuple[str, str, str]] = [
 _RULES: list[tuple[str, str, re.Pattern]] = [
     (rule_id, label, re.compile(pattern)) for rule_id, label, pattern in _RULE_DEFS
 ]
+
+# The same rules for other callers (the git commit guard in
+# server/git/security.py). Each pattern has one capture group: the secret.
+RULES: tuple[tuple[str, str, re.Pattern], ...] = tuple(_RULES)
 
 
 def scan_for_secrets(content: str) -> list[dict]:
