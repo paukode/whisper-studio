@@ -28,7 +28,6 @@ WORKSPACE_EXPORTS = [
     "_atomic_write_bytes",
     "_normalize_lf",
     "own_scratch_dir",
-    "WORKSPACE_BACKUPS",
 ]
 
 CHAT_EXPORTS = [

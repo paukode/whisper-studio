@@ -17,13 +17,13 @@ from server.approval.markers import workspace_prompt
 from .paths import (
     RECENT_WORKSPACES_PATH,
     SAVE_LOCATIONS_PATH,
-    WORKSPACE_BACKUPS,
     WORKSPACE_CONFIG_PATH,
     _is_system_path,
     _ws_path_allowed,
     _ws_validate_path,
     in_other_scratch,
 )
+from .write_undo import clear_write_backups
 
 log = logging.getLogger("whisper-studio")
 
@@ -508,7 +508,7 @@ def disconnect_workspace() -> list[str]:
         _release_workspace()
     warnings: list[str] = [damage] if damage else []
     for label, step in (
-        ("undo backups", WORKSPACE_BACKUPS.clear),
+        ("undo copies", clear_write_backups),
         ("session shell state", clear_workspace_scoped_state),
         ("git watcher", lambda: _point_git_watcher_at(None)),
         ("workspace watcher", lambda: _point_workspace_watcher_at(None)),
@@ -568,7 +568,7 @@ def connect_workspace(
     if switched and by_user:
         _release_workspace()
     save_recent_workspace(real)
-    WORKSPACE_BACKUPS.clear()
+    clear_write_backups()
     # On an ACTUAL workspace change, drop state scoped to the old workspace so
     # it can't bleed into the new one. Without this, per-session shell cwds keep
     # running read-only commands in the old folder, and the worktree registry

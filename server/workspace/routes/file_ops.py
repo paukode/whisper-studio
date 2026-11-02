@@ -5,6 +5,7 @@ Read (`/file`, `/source-file`), mutate (`/write`, `/delete`, `/rename`,
 package router via decorator side-effects.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -16,12 +17,14 @@ from .. import router
 from ..paths import (
     _WS_BINARY_EXTS,
     _WS_IMAGE_EXTS,
-    WORKSPACE_BACKUPS,
+    _atomic_write_bytes,
     _atomic_write_text,
     _normalize_lf,
+    _ws_path_allowed,
     _ws_validate_path,
 )
 from ..state import get_workspace_path
+from ..write_undo import UndoRefused, get_backup, undo_write
 
 log = logging.getLogger("whisper-studio")
 
@@ -239,12 +242,6 @@ async def ws_write_endpoint(request: Request):
             status_code=403,
             media_type="application/json",
         )
-    if os.path.isfile(full):
-        try:
-            with open(full, errors="replace") as f:
-                WORKSPACE_BACKUPS[path] = f.read()
-        except Exception:
-            pass
     _atomic_write_text(full, content)
     return {"path": path, "written": True, "size": len(content)}
 
@@ -268,11 +265,6 @@ async def ws_delete_endpoint(request: Request):
             media_type="application/json",
         )
     if os.path.isfile(full):
-        try:
-            with open(full, errors="replace") as f:
-                WORKSPACE_BACKUPS[path] = f.read()
-        except Exception:
-            pass
         os.remove(full)
     elif os.path.isdir(full):
         import shutil
@@ -451,7 +443,17 @@ async def ws_copy_file_endpoint(request: Request):
 
 @router.post("/undo")
 async def ws_undo_endpoint(request: Request):
+    """Undo one write the assistant made, named by its tool_use_id
+    (server/workspace/write_undo.py). Refuses, and changes nothing, when the
+    file is not as that write left it."""
     body = await request.json()
+    tool_use_id = body.get("tool_use_id")
+    if not isinstance(tool_use_id, str) or not tool_use_id:
+        return Response(
+            content=json.dumps({"error": "tool_use_id required"}),
+            status_code=400,
+            media_type="application/json",
+        )
     ws = get_workspace_path()
     if not ws:
         return Response(
@@ -459,20 +461,21 @@ async def ws_undo_endpoint(request: Request):
             status_code=400,
             media_type="application/json",
         )
-    path = body.get("path", "")
-    if path not in WORKSPACE_BACKUPS:
+    backup = get_backup(tool_use_id)
+    # The path is the server's own record, never the request's; it must still
+    # be inside the workspace (or the writing session's scratch folder).
+    if backup is not None and not _ws_path_allowed(backup.full, ws, backup.session_id):
         return Response(
-            content=json.dumps({"error": "No backup for this file"}),
-            status_code=404,
-            media_type="application/json",
-        )
-    full = os.path.join(ws, path)
-    if not _ws_validate_path(full, ws):
-        return Response(
-            content=json.dumps({"error": "Invalid path"}),
+            content=json.dumps({"error": f"{backup.path} is outside the workspace now"}),
             status_code=403,
             media_type="application/json",
         )
-    original = WORKSPACE_BACKUPS.pop(path)
-    _atomic_write_text(full, original)
-    return {"path": path, "restored": True}
+    try:
+        done = await asyncio.to_thread(undo_write, tool_use_id, _atomic_write_bytes)
+    except UndoRefused as e:
+        return Response(
+            content=json.dumps({"error": str(e)}),
+            status_code=e.status,
+            media_type="application/json",
+        )
+    return {"path": done.path, "restored": True, "removed": done.before is None}

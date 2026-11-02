@@ -24,7 +24,6 @@ from . import routes  # noqa: E402,F401
 from .commands import _validate_command  # noqa: E402,F401
 from .executors import execute_ws_open_folder  # noqa: E402,F401
 from .paths import (  # noqa: E402,F401
-    WORKSPACE_BACKUPS,
     _atomic_write_bytes,
     _atomic_write_text,
     _normalize_lf,

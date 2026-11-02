@@ -271,6 +271,17 @@ describe('ApprovalBanner diff preview', () => {
     expect(container.querySelector('.git-diff-header')).toBeNull();
   });
 
+  it('a pending write card offers no Undo: nothing was written yet', () => {
+    getChatStore(SID).getState().enqueueApproval(
+      writeApproval('tu_pending', { path: 'a.txt', original: 'one\n', content: 'ONE\n' }),
+    );
+
+    render(<ApprovalBanner />);
+
+    expect(screen.getByRole('button', { name: 'Yes' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Undo/ })).toBeNull();
+  });
+
   it('draws a created file as all additions', () => {
     getChatStore(SID).getState().enqueueApproval(
       writeApproval('tu_new', { path: 'new.txt', content: 'a\nb\n' }),

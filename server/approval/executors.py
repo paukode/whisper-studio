@@ -42,20 +42,21 @@ async def _do_write(payload: dict) -> ApprovalOutcome:
     full = os.path.join(ws, path)
     if not workspace._ws_path_allowed(full, ws, payload.get("session_id")):
         return ApprovalOutcome(ok=False, error="Invalid path")
-    # The file before the write: the undo backup, and the old side of the
-    # diff stats and the stored edit below. Empty for a created file; None
-    # for a file that exists but could not be read, whose change is unknown
-    # (a read failure must not make an overwrite look like a create). Read
-    # with its line ends as they are on disk, so the write's own move to LF
-    # counts in the stats and shows in the diff, as git counts it; the undo
-    # backup keeps the text as an editor reads it.
+    # The file before the write: the undo copy (its exact bytes), and the
+    # old side of the diff stats and the stored edit below. Empty for a
+    # created file; None for a file that exists but could not be read, whose
+    # change is unknown (a read failure must not make an overwrite look like
+    # a create) and which gets no undo. Decoded with its line ends as they
+    # are on disk, so the write's own move to LF counts in the stats and
+    # shows in the diff, as git counts it.
     original: str | None = ""
+    before: bytes | None = None
     created = not os.path.isfile(full)
     if not created:
         try:
-            with open(full, errors="replace", newline="") as f:
-                original = f.read()
-            workspace.WORKSPACE_BACKUPS[path] = original.replace("\r\n", "\n").replace("\r", "\n")
+            with open(full, "rb") as f:
+                before = f.read()
+            original = before.decode("utf-8", errors="replace")
         except Exception:
             original = None
     try:
@@ -93,6 +94,17 @@ async def _do_write(payload: dict) -> ApprovalOutcome:
         else:
             note = await asyncio.to_thread(ruff.after_save, full, ws)
         output = f"{output}\n\n{note}"
+    # The undo copy of this one write, keyed by its tool_use id, with the
+    # file as the write and ruff left it (server/workspace/write_undo.py).
+    # A write with no id (a direct call) or an unreadable old file keeps none.
+    tool_use_id = payload.get("__tool_use_id__")
+    if tool_use_id and original is not None:
+        from server.workspace.write_undo import record_write
+
+        try:
+            record_write(tool_use_id, full, path, payload.get("session_id"), before)
+        except OSError as e:
+            log.warning("write %s: no undo copy kept, the file could not be read back: %s", path, e)
     # The stats are computed once, here, after ruff: against the file as it
     # is on disk now, so a fix or a reformat counts. They ride on the
     # outcome to the inline path's skill_result meta and the card's JSON (a
@@ -216,20 +228,15 @@ async def _do_delete(payload: dict) -> ApprovalOutcome:
         return ApprovalOutcome(ok=False, error="Path not found")
     try:
         # A large tree (node_modules) takes seconds to remove.
-        await asyncio.to_thread(_delete_path, workspace, path, full)
+        await asyncio.to_thread(_delete_path, full)
     except Exception as e:
         return ApprovalOutcome(ok=False, error=f"Delete failed: {e}")
     return ApprovalOutcome(ok=True, output=f"Deleted {path}")
 
 
-def _delete_path(workspace, path: str, full: str) -> None:
-    """Keep a file's text for undo, then remove the file or the whole tree."""
+def _delete_path(full: str) -> None:
+    """Remove the file or the whole tree."""
     if os.path.isfile(full):
-        try:
-            with open(full, errors="replace") as f:
-                workspace.WORKSPACE_BACKUPS[path] = f.read()
-        except OSError as e:
-            log.warning("delete %s: no undo copy kept, the file could not be read: %s", full, e)
         os.remove(full)
     elif os.path.isdir(full):
         shutil.rmtree(full)

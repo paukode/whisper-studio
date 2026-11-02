@@ -479,6 +479,15 @@
       <code>GET /api/workspace/edits/{tool_use_id}</code>. The record does not keep the text of a
       file over 2 MB, or of a dotenv or credential file. The app deletes records after 30 days. When
       all records use more than 200 MB, the app deletes the oldest records first.</p>
+    <p>The same write keeps an undo copy in memory
+      (<code class="path">server/workspace/write_undo.py</code>), keyed by the
+      <code>tool_use_id</code>: the exact bytes of the file before the write (none for a created
+      file) and a hash of the file after the write and the ruff fix. The record route returns
+      <code>undoable</code>, and the diff dialog shows <b>Undo</b> only then.
+      <code>POST /api/workspace/undo</code> with the <code>tool_use_id</code> puts back the bytes,
+      or removes the created file. It refuses with 409 when the file is not as that write left it
+      (a later write, an edit by the user, a move), so two writes to one file undo in order. A
+      restart, a workspace change, or more than 64 MB of copies (oldest first) drops them.</p>
 
     <h2 id="git-pull">A worked spec: git_pull</h2>
     <p><code>git_pull</code> is a good example of what a spec buys you, because a pull is the one git
@@ -578,6 +587,7 @@
       <dt><code class="path">server/tool_approvals.py</code></dt><dd>Applies the decision per tool and emits the <code>approval_request</code> pause.</dd>
       <dt><code class="path">server/tool_meta.py</code></dt><dd>The <code>meta</code> of each <code>skill_result</code> frame: the duration, the output size, the lines of a read, and the counts of a write.</dd>
       <dt><code class="path">server/workspace/edits.py</code></dt><dd>The counts of a write, and the stored edits for the diff dialog.</dd>
+      <dt><code class="path">server/workspace/write_undo.py</code></dt><dd>The undo copy of each write, keyed by its tool_use_id, and the checks before an undo.</dd>
       <dt><code class="path">server/chat/engine/pause.py</code></dt><dd>The process-wide <code>paused_sessions</code> store every provider path shares.</dd>
       <dt><code class="path">server/approval/spec.py</code></dt><dd>The <code>ApprovalSpec</code> and <code>ApprovalOutcome</code> dataclasses, including <code>refuse_if_agent</code>.</dd>
       <dt><code class="path">server/approval/bootstrap.py</code></dt><dd>Declares and registers specs for every built-in workspace tool.</dd>

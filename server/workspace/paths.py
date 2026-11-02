@@ -99,7 +99,6 @@ RECENT_WORKSPACES_PATH = os.path.join(DATA_DIR, "recent_workspaces.json")
 # purely so a file saved this way stays clickable/revealable via /open-with
 # and /reveal afterward. See server/workspace/routes/os_integration.py.
 SAVE_LOCATIONS_PATH = os.path.join(DATA_DIR, "save_locations.json")
-WORKSPACE_BACKUPS: dict[str, str] = {}
 
 
 def get_scratch_dir(session_id: str) -> str:

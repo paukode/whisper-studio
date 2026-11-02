@@ -135,17 +135,6 @@ def test_approved_delete_of_a_large_tree_does_not_block_the_loop(workspace_dir, 
     assert ticks >= 4, f"the tree delete froze the loop ({ticks} ticks)"
 
 
-def test_approved_delete_of_a_file_keeps_its_text_for_undo(workspace_dir):
-    from server import workspace
-    from server.approval import executors
-
-    (workspace_dir / "notes.txt").write_text("keep me")
-    outcome = asyncio.run(executors._do_delete({"path": "notes.txt"}))
-    assert outcome.ok, outcome.error
-    assert not (workspace_dir / "notes.txt").exists()
-    assert workspace.WORKSPACE_BACKUPS.pop("notes.txt") == "keep me"
-
-
 def test_a_failed_command_preview_is_shown_not_left_blank():
     """render_command raising used to leave the card with no command body."""
     from server.approval.spec import ApprovalSpec

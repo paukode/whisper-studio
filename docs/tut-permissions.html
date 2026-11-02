@@ -210,11 +210,15 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Card type</th><th>Shows</th></tr></thead>
       <tbody>
-        <tr><td>Diff</td><td>A line-by-line diff of the file edit. A file-write card also has an <b>Undo</b> button that restores the old content.</td></tr>
+        <tr><td>Diff</td><td>A line-by-line diff of the file edit. After the write, click the diff pill of the call in the chat. The diff dialog has an <b>Undo</b> button. Undo puts back the file as it was immediately before that write.</td></tr>
         <tr><td>Command</td><td>The exact shell command and its folder.</td></tr>
         <tr><td>Text</td><td>A plain summary for all other actions.</td></tr>
       </tbody>
     </table></div>
+    <p>If the file changed after that write, Undo does not change the file and shows the reason.
+      Undo the newest write first. The card does not have an <b>Undo</b> button, because the file
+      does not change before you approve. The app keeps the undo copy until it restarts or you
+      change the workspace.</p>
     <p>Each card has a short <span class="badge badge--muted">risk</span> label. When more actions
       wait, the card shows a "N more pending" counter. Many cards also show one sentence about the
       risk of the call. A fast model writes this sentence. If the model does not answer in 3 s, the

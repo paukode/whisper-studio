@@ -63,12 +63,28 @@ export interface EditRecord {
   created: boolean;
   at: string;
   stored: boolean;
+  /** The app still keeps the undo copy of this write: it was applied and
+   *  not undone, and the app has not restarted or changed workspace since. */
+  undoable?: boolean;
 }
 
 /** The stored edit of one tool call. Rejects with the server's detail (an
  *  ApiError with status 404) when nothing is kept for that id. */
 export function getEdit(toolUseId: string): Promise<EditRecord> {
   return get<EditRecord>(`/api/workspace/edits/${encodeURIComponent(toolUseId)}`);
+}
+
+export interface UndoResult {
+  path: string;
+  restored: true;
+  /** The write had created the file, so undo removed it. */
+  removed: boolean;
+}
+
+/** Undo the one write of this tool call. The server refuses (409) when the
+ *  file changed after that write, and changes nothing then. */
+export function undoEdit(toolUseId: string): Promise<UndoResult> {
+  return post<UndoResult>('/api/workspace/undo', { tool_use_id: toolUseId });
 }
 
 export function writeFile(path: string, content: string): Promise<void> {

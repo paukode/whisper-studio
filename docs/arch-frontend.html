@@ -351,7 +351,9 @@
         Git panel (<code class="path">src/components/git/DiffDialog.tsx</code>) through
         <code class="path">src/components/chat/EditDiffViewer.tsx</code>. The dialog shows
         the file before and after that call, from <code>GET /api/workspace/edits/{tool_use_id}</code>.
-        The header of the dialog shows the full path of the file.
+        The header of the dialog shows the full path of the file. When the record says
+        <code>undoable</code>, the dialog has an <b>Undo</b> button for that one write
+        (<code>POST /api/workspace/undo</code>).
         <b>Expand all</b> shows each output, and
         a row with an error is open at the start. Because the streaming view and the saved
         transcript use the same constant, <code>ACTIVITY_MIN_RUN</code>, the row does not move when
