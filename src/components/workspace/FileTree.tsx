@@ -49,14 +49,15 @@ export const FileTree: React.FC<FileTreeProps> = ({
 
   // Load the root directory via react-query. A new queryKey on ROOT_PATH/wsPath
   // change (workspace switch) triggers a refetch.
-  const { data: rootEntries, isLoading, isError: rootError } = useQuery({
+  const { data: rootEntries, isLoading, isError: rootError, error: rootErrorDetail, refetch: refetchRoot } = useQuery({
     queryKey: ['file-tree-root', ROOT_PATH, wsPath],
     queryFn: () => listDir(ROOT_PATH),
   });
 
   // Mirror the fetched root listing into the workspace store. setFileTree is a
   // zustand action (not React setState), so this is not a setState-in-effect
-  // violation. On error (API unavailable / no workspace), show the empty state.
+  // violation. A failed listing is shown as an error below, never as an
+  // empty folder.
   useEffect(() => {
     if (rootEntries) setFileTree(sortEntries(rootEntries));
     else if (rootError) setFileTree([]);
@@ -181,7 +182,15 @@ export const FileTree: React.FC<FileTreeProps> = ({
         />
       ))}
 
-      {fileTree.length === 0 && !isLoading && (
+      {rootError && (
+        <div className="file-tree-empty" role="alert">
+          <span className="file-tree-empty-text">
+            Could not list the workspace: {toError(rootErrorDetail).message}
+          </span>{' '}
+          <button type="button" className="btn btn-sm" onClick={() => void refetchRoot()}>Retry</button>
+        </div>
+      )}
+      {!rootError && fileTree.length === 0 && !isLoading && (
         <div className="file-tree-empty">
           <span className="file-tree-empty-text">No files found</span>
         </div>
