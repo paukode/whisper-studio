@@ -11,7 +11,7 @@ BUILD_DIR="$REPO_ROOT/build-app"
 DIST_DIR="$REPO_ROOT/dist-app"
 APP_DIR="$DIST_DIR/Whisper Studio.app"
 
-[[ -d "$APP_DIR" ]] || { echo "ERROR: $APP_DIR not found — run macapp/build_app.sh first" >&2; exit 1; }
+[[ -d "$APP_DIR" ]] || { echo "ERROR: $APP_DIR not found, run macapp/build_app.sh first" >&2; exit 1; }
 
 # Version, same rule as build_app.sh: git describe. Outside a git checkout
 # there is no version to derive, so packaging stops (APP_VERSION still wins).

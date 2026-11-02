@@ -1,4 +1,4 @@
-// Native translation bridge — Apple's on-device Translation framework,
+// Native translation bridge, Apple's on-device Translation framework,
 // exposed to the page over the same WKWebView bridge pattern as
 // NativeAudioCapture (contract pinned in src/services/nativeTranslation.ts):
 //
@@ -36,7 +36,7 @@ final class TranslationCoordinator: ObservableObject {
         let text: String
         /// nil = source unknown (Parakeet segments carry no language ID).
         /// submit() resolves it on-device (NLLanguageRecognizer, then the
-        /// recording's last language) BEFORE the framework sees the request —
+        /// recording's last language) BEFORE the framework sees the request,
         /// framework auto-detect is never used, because its failure mode is a
         /// blocking OS "can't determine language" sheet mid-recording.
         let source: String?
@@ -60,7 +60,7 @@ final class TranslationCoordinator: ObservableObject {
         if request.source == nil {
             // A nil source hands language detection to the Translation
             // framework, and when a short utterance defeats it macOS pops a
-            // "can't determine language" sheet with a download picker — mid
+            // "can't determine language" sheet with a download picker, mid
             // recording, over and over. Resolve the source HERE instead:
             // NLLanguageRecognizer on the text, else the recording's last
             // known language, else fail this one request quietly.
@@ -112,7 +112,7 @@ final class TranslationCoordinator: ObservableObject {
 
     /// Runs inside the translationTask closure with a live session for
     /// `currentPair`. Requests for another pair are left queued and re-armed
-    /// afterwards (rare — a recording keeps one language pair).
+    /// afterwards (rare, a recording keeps one language pair).
     func drain(session: TranslationSession) async {
         guard let pair = currentPair else { return }
         while let index = queue.firstIndex(where: { $0.pair == pair }) {

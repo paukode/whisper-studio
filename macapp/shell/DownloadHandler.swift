@@ -1,10 +1,10 @@
-// Whisper Studio — WKDownload handling for the native shell.
+// Whisper Studio: WKDownload handling for the native shell.
 //
 // WKWebView implements NO default download behavior: an anchor with a
 // `download` attribute or a non-renderable response just *navigates*, which
 // used to replace the SPA with raw exported markdown. main.swift routes such
 // navigations here via the `.download` navigation policy; this delegate
-// saves the payload into ~/Downloads (never overwriting — name collisions
+// saves the payload into ~/Downloads (never overwriting, name collisions
 // get " (2)", " (3)", … suffixes) and reports the outcome back to the page
 // through the `window.__whisperShellToast` hook registered by the frontend
 // (src/services/shellToastBridge.ts). If the hook is missing (the page has
@@ -79,7 +79,7 @@ func dedupedDestination(
 
 /// Encode a Swift string as a double-quoted JavaScript string literal,
 /// escaping quotes, backslashes, control characters, and the JS line
-/// terminators U+2028/U+2029 — safe to splice into evaluateJavaScript.
+/// terminators U+2028/U+2029, safe to splice into evaluateJavaScript.
 func jsStringLiteral(_ s: String) -> String {
     var out = "\""
     for scalar in s.unicodeScalars {
@@ -249,7 +249,7 @@ struct SmokeDownloadDedupe {
             fileExists: { $0.lastPathComponent != "x (4).txt" })
         check(everything.lastPathComponent == "x (4).txt", "injected fileExists drives the walk")
 
-        // JS string literal escaping — quotes, backslashes, newlines, and
+        // JS string literal escaping, quotes, backslashes, newlines, and
         // JS line terminators must all be neutralized.
         check(
             jsStringLiteral("Saved to Downloads: a.md") == "\"Saved to Downloads: a.md\"",

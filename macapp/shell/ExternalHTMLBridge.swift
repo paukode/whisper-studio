@@ -1,17 +1,17 @@
-// Whisper Studio — bridges the artifact "Open" action to the user's actual
+// Whisper Studio: bridges the artifact "Open" action to the user's actual
 // default browser.
 //
 // window.open()/target="_blank" only escapes a WKWebView to the OS default
 // browser for real http(s)/mailto/tel URLs (see main.swift's
 // createWebViewWith / decidePolicyFor). src/utils/openHtmlSandboxed.ts opens
 // model-authored HTML via `window.open('about:blank')` plus a sandboxed
-// iframe so the artifact never runs same-origin with the app — but that
+// iframe so the artifact never runs same-origin with the app, but that
 // about:blank popup has no navigable URL, so inside the native shell there is
 // nothing for createWebViewWith to hand off, and the click is a silent no-op.
 //
 // This bridge gives the page an explicit escape hatch instead: hand over the
 // HTML, and the shell writes it to a throwaway file and opens it with
-// NSWorkspace — exactly like double-clicking the file in Finder, which uses
+// NSWorkspace, exactly like double-clicking the file in Finder, which uses
 // the user's real default browser.
 //
 // Bridge contract:

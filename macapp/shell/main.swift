@@ -1,4 +1,4 @@
-// Whisper Studio — thin native macOS shell.
+// Whisper Studio: thin native macOS shell.
 //
 // AppKit + WebKit app built from the Swift files in macapp/shell with
 // swiftc (build_shell.sh, no xcodeproj). This file's responsibilities:
@@ -97,7 +97,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     private let downloadHandler = DownloadHandler()
 
     // Opens artifact HTML in the user's default browser on request
-    // (ExternalHTMLBridge.swift) — window.open() cannot reach outside the
+    // (ExternalHTMLBridge.swift), window.open() cannot reach outside the
     // native shell on its own.
     private let externalHTMLBridge = ExternalHTMLBridge()
 
@@ -201,7 +201,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         if let handle = handle {
             handle.seekToEndOfFile()
             let stamp = ISO8601DateFormatter().string(from: Date())
-            if let line = "\n===== Whisper Studio launch \(stamp) — port \(port) =====\n"
+            if let line = "\n===== Whisper Studio launch \(stamp), port \(port) =====\n"
                 .data(using: .utf8)
             {
                 handle.write(line)
@@ -231,7 +231,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         let inheritedPath = procEnv["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
         procEnv["PATH"] = binDir.path + ":" + inheritedPath
         procEnv["PYTHONUNBUFFERED"] = "1"
-        // Bytecode caches must never land inside the signed bundle — a single
+        // Bytecode caches must never land inside the signed bundle, a single
         // .pyc write after signing invalidates the whole app seal. They are
         // pure machine noise, so they go to ~/Library/Caches (regenerated on
         // demand), keeping the app-support folder to storage/ and logs/.
@@ -480,7 +480,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         appItem.submenu = appMenu
         mainMenu.addItem(appItem)
 
-        // Edit menu — required so the web view keeps standard keyboard shortcuts.
+        // Edit menu, required so the web view keeps standard keyboard shortcuts.
         let editItem = NSMenuItem()
         let editMenu = NSMenu(title: "Edit")
         editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
@@ -568,7 +568,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         // target=_blank and window.open: hand real web links to the default
         // browser. blob:/data:/about: URLs are in-page content the external
         // browser cannot resolve (a blob: URL only means something inside
-        // this web view) — never leak those out of the app.
+        // this web view), never leak those out of the app.
         if let url = navigationAction.request.url,
             let scheme = url.scheme?.lowercased(),
             ["http", "https", "mailto", "tel"].contains(scheme)
@@ -685,8 +685,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             decisionHandler(.cancel)
             return
         }
-        // Everything else — including blob:/data: navigations that are NOT
-        // downloads — stays inside the web view; nothing but real web links
+        // Everything else, including blob:/data: navigations that are NOT
+        // downloads, stays inside the web view; nothing but real web links
         // is ever handed to the external browser.
         decisionHandler(.allow)
     }

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Whisper Studio — macOS app bundle assembler.
+# Whisper Studio: macOS app bundle assembler.
 #
 # Builds dist-app/Whisper Studio.app: frontend, standalone Python runtime,
 # Playwright Chromium (Live Preview), llama-server, ffmpeg/ffprobe, node, the
@@ -135,7 +135,7 @@ log "Building Whisper Studio.app (version $VERSION, identity: $SIGN_IDENTITY)"
 
 log "[a] Frontend build (npm run build)"
 [[ -d "$REPO_ROOT/node_modules" ]] \
-    || die "node_modules missing at $REPO_ROOT — run 'npm ci' (or npm install) first"
+    || die "node_modules missing at $REPO_ROOT, run 'npm ci' (or npm install) first"
 # vite build occasionally finishes writing static/dist but then the process
 # hangs at 0% CPU instead of exiting (a known rollup/esbuild worker-teardown
 # flake), which would stall the whole packaging build forever. So run it in the
@@ -166,7 +166,7 @@ else
     # No completion line within the window. The observed second flake mode is
     # vite hanging at 0% CPU with NOTHING in the log (not even the tsc step's
     # errors), where an unbounded wait stalled packaging for hours. Reap and
-    # fail loudly instead — the log tail below says what (if anything) ran.
+    # fail loudly instead, the log tail below says what (if anything) ran.
     if kill -0 "$FE_PID" 2>/dev/null; then
         substep "frontend build produced no completion within 10 min; reaping"
         pkill -P "$FE_PID" 2>/dev/null || true
@@ -371,7 +371,7 @@ cp "$MACAPP_DIR/icon/AppIcon.icns" "$RES_DIR/AppIcon.icns"
 # f.4: Python runtime. Bytecode caches are excluded: the shell redirects
 # runtime .pyc writes to WHISPER_HOME via PYTHONPYCACHEPREFIX (a post-signing
 # write inside Resources/ would break the bundle seal), and with that prefix
-# set Python ignores in-tree __pycache__ anyway — they'd be dead weight.
+# set Python ignores in-tree __pycache__ anyway, they'd be dead weight.
 substep "copying python runtime"
 rsync -a --delete --exclude '__pycache__/' --exclude '*.pyc' \
     "$PY_DIR/" "$RES_DIR/python/"
