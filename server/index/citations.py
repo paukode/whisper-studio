@@ -8,10 +8,11 @@ The ``#wsfile=`` fragment survives HTML sanitization (that is why a fragment
 scheme was chosen). ``quote`` percent-encodes any literal ``&``/``:`` in the path,
 so the FIRST raw ``&`` in the fragment is unambiguously the path/params boundary —
 the client splits there before decoding. The optional ``&L=`` param is additive:
-links without it (old transcripts) still open the file, just at the top.
+a link without it (``file_link``, a fact with no line provenance) opens the file
+at the top.
 
-Both emitters (the ``workspace_semantic_search`` tool and the grounding block) use
-this so display text stays human-readable (relative) while the href is canonical
+Every emitter (the ``workspace_semantic_search`` and ``workspace_graph_query``
+tools and the grounding block) uses this so display text stays human-readable (relative) while the href is canonical
 (absolute), which also means the same file cited from either place opens one dock
 panel instead of two.
 """
@@ -26,6 +27,11 @@ def citation_link(display_path: str, start: int, end: int, href_path: str) -> st
     reader sees (kept relative); ``href_path`` is the target the client opens
     (absolute, so it resolves regardless of which workspace is connected)."""
     return f"[{display_path}:{start}-{end}](#wsfile={quote(href_path)}&L={start}-{end})"
+
+
+def file_link(display_path: str, href_path: str) -> str:
+    """A ``#wsfile`` citation with no line range: opens the file at the top."""
+    return f"[{display_path}](#wsfile={quote(href_path)})"
 
 
 def created_file_link(display_path: str, href_path: str) -> str:
