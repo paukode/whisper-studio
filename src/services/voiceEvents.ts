@@ -163,7 +163,7 @@ export function applyVoiceEvent(ev: VoiceServerEvent, deps: VoiceEventDeps): voi
           if (reports) deps.commitAssistant('*(Stopped)*', tools, false, reports);
           else deps.commitAssistant('*(Stopped)*', tools, false);
         }
-      } else if (!ev.output.startsWith('Error:')) {
+      } else {
         if (reports) deps.commitAssistant(ev.output, stepsToToolUse(inner), false, reports);
         else deps.commitAssistant(ev.output, stepsToToolUse(inner), false);
       }
