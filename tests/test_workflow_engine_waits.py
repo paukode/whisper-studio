@@ -460,7 +460,7 @@ def test_directive_states_live_limits_and_sizing(monkeypatch):
     assert 'isolation:"worktree"' in text and "checker" in text
     assert "incomplete" in text and "workflow_wait" in text
     assert "Do not set `opts.model` unless the user asked" in text
-    assert "—" not in text and "{round_limit}" not in text
+    assert "\u2014" not in text and "{round_limit}" not in text
 
 
 # 8. The default agent model is the chat's selected model.

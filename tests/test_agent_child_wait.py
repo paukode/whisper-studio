@@ -172,3 +172,44 @@ def test_the_card_counts_only_the_agents_own_time():
     )
     assert readout["elapsed_s"] == 60.0
     assert readout["budget_state"] == "working"
+
+
+@pytest.mark.parametrize("kind,waits", [("agent", True), ("workflow", True), ("shell", False)])
+def test_a_task_wait_counts_as_waited_only_on_agent_tasks(monkeypatch, tmp_path, kind, waits):
+    from server.tasks import registry
+
+    monkeypatch.setattr(registry, "DB_PATH", str(tmp_path / "tasks.db"))
+    task_id = registry.create_task(kind, session_id="s1", title="t")
+
+    async def route(name, tool_input, **kwargs):
+        _Clock.now += 60
+        return "ok", []
+
+    monkeypatch.setattr(te, "route_tool", route)
+    budget = {"rounds": 0, "seconds": 0.0, "waited": 0.0}
+    scope = ToolScope(permitted=frozenset({"task_wait"}), activation_key="agent:x", budget=budget)
+    executor = ThreadPoolExecutor(max_workers=1)
+
+    async def batch():
+        return await te.execute_tool_batch(
+            [{"id": "a", "name": "task_wait", "input": {"task_ids": [task_id]}}],
+            tool_schemas={"task_wait": {"type": "object"}},
+            is_concurrent_safe=lambda n: False,
+            loop=asyncio.get_running_loop(),
+            executor=executor,
+            transcript="",
+            attachments=None,
+            session_id="s1",
+            session_denials={},
+            model_id="m",
+            plan_mode=False,
+            tool_scope=scope,
+        )
+
+    try:
+        asyncio.run(batch())
+    finally:
+        executor.shutdown(wait=False)
+    # A shell command the agent started is its own work: that wait stays on
+    # its own clock.
+    assert budget["waited"] == (60.0 if waits else 0.0)
