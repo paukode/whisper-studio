@@ -145,3 +145,8 @@ export function openSessionWorkspace(id: string, app: WorkspaceApp): Promise<{ o
     `/api/sessions/${encodeURIComponent(id)}/open-workspace`, { app },
   );
 }
+
+/** Rename a session (a user-chosen title). Rejects with the server's reason. */
+export function renameSession(id: string, title: string): Promise<unknown> {
+  return patch(`/api/sessions/${encodeURIComponent(id)}/title`, { title, customTitle: true });
+}

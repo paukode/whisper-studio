@@ -10,6 +10,7 @@ import { useGoalStore } from '@/stores/goalStore';
 import { launchRun } from '@/api/workflows';
 import { startWatch, planAutofix } from '@/api/ci';
 import { clearSessionGoal, setSessionGoal } from '@/api/goals';
+import { renameSession } from '@/api/sessions';
 import { toError } from '@/utils/toError';
 import { activeEffortLevel, noChatModelHint, useSettingsStore } from '@/stores/settingsStore';
 import type { SettingsState } from '@/stores/settingsStore';
@@ -389,13 +390,14 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
       case 'rename': {
         const newTitle = input.slice(8).trim(); // everything after "/rename "
         if (newTitle && sessionId) {
-          useSessionStore.getState().updateSessionTitle(sessionId, newTitle, true);
-          fetch(`/api/sessions/${sessionId}/title`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ title: newTitle, customTitle: true }),
-          }).catch(() => {});
-          addToast({ type: 'success', message: `Session renamed to "${newTitle}"`, duration: 2000, persist: false });
+          renameSession(sessionId, newTitle)
+            .then(() => {
+              useSessionStore.getState().updateSessionTitle(sessionId, newTitle, true);
+              addToast({ type: 'success', message: `Session renamed to "${newTitle}"`, duration: 2000, persist: false });
+            })
+            .catch((e: unknown) => {
+              addToast({ type: 'error', message: `Could not rename the session: ${toError(e).message}` });
+            });
         } else {
           addToast({ type: 'info', message: 'Usage: /rename <new title>', duration: 3000, persist: false });
         }
