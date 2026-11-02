@@ -278,8 +278,7 @@ def _interval_start(seconds: int, last_run_iso: str | None) -> datetime:
 
 
 def build_trigger(sch: dict, *, last_run_iso: str | None):
-    """Construct the APScheduler trigger for a schedule. Imported lazily so the
-    module still loads (cron disabled) when APScheduler is absent."""
+    """Construct the APScheduler trigger for a schedule."""
     from apscheduler.triggers.cron import CronTrigger
     from apscheduler.triggers.date import DateTrigger
     from apscheduler.triggers.interval import IntervalTrigger

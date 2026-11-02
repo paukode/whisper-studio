@@ -1,8 +1,7 @@
 """
 Cron scheduler for Whisper Studio.
 
-Schedules recurring tasks using APScheduler (optional dependency). Falls back
-gracefully if APScheduler is not installed.
+Schedules recurring tasks using APScheduler.
 
 A job's ``schedule`` is a discriminated union:
 
@@ -368,17 +367,14 @@ async def init_scheduler():
         log.error("cron: no jobs scheduled: %s", e)
         jobs = []
     _report_old_jobs(jobs)
-    try:
-        from apscheduler.schedulers.asyncio import AsyncIOScheduler
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-        _scheduler = AsyncIOScheduler()
-        _scheduler.start()
-        for job in jobs:
-            if job.get("enabled", True):
-                _add_job_to_scheduler(job, catch_up=True)
-        log.info("Cron scheduler started with %d jobs", len(jobs))
-    except ImportError:
-        log.info("APScheduler not installed — cron disabled")
+    _scheduler = AsyncIOScheduler()
+    _scheduler.start()
+    for job in jobs:
+        if job.get("enabled", True):
+            _add_job_to_scheduler(job, catch_up=True)
+    log.info("Cron scheduler started with %d jobs", len(jobs))
 
 
 def _spawn_cron_run(job_id: str) -> None:
