@@ -134,20 +134,28 @@ def _transcribe_with_speakers(path: str) -> str:
     if not segments:
         return (result.get("text") or "").strip()
 
-    labels = _diarize(audio, segments)
+    # Speaker labels are extra on top of a transcript Whisper already decoded:
+    # a labelling failure keeps the transcript and says so in the text.
     lines = []
+    try:
+        labels: list = _diarize(audio, segments)
+    except Exception as e:
+        log.warning("speaker labelling failed: %s", e)
+        lines.append(f"[Speaker labels unavailable: {e}]")
+        labels = [None] * len(segments)
     for seg, label in zip(segments, labels, strict=False):
         text = (seg.get("text") or "").strip()
         if not text:
             continue
-        lines.append(f"[{_fmt_ts(seg.get('start', 0))}] {label}: {text}")
+        ts = _fmt_ts(seg.get("start", 0))
+        lines.append(f"[{ts}] {label}: {text}" if label else f"[{ts}] {text}")
     return "\n".join(lines)
 
 
 def _diarize(audio, segments) -> list:
     """Assign a speaker label per segment via the configured speaker encoder's
-    embeddings + the existing agglomerative clusterer. A failure raises, and
-    extract_media reports it."""
+    embeddings + the existing agglomerative clusterer. A failure raises;
+    _transcribe_with_speakers keeps the transcript and notes the error."""
     import numpy as np
 
     from server.diarization.speakers import _agglomerative, _thresholds, embed
@@ -291,15 +299,28 @@ def _sample_video_frames(path: str) -> tuple[str, list[dict]]:
                 img.load()
             except Exception:
                 continue
+            # One frame's failure is noted in the text; it never costs the
+            # transcript or the other frames.
             # On-screen text (for text-only models + the transcript merge).
-            text = _ocr_with_apple_vision([img])
+            try:
+                text = _ocr_with_apple_vision([img])
+            except Exception as e:
+                log.warning("frame OCR failed at %s: %s", _fmt_ts(ts), e)
+                notes.append(f"[frame at {_fmt_ts(ts)}: OCR failed: {e}]")
+                text = ""
             if text and text.strip():
                 notes.append(f"[{_fmt_ts(ts)}] {text.strip()}")
             # Retain the actual frame so vision models can see it, not just its
             # OCR'd text.
+            try:
+                data = _encode_frame(img)
+            except Exception as e:
+                log.warning("frame encode failed at %s: %s", _fmt_ts(ts), e)
+                notes.append(f"[frame at {_fmt_ts(ts)}: image encode failed: {e}]")
+                continue
             frames.append(
                 {
-                    "data": _encode_frame(img),
+                    "data": data,
                     "media_type": "image/jpeg",
                     "timestamp": round(ts, 1),
                 }

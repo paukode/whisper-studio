@@ -164,3 +164,62 @@ def test_video_upload_retains_frames(monkeypatch):
     # retained frames ride along for the chat layer to emit as image blocks.
     assert att["kind"] == "document"
     assert att["frames"] == frames
+
+
+def _fake_whisper(monkeypatch, segments):
+    import sys
+    import types
+
+    from server.asr import whisper_backend
+
+    fake = types.ModuleType("mlx_whisper")
+    fake.audio = types.SimpleNamespace(load_audio=lambda path: np.zeros(48000))
+    fake.transcribe = lambda audio, **kw: {"segments": segments, "text": ""}
+    monkeypatch.setitem(sys.modules, "mlx_whisper", fake)
+    monkeypatch.setattr(whisper_backend, "_ensure_model", lambda: "model")
+
+
+def test_a_speaker_labelling_failure_keeps_the_transcript(monkeypatch):
+    _fake_whisper(
+        monkeypatch,
+        [{"start": 0, "end": 1, "text": "hello"}, {"start": 1, "end": 2, "text": "world"}],
+    )
+
+    def boom(audio, segments):
+        raise RuntimeError("encoder offline")
+
+    monkeypatch.setattr(media, "_diarize", boom)
+    out = media._transcribe_with_speakers("clip.wav")
+    assert out.splitlines() == [
+        "[Speaker labels unavailable: encoder offline]",
+        "[00:00] hello",
+        "[00:01] world",
+    ]
+
+
+def test_a_failed_frame_is_noted_and_the_rest_kept(monkeypatch):
+    from PIL import Image
+
+    import server.extract.ocr as ocr
+
+    def fake_ffmpeg(cmd, **kw):
+        outdir = cmd[-1].rsplit("/", 1)[0]
+        for i in (1, 2):
+            Image.new("RGB", (8, 8)).save(f"{outdir}/f{i:03d}.png")
+
+    calls = iter([RuntimeError("vision busy"), "slide title"])
+
+    def fake_ocr(imgs):
+        r = next(calls)
+        if isinstance(r, Exception):
+            raise r
+        return r
+
+    monkeypatch.setattr(media, "_video_duration", lambda path: 20.0)
+    monkeypatch.setattr(media, "_required_binary", lambda name, env: name)
+    monkeypatch.setattr(media.subprocess, "run", fake_ffmpeg)
+    monkeypatch.setattr(ocr, "_ocr_with_apple_vision", fake_ocr)
+    notes, frames = media._sample_video_frames("clip.mp4")
+    assert "[frame at 00:00: OCR failed: vision busy]" in notes
+    assert "[00:10] slide title" in notes
+    assert len(frames) == 2
