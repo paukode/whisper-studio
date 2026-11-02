@@ -162,3 +162,17 @@ def test_approved_delete_of_a_file_keeps_its_text_for_undo(workspace_dir):
     assert outcome.ok, outcome.error
     assert not (workspace_dir / "notes.txt").exists()
     assert workspace.WORKSPACE_BACKUPS.pop("notes.txt") == "keep me"
+
+
+def test_a_failed_command_preview_is_shown_not_left_blank():
+    """render_command raising used to leave the card with no command body."""
+    from server.approval.spec import ApprovalSpec
+
+    def boom(_ti):
+        raise ValueError("bad input")
+
+    spec = ApprovalSpec(
+        category="cli", preview="command", summary="s", executor=None, render_command=boom
+    )
+    payload = spec.build_payload({"x": 1})
+    assert payload["command"] == "(command preview unavailable: bad input)"

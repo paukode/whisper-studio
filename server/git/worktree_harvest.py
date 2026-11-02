@@ -108,8 +108,8 @@ def _remove_worktree(
         log.warning("worktree cleanup error for %s: %s", worktree_path, e)
     try:
         set_session(session_key, None)
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as e:  # noqa: BLE001 (cleanup must never raise)
+        log.warning("worktree session clear failed for %s: %s", session_key, e)
     return removed, branch_deleted
 
 

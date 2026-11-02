@@ -193,8 +193,9 @@ class ApprovalSpec:
         if self.render_command and "command" not in payload:
             try:
                 payload["command"] = self.render_command(tool_input)
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as e:  # noqa: BLE001 (a card must never show a blank command)
+                log.exception("approval %s: command preview failed", self.category)
+                payload["command"] = f"(command preview unavailable: {e})"
         # Outside payload_fields on purpose: the gate stamps it on every card
         # of a workspace-bound action, and it must survive the whitelist.
         if WORKSPACE_ROOT_KEY in tool_input:

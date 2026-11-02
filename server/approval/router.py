@@ -64,12 +64,9 @@ async def approval_execute(req: ExecuteRequest):
     # the connected workspace (dest_kind="workspace"), whereas the save
     # category exists precisely for files landing outside any workspace.
     if outcome.ok and spec.category in ("write", "delete", "cli", "office-script"):
-        try:
-            from server.git.router import invalidate_changes_cache
+        from server.git.router import invalidate_changes_cache
 
-            invalidate_changes_cache()
-        except Exception:
-            pass
+        invalidate_changes_cache()
 
     ws_after = get_workspace_path()
     ws_folder_opened = ws_after if (outcome.ok and ws_after and ws_after != ws_before) else None

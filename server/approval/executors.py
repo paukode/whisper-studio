@@ -227,8 +227,8 @@ def _delete_path(workspace, path: str, full: str) -> None:
         try:
             with open(full, errors="replace") as f:
                 workspace.WORKSPACE_BACKUPS[path] = f.read()
-        except Exception:
-            pass
+        except OSError as e:
+            log.warning("delete %s: no undo copy kept, the file could not be read: %s", full, e)
         os.remove(full)
     elif os.path.isdir(full):
         shutil.rmtree(full)
