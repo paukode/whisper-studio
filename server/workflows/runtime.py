@@ -221,8 +221,8 @@ class WorkflowRun:
         if self.proc and self.proc.returncode is None:
             try:
                 await self._send(rpc.control("cancel"))
-            except Exception:
-                pass
+            except Exception as e:  # noqa: BLE001 - the kill below ends it anyway
+                log.debug("workflow %s: cancel message not sent: %s", self.run_id, e)
             await asyncio.sleep(2)
             self._kill()
 
@@ -398,7 +398,8 @@ class WorkflowRun:
                 from server.infrastructure import result_cache
 
                 cache_file = result_cache.write(f"toolscript_{name}", result)
-            except Exception:
+            except Exception as e:  # noqa: BLE001 - the preview is still journaled
+                log.warning("workflow %s: tool result %s not cached: %s", self.run_id, name, e)
                 cache_file = ""
             preview = result[: self._TOOL_LOG_PREVIEW]
             self.journal.tool_call(
@@ -570,8 +571,8 @@ class WorkflowRun:
     def _emit(self, ev: dict) -> None:
         try:
             self._on_event({"run_id": self.run_id, **ev})
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001 - a listener failure must not end the run
+            log.warning("workflow %s: event listener failed: %s", self.run_id, e)
 
     def _result(self, status: str, *, result=None, error: str = "") -> dict:
         return {

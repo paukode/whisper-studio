@@ -498,15 +498,15 @@ async def run_agent(
                 from server.workspace.state import reset_workspace_override
 
                 reset_workspace_override(_ws_token)
-            except Exception:  # noqa: BLE001 — teardown hygiene only
-                pass
+            except Exception as e:  # noqa: BLE001 - teardown continues
+                log.warning("agent %s teardown: workspace override reset failed: %s", agent_id, e)
         if _override_path:
             try:
                 from server.cwd_tracker import clear_override
 
                 clear_override(session_id, _override_path)
-            except Exception:  # noqa: BLE001 — teardown hygiene only
-                pass
+            except Exception as e:  # noqa: BLE001 - teardown continues
+                log.warning("agent %s teardown: cwd override clear failed: %s", agent_id, e)
         try:
             from server.cwd_tracker import clear_scope, reset_cwd_scope
 
@@ -514,8 +514,8 @@ async def run_agent(
             # Drop this agent's own cwd entries so a long-lived server does
             # not accumulate one per agent forever.
             clear_scope(session_id, agent_id)
-        except Exception:  # noqa: BLE001 — teardown hygiene only
-            pass
+        except Exception as e:  # noqa: BLE001 - teardown continues
+            log.warning("agent %s teardown: cwd scope clear failed: %s", agent_id, e)
         if _wt_session is not None:
             # Non-success exit (cancel / unexpected exception): never apply, but
             # tidy a pristine worktree and keep a dirty one for inspection —
@@ -536,8 +536,8 @@ async def run_agent(
                             "text": f"[worktree] {note}",
                         },
                     )
-            except BaseException:  # noqa: BLE001 — incl. CancelledError mid-teardown
-                pass
+            except BaseException as e:  # noqa: BLE001 - incl. CancelledError mid-teardown
+                log.warning("agent %s teardown: worktree tidy failed: %r", agent_id, e)
         message_bus.delete_mailbox(agent_id)
         budget_extensions.unregister(agent_id)
         # The run's own tool_search activations end with it.

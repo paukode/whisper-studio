@@ -82,13 +82,10 @@ def _validate_name(name: str) -> str | None:
         return (
             "name must be 2-64 chars: lowercase letters, digits, '_' or '-', starting with a letter"
         )
-    try:
-        from server.skills_import import _is_reserved
+    from server.skills_import import _is_reserved
 
-        if _is_reserved(name.replace("-", "_")):
-            return f"'{name}' collides with a built-in tool name; pick another"
-    except Exception:  # noqa: BLE001
-        pass
+    if _is_reserved(name.replace("-", "_")):
+        return f"'{name}' collides with a built-in tool name; pick another"
     root = os.path.realpath(_sk.SKILLS_DIR)
     real = os.path.realpath(os.path.join(_sk.SKILLS_DIR, name))
     if not real.startswith(root + os.sep):

@@ -11,10 +11,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 
 from server.infrastructure.paths import data_root
+
+log = logging.getLogger("whisper-studio")
 
 _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
@@ -47,7 +50,10 @@ def _read_json(path: str) -> dict | None:
     try:
         with open(path, encoding="utf-8") as f:
             return json.load(f)
-    except Exception:
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as e:
+        log.warning("workflow store: %s not read: %s", path, e)
         return None
 
 
