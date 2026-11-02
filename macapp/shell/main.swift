@@ -1,7 +1,7 @@
 // Whisper Studio — thin native macOS shell.
 //
-// Single-file AppKit + WebKit app compiled with swiftc (no xcodeproj).
-// Responsibilities:
+// AppKit + WebKit app built from the Swift files in macapp/shell with
+// swiftc (build_shell.sh, no xcodeproj). This file's responsibilities:
 //   * spawn the bundled Python backend (Resources/backend, Resources/python)
 //   * wait for /health, then show the SPA in a WKWebView
 //   * forward mic-capture permission to the OS TCC prompt

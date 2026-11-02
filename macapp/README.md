@@ -184,8 +184,8 @@ natively:
   (registered in `src/services/shellToastBridge.ts`): a "Saved to
   Downloads: <file>" toast appears and persists to the notification bell
   (source "export"). Failures raise an error toast with the reason. If the
-  hook is missing (older cached page), the shell logs to stderr and stays
-  silent: no alert, no crash.
+  hook is missing (the page has not registered it yet, or a non-app page is
+  loaded), the shell logs to stderr: no alert, no crash.
 
 **Permission**: the first write into `~/Downloads` triggers the standard
 macOS "wants to access your Downloads folder" consent prompt. For a
