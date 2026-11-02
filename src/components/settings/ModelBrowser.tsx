@@ -14,6 +14,7 @@ import {
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useUIStore } from '@/stores/uiStore';
 import { humanSize } from '@/utils/humanSize';
+import { toError } from '@/utils/toError';
 
 /** Compact download count: 4685368 → "4.7M", 308619 → "309K". */
 const humanCount = (n: number | null | undefined): string => {
@@ -459,6 +460,13 @@ const RecommendedSection: React.FC = () => {
       query.state.data?.recommended?.some((m) => m.downloading) ? 4000 : false,
   });
   const models = query.data?.recommended ?? [];
+  if (query.isError) {
+    return (
+      <p className="settings-empty" role="alert" style={{ marginBottom: 20 }}>
+        Could not load the Recommended models: {toError(query.error).message}
+      </p>
+    );
+  }
   if (query.isLoading || models.length === 0) return null;
   return (
     <div style={{ marginBottom: 20 }}>

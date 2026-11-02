@@ -5,6 +5,8 @@ import { get, post, put, del, patch } from '@/api/client';
 import { useSaveToast } from '@/hooks/useSaveToast';
 import { ImportSkillsDialog } from './ImportSkillsDialog';
 import { SkillFileTree } from './SkillFileTree';
+import { useUIStore } from '@/stores/uiStore';
+import { toError } from '@/utils/toError';
 import { ConfirmDialog } from './ConfirmDialog';
 import { ExpandableText } from './ExpandableText';
 
@@ -82,11 +84,11 @@ export const SkillsPanel: React.FC = () => {
       setEditingSkill(skillName);
       setIsNewSkill(false);
       setIsEditing(true);
-      setIsFolderView(typeof data !== 'string' && !!data.isFolder);
+      setIsFolderView(!!data.isFolder);
       setEditorName(skillName);
-      setEditorContent(typeof data === 'string' ? data : (data.content ?? ''));
+      setEditorContent(data.content);
     } catch (err) {
-      console.warn('Failed to load skill content:', err);
+      useUIStore.getState().addToast({ type: 'error', message: `Could not open ${skillName}: ${toError(err).message}` });
     }
   }, []);
 
@@ -95,12 +97,8 @@ export const SkillsPanel: React.FC = () => {
     if (!name) return;
     await saveToast(async () => {
       if (editingSkill) {
-        // Update existing — use new_name if renamed during edit
-        const body: Record<string, string> = { content: editorContent };
-        if (name !== editingSkill) {
-          body.new_name = name;
-        }
-        await put(`/api/skills/${encodeURIComponent(editingSkill)}`, body);
+        // The name field is read-only while editing; Rename renames.
+        await put(`/api/skills/${encodeURIComponent(editingSkill)}`, { content: editorContent });
       } else {
         await post('/api/skills', { name, content: editorContent });
       }
@@ -150,7 +148,7 @@ export const SkillsPanel: React.FC = () => {
     await saveToast(async () => {
       // Fetch current content, then PUT with new_name
       const data = await get<{ content: string }>(`/api/skills/${encodeURIComponent(renamingSkill)}`);
-      const content = typeof data === 'string' ? data : (data.content ?? '');
+      const content = data.content;
       // Update name in frontmatter content
       const updatedContent = content.replace(/^(name:\s*).+$/m, `$1${newName}`);
       await put(`/api/skills/${encodeURIComponent(renamingSkill)}`, {

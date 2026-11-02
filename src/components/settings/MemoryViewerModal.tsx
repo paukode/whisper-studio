@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { get, put, post, del as apiDel } from '@/api/client';
 import { ApiError } from '@/types/api';
 import { useUIStore } from '@/stores/uiStore';
+import { toError } from '@/utils/toError';
 import { useBackdropDismiss } from '@/hooks/useBackdropDismiss';
 
 interface MemoryFileMeta {
@@ -46,7 +47,7 @@ export const MemoryViewerModal: React.FC<MemoryViewerModalProps> = ({ isOpen, on
   const addToast = useUIStore((s) => s.addToast);
   const queryClient = useQueryClient();
 
-  const { data: listing, isLoading } = useQuery({
+  const { data: listing, isLoading, isError, error: listingError } = useQuery({
     queryKey: ['memory-listing'],
     queryFn: () => get<MemoryListing>('/api/memory'),
     enabled: isOpen,
@@ -225,6 +226,10 @@ export const MemoryViewerModal: React.FC<MemoryViewerModalProps> = ({ isOpen, on
               <span className="skeleton skeleton-text" style={{ width: '90%' }} />
               <span className="skeleton skeleton-text" style={{ width: '75%' }} />
             </div>
+          ) : isError ? (
+            <p role="alert" style={{ color: 'var(--text-muted)' }}>
+              Could not load memory: {toError(listingError).message}
+            </p>
           ) : selected ? (
             <div>
               <div

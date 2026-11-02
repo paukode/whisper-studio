@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { get } from '@/api/client';
+import { useUIStore } from '@/stores/uiStore';
+import { toError } from '@/utils/toError';
 
 interface FileEntry {
   path: string;
@@ -14,7 +16,7 @@ function formatSize(n: number): string {
 /** Read-only view of a folder skill's bundled files (scripts, references,
  *  assets). Clicking a file fetches and inlines its contents. */
 export const SkillFileTree: React.FC<{ skillName: string }> = ({ skillName }) => {
-  const { data } = useQuery({
+  const { data, isError, error } = useQuery({
     queryKey: ['skillFiles', skillName],
     queryFn: () =>
       get<{ files: FileEntry[] }>(`/api/skills/${encodeURIComponent(skillName)}/files`),
@@ -38,10 +40,17 @@ export const SkillFileTree: React.FC<{ skillName: string }> = ({ skillName }) =>
       setBinary(!!r.binary);
       setOpenPath(path);
     } catch (err) {
-      console.warn('Failed to read skill file:', err);
+      useUIStore.getState().addToast({ type: 'error', message: `Could not open ${path}: ${toError(err).message}` });
     }
   };
 
+  if (isError) {
+    return (
+      <p className="settings-empty" role="alert" style={{ marginTop: '8px' }}>
+        Could not list the bundled files: {toError(error).message}
+      </p>
+    );
+  }
   if (files.length === 0) return null;
 
   return (
