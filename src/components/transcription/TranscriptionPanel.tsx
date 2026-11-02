@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 import { getActiveTranscriptionStore, useActiveTranscriptionStore } from '@/stores/sessionRuntimes';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useUIStore } from '@/stores/uiStore';
+import { toError } from '@/utils/toError';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useChatStream } from '@/hooks/useChatStream';
 import { put } from '@/api/client';
@@ -442,8 +443,10 @@ export const TranscriptionPanel: React.FC = () => {
     const text = segments
       .map((s) => {
         const line = `[${getSpeakerDisplayName(s.speaker)}] ${s.text}`;
-        const en = (s.translations ?? []).map((t) => t.text).join(' ');
-        return en ? `${line}\n    [EN] ${en}` : line;
+        // Label each translation with its own target language.
+        const translated = (s.translations ?? []).map((t) => t.text).join(' ');
+        const lang = (s.translations?.[0]?.target ?? 'en').toUpperCase();
+        return translated ? `${line}\n    [${lang}] ${translated}` : line;
       })
       .join('\n');
     downloadFile(text, `transcript-${currentSessionId ?? 'export'}.txt`, 'text/plain');
@@ -461,7 +464,12 @@ export const TranscriptionPanel: React.FC = () => {
     //    controller relays this to the open WebSocket; it's a no-op when
     //    not recording.
     useSettingsStore.getState().updateConfig({ transcriptionBackend: option.backend });
-    void put('/api/config', { transcription_backend: option.backend });
+    put('/api/config', { transcription_backend: option.backend }).catch((err: unknown) => {
+      useUIStore.getState().addToast({
+        type: 'error',
+        message: `Could not save the transcription engine (it applies until the app restarts): ${toError(err).message}`,
+      });
+    });
     window.dispatchEvent(
       new CustomEvent(SET_MODEL_EVENT, { detail: { backend: option.backend } }),
     );
@@ -471,7 +479,12 @@ export const TranscriptionPanel: React.FC = () => {
   // config, persist, relay to a live recording socket.
   const handleTranslateChange = useCallback((mode: string, target: string) => {
     useSettingsStore.getState().updateConfig({ translateMode: mode, translateTarget: target });
-    void put('/api/config', { translate_mode: mode, translate_target: target });
+    put('/api/config', { translate_mode: mode, translate_target: target }).catch((err: unknown) => {
+      useUIStore.getState().addToast({
+        type: 'error',
+        message: `Could not save the translation setting (it applies until the app restarts): ${toError(err).message}`,
+      });
+    });
     window.dispatchEvent(new CustomEvent(SET_TRANSLATE_EVENT, { detail: { mode, target } }));
   }, []);
 
