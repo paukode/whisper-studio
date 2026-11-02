@@ -16,17 +16,20 @@ behind that one composer.*
 
 > **Transcription runs entirely on your machine.** The speech model
 > loads into memory on first record and runs locally on CPU/GPU. Recorded
-> audio never leaves the laptop. Amazon Bedrock is used only for a cloud
-> chat response (Claude or GPT) you explicitly send; pick an on-device model
-> instead and no chat call leaves the machine either. The one exception is
-> voice mode: while you hold a spoken conversation, that audio is streamed
-> to Amazon Nova Sonic on Bedrock. No telemetry, no proxies, no per-minute
+> audio never leaves the laptop. In Local mode (the first-run default) every
+> model call stays on the Mac. In Hybrid and Cloud modes the app calls Amazon
+> Bedrock for cloud chat (Claude or GPT) and for background work such as
+> session titles, memory, compaction, and indexing. The one path that sends
+> audio is voice mode: while you hold a spoken conversation, that audio is
+> streamed to Amazon Nova Sonic on Bedrock. Model weights download from
+> Hugging Face on first use. No telemetry, no proxies, no per-minute
 > transcription fees.
 
 ## Documentation
 
 Read the docs online at **[paukode.github.io/whisper-studio](https://paukode.github.io/whisper-studio/)**,
-published to GitHub Pages automatically on every push to `main`. The same
+published to GitHub Pages automatically on every push to `main` that changes
+`docs/`. The same
 site ships inside the app: open the **?** panel, or ground an answer in it
 with `@docs`.
 
@@ -61,8 +64,8 @@ Deploy setup is in [`docs/README.md`](docs/README.md).
   no remote backend.
 - **Local transcription with speaker attribution.** Two on-device engines
   (Parakeet streaming, Whisper batch) plus Canary translation, word-level timings,
-  turns split where one speaker takes over, and voiceprints that recognise
-  a named speaker in later recordings.
+  turns split where one speaker takes over, and opt-in voiceprints that
+  recognise a named speaker in later recordings.
 - **Talk to it.** Voice mode holds a spoken conversation: Amazon Nova Sonic
   carries the voice while your session's model does the work through the
   same tools as typed chat, approvals included.
@@ -99,10 +102,11 @@ More screenshots, one per feature, are in the
 
 **Mac app (recommended, Apple Silicon, macOS 14+):** download the latest DMG
 from the **[Releases page](https://github.com/paukode/whisper-studio/releases)**,
-drag it into Applications, then right-click and choose Open on first launch
-(the build is not notarized). No Homebrew, Python, or cloning required.
+drag it into Applications, and open it. Releases are signed and notarized.
+No Homebrew, Python, or cloning required.
 
-**From source**, if you already have Python 3.12+, Homebrew, Git, and the AWS CLI configured:
+**From source** (Apple Silicon, macOS 14+), if you already have Homebrew and
+the Xcode Command Line Tools (`xcode-select --install`):
 
 ```sh
 git clone https://github.com/paukode/whisper-studio.git
@@ -110,16 +114,25 @@ cd whisper-studio
 bash setup.sh
 ```
 
-`setup.sh` provisions an isolated `venv/`, installs Node into it via
-`nodeenv`, fetches frontend deps, builds the bundle, downloads the same
-always-on speech models the Mac app ships, seeds the same first-run config
-the Mac app creates, then serves the app on a single port and opens it in
-your browser. Click the gear icon to set your **Bedrock Region**:
+`setup.sh` installs Python 3.13 from Homebrew when it is missing, provisions
+an isolated `venv/`, installs Node into it via `nodeenv`, fetches frontend
+deps, installs the same pinned ffmpeg and llama.cpp builds the Mac app
+bundles, builds the capture helper (native mic and system audio in the
+browser) and the bundle, downloads the same always-on speech models the Mac
+app ships, seeds the same first-run config the Mac app creates, then serves
+the app on port 41430 and opens it in your browser.
+
+A fresh install starts in **Local mode**, which offers and runs only
+on-device models. Either install an on-device model from **Settings >
+Models > Discover**, or switch **Settings > Model mode** to Hybrid or Cloud
+for Claude and GPT on Bedrock. For Bedrock, click the gear icon to set your
+**Bedrock Region**:
 
 ![Settings on the API Keys tab, showing Bedrock Region](docs/assets/img/settings-api-keys.png)
 
 Pick the model from the **model chip** in the composer toolbar rather than in
-Settings, since cloud and on-device models sit in the same list:
+Settings. It lists the models your mode offers (in Hybrid mode, cloud and
+on-device models sit in the same list):
 
 ![The model picker listing Claude, GPT and on-device models](docs/assets/img/model-picker.png)
 
@@ -128,7 +141,7 @@ needs no setup; the transcription engine downloads on first record.
 
 For the Vite dev server with hot-module reload, use `bash setup.sh --dev`.
 
-New to Python / Homebrew / AWS, or want the setup flags and model modes?
+New to Homebrew or AWS, or want the setup flags and model modes?
 The **[Installation guide](https://paukode.github.io/whisper-studio/installation.html)** walks through
 everything from zero, including what a source install shares with the Mac app
 and where the two differ.
@@ -140,33 +153,38 @@ Already running Whisper Studio? No need to re-clone. From the repo folder:
 ```sh
 git fetch origin
 git reset --hard origin/main
-bash setup.sh          # rebuild the bundle and install any new deps
+bash setup.sh          # reinstalls Python or npm packages when their pins changed, rebuilds the bundle
 ```
 
-Your settings, chat history, and downloaded models live in gitignored folders
-(`config.user.json` and the legacy `config.json`, `storage/`, `data/`,
+Your settings, chat history, and downloaded models live in gitignored files
+and folders (`config.user.json`, `pricing.json`, `storage/`, `data/`,
 `models/`), so this updates only the code and leaves them untouched.
 
-> **Heads up:** `git reset --hard` discards any local changes to *project files*
-> (not your config or data), so commit or `git stash` them first if you have
-> edited the code. And never run `git clean` here: it would delete the
-> gitignored config, `models/`, and `storage/` you want to keep.
+> **Heads up:** in a source install the checkout is also your user folder.
+> `git reset --hard` discards local changes to tracked files, which include
+> the shipped `skills/`, `plugins/` and `rules/global/rules.md`, so commit or
+> copy your edits to those first. And never run `git clean` here: it deletes
+> untracked folders such as `agents/` and `logs/`, and with `-x` your config,
+> `models/`, and `storage/` as well.
 
 ## Configuration
 
 Settings resolve in layers, highest priority first: environment
-(`TAVILY_API_KEY`, `HOST`, `PORT`), project
-(`<workspace>/.whisper/settings.json`), user (`config.user.json` at the repo
-root, or the legacy `config.json`, both gitignored), and the shipped system
-layer (`config.example.json` merged over built-in defaults). The project and
-user layers are edited through the in-app Settings panel (gear icon); the env
-layer is shell-only.
+(`TAVILY_API_KEY`), project (`<workspace>/.whisper/settings.json`), user
+(`config.user.json`, gitignored: in the checkout for a source install, in
+`~/.whisper` for the Mac app), and the shipped system layer
+(`config.example.json` merged over built-in defaults). The user layer is
+edited through the in-app Settings panel (gear icon) and is never changed at
+startup; the project layer is a hand-written file; the env layer is
+shell-only. An old single-file `config.json` is not read.
 
 On first run `setup.sh` creates `config.user.json` with the same defaults a
-fresh Mac-app install gets: hybrid model mode, on-device index capabilities,
-and every weight downloading on demand. Chat, transcription, and the workspace
-tools all work out of the box; web search needs a Tavily key, and voice mode
-needs Amazon Nova Sonic access in your Bedrock region. Full field-by-field
+fresh Mac-app install gets: local model mode, on-device index capabilities,
+and every weight downloading on demand. Transcription and the workspace tools
+work out of the box. Chat needs an on-device model from Discover, or a switch
+to Hybrid or Cloud mode for Bedrock; web search needs a Tavily key, and voice
+mode needs Hybrid or Cloud mode and Amazon Nova Sonic access in your Bedrock
+region. Full field-by-field
 tables are in
 **[Configuration](https://paukode.github.io/whisper-studio/configuration.html)**,
 **[Environment variables](https://paukode.github.io/whisper-studio/ref-env.html)**, and
@@ -227,24 +245,25 @@ Each of these has a tutorial or reference page:
   indexing & search, MCP & plugins, and model modes.
 - **[Slash commands](https://paukode.github.io/whisper-studio/ref-slash-commands.html)** and
   **[Agent tools](https://paukode.github.io/whisper-studio/ref-tools.html)**: the complete reference for
-  every `/` command and the full tool pool the assistant can call (120 core
-  tools plus skill-backed and MCP tools).
+  every `/` command and the full tool pool the assistant can call (the
+  built-in tools plus skill-backed and MCP tools).
 
 ## Security model
 
 Whisper Studio binds `127.0.0.1` by default, sanitizes every Markdown
 render through DOMPurify before it reaches the DOM, routes risky commands
 through a server-held approval pause that re-validates the action at
-execute time, and wraps shell and Python execution in `sandbox-exec(5)`.
+execute time, and wraps shell and Python execution in `sandbox-exec(5)`
+(a command does not run when the sandbox is missing).
 HTTPS is verified against the macOS trust store as well as the bundled
 certificate list. Plugins are opt-in, credentials are scrubbed from MCP
-child processes, and the outbound calls the backend makes on its own are to
-Amazon Bedrock for a cloud chat model or a voice conversation, both skipped
-entirely in local mode. No telemetry.
+child processes, and in Hybrid and Cloud modes the backend's own outbound
+model calls go to Amazon Bedrock (chat, voice, and background work such as
+titles and memory); Local mode makes none. No telemetry.
 
-In the default permission mode, every command the assistant wants to run stops
-for approval first, showing the exact command, its working directory, and a
-risk rating:
+In the default permission mode, read-only commands run at once and every
+other command stops for approval first, showing the exact command, its
+working directory, and a risk rating:
 
 ![An approval card asking to run pytest, with Yes, Yes-all, No and Block](docs/assets/img/approval-card.png)
 
