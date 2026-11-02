@@ -911,7 +911,6 @@ async def _run_agent_loop(
     }
     round_text_parts: list[str] = []
     error_text: str | None = None
-    compaction_failed = False
     # The final round's message is the report the caller receives; the
     # earlier rounds are narration that lives in the journal.
     last_round_text = ""
@@ -983,7 +982,6 @@ async def _run_agent_loop(
                     round_text_parts.append(frame["text"])
                 elif "error" in frame:
                     error_text = frame["error"]
-                    compaction_failed |= frame.get("error_code") == "COMPACTION_FAILED"
                 elif "budget_warning" in frame:
                     cost_capped = True
                 elif "skill_input" in frame:
@@ -1100,9 +1098,11 @@ async def _run_agent_loop(
             earlier = "\u2026" + earlier[-2500:]
         report_text = (report_text.strip() + "\n\nEarlier notes:\n" + earlier).strip()
     body_text = _finalize(report_text or collected_text)
+    # Every error frame ends the turn (runner.py): the run failed.
+    failed = error_text is not None
 
     structured = None
-    if structured_schema is not None and not compaction_failed:
+    if structured_schema is not None and not failed:
         # One-shot structured-output calls on the old provider adapters
         # (server.agents.providers): the chat/engine adapters have no
         # equivalent. See distill_run_output.
@@ -1120,10 +1120,10 @@ async def _run_agent_loop(
             source=cost_source,
         )
 
-    if compaction_failed:
+    if failed:
         # Keep every partial note, without another model request or success.
-        body_text = _finalize(f"[Agent Error] {error_text}\n\n{collected_text}")
-    if stopped_early and not compaction_failed:
+        body_text = _finalize(f"[Agent Error] {error_text}\n\n{collected_text}".strip())
+    if stopped_early and not failed:
         if cost_capped:
             stop_reason, reason_text = "cost_cap", "reached the session cost cap"
         elif _time_up:
@@ -1168,12 +1168,7 @@ async def _run_agent_loop(
             stopped_early=True,
         )
 
-    if error_text and not body_text.strip():
-        # A terminal round error with nothing else produced — surface it
-        # plainly instead of an empty result.
-        body_text = f"[Agent Error] {error_text}"
-
-    status, reason = ("failed", "error") if compaction_failed else ("completed", "completed")
+    status, reason = ("failed", "error") if failed else ("completed", "completed")
     _emit(status, turn=rounds_used, turns_used=rounds_used, status=status)
     _close_journal(
         journal,
