@@ -2,7 +2,7 @@
 
 User layer: data_root()/hooks.json (v2). A file in the old v1 list format is
 not read and never overwritten; a notice says so.
-Project layer: the "hooks" key in <workspace>/.whisper/settings.json — arbitrary
+Project layer: the "hooks" key in <workspace>/.whisper/settings.json: arbitrary
 code from a cloned repo, so INERT until the workspace's project-hook set is
 explicitly trusted (SHA-256 of the canonical hooks, mirroring trusted skills).
 """
@@ -91,7 +91,7 @@ def hook_label(hook: HookDef) -> str:
 
 
 def hooks_path() -> str:
-    # Resolved per call — data_root() honors WHISPER_DATA_DIR/config at runtime,
+    # Resolved per call: data_root() honors WHISPER_DATA_DIR/config at runtime,
     # so a module-level constant would freeze the path (and break test isolation).
     return os.path.join(data_root(), "hooks.json")
 
@@ -226,7 +226,7 @@ def approve_project_hooks(workspace: str) -> bool:
 
 
 def revoke_project_hooks(workspace: str) -> bool:
-    """Drop trust for a workspace's project hooks — they go inert again."""
+    """Drop trust for a workspace's project hooks; they go inert again."""
     trust = _load_trust()
     if _real(workspace) not in trust:
         return False
@@ -243,7 +243,7 @@ def revoke_project_hooks(workspace: str) -> bool:
 def load_project_hooks(workspace: str | None) -> dict[str, list[HookDef]]:
     """Project hooks ONLY when trusted; otherwise empty (they stay inert).
 
-    The trust check hashes the SAME ``raw`` that gets normalized and executed —
+    The trust check hashes the SAME ``raw`` that gets normalized and executed:
     a single read closes the TOCTOU where a concurrent writer could swap in
     malicious hooks between the trust check and the load."""
     raw = _project_hooks_raw(workspace)

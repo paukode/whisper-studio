@@ -40,7 +40,7 @@ class HookDef:
     enabled: bool = True
     on_error: str = "ignore"  # "ignore" | "block"
     id: str = ""
-    source: str = "user"  # "user" | "project" | "plugin"
+    source: str = "user"  # "user" | "project"
 
     def clamp(self) -> HookDef:
         self.timeout = max(1, min(int(self.timeout or DEFAULT_TIMEOUT), MAX_TIMEOUT))
@@ -59,7 +59,6 @@ class HookOutcome:
     reason: str = ""
     updated_input: dict | None = None
     contexts: list[str] = field(default_factory=list)
-    errors: list[str] = field(default_factory=list)
     # Structured findings from a plugin deny (e.g. security_checks); drives the
     # existing security_blocked UI frame. None for a plain shell/project deny.
     findings: object | None = None
@@ -152,7 +151,6 @@ def build_stdin_payload(
     tool_input: dict | None = None,
     tool_output: str | None = None,
     stop_hook_active: bool = False,
-    round_num: int | None = None,
     model_id: str = "",
 ) -> dict:
     payload: dict = {
@@ -170,6 +168,4 @@ def build_stdin_payload(
         payload["tool_output"] = tool_output
     if event in ("Stop",):
         payload["stop_hook_active"] = stop_hook_active
-    if round_num is not None:
-        payload["round"] = round_num
     return payload

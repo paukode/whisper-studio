@@ -2,7 +2,7 @@
 
 One ``run_hooks(event, payload)`` per event, covering every model path because
 it is called from the shared tool executor and the shared end-of-turn gates.
-Order per event: in-process hooks (plugins, WS-E's orchestrator gate) first,
+Order per event: in-process hooks (plugins) first,
 then user shell hooks, then trusted project shell hooks. First deny wins;
 input rewrites and context chain in declaration order.
 
@@ -35,8 +35,6 @@ from server.hooks.schema import HookDef, HookOutcome, build_stdin_payload, match
 from server.infrastructure.paths import data_root
 
 log = logging.getLogger("whisper-studio")
-
-MAX_STOP_BLOCKS_PER_TURN = 3
 
 
 def _apply_control(control: dict, outcome: HookOutcome, *, allow_rewrite: bool) -> bool:
@@ -96,11 +94,10 @@ async def run_hooks(
     ws = workspace or _current_workspace()
     cwd = ws or data_root()
 
-    # Phase 1: in-process hooks (plugins, orchestrator gate).
+    # Phase 1: in-process hooks (plugins).
     for control in await run_inprocess(event, payload):
         if isinstance(control, InProcessHookError):
-            outcome.errors.append(control.message)
-            continue
+            continue  # run_inprocess logged it
         if _apply_control(control, outcome, allow_rewrite=allow_rewrite):
             return outcome
 
@@ -124,7 +121,7 @@ async def run_hooks(
                 outcome.decision = "deny"
                 outcome.reason = f"Hook '{hook.id}' was not run and is fail-closed. {msg}"
                 return outcome
-            outcome.errors.append(f"hook {hook.id}: {msg}")
+            log.warning("Hook %s was not run (on_error=ignore): %s", hook.id, msg)
             continue
         hook_payload = payload
         if allow_rewrite and outcome.updated_input is not None:
@@ -139,7 +136,6 @@ async def run_hooks(
                 outcome.reason = f"Hook '{hook.id}' failed ({e}) and is fail-closed."
                 return outcome
             log.warning("Hook %s could not run and was skipped (on_error=ignore): %s", hook.id, e)
-            outcome.errors.append(f"hook {hook.id}: {e}")
             continue
 
         if code == 2:
@@ -157,7 +153,6 @@ async def run_hooks(
                 code,
                 stderr.strip()[:200],
             )
-            outcome.errors.append(f"hook {hook.id}: exit {code}: {stderr.strip()[:200]}")
             continue
 
         # exit 0: parse stdout for structured control, else treat as context.
@@ -196,9 +191,9 @@ async def check_stop_hooks(
     stop_hook_active: bool = False,
     model_id: str = "",
 ) -> HookOutcome:
-    """The WS-E-critical gate: run Stop hooks at end of turn. A deny means the
-    turn must not finish — the caller injects the reason and continues the
-    loop (bounded by MAX_STOP_BLOCKS_PER_TURN and the model's round cap)."""
+    """Run Stop hooks at end of turn. A deny means the turn must not finish:
+    the caller injects the reason and continues the loop (bounded by the
+    completion gate's goal_max_consecutive_blocks and the round cap)."""
     payload = build_stdin_payload(
         "Stop",
         session_id=session_id,

@@ -105,8 +105,7 @@ async def add_hook(request: Request):
 @router.put("/{hook_id}")
 async def update_hook(hook_id: str, request: Request):
     body = await request.json()
-    # An id that doesn't exist yet is an upsert, but reject if the client is
-    # clearly editing a hook that was already deleted elsewhere.
+    # Reject an id that no longer exists (deleted elsewhere).
     existing_ids = {h.id for defs in cfg.load_user_hooks().values() for h in defs}
     if hook_id not in existing_ids:
         return _err("Not found", 404)

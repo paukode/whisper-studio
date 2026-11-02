@@ -117,8 +117,7 @@ DEFAULTS = {
 # breaker when denials pile up — forcing the effective mode back to "ask"
 # instead of continuing to consult the classifier.
 #
-# Two independent triggers, mirroring hooks/engine.py's simple counted-cap
-# (MAX_STOP_BLOCKS_PER_TURN) but with a rolling window added since a
+# Two independent triggers: a counted cap, and a rolling window, since a
 # classifier can also deny slowly across many calls without ever stringing
 # 3 in a row:
 #   - consecutive: 3 "confirm" verdicts in a row with no intervening

@@ -115,7 +115,7 @@ def test_old_hook_vars_finds_each_old_variable_once():
     assert old_hook_vars("echo $WHISPER_TOOLS $WHISPER_DATA_DIR MY_WHISPER_TOOL") == []
 
 
-def test_a_hook_with_an_old_variable_is_not_run_and_is_reported(no_spawn, notices):
+def test_a_hook_with_an_old_variable_is_not_run_and_is_reported(no_spawn, notices, caplog):
     from server.hooks.config_loader import OLD_VARS_NOTICE_TITLE
 
     _save("PreToolUse", command='test "$WHISPER_TOOL" = ws_delete_file && exit 2', matcher="*")
@@ -124,7 +124,7 @@ def test_a_hook_with_an_old_variable_is_not_run_and_is_reported(no_spawn, notice
     )
     # on_error "ignore" (the default): skipped like any hook that cannot run.
     assert not out.blocked
-    assert any("WHISPER_TOOL" in e and "tool_name" in e for e in out.errors)
+    assert "WHISPER_TOOL" in caplog.text and "tool_name" in caplog.text
     [notice] = notices
     assert notice["title"] == OLD_VARS_NOTICE_TITLE
     assert "WHISPER_TOOL" in notice["message"] and "stdin" in notice["message"]
@@ -247,7 +247,7 @@ def test_a_crashing_pre_tool_hook_blocks_the_call():
     assert "crash" in out.reason and "bytes-like" in out.reason
 
 
-def test_a_crashing_hook_on_another_event_is_reported_as_an_error():
+def test_a_crashing_hook_on_another_event_is_reported_as_an_error(caplog):
     async def crash(payload):
         raise RuntimeError("boom")
 
@@ -256,7 +256,7 @@ def test_a_crashing_hook_on_another_event_is_reported_as_an_error():
         engine.run_hooks("PostToolUse", {"tool_name": "ws_read_file"}, tool_name="ws_read_file")
     )
     assert not out.blocked
-    assert any("boom" in e for e in out.errors)
+    assert "boom" in caplog.text
 
 
 def test_pre_tool_backcompat_adapter():
@@ -294,13 +294,13 @@ def test_shell_exit_0_passes():
     assert not out.blocked
 
 
-def test_shell_other_exit_ignored_by_default():
+def test_shell_other_exit_ignored_by_default(caplog):
     _save("PreToolUse", command="exit 7", matcher="*", on_error="ignore")
     out = _run(
         engine.run_hooks("PreToolUse", {"tool_name": "ws_write_file"}, tool_name="ws_write_file")
     )
     assert not out.blocked
-    assert any("exit 7" in e for e in out.errors)
+    assert "exited 7" in caplog.text
 
 
 def test_shell_other_exit_blocks_when_fail_closed():
@@ -319,13 +319,13 @@ def test_shell_timeout_fail_closed_blocks():
     assert out.blocked
 
 
-def test_shell_timeout_ignored_by_default():
+def test_shell_timeout_ignored_by_default(caplog):
     _save("PreToolUse", command="sleep 5", matcher="*", timeout=1, on_error="ignore")
     out = _run(
         engine.run_hooks("PreToolUse", {"tool_name": "ws_write_file"}, tool_name="ws_write_file")
     )
     assert not out.blocked
-    assert out.errors
+    assert "could not run and was skipped" in caplog.text
 
 
 # ── structured stdout control ────────────────────────────────────────────────
@@ -432,7 +432,7 @@ def test_check_stop_hooks_passes_when_no_hooks():
 
 def test_inprocess_stop_gate_can_block():
     async def gate(payload):
-        # WS-E's orchestrator gate lives here: refuse to stop mid-workflow.
+        # An in-process Stop hook: refuse to stop mid-workflow.
         return {"decision": "deny", "reason": "workflow step 2/5 pending"}
 
     plugin_hooks.register_hook("Stop", gate)
