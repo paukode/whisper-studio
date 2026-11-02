@@ -315,13 +315,11 @@ export const ModelsPanel: React.FC<{ section?: ModelSection }> = ({ section }) =
     void run(
       m.key,
       async () => {
-        const res = await removeModelFromList(m.key);
+        // Offered only on local-chat rows, so the files are deleted.
+        await removeModelFromList(m.key);
         addToast({
           type: 'success',
-          message:
-            res.scope === 'bedrock'
-              ? `${m.label} removed from the list. Re-enable it under Chat model visibility.`
-              : `${m.label} removed. Download it again any time from Discover.`,
+          message: `${m.label} removed. Download it again any time from Discover.`,
         });
       },
       `Could not remove ${m.label}`,
@@ -354,9 +352,8 @@ export const ModelsPanel: React.FC<{ section?: ModelSection }> = ({ section }) =
 
       {showCatalog &&
         visibleGroups.map((group) => {
-        // Local models are deleted outright when removed (not hidden via the
-        // Bedrock-only chat_models_disabled list), so the catalog is already the
-        // truth — no extra hide-list filtering here.
+        // The Models list shows every catalog row; chat_models_disabled only
+        // hides a model from the composer picker.
         // Bundled infrastructure models (language ID, speaker encoder) are
         // always installed via the app bundle / setup.sh and never user-managed.
         const rows = models.filter((m) => m.group === group.id && !m.bundled);
@@ -473,8 +470,7 @@ export const ModelsPanel: React.FC<{ section?: ModelSection }> = ({ section }) =
                         // A plain not-downloaded model with partial bytes keeps
                         // JUST Download — the partials are hf resume state the
                         // next attempt picks up. But a FAILED download also
-                        // offers Delete: it lets the user clear a dead job's
-                        // partials and recover a model this bug once stranded.
+                        // offers Delete, to clear a dead job's partials.
                         <>
                           <button
                             className="btn btn-primary btn-sm"

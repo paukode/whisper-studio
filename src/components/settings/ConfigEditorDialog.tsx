@@ -40,8 +40,8 @@ interface SaveRawConfigResult {
   local_models: string[];
 }
 
-export const fetchRawConfig = () => get<RawConfig>('/api/config/raw');
-export const saveRawConfig = (text: string) =>
+const fetchRawConfig = () => get<RawConfig>('/api/config/raw');
+const saveRawConfig = (text: string) =>
   put<SaveRawConfigResult>('/api/config/raw', { text });
 
 type Tab = 'user' | 'effective';

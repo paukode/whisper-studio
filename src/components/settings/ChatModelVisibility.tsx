@@ -19,9 +19,9 @@ export interface ModelsDisabledResponse {
   models: ModelVisibilityRow[];
 }
 
-export const fetchModelsDisabled = () =>
+const fetchModelsDisabled = () =>
   get<ModelsDisabledResponse>('/api/config/models-disabled');
-export const saveModelsDisabled = (disabled: string[]) =>
+const saveModelsDisabled = (disabled: string[]) =>
   put<ModelsDisabledResponse & { ok: boolean }>('/api/config/models-disabled', { disabled });
 
 /**
