@@ -172,6 +172,22 @@ def _isolate_workspace_state(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_worktree_sessions(tmp_path_factory, monkeypatch):
+    """Keep the agent worktree registry off the real ~/.whisper_cache.
+
+    server/git/worktree_session.py rewrites its persist file on every
+    set_session, and the harvest tests enter and leave agent worktrees, so the
+    suite used to append hundreds of tmp-path rows to the user's real file.
+    """
+    from server.git import worktree_session
+
+    cache = tmp_path_factory.mktemp("worktree-sessions")
+    monkeypatch.setattr(worktree_session, "_PERSIST_DIR", str(cache))
+    monkeypatch.setattr(worktree_session, "_PERSIST_FILE", str(cache / "worktree-sessions.json"))
+    monkeypatch.setattr(worktree_session, "_SESSIONS", {})
+
+
+@pytest.fixture(autouse=True)
 def _drop_cached_bedrock_clients():
     """server.chat.infra caches one boto3 bedrock-runtime client per region for
     the whole process. A test whose code path reaches _get_bedrock_client()
