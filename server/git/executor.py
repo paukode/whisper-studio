@@ -142,7 +142,10 @@ def _exec_git_diff(tool_input, transcript, current_attachments):
         abs_file = path_inside(cwd, single_file)
         if abs_file is None:
             return f"Error: file must be a path inside the repository ({cwd}): {single_file}"
-        result = fetch_single_file_git_diff(cwd, abs_file)
+        try:
+            result = fetch_single_file_git_diff(cwd, abs_file)
+        except (RuntimeError, subprocess.TimeoutExpired) as e:
+            return f"Error: {e}"
         if not result:
             return f"No diff for {single_file} (file may be unchanged or not found)."
         header = f"File: {result.filename} ({result.status})\n"

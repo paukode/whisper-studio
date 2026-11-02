@@ -245,3 +245,51 @@ def test_numstat_is_read_once_per_diff(client, monkeypatch):
 
     assert data["added"] == 1 and data["removed"] == 1
     assert len(numstat_calls) == 1, f"expected one numstat call, got {numstat_calls}"
+
+
+def test_a_git_timeout_is_an_error_not_a_new_file(client, monkeypatch):
+    """A timed-out ls-files used to make a tracked file 'untracked' and
+    return its whole text as added."""
+    import subprocess
+
+    c, work = client
+    (work / "a.txt").write_text("one\nTWO\nthree\n")
+
+    def slow(args, cwd, timeout=None, **_kw):
+        raise subprocess.TimeoutExpired(args, timeout)
+
+    monkeypatch.setattr(file_diff, "_run_git", slow)
+    data = c.get("/api/git/file-diff", params={"path": "a.txt"}).json()
+
+    assert data["mode"] == "error"
+    assert data["error"].startswith("git ls-files failed:")
+
+
+def test_a_staged_file_in_a_repository_with_no_commit_is_added(tmp_path, monkeypatch):
+    work = tmp_path / "fresh"
+    work.mkdir()
+    _git(["init", "-q"], work)
+    (work / "n.txt").write_text("new\n")
+    _git(["add", "n.txt"], work)
+
+    data = file_diff.build_file_diff(str(work), "n.txt")
+
+    assert data["mode"] == "full"
+    assert data["status"] == "added"
+    assert data["new"] == "new\n"
+
+
+def test_git_diff_tool_reports_a_git_failure(tmp_path, monkeypatch):
+    import subprocess
+
+    from server.git import diff as git_diff
+
+    _git(["init", "-q"], tmp_path)
+    (tmp_path / "a.txt").write_text("x\n")
+
+    def broken(args, cwd, timeout=None, **_kw):
+        return subprocess.CompletedProcess(args, 128, "", "fatal: index file corrupt")
+
+    monkeypatch.setattr(git_diff, "_run_git", broken)
+    with pytest.raises(RuntimeError, match="index file corrupt"):
+        git_diff.fetch_single_file_git_diff(str(tmp_path), str(tmp_path / "a.txt"))

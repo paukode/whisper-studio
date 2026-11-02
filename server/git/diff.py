@@ -152,8 +152,10 @@ def fetch_git_diff(path: str) -> GitDiffResult | None:
 def fetch_single_file_git_diff(path: str, file_path: str) -> ToolUseDiff | None:
     """Fetch structured diff for a single file against merge base (PR-like diff).
 
-    Falls back to diffing against HEAD if merge base cannot be determined.
+    Diffs against HEAD when there is no merge base with origin/<default>.
     For untracked files, generates synthetic diff showing all additions.
+    Returns None for an unchanged file; raises RuntimeError (or
+    subprocess.TimeoutExpired) when git fails.
     """
     git_root = find_git_root(os.path.dirname(os.path.abspath(file_path)))
     if not git_root:
@@ -162,35 +164,33 @@ def fetch_single_file_git_diff(path: str, file_path: str) -> ToolUseDiff | None:
     abs_file = os.path.abspath(file_path)
     rel_file = os.path.relpath(abs_file, git_root)
 
-    # Check if file is tracked
-    try:
-        track_result = _run_git(
-            ["ls-files", "--error-unmatch", rel_file],
-            cwd=git_root,
-            timeout=SINGLE_FILE_DIFF_TIMEOUT_S,
-        )
-        is_tracked = track_result.returncode == 0
-    except Exception:
-        is_tracked = False
+    # Check if file is tracked: exit 0 tracked, 1 untracked, anything else
+    # (a timeout raises) is a git failure, never a guess.
+    track_result = _run_git(
+        ["ls-files", "--error-unmatch", "--", rel_file],
+        cwd=git_root,
+        timeout=SINGLE_FILE_DIFF_TIMEOUT_S,
+    )
+    if track_result.returncode not in (0, 1):
+        raise RuntimeError(f"git ls-files failed: {track_result.stderr.strip()}")
 
-    if not is_tracked:
-        # Untracked file — generate synthetic diff
+    if track_result.returncode == 1:
+        # Untracked file: generate a synthetic diff
         return _generate_synthetic_diff(abs_file, rel_file, git_root)
 
     # Get diff reference (merge base or HEAD)
     diff_ref = _get_diff_ref(git_root)
 
-    try:
-        result = _run_git(
-            ["diff", diff_ref, "--", rel_file],
-            cwd=git_root,
-            timeout=SINGLE_FILE_DIFF_TIMEOUT_S,
-        )
-        if result.returncode != 0 or not result.stdout.strip():
-            return None
-        return _parse_raw_diff_to_tool_use(rel_file, result.stdout, git_root)
-    except Exception:
+    result = _run_git(
+        ["diff", diff_ref, "--", rel_file],
+        cwd=git_root,
+        timeout=SINGLE_FILE_DIFF_TIMEOUT_S,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"git diff failed: {result.stderr.strip()}")
+    if not result.stdout.strip():
         return None
+    return _parse_raw_diff_to_tool_use(rel_file, result.stdout, git_root)
 
 
 # --- Parsing ---
@@ -207,15 +207,12 @@ def parse_git_numstat(path: str) -> dict[str, DiffFileStats] | None:
     if not git_root:
         return None
 
-    try:
-        result = _run_git(
-            ["--no-optional-locks", "diff", "HEAD", "--numstat"],
-            cwd=git_root,
-            timeout=GIT_TIMEOUT_S,
-        )
-        if result.returncode != 0:
-            return None
-    except Exception:
+    result = _run_git(
+        ["--no-optional-locks", "diff", "HEAD", "--numstat"],
+        cwd=git_root,
+        timeout=GIT_TIMEOUT_S,
+    )
+    if result.returncode != 0:
         return None
 
     per_file: dict[str, DiffFileStats] = {}
@@ -256,15 +253,12 @@ def parse_shortstat(path: str) -> tuple[int, int, int] | None:
     if not git_root:
         return None
 
-    try:
-        result = _run_git(
-            ["--no-optional-locks", "diff", "HEAD", "--shortstat"],
-            cwd=git_root,
-            timeout=GIT_TIMEOUT_S,
-        )
-        if result.returncode != 0:
-            return None
-    except Exception:
+    result = _run_git(
+        ["--no-optional-locks", "diff", "HEAD", "--shortstat"],
+        cwd=git_root,
+        timeout=GIT_TIMEOUT_S,
+    )
+    if result.returncode != 0:
         return None
 
     output = result.stdout.strip()
@@ -295,15 +289,14 @@ def parse_shortstat(path: str) -> tuple[int, int, int] | None:
 
 def _fetch_untracked_files(git_root: str, max_files: int) -> dict[str, DiffFileStats]:
     """Fetch untracked file stats (excluding ignored files)."""
-    try:
-        result = _run_git(
-            ["ls-files", "--others", "--exclude-standard"],
-            cwd=git_root,
-            timeout=GIT_TIMEOUT_S,
-        )
-        if result.returncode != 0 or not result.stdout.strip():
-            return {}
-    except Exception:
+    result = _run_git(
+        ["ls-files", "--others", "--exclude-standard"],
+        cwd=git_root,
+        timeout=GIT_TIMEOUT_S,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"git ls-files failed: {result.stderr.strip()}")
+    if not result.stdout.strip():
         return {}
 
     untracked: dict[str, DiffFileStats] = {}
@@ -317,20 +310,17 @@ def _fetch_untracked_files(git_root: str, max_files: int) -> dict[str, DiffFileS
 
 
 def _get_diff_ref(git_root: str) -> str:
-    """Get the best reference for diffing: merge base with the default
-    branch, falling back to HEAD."""
+    """Get the best reference for diffing: the merge base with the default
+    branch, or HEAD when there is none (no origin/<default> branch, or no
+    common history with it)."""
     default_branch = get_default_branch(git_root)
-    try:
-        result = _run_git(
-            ["merge-base", "HEAD", f"origin/{default_branch}"],
-            cwd=git_root,
-            timeout=SINGLE_FILE_DIFF_TIMEOUT_S,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
-    except Exception:
-        pass
-
+    result = _run_git(
+        ["merge-base", "HEAD", f"origin/{default_branch}"],
+        cwd=git_root,
+        timeout=SINGLE_FILE_DIFF_TIMEOUT_S,
+    )
+    if result.returncode == 0 and result.stdout.strip():
+        return result.stdout.strip()
     return "HEAD"
 
 
