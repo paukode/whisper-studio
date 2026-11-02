@@ -12,6 +12,7 @@ import pytest
 from server.voice import protocol
 from server.voice import session as voice_session
 from server.voice.session import VoiceConfig, VoiceSession
+from tests.cost_rows import session_cost_rows
 
 
 class FakeStream:
@@ -981,7 +982,7 @@ def _logged(session_id):
     from server.costs import tracker
 
     sums: dict[str, list[int]] = {}
-    for row in tracker.get_session_costs(session_id):
+    for row in session_cost_rows(session_id):
         assert (row["source"], row["count_source"]) == ("voice", "reported")
         got = sums.setdefault(row["model"], [0, 0])
         got[0] += row["input_tokens"]

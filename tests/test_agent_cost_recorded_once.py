@@ -14,6 +14,7 @@ from server import agent_tools
 from server.agent_tools import spawn as spawn_mod
 from server.costs import budget as budget_mod
 from server.costs import tracker
+from tests.cost_rows import session_cost_rows
 
 
 class _Bus:
@@ -71,7 +72,7 @@ def test_spawn_agent_adds_no_rollup_row(monkeypatch):
         asyncio.run(agent_tools.execute_spawn_agent({"task": "work"}, "sess-once", "m"))
     )
     assert out["status"] == "completed" and ran == ["sess-once"]
-    rows = tracker.get_session_costs("sess-once")
+    rows = session_cost_rows("sess-once")
     assert [r["model"] for r in rows] == ["gpt5.6-sol"]
 
 
@@ -82,5 +83,5 @@ def test_team_member_adds_no_rollup_row(monkeypatch):
             {"team_name": "t", "agents": [{"name": "a", "task": "x"}]}, "model-x", "sess-team"
         )
     )
-    rows = tracker.get_session_costs("sess-team")
+    rows = session_cost_rows("sess-team")
     assert [r["model"] for r in rows] == ["gpt5.6-sol"]

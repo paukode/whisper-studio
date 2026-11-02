@@ -441,19 +441,6 @@ def record_turn(
         log.error("Failed to record cost: %s", e)
 
 
-def get_session_costs(session_id: str) -> list[dict]:
-    """Every recorded call of one session, oldest first (raw token rows)."""
-    try:
-        with _get_conn() as conn:
-            rows = conn.execute(
-                "SELECT * FROM session_costs WHERE session_id = ? ORDER BY id",
-                (session_id,),
-            ).fetchall()
-        return [dict(r) for r in rows]
-    except Exception:
-        return []
-
-
 _EMPTY_USAGE = {"prompt_tokens": 0, "output_tokens": 0, "cost_usd": 0.0, "rounds": 0}
 
 

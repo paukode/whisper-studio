@@ -17,6 +17,7 @@ import pytest
 
 from server.chat.infra import _get_chat_models
 from server.costs import calls, capture, tracker
+from tests.cost_rows import session_cost_rows
 
 
 class _Body(io.BytesIO):
@@ -45,7 +46,7 @@ class _FakeBedrock:
 
 
 def _only_row(session_id):
-    rows = tracker.get_session_costs(session_id)
+    rows = session_cost_rows(session_id)
     assert len(rows) == 1, rows
     return rows[0]
 
@@ -158,7 +159,7 @@ def test_an_explainer_call_the_timeout_abandoned_is_still_logged(monkeypatch):
     )
     assert got is None  # timed out for the caller
     deadline = time.monotonic() + 5
-    while not tracker.get_session_costs("s-exp") and time.monotonic() < deadline:
+    while not session_cost_rows("s-exp") and time.monotonic() < deadline:
         time.sleep(0.05)
     assert _only_row("s-exp")["source"] == "explainer"
 
@@ -286,7 +287,7 @@ def test_structured_output_distillation_is_logged_per_attempt_under_the_runs_sou
     schema = {"type": "object", "properties": {"ok": {"type": "boolean"}}}
     out, total = _distill(adapter, "s-distill", schema)
     assert out == {"ok": True}
-    first, second = tracker.get_session_costs("s-distill")
+    first, second = session_cost_rows("s-distill")
     assert (first["source"], first["model"], first["input_tokens"]) == ("workflow", "opus5.0", 530)
     assert first["count_source"] == "reported" and first["count_detail"]
     posted = adapter._bedrock.bodies[1]
@@ -399,7 +400,7 @@ def test_cohere_embed_is_priced_and_rerank_is_shown_as_unpriced(monkeypatch):
     monkeypatch.setattr(embedder_cohere, "_bedrock", lambda: fake)
     embedder_cohere.embed_documents(["alpha", "beta"])
     assert reranker._rerank_cohere("q", ["alpha", "beta"]) == [0.0, 0.9]
-    embed, rerank = tracker.get_session_costs("")
+    embed, rerank = session_cost_rows("")
     assert (embed["model"], embed["source"], embed["input_tokens"]) == (
         COHERE_EMBED_MODEL_ID,
         "index",

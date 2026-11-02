@@ -18,6 +18,7 @@ from server.chat.engine.anthropic import AnthropicAdapter
 from server.chat.engine.policy import TurnPolicy
 from server.chat.engine.runner import TurnContext, run_turn
 from server.costs import capture, tracker
+from tests.cost_rows import session_cost_rows
 
 _START_USAGE = {
     "input_tokens": 12,
@@ -219,7 +220,7 @@ def _quiet_turn(monkeypatch):
 def test_a_retried_attempt_is_recorded_once_with_its_output_estimated(_quiet_turn):
     adapter = _claude([_claude_stream(error_after_thinking=True), _claude_stream()])
     _turn(adapter, "retry-sess")
-    failed, completed = tracker.get_session_costs("retry-sess")
+    failed, completed = session_cost_rows("retry-sess")
     # The failed attempt: the prompt counts message_start reported, the
     # output as characters / 4 of what arrived before the fault.
     assert (failed["input_tokens"], failed["cache_read_tokens"]) == (12, 95_000)
@@ -234,7 +235,7 @@ def test_a_stopped_round_is_recorded(_quiet_turn):
     answer = "Hello there, twenty chars. And the rest of the answer"
     adapter = _claude([_claude_stream(answer=answer)])
     _turn(adapter, "stop-sess", stop_after='"text"')
-    (row,) = tracker.get_session_costs("stop-sess")
+    (row,) = session_cost_rows("stop-sess")
     assert row["input_tokens"] == 12 and row["estimated_fields"] == "output"
 
 
@@ -244,14 +245,14 @@ def test_a_stop_while_the_held_answer_is_sent_records_the_round(_quiet_turn):
     # round's usage, and a Stop as the answer is sent records it.
     adapter = _claude([_claude_stream()])
     _turn(adapter, "held-stop", stop_after='"text"')
-    (row,) = tracker.get_session_costs("held-stop")
+    (row,) = session_cost_rows("held-stop")
     assert (row["input_tokens"], row["output_tokens"]) == (12, 420)
 
 
 def test_a_round_stopped_while_its_usage_frame_is_sent_is_still_recorded(_quiet_turn):
     adapter = _claude([_claude_stream()])
     _turn(adapter, "usage-stop", stop_after='"usage"')
-    (row,) = tracker.get_session_costs("usage-stop")
+    (row,) = session_cost_rows("usage-stop")
     assert (row["output_tokens"], row["count_source"]) == (420, "reported")
 
 
@@ -336,7 +337,7 @@ def _gpt_completed():
 def test_a_gpt_round_stopped_while_it_is_still_reasoning_bills_its_input(_quiet_turn, monkeypatch):
     adapter, responses = _gpt(monkeypatch, [_GptStream(_SUMMARY, tail="hang")])
     _turn(adapter, "gpt-stop", stop_after='"thinking"')
-    (row,) = tracker.get_session_costs("gpt-stop")
+    (row,) = session_cost_rows("gpt-stop")
     # Nothing billable arrived yet (a reasoning summary is not billed
     # output), but the posted prompt was being processed.
     assert row["input_tokens"] == capture.estimate_tokens(capture.json_chars(responses.posted[0]))
@@ -351,7 +352,7 @@ def test_a_gpt_stream_that_breaks_while_reasoning_is_recorded_then_retried(
     done = _GptStream([_Ev(type="response.output_text.delta", delta="Hi"), _gpt_completed()])
     adapter, responses = _gpt(monkeypatch, [broken, done])
     _turn(adapter, "gpt-retry")
-    failed, completed = tracker.get_session_costs("gpt-retry")
+    failed, completed = session_cost_rows("gpt-retry")
     assert failed["input_tokens"] == capture.estimate_tokens(
         capture.json_chars(responses.posted[0])
     )
@@ -458,7 +459,7 @@ def test_a_completed_gpt_round_records_its_cache_write(_quiet_turn, monkeypatch)
     )
     adapter, _ = _gpt(monkeypatch, [done])
     _turn(adapter, "gpt-write")
-    (row,) = tracker.get_session_costs("gpt-write")
+    (row,) = session_cost_rows("gpt-write")
     assert (row["input_tokens"], row["cache_read_tokens"], row["cache_creation_tokens"]) == (
         51_300,
         46_000,
