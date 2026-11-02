@@ -116,7 +116,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
       // root / macOS extended ACLs, so we never refuse based on it).
       // A disconnect clicked just before must reach the server first.
       await settleWorkspaceOps();
-      const data = await post<{ path?: string; writable?: boolean; warnings?: string[] }>(
+      const data = await post<{ path: string; writable?: boolean; warnings?: string[] }>(
         '/api/workspace/connect',
         { path: wsPath },
       );
@@ -124,12 +124,12 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
       // and relative segments collapsed), not the raw input — everything
       // downstream compares against the server's own notion of the
       // workspace root, and an unexpanded "~/..." never matches it.
-      const connectedPath = data?.path || wsPath;
+      const connectedPath = data.path;
       useUIStore.getState().setWsConnected(true, connectedPath);
-      reportConnectWarnings(data?.warnings);
+      reportConnectWarnings(data.warnings);
       setWorkOpen(false);
       const name = connectedPath.split('/').pop();
-      if (data?.writable === false) {
+      if (data.writable === false) {
         useUIStore.getState().addToast({
           type: 'info',
           message: `Connected to ${name}. Folder may be read-only. Writes will be confirmed on first attempt.`,

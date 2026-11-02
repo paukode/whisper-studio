@@ -303,7 +303,7 @@ describe('TurnBubble', () => {
     globalThis.fetch = vi.fn((url: string) =>
       Promise.resolve({
         ok: true,
-        json: async () => (String(url).includes('/api/workspace/connect') ? { writable: true } : { connected: false }),
+        json: async () => (String(url).includes('/api/workspace/connect') ? { path: '/Users/me/Projects/site', writable: true } : { connected: false }),
       }),
     ) as unknown as typeof fetch;
     const paused: ChatMessage = {
