@@ -1,6 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useUIStore, dialogConfirm } from '@/stores/uiStore';
+import { toError } from '@/utils/toError';
+
+/** Say why an index or recent-folder action failed. */
+const reportFailure = (what: string, err: unknown) =>
+  useUIStore.getState().addToast({ type: 'error', message: `${what}: ${toError(err).message}` });
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { get, post } from '@/api/client';
 import {
@@ -100,6 +105,12 @@ export const WorkspaceConnectDialog: React.FC = () => {
   // Per-folder settings (loaded lazily when a folder's ⋯ menu opens) and the
   // open menu's path.
   const [settingsByPath, setSettingsByPath] = useState<Record<string, IndexSettings>>({});
+  const [settingsErrorByPath, setSettingsErrorByPath] = useState<Record<string, string>>({});
+  const loadSettings = useCallback((p: string) => {
+    getIndexSettings(p)
+      .then((s) => setSettingsByPath((prev) => ({ ...prev, [p]: s })))
+      .catch((err: unknown) => setSettingsErrorByPath((prev) => ({ ...prev, [p]: toError(err).message })));
+  }, []);
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const statusesRef = useRef(statuses);
   useEffect(() => {
@@ -149,10 +160,8 @@ export const WorkspaceConnectDialog: React.FC = () => {
     const p = normalizeWsPath(path);
     if (!isOpen || !indexOnConnect || !p) return;
     if (recentWorkspaces.includes(p) || settingsByPath[p]) return;
-    getIndexSettings(p)
-      .then((s) => setSettingsByPath((prev) => ({ ...prev, [p]: s })))
-      .catch(() => {});
-  }, [isOpen, indexOnConnect, path, recentWorkspaces, settingsByPath]);
+    loadSettings(p);
+  }, [isOpen, indexOnConnect, path, recentWorkspaces, settingsByPath, loadSettings]);
 
   // Open a folder's ⋯ menu, lazily loading its settings. Safe for any state:
   // a not-yet-indexed folder reads the pending pre-index store server-side (no
@@ -161,15 +170,11 @@ export const WorkspaceConnectDialog: React.FC = () => {
     (wsPath: string) => {
       setOpenMenu((cur) => {
         const next = cur === wsPath ? null : wsPath;
-        if (next && !settingsByPath[next]) {
-          getIndexSettings(next)
-            .then((s) => setSettingsByPath((prev) => ({ ...prev, [next]: s })))
-            .catch(() => {});
-        }
+        if (next && !settingsByPath[next]) loadSettings(next);
         return next;
       });
     },
-    [settingsByPath],
+    [settingsByPath, loadSettings],
   );
 
   // Patch one folder's settings and keep the local copy in sync with the server.
@@ -177,7 +182,7 @@ export const WorkspaceConnectDialog: React.FC = () => {
     (wsPath: string, patch: Parameters<typeof updateIndexSettings>[1]) => {
       updateIndexSettings(wsPath, patch)
         .then((s) => setSettingsByPath((prev) => ({ ...prev, [wsPath]: s })))
-        .catch(() => {});
+        .catch((err: unknown) => reportFailure('Could not save the index settings', err));
     },
     [],
   );
@@ -249,8 +254,8 @@ export const WorkspaceConnectDialog: React.FC = () => {
       }));
       try {
         await buildIndex(wsPath);
-      } catch {
-        /* surfaced via polled status */
+      } catch (err) {
+        reportFailure('Could not start indexing', err);
       }
       void refreshStatuses([wsPath]);
       // The workspace panel's Explore button watches the same status under
@@ -265,8 +270,9 @@ export const WorkspaceConnectDialog: React.FC = () => {
       e.stopPropagation();
       try {
         await removeIndex(wsPath);
-      } catch {
-        /* ignore */
+      } catch (err) {
+        reportFailure('Could not remove the index', err);
+        return;
       }
       setStatuses((prev) => ({ ...prev, [wsPath]: { indexed: false, building: false } }));
       // Hide the workspace panel's Explore button for the now-unindexed folder.
@@ -281,8 +287,8 @@ export const WorkspaceConnectDialog: React.FC = () => {
       e.stopPropagation();
       try {
         await removeRecentWorkspace(wsPath);
-      } catch {
-        /* ignore */
+      } catch (err) {
+        reportFailure('Could not forget the folder', err);
       }
       void queryClient.invalidateQueries({ queryKey: ['workspace-recent'] });
     },
@@ -292,8 +298,8 @@ export const WorkspaceConnectDialog: React.FC = () => {
   const handleClearUnindexed = useCallback(async () => {
     try {
       await clearUnindexedRecents();
-    } catch {
-      /* ignore */
+    } catch (err) {
+      reportFailure('Could not clear the folders', err);
     }
     void queryClient.invalidateQueries({ queryKey: ['workspace-recent'] });
   }, [queryClient]);
@@ -307,8 +313,8 @@ export const WorkspaceConnectDialog: React.FC = () => {
       setStopping((prev) => ({ ...prev, [wsPath]: true }));
       try {
         await cancelIndex(wsPath);
-      } catch {
-        /* ignore */
+      } catch (err) {
+        reportFailure('Could not stop indexing', err);
       }
       // The build stops after the current file; the poll clears both flags.
       void refreshStatuses([wsPath]);
@@ -450,7 +456,7 @@ export const WorkspaceConnectDialog: React.FC = () => {
         // Kick off indexing in the background if requested; it continues
         // server-side after the dialog closes.
         if (indexOnConnect) {
-          buildIndex(connectedPath).catch(() => {});
+          buildIndex(connectedPath).catch((err: unknown) => reportFailure('Could not start indexing', err));
         }
         closeDialog();
       } catch (err: unknown) {
@@ -564,6 +570,7 @@ export const WorkspaceConnectDialog: React.FC = () => {
       status={statuses[wsPath]}
       stopping={!!stopping[wsPath]}
       settings={settingsByPath[wsPath]}
+      settingsError={settingsErrorByPath[wsPath]}
       menuOpen={openMenu === wsPath}
       onSelect={() => handleSelectRecent(wsPath)}
       onRemoveRecent={(e) => void handleRemoveRecent(e, wsPath)}
