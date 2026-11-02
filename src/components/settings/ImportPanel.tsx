@@ -1,6 +1,7 @@
 import React, { useCallback, useState } from 'react';
 import { get, post } from '@/api/client';
 import { useUIStore } from '@/stores/uiStore';
+import { toError } from '@/utils/toError';
 import { useMcpStore } from '@/stores/mcpStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 
@@ -67,33 +68,17 @@ export const ImportPanel: React.FC = () => {
   const [result, setResult] = useState<ImportSummary | null>(null);
   const addToast = useUIStore((s) => s.addToast);
 
-  const handleBrowseSource = useCallback(async () => {
+  // Native folder picker; a picked path goes to `setPath`, a cancel does nothing.
+  const pickFolder = useCallback(async (setPath: (path: string) => void) => {
     try {
-      const res = await get<{ path: string | null; cancelled?: boolean; error?: string }>(
-        '/api/workspace/pick-folder',
-      );
-      if (res.path) setSourcePath(res.path);
-    } catch {
-      addToast({
-        type: 'error',
-        message: 'Could not open the folder picker.',
-      });
+      const res = await get<{ path: string | null; cancelled?: boolean }>('/api/workspace/pick-folder');
+      if (res.path) setPath(res.path);
+    } catch (err) {
+      addToast({ type: 'error', message: `Could not open the folder picker: ${toError(err).message}` });
     }
   }, [addToast]);
-
-  const handleBrowseWorkspace = useCallback(async () => {
-    try {
-      const res = await get<{ path: string | null; cancelled?: boolean; error?: string }>(
-        '/api/workspace/pick-folder',
-      );
-      if (res.path) setWorkspacePath(res.path);
-    } catch {
-      addToast({
-        type: 'error',
-        message: 'Could not open the folder picker.',
-      });
-    }
-  }, [addToast]);
+  const handleBrowseSource = useCallback(() => pickFolder(setSourcePath), [pickFolder]);
+  const handleBrowseWorkspace = useCallback(() => pickFolder(setWorkspacePath), [pickFolder]);
 
   const handleImport = useCallback(async () => {
     const source = sourcePath.trim();
