@@ -44,7 +44,7 @@ FFPROBE_ZIP_URL="${FFMPEG_BASE_URL}/ffprobe.zip"
 NODE_VERSION="v$(tr -d ' \n' < "$(dirname "${BASH_SOURCE[0]}")/../.nvmrc")"
 NODE_TARBALL="node-${NODE_VERSION}-darwin-arm64.tar.gz"
 NODE_URL="https://nodejs.org/dist/${NODE_VERSION}/${NODE_TARBALL}"
-NODE_SHA256="1d7f34ec4c03e12d8b33481e5c4560432d7dc31a0ef3ff5a4d9a8ada7cf6ecc9"
+NODE_SHA256="d38bd5e5a2ddce6bbb5ce45e46e208337da4d51fffe611e567fd32073d6439f6"
 
 # Signing: "-" = ad-hoc (default). Set SIGN_IDENTITY to a Developer ID
 # Application identity for a distributable build.

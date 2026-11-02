@@ -219,7 +219,7 @@ def test_new_rebuilds_the_install_and_never_touches_config_user_json(tmp_path):
 def test_removed_flags_are_unknown(tmp_path, flag):
     """A fresh install always starts in Local mode; the mode is changed in
     Settings, not by a setup flag."""
-    (tmp_path / ".nvmrc").write_text("22.16.0\n")
+    (tmp_path / ".nvmrc").write_text("26.13.0\n")
     keep = tmp_path / "config.user.json"
     keep.write_text("{}")
 

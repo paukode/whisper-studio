@@ -90,7 +90,7 @@ def test_status_shows_the_workspaces_eslint_without_running_it(tmp_path, monkeyp
 
     def fake_run(argv, *, cwd=None, timeout=10.0):
         calls.append(argv)
-        return ToolRun(0, "v22.16.0\n", "")
+        return ToolRun(0, "v26.13.0\n", "")
 
     monkeypatch.setattr(status, "node_path", lambda: "/app/bin/node")
     monkeypatch.setattr(status, "run_tool", fake_run)
@@ -106,7 +106,7 @@ def test_status_shows_the_workspaces_eslint_without_running_it(tmp_path, monkeyp
     # Opening the page executes nothing from the workspace: only the app's
     # node is asked for its version.
     assert calls == [["/app/bin/node", "--version"]]
-    assert "Node 22.16.0" in row.note
+    assert "Node 26.13.0" in row.note
 
 
 def test_an_eslint_whose_node_does_not_run_is_not_working(tmp_path, monkeypatch):

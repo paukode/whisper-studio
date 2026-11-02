@@ -94,7 +94,7 @@ npx tsc --noEmit && npm test && npm run lint && npm run build
 ```
 
 - Python 3.12 is the code's floor (the voice SDK pins it); the packaged app
-  and `setup.sh` use 3.13. The project pins Node in `.nvmrc` (22.16.0), and
+  and `setup.sh` use 3.13. The project pins Node in `.nvmrc` (26.13.0), and
   `setup.sh` installs it into `venv/`; the system Node on this Mac is 24, so
   use `venv/bin/node` when the version matters.
 - Run the full pytest suite with the DEFAULT environment and expect it green.
