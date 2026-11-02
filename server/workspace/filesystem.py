@@ -47,8 +47,9 @@ def _ws_list_dir(root: str, rel_path: str = "") -> list[dict]:
 def _ws_search_files(root: str, query: str, max_results: int = 100) -> list[dict]:
     """Search for files matching a query string (case-insensitive) across the workspace.
 
-    Uses os.walk with the same ignore rules as the old scan, but returns only
-    files whose path contains the query. Stops after max_results matches.
+    Walks the tree with os.walk, skipping dot folders and the build and
+    dependency folders in _WS_IGNORED_DIRS, and returns only files whose path
+    contains the query. Stops after max_results matches.
     """
     query_lower = query.lower()
     results = []

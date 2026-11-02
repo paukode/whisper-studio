@@ -1,14 +1,17 @@
-"""Tool schemas advertised to the LLM.
+"""Tool schemas advertised to the model.
 
-Four schema groups, ALL returned unconditionally — the tool catalog is
+Four schema groups, ALL returned unconditionally: the tool catalog is
 byte-stable across workspace connect/disconnect so the prompt-prefix cache
 survives the flip (register always, refuse at execution):
 - get_global_workspace_tools(): ws_open_folder, so the model can connect a
   workspace mid-conversation.
-- get_workspace_write_tools(): the four file-write tools; each executor
-  answers a missing workspace with a [WS_WORKSPACE_PROMPT] folder picker.
-- get_workspace_tools(): read/list/grep/glob + the write tools + run_command;
-  executors answer "No workspace connected." when there is none.
+- get_workspace_write_tools(): the five file-write tools. With no workspace,
+  ws_write_file, ws_edit_file and ws_delete_file raise the
+  [WS_WORKSPACE_PROMPT] folder picker; ws_create_file and save_file save to
+  ~/Documents (or the path the user named) through the save approval.
+- get_workspace_tools(): read/list/grep/glob, the write tools and
+  ws_run_command; executors answer "No workspace connected." when there is
+  none.
 - get_worktree_tools(): executors refuse when the workspace is not a git repo.
 """
 
@@ -75,7 +78,7 @@ def get_workspace_tools() -> list[dict]:
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Relative path within the workspace (e.g. 'src/main.py'), or an absolute path anywhere (the scratch folder, a file elsewhere on this Mac; ~ is expanded). Reading never asks; credential stores such as ~/.ssh and ~/.aws are refused.",
+                        "description": "Relative path within the workspace (e.g. 'src/main.py'), or an absolute path anywhere (the scratch folder, a file elsewhere on this Mac; ~ is expanded). Reading never asks, except a credential store such as ~/.ssh or ~/.aws, which follows the permission mode (Bypass reads it, other modes ask first).",
                     },
                     "offset": {
                         "type": "integer",
@@ -97,7 +100,7 @@ def get_workspace_tools() -> list[dict]:
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Relative directory path ('' or '.' for the workspace root), or an absolute path anywhere (~ is expanded). Reading never asks; credential stores are refused.",
+                        "description": "Relative directory path ('' or '.' for the workspace root), or an absolute path anywhere (~ is expanded). Reading never asks, except a credential store, which follows the permission mode (Bypass reads it, other modes ask first).",
                     }
                 },
                 "required": ["path"],
@@ -261,16 +264,14 @@ def get_workspace_tools() -> list[dict]:
 def get_workspace_write_tools() -> list[dict]:
     """The file-write tools, advertised with or without a connected workspace.
 
-    Each of these executors handles "no workspace" by returning a
+    With no workspace, ws_write_file, ws_edit_file and ws_delete_file return a
     [WS_WORKSPACE_PROMPT] payload: the user gets a folder picker, the chosen
     folder is connected, and the turn resumes so the same call is re-issued
-    against a real workspace. Withholding them until a workspace exists made
-    that flow unreachable — the model was told (by the no_workspace prompt
-    section) to call tools that were not in its catalog, and the only workspace
-    tool it did have, ws_open_folder, was the one the section told it not to use.
+    against it. ws_create_file and save_file save to ~/Documents (or a path
+    the user named) through the save approval instead.
 
-    ws_run_command is deliberately NOT here: it has no picker fallback and just
-    errors without a workspace.
+    ws_run_command is not here: it is advertised by get_workspace_tools and
+    refuses at execution without a workspace.
     """
     return [
         {

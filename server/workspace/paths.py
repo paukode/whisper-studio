@@ -2,7 +2,7 @@
 
 Lowest layer of the workspace package — depends on nothing else inside it.
 Owns the mutable backup dict so any caller (executors, routes, the approval
-bootstrap module) mutates the same object regardless of how it was imported.
+executors) mutates the same object regardless of how it was imported.
 """
 
 import logging
@@ -91,8 +91,6 @@ def _resolve_path(path: str) -> str:
     return path
 
 
-# Repo root lives three dirname() calls above this file:
-#   server/workspace/paths.py -> server/workspace -> server -> <repo>
 DATA_DIR = data_root()
 WORKSPACE_CONFIG_PATH = os.path.join(DATA_DIR, "workspace_config.json")
 RECENT_WORKSPACES_PATH = os.path.join(DATA_DIR, "recent_workspaces.json")
@@ -155,7 +153,7 @@ def in_other_scratch(filepath: str, session_id: str | None) -> bool:
 # File-saving tools build their full content BEFORE the approval card is
 # shown: the finished bytes are written to this app-sandbox staging area at
 # tool-call time, and approving just MOVES the ready file to the user's
-# destination (server/approval/bootstrap.py's _do_save_to_path). By the time
+# destination (server/approval/executors.py's _do_save_to_path). By the time
 # the user sees the card, the file already exists and cannot fail to build.
 
 _STAGING_MAX_AGE_SECONDS = 24 * 3600

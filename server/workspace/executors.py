@@ -5,10 +5,10 @@ or route deps. The decorators fire at import time, so the package `__init__.py`
 must import this module for tool registration to take effect.
 
 Also home to:
-- execute_ws_open_folder: the public bridge used by chat.py / tool_router.py
+- execute_ws_open_folder: the bridge tool_router.py calls
 - _normalize_quotes + _replace_with_normalization: quote-tolerant matching
   used by ws_edit_file
-- _WORKTREES: in-memory registry shared with the worktree route handlers
+- _WORKTREES: in-memory worktree registry, cleared on a workspace switch
 
 ws_run_command asks read_only._is_read_only_command whether a command may skip
 the approval card; one that does runs under the read-only OS sandbox.
@@ -580,7 +580,7 @@ def _stage_and_request_save(dest: str, filename: str, data: bytes) -> str:
     destination against the sensitive-path denylist, write the FINISHED
     bytes to the app-sandbox staging area, and return the [WS_APPROVAL]
     payload whose approval simply MOVES the ready file into place
-    (server/approval/bootstrap.py's _do_save_to_path). By the time the user
+    (server/approval/executors.py's _do_save_to_path). By the time the user
     sees the card the file already exists — approving cannot fail on
     content problems, and declining leaves nothing outside the sandbox."""
     from server.security.sensitive_paths import is_sensitive_path
