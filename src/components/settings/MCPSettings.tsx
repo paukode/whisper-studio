@@ -293,6 +293,8 @@ export const MCPSettings: React.FC = () => {
           payload: { elicitation_id: e.elicitation_id, response_action: responseAction, content },
         });
         await useMcpStore.getState().refresh();
+      } catch (err) {
+        setError(`Could not answer ${e.server}: ${err instanceof Error ? err.message : String(err)}`);
       } finally {
         setElicitationBusy(null);
       }
@@ -301,7 +303,7 @@ export const MCPSettings: React.FC = () => {
   );
 
   const statusClass = (status: string) => {
-    if (status === 'running' || status === 'connected') return 'connected';
+    if (status === 'connected') return 'connected';
     if (status === 'error') return 'error';
     return 'stopped';
   };
