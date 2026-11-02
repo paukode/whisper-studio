@@ -28,6 +28,37 @@ _executor = ThreadPoolExecutor(max_workers=AGENT_CALL_CONCURRENCY)
 STRUCTURED_TOOL_NAME = "emit_result"
 
 
+def _apply_cache_checkpoints(body: dict) -> None:
+    """Prompt-cache checkpoints for one agent call, with the same helpers
+    interactive chat uses (server/chat/caching.py): the last tool, the system
+    block and the last message. That is three of the four breakpoints Bedrock
+    allows. A structured call and its repair retry share the prefix, so the
+    retry reads the transcript from the cache. The shared ``messages`` list
+    is never changed: only the request copy carries ``cache_control``."""
+    from server.chat.caching import (
+        CACHE_TTL,
+        annotate_messages_cache,
+        cached_tools_and_system,
+    )
+    from server.infrastructure.feature_flags import is_enabled
+
+    system = body.get("system")
+    if not isinstance(system, str) or not system or not is_enabled("prompt_caching"):
+        return
+    tools = body.get("tools")
+    if tools:
+        body["tools"], body["system"] = cached_tools_and_system(tools, system, "", CACHE_TTL)
+    else:
+        body["system"] = [
+            {
+                "type": "text",
+                "text": system,
+                "cache_control": {"type": "ephemeral", "ttl": CACHE_TTL},
+            }
+        ]
+    body["messages"] = annotate_messages_cache(body["messages"], CACHE_TTL)
+
+
 class AnthropicBedrockAdapter:
     def __init__(self, *, model_key: str, model_id: str):
         self.model_key = model_key
@@ -92,6 +123,8 @@ class AnthropicBedrockAdapter:
                 body["output_config"] = {
                     "effort": api_effort_for(effort_label, meta, self.model_key)
                 }
+
+        _apply_cache_checkpoints(body)
 
         bedrock = self._bedrock_client()
         request_body = json.dumps(body)
