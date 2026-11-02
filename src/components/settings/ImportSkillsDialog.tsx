@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useState } from 'react';
-import { post } from '@/api/client';
+import { post, readErrorBody } from '@/api/client';
 import { useBackdropDismiss } from '@/hooks/useBackdropDismiss';
 
 interface PreviewSkill {
@@ -21,17 +21,6 @@ type Mode = 'git' | 'local';
 
 const errMsg = (e: unknown): string =>
   e instanceof Error ? e.message : String(e);
-
-/** Read a JSON error body ({error} or {detail}) from a failed multipart
- *  response, falling back to the status text. */
-async function readError(resp: Response): Promise<string> {
-  try {
-    const body = (await resp.json()) as { error?: string; detail?: string };
-    return body.error || body.detail || `HTTP ${resp.status}`;
-  } catch {
-    return `HTTP ${resp.status}`;
-  }
-}
 
 /** Import folder skills from a git URL OR a local folder: preview the available
  *  skills, select some, and import them into /skills/ (hot-reloaded, no restart).
@@ -105,7 +94,7 @@ export const ImportSkillsDialog: React.FC<{
         method: 'POST',
         body: buildForm(files),
       });
-      if (!resp.ok) throw new Error(await readError(resp));
+      if (!resp.ok) throw new Error(await readErrorBody(resp));
       const r = (await resp.json()) as { skills: PreviewSkill[] };
       setSkills(r.skills ?? []);
       if ((r.skills ?? []).length === 0) setError('No skills found in that folder.');
@@ -157,7 +146,7 @@ export const ImportSkillsDialog: React.FC<{
         fd.append('subpaths', JSON.stringify([...selected]));
         fd.append('overwrite', overwrite ? 'true' : 'false');
         const resp = await fetch('/api/skills/import/local', { method: 'POST', body: fd });
-        if (!resp.ok) throw new Error(await readError(resp));
+        if (!resp.ok) throw new Error(await readErrorBody(resp));
         applyResult((await resp.json()) as ImportResult);
       }
     } catch (e) {
@@ -293,7 +282,6 @@ export const ImportSkillsDialog: React.FC<{
                 // imperatively so the picker selects a whole directory tree.
                 if (el) {
                   el.setAttribute('webkitdirectory', '');
-                  el.setAttribute('directory', '');
                 }
               }}
               type="file"

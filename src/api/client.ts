@@ -8,7 +8,10 @@ export interface RequestOptions {
   schema?: ZodType;
 }
 
-async function parseErrorMessage(response: Response): Promise<string> {
+/** The reason in a failed response: its JSON `detail`, `message` or `error`,
+ *  else the raw text, else the status. Also for raw fetch calls (multipart
+ *  uploads) that cannot go through request(). */
+export async function readErrorBody(response: Response): Promise<string> {
   try {
     const body = await response.text();
     try {
@@ -66,7 +69,7 @@ async function request<T>(
   }
 
   if (!response.ok) {
-    const message = await parseErrorMessage(response);
+    const message = await readErrorBody(response);
     throw new ApiError(response.status, message, url, method);
   }
 
