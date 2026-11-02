@@ -69,6 +69,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import Response
 
 from server.infrastructure.paths import data_root
+from server.security.egress_policy import DEFAULT_NETWORK_POLICY, VALID_TIERS
 
 log = logging.getLogger("whisper-studio")
 
@@ -98,16 +99,10 @@ DEFAULTS = {
     "mode": "default",
     "rules": [],
     "category_modes": {},
-    # DEFAULT-OFF egress control for sandboxed commands (server/sandbox.py +
-    # server/security/egress_policy.py). "permissive" == today's behavior:
-    # no domain restriction, no proxy. See egress_policy.py for the tier
-    # semantics and DEFAULT_NETWORK_POLICY (kept in sync with this literal
-    # by hand — a module-level import either way would create a cycle).
-    "network_policy": {
-        "tier": "permissive",
-        "custom_allowed_domains": [],
-        "methods_only_safe": False,
-    },
+    # Egress control for sandboxed commands (server/sandbox.py +
+    # server/security/egress_policy.py), off by default: "permissive" means
+    # no domain restriction and no proxy. See egress_policy.py for the tiers.
+    "network_policy": DEFAULT_NETWORK_POLICY,
 }
 
 # ── Auto-mode circuit breaker ───────────────────────────────────────────────
@@ -262,8 +257,6 @@ def _match_rule(tool_name: str, tool_input: dict, rules: list) -> tuple[int | No
 def _validate_network_policy(np: object) -> str | None:
     """Returns an error string if `np` isn't a valid (partial) network_policy
     body, or None if it's fine to merge onto the saved config."""
-    from server.security.egress_policy import VALID_TIERS
-
     if not isinstance(np, dict):
         return "network_policy must be an object"
     if "tier" in np and np["tier"] not in VALID_TIERS:

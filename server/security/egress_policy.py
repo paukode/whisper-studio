@@ -86,10 +86,8 @@ TIER_RESTRICTIVE = "restrictive"
 
 VALID_TIERS = frozenset({TIER_PERMISSIVE, TIER_CURATED, TIER_RESTRICTIVE})
 
-# The shape of `permissions.json`'s "network_policy" key. Kept as a plain
-# literal (not imported by server/security/permissions.py) to avoid a
-# circular import — permissions.py embeds an equivalent literal in its own
-# DEFAULTS; keep the two in sync by hand if this shape changes.
+# The shape of `permissions.json`'s "network_policy" key; permissions.py
+# uses it as its DEFAULTS entry.
 DEFAULT_NETWORK_POLICY = {
     "tier": TIER_PERMISSIVE,
     "custom_allowed_domains": [],
