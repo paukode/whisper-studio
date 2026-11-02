@@ -221,8 +221,22 @@
         its report), "done", "failed", or the limit that stopped the run.</li>
       <li><b>The feed.</b> The task of the agent, each text that the agent wrote, and each tool call
         with its result below it. While the agent waits, the feed shows what it waits for.</li>
+      <li><b>The task.</b> The task shows as formatted text, as in the chat. Headings, lists, and
+        code blocks keep their format. A brief that the agent shares with other agents of a
+        workflow is in a closed section above the task. The end of a long task is in a closed
+        section below it. The app never cuts a code block between the two parts. HTML tags in the
+        task show as text.</li>
       <li><b>The report.</b> When the run is complete, the pane shows the report of the agent.</li>
     </ul>
+    <p>In the tasks list of the header, click the arrow of a completed agent row to see its
+      report. The report shows as formatted text, as in the chat. Shell commands and running tasks
+      show their output as plain text.</p>
+    <h3 id="workflow-run-card">The workflow run card</h3>
+    <p>A workflow run card shows one row for each agent of the run. A row stays on the card when
+      its agent completes. The rows also stay after you reload the app. The line below the title
+      shows the number of agents and the highest number of agents that ran at the same time, for
+      example "12 agents · at most 4 at once". When the script names its phases, a second line
+      shows the number of agents in each phase, for example "plan 1 · review 8 · fix 3".</p>
     <p>"Extend +20" gives a running agent 20 more rounds, while its context is still loaded. This
       costs less than a new start of the agent. A toast tells you if the extension failed. A
       completed agent has no "Extend +20" button. Send it a follow-up in place of an extension.</p>
