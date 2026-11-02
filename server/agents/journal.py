@@ -178,12 +178,12 @@ def shared_brief(agent_dir: str, meta: dict) -> dict | None:
     return {"text": brief, "agents": sum(1 for o in others if o.startswith(brief))}
 
 
-def load_feed(agent_id: str, session_id: str | None = None) -> dict | None:
+def load_feed(agent_id: str) -> dict | None:
     """What the agent pane shows: meta, the newest FEED_EVENTS_MAX progress
     events (oldest first), the report, and the brief the task shares with
     its workflow siblings. The API message list is left on disk; the pane
     never needs it."""
-    d = find_dir(agent_id, session_id)
+    d = find_dir(agent_id)
     if not d:
         return None
     out: dict = {"agent_id": agent_id, "meta": {}, "events": [], "report": "", "shared_brief": None}
