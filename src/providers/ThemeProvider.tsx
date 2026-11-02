@@ -50,7 +50,7 @@ export const PALETTE_STYLE_ID = 'ws-palette';
  * attribute, so the new values are already in place when they fire. The
  * default palette is themes.css itself and needs no stylesheet.
  */
-export function applyPalette(id: string): void {
+function applyPalette(id: string): void {
   const palette = findPalette(id);
   const css = palette.id === DEFAULT_PALETTE_ID ? '' : paletteCss(palette);
   let style = document.getElementById(PALETTE_STYLE_ID);
@@ -88,7 +88,7 @@ function resolveTheme(key: ThemeKey, systemTheme: 'light' | 'dark'): 'light' | '
   return key === 'auto' ? systemTheme : key;
 }
 
-export const ThemeContext = createContext<ThemeContextValue | null>(null);
+const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 /**
  * ThemeProvider manages the active theme for the application.

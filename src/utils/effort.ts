@@ -8,7 +8,7 @@
 export const EFFORT_ORDER = ['none', 'low', 'medium', 'high', 'extra', 'max', 'ultracode'] as const;
 export type EffortLevel = (typeof EFFORT_ORDER)[number];
 
-export const EFFORT_LABELS: Record<string, string> = {
+const EFFORT_LABELS: Record<string, string> = {
   none: 'None',
   low: 'Low',
   medium: 'Medium',

@@ -50,7 +50,7 @@ export const TeamProgressEventSchema = z.object({
  *  field is declared, since a nested z.object drops the keys it does not
  *  name; the optional ones also accept null, which reads as absent. `kind`
  *  stays an open string: a kind this client does not know yet still renders. */
-export const DeliverySchema = z.object({
+const DeliverySchema = z.object({
   kind: z.string(),
   target: z.string(),
   label: z.string(),

@@ -22,9 +22,9 @@ import { toError } from '@/utils/toError';
  *  coerced back up to 32K on read. Persisted to localStorage since the
  *  settings store has no persist middleware. */
 const LOCAL_CTX_KEY = 'whisper.localContextWindow';
-export const LOCAL_CTX_MIN = 32768;
-export const LOCAL_CTX_MAX = 262144;
-export const LOCAL_CTX_DEFAULT = 32768;
+const LOCAL_CTX_MIN = 32768;
+const LOCAL_CTX_MAX = 262144;
+const LOCAL_CTX_DEFAULT = 32768;
 
 function readLocalContextWindow(): number {
   try {
@@ -88,8 +88,8 @@ async function loadMemoryFlag(): Promise<void> {
  *  level so switching between a cloud and a local model changes neither.
  *  Max (no thinking cap) is the default; persisted like the context window. */
 const LOCAL_THINKING_KEY = 'whisper.localThinkingLevel';
-export const LOCAL_THINKING_LEVELS = ['none', 'low', 'medium', 'high', 'max'];
-export const LOCAL_THINKING_DEFAULT = 'max';
+const LOCAL_THINKING_LEVELS = ['none', 'low', 'medium', 'high', 'max'];
+const LOCAL_THINKING_DEFAULT = 'max';
 
 function readLocalThinkingLevel(): string {
   try {

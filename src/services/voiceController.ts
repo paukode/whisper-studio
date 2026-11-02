@@ -495,7 +495,7 @@ class VoiceController {
   }
 }
 
-export function floatToPcm16(samples: Float32Array): Int16Array {
+function floatToPcm16(samples: Float32Array): Int16Array {
   const out = new Int16Array(new ArrayBuffer(samples.length * 2));
   for (let i = 0; i < samples.length; i++) {
     const s = Math.max(-1, Math.min(1, samples[i]));
