@@ -39,9 +39,10 @@ Recommended vs shipped: the app ships NO local chat models by default — a fres
 install has an empty on-device catalog until the user downloads one from Settings
 > Models > Discover. ``RECOMMENDED_LOCAL_MODELS`` below is a curated set the
 Discover tab surfaces for one-click install; a recommended model only enters the
-effective catalog once its weights are on disk (so it shows up after download,
-and a model downloaded by a prior release is not orphaned). Anything the user
-adds/installs lands in ``chat_models`` and is always present, even mid-download.
+effective catalog through its ``chat_models`` entry, which a Discover install
+writes; the recommendation fills any field that entry leaves out. Anything the
+user adds or installs lands in ``chat_models`` and is present at once, even
+mid-download.
 """
 
 from __future__ import annotations
@@ -146,8 +147,9 @@ def _config_local_models() -> dict[str, dict]:
             "label": m.get("label") or key,
             "supports_tools": bool(m.get("supports_tools", False)),
         }
-        # Only carry weight fields the config actually set, so a built-in of the
-        # same key keeps supplying the rest instead of being blanked out.
+        # Only carry weight fields the config actually set, so a recommended
+        # model of the same key keeps supplying the rest instead of being
+        # blanked out.
         for field in (*_REQUIRED, "ctx", "engine"):
             if m.get(field):
                 entry[field] = m[field]
@@ -177,30 +179,22 @@ def recommended_models() -> dict[str, dict]:
 
 
 def local_models() -> dict[str, dict]:
-    """The effective on-device catalog: recommended models that are DOWNLOADED,
-    merged with the user's config ``is_local`` entries (config winning per key).
+    """The effective on-device catalog: the user's config ``is_local``
+    entries. An entry whose key is a recommended model is laid over that
+    recommendation, so a config entry may set just one field (``ctx``) and
+    the recommendation fills the rest.
 
     A fresh install ships nothing local, so this is empty until the user
-    downloads a model from Discover — which writes a config entry (always
-    present, so an in-progress download shows immediately) and, once complete,
-    also satisfies the on-disk check. A recommended model left on disk by a prior
-    release still appears here even without a config entry, so its weights stay
-    manageable instead of being orphaned.
+    downloads a model from Discover, which writes a config entry (present at
+    once, so an in-progress download shows immediately).
 
     Entries that still lack a required weight field after the merge are dropped
     with a warning — a half-declared model would otherwise fail later at load
     time with a much less obvious error.
     """
-    merged: dict[str, dict] = {
-        key: dict(entry)
-        for key, entry in RECOMMENDED_LOCAL_MODELS.items()
-        if _recommended_downloaded_on_disk(entry)
-    }
+    merged: dict[str, dict] = {}
     for key, entry in _config_local_models().items():
-        if key in merged:
-            merged[key].update(entry)
-        else:
-            merged[key] = dict(entry)
+        merged[key] = {**RECOMMENDED_LOCAL_MODELS.get(key, {}), **entry}
 
     usable: dict[str, dict] = {}
     for key, entry in merged.items():

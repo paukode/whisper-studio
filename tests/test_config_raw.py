@@ -156,9 +156,7 @@ def test_put_local_model_id_must_have_local_prefix(client):
 def test_put_recommended_local_key_may_omit_weight_fields(client, monkeypatch):
     """A config entry for a RECOMMENDED local model (the recommendation fills
     repo_id/filename/dir) may carry just an override like ctx. It validates on its
-    own and becomes loadable once the weights are on disk."""
-    # Pin the recommendation as downloaded so it enters the effective registry.
-    monkeypatch.setattr("server.local.registry._recommended_downloaded_on_disk", lambda entry: True)
+    own and enters the registry over the recommendation."""
     text = json.dumps(
         {
             "chat_models": {

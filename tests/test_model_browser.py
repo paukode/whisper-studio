@@ -785,25 +785,6 @@ def test_remove_from_list_deletes_local_user_entry(isolated_home, monkeypatch):
     assert key not in data.get("chat_models_disabled", [])
 
 
-def test_remove_from_list_deletes_a_downloaded_recommendation(isolated_home, monkeypatch):
-    # A recommended model present on disk (e.g. from a prior release) with no user
-    # config entry is still LOCAL — remove deletes it, never tombstones.
-    monkeypatch.setattr(
-        "server.local.registry._recommended_downloaded_on_disk",
-        lambda entry: entry.get("id") == "local:gemma-4-12b-it-qat-q4_0",
-    )
-    monkeypatch.setattr("server.models_manager.catalog.get_entry", lambda k: None)
-    out = service.remove_from_list("local_gemma")
-    assert out["scope"] == "local"
-
-    data = (
-        json.loads((isolated_home / "config.user.json").read_text())
-        if (isolated_home / "config.user.json").exists()
-        else {}
-    )
-    assert "local_gemma" not in data.get("chat_models_disabled", [])
-
-
 def test_remove_from_list_refuses_a_model_answering_in_a_chat(isolated_home, monkeypatch):
     """Refused as a whole: the config entry stays with the weights, instead of
     the entry vanishing while gigabytes of weights stay on disk unlisted."""

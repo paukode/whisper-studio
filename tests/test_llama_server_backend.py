@@ -53,26 +53,13 @@ def _seed_local_registry(monkeypatch):
 # ── registry ─────────────────────────────────────────────────────────────────
 
 
-def test_registry_is_empty_when_nothing_installed_or_downloaded(monkeypatch):
-    """The app ships no local models: a fresh catalog with no config entries and
-    nothing on disk is empty until the user downloads a recommendation."""
+def test_registry_is_empty_without_config_entries(monkeypatch):
+    """The app ships no local models, and a recommended model's weights on
+    disk with no config entry (left by a release before 2026-08-06) do not
+    bring it back: only chat_models entries count."""
     monkeypatch.setattr(R, "_config_local_models", lambda: {})
-    monkeypatch.setattr(R, "_recommended_downloaded_on_disk", lambda entry: False)
+    monkeypatch.setattr(R, "_recommended_downloaded_on_disk", lambda entry: True)
     assert R.local_models() == {}
-
-
-def test_registry_surfaces_a_downloaded_recommendation(monkeypatch):
-    """A recommended model appears once its weights are on disk, even with no
-    config entry (e.g. downloaded by a prior release) — so it is never orphaned."""
-    monkeypatch.setattr(R, "_config_local_models", lambda: {})
-    monkeypatch.setattr(
-        R,
-        "_recommended_downloaded_on_disk",
-        lambda entry: entry.get("id") == "local:gemma-4-12b-it-qat-q4_0",
-    )
-    models = R.local_models()
-    assert set(models) == {"local_gemma"}
-    assert models["local_gemma"]["id"] == "local:gemma-4-12b-it-qat-q4_0"
 
 
 def test_registry_adds_a_config_only_model(monkeypatch):
@@ -121,14 +108,9 @@ def test_registry_drops_half_declared_model(monkeypatch):
     assert "local_broken" not in R.local_models()
 
 
-def test_config_overrides_downloaded_recommendation_field(monkeypatch):
-    """A config entry can retune one field of a downloaded recommendation without
-    restating its repo — the recommended definition fills the untouched fields."""
-    monkeypatch.setattr(
-        R,
-        "_recommended_downloaded_on_disk",
-        lambda entry: entry.get("id") == "local:gemma-4-12b-it-qat-q4_0",
-    )
+def test_config_overrides_one_field_of_a_recommendation(monkeypatch):
+    """A config entry can retune one field of a recommended model without
+    restating its repo: the recommended definition fills the untouched fields."""
     monkeypatch.setattr(R, "_config_local_models", lambda: {"local_gemma": {"ctx": 65536}})
     entry = R.local_models()["local_gemma"]
     assert entry["ctx"] == 65536
