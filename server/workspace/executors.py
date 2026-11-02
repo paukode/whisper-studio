@@ -970,7 +970,7 @@ def _background_started_message(
 # Feature 8: Git Worktree Isolation
 # =============================================================================
 
-_WORKTREES: dict[str, dict] = {}  # name -> {path, branch, base_branch}
+_WORKTREES: dict[str, dict] = {}  # name -> {"branch": its whisper/<name> branch}
 
 
 @register_executor("ws_create_worktree", read_only=False, concurrent_safe=False)
@@ -978,9 +978,6 @@ def _exec_ws_create_worktree(tool_input, transcript, current_attachments):
     ws = get_workspace_path()
     if not ws:
         return "No workspace connected."
-    git_dir = os.path.join(ws, ".git")
-    if not os.path.isdir(git_dir):
-        return "Workspace is not a git repository."
     name = tool_input.get("name", "").strip()
     if not name:
         import time
@@ -996,6 +993,18 @@ def _exec_ws_create_worktree(tool_input, transcript, current_attachments):
         validate_worktree_slug(name)
     except ValueError as e:
         return f"Invalid worktree name: {e}"
+    # git decides: a linked worktree (.git is a file) or a folder inside a
+    # repository is a repository too.
+    probe = subprocess.run(
+        ["git", "rev-parse", "--is-inside-work-tree"],
+        capture_output=True,
+        text=True,
+        cwd=ws,
+        timeout=15,
+    )
+    if probe.returncode != 0 or probe.stdout.strip() != "true":
+        reason = probe.stderr.strip()
+        return "Workspace is not a git repository" + (f": {reason}" if reason else ".")
     branch = f"whisper/{name}"
     worktree_path = os.path.join(ws, ".worktrees", name)
     try:
@@ -1008,7 +1017,7 @@ def _exec_ws_create_worktree(tool_input, transcript, current_attachments):
         )
         if result.returncode != 0:
             return f"Failed to create worktree: {result.stderr.strip()}"
-        _WORKTREES[name] = {"path": worktree_path, "branch": branch, "base": "HEAD"}
+        _WORKTREES[name] = {"branch": branch}
         return json.dumps({"created": True, "name": name, "branch": branch, "path": worktree_path})
     except Exception as e:
         return f"Worktree error: {e}"
@@ -1031,6 +1040,8 @@ def _exec_ws_diff_worktree(tool_input, transcript, current_attachments):
             cwd=ws,
             timeout=15,
         )
+        if result.returncode != 0:
+            return f"Diff error: {result.stderr.strip()}"
         diff = result.stdout.strip()
         return diff if diff else "(no changes in worktree)"
     except Exception as e:

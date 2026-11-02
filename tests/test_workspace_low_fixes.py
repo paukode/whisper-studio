@@ -135,8 +135,12 @@ def test_create_worktree_accepts_clean_slug(tmp_path, monkeypatch):
         stdout = ""
 
     def fake_run(cmd, *a, **k):
-        calls["cmd"] = cmd
-        return FakeResult()
+        result = FakeResult()
+        if cmd[1:2] == ["rev-parse"]:
+            result.stdout = "true\n"
+        else:
+            calls["cmd"] = cmd
+        return result
 
     monkeypatch.setattr(executors.subprocess, "run", fake_run)
 
@@ -244,3 +248,40 @@ def test_agent_registers_and_emits_resolved_model(monkeypatch):
     assert started and started[0]["model"] == RESOLVED
     # And the bedrock call actually used it.
     assert invoked.get("modelId") == RESOLVED
+
+
+def test_create_worktree_accepts_a_linked_worktree_workspace(tmp_path, monkeypatch):
+    """A workspace whose .git is a file (a linked worktree) used to be refused
+    as 'not a git repository'."""
+    import subprocess
+
+    main = tmp_path / "main"
+    main.mkdir()
+    run = lambda *a, cwd=main: subprocess.run(["git", *a], cwd=cwd, check=True, capture_output=True)  # noqa: E731
+    run("init", "-q", "-b", "main")
+    run("config", "user.email", "t@example.com")
+    run("config", "user.name", "t")
+    (main / "a.txt").write_text("x\n")
+    run("add", "a.txt")
+    run("commit", "-qm", "first")
+    linked = tmp_path / "linked"
+    run("worktree", "add", "-q", "-b", "side", str(linked))
+    assert (linked / ".git").is_file()
+    monkeypatch.setattr(executors, "get_workspace_path", lambda: str(linked))
+
+    data = json.loads(executors._exec_ws_create_worktree({"name": "feature-y"}, "", None))
+
+    assert data["created"] is True and data["branch"] == "whisper/feature-y"
+
+
+def test_create_worktree_refuses_a_folder_outside_any_repository(tmp_path, monkeypatch):
+    monkeypatch.setattr(executors, "get_workspace_path", lambda: str(tmp_path))
+    out = executors._exec_ws_create_worktree({"name": "x"}, "", None)
+    assert out.startswith("Workspace is not a git repository: fatal: not a git repository")
+
+
+def test_diff_worktree_reports_a_git_failure(tmp_path, monkeypatch):
+    monkeypatch.setattr(executors, "get_workspace_path", lambda: str(tmp_path))
+    monkeypatch.setitem(executors._WORKTREES, "gone", {"branch": "whisper/gone"})
+    out = executors._exec_ws_diff_worktree({"name": "gone"}, "", None)
+    assert out.startswith("Diff error: ") and out != "Diff error: "
