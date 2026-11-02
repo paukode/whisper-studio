@@ -66,10 +66,6 @@ THRESHOLDS = {
     embedder.NAME_ECAPA: {"match": 0.40, "new": 0.15, "single": 0.60},
     embedder.NAME_REDIMNET: {"match": 0.45, "new": 0.45, "single": 0.45},
 }
-# The historical (ECAPA) calibration, kept as the module-level names so
-# callers and tests that never load an encoder behave exactly as before.
-MATCH_THRESHOLD = THRESHOLDS[embedder.NAME_ECAPA]["match"]
-NEW_SPEAKER_THRESHOLD = THRESHOLDS[embedder.NAME_ECAPA]["new"]
 
 # Utterances shorter than this never CREATE a new speaker — short
 # windows give unreliable embeddings (a cough or cross-talk fragment
@@ -129,10 +125,8 @@ RECLUSTER_EVERY = 10
 # ...or this many when a brand-new speaker was just created — that is
 # exactly when assignment mistakes happen, so don't sit on them.
 RECLUSTER_AFTER_NEW = 3
-# Tree cutting (cosine distance): if even the final merge is below this,
-# everything is one speaker; and a merge-distance gap must be at least
-# MIN_GAP to be trusted as the cluster-count boundary.
-SINGLE_CLUSTER_DIST = THRESHOLDS[embedder.NAME_ECAPA]["single"]
+# Tree cutting: a merge-distance gap must be at least MIN_GAP to be trusted
+# as the cluster-count boundary (the one-speaker cut is THRESHOLDS "single").
 MIN_GAP = 0.12
 
 # Embedding (torch) work runs here, off the event loop and off the
@@ -141,14 +135,9 @@ executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="diarize")
 
 
 def _thresholds() -> dict:
-    """Calibration for the encoder that is actually loaded.
-
-    Falls back to the ECAPA numbers when nothing has been loaded yet:
-    there are no embeddings to judge in that state anyway, and it keeps
-    the historical behaviour for callers that inject their own vectors.
-    """
-    name = embedder.active_name() or embedder.NAME_ECAPA
-    return THRESHOLDS.get(name, THRESHOLDS[embedder.NAME_ECAPA])
+    """Calibration for the encoder that is loaded, or the configured one
+    when nothing is loaded yet (the encoder that will produce the vectors)."""
+    return THRESHOLDS[embedder.active_name() or embedder.configured_name()]
 
 
 def preload() -> None:

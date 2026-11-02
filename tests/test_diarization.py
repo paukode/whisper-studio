@@ -24,6 +24,16 @@ from server.diarization.speakers import (
 DIM = 8
 
 
+@pytest.fixture(autouse=True)
+def _ecapa_calibration(monkeypatch):
+    """The synthetic similarities below are written against the ECAPA
+    thresholds. Nothing loads an encoder here, so pin the configured one;
+    tests that compare encoders patch active_name themselves."""
+    from server.diarization import embedder
+
+    monkeypatch.setattr(embedder, "configured_name", lambda: embedder.NAME_ECAPA)
+
+
 def basis(i: int) -> np.ndarray:
     v = np.zeros(DIM, dtype=np.float32)
     v[i] = 1.0
@@ -279,9 +289,10 @@ def test_thresholds_follow_the_loaded_encoder(monkeypatch):
     assert sp._thresholds() == sp.THRESHOLDS[embedder.NAME_REDIMNET]
     monkeypatch.setattr(embedder, "active_name", lambda: embedder.NAME_ECAPA)
     assert sp._thresholds() == sp.THRESHOLDS[embedder.NAME_ECAPA]
-    # Nothing loaded: keep the historical calibration.
+    # Nothing loaded yet: the configured encoder's calibration.
     monkeypatch.setattr(embedder, "active_name", lambda: None)
-    assert sp._thresholds() == sp.THRESHOLDS[embedder.NAME_ECAPA]
+    monkeypatch.setattr(embedder, "configured_name", lambda: embedder.NAME_REDIMNET)
+    assert sp._thresholds() == sp.THRESHOLDS[embedder.NAME_REDIMNET]
 
 
 def test_a_different_voice_creates_a_speaker_under_redimnet(monkeypatch):
