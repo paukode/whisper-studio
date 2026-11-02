@@ -2,7 +2,7 @@ import React, { useCallback, useRef, useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { eventPath, inConnectedRoot, useWorkspaceStore } from '@/stores/workspaceStore';
 import { useUIStore } from '@/stores/uiStore';
-import { indexStatus, queryFile, type BinaryFileInfo } from '@/api/workspace';
+import { indexStatus, openInDefaultApp, queryFile, type BinaryFileInfo } from '@/api/workspace';
 import { getLangForPath } from '@/utils/languageDetection';
 import { FileTree } from './FileTree';
 import { EditorTabs } from './EditorTabs';
@@ -265,6 +265,19 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({ onCollapse }) =>
     [setViewerType],
   );
 
+  /** Open an Office document in its default app (Word or Pages): the app
+   *  views it but does not edit it. */
+  const openTabInDefaultApp = useCallback(async (path: string) => {
+    try {
+      await openInDefaultApp(path);
+    } catch (err) {
+      useUIStore.getState().addToast({
+        type: 'error',
+        message: `Could not open ${path.split('/').pop() || path}: ${toError(err).message}`,
+      });
+    }
+  }, []);
+
   /** Switch from Monaco back to Markdown preview. */
   const handleSwitchToMarkdown = useCallback(
     (path: string) => {
@@ -328,7 +341,7 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({ onCollapse }) =>
     if (vt === 'image') return <ImageViewer key={activeTab.path} filePath={activeTab.path} />;
     if (vt === 'pdf') return <PDFViewer key={activeTab.path} filePath={activeTab.path} />;
     if (vt === 'spreadsheet') return <SpreadsheetViewer key={activeTab.path} filePath={activeTab.path} />;
-    if (vt === 'word') return <WordViewer key={activeTab.path} filePath={activeTab.path} onEdit={() => handleSwitchToEditor(activeTab.path)} />;
+    if (vt === 'word') return <WordViewer key={activeTab.path} filePath={activeTab.path} onOpenInDefaultApp={() => void openTabInDefaultApp(activeTab.path)} />;
 
     if (vt === 'diff') {
       return (

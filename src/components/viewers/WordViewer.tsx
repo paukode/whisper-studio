@@ -7,7 +7,9 @@ import { useHtmlProp } from '@/hooks/useHtmlProp';
 
 export interface WordViewerProps {
   filePath: string;
-  onEdit?: () => void;
+  /** Opens the document in its default app (Word or Pages). The app has no
+   *  editor for a .docx: its text editor would save plain text over it. */
+  onOpenInDefaultApp?: () => void;
   /** Override the raw-bytes URL (e.g. sourceFileRawUrl for indexed-folder
    *  citations). Defaults to the workspace-relative rawFileUrl. */
   rawUrl?: string;
@@ -20,7 +22,7 @@ export interface WordViewerProps {
  * Safety: a .docx can come from anywhere, so mammoth's HTML is sanitized
  * (sanitizeHtml, DOMPurify) before it is rendered.
  */
-export const WordViewer: React.FC<WordViewerProps> = ({ filePath, onEdit, rawUrl }) => {
+export const WordViewer: React.FC<WordViewerProps> = ({ filePath, onOpenInDefaultApp, rawUrl }) => {
   const fileName = filePath.split('/').pop() ?? filePath;
 
   // react-query owns the fetch + convert lifecycle (loading/error/data) so
@@ -63,8 +65,8 @@ export const WordViewer: React.FC<WordViewerProps> = ({ filePath, onEdit, rawUrl
     <div className="ws-word-viewer" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div className="ws-markdown-toolbar">
         <button className="btn btn-sm active" type="button" disabled>Preview</button>
-        {onEdit && (
-          <button className="btn btn-sm" onClick={onEdit} type="button">Edit</button>
+        {onOpenInDefaultApp && (
+          <button className="btn btn-sm" onClick={onOpenInDefaultApp} type="button">Open in default app</button>
         )}
         <span style={{ flex: 1 }} />
         <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{fileName}</span>

@@ -223,8 +223,15 @@ async def ws_source_file(path: str = "", raw: bool = False):
     return {"path": full, "name": name, "kind": kind, "content": content}
 
 
+# Office documents are zip packages, never text. The editor's save writes
+# text, so a save of one of these would destroy the document; it is refused.
+# The viewers open them in the default app instead.
+OFFICE_DOCUMENT_EXTS = frozenset({".docx", ".xlsx", ".pptx", ".doc", ".xls", ".ppt"})
+
+
 @router.post("/write")
 async def ws_write_endpoint(request: Request):
+    """The editor's save (and New File): writes text to a workspace file."""
     body = await request.json()
     ws = get_workspace_path()
     if not ws:
@@ -234,6 +241,18 @@ async def ws_write_endpoint(request: Request):
             media_type="application/json",
         )
     path = body.get("path", "")
+    if os.path.splitext(path)[1].lower() in OFFICE_DOCUMENT_EXTS:
+        name = os.path.basename(path) or path
+        return Response(
+            content=json.dumps(
+                {
+                    "error": f"{name} is an Office document, not text. The editor cannot save "
+                    "it; nothing was written. Open it in its default app to change it."
+                }
+            ),
+            status_code=415,
+            media_type="application/json",
+        )
     content = _normalize_lf(body.get("content", ""))
     full = os.path.join(ws, path)
     if not _ws_validate_path(full, ws):

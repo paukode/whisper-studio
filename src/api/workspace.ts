@@ -87,6 +87,12 @@ export function undoEdit(toolUseId: string): Promise<UndoResult> {
   return post<UndoResult>('/api/workspace/undo', { tool_use_id: toolUseId });
 }
 
+/** Open a file in its macOS default app (Word or Pages for a .docx), as
+ *  a Finder double-click would. A workspace-relative or absolute path. */
+export function openInDefaultApp(path: string): Promise<void> {
+  return post<void>('/api/workspace/open-with', { path });
+}
+
 export function writeFile(path: string, content: string): Promise<void> {
   return post<void>('/api/workspace/write', { path, content });
 }
