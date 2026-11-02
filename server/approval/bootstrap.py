@@ -316,7 +316,8 @@ def register_defaults() -> None:
         first = next((ln for ln in (p.get("input") or "").splitlines() if ln.strip()), "")
         if len(first) > 80:
             first = first[:77] + "..."
-        return f"terminal_send: {first or '(read pending output)'}"
+        where = " (visible terminal)" if p.get("target") == "visible" else ""
+        return f"terminal_send{where}: {first or '(read pending output)'}"
 
     register(
         "terminal_send",
@@ -326,7 +327,7 @@ def register_defaults() -> None:
             summary=_terminal_send_summary,
             executor=_do_terminal_send,
             risk_hint="medium",
-            payload_fields=["input", "timeout", "cwd", "session_id"],
+            payload_fields=["input", "target", "timeout", "cwd", "session_id"],
             render_command=lambda p: p.get("input") or "(read pending output)",
         ),
     )

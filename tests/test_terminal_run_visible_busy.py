@@ -144,6 +144,10 @@ def test_runs_at_the_prompt_of_a_nested_shell(monkeypatch):
         assert await _wait_for(lambda: t._foreground_pgrp(s) not in (None, shell_pgrp)), (
             "the nested shell never took the foreground"
         )
+        # Its line editor reads the terminal once it shows its prompt.
+        from server.executors.terminal_run import _line_editor_reading
+
+        assert await _wait_for(lambda: _line_editor_reading(s))
         ok, text = await do_terminal_run(
             {"command": "echo nested-ok", "mode": "visible", "timeout": 10}
         )

@@ -219,10 +219,30 @@ def _visible_busy(program: str) -> str:
 _OPENED_NOTE = "[terminal] No terminal was open, so a new one was opened for this command.\n"
 
 
+# How to stop a run of the assistant that still holds the visible terminal.
+_STOP_HINT = (
+    "To stop it, call terminal_send with target='visible' and input '\\x03' (Ctrl-C), "
+    "or ask the user to press Ctrl-C in that terminal tab."
+)
+
+
+def _still_running(program: str) -> str:
+    """The refusal for a visible run while the assistant's own earlier run
+    still holds the visible terminal."""
+    who = f" ({program})" if program else ""
+    return (
+        f"Your earlier command is still running in the visible terminal{who}. "
+        "Further visible runs are refused until it ends, so nothing is typed into it. "
+        "Wait for it to end and call terminal_run again. " + _STOP_HINT
+    )
+
+
 # Programs that hold the terminal's foreground while sitting at a prompt of
 # their own: a nested shell (bash, nix develop's bash), a multiplexer, a
-# remote or elevated shell. A command typed into one runs at that prompt and
-# prints its completion marker as usual, so they do not make the terminal busy.
+# remote or elevated shell. They count as idle only while a line editor reads
+# the terminal (canonical input mode off, _line_editor_reading): a shell that
+# runs a script (`bash script.sh`) or `sudo make` keeps canonical mode and is
+# busy, so a command is never typed into its stdin.
 _PROMPT_HOSTS = frozenset(
     {
         "sh",
@@ -269,16 +289,30 @@ def _process_name(pid: int) -> str:
     return os.path.basename(name).lstrip("-")
 
 
+def _line_editor_reading(session) -> bool:
+    """True when canonical input mode is off on the PTY: a line editor (zsh's
+    ZLE, readline, a multiplexer or ssh client in raw mode) reads each key.
+    A program that just runs keeps canonical mode, and a line typed at it
+    waits in the tty queue for its stdin."""
+    import termios
+
+    try:
+        return not termios.tcgetattr(session.master_fd)[3] & termios.ICANON
+    except (OSError, termios.error):
+        return False
+
+
 def _foreground_program(session) -> str | None:
     """The program holding the PTY's foreground when it is not at a shell
     prompt, else None.
 
     The login shell is its own session and group leader (setsid at spawn), so
-    its pid is its group id; a foreground child runs in a group of its own. A
-    child that is itself a prompt host (a nested shell, tmux, ssh) does not
-    count. Unknown (the fd or the shell is gone) is not busy: the write then
-    fails on its own and says so. Returns "" for a busy group whose leader's
-    name cannot be read. Blocking (it may ask ``ps``)."""
+    its pid is its group id; a foreground child runs in a group of its own.
+    That group is idle only when its leader is a prompt host AND a line editor
+    reads the terminal: a nested interactive shell at its prompt, not a
+    `bash script.sh` that runs. Unknown (the fd or the shell is gone) is not
+    busy: the write then fails on its own and says so. Returns "" for a busy
+    group whose leader's name cannot be read. Blocking (it may ask ``ps``)."""
     from server.terminal import _foreground_pgrp
 
     fg = _foreground_pgrp(session)
@@ -290,7 +324,7 @@ def _foreground_program(session) -> str | None:
         return None
     # A group's id is its leader's pid.
     name = _process_name(fg)
-    if name in _PROMPT_HOSTS:
+    if name in _PROMPT_HOSTS and _line_editor_reading(session):
         return None
     return name
 
@@ -305,6 +339,8 @@ async def do_terminal_run(payload: dict) -> tuple[bool, str]:
     only return ok=False for *system* failures (bad mode, no visible
     session, etc.) — those are conditions the model can correct."""
     from server.terminal import (
+        assistant_run_pending,
+        clear_pending_run,
         latest_visible_session,
         open_visible_session,
         run_in_sandbox,
@@ -403,6 +439,14 @@ async def do_terminal_run(payload: dict) -> tuple[bool, str]:
             preamble = _OPENED_NOTE
         else:
             program = await asyncio.to_thread(_foreground_program, session)
+            if assistant_run_pending(session):
+                if program is not None:
+                    # The assistant's own timed-out run: a new tab would start
+                    # the same work twice, so wait for it or stop it.
+                    return False, _still_running(program)
+                # The shell is idle again, but the marker never printed (the
+                # command read its stdin, say): nothing is running any more.
+                clear_pending_run(session)
             if program is not None:
                 # Typing there would feed the command to that program's stdin (a
                 # dev server another chat left running, say), and a Ctrl-C meant
@@ -416,7 +460,14 @@ async def do_terminal_run(payload: dict) -> tuple[bool, str]:
             except FileNotFoundError as e:
                 return False, str(e)
         show_visible_session(session, opened=opened)
-        result = await run_in_session(session, command, timeout=timeout)
+        from server.workspace.paths import own_scratch_dir
+
+        result = await run_in_session(
+            session,
+            command,
+            timeout=timeout,
+            script_dir=own_scratch_dir(payload.get("session_id")),
+        )
 
     # Format the result for the model: exit code on its own line, then
     # output. Marking the boundary explicitly makes it easier for the
@@ -426,8 +477,8 @@ async def do_terminal_run(payload: dict) -> tuple[bool, str]:
         summary = f"TIMED OUT after {timeout:.0f}s; partial output below.\n{summary}"
         if mode == "visible":
             summary += (
-                "\nThe command may still be running in the foreground of the visible "
-                "terminal; a further visible run opens a new terminal tab until it exits."
+                "\nThe command is still running in the visible terminal. Further visible "
+                "runs are refused until it ends. " + _STOP_HINT
             )
     output = result.get("output") or "(no output)"
 
@@ -488,6 +539,12 @@ async def do_terminal_send(payload: dict) -> tuple[bool, str]:
     if not isinstance(text, str):
         return False, "input must be a string"
 
+    target = (payload.get("target") or "interactive").strip()
+    if target not in ("interactive", "visible"):
+        return False, f"invalid target {target!r}: must be 'interactive' or 'visible'"
+    if target == "visible":
+        return await _send_keys_to_visible(text, payload.get("timeout", 10.0))
+
     # Validate whatever LOOKS like a command: the first non-empty line. An empty
     # send (read-only poll), bare REPL expressions, and a send of only the keys
     # in _CONTROL_KEYS skip the shell validator, whose control-character check
@@ -537,6 +594,30 @@ async def do_terminal_send(payload: dict) -> tuple[bool, str]:
     return True, f"wait_reason: {reason}\n{hint}\n---\n{output}"
 
 
+async def _send_keys_to_visible(text: str, timeout) -> tuple[bool, str]:
+    """Send only stop keys (Ctrl-C, Ctrl-D, Ctrl-Q) to the user's visible
+    terminal, to stop a run of the assistant that timed out there. It types
+    no command, so the visible terminal's command floor is not involved."""
+    from server.terminal import latest_visible_session, send_and_wait
+
+    if not text or not set(text) <= _CONTROL_KEYS:
+        return False, (
+            "target='visible' sends only \\x03 (Ctrl-C), \\x04 (Ctrl-D) or \\x11 "
+            "(Ctrl-Q), with no other text. Use terminal_run mode='visible' to run a command there."
+        )
+    session = latest_visible_session()
+    if session is None:
+        return False, "No visible terminal is open."
+    try:
+        wait = max(0.5, min(float(timeout), float(_MAX_TIMEOUT_S)))
+    except (TypeError, ValueError):
+        return False, "timeout must be a number (seconds)"
+    result = await send_and_wait(session, text, timeout=wait)
+    reason = result["wait_reason"]
+    output = result.get("output") or "(no output)"
+    return True, f"wait_reason: {reason}\n{_WAIT_REASON_HINTS.get(reason, '')}\n---\n{output}"
+
+
 async def do_terminal_close(payload: dict) -> tuple[bool, str]:
     from server.terminal import close_interactive
 
@@ -561,6 +642,7 @@ def _exec_terminal_send(tool_input, transcript, current_attachments):
         {
             "action": "terminal_send",
             "input": tool_input.get("input"),
+            "target": (tool_input.get("target") or "").strip(),
             "timeout": tool_input.get("timeout", 10.0),
             "cwd": tool_input.get("cwd") or "",
             "session_id": session_id,
