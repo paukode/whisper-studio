@@ -5,7 +5,6 @@ import { listDir, renameFile } from '@/api/workspace';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { useUIStore } from '@/stores/uiStore';
 import { FileTreeNode } from './FileTreeNode';
-import { InlineInput } from './InlineInput';
 import { toError } from '@/utils/toError';
 
 const ROOT_PATH = '.';
@@ -19,7 +18,8 @@ export interface FileTreeProps {
 
 /**
  * Lazy-loading directory tree. Fetches children on expand via the
- * workspace API. Supports inline rename and new-file/new-folder inputs.
+ * workspace API. Supports inline rename (new files and folders are made
+ * from the context menu).
  */
 export const FileTree: React.FC<FileTreeProps> = ({
   onFileSelect,
@@ -34,8 +34,6 @@ export const FileTree: React.FC<FileTreeProps> = ({
 
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
-  const [newItemParent, setNewItemParent] = useState<string | null>(null);
-  const [newItemType] = useState<'file' | 'directory'>('file');
 
   // Sync selected path when the active editor tab changes. During-render
   // previous-value pattern instead of setState-in-effect.
@@ -154,18 +152,6 @@ export const FileTree: React.FC<FileTreeProps> = ({
     setRenamingPath(null);
   }, []);
 
-  const handleNewItemConfirm = useCallback(
-    (_name: string) => {
-      // New item creation is handled by the parent WorkspacePanel via API call
-      setNewItemParent(null);
-    },
-    [],
-  );
-
-  const handleNewItemCancel = useCallback(() => {
-    setNewItemParent(null);
-  }, []);
-
   if (isLoading && fileTree.length === 0) {
     return (
       <div className="file-tree file-tree-loading" role="tree" aria-label="File tree" aria-busy="true">
@@ -194,16 +180,6 @@ export const FileTree: React.FC<FileTreeProps> = ({
           onRenameCancel={handleRenameCancel}
         />
       ))}
-
-      {newItemParent != null && (
-        <div className="file-tree-new-item" style={{ paddingLeft: '20px' }}>
-          <InlineInput
-            placeholder={newItemType === 'file' ? 'New file name…' : 'New folder name…'}
-            onConfirm={handleNewItemConfirm}
-            onCancel={handleNewItemCancel}
-          />
-        </div>
-      )}
 
       {fileTree.length === 0 && !isLoading && (
         <div className="file-tree-empty">
