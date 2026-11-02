@@ -559,6 +559,7 @@ export const CronPanel: React.FC = () => {
   const deleteMut = useMutation({
     mutationFn: (id: string) => deleteCronJob(id),
     onSuccess: invalidate,
+    onError: (e: unknown) => addToast({ type: 'error', message: e instanceof Error ? e.message : 'Could not delete task', duration: 4000 }),
   });
 
   const runMut = useMutation({
@@ -603,7 +604,7 @@ export const CronPanel: React.FC = () => {
         </button>
         <span className="settings-hint">
           {activeCount} active{pausedCount ? ` · ${pausedCount} paused` : ''}{orphanCount ? ` · ${orphanCount} orphaned` : ''}
-          {' · '}{schedulerActive ? 'scheduler running' : 'scheduler off (pip install apscheduler)'}
+          {' · '}{schedulerActive ? 'scheduler running' : 'scheduler not running'}
         </span>
       </div>
 
