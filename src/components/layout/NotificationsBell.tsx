@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { get, post } from '@/api/client';
 import { useSessionStore } from '@/stores/sessionStore';
+import { useUIStore } from '@/stores/uiStore';
+import { toError } from '@/utils/toError';
 
 interface NotificationRow {
   id: number;
@@ -79,6 +81,9 @@ export const NotificationsBell: React.FC = () => {
     return () => window.removeEventListener('keydown', onKey, true);
   }, [open]);
 
+  const report = (what: string, err: unknown) =>
+    useUIStore.getState().addToast({ type: 'error', message: `${what}: ${toError(err).message}` });
+
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ['notifications-unread'] });
     void queryClient.invalidateQueries({ queryKey: ['notifications-list'] });
@@ -87,8 +92,8 @@ export const NotificationsBell: React.FC = () => {
   const markAllRead = async () => {
     try {
       await post('/api/notifications/read', {});
-    } catch {
-      /* best-effort; the list refetch shows the truth */
+    } catch (err) {
+      report('Could not mark the notifications read', err);
     }
     refresh();
   };
@@ -96,8 +101,8 @@ export const NotificationsBell: React.FC = () => {
   const clearAll = async () => {
     try {
       await post('/api/notifications/clear', {});
-    } catch {
-      /* best-effort */
+    } catch (err) {
+      report('Could not clear the notifications', err);
     }
     refresh();
   };
@@ -105,8 +110,8 @@ export const NotificationsBell: React.FC = () => {
   const markRead = async (id: number) => {
     try {
       await post('/api/notifications/read', { ids: [id] });
-    } catch {
-      /* best-effort */
+    } catch (err) {
+      report('Could not mark the notification read', err);
     }
     refresh();
   };
@@ -114,8 +119,8 @@ export const NotificationsBell: React.FC = () => {
   const hideOne = async (id: number) => {
     try {
       await post('/api/notifications/hide', { ids: [id] });
-    } catch {
-      /* best-effort */
+    } catch (err) {
+      report('Could not hide the notification', err);
     }
     refresh();
   };

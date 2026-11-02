@@ -93,6 +93,8 @@ export const CaptureSourceMenu: React.FC = () => {
   const [open, setOpen] = useState(false);
   const [nativeApps, setNativeApps] = useState<NativeAudioSourceInfo[]>([]);
   const [nativeScanning, setNativeScanning] = useState(false);
+  // Why the last scan of audio-playing apps failed (null: it did not).
+  const [scanError, setScanError] = useState<string | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
 
   const nativeAvailable = isNativeAudioAvailable();
@@ -118,12 +120,15 @@ export const CaptureSourceMenu: React.FC = () => {
     scanSeq.current += 1;
     const seq = scanSeq.current;
     setNativeScanning(true);
+    setScanError(null);
     listNativeAudioSources()
       .then((sources) => {
         if (seq === scanSeq.current) setNativeApps(sources.filter((s) => s.pid >= 0));
       })
-      .catch(() => {
-        if (seq === scanSeq.current) setNativeApps([]);
+      .catch((err: unknown) => {
+        if (seq !== scanSeq.current) return;
+        setNativeApps([]);
+        setScanError(err instanceof Error ? err.message : String(err));
       })
       .finally(() => {
         if (seq === scanSeq.current) setNativeScanning(false);
@@ -359,7 +364,12 @@ export const CaptureSourceMenu: React.FC = () => {
               {nativeScanning && nativeApps.length === 0 && (
                 <div className="capture-source-empty">Scanning for apps playing audio…</div>
               )}
-              {!nativeScanning && nativeApps.length === 0 && !armedAppMissing && (
+              {!nativeScanning && scanError && (
+                <div className="capture-source-empty" role="alert">
+                  Could not list the apps playing audio: {scanError}
+                </div>
+              )}
+              {!nativeScanning && !scanError && nativeApps.length === 0 && !armedAppMissing && (
                 <div className="capture-source-empty">
                   No apps are playing audio right now. Start playback (e.g. join the call), then
                   reopen this menu.
