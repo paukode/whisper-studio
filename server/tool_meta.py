@@ -29,8 +29,6 @@ from __future__ import annotations
 
 import re
 
-META_KEYS = ("duration_ms", "output_chars", "truncated", "lines", "bytes", "added", "removed")
-
 # One line of a ws_read_file result: a right-aligned line number, a tab, the
 # text (server/workspace/executors.py). The token-budget notes between the
 # head and the tail of a large file carry no number and do not count.

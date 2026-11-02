@@ -23,8 +23,12 @@ from server.approval.markers import approval_request, preview_image
 from server.approval.router import router as approval_router
 from server.approval.spec import ApprovalOutcome, ApprovalSpec
 from server.chat.budget import TOOL_RESULT_BUDGET_BYTES, make_budget_tool_result
-from server.tool_meta import META_KEYS, read_file_lines, result_meta
+from server.tool_meta import read_file_lines, result_meta
 from tests.test_ask_user_pause_resume import _run, _State
+
+# The frame's meta keys, in the order the Zod schema (src/types/schemas/
+# chat.schema.ts) declares them.
+META_KEYS = ("duration_ms", "output_chars", "truncated", "lines", "bytes", "added", "removed")
 
 NUMBERED = "    1\timport os\n    2\t\n    3\tprint(os.sep)"
 
