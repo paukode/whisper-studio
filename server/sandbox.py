@@ -4,7 +4,11 @@ OS-level command sandboxing: restricts filesystem access for shell commands.
 Uses macOS sandbox-exec with a deny profile. It is the only backend: when
 sandbox-exec cannot be used, run_sandboxed, popen_sandboxed and
 build_pty_sandbox_wrap raise SandboxUnavailableError and nothing runs (fail
-closed). Nothing that goes through this module runs without the sandbox.
+closed). Nothing that goes through this module runs without the sandbox,
+except a Bypass turn's commands: under server/security/bypass_sandbox.py's
+scope every entry point runs the command with ``/bin/sh -c`` and no profile,
+and sandbox-exec is not needed (the user's rule: Bypass works like Claude
+Code's bypass). The environment stays the same in both cases.
 
 The sandbox denies read/write access to sensitive paths (SSH keys, cloud
 credentials, system secrets) while allowing access to the workspace and
@@ -41,7 +45,7 @@ import stat
 import subprocess
 import tempfile
 
-from server.security import egress_policy
+from server.security import bypass_sandbox, egress_policy
 from server.security.sensitive_env import GITHUB_ENV_VARS
 from server.security.sensitive_paths import expanded_sandbox_paths
 
@@ -395,7 +399,9 @@ class SandboxUnavailableError(RuntimeError):
 
     Raised by run_sandboxed, popen_sandboxed and build_pty_sandbox_wrap in
     every write_mode: an "open" run still relies on the profile's credential
-    deny-list, so there is no unsandboxed fallback."""
+    deny-list, so there is no unsandboxed fallback.
+    A Bypass turn's command is not a fallback: it never needs the sandbox
+    (see server/security/bypass_sandbox.py)."""
 
     def __init__(self, message: str = SANDBOX_UNAVAILABLE_MESSAGE):
         super().__init__(message)
@@ -508,10 +514,21 @@ def run_sandboxed(
     write_paths (aws_cli with no workspace connected, whose cwd is $HOME).
 
     Raises SandboxUnavailableError, and runs nothing, when sandbox-exec
-    cannot be used.
+    cannot be used (outside a Bypass turn, which runs with no sandbox and
+    returns no profile path).
     """
-    _require_sandbox_exec()
     env_extra = {**_scratch_env(write_mode, scratch_dir), **(env_extra or {})}
+    if bypass_sandbox.active():
+        return _run_command(
+            ["/bin/sh", "-c", command],
+            cwd=cwd,
+            timeout=timeout,
+            capture_output=capture_output,
+            text=text,
+            input_data=input_data,
+            env_extra=env_extra,
+        )
+    _require_sandbox_exec()
     tree = _resolve_write_root(write_root, cwd)
     return _run_macos_sandboxed(
         command,
@@ -563,37 +580,53 @@ def _run_macos_sandboxed(
         with os.fdopen(fd, "w") as f:
             f.write(profile)
 
-        from server.process_utils import kill_process_group, new_process_group
-
-        sandboxed_command = [
-            "sandbox-exec",
-            "-f",
-            profile_path,
-            "/bin/sh",
-            "-c",
-            command,
-        ]
-        proc = subprocess.Popen(
-            sandboxed_command,
+        return _run_command(
+            ["sandbox-exec", "-f", profile_path, "/bin/sh", "-c", command],
             cwd=cwd,
-            stdin=subprocess.PIPE if input_data is not None else None,
-            stdout=subprocess.PIPE if capture_output else None,
-            stderr=subprocess.PIPE if capture_output else None,
+            timeout=timeout,
+            capture_output=capture_output,
             text=text,
-            preexec_fn=new_process_group,
-            env=_merged_env(env_extra),
+            input_data=input_data,
+            env_extra=env_extra,
         )
-        try:
-            stdout, stderr = proc.communicate(input=input_data, timeout=timeout)
-        except subprocess.TimeoutExpired:
-            kill_process_group(proc)
-            raise
-        return subprocess.CompletedProcess(sandboxed_command, proc.returncode, stdout, stderr)
     finally:
         try:
             os.unlink(profile_path)
         except OSError:
             pass
+
+
+def _run_command(
+    argv: list[str],
+    *,
+    cwd: str,
+    timeout: int,
+    capture_output: bool,
+    text: bool,
+    input_data: str | None,
+    env_extra: dict | None,
+) -> subprocess.CompletedProcess:
+    """Run ``argv`` in its own process group with the merged environment,
+    killing the group on timeout. Both the sandboxed and the Bypass run
+    end here."""
+    from server.process_utils import kill_process_group, new_process_group
+
+    proc = subprocess.Popen(
+        argv,
+        cwd=cwd,
+        stdin=subprocess.PIPE if input_data is not None else None,
+        stdout=subprocess.PIPE if capture_output else None,
+        stderr=subprocess.PIPE if capture_output else None,
+        text=text,
+        preexec_fn=new_process_group,
+        env=_merged_env(env_extra),
+    )
+    try:
+        stdout, stderr = proc.communicate(input=input_data, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        kill_process_group(proc)
+        raise
+    return subprocess.CompletedProcess(argv, proc.returncode, stdout, stderr)
 
 
 def popen_sandboxed(
@@ -617,7 +650,8 @@ def popen_sandboxed(
     unlinked by the caller once the process exits — the profile file has to
     outlive the process, exactly the ``build_pty_sandbox_wrap`` contract.
     Raises SandboxUnavailableError, and starts nothing, when sandbox-exec
-    cannot be used.
+    cannot be used (outside a Bypass turn, which runs with no sandbox and
+    returns no profile path).
 
     Environment and egress: the child gets the same ``_merged_env`` as a
     ``run_sandboxed`` child, so the credential denylist holds (no GH_TOKEN for
@@ -640,6 +674,16 @@ def popen_sandboxed(
     """
     from server.process_utils import new_process_group
 
+    if bypass_sandbox.active():
+        proc = subprocess.Popen(
+            ["/bin/sh", "-c", command],
+            cwd=cwd,
+            stdout=stdout_file,
+            stderr=subprocess.STDOUT,
+            preexec_fn=new_process_group,
+            env=_merged_env(_scratch_env(write_mode, scratch_dir)),
+        )
+        return proc, None
     _require_sandbox_exec()
     profile = _generate_macos_profile(
         write_root or cwd,
@@ -696,8 +740,11 @@ def build_pty_sandbox_wrap(
     one-shot run_sandboxed which deletes it immediately).
 
     Raises SandboxUnavailableError, and wraps nothing, when sandbox-exec
-    cannot be used: the shell never starts without the sandbox.
+    cannot be used: the shell never starts without the sandbox. A Bypass
+    turn's shell is the exception: it gets ``shell_cmd`` as is and no profile.
     """
+    if bypass_sandbox.active():
+        return list(shell_cmd), None
     _require_sandbox_exec()
     profile = _generate_macos_profile(
         write_root, write_mode=write_mode, scratch_dir=scratch_dir, secret_reads=secret_reads
@@ -723,7 +770,10 @@ def sandbox_backend() -> str:
 
 def pty_sandbox_backend() -> str:
     """Which backend `build_pty_sandbox_wrap` would use: "sandbox-exec" or
-    "none", as for `sandbox_backend`."""
+    "none", as for `sandbox_backend`, or "bypass" under a Bypass turn's
+    scope, where the shell runs with no sandbox and needs none."""
+    if bypass_sandbox.active():
+        return "bypass"
     return "sandbox-exec" if _is_sandbox_exec_available() else "none"
 
 
