@@ -154,22 +154,6 @@ def is_downloaded(key: str) -> bool:
     return os.path.exists(gguf_path(key))
 
 
-def _shard_filenames(filename: str) -> list[str]:
-    """Every filename in a sharded GGUF group, or just ``[filename]``.
-
-    llama-server is handed the FIRST shard (``...-00001-of-000NN.gguf``) and
-    finds the rest by naming convention, so all NN shards must be on disk. A
-    non-sharded filename returns unchanged.
-    """
-    import re
-
-    m = re.match(r"^(?P<base>.+?)-(?P<idx>\d{5})-of-(?P<total>\d{5})\.gguf$", filename, re.I)
-    if not m:
-        return [filename]
-    base, total = m.group("base"), int(m.group("total"))
-    return [f"{base}-{i:05d}-of-{total:05d}.gguf" for i in range(1, total + 1)]
-
-
 def ensure_downloaded(key: str) -> str:
     """Fetch the weights into models/ if absent, returning the load path.
 
@@ -189,7 +173,11 @@ def ensure_downloaded(key: str) -> str:
 
     m = LOCAL_MODELS[key]
     local_dir = os.path.join(MODELS_DIR, m["dir"])
-    filenames = _shard_filenames(m["filename"])
+    from server.model_browser.compat import shard_filenames
+
+    # llama-server is handed the FIRST shard and finds the rest by naming
+    # convention, so every shard must be on disk.
+    filenames = shard_filenames(m["filename"])
     log.info(
         "Downloading local model %s (%d file(s), first=%s) into %s ...",
         key,

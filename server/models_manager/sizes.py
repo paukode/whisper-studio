@@ -51,8 +51,12 @@ def _cache_key(entry: ModelEntry) -> str:
 
 
 def fetch_size(repo_id: str, filename: str | None = None) -> int | None:
-    """Sum of per-file sizes for a repo (or one file of it) from the HF API.
-    Network-bound and blocking; returns None on any failure."""
+    """Sum of per-file sizes for a repo (or one file of it, every shard of a
+    sharded GGUF) from the HF API. Network-bound and blocking; returns None
+    on any failure."""
+    from server.model_browser.compat import shard_filenames
+
+    wanted = set(shard_filenames(filename)) if filename is not None else None
     try:
         from huggingface_hub import HfApi
 
@@ -65,7 +69,7 @@ def fetch_size(repo_id: str, filename: str | None = None) -> int | None:
         size = getattr(sibling, "size", None)
         if not size:
             continue
-        if filename is not None and sibling.rfilename != filename:
+        if wanted is not None and sibling.rfilename not in wanted:
             continue
         total += int(size)
     return total or None

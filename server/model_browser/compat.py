@@ -307,6 +307,16 @@ def shard_info(filename: str) -> tuple[str, int, int] | None:
     return m.group("base"), int(m.group("idx")), int(m.group("total"))
 
 
+def shard_filenames(filename: str) -> list[str]:
+    """Every filename of the sharded GGUF ``filename`` belongs to (its first
+    shard names the group), or just ``[filename]`` when it is not sharded."""
+    info = shard_info(filename)
+    if info is None:
+        return [filename]
+    base, _idx, total = info
+    return [f"{base}-{i:05d}-of-{total:05d}.gguf" for i in range(1, total + 1)]
+
+
 def is_mmproj(filename: str) -> bool:
     """A vision projector (mmproj) file — not a chat model on its own, hidden."""
     return "mmproj" in filename.lower()

@@ -38,6 +38,7 @@ from server.models_manager.catalog import (
     bytes_on_disk,
     entries,
     get_entry,
+    gguf_paths,
     is_installed,
     model_dir,
 )
@@ -576,9 +577,10 @@ def delete(entry: ModelEntry) -> dict:
             other.key != entry.key and other.dir_name == entry.dir_name for other in entries()
         )
         if shared and entry.gguf_filename:
-            target = os.path.join(root, entry.gguf_filename)
-            if os.path.exists(target):
-                os.remove(target)
+            # Every shard and its download bookkeeping, not only the first
+            # shard the entry names.
+            for path in gguf_paths(entry):
+                os.remove(path)
         elif shared:
             # A whole-directory model (MLX snapshot) sharing its dir with
             # another entry: rmtree here would silently destroy the other

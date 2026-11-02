@@ -270,12 +270,52 @@ def is_installed(entry: ModelEntry) -> bool:
     return os.path.exists(os.path.join(model_dir(entry), entry.sentinel_rel))
 
 
+def gguf_paths(entry: ModelEntry) -> list[str]:
+    """Every path on disk that belongs to a GGUF entry's file in its folder:
+    each shard of it, and Hugging Face's per-file download bookkeeping under
+    ``.cache/huggingface/download`` (lock, metadata, and the .incomplete
+    partial of a download in flight). Other quants of the same repo share the
+    folder and are not included. Reads only; creates nothing."""
+    import glob
+
+    # The name hf gives a partial download (huggingface_hub/_local_folder.py,
+    # LocalDownloadFilePaths.incomplete_path), pinned with the hf version.
+    from huggingface_hub._local_folder import _short_hash
+
+    from server.model_browser.compat import shard_filenames
+
+    root = model_dir(entry)
+    download = os.path.join(root, ".cache", "huggingface", "download")
+    found: list[str] = []
+    for name in shard_filenames(entry.gguf_filename or ""):
+        for path in (
+            os.path.join(root, name),
+            os.path.join(download, f"{name}.lock"),
+            os.path.join(download, f"{name}.metadata"),
+        ):
+            if os.path.exists(path):
+                found.append(path)
+        partials = os.path.join(download, f"{_short_hash(name + '.metadata')}.*.incomplete")
+        found.extend(glob.glob(partials))
+    return found
+
+
 def bytes_on_disk(entry: ModelEntry) -> int:
-    """Total bytes under the model's directory — including hf's .incomplete
-    files, so an in-flight download's progress is visible as tree growth."""
+    """Bytes the model has on disk, including hf's .incomplete files, so an
+    in-flight download's progress is visible as growth. A GGUF entry counts
+    only its own file (every shard) because the quants of one repo share a
+    folder; any other entry counts its whole folder."""
     root = model_dir(entry)
     if not os.path.isdir(root):
         return 0
+    if entry.gguf_filename:
+        total = 0
+        for path in gguf_paths(entry):
+            try:
+                total += os.path.getsize(path)
+            except OSError:
+                continue
+        return total
     total = 0
     for dirpath, _dirnames, filenames in os.walk(root):
         for name in filenames:
