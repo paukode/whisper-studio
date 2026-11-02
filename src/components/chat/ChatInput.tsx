@@ -4,6 +4,7 @@ import { useSessionStore } from '@/stores/sessionStore';
 import { useMcpStore } from '@/stores/mcpStore';
 import { chatModelBlockReason, useSettingsStore } from '@/stores/settingsStore';
 import { useUIStore } from '@/stores/uiStore';
+import { ICON } from '@/components/chat/activityIcons';
 import { useChatStream } from '@/hooks/useChatStream';
 import { useChatAutocomplete } from '@/hooks/useChatAutocomplete';
 import { useSlashCommands } from '@/hooks/useSlashCommands';
@@ -771,7 +772,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
                   onMouseDown={(e) => { e.preventDefault(); selectAcItem(item); }}
                   onMouseEnter={() => setAcIndex(i)}
                 >
-                  <div className="skill-ac-icon">{item.icon}</div>
+                  <div className="skill-ac-icon">{ICON[item.icon]}</div>
                   <div className="skill-ac-text">
                     <span className="skill-ac-name">{item.name}</span>
                     <span className="skill-ac-desc">{item.desc}</span>

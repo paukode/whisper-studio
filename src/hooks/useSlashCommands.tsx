@@ -19,6 +19,7 @@ import { requestModelChange } from '@/components/chat/dataRetentionConsent';
 import { ContextReportPanel, type ContextReport } from '@/components/chat/ContextReportPanel';
 import { clampEffort, effortLabel, EFFORT_ORDER, thinkingLabel } from '@/utils/effort';
 import { downloadFile } from '@/utils/downloadFile';
+import { ICON } from '@/components/chat/activityIcons';
 import { useTheme } from '@/providers/ThemeProvider';
 import type { ThemeKey } from '@/types/theme';
 import {
@@ -276,7 +277,7 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
             }>('/api/doctor');
             const { status, checks } = result;
 
-            const sIcon = status === 'ok' ? '✓' : status === 'warn' ? '⚠' : '✗';
+            const sIcon = status === 'ok' ? ICON.check : status === 'warn' ? ICON.alert : ICON.x;
             const sColor = status === 'ok' ? 'var(--success)' : status === 'warn' ? 'var(--warning)' : 'var(--danger)';
 
             const dotColor = (s: string) => s === 'ok' ? 'var(--success)' : s === 'warn' ? 'var(--warning)' : 'var(--danger)';
@@ -294,7 +295,7 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
             const body = (
               <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden', fontSize: 13 }}>
                 <div style={{ padding: '8px 12px', background: 'var(--bg-elevated)', borderBottom: '1px solid var(--border)', fontWeight: 600, fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ color: sColor }}>{sIcon}</span> Diagnostics: {status}
+                  <span style={{ color: sColor, display: 'inline-flex' }}>{sIcon}</span> Diagnostics: {status}
                 </div>
                 {rows}
               </div>
@@ -544,7 +545,7 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
           for (const c of cmds) {
             helpSections.push(
               <div key={`cmd-${c.cmd}`} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '5px 0', fontSize: '0.88em' }}>
-                <span style={{ flexShrink: 0, width: 24, textAlign: 'center' }}>{c.icon}</span>
+                <span style={{ flexShrink: 0, width: 24, display: 'inline-flex', justifyContent: 'center', color: 'var(--text-muted)' }}>{ICON[c.icon]}</span>
                 <span style={{ fontWeight: 500, color: 'var(--accent)', minWidth: 80 }}>/{c.cmd.trim()}</span>
                 <span style={{ color: 'var(--text-secondary)' }}>{c.desc}</span>
               </div>,
@@ -607,7 +608,7 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
         // that hosts the live progress card and (later) the final answer. The
         // assistant message opens with an intro so the user knows work is
         // happening in the background and that they can keep chatting.
-        const INTRO = '🤖 **Subagent started**: working on this in the background. '
+        const INTRO = '**Subagent started**: working on this in the background. '
           + 'Keep chatting; **Open** on its row below shows everything it does, and it will post '
           + 'the result here when done. Stop it from the tasks pill in the header.';
         // Distinct timestamps: two synchronous toISOString() calls land on the
@@ -686,7 +687,7 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
               // agent rows to "stopped" so they don't spin forever, and note it.
               patch((m) => {
                 const tr = m.teamReports?.[teamId];
-                if (!tr) return { ...m, content: '⏹ Subagent stopped.' };
+                if (!tr) return { ...m, content: 'Subagent stopped.' };
                 const agents: Record<string, TeamAgentReport> = {};
                 for (const [k, a] of Object.entries(tr.agents)) {
                   agents[k] = (a.status === 'running' || a.status === 'pending')
@@ -695,7 +696,7 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
                 }
                 return {
                   ...m,
-                  content: '⏹ Subagent stopped.',
+                  content: 'Subagent stopped.',
                   teamReports: { ...m.teamReports, [teamId]: { ...tr, status: 'completed', agents } },
                 };
               });

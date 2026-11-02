@@ -8,6 +8,7 @@ import {
 import { useSessionStore } from '@/stores/sessionStore';
 import { useUIStore } from '@/stores/uiStore';
 import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer';
+import { ICON } from '@/components/chat/activityIcons';
 
 /** Milliseconds before a primed Delete reverts to its resting label. */
 const DELETE_CONFIRM_TIMEOUT_MS = 4000;
@@ -305,9 +306,9 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({ initial, systemTz, saving, 
         background: preview.error ? 'var(--danger-dim)' : 'var(--accent-dim)',
         color: preview.error ? 'var(--danger)' : 'var(--text-secondary)',
       }}>
-        {preview.error ? `⚠ ${preview.error}`
+        {preview.error ? <>{ICON.alert} {preview.error}</>
           : preview.label
-            ? <>✓ <strong>{preview.label}</strong>{preview.next_run ? <> — next run {new Date(preview.next_run).toLocaleString()}</> : null}</>
+            ? <>{ICON.check} <strong>{preview.label}</strong>{preview.next_run ? <>, next run {new Date(preview.next_run).toLocaleString()}</> : null}</>
             : 'Set a schedule to preview the next run.'}
       </div>
 
@@ -441,16 +442,15 @@ const JobCard: React.FC<JobCardProps> = ({
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 18px', fontSize: 13.5 }}>
         <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--accent)' }}>
-          🗓 {job.schedule_label || '—'}
+          {ICON.calendar} {job.schedule_label || 'No schedule'}
         </span>
         <span style={{ opacity: 0.85 }}>
-          ⏱ {job.enabled
+          {ICON.clock} {job.enabled
             ? (job.next_run ? formatCountdown(job.next_run, now) || 'scheduled' : 'scheduled')
-            : (kind === 'orphan' ? 'its chat was removed' : 'paused — no next run')}
+            : (kind === 'orphan' ? 'its chat was removed' : 'paused, no next run')}
         </span>
         <span style={{ opacity: 0.7 }}>
-          {job.run_state === 'failed' ? '⚠ ' : '✓ '}
-          last run {formatAgo(job.last_run, now)}
+          {job.run_state === 'failed' ? ICON.alert : ICON.check} last run {formatAgo(job.last_run, now)}
           {typeof job.run_count === 'number' && job.run_count > 0
             ? ` · ${job.run_count} ${job.run_count === 1 ? 'run' : 'runs'}`
             : ''}
@@ -468,8 +468,8 @@ const JobCard: React.FC<JobCardProps> = ({
           display: 'flex', alignItems: 'center', gap: 8, padding: '8px 11px', borderRadius: 'var(--radius-lg)',
           fontSize: 13, background: 'var(--warning-dim)', border: '1px solid var(--warning-border)', color: '#c9862a',
         }}>
-          <span>⚡ This runs on a fixed interval, not a set time.</span>
-          <button type="button" className="btn btn-sm" style={{ marginLeft: 'auto' }} onClick={onEdit}>Switch to a daily time →</button>
+          <span>{ICON.zap} This runs on a fixed interval, not a set time.</span>
+          <button type="button" className="btn btn-sm" style={{ marginLeft: 'auto' }} onClick={onEdit}>Switch to a daily time</button>
         </div>
       )}
 
@@ -485,19 +485,19 @@ const JobCard: React.FC<JobCardProps> = ({
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
         {job.orphaned || job.session_exists === false ? (
-          <button className="btn btn-sm btn-primary" type="button" onClick={onReassign} disabled={busy}>⤴ Reassign to this session</button>
+          <button className="btn btn-sm btn-primary" type="button" onClick={onReassign} disabled={busy}>Reassign to this session</button>
         ) : (
           <>
             {job.run_state === 'running' ? (
               <button className="btn btn-sm" type="button" onClick={onStop} disabled={busy}
-                style={{ color: 'var(--accent-record)' }}>■ Stop</button>
+                style={{ color: 'var(--accent-record)' }}>Stop</button>
             ) : (
-              <button className="btn btn-sm" type="button" onClick={onRun} disabled={busy}>▶ Run now</button>
+              <button className="btn btn-sm" type="button" onClick={onRun} disabled={busy}>Run now</button>
             )}
-            <button className="btn btn-sm" type="button" onClick={onEdit} disabled={busy}>✎ Edit</button>
+            <button className="btn btn-sm" type="button" onClick={onEdit} disabled={busy}>Edit</button>
           </>
         )}
-        <button className="btn btn-sm" type="button" onClick={() => setShowHistory((v) => !v)}>🕘 History</button>
+        <button className="btn btn-sm" type="button" onClick={() => setShowHistory((v) => !v)}>History</button>
         <button className="btn btn-sm" type="button" onClick={onDelete} disabled={busy}
           style={{ color: deleteArmed ? '#fff' : 'var(--accent-record)', background: deleteArmed ? 'var(--accent-record)' : undefined, marginLeft: 'auto' }}>
           {deleteArmed ? 'Confirm' : 'Delete'}
@@ -564,13 +564,13 @@ export const CronPanel: React.FC = () => {
 
   const runMut = useMutation({
     mutationFn: (id: string) => runCronJob(id),
-    onSuccess: () => { invalidate(); addToast({ type: 'success', message: 'Running now — result will appear in the session', duration: 3000 }); },
+    onSuccess: () => { invalidate(); addToast({ type: 'success', message: 'Running now. The result will appear in the session.', duration: 3000 }); },
     onError: (e: unknown) => addToast({ type: 'error', message: e instanceof Error ? e.message : 'Could not run task', duration: 4000 }),
   });
 
   const stopMut = useMutation({
     mutationFn: (id: string) => stopCronJob(id),
-    onSuccess: () => { invalidate(); addToast({ type: 'info', message: 'Stop requested — the run will end within a moment', duration: 3000 }); },
+    onSuccess: () => { invalidate(); addToast({ type: 'info', message: 'Stop requested. The run will end in a moment.', duration: 3000 }); },
     onError: (e: unknown) => addToast({ type: 'error', message: e instanceof Error ? e.message : 'Could not stop run', duration: 4000 }),
   });
 

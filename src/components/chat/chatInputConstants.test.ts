@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { ICON } from './activityIcons';
 import {
+  AT_ROOT_ENTRIES,
+  BASE_SLASH_COMMANDS,
   matchColonSubmenu,
   matchSubmitTrigger,
   optLabel,
@@ -194,5 +197,22 @@ describe('parseSkillMention', () => {
     expect(parseSkillMention('@my_session_b also doing feature Y', KNOWN)).toEqual({
       messageToSend: '@my_session_b also doing feature Y',
     });
+  });
+});
+
+describe('command and mention menu icons', () => {
+  const EMOJI = /\p{Extended_Pictographic}/u;
+  const rows = [...BASE_SLASH_COMMANDS, ...AT_ROOT_ENTRIES];
+
+  it('name an SVG icon, never an emoji', () => {
+    for (const row of rows) {
+      expect(ICON[row.icon], row.icon).toBeDefined();
+      expect(EMOJI.test(row.icon)).toBe(false);
+    }
+  });
+
+  it('carry no emoji in their text', () => {
+    for (const row of BASE_SLASH_COMMANDS) expect(EMOJI.test(row.cmd + row.desc), row.cmd).toBe(false);
+    for (const row of AT_ROOT_ENTRIES) expect(EMOJI.test(row.name + row.desc), row.name).toBe(false);
   });
 });

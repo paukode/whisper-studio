@@ -1953,9 +1953,10 @@ input.segment-speaker {
     width: 28px; height: 28px; border-radius: var(--radius-md);
     background: var(--accent-dim);
     display: flex; align-items: center; justify-content: center;
-    font-size: var(--fs-body); flex-shrink: 0;
+    color: var(--accent); flex-shrink: 0;
     transition: background 0.15s;
 }
+.skill-ac-icon .activity-ic { width: 14px; height: 14px; flex-basis: 14px; }
 .skill-ac-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .skill-ac-name {
     font-size: var(--fs-small); font-weight: 600;
