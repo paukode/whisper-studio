@@ -66,32 +66,33 @@
         before moving it - so even a forged approval payload sent directly to
         <code>POST /api/approval/execute</code> cannot "move" an arbitrary readable file into a
         user-visible folder.</li>
-      <li><b>Four things always ask, whatever the mode says.</b> Destructive GitHub actions (repo or
+      <li><b>Two things always ask, whatever the mode says.</b> Destructive GitHub actions (repo or
         ref deletion, a PR merge, an archive or rename, a raw API DELETE, carried under the
-        <code>github-destructive</code> category); any <code>rm</code>-class command that deletes
-        outside the connected workspace and the app's own folder, or whose operands the command
-        line cannot resolve (<code class="path">server/security/delete_scope.py</code>); any
-        tool call asking to escape the sandbox with
-        <code>sandbox_permissions: "danger-full-access"</code>; and any call to an MCP server or tool
-        set to <code>approval_mode: "approve"</code>. Each is a hard floor: no permission
-        mode, category override, bypass mode, trusted skill, or blanket session approval can skip it
+        <code>github-destructive</code> category), and any call to an MCP server or tool set to
+        <code>approval_mode: "approve"</code>. Each is a hard floor: no permission mode, category
+        override, bypass mode, trusted skill, or blanket session approval can skip it
         (<code class="path">server/security/permissions.py</code>). In Don't ask, a destructive GitHub
-        action is denied instead, because that mode never shows a card. A fifth floor depends on the mode:
-        a command typed into your visible terminal asks in every mode except
-        <code>bypassPermissions</code>. A delete that stays inside the workspace follows the mode like
-        any other command.</li>
-      <li><b>Bypass stops at the workspace boundary.</b> Inside the connected workspace
-        <code>bypassPermissions</code> runs everything with no card. A save to a path outside it and
-        the first reach into a folder outside it (the <code>save</code> and
-        <code>folder-access</code> categories) still ask in bypass, unless that category's own row
-        says bypass, a session "yes to all" or a rule of yours covers it, or the path is under
-        <code class="path">~/.whisper</code>. Reading never asks anywhere, apart from the
-        credential stores below. A command that ran without a card (bypass, a session approval, a
-        rule, the Auto classifier) is workspace-write confined by the OS like an agent's; only a
-        command approved on its card runs with open writes. A command that the assistant types into
-        your visible terminal has no OS confinement, so it raises a card in every mode except
-        <code>bypassPermissions</code>. In <code>bypassPermissions</code>, the terminal panel opens
-        and the command runs. A delete in that terminal still raises a card.</li>
+        action is denied instead, because that mode never shows a card.</li>
+      <li><b>Three more floors ask in every mode except Bypass.</b> Any <code>rm</code>-class
+        command that deletes outside the connected workspace and the app's own folder, or whose
+        operands the command line cannot resolve
+        (<code class="path">server/security/delete_scope.py</code>); any tool call asking to escape
+        the sandbox with <code>sandbox_permissions: "danger-full-access"</code>; and a command typed
+        into your visible terminal. Outside Bypass no category override, trusted skill, rule, or
+        blanket session approval can skip them, and an unattended agent cannot run a delete. A
+        delete that stays inside the workspace follows the mode like any other command. The
+        <code>rm -rf /</code> hard block in
+        <code class="path">server/security/command_validator.py</code> refuses in every mode.</li>
+      <li><b>Bypass has no workspace boundary.</b> Since 2026-11-02 <code>bypassPermissions</code>
+        works like Claude Code's bypass: it shows no card, inside the workspace or outside it. A save
+        to a path outside it, the first reach into a folder outside it, a delete outside it, and a
+        ws_* file write, edit, or delete at any path run with no card. The subagents and workflow
+        scripts of a Bypass session delete without a card too. A category row of yours that names
+        another mode still decides that category. The scratch folders of other sessions and the
+        kernel pseudo-filesystems stay out of reach. In the other modes a change outside the
+        workspace asks, unless a session "yes to all" or a rule of yours covers it, or the path is
+        under <code class="path">~/.whisper</code>. Reading never asks anywhere, apart from the
+        credential stores below.</li>
       <li><b>Reads of credential stores follow the mode.</b> The credential stores are the deny-list
         in <code class="path">server/security/sensitive_paths.py</code> (the login Keychain,
         <code class="path">~/.ssh</code>, <code class="path">~/.aws</code>, git credentials, browser
