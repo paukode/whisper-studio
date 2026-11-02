@@ -86,7 +86,7 @@ def refuse_if_agent(payload: dict, what: str = "This action") -> ApprovalOutcome
 
 def refuse_if_agent_rm(payload: dict, command_field: str = "command") -> ApprovalOutcome | None:
     """Refuse rm (and its close cousins, see is_rm_command) from an unattended
-    subagent, unconditionally.
+    subagent, in every permission mode but bypassPermissions.
 
     Deleting files is exactly the kind of irreversible action a human must see
     before it happens; the unattended auto-approve path (agent=True) skips
@@ -97,8 +97,17 @@ def refuse_if_agent_rm(payload: dict, command_field: str = "command") -> Approva
     delete outside the workspace even when a human WOULD normally have
     pre-approved the whole "cli" category (inside the workspace that floor
     does not apply; this refusal still does, since no human is present).
+
+    In bypassPermissions the agents and workflow scripts of the session run
+    the delete like the session itself does (the user's decision of
+    2026-11-02: Bypass works like Claude Code's bypass). The rm -rf / hard
+    block (server/security/command_validator.py) still refuses there.
     """
     if not payload.get("__agent__"):
+        return None
+    from server.security.permissions import bypass_now
+
+    if bypass_now():
         return None
     from server.security.delete_sites import is_rm_command
 
@@ -108,8 +117,8 @@ def refuse_if_agent_rm(payload: dict, command_field: str = "command") -> Approva
         ok=False,
         error=(
             "rm (or an equivalent delete) is never run from an unattended "
-            "subagent or workflow, no matter the permission mode. Ask the "
-            "top-level session, where a human can approve it, to run this."
+            "subagent or workflow outside Bypass mode. Ask the top-level "
+            "session, where a human can approve it, to run this."
         ),
     )
 

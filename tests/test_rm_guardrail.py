@@ -1,13 +1,15 @@
 """User directive: rm (and its close cousins) never deletes anything outside
-the connected workspace without a real human clicking Approve — no permission
-mode, category override, blanket session approval, custom rule or
-trusted-skill exemption may cover it. Inside the workspace (and the app's own
-folders) a delete is an ordinary command: bypass means bypass there, and the
-other modes apply their usual command rule. Two independent layers:
+the connected workspace without a real human clicking Approve, in every
+permission mode but Bypass: no category override, blanket session approval,
+custom rule or trusted-skill exemption may cover it. Inside the workspace (and
+the app's own folders) a delete is an ordinary command and the mode applies
+its usual command rule. In Bypass a delete anywhere runs with no card (the
+user's decision of 2026-11-02: Bypass works like Claude Code's bypass); the
+rm -rf / hard block (server/security/command_validator.py) still refuses it
+there. Two independent layers outside Bypass:
 
 1. server.security.permissions.resolve_static_decision forces "ask" for any
-   command-shaped tool input that deletes beyond the workspace, an absolute
-   floor exactly like the existing github-destructive category.
+   command-shaped tool input that deletes beyond the workspace.
 2. server.approval.spec.refuse_if_agent_rm hard-refuses every rm inside the
    executors themselves (_do_command, _do_terminal_run) for the unattended
    path, which skips resolve_static_decision entirely and has no human at all.
@@ -507,7 +509,7 @@ def _decide(command, mode=MODE_DEFAULT, approvals=None, auto_allow_trusted=False
     )
 
 
-ALL_MODES = (MODE_DEFAULT, MODE_ACCEPT_EDITS, MODE_DONT_ASK, MODE_BYPASS)
+NON_BYPASS_MODES = (MODE_DEFAULT, MODE_ACCEPT_EDITS, MODE_DONT_ASK)
 
 
 @pytest.fixture
@@ -578,11 +580,38 @@ def test_a_delete_outside_the_workspace_always_asks(workspace, tmp_path):
     )
     for command in outside:
         assert approval_floor("ws_run_command", {"command": command}, "cli") == "rm", command
-        for mode in ALL_MODES:
+        for mode in NON_BYPASS_MODES:
+            assert approval_floor("ws_run_command", {"command": command}, "cli", mode) == "rm"
             assert _decide(command, mode=mode) == "ask", (command, mode)
         assert _decide(command, approvals={"cli": "allow"}) == "ask", command
-        assert _decide(command, mode=MODE_BYPASS, approvals={"cli": "allow"}) == "ask"
         assert _decide(command, auto_allow_trusted=True) == "ask"
+        # The user's decision of 2026-11-02 (replaces "asks even in bypass"):
+        # Bypass runs a delete outside the workspace with no card.
+        assert approval_floor("ws_run_command", {"command": command}, "cli", MODE_BYPASS) is None
+        assert _decide(command, mode=MODE_BYPASS) == "allow", command
+
+
+def test_rm_of_the_filesystem_root_is_refused_in_bypass_too():
+    # The hard block runs in the command executors whatever the mode; a
+    # Bypass call validates with secret_reads=True (tool_executor's stamp).
+    from server.security.command_validator import validate_command
+
+    for command in ("rm -rf /", "rm -rf /*", "echo hi && rm -rf /"):
+        assert validate_command(command, secret_reads=True), command
+        assert validate_command(command), command
+
+
+def test_a_category_row_that_asks_keeps_the_rm_floor_in_bypass(monkeypatch, tmp_path):
+    ws = tmp_path / "project"
+    ws.mkdir()
+    monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: str(ws))
+    monkeypatch.setattr(
+        "server.security.permissions.load_permissions",
+        lambda: {"mode": MODE_BYPASS, "rules": [], "category_modes": {"cli": MODE_DEFAULT}},
+    )
+    payload = {"command": "rm -rf ~/old"}
+    assert approval_floor("ws_run_command", payload, "cli", MODE_BYPASS) == "rm"
+    assert _decide("rm -rf ~/old", mode=MODE_BYPASS) == "ask"
 
 
 def test_a_symlink_out_of_the_workspace_reads_as_outside(workspace, tmp_path):
@@ -622,10 +651,10 @@ def test_the_card_the_gate_stamped_decides_its_own_workspace(workspace, tmp_path
 def test_with_no_workspace_every_delete_asks(monkeypatch):
     monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: None)
     assert _decide("rm -rf ./build") == "ask"
-    assert _decide("rm -rf ./build", mode=MODE_BYPASS) == "ask"
     assert _decide("rm -rf ./build", approvals={"cli": "allow"}) == "ask"
-    assert _decide("rm -rf ./build", mode=MODE_BYPASS, approvals={"cli": "allow"}) == "ask"
     assert _decide("rm -rf ./build", auto_allow_trusted=True) == "ask"
+    # Bypass runs it (the user's decision of 2026-11-02).
+    assert _decide("rm -rf ./build", mode=MODE_BYPASS) == "allow"
     # dontAsk normally auto-DENIES write-class tools silently; a delete the
     # floor catches must still surface a real prompt rather than a silent,
     # unexplained refusal.
@@ -661,7 +690,42 @@ def test_rm_guardrail_only_looks_at_a_real_command_field():
 # ── refuse_if_agent_rm: the unattended-agent hard refusal ───────────────────
 
 
-def test_refuse_if_agent_rm_blocks_unattended_rm():
+@pytest.fixture
+def app_mode(monkeypatch):
+    """Pin the app's permission mode the unattended executors read."""
+
+    def pin(mode):
+        monkeypatch.setattr("server.security.permissions.get_mode", lambda: mode)
+
+    pin(MODE_DEFAULT)
+    return pin
+
+
+def test_refuse_if_agent_rm_runs_an_agents_rm_in_bypass(app_mode):
+    # The user's decision of 2026-11-02: the agents and workflow scripts of a
+    # Bypass session delete like the session itself.
+    from server.approval.spec import refuse_if_agent_rm
+
+    app_mode(MODE_BYPASS)
+    assert refuse_if_agent_rm({"__agent__": True, "command": "rm -rf /tmp/x"}) is None
+    for mode in NON_BYPASS_MODES:
+        app_mode(mode)
+        outcome = refuse_if_agent_rm({"__agent__": True, "command": "rm -rf /tmp/x"})
+        assert outcome is not None and outcome.ok is False, mode
+
+
+def test_an_agents_rm_of_the_filesystem_root_is_refused_in_bypass(app_mode, workspace, monkeypatch):
+    from server.approval.bootstrap import _do_command
+
+    monkeypatch.setattr("server.workspace.get_workspace_path", lambda: str(workspace))
+    app_mode(MODE_BYPASS)
+    payload = {"__agent__": True, "command": "rm -rf /", "secret_access": True}
+    outcome = asyncio.run(_do_command(payload))
+    assert outcome.ok is False
+    assert "dangerous pattern" in (outcome.error or "")
+
+
+def test_refuse_if_agent_rm_blocks_unattended_rm(app_mode):
     from server.approval.spec import refuse_if_agent_rm
 
     outcome = refuse_if_agent_rm({"__agent__": True, "command": "rm -rf /tmp/x"})
@@ -669,7 +733,7 @@ def test_refuse_if_agent_rm_blocks_unattended_rm():
     assert outcome.ok is False
 
 
-def test_refuse_if_agent_rm_blocks_rm_wherever_the_command_hides_it():
+def test_refuse_if_agent_rm_blocks_rm_wherever_the_command_hides_it(app_mode):
     from server.approval.spec import refuse_if_agent_rm
 
     for command in (
@@ -710,7 +774,7 @@ def test_refuse_if_agent_rm_allows_interactive_rm():
     assert refuse_if_agent_rm({"command": "rm -rf /tmp/x"}) is None
 
 
-def test_do_command_refuses_unattended_rm():
+def test_do_command_refuses_unattended_rm(app_mode):
     from server.approval.bootstrap import _do_command
 
     outcome = asyncio.run(_do_command({"__agent__": True, "command": "rm -rf /tmp/x"}))
@@ -718,7 +782,7 @@ def test_do_command_refuses_unattended_rm():
     assert "unattended" in (outcome.error or "").lower()
 
 
-def test_do_terminal_run_refuses_unattended_rm():
+def test_do_terminal_run_refuses_unattended_rm(app_mode):
     from server.approval.bootstrap import _do_terminal_run
 
     outcome = asyncio.run(_do_terminal_run({"__agent__": True, "command": "rm -rf /tmp/x"}))
