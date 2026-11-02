@@ -393,9 +393,20 @@ async def update_skill(name: str, request: Request):
                 status_code=400,
                 media_type="application/json",
             )
+        old_path = os.path.join(_sk.SKILLS_DIR, old_file)
+        # foo_bar -> foo-bar (or a case change on APFS) names the same file:
+        # write it in place, never delete what was just written.
+        same_file = os.path.exists(new_filepath) and os.path.samefile(new_filepath, old_path)
+        if os.path.exists(new_filepath) and not same_file:
+            return Response(
+                content=json.dumps({"error": f"A skill named {new_name} already exists"}),
+                status_code=409,
+                media_type="application/json",
+            )
         with open(new_filepath, "w") as f:
             f.write(new_content)
-        os.remove(os.path.join(_sk.SKILLS_DIR, old_file))
+        if not same_file:
+            os.remove(old_path)
         config = _sk.load_skills_config()
         if name in config.get("disabled", []):
             config["disabled"].remove(name)
