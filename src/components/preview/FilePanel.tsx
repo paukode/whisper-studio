@@ -25,7 +25,6 @@ import { MarkdownPreview } from '@/components/viewers/MarkdownPreview';
  */
 type SourceFile =
   | { kind: 'markdown' | 'text'; content: string; name?: string; path?: string }
-  | { kind: 'image'; name?: string; path?: string }
   | { kind: 'unsupported'; message: string; name?: string; path?: string };
 
 /** How to render the fetched text content. */
@@ -108,14 +107,6 @@ const TextContent: React.FC<{ path: string; mode: TextMode; reveal?: LineTarget 
   if (error) return <div style={MUTED}>{error}</div>;
   if (data == null) return <div style={MUTED}>Loading…</div>;
   if (data.kind === 'unsupported') return <div style={MUTED}>{data.message}</div>;
-  if (data.kind === 'image') {
-    // Defensive: extension routing should catch images before this branch.
-    return (
-      <div style={{ padding: 12 }}>
-        <img src={sourceFileRawUrl(path)} alt={data.name ?? ''} style={{ maxWidth: '100%', height: 'auto', display: 'block' }} />
-      </div>
-    );
-  }
   if (mode === 'csv') return <CSVViewer filePath={path} content={data.content} />;
   if (mode === 'notebook') return <NotebookViewer filePath={path} content={data.content} />;
   if (mode === 'markdown') return <MarkdownPreview filePath={path} content={data.content} />;
@@ -214,4 +205,3 @@ export const FilePanel: React.FC<{
   );
 };
 
-export default FilePanel;

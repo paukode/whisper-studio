@@ -25,18 +25,6 @@ export async function listDir(path: string): Promise<FileTreeEntry[]> {
   return Array.isArray(data?.entries) ? data.entries : [];
 }
 
-/** Read a text file's content as a raw string. Bypasses the shared client on
- *  purpose: the client sniffs the content-type and would `response.json()`-parse
- *  a `.json` file into an object, breaking the `Promise<string>` contract. Reading
- *  the body with `response.text()` guarantees a string regardless of content-type. */
-export async function readFile(path: string): Promise<string> {
-  const response = await fetch(`/api/workspace/file?path=${encodeURIComponent(path)}&raw=true`);
-  if (!response.ok) {
-    throw new Error(`Failed to read file: ${response.status} ${response.statusText}`);
-  }
-  return response.text();
-}
-
 /** Query file metadata without fetching content. Binary files return {binary:true, type}. */
 export function queryFile(path: string): Promise<TextFileInfo | BinaryFileInfo> {
   return get<TextFileInfo | BinaryFileInfo>(`/api/workspace/file?path=${encodeURIComponent(path)}`);
