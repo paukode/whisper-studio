@@ -102,6 +102,13 @@
       <li>"+ New Skill": write a skill in the app.</li>
       <li>"Import skill": add skills that a different person shared.</li>
     </ul>
+    <p>Each skill has a unique name. Case and the difference between "-" and "_" do not
+      make a different name. Thus, "Deploy-Staging" and "deploy_staging" are the same name.
+      The app does not save, rename, or import a skill when a different skill has that name.</p>
+    <p>The app does not replace the skill that you have. The editor shows "A skill named
+      deploy_staging already exists". The import dialog shows "Not imported, a skill with
+      the same name exists" and the names. To continue, use a different name, or delete the
+      skill that you have.</p>
     <p>"Settings", "Import project" copies skills, instructions, and MCP servers from a Claude
       Code or Codex CLI project. Refer to <a href="tut-mcp-plugins.html#import-project">Import a
       Claude Code or Codex project</a>.</p>
