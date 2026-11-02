@@ -60,19 +60,22 @@ def exec_ws_grep(tool_input, transcript, current_attachments):
     file_type = tool_input.get("type", "")
     multiline = tool_input.get("multiline", False)
 
-    args = _build_grep_args(
-        pattern,
-        glob_filter,
-        output_mode,
-        context=context,
-        context_before=context_before,
-        context_after=context_after,
-        case_sensitive=case_sensitive,
-        max_columns=max_columns,
-        show_line_numbers=show_line_numbers,
-        file_type=file_type,
-        multiline=multiline,
-    )
+    try:
+        args = _build_grep_args(
+            pattern,
+            glob_filter,
+            output_mode,
+            context=context,
+            context_before=context_before,
+            context_after=context_after,
+            case_sensitive=case_sensitive,
+            max_columns=max_columns,
+            show_line_numbers=show_line_numbers,
+            file_type=file_type,
+            multiline=multiline,
+        )
+    except ValueError as e:
+        return f"Error: {e}"
 
     try:
         stdout, stderr, returncode = rg_raw(args, cwd=ws)
@@ -203,18 +206,14 @@ def _build_grep_args(
     # patterns combined with the directory glob.
     if file_type and glob_filter:
         type_globs = _resolve_type_globs(file_type)
+        if not type_globs:
+            raise ValueError(f"unknown file type {file_type!r} (see rg --type-list)")
         dir_globs = _parse_glob_patterns(glob_filter)
-        if type_globs:
-            for dg in dir_globs:
-                for tg in type_globs:
-                    # Combine: "server/**" + "*.py" → "server/**/*.py"
-                    combined = f"{dg.rstrip('/')}/{tg}" if dg.endswith("**") else f"{dg}/{tg}"
-                    args.extend(["--glob", combined])
-        else:
-            # Fallback: couldn't resolve type, use both separately
-            args.extend(["--type", file_type])
-            for g in dir_globs:
-                args.extend(["--glob", g])
+        for dg in dir_globs:
+            for tg in type_globs:
+                # Combine: "server/**" + "*.py" → "server/**/*.py"
+                combined = f"{dg.rstrip('/')}/{tg}" if dg.endswith("**") else f"{dg}/{tg}"
+                args.extend(["--glob", combined])
     elif file_type:
         args.extend(["--type", file_type])
     elif glob_filter:
@@ -231,28 +230,26 @@ def _build_grep_args(
 
 
 def _resolve_type_globs(file_type: str) -> list[str]:
-    """Resolve an rg file type name to its glob extensions via rg --type-list."""
+    """Resolve an rg file type name to its glob extensions via rg --type-list,
+    or [] when rg knows no such type."""
     import subprocess
 
     from server.search.engine import get_rg_path
 
-    try:
-        result = subprocess.run(
-            # Use the resolved ripgrep binary (env override / PATH / pip), the
-            # same one every other rg invocation uses, rather than bare "rg"
-            # which may not be on PATH in the server's environment.
-            [get_rg_path(), "--type-list"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        for line in result.stdout.splitlines():
-            if line.startswith(f"{file_type}:"):
-                # Format: "py: *.py, *.pyi"
-                _, exts = line.split(":", 1)
-                return [e.strip() for e in exts.split(",") if e.strip()]
-    except Exception:
-        pass
+    result = subprocess.run(
+        # The resolved ripgrep binary, the same one every other rg invocation
+        # uses, rather than bare "rg", which may not be on the server's PATH.
+        [get_rg_path(), "--type-list"],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=True,
+    )
+    for line in result.stdout.splitlines():
+        if line.startswith(f"{file_type}:"):
+            # Format: "py: *.py, *.pyi"
+            _, exts = line.split(":", 1)
+            return [e.strip() for e in exts.split(",") if e.strip()]
     return []
 
 
