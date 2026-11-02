@@ -167,3 +167,24 @@ def test_team_create_concurrency_cap_matches_the_one_agent_concurrency_knob():
     from server.agents.providers.base import AGENT_CALL_CONCURRENCY
 
     assert spawn_mod.MAX_CONCURRENT_AGENTS_PER_SESSION == AGENT_CALL_CONCURRENCY
+
+
+def test_team_create_ignores_a_session_id_in_the_tool_input(monkeypatch):
+    monkeypatch.setattr("server.agents.event_bus.event_bus", _Bus())
+    captured = []
+
+    async def _fake_run_agent(task, **kwargs):
+        captured.append(kwargs)
+        return _fake_result()
+
+    monkeypatch.setattr("server.agents.runtime.run_agent", _fake_run_agent)
+
+    asyncio.run(
+        agent_tools.execute_team_create(
+            {"team_name": "t", "agents": [{"name": "a", "task": "x"}], "session_id": "other"},
+            "model-x",
+            "sess1",
+        )
+    )
+
+    assert captured[0]["session_id"] == "sess1"

@@ -132,7 +132,7 @@ async def _settle_cancelled_members(gather_task: asyncio.Task) -> None:
 async def execute_team_create(
     tool_input: dict,
     model_id: str,
-    session_id: str = "default",
+    session_id: str,
     effort_label: str | None = None,
     *,
     parent_agent_id: str | None = None,
@@ -161,7 +161,6 @@ async def execute_team_create(
     team_name = tool_input.get("team_name", "team")
     description = tool_input.get("description", "")
     agents = tool_input.get("agents", [])
-    session_id = tool_input.get("session_id", session_id)
 
     team_id = uuid.uuid4().hex[:8]
     _teams[team_id] = {

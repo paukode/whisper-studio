@@ -580,9 +580,8 @@ TEAM_CREATE_TOOL = {
                     "required": ["name", "task"],
                 },
             },
-            "session_id": {"type": "string", "description": "Current session ID"},
         },
-        "required": ["team_name", "agents", "session_id"],
+        "required": ["team_name", "agents"],
     },
 }
 
