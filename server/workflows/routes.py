@@ -39,13 +39,14 @@ def _default_model():
 
     cfg = load_config()
     models = cfg.get("chat_models", {}) or {}
-    # load_config guarantees default_chat_model names a chat_models entry.
+    # default_chat_model names a chat_models entry whenever chat_models is not
+    # empty; with every model hidden there is none, and run_agent says why.
     key = cfg["default_chat_model"]
     if current_mode(cfg) == "local":
         meta = cfg.get("chat_model_meta") or {}
         key = mode_default_model(list(models), meta, "local", key)
         return key, models.get(key, "")
-    return key, models[key]
+    return key, models.get(key, "")
 
 
 @router.get("/runs/{run_id}")

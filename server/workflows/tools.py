@@ -132,12 +132,12 @@ def _model_key_for(model_id: str) -> str:
 
 
 def _default_model_key() -> str:
-    """The configured default chat model key — the right fallback when an id
+    """The configured default chat model key, the right fallback when an id
     cannot be reversed. Never "" (an empty key infers the standard ladder, which
     would clamp ultracode away just as silently as the old "sonnet" did)."""
     from server.infrastructure.config import load_config
 
-    # load_config guarantees default_chat_model names a chat_models entry.
+    # It names a chat_models entry whenever chat_models is not empty.
     return load_config()["default_chat_model"]
 
 
