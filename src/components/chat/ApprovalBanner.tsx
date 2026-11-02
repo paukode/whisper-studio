@@ -104,6 +104,7 @@ export function ApprovalBanner() {
           <CommandPreview
             command={payload.command as string | undefined}
             cwd={payload.cwd as string | undefined}
+            previewError={payload.command_preview_error as string | undefined}
           />
         );
       case 'list':

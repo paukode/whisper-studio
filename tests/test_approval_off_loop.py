@@ -157,4 +157,7 @@ def test_a_failed_command_preview_is_shown_not_left_blank():
         category="cli", preview="command", summary="s", executor=None, render_command=boom
     )
     payload = spec.build_payload({"x": 1})
-    assert payload["command"] == "(command preview unavailable: bad input)"
+    assert payload["command_preview_error"] == "Command preview unavailable: bad input"
+    # "command" is the field approved executors run: display text never
+    # goes there, so an executor still refuses with "No command".
+    assert "command" not in payload
