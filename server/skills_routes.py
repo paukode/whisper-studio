@@ -461,7 +461,17 @@ async def delete_skill(name: str):
     if skill_dir:
         import shutil
 
-        shutil.rmtree(skill_dir, ignore_errors=True)
+        try:
+            shutil.rmtree(skill_dir)
+        except OSError as e:
+            # Whatever is left stays loaded as it is on disk; say why.
+            _sk.SKILLS = _sk.load_skills()
+            _sk.rebuild_tools()
+            return Response(
+                content=json.dumps({"error": f"Could not delete {skill_dir}: {e}"}),
+                status_code=500,
+                media_type="application/json",
+            )
     else:
         old_file = _sk._find_skill_file(name)
         if not old_file:

@@ -1,5 +1,5 @@
-"""Renaming a markdown skill never deletes the file it just wrote and never
-overwrites another skill."""
+"""Skill edits through the routes: a rename never deletes the file it just
+wrote and never overwrites another skill; a delete that fails says why."""
 
 import pytest
 from fastapi import FastAPI
@@ -42,3 +42,21 @@ def test_a_rename_onto_another_skill_is_refused(client):
     assert r.status_code == 409
     assert "beta body" in (d / "beta.md").read_text()
     assert (d / "alpha.md").exists()
+
+
+def test_a_folder_skill_that_cannot_be_deleted_says_why(client, monkeypatch):
+    import shutil
+
+    c, d = client
+    folder = d / "alpha"
+    folder.mkdir()
+    (folder / "SKILL.md").write_text(_md("alpha", "body"))
+    monkeypatch.setattr(skills_mod, "SKILLS", skills_mod.load_skills(str(d)))
+
+    def refuse(path, *a, **k):
+        raise PermissionError(13, "Operation not permitted", str(path))
+
+    monkeypatch.setattr(shutil, "rmtree", refuse)
+    r = c.delete("/api/skills/alpha")
+    assert r.status_code == 500
+    assert "Could not delete" in r.json()["error"]
