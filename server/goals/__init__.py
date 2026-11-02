@@ -70,9 +70,9 @@ def not_checked(reason: str) -> Verdict:
 
 @dataclass
 class GateContext:
-    """Everything the gate needs, assembled by each caller. Provider-neutral:
-    ``messages`` is the caller's native history (Anthropic blocks or Responses
-    items); the tail renderer flattens either to text."""
+    """Everything the gate needs, assembled by each caller. ``messages`` is
+    the canonical history (tool_use and tool_result content blocks) every
+    provider's engine keeps; the tail renderer flattens it to text."""
 
     session_id: str
     messages: list = field(default_factory=list)

@@ -110,36 +110,26 @@ def test_tail_slices_giant_tool_result():
     assert "elided" in out
 
 
-def test_tail_renders_responses_items():
+def test_tail_renders_tool_calls_and_results():
     from server.goals.tail import render_tail
 
     msgs = [
-        {"role": "user", "content": [{"type": "input_text", "text": "do it"}]},
+        {"role": "user", "content": [{"type": "text", "text": "run the tests"}]},
         {
             "role": "assistant",
             "content": [
-                {"type": "output_text", "text": "ok"},
-                {"type": "function_call", "name": "ws_bash"},
+                {"type": "text", "text": "ok"},
+                {"type": "tool_use", "id": "c1", "name": "ws_run_command", "input": {}},
             ],
         },
+        {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "c1", "content": "42 passed"}],
+        },
+        {"role": "assistant", "content": [{"type": "text", "text": "all green"}]},
     ]
     out = render_tail(msgs)
-    assert "do it" in out and "ok" in out and "ws_bash" in out
-
-
-def test_tail_renders_top_level_responses_tool_items():
-    # The OpenAI loop's input_items carry tool activity as TOP-LEVEL items with
-    # no role/content — they must still be visible to the evaluator.
-    from server.goals.tail import render_tail
-
-    msgs = [
-        {"role": "user", "content": [{"type": "input_text", "text": "run the tests"}]},
-        {"type": "function_call", "call_id": "c1", "name": "ws_run_command", "arguments": "{}"},
-        {"type": "function_call_output", "call_id": "c1", "output": "42 passed"},
-        {"role": "assistant", "content": [{"type": "output_text", "text": "all green"}]},
-    ]
-    out = render_tail(msgs)
-    assert "ws_run_command" in out
+    assert "run the tests" in out and "ok" in out and "ws_run_command" in out
     assert "42 passed" in out
     assert "all green" in out
 

@@ -44,7 +44,7 @@ def test_turn_messages_start_after_the_last_real_user_prompt():
     assert len(turn) == 5 and turn[0]["role"] == "assistant"
 
 
-def test_artifact_created_detects_anthropic_and_responses_shapes():
+def test_artifact_created_detects_a_create_artifact_call():
     anth = [
         {"role": "user", "content": "make it"},
         {
@@ -52,12 +52,8 @@ def test_artifact_created_detects_anthropic_and_responses_shapes():
             "content": [{"type": "tool_use", "name": "create_artifact", "input": {}}],
         },
     ]
-    resp = [
-        {"role": "user", "content": "make it"},
-        {"role": "assistant", "content": [{"type": "function_call", "name": "create_artifact"}]},
-    ]
     none = [{"role": "user", "content": "make it"}, {"role": "assistant", "content": "done"}]
-    assert d.artifact_created(anth) and d.artifact_created(resp)
+    assert d.artifact_created(anth)
     assert not d.artifact_created(none)
 
 
