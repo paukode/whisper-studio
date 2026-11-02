@@ -678,3 +678,52 @@ def test_stream_round_raises_when_the_stream_dies_mid_generation(monkeypatch):
 
     with pytest.raises(RuntimeError, match="mid-generation"):
         asyncio.run(go())
+
+
+def test_stream_round_raises_on_a_line_that_is_not_json(monkeypatch):
+    """A data line that does not parse used to be skipped, so its text or
+    tool-call delta silently went missing from the round."""
+    from server.local import server_stream as SS
+
+    frames = [{"choices": [{"delta": {"content": "half an ans"}}]}]
+    lines = [f"data: {json.dumps(f)}" for f in frames] + ['data: {"choices": [', "data: [DONE]"]
+
+    class _Resp:
+        status_code = 200
+
+        async def aiter_lines(self):
+            for line in lines:
+                yield line
+
+        async def aread(self):
+            return b""
+
+    class _StreamCM:
+        async def __aenter__(self):
+            return _Resp()
+
+        async def __aexit__(self, *a):
+            return False
+
+    class _Client:
+        def __init__(self, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        def stream(self, *a, **kw):
+            return _StreamCM()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", _Client)
+
+    async def go():
+        return [item async for item in SS._stream_round("http://x", {"model": "m"})]
+
+    with pytest.raises(RuntimeError, match="not JSON"):
+        asyncio.run(go())

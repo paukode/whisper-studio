@@ -279,8 +279,12 @@ async def _stream_round(base_url: str, payload: dict):
                     break
                 try:
                     obj = json.loads(data)
-                except json.JSONDecodeError:
-                    continue
+                except json.JSONDecodeError as e:
+                    # A dropped line can hold text or a tool-call delta, so the
+                    # round fails instead of going on with a hole in it.
+                    raise RuntimeError(
+                        f"model server sent a stream line that is not JSON: {data[:200]!r}"
+                    ) from e
                 if obj.get("error"):
                     raise RuntimeError(f"model server error: {str(obj['error'])[:400]}")
                 # The usage chunk arrives last and carries an EMPTY choices list,
