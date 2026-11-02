@@ -175,8 +175,7 @@ def _build_task_tracking_section(session_id: str = "default", **_) -> str:
         "\n\nTASK TRACKING: For complex multi-step requests, use task_create to create tasks, "
         "task_update to mark them in_progress/completed, and task_list to review progress. "
         "When you begin a fresh multi-step plan after an earlier one is already finished, "
-        "task_stop the old completed tasks first so the task list reflects only the current plan. "
-        f"Always pass session_id='{session_id}' to task tools."
+        "task_stop the old completed tasks first so the task list reflects only the current plan."
     )
     # Inject the live task list (with IDs) so a resumed or continued turn keeps
     # working the SAME plan instead of re-deriving it and creating duplicates.
