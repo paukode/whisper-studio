@@ -1,9 +1,9 @@
 """
-Git API router — REST endpoints for frontend direct git access.
+Git API router, REST endpoints for frontend direct git access.
 
 All endpoints require a connected workspace with .git.
 Read-only endpoints have no approval check.
-Sync git functions are called directly — FastAPI runs them in threadpool.
+Sync git functions are called directly, FastAPI runs them in threadpool.
 """
 
 import asyncio
@@ -134,7 +134,7 @@ def git_status_endpoint():
 
 @router.get("/events")
 async def git_events_endpoint():
-    """Server-Sent Events stream — fires when the git file watcher detects
+    """Server-Sent Events stream, fires when the git file watcher detects
     a change to .git/HEAD, .git/config, or the current branch ref.
 
     Each `git-changed` event carries the current branch and head SHA so the panel can
@@ -225,13 +225,13 @@ def git_changes_endpoint():
 
     Returns status and per-file diff stats in one call. The cache absorbs the
     assistant's tool loop running `git status` / `git diff` repeatedly between
-    rounds — cuts subprocess count by ~70% under load."""
+    rounds, cuts subprocess count by ~70% under load."""
     ws = _require_git_workspace()
     key = os.path.normpath(ws)
     now = time.monotonic()
     cached = _CHANGES_CACHE.get(key)
     if cached and now - cached[0] < _CHANGES_TTL_SECONDS:
-        # Refresh LRU position — touching a hot entry keeps it from
+        # Refresh LRU position, touching a hot entry keeps it from
         # being evicted by a sweep through cold worktrees.
         _CHANGES_CACHE.move_to_end(key)
         return cached[1]
@@ -332,7 +332,7 @@ def git_restore_endpoint(req: RestoreRequest):
         elif os.path.exists(full_path) or os.path.islink(full_path):
             os.remove(full_path)
         return {"success": True}
-    # Tracked file — restore from HEAD
+    # Tracked file, restore from HEAD
     result = _run_git(["checkout", "HEAD", "--", req.path], cwd=ws)
     if result.returncode != 0:
         raise HTTPException(status_code=400, detail=result.stderr.strip())

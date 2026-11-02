@@ -2,7 +2,7 @@
 
 Downloads run in a SUBPROCESS (``<venv python> -m server.models_manager.worker
 <key>``), not a thread: the ensure_* functions block inside huggingface_hub
-with no cancellation hook, and a thread can't be killed — terminating the
+with no cancellation hook, and a thread can't be killed, terminating the
 worker process is a real, honest cancel. The worker calls the exact same
 ensure function the app itself uses (including GLiNER's backbone-tokenizer
 pre-cache), so a managed download is byte-for-byte the lazy first-use one.
@@ -15,7 +15,7 @@ resumes instead of restarting.
 
 Requests beyond the concurrency cap are QUEUED (FIFO), not refused: the key
 goes into ``_queue`` and the next free slot starts it. The queue is pumped by
-``reap()`` — which every endpoint (including the 1s status poll) calls first —
+``reap()``, which every endpoint (including the 1s status poll) calls first,
 and directly by ``cancel()``, so a freed slot is refilled on the very next
 poll at the latest and queued items can never stall.
 """
@@ -45,7 +45,7 @@ from server.models_manager.catalog import (
 
 log = logging.getLogger("whisper-studio")
 
-# At most this many downloads at once — kind to disk and network; the rest of
+# At most this many downloads at once, kind to disk and network; the rest of
 # the app (transcription, chat) keeps its share of bandwidth and IOPS.
 MAX_CONCURRENT = 2
 
@@ -91,7 +91,7 @@ class _Job:
         self.proc = proc
         # The worker PID, kept explicitly so liveness can be probed directly
         # (os.kill(pid, 0)) even in the case where the Popen handle never
-        # observes the exit — a dead worker must never read as "downloading".
+        # observes the exit, a dead worker must never read as "downloading".
         self.pid = getattr(proc, "pid", None)
         self.log_path = log_path
         self.started_at = time.time()
@@ -127,7 +127,7 @@ def _spawn_worker(key: str, log_path: str) -> subprocess.Popen:
     cmd = [sys.executable, "-m", "server.models_manager.worker", key]
     env = {**os.environ, "HF_HUB_DISABLE_PROGRESS_BARS": "1", "PYTHONUNBUFFERED": "1"}
     with open(log_path, "w") as log_file:
-        # start_new_session: the worker must survive nothing — but it must not
+        # start_new_session: the worker must survive nothing, but it must not
         # share our process group, so a Ctrl-C to the server doesn't half-kill
         # a download we then mis-report as failed.
         return subprocess.Popen(
@@ -147,7 +147,7 @@ def _failure_reason(log_path: str) -> str:
     non-zero exit (see worker.py), so a handled failure becomes a sentence the
     user can act on. Only that marker line is trusted: a worker that was killed
     (cancel, SIGKILL, OOM) never writes one, and the tail of its log is just
-    library noise — for those the generic exit-code message is more honest.
+    library noise, for those the generic exit-code message is more honest.
     """
     try:
         with open(log_path, errors="replace") as f:
@@ -173,7 +173,7 @@ def _failure_message(log_path: str, rc: int | None) -> str:
 
 def _pid_alive(pid: int | None) -> bool:
     """Whether the worker process still exists. ``os.kill(pid, 0)`` probes the
-    PID without sending a real signal — the liveness backstop for the case where
+    PID without sending a real signal, the liveness backstop for the case where
     ``Popen.poll()`` cannot see the exit. An unknown PID is assumed alive (a
     missing PID alone never condemns a job). Module-level so tests can stub it."""
     if pid is None:
@@ -184,7 +184,7 @@ def _pid_alive(pid: int | None) -> bool:
         return False
     except PermissionError:  # exists, just not ours to signal
         return True
-    except OSError:  # ambiguous errno — be conservative, don't declare it dead
+    except OSError:  # ambiguous errno, be conservative, don't declare it dead
         return True
     return True
 
@@ -203,7 +203,7 @@ def _note_byte_progress(job: _Job, entry: ModelEntry | None, now: float) -> bool
 
 def _terminate(job: _Job) -> None:
     """Best-effort stop of a worker process: terminate, then kill if it lingers.
-    Must be called WITHOUT holding ``_lock`` — it can wait on the process."""
+    Must be called WITHOUT holding ``_lock``, it can wait on the process."""
     try:
         if job.proc.poll() is None:
             job.proc.terminate()
@@ -224,7 +224,7 @@ def _drop_partial_sentinel(entry: ModelEntry) -> None:
 
     ``start_download`` refuses to run when the model is installed, so any
     sentinel on disk when an attempt ends non-successfully was written BY that
-    attempt — and for snapshot repos hf fetches small files (configs, exactly
+    attempt, and for snapshot repos hf fetches small files (configs, exactly
     the sentinels of ECAPA/GLiNER) early, long before the weights. Left in
     place it would make a half-downloaded model read "installed" and block the
     retry. Removing just the sentinel costs one small re-fetch on resume; the
@@ -240,15 +240,15 @@ def _drop_partial_sentinel(entry: ModelEntry) -> None:
 
 def reap() -> None:
     """Fold finished, dead, or stalled workers into terminal states (called
-    before every read), then pump the queue — a reaped job frees a slot.
+    before every read), then pump the queue, a reaped job frees a slot.
 
     A job leaves ``downloading`` three ways, and only a clean success (or an
     explicit cancel) is silent; every other exit records an actionable error:
 
-      1. the worker exited on its own — ``poll()`` returns an exit code;
-      2. the worker is gone even though ``poll()`` never saw the exit — the PID
+      1. the worker exited on its own, ``poll()`` returns an exit code;
+      2. the worker is gone even though ``poll()`` never saw the exit, the PID
          liveness backstop (``os.kill(pid, 0)``) catches it;
-      3. the worker is wedged — no new bytes for ``STALL_TIMEOUT_SEC`` — so it is
+      3. the worker is wedged, no new bytes for ``STALL_TIMEOUT_SEC``, so it is
          terminated and reported rather than left at a stuck percent forever.
 
     This is what turns a dead or hung download into a visible error the user can
@@ -272,7 +272,7 @@ def reap() -> None:
                         finished.append(key)
                     continue
                 _errors[key] = _failure_message(job.log_path, rc)
-                _progress_max.pop(key, None)  # run over — next run re-measures
+                _progress_max.pop(key, None)  # run over, next run re-measures
                 log.warning("Model download %s failed (rc=%s).", key, rc)
                 failed.append(key)
                 continue
@@ -366,7 +366,7 @@ def queue_position(key: str) -> int | None:
 
 
 def state_of(entry: ModelEntry) -> tuple[str, str | None]:
-    """(state, error) — downloading > queued > installed > error > absent."""
+    """(state, error), downloading > queued > installed > error > absent."""
     with _lock:
         if entry.key in _jobs:
             return "downloading", None
@@ -381,7 +381,7 @@ def state_of(entry: ModelEntry) -> tuple[str, str | None]:
 
 
 def progress_of(entry: ModelEntry, state: str | None = None) -> float | None:
-    """THE download-progress fraction — the one number every surface shows.
+    """THE download-progress fraction, the one number every surface shows.
 
     Settings > Models, the pre-recording gate, and the local-chat loading
     banner must all render this, never their own bytes/size arithmetic.
@@ -417,11 +417,11 @@ def progress_of(entry: ModelEntry, state: str | None = None) -> float | None:
 def start_download(entry: ModelEntry) -> str:
     """Start (or queue) a download. Returns what happened:
 
-      - ``"started"``            — a worker is running now
-      - ``"queued"``             — all slots busy; the key joined the FIFO queue
-      - ``"already_downloading"``/``"already_queued"`` — benign duplicate, no-op
+      - ``"started"``            , a worker is running now
+      - ``"queued"``             , all slots busy; the key joined the FIFO queue
+      - ``"already_downloading"``/``"already_queued"``, benign duplicate, no-op
 
-    Only "already installed" is a Conflict — a duplicate request for a running
+    Only "already installed" is a Conflict, a duplicate request for a running
     or queued download is exactly what the requester wanted, so it succeeds.
     """
     reap()
@@ -448,7 +448,7 @@ def start_download(entry: ModelEntry) -> str:
 
 
 def _dequeue_locked(key: str) -> bool:
-    """Remove a key from the queue (caller holds ``_lock``). Partials stay —
+    """Remove a key from the queue (caller holds ``_lock``). Partials stay,
     a queued model never started, so there is nothing new on disk to unwind."""
     if key not in _queue:
         return False
@@ -473,14 +473,14 @@ def cancel(entry: ModelEntry) -> str:
     job.cancelled = True
     _terminate(job)
     # rc == 0 means the download actually completed before the terminate
-    # landed — then the sentinel is legitimate and stays.
+    # landed, then the sentinel is legitimate and stays.
     if job.proc.poll() != 0:
         _drop_partial_sentinel(entry)
     _errors.pop(entry.key, None)
     with _lock:
         _progress_max.pop(entry.key, None)
     log.info("Model download cancelled: %s.", entry.key)
-    _pump()  # the terminated job freed a slot — start the next queued download
+    _pump()  # the terminated job freed a slot, start the next queued download
     return "cancelled"
 
 
@@ -564,7 +564,7 @@ def delete(entry: ModelEntry) -> dict:
     if not os.path.exists(root):
         if dequeued:
             # Honoring the delete meant dequeuing; with nothing on disk that
-            # was the whole job — report it as done rather than a conflict.
+            # was the whole job, report it as done rather than a conflict.
             return {"deleted": False, "dequeued": True, "stopped_llama_server": False}
         raise NotOnDisk("Nothing to delete: this model is not on disk.")
 
@@ -572,7 +572,7 @@ def delete(entry: ModelEntry) -> dict:
     if entry.group == GROUP_LOCAL_CHAT:
         stopped = _stop_if_serving(entry.key)
         # A registry entry normally owns its directory, but two config entries
-        # MAY point different filenames at one dir — then only our file goes.
+        # MAY point different filenames at one dir, then only our file goes.
         shared = any(
             other.key != entry.key and other.dir_name == entry.dir_name for other in entries()
         )
@@ -585,7 +585,7 @@ def delete(entry: ModelEntry) -> dict:
             # A whole-directory model (MLX snapshot) sharing its dir with
             # another entry: rmtree here would silently destroy the other
             # model's weights. Browser installs namespace MLX dirs so this
-            # only fires for hand-written config collisions — refuse loudly.
+            # only fires for hand-written config collisions, refuse loudly.
             raise Conflict(
                 "This model shares its folder with another entry; delete the "
                 "other entry first or separate their `dir` values in config."

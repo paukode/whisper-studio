@@ -4,11 +4,11 @@ This module is the hybrid model's "registry collected centrally" half:
 specs are declared here next to (but separate from) the workspace tool
 implementations, and a single `register_defaults()` call wires them all
 in at startup. Adding a new approval-required tool is one new entry
-here — no frontend changes, no tool_executor edits.
+here, no frontend changes, no tool_executor edits.
 
 Each executor is a thin async wrapper around the existing workspace
 endpoint logic. The frontend never knows which endpoint actually runs
-the work — it just POSTs to /api/approval/execute with {action, payload}.
+the work, it just POSTs to /api/approval/execute with {action, payload}.
 """
 
 from __future__ import annotations
@@ -71,7 +71,7 @@ from .spec import ApprovalSpec
 
 def register_defaults() -> None:
     """Register specs for the built-in workspace tools. Called at startup."""
-    # Writes — diff preview, write category
+    # Writes, diff preview, write category
     for action in ("write", "ws_write_file"):
         register(
             action,
@@ -107,7 +107,7 @@ def register_defaults() -> None:
             ),
         )
 
-    # create_docx/pptx/xlsx/create_pdf — same trust boundary as ws_create_file
+    # create_docx/pptx/xlsx/create_pdf, same trust boundary as ws_create_file
     # (a file inside the already-connected workspace), so it shares the
     # "write" category and benefits from "Yes for all writes" the same way.
     # No diff to show (binary content), so preview="text" just renders the
@@ -125,7 +125,7 @@ def register_defaults() -> None:
     )
 
     # The direct-save move (save_file, ws_create_file without a workspace,
-    # document tools) — its own category (not "write") so it neither
+    # document tools), its own category (not "write") so it neither
     # inherits "Yes for all writes" session-memory from ordinary workspace
     # writes nor triggers the git-changes cache invalidation
     # /api/approval/execute does for the write/delete/cli categories (these
@@ -142,14 +142,14 @@ def register_defaults() -> None:
         ),
     )
 
-    # office_script — runs model-written python-docx/pptx/openpyxl code and
+    # office_script, runs model-written python-docx/pptx/openpyxl code and
     # then writes what it produced. Registered from its own module (see
     # server/documents/approval.py) to keep this file under the size budget.
     from server.documents.approval import register_office_script_approval
 
     register_office_script_approval()
 
-    # rules_write — writes the user's rules under ~/.whisper with no card in
+    # rules_write, writes the user's rules under ~/.whisper with no card in
     # every mode but plan, where it raises this card (server/rules_tools.py).
     from server.rules_tools import register_rules_approval
 
@@ -167,7 +167,7 @@ def register_defaults() -> None:
     register_cron_approval()
     register_secret_read_approval()
 
-    # Folder access — its own category so it is never covered by "Yes for all
+    # Folder access, its own category so it is never covered by "Yes for all
     # writes"/"all commands". Granting the app reach into a NEW folder outside
     # the connected workspace is a distinct, durable decision (it persists
     # across sessions), so it gets its own prompt and its own session bucket.
@@ -183,7 +183,7 @@ def register_defaults() -> None:
         ),
     )
 
-    # Deletes — text preview, delete category
+    # Deletes, text preview, delete category
     for action in ("delete", "ws_delete_file"):
         register(
             action,
@@ -197,7 +197,7 @@ def register_defaults() -> None:
             ),
         )
 
-    # Commands — command preview, cli category
+    # Commands, command preview, cli category
     for action in ("command", "cli", "ws_run_command"):
         register(
             action,
@@ -213,7 +213,7 @@ def register_defaults() -> None:
             ),
         )
 
-    # Git writes — under the cli category so "Yes for all commands" also
+    # Git writes, under the cli category so "Yes for all commands" also
     # covers commits/pushes. The summary is a short verb-phrase; the
     # rendered command lives in payload.command so CommandPreview can
     # show it without duplicating the title.
@@ -418,8 +418,8 @@ def register_defaults() -> None:
     )
     # GitHub hybrid tools. Routine writes use the ask-by-default "github"
     # category; destructive verbs (merge/delete/rename/archive, API DELETE) use
-    # "github-destructive", a separate category so no blanket "cli" approval —
-    # nor a blanket "github" approval — ever covers them.
+    # "github-destructive", a separate category so no blanket "cli" approval,
+    # nor a blanket "github" approval, ever covers them.
     for _action, _cat, _exec, _summ, _rend in (
         ("github", "github", _do_github, _gh_summary, _gh_render),
         ("github_destructive", "github-destructive", _do_github, _gh_summary, _gh_render),
@@ -548,7 +548,7 @@ def register_defaults() -> None:
         ),
     )
 
-    # Worktrees — text preview, dedicated category so users can
+    # Worktrees, text preview, dedicated category so users can
     # "Yes for all worktree operations" once they trust the flow.
     register(
         "enter_worktree",
@@ -573,7 +573,7 @@ def register_defaults() -> None:
         ),
     )
 
-    # Live preview — dedicated category so users can "Yes for all preview
+    # Live preview, dedicated category so users can "Yes for all preview
     # operations" independently of cli/write. preview_eval carries the
     # highest risk_hint (arbitrary JS in a real page context); the rest
     # scale with how reversible/contained the action is.
@@ -713,7 +713,7 @@ def register_defaults() -> None:
             preview="command",
             summary=_preview_eval_summary,
             executor=_do_preview_eval,
-            risk_hint="high",  # arbitrary JS — the highest-risk single action
+            risk_hint="high",  # arbitrary JS, the highest-risk single action
             payload_fields=["session_name", "expression", "session_id"],
             render_command=lambda p: p.get("expression") or "?",  # full, unabridged JS
         ),
@@ -745,7 +745,7 @@ def register_defaults() -> None:
         ),
     )
 
-    # MCP tool calls — dedicated "mcp" category so per-server approval_mode /
+    # MCP tool calls, dedicated "mcp" category so per-server approval_mode /
     # tool_overrides (mcp_servers.json) sit on their own tier instead of
     # falling into "cli" or another generic bucket. Only reached when
     # server.mcp.MCPManager.call_tool decided the tool's tier isn't "auto"
@@ -762,7 +762,7 @@ def register_defaults() -> None:
         ),
     )
 
-    # MCP elicitations — an MCP server asking the human for input mid tool
+    # MCP elicitations, an MCP server asking the human for input mid tool
     # call. Its own category (not "mcp") since it is answered directly via
     # POST /api/approval/execute from Settings → MCP rather than through the
     # [WS_APPROVAL] pause-a-chat-turn pipeline the rest of this file uses;

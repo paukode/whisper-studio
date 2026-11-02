@@ -1,7 +1,7 @@
 """Engine dispatch for the on-device model servers.
 
-Two engines serve local chat models — llama-server for GGUF weights and
-``mlx_lm server`` for MLX snapshots — and both speak the same OpenAI-compatible
+Two engines serve local chat models, llama-server for GGUF weights and
+``mlx_lm server`` for MLX snapshots, and both speak the same OpenAI-compatible
 ``/v1/chat/completions`` SSE, so everything above this module (LocalAdapter,
 the stream parser, the turn engine) is engine-agnostic. This facade is the one
 place that knows which engine a model key belongs to, and it owns the
@@ -33,7 +33,7 @@ _BUSY_WAIT_TIMEOUT_S = int(os.environ.get("WHISPER_LOCAL_BUSY_WAIT_S", "600"))
 
 # Live chat turns currently streaming from the resident server. A transition
 # that would displace that server (different key, or a context-size change)
-# WAITS for this to drain instead of stopping the server mid-stream — the bug
+# WAITS for this to drain instead of stopping the server mid-stream, the bug
 # where switching models in the composer killed the in-flight answer
 # ("round 0 failed" with an empty error and a turn with no text).
 _busy_lock = threading.Lock()
@@ -61,7 +61,7 @@ _release_when_idle: str | None = None
 def begin_turn() -> None:
     """Mark a chat turn as streaming from the resident server. Callers must
     pair with ``end_turn`` in a finally. ``ensure_serving(mark_busy=True)``
-    does this atomically with the residency check — prefer that."""
+    does this atomically with the residency check, prefer that."""
     global _busy_turns
     with _busy_lock:
         _busy_turns += 1
@@ -238,13 +238,13 @@ def ensure_serving(
     One local model resident at a time is a CROSS-engine invariant, so the
     whole transition runs under the facade lock. Ordering mirrors what each
     engine already does internally: validate the engine and fetch the weights
-    FIRST, and only then evict the other engine's resident model — a doomed
+    FIRST, and only then evict the other engine's resident model, a doomed
     request (mlx-lm missing, unknown key) or a minutes-long first download must
     never leave the machine with nothing resident. Blocking (a cold start loads
     gigabytes), so call it off the event loop.
 
     A transition that would displace the resident server (different key, or a
-    context-size change) waits for live chat turns to finish first — stopping
+    context-size change) waits for live chat turns to finish first, stopping
     a server mid-stream kills the answer being written. ``should_abort`` lets
     a waiting caller bail out (the model-load endpoint passes its cancel
     flag); it is checked again once the transition lock is acquired, so a call

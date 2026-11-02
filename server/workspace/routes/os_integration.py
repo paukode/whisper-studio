@@ -42,7 +42,7 @@ async def ws_open_with(request: Request):
     """Open a file with the system default application.
 
     Accepts a workspace-relative path (resolved against the connected
-    workspace) or an absolute path — the latter is allowed only when it lives
+    workspace) or an absolute path, the latter is allowed only when it lives
     inside the connected workspace or a known indexed workspace, mirroring
     /reveal below, so a created-file chat link still opens after the user
     switches to a different workspace."""
@@ -88,7 +88,7 @@ async def ws_reveal(request: Request):
     it. Used by the chat 'source' links.
 
     Accepts a workspace-relative path (resolved against the connected workspace)
-    or an absolute path — the latter is allowed only when it lives inside the
+    or an absolute path, the latter is allowed only when it lives inside the
     connected workspace or a known indexed workspace, so a grounded citation
     from a *different* indexed folder can still be revealed."""
     body = await request.json()

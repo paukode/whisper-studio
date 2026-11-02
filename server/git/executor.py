@@ -1,5 +1,5 @@
 """
-Git tool executor — handles git tool calls with safety validation.
+Git tool executor, handles git tool calls with safety validation.
 
 Each tool handler validates inputs against the security layer, executes
 git commands via subprocess.run(), parses output, tracks operations,
@@ -177,7 +177,7 @@ def _exec_git_log(tool_input, transcript, current_attachments):
     file_path = tool_input.get("file")
     oneline = tool_input.get("oneline", True)
 
-    # `branch` sits before the `--` separator, so it must be validated —
+    # `branch` sits before the `--` separator, so it must be validated,
     # an option-like value (e.g. "--output=/path") would otherwise be
     # parsed by git as a flag rather than a revision.
     if branch and not is_safe_ref_name(branch):
@@ -231,7 +231,7 @@ def _exec_git_show(tool_input, transcript, current_attachments):
 
     # The ref is a positional revision that precedes the `--` separator, so
     # the separator alone cannot stop an option-like value ("--output=/path")
-    # from being parsed as a git flag — validate it against the ref allowlist.
+    # from being parsed as a git flag, validate it against the ref allowlist.
     if ref and not is_safe_ref_name(ref):
         return f"Error: invalid ref name: {ref}"
 
@@ -300,7 +300,7 @@ def _exec_git_stash_list(tool_input, transcript, current_attachments):
 
 
 # Anchored regex for accepted git remote URL forms. Allows alnum, dot,
-# slash, at, colon, underscore, hyphen — explicitly NO shell metachars,
+# slash, at, colon, underscore, hyphen, explicitly NO shell metachars,
 # spaces, semicolons, backticks, or quotes. Rejects file:// to keep
 # the assistant from cloning arbitrary local paths.
 import re as _re  # noqa: E402
@@ -327,7 +327,7 @@ def do_git_clone(payload: dict) -> tuple[bool, str]:
         return False, "url is required"
     if not _GIT_URL_RE.match(url):
         return False, (
-            f"invalid url {url!r} — accepted forms are https://, ssh://, "
+            f"invalid url {url!r}; accepted forms are https://, ssh://, "
             "or git@host:path (no shell metacharacters, no file://)"
         )
 
@@ -366,7 +366,7 @@ def do_git_clone(payload: dict) -> tuple[bool, str]:
             env=env,
         )
     except subprocess.TimeoutExpired:
-        return False, "git clone timed out after 300s — network too slow or repo too large"
+        return False, "git clone timed out after 300s (network too slow or repo too large)"
 
     if result.returncode != 0:
         return False, f"git clone failed: {(result.stderr or result.stdout or '').strip()}"
@@ -391,7 +391,7 @@ def do_git_clone(payload: dict) -> tuple[bool, str]:
 def _exec_git_clone(tool_input, transcript, current_attachments):
     """Emit an approval request. Actual `git clone` runs only after the
     user clicks Yes (or 'Yes, all cli' is set for the session). Unlike
-    every other git_* tool, this one does NOT call _get_git_cwd() — by
+    every other git_* tool, this one does NOT call _get_git_cwd(), by
     design, it runs without a pre-existing workspace."""
     import json
 
@@ -462,7 +462,7 @@ def do_git_add_commit(payload: dict) -> tuple[bool, str]:
 
 @register_executor("git_add_commit", read_only=False, concurrent_safe=False)
 def _exec_git_add_commit(tool_input, transcript, current_attachments):
-    """Emit an approval request — the actual commit only runs once the
+    """Emit an approval request, the actual commit only runs once the
     user clicks Yes (or the session has pre-approved 'cli'). Mirrors how
     ws_write_file routes through the approval system."""
     import json
@@ -635,7 +635,7 @@ def do_git_push_pr(payload: dict) -> tuple[bool, str]:
     default_branch = get_default_branch(cwd)
     if branch == default_branch:
         return False, (
-            f"on default branch '{default_branch}' — create a new branch first with git_create_branch before pushing a PR"
+            f"on default branch '{default_branch}': create a new branch first with git_create_branch before pushing a PR"
         )
 
     stdout, stderr, rc = _git(["push", "-u", "origin", branch], cwd, timeout=30)

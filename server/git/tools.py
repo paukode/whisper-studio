@@ -1,5 +1,5 @@
 """
-Git tool definitions — schemas for all git tools exposed to the AI assistant.
+Git tool definitions: schemas for all git tools exposed to the assistant.
 
 Tool schemas follow Whisper's existing tool_pool pattern: each tool is a dict
 with name, description, and input_schema. Executor functions are registered
@@ -196,7 +196,7 @@ GIT_WRITE_TOOLS = [
         "name": "git_clone",
         "description": (
             "[Git] Clone a remote repository and (by default) open it as the workspace. "
-            "This is the ONLY git tool that does NOT require a connected workspace — "
+            "This is the ONLY git tool that does NOT require a connected workspace: "
             "use it when the user says 'clone X', 'pull this repo', 'open https://github.com/...', "
             "or 'set up <repo>'. Refuses overwriting an existing non-empty directory. "
             "Fails fast on missing credentials (no hanging on prompts)."
@@ -210,7 +210,7 @@ GIT_WRITE_TOOLS = [
                 },
                 "dest": {
                     "type": "string",
-                    "description": "Local destination directory. Optional — defaults to ~/Documents/<repo-name>. Must not exist or must be empty.",
+                    "description": "Local destination directory. Optional; defaults to ~/Documents/<repo-name>. Must not exist or must be empty.",
                 },
                 "open": {
                     "type": "boolean",

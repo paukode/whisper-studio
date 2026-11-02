@@ -1,7 +1,7 @@
 """Orchestration for the model browser: search, repo detail, install, uninstall.
 
 Pure-ish glue over :mod:`hf_client` (network) and :mod:`compat` (rules), plus the
-existing models-manager download queue and config machinery. No FastAPI here —
+existing models-manager download queue and config machinery. No FastAPI here,
 routes.py is the thin HTTP shell.
 """
 
@@ -61,7 +61,7 @@ def _reserved_companion_bytes() -> int:
     are explicitly unloaded the moment it finishes (see pipeline.build's
     ``finally`` block), so they are not steady-state competitors for a chat
     model's memory. Reserving their full on-disk size (which can exceed 10 GB
-    across all four) as if permanently resident was the original bug — it
+    across all four) as if permanently resident was the original bug, it
     could shrink the usable budget so far that even a 2-3 GB quant, or an
     already-installed and working local model, was graded "won't fit".
 
@@ -300,7 +300,7 @@ def _install_mlx_model(repo_id: str, label: str | None = None, n_ctx: int | None
     model_type, mlx_tagged = hf_client.repo_mlx_meta(repo_id)
     if not mlx_tagged:
         # A GGUF repo usually carries a config.json too, so the arch gate alone
-        # would happily accept it — and snapshot gigabytes mlx_lm cannot load.
+        # would happily accept it, and snapshot gigabytes mlx_lm cannot load.
         raise InstallError(
             f"{repo_id} does not carry MLX-format weights (no mlx tag on the "
             "repo). It was not installed."
@@ -325,7 +325,7 @@ def _install_mlx_model(repo_id: str, label: str | None = None, n_ctx: int | None
 
 def install_recommended(key: str) -> dict:
     """Install a curated Discover recommendation by its canonical key. Writes the
-    shipped definition into the user config and enqueues the download — same tail
+    shipped definition into the user config and enqueues the download, same tail
     as a searched install, but the metadata comes from the recommendation, not a
     live HF header read."""
     from server.local.registry import RECOMMENDED_LOCAL_MODELS
@@ -357,7 +357,7 @@ def _finalize_install(key: str, entry: dict) -> dict:
     try:
         start = manager.start_download(catalog_entry)
     except manager.Conflict as e:
-        # Already installed on disk — the config entry is still what we want.
+        # Already installed on disk, the config entry is still what we want.
         start = "already_installed"
         log.info("Install %s: %s", key, e)
 
@@ -431,7 +431,7 @@ def _delete_weights(key: str) -> tuple[bool, bool]:
     """Cancel any running/queued download and delete this model's weights.
 
     Returns ``(stopped_llama_server, weights_deleted)``. Missing files are not
-    an error — a model with a config entry but nothing on disk just deletes
+    an error, a model with a config entry but nothing on disk just deletes
     nothing. Used by remove-from-list."""
     from server.models_manager import manager
     from server.models_manager.catalog import get_entry
@@ -458,7 +458,7 @@ def remove_from_list(key: str) -> dict:
     """Remove a chat model from the Models list and the composer picker.
 
     A LOCAL model (installed or a downloaded recommendation) is DELETED outright
-    — its weights and its config entry both go — because it is always
+    its weights and its config entry both go, because it is always
     re-downloadable from the Discover tab, so there is nothing to preserve.
     A BEDROCK model has no weights and lives in the app-owned catalog, so it is
     hidden via the recoverable ``chat_models_disabled`` list instead.

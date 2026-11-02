@@ -30,7 +30,7 @@ FILE_DIFF_TIMEOUT_S = 5
 # also bounds the response size.
 FULL_MODE_MAX_BYTES = 512_000
 # The client's LCS table is (old+1) x (new+1) cells. 9M cells is ~70MB of
-# packed JS numbers and a few hundred ms to fill — past that, hand the
+# packed JS numbers and a few hundred ms to fill, past that, hand the
 # work to git rather than freezing the tab.
 FULL_MODE_MAX_CELLS = 9_000_000
 # Context lines around each hunk. Wider than git's default 3 because the
@@ -116,7 +116,7 @@ def _build(workspace: str, rel_path: str, abs_path: str) -> dict:
 
     head = _show_head(workspace, rel_path)
     if head is None:
-        # Tracked but absent from HEAD — a newly added (staged) file.
+        # Tracked but absent from HEAD, a newly added (staged) file.
         head = ""
 
     if not on_disk:
@@ -171,7 +171,7 @@ def _fits_full_mode(old: str, new: str) -> bool:
 
 
 def _untracked_diff(workspace: str, rel_path: str, abs_path: str) -> FileDiff:
-    """Untracked files have no HEAD side — every line is an addition."""
+    """Untracked files have no HEAD side, every line is an addition."""
     if _has_nul_bytes(abs_path):
         return FileDiff(path=rel_path, mode="binary", status="added")
 
@@ -314,7 +314,7 @@ def parse_unified_diff(raw: str) -> tuple[list[DiffHunk], int, int, bool]:
                 truncated = True
             old_no += 1
             new_no += 1
-        # Any other marker is diff metadata between hunks — skip it.
+        # Any other marker is diff metadata between hunks, skip it.
 
     # Drop hunks that lost all their lines to the cap.
     hunks = [h for h in hunks if h.lines]

@@ -1,4 +1,4 @@
-"""``.whisper/launch.json`` — named dev-server launch configs, per workspace.
+"""``.whisper/launch.json``, named dev-server launch configs, per workspace.
 
 Same shape as Claude Code's own ``.claude/launch.json``. Optional convenience:
 ``preview_start`` can also be called with an ad-hoc command/cwd/port with no

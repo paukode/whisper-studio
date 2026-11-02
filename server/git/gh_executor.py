@@ -175,7 +175,7 @@ def _build_api_args(payload: dict, *, body_tmp: str | None) -> list[str]:
     for k, val in (payload.get("fields") or {}).items():
         args += ["-f", f"{k}={val}"]
     # JSON body via a server-written tempfile (model cannot point --input at a
-    # local file — closes the @file exfil).
+    # local file, closes the @file exfil).
     if body_tmp:
         args += ["--input", body_tmp]
     return args
@@ -291,10 +291,10 @@ def _verify_api(payload: dict, cwd: str, mutation_out: str) -> tuple[bool, str]:
     endpoint = payload.get("endpoint", "")
     if payload.get("graphql_mutation"):
         # GraphQL responses are the mutation's own output, not an independent
-        # read — mark UNVERIFIED honestly.
+        # read, mark UNVERIFIED honestly.
         return (
             True,
-            f"{mutation_out}\n[GraphQL mutation sent — state not independently verified]".strip(),
+            f"{mutation_out}\n[GraphQL mutation sent, state not independently verified]".strip(),
         )
     if method == "DELETE":
         rc, out = run_gh(["api", endpoint], cwd=cwd, timeout=30)
@@ -314,4 +314,4 @@ def _verify_api(payload: dict, cwd: str, mutation_out: str) -> tuple[bool, str]:
         rc, out = run_gh(["api", url], cwd=cwd, timeout=30)
         if rc == 0:
             return True, f"Verified via re-read.\n{mutation_out}".strip()
-    return True, f"{mutation_out}\n[mutation sent — state not independently re-verified]".strip()
+    return True, f"{mutation_out}\n[mutation sent, state not independently re-verified]".strip()

@@ -1,6 +1,6 @@
 """All `@register_executor` handlers for workspace tools.
 
-Imports from sibling modules (paths/state/filesystem/commands) — no FastAPI
+Imports from sibling modules (paths/state/filesystem/commands), no FastAPI
 or route deps. The decorators fire at import time, so the package `__init__.py`
 must import this module for tool registration to take effect.
 
@@ -241,7 +241,7 @@ def execute_ws_open_folder(tool_input: dict) -> str:
         )
     # Ask the user once before reaching into a folder they have not already
     # approved, then remember the answer forever (folder_grants). Approving
-    # the card OPENS the folder as well as recording the grant — the user
+    # the card OPENS the folder as well as recording the grant, the user
     # approved "open this folder", so granting without opening would leave
     # them staring at a still-disconnected workspace. From then on this check
     # passes silently, including for every folder beneath the granted one.
@@ -339,13 +339,13 @@ def _exec_ws_read_file(tool_input, transcript, current_attachments):
         skipped = len(result_lines) - len(head_lines) - len(tail_lines)
         if skipped > 0:
             result = "\n".join(head_lines)
-            result += f"\n\n... [{skipped} lines omitted — file exceeds token budget ({total_lines} total lines)] ...\n\n"
+            result += f"\n\n... [{skipped} lines omitted: file exceeds token budget ({total_lines} total lines)] ...\n\n"
             result += "\n".join(tail_lines)
             result += (
                 f"\n\n(Token budget: showing first {len(head_lines)} + last {len(tail_lines)} lines. "
                 f"Use offset/limit to read specific sections.)"
             )
-        # Fall through — result is now within budget
+        # Fall through, result is now within budget
 
     file_state.record_read(session_id, full, offset, limit, len(numbered))
     return result
@@ -528,7 +528,7 @@ def _exec_ws_edit_file(tool_input, transcript, current_attachments):
         "session_id": session_id,
     }
     # Flag a fuzzy match so the approval banner can tell the user the edit
-    # only matched after quote normalization — the model's old_string did not
+    # only matched after quote normalization, the model's old_string did not
     # match the file byte-for-byte (typographic vs. ASCII quotes). Omitted on
     # exact matches so the hint only shows when it is actually relevant.
     if used_normalization:
@@ -581,7 +581,7 @@ def _stage_and_request_save(dest: str, filename: str, data: bytes) -> str:
     bytes to the app-sandbox staging area, and return the [WS_APPROVAL]
     payload whose approval simply MOVES the ready file into place
     (server/approval/executors.py's _do_save_to_path). By the time the user
-    sees the card the file already exists — approving cannot fail on
+    sees the card the file already exists, approving cannot fail on
     content problems, and declining leaves nothing outside the sandbox."""
     from server.security.sensitive_paths import is_sensitive_path
 
@@ -610,14 +610,14 @@ def _exec_ws_create_file(tool_input, transcript, current_attachments):
 
     if kind == "absolute":
         # No workspace connected (or the user named an explicit location):
-        # stage the finished content and request the move — never connects
+        # stage the finished content and request the move, never connects
         # a persistent workspace.
         return _stage_and_request_save(target, os.path.basename(target), content.encode("utf-8"))
 
     full = target
     path = tool_input.get("path", "")
     if os.path.isdir(full):
-        return f"Directory already exists: {path}. You don't need to create directories — they are created automatically when you create files inside them. Proceed to create the files directly."
+        return f"Directory already exists: {path}. You don't need to create directories: they are created automatically when you create files inside them. Proceed to create the files directly."
     if os.path.isfile(full):
         return f"File already exists: {path}. Use ws_write_file to modify it."
     payload = json.dumps(
@@ -633,7 +633,7 @@ def _exec_ws_create_file(tool_input, transcript, current_attachments):
 
 @register_executor("save_file", read_only=False, concurrent_safe=False)
 def _exec_save_file(tool_input, transcript, current_attachments):
-    """One-shot 'save this file somewhere' — never connects a persistent
+    """One-shot 'save this file somewhere', never connects a persistent
     workspace (get_workspace_path() is not even consulted here) and never
     asks the user where to save.
 
@@ -1060,9 +1060,9 @@ def _exec_ws_merge_worktree(tool_input, transcript, current_attachments):
     # Run the merge with ARGV, never a shell string. Git ref names permit
     # shell-active characters (brace expansion `{a,b}`, `;`, `(`) and quotes,
     # so interpolating the branch/name into a shell `command` payload was a
-    # command-injection vector. Passing them as literal argv elements — the
+    # command-injection vector. Passing them as literal argv elements, the
     # same way do_git_merge and the sibling worktree ops (ws_create_worktree,
-    # ws_diff_worktree) do — means the shell never parses them. The `-m`
+    # ws_diff_worktree) do, means the shell never parses them. The `-m`
     # message keeps the user-facing behavior (a descriptive merge commit).
     branch = info["branch"]
     msg = f"Merge worktree {name}"

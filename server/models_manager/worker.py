@@ -2,7 +2,7 @@
 
 Runs ONE model download to completion in its own process by calling the same
 ensure_* function the app uses lazily (see catalog.py), so the on-disk result
-is identical — including GLiNER's backbone-tokenizer pre-cache. Being a
+is identical, including GLiNER's backbone-tokenizer pre-cache. Being a
 separate process is the whole point: the manager cancels a download by
 terminating it, which no thread-based approach can do against a blocking
 huggingface_hub call.
@@ -69,7 +69,7 @@ def main(key: str) -> int:
 
     entry = get_entry(key)
     if entry is None:
-        # No traceback to add — this is the whole story.
+        # No traceback to add, this is the whole story.
         print(f"DOWNLOAD FAILED: unknown model key {key!r}", file=sys.stderr)
         return 2
     try:

@@ -1,5 +1,5 @@
 """
-Core git utilities — git discovery, state queries, caching.
+Core git utilities, git discovery, state queries, caching.
 
 All functions are sync. Uses subprocess.run() for git commands
 and direct file I/O for filesystem reads, matching Whisper's existing patterns.

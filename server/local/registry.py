@@ -15,7 +15,7 @@ loadable and selectable with no code change::
       "ctx": 32768
     }
 
-MLX-format models work the same way with ``"engine": "mlx"`` — the weights are
+MLX-format models work the same way with ``"engine": "mlx"``, the weights are
 a whole-repo snapshot, so there is no ``filename``::
 
     "local_qwen_mlx": {
@@ -81,7 +81,7 @@ RECOMMENDED_LOCAL_MODELS: dict[str, dict] = {
         "dir": "gemma-4-12b-it-qat-q4_0",
         "ctx": 32768,
         "supports_tools": True,
-        # Exact GGUF size from the HF repo listing — lets Discover warn before
+        # Exact GGUF size from the HF repo listing, lets Discover warn before
         # download on a machine too small for this quant, same as a searched one.
         "size_bytes": 6975879296,
     },
@@ -127,7 +127,7 @@ def _config_local_models() -> dict[str, dict]:
 
     Reads the normalized merge of the SYSTEM and USER layers WITHOUT the
     ``chat_models_disabled`` hide-list: disabling a model only hides it from the
-    composer picker — its weights must stay downloadable/deletable here, or a
+    composer picker, its weights must stay downloadable/deletable here, or a
     disabled model's gigabytes would become unmanageable (and, for user-added
     models, invisible). A config that cannot be read raises its error.
     """
@@ -171,7 +171,7 @@ def _recommended_downloaded_on_disk(entry: dict) -> bool:
 
 def recommended_models() -> dict[str, dict]:
     """The curated Discover catalog with a ``downloaded`` flag per entry. Not
-    filtered by anything — the Discover tab shows every recommendation."""
+    filtered by anything, the Discover tab shows every recommendation."""
     return {
         key: {**entry, "downloaded": _recommended_downloaded_on_disk(entry)}
         for key, entry in RECOMMENDED_LOCAL_MODELS.items()
@@ -189,7 +189,7 @@ def local_models() -> dict[str, dict]:
     once, so an in-progress download shows immediately).
 
     Entries that still lack a required weight field after the merge are dropped
-    with a warning — a half-declared model would otherwise fail later at load
+    with a warning, a half-declared model would otherwise fail later at load
     time with a much less obvious error.
     """
     merged: dict[str, dict] = {}

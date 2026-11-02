@@ -1,5 +1,5 @@
 """
-Filesystem-based git state reading — no subprocess spawning.
+Filesystem-based git state reading, no subprocess spawning.
 
 Reads .git/HEAD, refs, packed-refs, config, and commondir directly from disk.
 Used on hot paths where subprocess overhead matters (prompt building, cache invalidation).
@@ -61,7 +61,7 @@ def read_git_head(git_dir: str) -> dict | None:
             if not is_safe_ref_name(name):
                 return None
             return {"type": "branch", "name": name}
-        # Unusual symref (not a local branch) — resolve to SHA
+        # Unusual symref (not a local branch), resolve to SHA
         if not is_safe_ref_name(ref):
             return None
         sha = resolve_ref(git_dir, ref)
@@ -157,7 +157,7 @@ def is_safe_ref_name(name: str) -> bool:
 def is_valid_git_sha(s: str) -> bool:
     """Validate git SHA: 40 hex chars (SHA-1) or 64 hex chars (SHA-256).
 
-    Only accepts full-length hashes — rejects abbreviated SHAs.
+    Only accepts full-length hashes, rejects abbreviated SHAs.
     """
     return bool(re.match(r"^[0-9a-f]{40}$", s) or re.match(r"^[0-9a-f]{64}$", s))
 

@@ -2,7 +2,7 @@
 
 The hybrid model: tool modules `register(...)` next to their definitions
 (declared at tool); this module is the central lookup (validated/audited
-centrally). Importing the tool module is what populates the registry —
+centrally). Importing the tool module is what populates the registry,
 import order matters in the sense that the bootstrap (`server/approval/
 bootstrap.py`) must be imported before any code calls `get()`.
 """
@@ -31,7 +31,7 @@ def _wrap_executor(fn) -> Executor:
 
 
 def register(action: str, spec: ApprovalSpec) -> None:
-    """Register a spec for an action/tool name. Idempotent — later calls
+    """Register a spec for an action/tool name. Idempotent, later calls
     overwrite earlier ones, useful during dev reloads."""
     spec.executor = _wrap_executor(spec.executor)
     _REGISTRY[action] = spec

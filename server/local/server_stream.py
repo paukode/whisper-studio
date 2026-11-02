@@ -1,19 +1,19 @@
 """Model-server protocol helpers for on-device turns (llama-server and mlx_lm).
 
 The agentic loop itself lives in the unified turn engine
-(server/chat/engine/runner.py + engine/local.py — the LocalAdapter); this
+(server/chat/engine/runner.py + engine/local.py, the LocalAdapter); this
 module keeps the wire specifics the adapter builds on: the
 ``/v1/chat/completions`` SSE parser, the tool-call accumulator, argument
 coercion, tool-result message rendering, and the local post-turn memory hooks.
 Both engines speak the same OpenAI-compatible SSE, so one parser serves both
-(the only dialect difference — the reasoning delta field name — is folded in
+(the only dialect difference, the reasoning delta field name, is folded in
 below).
 
 Speaking the engines' OpenAI-compatible endpoint means they do the per-family
 work:
 
   * ``tool_calls`` arrive already parsed into OpenAI shape (name + JSON
-    arguments), for every family upstream supports — so a new GGUF in config gets
+    arguments), for every family upstream supports, so a new GGUF in config gets
     tool calling with no marker constants here.
   * reasoning arrives on ``reasoning_content``, so the thinking channel needs no
     marker splitter and can never leak raw markers into the answer.
@@ -45,8 +45,8 @@ def _spawn_session_update(model_key: str, messages: list[dict], session_id: str)
     The cadence + feature-flag gate lives in ``maybe_update_session_memory``;
     this just kicks it off (on the model's executor thread, via the local
     summariser) so session memory auto-builds fully offline. It runs one turn
-    behind — the just-generated answer is captured on the next turn via the
-    persisted history — which avoids threading the answer text out of the
+    behind, the just-generated answer is captured on the next turn via the
+    persisted history, which avoids threading the answer text out of the
     stream and keeps the model thread free while the response is still flushing.
     """
     if not messages:
@@ -306,7 +306,7 @@ async def _stream_round(base_url: str, payload: dict):
     if not completed and finish_reason is None:
         # Both engines end a successful stream with a finish_reason chunk and
         # then [DONE]. mlx_lm's HTTP/1.0 body is close-delimited, so a
-        # mid-generation death (e.g. Metal OOM) reads as a CLEAN EOF here —
+        # mid-generation death (e.g. Metal OOM) reads as a CLEAN EOF here,
         # without this guard a truncated answer would commit as a complete
         # round. (llama-server streams chunked HTTP/1.1, where an abrupt close
         # already raises inside aiter_lines.)

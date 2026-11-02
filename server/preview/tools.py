@@ -1,6 +1,6 @@
 """Bedrock tool-definition schemas for the 14 live-preview tools.
 
-Split into read-only (no approval) and approval-gated groups — see
+Split into read-only (no approval) and approval-gated groups, see
 server/executors/preview.py for the executor registrations that back this
 split, and server/approval/bootstrap.py for the ApprovalSpecs.
 """
@@ -41,7 +41,7 @@ READ_ONLY_TOOLS: list[dict] = [
     },
     {
         "name": "preview_screenshot",
-        "description": "Capture a screenshot of the preview session's current page. Returns an actual image you can see, downscaled and compressed. Prefer preview_console_logs/preview_network/preview_snapshot for precise checks — use this for visual judgment.",
+        "description": "Capture a screenshot of the preview session's current page. Returns an actual image you can see, downscaled and compressed. Prefer preview_console_logs/preview_network/preview_snapshot for precise checks; use this for visual judgment.",
         "input_schema": {
             "type": "object",
             "properties": {"session_name": _SESSION_NAME},
@@ -89,7 +89,7 @@ READ_ONLY_TOOLS: list[dict] = [
     },
     {
         "name": "preview_snapshot",
-        "description": "Get the accessibility tree of the current page as text — roles, names, and structure. Usually more reliable than a screenshot for confirming layout/content.",
+        "description": "Get the accessibility tree of the current page as text: roles, names, and structure. Usually more reliable than a screenshot for confirming layout/content.",
         "input_schema": {
             "type": "object",
             "properties": {"session_name": _SESSION_NAME},
@@ -230,7 +230,7 @@ APPROVAL_GATED_TOOLS: list[dict] = [
     },
     {
         "name": "preview_eval",
-        "description": "Execute JavaScript in the preview session's page context and return the result. Use for debugging/inspection only — prefer preview_click/preview_fill for interactions.",
+        "description": "Execute JavaScript in the preview session's page context and return the result. Use for debugging/inspection only; prefer preview_click/preview_fill for interactions.",
         "input_schema": {
             "type": "object",
             "properties": {

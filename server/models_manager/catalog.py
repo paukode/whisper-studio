@@ -1,6 +1,6 @@
 """The managed-model catalog: every downloadable model, with live disk state.
 
-One entry per model the app can download on demand — ASR/diarization weights,
+One entry per model the app can download on demand, ASR/diarization weights,
 the workspace-index models, and the on-device chat GGUFs. Each entry records
 where the model lives under ``models_root()`` and which file marks it as
 installed, REUSING the layout the owning module's ensure_* function checks
@@ -9,8 +9,8 @@ installed, REUSING the layout the owning module's ensure_* function checks
 Paths are re-rooted at ``models_root()`` on every query instead of read from
 the owning modules' frozen ``*_MODEL_DIR`` constants: those are resolved once
 at import time, so they go stale when ``WHISPER_HOME`` changes afterwards
-(tests, packaged-app relaunch). The *relative* layout — directory name and
-sentinel filename — is taken from the modules themselves, so the check cannot
+(tests, packaged-app relaunch). The *relative* layout, directory name and
+sentinel filename, is taken from the modules themselves, so the check cannot
 drift from what the ensure functions actually download.
 
 The static entries are built lazily (the ASR modules import numpy) and cached;
@@ -84,7 +84,7 @@ def _static_entries() -> tuple[ModelEntry, ...]:
             ensure_func="_ensure_model",
             note=(
                 "Highest transcription accuracy, 99 languages, detects the "
-                "language per sentence — best for mixed-language meetings. "
+                "language per sentence, best for mixed-language meetings. "
                 "Translates into English only."
             ),
         ),

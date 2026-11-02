@@ -56,7 +56,7 @@ async def ws_connect(request: Request):
     return {
         "path": real,
         "entries": entries,
-        # Advisory hint — see _check_writable docstring. False is a
+        # Advisory hint, see _check_writable docstring. False is a
         # soft warning, not a refusal; the frontend toasts an info note
         # so the user knows writes might fail without blocking them.
         "writable": _check_writable(real),

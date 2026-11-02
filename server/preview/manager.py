@@ -8,7 +8,7 @@ replace or drive it, and the refusal names the owning chat. The human kill
 switch in Settings (a REST DELETE with no chat attached) is not restricted.
 
 Also hosts the thin per-tool wrapper functions the approval executors call
-(start_preview_session, stop_preview_session, navigate_in_preview, ...) —
+(start_preview_session, stop_preview_session, navigate_in_preview, ...),
 no business logic duplicated in the approval layer.
 """
 
@@ -297,7 +297,7 @@ async def navigate_in_preview(payload: dict) -> tuple[bool, str]:
         return False, str(e)
     except PlaywrightTimeoutError:
         return False, (
-            f"Navigation to {url!r} timed out — the dev server may still be "
+            f"Navigation to {url!r} timed out; the dev server may still be "
             "starting or is unreachable. Check preview_logs, then retry preview_navigate."
         )
     except Exception as e:  # noqa: BLE001
@@ -372,7 +372,7 @@ async def eval_in_preview(payload: dict) -> tuple[bool, str]:
             return False, "expression is required"
         await session.browser.ensure_started()
         # page.evaluate ignores the context default timeout (it waits on the JS
-        # promise), so bound it explicitly — a blocking expression must not wedge
+        # promise), so bound it explicitly, a blocking expression must not wedge
         # the turn.
         result = await asyncio.wait_for(_evaluate(session.browser.page, expression), timeout=15)
         return True, _eval_text(result)
@@ -466,7 +466,7 @@ def preview_network_text(payload: dict) -> str:
 async def preview_snapshot_text(payload: dict) -> str:
     session = preview_manager.get(payload.get("session_name", ""))
     if not session or session.browser.page is None:
-        return "No page loaded yet for this session — call preview_navigate first."
+        return "No page loaded yet for this session; call preview_navigate first."
     snapshot = await session.browser.page.aria_snapshot()
     return snapshot or "(empty accessibility tree)"
 
@@ -474,7 +474,7 @@ async def preview_snapshot_text(payload: dict) -> str:
 async def preview_inspect_text(payload: dict) -> str:
     session = preview_manager.get(payload.get("session_name", ""))
     if not session or session.browser.page is None:
-        return "No page loaded yet for this session — call preview_navigate first."
+        return "No page loaded yet for this session; call preview_navigate first."
     selector = payload.get("selector") or ""
     if not selector:
         return "selector is required"

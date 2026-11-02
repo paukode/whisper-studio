@@ -238,7 +238,7 @@ def get_workspace_override() -> str | None:
     """The raw per-task override, or None outside worktree isolation.
 
     Distinct from get_workspace_path(), which falls back to the globally
-    connected workspace when no override is set — callers that need to know
+    connected workspace when no override is set, callers that need to know
     specifically whether isolation is active (e.g. cwd_tracker) want this one.
     """
     return _WS_OVERRIDE.get()
@@ -330,7 +330,7 @@ def _workspace_prompt_payload(tool_name: str, tool_input: dict) -> str:
 # strews 'v2'/'final'/'clean' copies across the user's folder.
 REVISION_HINT = (
     "If a follow-up produces a revised version of this file, write it to this "
-    "exact same destination — the write replaces the file — do NOT save it under "
+    "exact same destination (the write replaces the file); do NOT save it under "
     "a new name unless the user asks for a separate copy."
 )
 
@@ -356,7 +356,7 @@ def resolve_write_destination(tool_name: str, tool_input: dict) -> tuple[str, st
       destination like destination_path: the save approval card shows the
       full path and the user decides there. It never raises the folder
       picker; the workspace was fine, and switching roots cannot fix a path.
-    - Neither: default to ~/Documents/<filename> — the approval card shows
+    - Neither: default to ~/Documents/<filename>, the approval card shows
       the full path and is the single human gate; the model's reply tells
       the user where the file went.
 
@@ -408,7 +408,7 @@ def resolve_write_destination(tool_name: str, tool_input: dict) -> tuple[str, st
 
 def load_save_locations() -> list[str]:
     """Directories written to via the one-shot save_file flow. Small, capped
-    list — never 'connected' or 'indexed' — that lets a file saved this way
+    list, never 'connected' or 'indexed', that lets a file saved this way
     stay clickable/revealable via /open-with and /reveal afterward without
     the heavyweight persistent-workspace machinery."""
     return _read_path_list(SAVE_LOCATIONS_PATH)
@@ -433,7 +433,7 @@ def clear_workspace_scoped_state() -> None:
     Without this, per-session shell cwds keep running read-only commands in
     the old folder and the worktree registry resolves stale branch names.
     Called both on an actual workspace switch (connect_workspace) and on
-    disconnect — disconnecting represents "no workspace connected" regardless
+    disconnect, disconnecting represents "no workspace connected" regardless
     of what gets connected next, so it must not defer this to whatever
     connect happens to follow. A disconnect immediately followed by
     reconnecting to a DIFFERENT path used to skip this entirely: connect's own
@@ -555,7 +555,7 @@ def _check_writable(path: str) -> bool:
 
     Returns False only when we have a clear signal the folder cannot be
     written to (not a directory, OSError, or os.access denies W_OK).
-    Returns True otherwise — including ambiguous cases where os.access
+    Returns True otherwise, including ambiguous cases where os.access
     is unreliable (network mounts, root user, macOS extended ACLs). The
     frontend treats False as a soft warning ("note: this folder appears
     read-only, writes will be confirmed on first attempt"), never as a

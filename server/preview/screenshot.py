@@ -2,7 +2,7 @@
 
 The sentinel is detected in server/tool_executor.py and turned into a real
 Anthropic `image` content block in the tool_result, so the model sees actual
-pixels — not a base64 blob buried in JSON text.
+pixels, not a base64 blob buried in JSON text.
 """
 
 from __future__ import annotations

@@ -45,7 +45,7 @@ def _browse(path: str) -> dict:
     target = os.path.realpath(target)
     entries = []
     # Files in the folder, so the picker can show what's inside the directory
-    # you're about to connect (read-only — you connect to the folder, not a
+    # you're about to connect (read-only, you connect to the folder, not a
     # single file). Capped so a huge directory can't bloat the response; the
     # full count is returned separately so the UI can say "showing N of M".
     files: list[dict] = []

@@ -30,7 +30,7 @@ MODELS_DIR = models_root()
 # Supported on-device models. Keys are prefixed ``local_`` by convention so they
 # read as on-device at a glance; detection itself is registry membership (below),
 # not the prefix, so a config-added model does not have to follow it.
-# The registry is config-driven — see server/local/registry.py. This module-level
+# The registry is config-driven, see server/local/registry.py. This module-level
 # name is kept as a LIVE VIEW for the many callsites that read it like a dict
 # (``key in LOCAL_MODELS``, ``LOCAL_MODELS[key]["ctx"]``, iteration): it resolves
 # the effective registry (config entries over recommendations) on every access, so a model added to
@@ -59,7 +59,7 @@ class _LocalModelsView(Mapping):
 
 LOCAL_MODELS: Mapping[str, dict] = _LocalModelsView()
 
-# The context window (n_ctx) most recently REQUESTED by an explicit load — i.e.
+# The context window (n_ctx) most recently REQUESTED by an explicit load, i.e.
 # the size the user picked in the chat-input context-window slider, which loads
 # the model via /api/local-model/load?n_ctx=... . A chat turn only asks that the
 # model be resident (n_ctx=None); without remembering the choice here, None
@@ -93,7 +93,7 @@ def is_local_model(key: str | None) -> bool:
 
 # All on-device model *ids* (the resolved sentinel, not the key) start with this
 # prefix. It is the single discriminator shared cloud-path code uses to stay
-# offline for local turns — centralised here so a sentinel change can't silently
+# offline for local turns, centralised here so a sentinel change can't silently
 # re-enable Bedrock calls in callers like memory recall.
 _LOCAL_ID_PREFIX = "local:"
 
@@ -130,7 +130,7 @@ def is_mlx_model(key: str | None) -> bool:
 
 # Written into an MLX model's snapshot dir once the download is COMPLETE.
 # A snapshot is a directory of many files with no natural "last file", and
-# config.json lands long before the safetensors — so presence of any repo file
+# config.json lands long before the safetensors, so presence of any repo file
 # cannot be the installed-sentinel the way the GGUF file itself is. The models
 # manager uses the same marker (catalog sentinel_rel).
 MLX_COMPLETE_MARKER = ".download_complete"
@@ -153,7 +153,7 @@ def ensure_downloaded(key: str) -> str:
     """Fetch the weights into models/ if absent, returning the load path.
 
     GGUF: the file (first shard for a sharded model; every shard is fetched,
-    since llama-server needs them all present). MLX: the snapshot directory —
+    since llama-server needs them all present). MLX: the snapshot directory,
     the whole repo is fetched and a completion marker written last, so a
     half-downloaded snapshot never reads as installed.
     """
@@ -162,7 +162,7 @@ def ensure_downloaded(key: str) -> str:
     path = gguf_path(key)
     if os.path.exists(path):
         # Positive confirmation so "did it download or just load?" is obvious.
-        log.info("Local model %s already present at %s — loading from disk.", key, path)
+        log.info("Local model %s already present at %s, loading from disk.", key, path)
         return path
     from huggingface_hub import hf_hub_download
 
@@ -190,7 +190,7 @@ def _ensure_mlx_downloaded(key: str) -> str:
     local_dir = mlx_dir(key)
     marker = os.path.join(local_dir, MLX_COMPLETE_MARKER)
     if os.path.exists(marker):
-        log.info("Local model %s already present at %s — loading from disk.", key, local_dir)
+        log.info("Local model %s already present at %s, loading from disk.", key, local_dir)
         return local_dir
     from huggingface_hub import snapshot_download
 
@@ -234,7 +234,7 @@ _LOCAL_SYSTEM_BASE = (
     "workspace filesystem, or the internet, so do not claim to use them."
 )
 
-# When tools are enabled we must NOT tell the model it has no tools/internet —
+# When tools are enabled we must NOT tell the model it has no tools/internet,
 # that makes it refuse instead of calling the declared tools. This prompt does
 # the opposite: it tells the model it has a full toolset (declared separately in
 # the chat template) and to use it. The exact tool list is rendered by the
@@ -306,14 +306,14 @@ def build_local_system_prompt(
     """A lean system prompt for local turns.
 
     The cloud system prompt carries ~2-2.5k tokens of tool/workspace/skill
-    guidance the local runtime can't act on — feeding it to a small on-device
+    guidance the local runtime can't act on, feeding it to a small on-device
     model just slows prefill (a longer warm-up) and eats the n_ctx budget. Keep
     a short identity plus any genuinely useful project/memory context. When
     ``tools`` is set, use the tools-positive identity instead of the no-tools one.
 
     When a workspace is connected AND tools are on, append a short marker so the
     model knows to reach the codebase with ws_* tools. Without tools there are no
-    ws_* tools to call, so the marker is skipped — the honest no-tools identity
+    ws_* tools to call, so the marker is skipped, the honest no-tools identity
     stands.
     """
     from server.prompts.rules import append_rules

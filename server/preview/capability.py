@@ -26,7 +26,7 @@ def is_packaged_install() -> bool:
     The macOS shell always sets ``WHISPER_HOME`` before spawning the backend
     (the same signal :func:`server.infrastructure.paths.app_home` keys on); a
     dev checkout never does. In a packaged install the code tree is signed and
-    read-only, so runtime pip installs / browser downloads are impossible —
+    read-only, so runtime pip installs / browser downloads are impossible,
     the Playwright browser ships inside the bundle instead."""
     return bool(os.environ.get("WHISPER_HOME", "").strip())
 
@@ -48,7 +48,7 @@ def _required_browser_dirs() -> tuple[str, ...]:
     installed playwright version launches, read from playwright's own registry
     (``playwright/driver/package/browsers.json``).
 
-    ``chromium.launch(headless=True)`` — the only launch in server/preview —
+    ``chromium.launch(headless=True)``, the only launch in server/preview,
     executes the *chromium-headless-shell* build on playwright 1.6x (verified:
     removing that directory breaks the launch), and ``playwright install
     chromium`` always installs the full chromium build alongside it. Require
@@ -72,7 +72,7 @@ def _required_browser_dirs() -> tuple[str, ...]:
             if b.get("name") in wanted and b.get("revision")
         )
         return dirs if len(dirs) == len(wanted) else ()
-    except Exception as e:  # noqa: BLE001 — registry format is not ours to trust
+    except Exception as e:  # noqa: BLE001 (registry format is not ours to trust)
         log.warning("Could not read playwright browser registry %s: %s", registry_path, e)
         return ()
 
@@ -83,7 +83,7 @@ def is_chromium_installed() -> bool:
 
     Checks for the `INSTALLATION_COMPLETE` marker file Playwright itself
     writes into each versioned browser directory on a successful install,
-    rather than guessing an executable path — the app-bundle name/location
+    rather than guessing an executable path, the app-bundle name/location
     varies across Playwright versions and channels (e.g. newer downloads are
     branded "Google Chrome for Testing.app", not "Chromium.app"), but the
     marker file's presence and meaning is Playwright's own stable contract.

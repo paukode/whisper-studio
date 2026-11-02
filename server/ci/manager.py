@@ -42,7 +42,7 @@ def start_watch(branch: str, cwd: str, session_id: str = "") -> str:
         from server.infrastructure.async_tasks import spawn
 
         spawn(_drive_watch(task_id, branch, cwd, session_id, cancel), name=f"ci-watch-{task_id}")
-    except Exception as e:  # noqa: BLE001 — never leak the cancel/registry row on a schedule failure
+    except Exception as e:  # noqa: BLE001 (never leak the cancel/registry row on a schedule failure)
         log.error("ci watch %s failed to schedule: %s", task_id, e)
         _cancels.pop(task_id, None)
         _finish(task_id, session_id, branch, {"status": "error", "error": str(e)})
@@ -79,7 +79,7 @@ async def _drive_watch(
 def _finish(task_id: str, session_id: str, branch: str, outcome: dict) -> None:
     # A crash (except path sets status="error") or an empty outcome (the coroutine
     # was cancelled at the asyncio level before returning) is a FAILED watch, not
-    # a completed one — don't record a green task over a watch that never ran.
+    # a completed one, don't record a green task over a watch that never ran.
     if outcome.get("cancelled"):
         status = "stopped"
     elif not outcome or outcome.get("status") == "error":
@@ -129,7 +129,7 @@ def _publish_progress(session_id: str, task_id: str, ev: dict) -> None:
 
 
 def _result_payload(task_id: str, branch: str, outcome: dict) -> dict:
-    """The terminal card payload — shared by the live ci_result event and the
+    """The terminal card payload, shared by the live ci_result event and the
     durable result_text so a reload reconstructs the exact watched run."""
     return {
         "task_id": task_id,

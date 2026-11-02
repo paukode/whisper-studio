@@ -1,6 +1,6 @@
 """Filesystem primitives, path validation, and shared constants.
 
-Lowest layer of the workspace package — depends on nothing else inside it.
+Lowest layer of the workspace package, depends on nothing else inside it.
 Owns the mutable backup dict so any caller (executors, routes, the approval
 executors) mutates the same object regardless of how it was imported.
 """
@@ -95,7 +95,7 @@ DATA_DIR = data_root()
 WORKSPACE_CONFIG_PATH = os.path.join(DATA_DIR, "workspace_config.json")
 RECENT_WORKSPACES_PATH = os.path.join(DATA_DIR, "recent_workspaces.json")
 # Directories written to via the one-shot save_file flow (server/workspace/
-# state.py's record_save_location). Never 'connected' or 'indexed' — this is
+# state.py's record_save_location). Never 'connected' or 'indexed', this is
 # purely so a file saved this way stays clickable/revealable via /open-with
 # and /reveal afterward. See server/workspace/routes/os_integration.py.
 SAVE_LOCATIONS_PATH = os.path.join(DATA_DIR, "save_locations.json")
@@ -106,7 +106,7 @@ def get_scratch_dir(session_id: str) -> str:
     """Per-session scratch directory for intermediate/throwaway files (temp
     scripts, probe files, format-conversion intermediates) that don't belong
     in the connected workspace. Created on first use; the caller is
-    responsible for deleting anything it writes here once the task is done —
+    responsible for deleting anything it writes here once the task is done,
     this helper never cleans up on its own.
     """
     safe_id = session_id.strip() or "default"
@@ -169,7 +169,7 @@ def stage_file_bytes(data: bytes, filename: str) -> str:
     Each staged file gets its own random subdirectory so the original
     filename is preserved for the eventual move. Declined approvals leave
     their staged file behind (the approval pipeline never calls back on No),
-    so every call also garbage-collects entries older than 24h — bounded,
+    so every call also garbage-collects entries older than 24h, bounded,
     best-effort cleanup with no background task needed."""
     import shutil
     import time

@@ -16,7 +16,7 @@ async def ws_recent():
 
 
 def _indexed_recent_paths() -> set[str]:
-    """Absolute paths of recents that currently have an index — these are kept
+    """Absolute paths of recents that currently have an index, these are kept
     in the list (removing a recent must never orphan an active index). An
     index store error fails the request, so no recent is dropped on a guess."""
     from server.index import store
@@ -31,7 +31,7 @@ def _save_recent(recent: list[str]) -> dict:
 
 @router.post("/recent/remove")
 async def ws_recent_remove(request: Request):
-    """Remove ONE folder from the recent list. Indexed folders are protected —
+    """Remove ONE folder from the recent list. Indexed folders are protected,
     they stay until their index is removed first."""
     body = await request.json()
     path = body.get("path", "")

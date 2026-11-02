@@ -72,7 +72,7 @@ def get_workspace_tools() -> list[dict]:
     read_tools = [
         {
             "name": "ws_read_file",
-            "description": "[Workspace] Read a file from the connected codebase, or any other readable file on this Mac by absolute path. Returns the COMPLETE file content with line numbers. Always reads the entire file in one call — do NOT use offset/limit unless the file is very large (2000+ lines).",
+            "description": "[Workspace] Read a file from the connected codebase, or any other readable file on this Mac by absolute path. Returns the COMPLETE file content with line numbers. Always reads the entire file in one call; do NOT use offset/limit unless the file is very large (2000+ lines).",
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -198,8 +198,8 @@ def get_workspace_tools() -> list[dict]:
             "name": "workspace_semantic_search",
             "description": (
                 "[Workspace] Semantic search over the indexed workspace by meaning, not keywords. "
-                "Covers ALL indexed files — code, PDFs, Word docs, spreadsheets, and scanned/"
-                "image documents (OCR'd at index time) — so it sees content ws_grep cannot. "
+                "Covers ALL indexed files (code, PDFs, Word docs, spreadsheets, and scanned/"
+                "image documents OCR'd at index time), so it sees content ws_grep cannot. "
                 "Embeds your natural-language query and returns the most relevant passages "
                 "(file paths + line ranges + snippets) plus passages linked through shared "
                 "entities (a knowledge-graph hop). PREFER THIS for any question about what the "
@@ -345,7 +345,7 @@ def get_workspace_write_tools() -> list[dict]:
                     },
                     "content": {
                         "type": "string",
-                        "description": "File content — plain text, or base64 if content_encoding is 'base64'",
+                        "description": "File content: plain text, or base64 if content_encoding is 'base64'",
                     },
                     "content_encoding": {
                         "type": "string",
@@ -369,7 +369,7 @@ def get_workspace_write_tools() -> list[dict]:
             "name": "ws_edit_file",
             "description": (
                 "[Workspace] Edit an existing file by replacing a specific string. "
-                "More efficient than ws_write_file for small changes — sends only the diff. "
+                "More efficient than ws_write_file for small changes: it sends only the diff. "
                 "The old_string must match EXACTLY (including indentation). "
                 "The old_string must be unique in the file. "
                 "Set replace_all=true to replace every occurrence. "
@@ -419,7 +419,7 @@ def get_workspace_write_tools() -> list[dict]:
 
 
 def _run_command_tool() -> list[dict]:
-    """ws_run_command — needs a real workspace, so it is never advertised without one."""
+    """ws_run_command: needs a real workspace, so it is never advertised without one."""
     return [
         {
             "name": "ws_run_command",
@@ -459,7 +459,7 @@ def _run_command_tool() -> list[dict]:
 
 def get_worktree_tools() -> list[dict]:
     """The worktree tools. Unconditional for catalog stability (see
-    get_workspace_tools) — their executors refuse at execution when no
+    get_workspace_tools), their executors refuse at execution when no
     workspace is connected or the workspace is not a git repo."""
     return [
         {

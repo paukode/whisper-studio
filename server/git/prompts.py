@@ -1,5 +1,5 @@
 """
-Git prompts — inject git context into system prompts.
+Git prompts: inject git context into system prompts.
 
 Generates the git status block and the git tool instructions block.
 """
@@ -69,8 +69,8 @@ def build_git_instructions_prompt() -> str:
     """Static git workflow instructions for the system prompt.
 
     Always included when git tools are in the tool pool so the LLM knows the
-    expected commit message style, PR body format, and safety rules. Static —
-    no dynamic git state — so it is registered on the cached WORKSPACE layer,
+    expected commit message style, PR body format, and safety rules. Static
+    (no dynamic git state), so it is registered on the cached WORKSPACE layer,
     NOT alongside build_git_status_prompt on the dynamic layer.
 
     Scope rule: per-tool usage guidance belongs in that tool's ``description``,
@@ -81,7 +81,7 @@ def build_git_instructions_prompt() -> str:
     """
     return """# Commits
 
-Match the repository's existing style — read recent messages with git_log before
+Match the repository's existing style: read recent messages with git_log before
 writing one. Say why the change was made rather than restating the diff, and
 stage the files you actually touched rather than everything.
 
@@ -118,7 +118,7 @@ pop/apply) must be confirmed with the user before you call them.
 Do git and GitHub work through the git_* and github tools, never by shelling out
 through ws_run_command, terminal_run, or any other command tool. The shell path
 skips the approval cards, skips the verification the github tools perform, and is
-not authenticated for GitHub — which is how it has produced confident but false
+not authenticated for GitHub, which is how it has produced confident but false
 "I closed the PR" claims. That includes `git worktree add`, checkout, merge,
 rebase, and `reset --hard`.
 

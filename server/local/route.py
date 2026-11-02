@@ -2,8 +2,8 @@
 
 Keeps server/chat/routes.py lean (and under the file-size budget): the endpoint
 calls ``local_chat_response(...)`` once, right after the system prompt + messages
-are built. This function decides whether the turn is a local (on-device) one —
-fresh or an approval resume — and returns the ``StreamingResponse``, or ``None``
+are built. This function decides whether the turn is a local (on-device) one,
+fresh or an approval resume, and returns the ``StreamingResponse``, or ``None``
 to let the cloud Claude path proceed.
 
 Local turns run on the unified turn engine (server/chat/engine) through the
@@ -69,7 +69,7 @@ def local_chat_response(
     # at a stale size. Without this, a backend restart wiped the in-memory
     # sticky value and the next turn silently relaunched llama-server at the
     # registry default while the UI showed the user's larger choice (64K chip,
-    # n_ctx=32768 exceed_context_size errors). Clamped like the load endpoint —
+    # n_ctx=32768 exceed_context_size errors). Clamped like the load endpoint,
     # never trust a client-supplied size. Recorded via set_requested_n_ctx so
     # the non-chat callers (session summariser, index extraction) reuse the
     # same size instead of bouncing the server.
@@ -84,7 +84,7 @@ def local_chat_response(
 
         set_requested_n_ctx(n_ctx)
     # Lean system prompt: the cloud one is tool/workspace-heavy (~2-2.5k tokens
-    # the local model can't use) — drop it to speed prefill and free n_ctx,
+    # the local model can't use), drop it to speed prefill and free n_ctx,
     # keeping only project/memory context plus, when tools are on, a short marker
     # that a workspace is connected (so the model reaches it via ws_* tools
     # instead of claiming no project was provided).

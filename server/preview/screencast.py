@@ -1,9 +1,9 @@
-"""Live preview screencast — stream the agent's headless Chromium page to the
+"""Live preview screencast, stream the agent's headless Chromium page to the
 UI over a WebSocket via CDP ``Page.startScreencast``.
 
 View-only: the frontend just renders the JPEG frames, so the user watches
 exactly what the model's browser is doing (navigation, clicks, dark mode,
-the overlay swallowing a click) without any input being forwarded back — so
+the overlay swallowing a click) without any input being forwarded back, so
 it never interferes with the agent driving the page. Each connection opens
 its own CDP session, so multiple viewers and the agent coexist.
 
@@ -28,7 +28,7 @@ router = APIRouter()
 _MAX_WIDTH = 1280
 _MAX_HEIGHT = 800
 _JPEG_QUALITY = 60
-_QUEUE_CAP = 2  # keep only the freshest frames — drop stale ones under backpressure
+_QUEUE_CAP = 2  # keep only the freshest frames, drop stale ones under backpressure
 
 
 @router.websocket("/ws/preview/{name}/screencast")
@@ -78,7 +78,7 @@ async def preview_screencast(websocket: WebSocket, name: str):
 
     def _on_frame(params: dict) -> None:
         # Chromium pauses the stream until each frame is acked, so ack every
-        # frame immediately — even ones we drop from the display queue.
+        # frame immediately, even ones we drop from the display queue.
         sid = params.get("sessionId")
         if sid is not None:
             loop.create_task(_ack(sid))

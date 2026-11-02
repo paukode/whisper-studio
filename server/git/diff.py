@@ -1,5 +1,5 @@
 """
-Git diff system — fetching and parsing with size safeguards.
+Git diff system, fetching and parsing with size safeguards.
 
 Provides diff totals and per-file stats with intelligent size limits.
 Detects transient git states (merge/rebase/cherry-pick/revert) and skips
@@ -21,7 +21,7 @@ from server.git.filesystem import resolve_git_dir
 
 GIT_TIMEOUT_S = 5
 MAX_FILES = 50  # Per-file detail limit
-MAX_DIFF_SIZE_BYTES = 1_000_000  # 1MB — skip files larger than this
+MAX_DIFF_SIZE_BYTES = 1_000_000  # 1MB, skip files larger than this
 MAX_FILES_FOR_DETAILS = 500  # Skip per-file details if more files than this
 SINGLE_FILE_DIFF_TIMEOUT_S = 3
 
@@ -245,7 +245,7 @@ def parse_shortstat(path: str) -> tuple[int, int, int] | None:
     """Parse 'git diff --shortstat' for quick totals.
 
     Returns (files_changed, insertions, deletions) or None on failure.
-    O(1) memory — git computes totals without loading all content.
+    O(1) memory, git computes totals without loading all content.
     """
     git_root = find_git_root(path)
     if not git_root:

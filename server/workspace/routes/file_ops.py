@@ -156,7 +156,7 @@ async def ws_source_file(path: str = "", raw: bool = False):
     ext = os.path.splitext(full)[1].lower()
     name = os.path.basename(full)
 
-    # Raw byte stream — <img>/<embed> src and the rich viewers' fetch target.
+    # Raw byte stream, <img>/<embed> src and the rich viewers' fetch target.
     # FileResponse streams from a threadpool: no whole-file read into memory,
     # no event-loop stall on a large cited file (indexed folders can hold
     # spreadsheets far bigger than anything a workspace tab would open).
@@ -183,7 +183,7 @@ async def ws_source_file(path: str = "", raw: bool = False):
                 data = f.read()
             text = await asyncio.to_thread(convert_document, data, ext, name)
             return {"path": full, "name": name, "kind": "markdown", "content": text}
-        except Exception as e:  # noqa: BLE001 — extraction is best-effort
+        except Exception as e:  # noqa: BLE001 (extraction is best-effort)
             log.warning("source-file extract failed for %s: %s", full, e)
             return {
                 "path": full,

@@ -44,7 +44,7 @@ async def watch_branch(
         run = await asyncio.to_thread(provider.latest_run, branch, cwd)
         if run and run.get("run_id") is not None:
             break
-        # Don't sleep after the final attempt — we're about to give up.
+        # Don't sleep after the final attempt, we're about to give up.
         if attempt < _RESOLVE_RETRIES - 1:
             await sleep(poll_interval)
     if not run or run.get("run_id") is None:

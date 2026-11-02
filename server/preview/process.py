@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import os
 
-# Mirrors terminal.py's _OUTPUT_BUFFER_CAP — bounded ring buffer so a chatty
+# Mirrors terminal.py's _OUTPUT_BUFFER_CAP, bounded ring buffer so a chatty
 # dev server can't grow memory unbounded.
 _OUTPUT_BUFFER_CAP = 1_048_576
 
@@ -21,7 +21,7 @@ _SPAWN_TIMEOUT_S = 30
 
 
 class DevServerSpawnError(Exception):
-    """Command validation or spawn failure — surfaced to the model as text,
+    """Command validation or spawn failure, surfaced to the model as text,
     no silent fallback."""
 
 
@@ -57,7 +57,7 @@ class DevServerProcess:
 
         # Validate the RAW joined argv, not a shell-quoted form: this process
         # is spawned via create_subprocess_exec (argv exec, no shell), so
-        # quoting here would be misleading — worse, validate_command()
+        # quoting here would be misleading, worse, validate_command()
         # deliberately treats single-quoted spans as "shell-safe, no
         # expansion" and skips scanning them for sensitive paths, so a
         # shlex-quoted argv could hide a payload like ~/.ssh from detection
@@ -76,7 +76,7 @@ class DevServerProcess:
             raise DevServerSpawnError(str(e)) from e
         try:
             # start_new_session=True (setsid), NOT preexec_fn=new_process_group.
-            # This is the async, event-loop spawn — a preexec_fn callable forces
+            # This is the async, event-loop spawn, a preexec_fn callable forces
             # a fork() that then runs Python in the child, which under uvloop
             # deadlocks (a lock held at fork-time is never released in the child)
             # and wedges the whole event loop with a ~100% CPU forked child.

@@ -123,7 +123,7 @@ def failing_log(run_id: int | str, cwd: str, *, max_bytes: int = 24_000) -> str:
     return text
 
 
-# Conservative, prefix-anchored patterns — deliberately NOT broad entropy
+# Conservative, prefix-anchored patterns, deliberately NOT broad entropy
 # matching (which would redact real error text). Each replaces the secret value
 # with a marker while keeping surrounding log context intact.
 _SECRET_PATTERNS = [

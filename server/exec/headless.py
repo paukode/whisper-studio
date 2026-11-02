@@ -1,4 +1,4 @@
-"""``run_headless_turn`` — a Python-callable, non-streaming primitive over the
+"""``run_headless_turn``, a Python-callable, non-streaming primitive over the
 shared agentic turn engine (server.chat.engine.runner.run_turn).
 
 Backend code drives one turn to completion with no HTTP client involved:
@@ -18,7 +18,7 @@ Two differences from ``_run_agent_loop``, both deliberate:
 
   - The tool catalog is the same core+activated pool interactive chat gets
     via progressive tool disclosure (``assemble_partitioned_pool``, built
-    ONCE here rather than reassembled per round) — no ``filter_tools_for_agent``
+    ONCE here rather than reassembled per round), no ``filter_tools_for_agent``
     narrowing and no ``get_agent_runtime_tools`` (spawn_agent/send_message/
     complete_coordination): those are agent-hierarchy concepts a standalone
     headless run has no use for.
@@ -35,18 +35,18 @@ Two differences from ``_run_agent_loop``, both deliberate:
 Event vocabulary
 -----------------
 ``run_headless_turn`` is an async generator yielding a small, STABLE dict
-vocabulary — this function's OWN contract, deliberately distinct from
+vocabulary, this function's OWN contract, deliberately distinct from
 runner.py's pinned internal SSE frames (see that module's docstring on
 golden-fixture pinning; those frames can reshape independently of this one):
 
     {"type": "text", "text": str}
         One flushed chunk of assistant text for a completed round (buffered
-        per round, exactly like _run_agent_loop's own "text" progress event —
+        per round, exactly like _run_agent_loop's own "text" progress event,
         not one per streamed delta). A ``notify_user`` tool call is folded in
         here too (its message text), mirroring how _run_agent_loop's
         ``_finalize`` merges notify_user into the agent's returned output.
     {"type": "tool_call", "name": str, "input": dict}
-        A tool the model invoked, with its full (model-visible) input —
+        A tool the model invoked, with its full (model-visible) input,
         unlike _run_agent_loop's progress events this is not preview-
         truncated, since the consumer here is code, not a UI card.
     {"type": "tool_result", "name": str, "output": str, "status": "ok" | "error"}
@@ -66,7 +66,7 @@ golden-fixture pinning; those frames can reshape independently of this one):
         Cumulative usage totals as of the latest completed round, with the
         cost the engine priced round by round (each at its own tier). Emitted
         once per round, and once more at the end if ``output_schema`` added
-        an extra structured-output call — the LAST usage event is always the
+        an extra structured-output call, the LAST usage event is always the
         authoritative running total.
     {"type": "error", "message": str}
         A terminal round-level error surfaced by the engine, or a pre-flight
@@ -98,7 +98,7 @@ golden-fixture pinning; those frames can reshape independently of this one):
         "paused" means an attended run is waiting on the human (see above).
 
 A raised exception from inside the turn itself (as opposed to a frame-level
-"error") propagates to the caller rather than being swallowed — this mirrors
+"error") propagates to the caller rather than being swallowed, this mirrors
 _run_agent_loop's own body (no broad try/except there either; that lives one
 level up, in run_agent's orchestration shell, which this primitive has no
 equivalent of).
@@ -115,7 +115,7 @@ from datetime import datetime, timezone
 
 log = logging.getLogger("whisper-studio")
 
-# Dedicated small pool for headless Bedrock calls — mirrors
+# Dedicated small pool for headless Bedrock calls, mirrors
 # server.agents.runtime._agent_executor (its own dedicated pool), so a
 # headless run's blocking provider calls never head-of-line-block the chat
 # route's or the agent runtime's own executors.
@@ -191,19 +191,19 @@ async def run_headless_turn(
         prompt: The user-turn text handed to the model.
         workspace_path: Workspace to run against for this call only (via the
             same context-local override worktree-isolated agents already use,
-            server.workspace.state.set_workspace_override) — never mutates
+            server.workspace.state.set_workspace_override), never mutates
             the process-wide connected workspace. None means "whatever
             workspace is currently connected, if any" (same as an agent run).
         model_key: A ``chat_models`` config key. None resolves the user's
             default chat model via the exact fallback chain
             server.agents.runtime._resolve_agent_model already implements
             (skips on-device candidates). An on-device model, explicit or
-            resolved, is refused — see the module docstring.
+            resolved, is refused, see the module docstring.
         output_schema: When given, one extra one-shot structured-output call
             runs after the turn via server.agents.runtime_support.distill_run_output
             (with its own single schema-repair retry).
         ephemeral: When True, this run's session id is never written to
-            sessions.db — no row is created, no message is appended. When
+            sessions.db, no row is created, no message is appended. When
             False (default), the prompt and the final answer are appended via
             server.infrastructure.sessions.append_message, the same
             out-of-band write path background tasks already use to persist
@@ -328,7 +328,7 @@ async def run_headless_turn(
         # Same cwd-tracker scoping a worktree-isolated agent gets (see
         # server.agents.runtime.run_agent): without this, a shell tool call
         # made under this override stores its cwd under a key keyed to
-        # `workspace_path`, and nothing below ever clears it — a guaranteed
+        # `workspace_path`, and nothing below ever clears it, a guaranteed
         # per-call leak, not just a race, since this override has no worktree
         # teardown to piggyback cleanup on.
         from server.cwd_tracker import register_override
@@ -409,7 +409,7 @@ async def run_headless_turn(
         if deferred_tool_index:
             system += "\n\n" + deferred_tool_index
 
-        # ── Provider adapter — same chat_model_meta.provider check
+        # ── Provider adapter, same chat_model_meta.provider check
         # server/chat/routes.py and agents/runtime.py both use. ─────────────
         loop = asyncio.get_event_loop()
         _provider = _get_chat_model_meta().get(resolved_model_key, {}).get("provider", "anthropic")
@@ -490,7 +490,7 @@ async def run_headless_turn(
         # ── Drain run_turn: an async generator yielding SSE-format ndjson
         # strings ("data: {...}\n\n" / "data: [DONE]\n\n" / ": hb\n\n"
         # heartbeat comments). THIS PARSING IS COUPLED TO runner.py's PINNED
-        # SSE FRAME VOCABULARY, exactly like _run_agent_loop's own drain —
+        # SSE FRAME VOCABULARY, exactly like _run_agent_loop's own drain,
         # see that function's comment before touching this one. ────────────
         rounds_used = 0
         compaction_failed = False

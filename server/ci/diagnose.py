@@ -32,14 +32,14 @@ def _extract_json(text: str):
     list, else None.
 
     Robust to two things the naive brace-counter got wrong: (a) the reply is
-    already pure JSON (fast path — no scan), and (b) a ``}``/``]`` INSIDE a
+    already pure JSON (fast path, no scan), and (b) a ``}``/``]`` INSIDE a
     string value (CI error excerpts are full of them: ``Type '{ x }'``, dict
-    reprs, JSON). The scan is string-aware — braces inside a JSON string, and
+    reprs, JSON). The scan is string-aware, braces inside a JSON string, and
     escaped quotes, don't affect nesting depth."""
     if not text:
         return None
     stripped = text.strip()
-    # (a) already pure JSON — the model was asked for ONLY the object.
+    # (a) already pure JSON, the model was asked for ONLY the object.
     try:
         val = json.loads(stripped)
         if isinstance(val, (dict, list)):

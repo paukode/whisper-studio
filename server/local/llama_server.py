@@ -8,11 +8,11 @@ What this module owns:
   * finding the pinned binary (the app's bundled copy, or setup.sh's)
   * starting it against one model at a chosen context size, and waiting for
     /health
-  * one resident model at a time — switching models stops the old process first,
+  * one resident model at a time, switching models stops the old process first,
     matching the memory-constrained on-device build (e.g. M3/18GB)
   * stopping it cleanly on server shutdown so no orphan holds the port or RAM
 
-It deliberately does NOT know about chat, tools or SSE — server/local/
+It deliberately does NOT know about chat, tools or SSE, server/local/
 server_stream.py speaks HTTP to whatever this has running.
 """
 
@@ -78,7 +78,7 @@ _log_path: str | None = None
 
 
 class LlamaServerUnavailable(RuntimeError):
-    """The binary is missing or too old — carries the actionable fix."""
+    """The binary is missing or too old, carries the actionable fix."""
 
 
 def binary_path() -> str | None:
@@ -169,8 +169,8 @@ def resident_key() -> str | None:
 def resident_n_ctx() -> int | None:
     """Context size the running process was started with, or None.
 
-    This is the TRUE window for an on-device turn — the ``--ctx-size`` the
-    subprocess was launched with — so the context meter must read it here rather
+    This is the TRUE window for an on-device turn, the ``--ctx-size`` the
+    subprocess was launched with, so the context meter must read it here rather
     than from the cloud ``context_windows`` config map, which knows nothing about
     local models.
     """
@@ -188,7 +188,7 @@ def base_url() -> str | None:
 
 
 def log_tail(lines: int = 40) -> str:
-    """Last lines of the subprocess log — used to explain a failed start."""
+    """Last lines of the subprocess log, used to explain a failed start."""
     if not _log_path or not os.path.exists(_log_path):
         return ""
     try:
@@ -294,7 +294,7 @@ def ensure_serving(key: str, n_ctx: int | None = None) -> str:
 
     Reuses the running process when it already serves this key at this context
     size; otherwise stops it and starts a new one (only one model is resident).
-    Blocking — a cold start loads gigabytes of weights, so call it off the event
+    Blocking, a cold start loads gigabytes of weights, so call it off the event
     loop. Raises LlamaServerUnavailable with the fix, or RuntimeError with the
     subprocess log tail when the model itself fails to load.
     """
@@ -367,7 +367,7 @@ def ensure_serving(key: str, n_ctx: int | None = None) -> str:
             "--ctx-size",
             str(target_ctx),
             # ONE slot. The default is 4, and each slot gets its own KV cache, so
-            # the default quadruples KV memory for a single-user desktop app —
+            # the default quadruples KV memory for a single-user desktop app,
             # enough to OOM Metal on an 18GB machine at a large context. One
             # request at a time is also what the UI does.
             "--parallel",
@@ -430,7 +430,7 @@ def _strip_reasoning_markers(text: str) -> str:
 
     Observed on the non-streaming endpoint: when upstream's reasoning parser does
     not claim a model's thought channel, ``reasoning_content`` comes back empty and
-    the content arrives as ``"<channel|>the real answer"`` — sometimes with the
+    the content arrives as ``"<channel|>the real answer"``, sometimes with the
     whole thought block ahead of it. Callers here want clean prose or JSON (session
     summaries, index extraction), so keep only what follows the LAST close marker
     and drop any stray markers. Text without markers is returned untouched.
@@ -449,7 +449,7 @@ def reap_orphans() -> int:
     """Kill leftover llama-server processes serving OUR models. Returns the count.
 
     The lifespan shutdown hook stops the child on a graceful exit, but SIGKILL
-    (force quit, OOM killer, `kill -9`) skips it — and because the child runs in
+    (force quit, OOM killer, `kill -9`) skips it, and because the child runs in
     its own session it survives, holding gigabytes and its port forever. Called
     at startup so a hard-killed run cleans up after itself.
 

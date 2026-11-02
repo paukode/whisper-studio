@@ -1,9 +1,9 @@
 """
-GitFileWatcher — polls .git/HEAD, .git/config, and the current branch's
+GitFileWatcher, polls .git/HEAD, .git/config, and the current branch's
 ref file once per second, fires subscribers when any of them mutate.
 
 Direct port of Claude Code's `GitFileWatcher` (utils/git/gitFilesystem.ts).
-Node's `fs.watchFile` is a polling watcher under the hood — this is the
+Node's `fs.watchFile` is a polling watcher under the hood, this is the
 same shape: stat-mtime once per second, callback on change. No external
 deps, no platform quirks.
 
@@ -97,7 +97,7 @@ class GitFileWatcher:
         """Register a callback fired when any watched file changes.
 
         Returns an unsubscribe function. Callbacks run on the watcher
-        thread — keep them short (e.g., put-into-queue, then return).
+        thread, keep them short (e.g., put-into-queue, then return).
         """
         with self._subscribers_lock:
             self._subscribers.append(callback)
@@ -221,7 +221,7 @@ class GitFileWatcher:
         if not changed:
             return
 
-        # If HEAD changed, the current branch may have flipped — re-resolve
+        # If HEAD changed, the current branch may have flipped, re-resolve
         # the branch ref path and start watching the new one. This mirrors
         # Claude Code's watchCurrentBranchRef logic.
         if head_changed:

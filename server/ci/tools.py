@@ -23,7 +23,7 @@ CI_TOOLS: list[dict] = [
         "name": "ci_watch",
         "description": (
             "Watch a branch's latest GitHub Actions run to its conclusion, detached from "
-            "this turn — a live card updates as jobs finish and a result card lands when it "
+            "this turn: a live card updates as jobs finish and a result card lands when it "
             "settles. Defaults to the current branch. Use after pushing to see if CI passes."
         ),
         "input_schema": {
@@ -104,12 +104,12 @@ async def execute_ci_autofix(
         return f"No CI runs found for branch '{branch}'.", []
     if not provider.is_terminal(run):
         return (
-            f"The latest run for '{branch}' is still in progress — watch it, then autofix if it fails.",
+            f"The latest run for '{branch}' is still in progress; watch it, then autofix if it fails.",
             [],
         )
     if not provider.is_failing(run):
         return (
-            f"The latest run for '{branch}' ({run.get('conclusion')}) isn't failing — nothing to autofix.",
+            f"The latest run for '{branch}' ({run.get('conclusion')}) isn't failing; nothing to autofix.",
             [],
         )
 
@@ -136,7 +136,7 @@ async def execute_ci_autofix(
             # carries it: the card's launch must reason at the turn's effort,
             # not the provider default. See server/workflows/tools.py::_preview.
             "effort_label": effort_label or "",
-            # Pin to the SAME repo the CI plan was diagnosed against — already
+            # Pin to the SAME repo the CI plan was diagnosed against, already
             # resolved above via resolve_target, not re-derived from
             # whatever happens to be connected when the user clicks Approve.
             "workspace_path": cwd,

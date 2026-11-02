@@ -55,7 +55,7 @@ async def get_catalog():
                 "installed": state == "installed",
                 "size_bytes_estimate": sizes.estimate(entry),
                 "bytes_on_disk": bytes_on_disk(entry),
-                # The one shared progress fraction — every surface renders
+                # The one shared progress fraction, every surface renders
                 # this, never its own bytes/size arithmetic.
                 "progress": manager.progress_of(entry, state),
                 "state": state,
@@ -90,7 +90,7 @@ async def get_status():
 
 @router.post("/{key}/download")
 async def start_download(key: str):
-    """Start a download — or queue it when both slots are busy (HTTP 200
+    """Start a download, or queue it when both slots are busy (HTTP 200
     either way; only "already installed" is a 409). A duplicate request for a
     running/queued download is a benign no-op reporting the current state."""
     entry = _entry_or_404(key)

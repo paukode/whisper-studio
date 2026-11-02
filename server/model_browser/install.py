@@ -4,13 +4,13 @@ A browser install writes exactly the same ``chat_models`` dict entry a user
 would add by hand
 (server/local/registry.py), into the USER layer (``config.user.json``), then
 enqueues the download through the existing models-manager queue. Nothing
-downstream is new — the registry merges the entry in, the models catalog derives
+downstream is new, the registry merges the entry in, the models catalog derives
 a download row from the registry, the composer picker's live refresh shows it,
 and load-on-use goes through ``llama-server`` unchanged.
 
 Two hard-won rules from the config machinery are load-bearing here:
   * the entry MUST be written into ``chat_models`` as a DICT, never into the
-    derived ``chat_model_meta`` — the normalizer rebuilds meta from chat_models
+    derived ``chat_model_meta``, the normalizer rebuilds meta from chat_models
     on every load and would clobber a meta-only entry;
   * the merge must READ the raw USER layer (``_load_user_config``) and write it
     back via ``save_config``, so other user entries survive. It must NOT go
@@ -55,7 +55,7 @@ def registry_key(repo_id: str, quant: str) -> str:
 
 
 def _model_id(repo_id: str, quant: str) -> str:
-    """The picker/runtime sentinel id. MUST start with ``local:`` — cloud-path
+    """The picker/runtime sentinel id. MUST start with ``local:``, cloud-path
     code branches on that prefix before any Bedrock call."""
     return f"local:{_slug(repo_id)}-{_slug(quant)}"
 
@@ -63,7 +63,7 @@ def _model_id(repo_id: str, quant: str) -> str:
 def _dir_name(repo_id: str) -> str:
     """The models/ subdirectory for this repo. Recognizable (mirrors the repo
     id) and filesystem-safe. Quants of one repo share the dir and differ by
-    filename — the models-manager delete already handles that shared-dir case."""
+    filename, the models-manager delete already handles that shared-dir case."""
     return re.sub(r"[^A-Za-z0-9._-]+", "_", repo_id.replace("/", "__"))
 
 
@@ -86,11 +86,11 @@ def build_entry(
     n_ctx: int | None,
     header_ctx: int | None,
 ) -> tuple[str, dict]:
-    """(key, chat_models entry) for a browsed model — the exact hand-config shape.
+    """(key, chat_models entry) for a browsed model, the exact hand-config shape.
 
     Defaults, all overridable in the config editor afterwards:
       * ``supports_tools`` True only at or above ``AGENTIC_MIN_PARAMS_B`` (or when
-        the name carries no size) — the tool loop rides on llama-server
+        the name carries no size), the tool loop rides on llama-server
         ``--jinja``, which these instruct families support, but a model too small
         to drive it emits raw JSON into the chat instead of a parsed call.
 
@@ -127,7 +127,7 @@ def build_mlx_entry(
     fed through the same resolve_ctx policy as a GGUF header.
 
     The dir gets an ``__mlx`` suffix so it can never collide with the GGUF
-    lane's dir for the same repo — MLX deletes remove the WHOLE directory (no
+    lane's dir for the same repo, MLX deletes remove the WHOLE directory (no
     per-file guard is possible for a snapshot), so a shared dir would put the
     other entry's weights at risk.
     """
@@ -309,7 +309,7 @@ def tombstone_entry(key: str) -> bool:
     visibility. Local models are deleted outright instead (they re-download from
     Discover), so this is Bedrock-only.
 
-    Order-preserving and idempotent — returns whether ``key`` was newly added.
+    Order-preserving and idempotent, returns whether ``key`` was newly added.
     Writes the same key the visibility toggles use, so both paths stay coherent.
     """
     raw = config_mod._load_user_config()
