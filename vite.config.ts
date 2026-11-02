@@ -44,11 +44,8 @@ export default defineConfig(({ command }) => {
     //  - `.whisper/worktrees/**`: where the enter_worktree tool puts them.
     //  - `.claude/worktrees/**`: where worktrees are created in this env.
     //  - `.worktrees/**`: where the ws_create_worktree tool puts them.
-    //  - a worktree placed sibling-style next to the repo via
-    //    `<repo>-<branch>` (the `addGitWorktree` default path) is outside
-    //    the vite root and is never watched; we can't pattern-match it
-    //    from inside vite, so prefer the in-tree patterns and steer the
-    //    assistant toward them via the git instructions prompt.
+    // A sibling `<repo>-<branch>` worktree (the Git panel's default path)
+    // is outside the vite root, so it is never watched.
     watch: {
       ignored: [
         '**/.whisper/worktrees/**',
