@@ -199,15 +199,35 @@ def workspace_lost_message() -> str | None:
     )
 
 
-def _set_connected_path(path: str | None) -> str | None:
-    """Persist ``path`` as the connected workspace; returns the previous one.
-    Raises when the config cannot be written (the old file stays whole)."""
+# The previous workspace of a damaged config file is unknown: callers treat
+# it as a switch away from some workspace (release it, drop scoped state).
+_UNKNOWN_PREVIOUS = object()
+
+
+def _set_connected_path(path: str | None, *, replace_damaged: bool = False):
+    """Persist ``path`` as the connected workspace; returns (previous, damage).
+
+    ``previous`` is the path that was connected, or _UNKNOWN_PREVIOUS when
+    the file was damaged and replaced. ``damage`` is None, or the read error
+    of the damaged file. Only the user's explicit connect or disconnect
+    passes ``replace_damaged``: it writes a fresh file over the damaged one
+    (logged at warning, and returned so the UI says so). Any other caller
+    raises the read error. Raises when the config cannot be written (the old
+    file stays whole).
+    """
     with CONFIG_LOCK:
-        config = load_workspace_config()
+        try:
+            config = load_workspace_config()
+        except ValueError as e:
+            if not replace_damaged:
+                raise
+            log.warning("workspace config damaged, replaced on the user's request: %s", e)
+            save_workspace_config({"path": path})
+            return _UNKNOWN_PREVIOUS, f"The damaged workspace config was replaced ({e})."
         previous = config.get("path")
         config["path"] = path
         save_workspace_config(config)
-    return previous
+    return previous, None
 
 
 def _release_workspace() -> None:
@@ -483,10 +503,10 @@ def disconnect_workspace() -> list[str]:
     A turn that is still running finds out at its next workspace tool call,
     which is refused (workspace_lost_message).
     """
-    previous = _set_connected_path(None)
+    previous, damage = _set_connected_path(None, replace_damaged=True)
     if previous:
         _release_workspace()
-    warnings: list[str] = []
+    warnings: list[str] = [damage] if damage else []
     for label, step in (
         ("undo backups", WORKSPACE_BACKUPS.clear),
         ("session shell state", clear_workspace_scoped_state),
@@ -501,7 +521,9 @@ def disconnect_workspace() -> list[str]:
     return warnings
 
 
-def connect_workspace(path: str, *, by_user: bool = False) -> str:
+def connect_workspace(
+    path: str, *, by_user: bool = False, warnings: list[str] | None = None
+) -> str:
     """Mark `path` as the active workspace, persist it, refresh recents, and
     re-point the git file watcher. Returns the canonicalised realpath that
     was stored. Raises ValueError if the directory does not exist.
@@ -518,6 +540,10 @@ def connect_workspace(path: str, *, by_user: bool = False) -> str:
     A tool in a turn whose workspace the user let go of may not connect one
     (ValueError with the reason): it would bring back the folder the user
     just disconnected, or replace the one they connected instead.
+
+    The user's connect also replaces a damaged workspace config file (a
+    tool's connect raises its read error); the note about it is appended to
+    ``warnings`` when the caller passes a list.
     """
     if not by_user:
         lost = workspace_lost_message()
@@ -532,8 +558,13 @@ def connect_workspace(path: str, *, by_user: bool = False) -> str:
         # macOS refused the read (Files and Folders access): connecting would
         # show an empty tree with no reason.
         raise ValueError(f"Cannot read {real}: {e.strerror}") from e
-    previous = _set_connected_path(real)
-    switched = bool(previous) and os.path.realpath(previous) != real
+    previous, damage = _set_connected_path(real, replace_damaged=by_user)
+    if damage and warnings is not None:
+        warnings.append(damage)
+    if previous is _UNKNOWN_PREVIOUS:
+        switched = True
+    else:
+        switched = bool(previous) and os.path.realpath(previous) != real
     if switched and by_user:
         _release_workspace()
     save_recent_workspace(real)

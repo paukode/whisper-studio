@@ -22,7 +22,7 @@ import { STORAGE_KEYS } from '@/utils/storageKeys';
 import { IndexSettingsPanel } from './IndexSettingsPanel';
 import { RecentWorkspaceItem } from './RecentWorkspaceItem';
 import { WorkspaceBrowser } from './WorkspaceBrowser';
-import { settleWorkspaceOps } from '@/services/workspaceConnection';
+import { reportConnectWarnings, settleWorkspaceOps } from '@/services/workspaceConnection';
 import {
   normalizeWsPath,
   type BrowseEntry,
@@ -434,7 +434,8 @@ export const WorkspaceConnectDialog: React.FC = () => {
       try {
         // A disconnect clicked just before must reach the server first.
         await settleWorkspaceOps();
-        const data = await post<{ path?: string }>('/api/workspace/connect', { path: trimmed });
+        const data = await post<{ path?: string; warnings?: string[] }>('/api/workspace/connect', { path: trimmed });
+        reportConnectWarnings(data?.warnings);
         // Use the CANONICAL path the server resolved (~ expanded, symlinks
         // and relative segments collapsed) rather than the raw input, so the
         // stored root and everything keyed off it (LSP roots, indexing,

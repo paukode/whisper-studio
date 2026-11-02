@@ -1,7 +1,7 @@
 import { toError } from '@/utils/toError';
 import React, { useCallback, useEffect, useState } from 'react';
 import { useUIStore } from '@/stores/uiStore';
-import { settleWorkspaceOps, syncWorkspaceStatus } from '@/services/workspaceConnection';
+import { reportConnectWarnings, settleWorkspaceOps, syncWorkspaceStatus } from '@/services/workspaceConnection';
 import { ICON } from '@/components/chat/activityIcons';
 
 export interface WorkspacePromptCardProps {
@@ -99,7 +99,8 @@ export const WorkspacePromptCard: React.FC<WorkspacePromptCardProps> = ({
         return;
       }
 
-      const data = (await resp.json()) as { writable?: boolean };
+      const data = (await resp.json()) as { writable?: boolean; warnings?: string[] };
+      reportConnectWarnings(data?.warnings);
       setResolved(path);
       useUIStore.getState().setWsConnected(true, path);
       window.dispatchEvent(new CustomEvent('whisper-workspace-refresh'));

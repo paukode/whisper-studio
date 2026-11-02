@@ -8,7 +8,7 @@ import { recordingController } from '@/services/recordingController';
 import { applyVoiceEvent, mergeSpoken } from '@/services/voiceEvents';
 import { buildHistoryPayload } from '@/hooks/chatStream/history';
 import { VoiceServerEventSchema, VoiceStatusSchema } from '@/types/schemas/voice.schema';
-import { settleWorkspaceOps } from './workspaceConnection';
+import { reportConnectWarnings, settleWorkspaceOps } from './workspaceConnection';
 import type { ChatMessage, TeamReportData, ToolUseEvent } from '@/types/chat';
 
 /**
@@ -371,8 +371,9 @@ class VoiceController {
     try {
       // A disconnect clicked just before must reach the server first.
       await settleWorkspaceOps();
-      const data = await post<{ path?: string }>('/api/workspace/connect', { path });
+      const data = await post<{ path?: string; warnings?: string[] }>('/api/workspace/connect', { path });
       const connected = data?.path || path;
+      reportConnectWarnings(data?.warnings);
       useUIStore.getState().setWsConnected(true, connected);
       useUIStore.getState().addToast({
         type: 'success',

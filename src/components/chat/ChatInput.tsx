@@ -30,7 +30,7 @@ import {
 import { MoreMenu, type MoreSection } from './MoreMenu';
 import { useVoiceStore } from '@/stores/voiceStore';
 import { voiceController } from '@/services/voiceController';
-import { settleWorkspaceOps } from '@/services/workspaceConnection';
+import { reportConnectWarnings, settleWorkspaceOps } from '@/services/workspaceConnection';
 import { VoiceBar } from './VoiceBar';
 
 export interface ChatInputProps {
@@ -117,7 +117,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
       // root / macOS extended ACLs, so we never refuse based on it).
       // A disconnect clicked just before must reach the server first.
       await settleWorkspaceOps();
-      const data = await post<{ path?: string; writable?: boolean }>(
+      const data = await post<{ path?: string; writable?: boolean; warnings?: string[] }>(
         '/api/workspace/connect',
         { path: wsPath },
       );
@@ -127,6 +127,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
       // workspace root, and an unexpanded "~/..." never matches it.
       const connectedPath = data?.path || wsPath;
       useUIStore.getState().setWsConnected(true, connectedPath);
+      reportConnectWarnings(data?.warnings);
       setWorkOpen(false);
       const name = connectedPath.split('/').pop();
       if (data?.writable === false) {
