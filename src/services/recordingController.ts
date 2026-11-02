@@ -205,7 +205,7 @@ let modelGateActive = false;
  *  cancel, put the header select back to the engine still in use. */
 let activeBackend = 'streaming';
 /** True while a live engine switch is gating the new engine's download, so a
- *  second switch can't race a set_backend relay past a half-finished one. */
+ *  second switch can't race a set_model relay past a half-finished one. */
 let liveSwitchActive = false;
 /** The user dismissed the server-driven "loading into memory" banner. A native
  *  MLX load can't be aborted mid-flight, so we simply stop re-showing its ramp

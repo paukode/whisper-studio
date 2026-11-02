@@ -402,8 +402,8 @@ async def websocket_endpoint(
         async with send_lock:
             try:
                 await websocket.send_json(payload)
-            except Exception:
-                pass  # client closed mid-send — benign disconnect race
+            except (WebSocketDisconnect, RuntimeError, OSError):
+                pass  # client closed mid-send: benign disconnect race
 
     async def emit_events(events: list[dict]) -> None:
         """Relay ordered backend events; label finals via diarization."""
@@ -574,7 +574,7 @@ async def websocket_endpoint(
             # a silent multi-second stall on the first sentence reads as
             # "nothing transcribes" (large-v3 loads for seconds).
             load_s = None
-            if hasattr(backend_mod, "is_loaded") and not backend_mod.is_loaded():
+            if not backend_mod.is_loaded():
                 loading_since = time.monotonic()
                 await load_model_into_memory()
                 load_s = time.monotonic() - loading_since
@@ -595,8 +595,9 @@ async def websocket_endpoint(
         try:
             events = await loop.run_in_executor(backend_mod.executor, asr_session.finish)
             await emit_events(events)
-        except Exception as e:
-            log.debug("ASR finish failed: %s", e)
+        except Exception:
+            # The last sentence of the take is lost: say so in the log.
+            log.error("ASR finish failed: the final utterance was not transcribed", exc_info=True)
 
     async def replay_carryover() -> None:
         """Emit what earlier connections of this take still had in flight
@@ -620,14 +621,10 @@ async def websocket_endpoint(
                 log.info("Relaying %d event(s) a dropped connection left in flight", len(events))
             await emit_events(events)
 
-    async def switch_backend(requested: str, variant: str | None = None) -> None:
+    async def switch_backend(requested: str) -> None:
         """Live model switch from the transcript panel header (or Settings).
         Flushes the outgoing pipeline first so the seam isn't clipped, then
-        routes subsequent audio to the new model. No-op when unchanged.
-
-        ``variant`` is accepted for wire compatibility with older clients
-        and ignored."""
-        del variant
+        routes subsequent audio to the new model. No-op when unchanged."""
         nonlocal backend_mod, backend_name, asr_session
         new_name = resolve_name(requested)
         if new_name == backend_name:
@@ -643,11 +640,7 @@ async def websocket_endpoint(
         # 3.1 GB and stacks up fast on small machines.
         # Parakeet (0.6B) stays resident: it is the dictation mic's always-on
         # engine and may be serving another connection.
-        if (
-            resolve_name(backend_name) != "parakeet"
-            and hasattr(backend_mod, "unload")
-            and backend_mod.is_loaded()
-        ):
+        if resolve_name(backend_name) != "parakeet" and backend_mod.is_loaded():
             old_label = _backend_label(backend_name)
             try:
                 await loop.run_in_executor(backend_mod.executor, backend_mod.unload)
@@ -719,11 +712,6 @@ async def websocket_endpoint(
                     continue
 
                 if msg.get("type") == "set_model":
-                    await switch_backend(msg.get("backend") or "", msg.get("variant"))
-                    continue
-
-                if msg.get("type") == "set_backend":
-                    # Legacy client message (pre unified-model-selector).
                     await switch_backend(msg.get("backend") or "")
                     continue
 
