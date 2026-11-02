@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useReducer } from 'react';
 import { openHtmlSandboxed } from '@/utils/openHtmlSandboxed';
 import { downloadFile } from '@/utils/downloadFile';
 import {
@@ -56,7 +56,6 @@ export const ProgramArtifactCard: React.FC<ProgramArtifactCardProps> = ({
   description,
 }) => {
   const [showPreview, setShowPreview] = useState(false);
-  const iframeRef = useRef<HTMLIFrameElement>(null);
   const themeCss = useArtifactThemeCss(showPreview);
   const previewHtml = useMemo(
     () => (themeCss === null ? null : withArtifactTheme(html, themeCss)),
@@ -128,7 +127,6 @@ export const ProgramArtifactCard: React.FC<ProgramArtifactCardProps> = ({
       {showPreview && previewHtml !== null && (
         <div style={{ borderTop: '1px solid var(--border)' }}>
           <iframe
-            ref={iframeRef}
             srcDoc={previewHtml}
             sandbox="allow-scripts"
             style={{

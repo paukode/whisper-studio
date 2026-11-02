@@ -54,7 +54,7 @@ export function resolvePath(path: string, wsPath: string): { shown: string; abso
 
 /** The diff stats of an edit or a group: +added -removed. A button that
  *  opens the diff when it belongs to one call, a plain chip on a group. */
-export const DiffPill: React.FC<{ added: number; removed: number; onOpen?: () => void }> = ({ added, removed, onOpen }) => {
+const DiffPill: React.FC<{ added: number; removed: number; onOpen?: () => void }> = ({ added, removed, onOpen }) => {
   const body = (
     <>
       <span className="add">+{formatCount(added)}</span>
