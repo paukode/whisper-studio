@@ -91,9 +91,8 @@ async def route_tool(
     if tool_name in ("task_create", "task_update", "task_list", "task_get", "task_stop"):
         from server.tasks_tracker import execute_task_tool, get_session_tasks
 
-        tool_input["session_id"] = session_id  # Always use real session ID
         output = await _submit(
-            loop, executor, lambda ci=tool_input: execute_task_tool(tool_name, ci)
+            loop, executor, lambda ci=tool_input: execute_task_tool(tool_name, ci, session_id)
         )
         side_effects.append({"todo_update": get_session_tasks(session_id)})
         return output, side_effects

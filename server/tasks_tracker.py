@@ -190,12 +190,8 @@ TASK_TOOLS = [
                     "type": "string",
                     "description": "Detailed description of what needs to be done",
                 },
-                "session_id": {
-                    "type": "string",
-                    "description": "Current session ID for task scoping",
-                },
             },
-            "required": ["subject", "session_id"],
+            "required": ["subject"],
         },
     },
     {
@@ -210,9 +206,8 @@ TASK_TOOLS = [
                     "description": "New status",
                     "enum": ["pending", "in_progress", "completed"],
                 },
-                "session_id": {"type": "string", "description": "Current session ID"},
             },
-            "required": ["task_id", "status", "session_id"],
+            "required": ["task_id", "status"],
         },
     },
     {
@@ -220,10 +215,8 @@ TASK_TOOLS = [
         "description": "List all tasks in the current session to review progress.",
         "input_schema": {
             "type": "object",
-            "properties": {
-                "session_id": {"type": "string", "description": "Current session ID"},
-            },
-            "required": ["session_id"],
+            "properties": {},
+            "required": [],
         },
     },
     {
@@ -233,9 +226,8 @@ TASK_TOOLS = [
             "type": "object",
             "properties": {
                 "task_id": {"type": "string", "description": "The task ID to retrieve"},
-                "session_id": {"type": "string", "description": "Current session ID"},
             },
-            "required": ["task_id", "session_id"],
+            "required": ["task_id"],
         },
     },
     {
@@ -245,16 +237,14 @@ TASK_TOOLS = [
             "type": "object",
             "properties": {
                 "task_id": {"type": "string", "description": "The task ID to cancel"},
-                "session_id": {"type": "string", "description": "Current session ID"},
             },
-            "required": ["task_id", "session_id"],
+            "required": ["task_id"],
         },
     },
 ]
 
 
-def execute_task_tool(tool_name: str, tool_input: dict) -> str:
-    session_id = tool_input.get("session_id", "default")
+def execute_task_tool(tool_name: str, tool_input: dict, session_id: str) -> str:
     if tool_name == "task_create":
         task = create_task(
             session_id, tool_input.get("subject", ""), tool_input.get("description", "")

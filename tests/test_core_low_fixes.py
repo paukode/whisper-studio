@@ -202,10 +202,7 @@ def test_execute_task_tool_reports_invalid_status(monkeypatch, tmp_path):
     task = tt.create_task(sid, "task Z")
 
     out = json.loads(
-        tt.execute_task_tool(
-            "task_update",
-            {"session_id": sid, "task_id": task["id"], "status": "bogus"},
-        )
+        tt.execute_task_tool("task_update", {"task_id": task["id"], "status": "bogus"}, sid)
     )
 
     assert "error" in out
