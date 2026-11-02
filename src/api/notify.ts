@@ -22,22 +22,19 @@ export interface PersistedToast {
  * count, so tight loops don't need client-side throttling.
  */
 export function persistToastNotification(t: PersistedToast): void {
-  try {
-    void post('/api/notifications', {
-      source: t.source ?? 'app',
-      title: t.title ?? '',
-      message: t.message,
-      status: t.status,
+  void post('/api/notifications', {
+    source: t.source ?? 'app',
+    title: t.title ?? '',
+    message: t.message,
+    status: t.status,
+  })
+    .then(() => {
+      // Refresh the bell badge promptly instead of waiting out its poll.
+      void queryClient.invalidateQueries({ queryKey: ['notifications-unread'] });
+      void queryClient.invalidateQueries({ queryKey: ['notifications-list'] });
     })
-      .then(() => {
-        // Refresh the bell badge promptly instead of waiting out its poll.
-        void queryClient.invalidateQueries({ queryKey: ['notifications-unread'] });
-        void queryClient.invalidateQueries({ queryKey: ['notifications-list'] });
-      })
-      .catch(() => {
-        /* best-effort */
-      });
-  } catch {
-    /* fetch may not exist in exotic embeds; the toast still showed */
-  }
+    .catch((err: unknown) => {
+      // Never a second toast here: it would recurse into addToast.
+      console.warn('[notifications] could not store the toast:', err);
+    });
 }

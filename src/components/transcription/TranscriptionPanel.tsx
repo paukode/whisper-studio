@@ -424,8 +424,16 @@ export const TranscriptionPanel: React.FC = () => {
       // The rename doubles as voiceprint enrollment: the server stores this
       // cluster's centroid under the name, so the same person is recognised
       // by name in later recordings instead of restarting at "Speaker N".
-      // Best-effort — the label is already applied locally either way.
-      if (currentSessionId) enrollSpeaker(currentSessionId, originalKey, newName);
+      // The label is already applied locally either way; a failed enrollment
+      // is reported, since later recordings will not know the name.
+      if (currentSessionId) {
+        enrollSpeaker(currentSessionId, originalKey, newName).catch((err: unknown) => {
+          useUIStore.getState().addToast({
+            type: 'warning',
+            message: `Could not remember ${newName}'s voice for later recordings: ${toError(err).message}`,
+          });
+        });
+      }
     },
     [renameSpeaker, currentSessionId],
   );
