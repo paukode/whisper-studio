@@ -95,7 +95,7 @@ _TWO_PATHS_RE = re.compile(rf"\s(?:~|/)|{_EXT}\s", re.IGNORECASE)
 # changed in this turn, whether its cell has a verb or not; a plain path
 # under such a column ("Modified" in a file listing, "Change" in a review of
 # someone else's pull request) says where the file is, unless a verb says
-# more. The rows of any other table read as prose, as before.
+# more. The rows of any other table read as prose.
 
 _TABLE_RULE_RE = re.compile(r"\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*")
 _FILE_COLUMN_RE = re.compile(
@@ -302,7 +302,6 @@ _ROW_COUNT_RE = re.compile(
     re.IGNORECASE,
 )
 _ROW_UNCHANGED_RE = re.compile(r"\b(?:unchanged|untouched)\b", re.IGNORECASE)
-# "server/app.py was updated": the verb after the path.
 # Between a headline's verb and its path: where the work went ("Report saved
 # to X", "Changes written: X").
 _HEADLINE_PLACE_RE = re.compile(r"^[\s*_]*(?:to|into|in|at|as|under|on|:)", re.IGNORECASE)
@@ -318,6 +317,7 @@ _NOW_HAS_RE = re.compile(
     r"|supports|reads|returns|logs|retries)\b",
     re.IGNORECASE,
 )
+# "server/app.py was updated": the verb after the path.
 _PASSIVE_AFTER_RE = re.compile(
     rf"^[\s`*_\"')\]]*(?:was|were|has been|have been|is now|are now|got|{_APOS}s been)"
     rf"(?:\s+(?:also|now|just|successfully|finally))*\s+(?P<verb>{_MADE_VERBS}|{_GONE_VERBS})\b",

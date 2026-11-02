@@ -1,7 +1,7 @@
 """Goal + goal_state persistence on the sessions row.
 
-A goal is 1:1 with a session, so it lives on two additive columns (migration
-009 in sessions._MIGRATED_SESSION_COLUMNS) rather than a new table. goal_state
+A goal is 1:1 with a session, so it lives on two additive columns (added by
+sessions._ensure_db through _MIGRATED_SESSION_COLUMNS) rather than a new table. goal_state
 is a small JSON blob holding the live counters and last verdict:
 
     {"active": bool, "consecutive_blocks": int, "total_evals": int,
