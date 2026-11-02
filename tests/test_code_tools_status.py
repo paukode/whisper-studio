@@ -109,6 +109,20 @@ def test_status_shows_the_workspaces_eslint_without_running_it(tmp_path, monkeyp
     assert "Node 22.16.0" in row.note
 
 
+def test_an_eslint_whose_node_does_not_run_is_not_working(tmp_path, monkeypatch):
+    """A node that cannot start used to show ESLint as OK with no Node note,
+    while lsp_diagnostics answered 'ESLint could not run'."""
+    _fake_eslint(tmp_path)
+    (tmp_path / "eslint.config.js").write_text("export default [];\n")
+    monkeypatch.setattr(status, "node_path", lambda: "/app/bin/node")
+    monkeypatch.setattr(
+        status, "run_tool", lambda argv, **kw: ToolRun(1, "", "Bad CPU type in executable")
+    )
+    row = status._eslint(str(tmp_path))
+    assert row.ok is False
+    assert row.reason.startswith("ESLint 10.2.1 is installed but Node.js does not run:")
+
+
 def _fake_eslint(project, version="10.2.1") -> None:
     pkg = project / "node_modules" / "eslint"
     (pkg / "bin").mkdir(parents=True)
