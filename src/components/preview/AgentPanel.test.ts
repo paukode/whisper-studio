@@ -2,7 +2,7 @@
  *  end is one row, and the waiting line names the tool still out. The task
  *  row shows the agent's own task first. */
 import { describe, expect, it } from 'vitest';
-import { feedItems, taskParts, waitingFor } from './AgentPanel';
+import { feedItems, fenceSafeCut, taskParts, waitingFor } from './AgentPanel';
 import type { AgentProgressEvent } from '@/stores/agentFeedStore';
 
 const ev = (over: Partial<AgentProgressEvent>): AgentProgressEvent => ({ agent_id: 'a1', phase: 'text', ...over }) as AgentProgressEvent;
@@ -61,6 +61,39 @@ describe('taskParts', () => {
     const parts = taskParts('x'.repeat(250), '', 100);
     expect(parts.own).toHaveLength(100);
     expect(parts.rest).toHaveLength(150);
+  });
+});
+
+describe('taskParts never splits a code fence', () => {
+  const fences = (text: string) => text.split('\n').filter((l) => /^ {0,3}(```|~~~)/.test(l)).length;
+
+  it('moves a cut inside a fence back to the line where the fence opens', () => {
+    const intro = 'Intro line.\n'.repeat(30);
+    const code = '```python\n' + 'x = 1\n'.repeat(40) + '```\n';
+    const task = intro + code + 'After the code.\n';
+    const { own, rest } = taskParts(task, '', intro.length + 50);
+    expect(own + rest).toBe(task);
+    expect(fences(own) % 2).toBe(0);
+    expect(fences(rest) % 2).toBe(0);
+    expect(rest.startsWith('```python')).toBe(true);
+  });
+
+  it('keeps a fence that opens at the top whole in the shown part', () => {
+    const code = '~~~\n' + 'line\n'.repeat(50) + '~~~\n';
+    const task = code + 'tail words '.repeat(20);
+    const { own, rest } = taskParts(task, '', 100);
+    expect(own + rest).toBe(task);
+    expect(own).toBe(code);
+  });
+
+  it('leaves a cut outside every fence where it is', () => {
+    const text = '```\na\n```\nplain text here\n';
+    expect(fenceSafeCut(text, text.length - 3)).toBe(text.length - 3);
+  });
+
+  it('an inner line of a different marker does not close the fence', () => {
+    const text = '````\n```\ninner\n```\n````\nend\n';
+    expect(fenceSafeCut(text, text.indexOf('inner'))).toBe(text.indexOf('end'));
   });
 });
 
