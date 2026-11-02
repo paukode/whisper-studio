@@ -1,10 +1,9 @@
 """Git importer for folder skills.
 
 Fetches selected skill folders (``<dir>/SKILL.md`` + ``scripts/`` / ``references/``
-/ ``assets/``) from a git URL into the app's ``/skills/`` directory, using a
-shallow, blobless, sparse checkout so a 300-skill mono-repo does not download
-everything. Reuses the clone hygiene from ``server/git/executor.py`` and the
-traversal-safe write discipline from the archived reference engine.
+/ ``assets/``) from a git URL into the user's skills folder (``~/.whisper/skills``),
+using a shallow, blobless, sparse checkout so a 300-skill mono-repo does not
+download everything. Reuses the clone hygiene from ``server/git/executor.py``.
 
 Two entry points:
   - ``preview(url)``  — cheap tree scan listing candidate skills (no blob fetch)

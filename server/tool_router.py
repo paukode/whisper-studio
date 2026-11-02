@@ -418,13 +418,12 @@ async def route_tool(
             )
         except Exception as e:
             log.warning("notify_user: durable record failed: %s", e)
-        # Carry the delivered message in the tool_result itself instead of a
-        # generic ack. The message previously lived ONLY in the side-effect
-        # dict above, invisible to the model's own transcript and to any
-        # evaluator reading it (server.goals.tail.render_tail renders
-        # tool_result content into the judged tail for both the interactive
-        # completion gate and cron's own verify-and-continue) — a plain
-        # "sent." made a genuinely-delivered report look like missing work.
+        # Carry the delivered message in the tool_result itself, not a generic
+        # ack: the side-effect dict above is invisible to the model's own
+        # transcript and to any evaluator reading it (server.goals.tail.
+        # render_tail renders tool_result content into the judged tail for
+        # the completion gate and cron's verify-and-continue), where a plain
+        # "sent." would make a delivered report look like missing work.
         if message.strip():
             return f"Notification sent to user: {message}", side_effects
         return "Notification sent to user.", side_effects
@@ -457,7 +456,7 @@ async def route_tool(
 
         return execute_workflow_list(tool_input, session_id), side_effects
 
-    # --- CI tools (WS-J: watch + autofix) ---
+    # --- CI tools (watch + autofix) ---
     if tool_name == "ci_watch":
         from server.ci.tools import execute_ci_watch
 

@@ -13,7 +13,7 @@ from server.mcp import mcp_manager
 log = logging.getLogger("whisper-studio")
 
 router = APIRouter(prefix="/api/skills", tags=["skills"])
-# WHISPER.md endpoints (Feature 10 + 18) ride their own router, mounted
+# WHISPER.md endpoints ride their own router, mounted
 # separately in server/main.py. Both routers' handlers live in skills_routes.
 whisper_md_router = APIRouter(prefix="/api/whisper-md", tags=["whisper-md"])
 
@@ -113,7 +113,7 @@ def load_skills(skills_dir: str = None) -> dict:
                     s.strip() for s in frontmatter["style_options"].split(",")
                 ]
             name = frontmatter.get("name", fname.replace(".md", "").replace("-", "_"))
-            # Feature 9: per-skill model override
+            # Per-skill model override
             skill_model = frontmatter.get("model", "").strip() or None
             skills[name] = {
                 "name": name,
@@ -229,7 +229,7 @@ def init_skills():
 
 
 def get_skill_model(skill_name: str) -> str | None:
-    """Feature 9: Return the model override for a skill, if specified."""
+    """Return the model override for a skill, if specified."""
     skill = SKILLS.get(skill_name)
     if skill:
         return skill.get("model")

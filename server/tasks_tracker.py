@@ -114,7 +114,7 @@ def get_session_tasks(session_id: str) -> list[dict]:
     if session_id not in _task_store:
         _task_store[session_id] = _load_from_db(session_id)
     # Self-heal: never expose more than one in_progress task. This runs on every
-    # read (live SSE broadcast, restore-on-resume, prompt build), so a session
+    # read (live todo_update broadcast and restore on resume), so a session
     # left with a zombie in_progress from an interrupted turn is repaired the
     # next time its tasks are loaded.
     _reconcile_in_progress(session_id)

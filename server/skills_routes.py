@@ -438,8 +438,9 @@ async def toggle_skill(name: str):
 
 @router.patch("/{name}/trust")
 async def trust_skill(name: str):
-    """Toggle a skill's `trusted` flag. Trust gates `allowed-tools`
-    auto-approval for folder skills (see the permissions layer)."""
+    """Toggle a skill's `trusted` flag. A trusted folder skill may run its own
+    bundled scripts without an approval card (command_runs_trusted_skill in
+    server/skills.py); validate_command still applies."""
     config = _sk.load_skills_config()
     trusted = config.get("trusted", [])
     if name in trusted:
@@ -483,7 +484,7 @@ async def delete_skill(name: str):
     return {"name": name, "deleted": True}
 
 
-# --- WHISPER.md API (Feature 10 + 18) ---
+# --- WHISPER.md API ---
 
 
 @whisper_md_router.get("")
