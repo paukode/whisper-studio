@@ -450,8 +450,8 @@ def publish_memory_event(session_id: str, **payload) -> None:
     """Surface memory activity on the session's long-lived event stream.
 
     Extraction finishes after the chat SSE closed, so the per-turn stream
-    cannot carry this; the /api/sessions/{id}/events channel (also used for
-    cron events) outlives the turn. A failure reaches the caller's handler.
+    cannot carry this; the multiplexed /api/sessions/events stream (also used
+    for cron events) outlives the turn. A failure reaches the caller's handler.
     """
     from server.agents.event_bus import event_bus
 
