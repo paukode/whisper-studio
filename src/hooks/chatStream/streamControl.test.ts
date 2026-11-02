@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dropRuntime, getChatStore } from '@/stores/sessionRuntimes';
 import type { ToolUseEvent } from '@/types/chat';
+import { useUIStore } from '@/stores/uiStore';
 import {
   STOPPED_TOOL_RESULT,
   killSessionStream,
@@ -10,8 +11,8 @@ import {
 
 // The ESC kill switch must also stop the shell work the stopped stream
 // started, and only that: the request carries when the stream began, so the
-// backend spares a dev server an earlier turn left running. Fire-and-forget,
-// never blocking or breaking the synchronous kill.
+// backend spares a dev server an earlier turn left running. Not awaited, so
+// the kill stays synchronous; a failed request is reported.
 describe('killSessionStream: shell-work stop wire', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
@@ -104,10 +105,16 @@ describe('killSessionStream: shell-work stop wire', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('stays synchronous and quiet when the request fails', () => {
+  it('stays synchronous when the request fails, and says the commands may still run', async () => {
+    useUIStore.setState({ toasts: [] });
     fetchMock.mockRejectedValue(new Error('offline'));
     registerStreamController('sess-offline', new AbortController());
     expect(() => killSessionStream('sess-offline')).not.toThrow();
+    await vi.waitFor(() =>
+      expect(useUIStore.getState().toasts.map((t) => t.message)).toContain(
+        "Stop could not reach the server, so the turn's commands may still be running: offline",
+      ),
+    );
   });
 });
 
