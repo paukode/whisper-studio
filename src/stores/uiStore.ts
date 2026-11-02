@@ -266,7 +266,7 @@ export const useUIStore = create<UIState>()((set) => ({
   sidebarCollapsed: loadSidebarCollapsed(),
   sessionGroupsCollapsed: loadSessionGroupsCollapsed(),
   settingsOpen: false,
-  settingsTab: 'general',
+  settingsTab: 'apikeys',
   toasts: [],
   toastQueue: [],
   transcriptVisible: false,

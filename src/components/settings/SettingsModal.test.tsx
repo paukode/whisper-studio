@@ -152,7 +152,7 @@ describe('SettingsModal — deep-link routing', () => {
   });
 
   it('an unknown tab id falls back to Keys and permissions → API keys', () => {
-    openAt('general'); // the store's initial default value
+    openAt('no-such-tab');
     expect(screen.getByText('APISettings')).toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: /Keys and permissions/i }),
