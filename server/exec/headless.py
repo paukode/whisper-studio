@@ -430,16 +430,14 @@ async def run_headless_turn(
                 session_id=session_id,
             )
         else:
+            from server.chat.caching import agent_cache_args
             from server.chat.engine.anthropic import AnthropicAdapter
 
             adapter = AnthropicAdapter(
                 model_key=resolved_model_key,
                 model_id=model_id,
                 system_prompt=system,
-                system_static="",
-                system_dynamic="",
-                caching_on=False,
-                cache_ttl="5m",
+                **agent_cache_args(system),
                 effort_label=_effort_label,
                 loop=loop,
                 executor=_HEADLESS_EXECUTOR,

@@ -433,3 +433,36 @@ def test_event_channel_keeps_agent_progress_off_the_session_channel(monkeypatch)
     assert seen_channels == ["voice:r1"]
     progress = [e["event"] for e in events if e["type"] == "team_progress"]
     assert progress == [{"phase": "started", "agent_id": "a1", "team_id": "t"}]
+
+
+def test_a_headless_run_caches_its_prompt_prefix(monkeypatch):
+    """Round 1 checkpoints the tools, the system prompt and the last message;
+    round 2 sends the same tools and system blocks, so it reads them from the
+    cache."""
+    fake_stream = FakeBedrockClient(
+        [
+            [
+                msg_start(),
+                *tool_use_block("t1", "ws_grep", {"pattern": "x"}),
+                *msg_end(stop_reason="tool_use"),
+            ],
+            [msg_start(), *text_block("Found it."), *msg_end(stop_reason="end_turn")],
+        ]
+    )
+    tools = [{"name": "ws_grep", "description": "d", "input_schema": {"type": "object"}}]
+    _patch_common(monkeypatch, fake_stream, tools)
+
+    async def fake_route_tool(tool_name, tool_input, **kw):
+        return "matches found", []
+
+    monkeypatch.setattr("server.tool_executor.route_tool", fake_route_tool)
+    asyncio.run(
+        _collect(
+            run_headless_turn("search", model_key="sonnet", ephemeral=True, session_id="sess-c")
+        )
+    )
+    first, second = fake_stream.requests
+    assert "cache_control" in first["tools"][-1]
+    assert "cache_control" in first["system"][0]
+    assert "cache_control" in str(first["messages"][-1])
+    assert second["tools"] == first["tools"] and second["system"] == first["system"]

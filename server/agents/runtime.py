@@ -730,18 +730,15 @@ async def _run_agent_loop(
             session_id=session_id,
         )
     else:
+        from server.chat.caching import agent_cache_args
         from server.chat.engine.anthropic import AnthropicAdapter
 
         adapter = AnthropicAdapter(
             model_key=model_key,
             model_id=model_id,
             system_prompt=system,
-            # Agents do not use prompt-cache checkpoints; system_static and
-            # system_dynamic only matter when caching_on is True.
-            system_static="",
-            system_dynamic="",
-            caching_on=False,
-            cache_ttl="5m",
+            # Checkpoints on the tools, the system prompt and the last message.
+            **agent_cache_args(system),
             effort_label=effort_label,
             loop=loop,
             executor=_agent_executor,
