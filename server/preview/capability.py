@@ -12,7 +12,6 @@ without waiting for a restart or a flag re-toggle.
 from __future__ import annotations
 
 import functools
-import glob
 import importlib.util
 import json
 import logging
@@ -57,7 +56,8 @@ def _required_browser_dirs() -> tuple[str, ...]:
     older playwright does not report ready and then fail at launch time.
 
     Returns an empty tuple when the registry cannot be read (unexpected
-    playwright layout) — the caller falls back to a glob heuristic."""
+    playwright layout, logged with the path): then Chromium does not count as
+    installed, because no build can be checked against the pinned revisions."""
     spec = importlib.util.find_spec("playwright")
     if spec is None or not spec.origin:
         return ()
@@ -89,18 +89,18 @@ def is_chromium_installed() -> bool:
     marker file's presence and meaning is Playwright's own stable contract.
     The set of required directories (full chromium + the headless shell that
     ``headless=True`` actually executes) comes from playwright's own registry
-    at the exact pinned revisions; if that registry cannot be read, fall back
-    to accepting any chromium build's marker."""
+    at the exact pinned revisions; if that registry cannot be read, no build
+    counts as installed (an older revision would report ready and then fail
+    at launch)."""
     if not is_playwright_importable():
         return False
     root = _browsers_root()
     if not os.path.isdir(root):
         return False
     required = _required_browser_dirs()
-    if required:
-        return all(os.path.isfile(os.path.join(root, d, "INSTALLATION_COMPLETE")) for d in required)
-    markers = glob.glob(os.path.join(root, "chromium*", "INSTALLATION_COMPLETE"))
-    return len(markers) > 0
+    if not required:
+        return False
+    return all(os.path.isfile(os.path.join(root, d, "INSTALLATION_COMPLETE")) for d in required)
 
 
 def preview_capability_ok() -> bool:

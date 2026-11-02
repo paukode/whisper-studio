@@ -105,13 +105,15 @@ def test_missing_headless_shell_not_ready(tmp_path, monkeypatch):
     assert capability.is_chromium_installed() is False
 
 
-def test_glob_fallback_when_registry_unreadable(tmp_path, monkeypatch):
+def test_an_unreadable_registry_is_not_installed(tmp_path, monkeypatch):
+    """Any chromium* marker used to count, so a stale older revision reported
+    ready and then failed at launch."""
     monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path))
     monkeypatch.setattr(capability, "_required_browser_dirs", lambda: ())
     marker_dir = tmp_path / "chromium-9999"
     marker_dir.mkdir(parents=True)
     (marker_dir / "INSTALLATION_COMPLETE").write_text("")
-    assert capability.is_chromium_installed() is True
+    assert capability.is_chromium_installed() is False
 
 
 def test_is_packaged_install_follows_whisper_home(monkeypatch):
