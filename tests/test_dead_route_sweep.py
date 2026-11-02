@@ -108,10 +108,7 @@ def test_deleted_routes_stay_deleted_and_kept_routes_remain():
 def test_esc_stop_flow_end_to_end(tmp_path):
     """Full HTTP round-trip: connect workspace, background a sleep, ESC-stop it.
 
-    Runs with the real shell-profile snapshot: wrap_command re-executes under
-    the snapshot's own shell, so a zsh profile no longer aborts under the
-    /bin/sh that background tasks use. The sleep must actually be running
-    for the stop call to find it.
+    The sleep must actually be running for the stop call to find it.
     """
     from server import workspace
     from server.workspace import routes as _  # noqa: F401
@@ -127,15 +124,9 @@ def test_esc_stop_flow_end_to_end(tmp_path):
     try:
         # The stopped turn's stream began here; the stop carries it as `since`.
         since = time.time()
-        from server.shell_snapshot import wrap_command
         from server.tasks.shell import start_shell_task
 
-        task_id = start_shell_task(
-            "sleep 30",
-            cwd=str(ws_dir),
-            session_id="esc-live",
-            exec_command=wrap_command("sleep 30", "esc-live"),
-        )["task_id"]
+        task_id = start_shell_task("sleep 30", cwd=str(ws_dir), session_id="esc-live")["task_id"]
         time.sleep(0.3)
 
         stop_body = {"session_id": "esc-live", "since": since}

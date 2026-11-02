@@ -572,7 +572,7 @@ def _delete_session_sync(session_id: str) -> None:
     and self-guarding, so one failure can't block the rest. Imports are
     function-local to avoid import cycles (same pattern as get_session).
     """
-    from server import cwd_tracker, diarization, file_state, shell_snapshot
+    from server import cwd_tracker, diarization, file_state
     from server.agents import journal as agent_journal
     from server.infrastructure.config import unlatch_session
     from server.memory import extract as memory_extract
@@ -621,7 +621,6 @@ def _delete_session_sync(session_id: str) -> None:
     for fn in (
         clear_session_tasks,
         diarization.drop_session,
-        shell_snapshot.clear_session,
         cwd_tracker.clear_session,
         file_state.clear_session,
         unlatch_session,  # drops the latched config snapshot
