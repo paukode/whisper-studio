@@ -30,7 +30,6 @@
         <tr><td><code class="path">usage.py</code></td><td>The log read back: the ranged report, the export, and the daily spend the cap uses.</td></tr>
         <tr><td><code class="path">routes.py</code></td><td>The <code>/api/costs</code> endpoints.</td></tr>
         <tr><td><code class="path">budget.py</code></td><td>Cap enforcement.</td></tr>
-        <tr><td><code class="path">pricing_history.py</code></td><td>Every rate a release shipped, so a stale seeded <code class="path">pricing.json</code> never shadows a correction.</td></tr>
       </tbody>
     </table></div>
     <p>Remaining-capacity tracking lives outside this package, in the token-based context meter in
@@ -86,9 +85,8 @@
       cache read and cache write, plus a <code>cached_in_input</code> flag on the OpenAI entries.</p>
     <p><code class="path">pricing.json</code> holds only the keys a user changes. Neither install path
       seeds it any more: a full copy of the template froze every rate at install time and shadowed
-      each later correction. An existing copy is still read, but an entry equal to a rate some release
-      shipped for that key (<code class="path">pricing_history.py</code>) is ignored and logged, so
-      only genuine overrides apply.</p>
+      each later correction. An existing copy is read as is: every entry in it replaces the default
+      rate for that key.</p>
     <p>There is deliberately <b>no fallback bucket</b>. An unknown model key bills $0 and logs an error
       (once per key) rather than silently inheriting another model's rate, and the Costs tab says so
       on that row. On-device (<code>local_*</code>) models are expected to be free and log at debug.</p>
