@@ -1,11 +1,4 @@
-"""HTML to Word, via python-docx — the engine behind create_docx.
-
-Replaces macOS `textutil`, which converted through the Cocoa HTML importer
-and was lossy in ways nothing reported: table cell shading vanished, fonts
-resolved to whatever the system had rather than what the CSS asked for, and
-point sizes arrived inflated by 4/3 because the importer converted at 96
-DPI. Undoing that damage took regex surgery on the emitted OOXML. Building
-the document directly means the file says what we meant the first time.
+"""HTML to Word, via python-docx: the engine behind create_docx.
 
 The supported vocabulary is deliberately the one create_docx advertises,
 not "HTML":
@@ -22,11 +15,9 @@ wrapper degrades to plain content instead of vanishing. Anything genuinely
 beyond this vocabulary is office_script's job, and create_docx's description
 says so.
 
-Cell shading IS honored here (`bgcolor`, or `background-color` in a `style`
-attribute), because it costs three lines with python-docx and its silent
-loss under textutil is what exposed the whole gap. That is a floor, not the
-feature set: office_script remains the answer for merges, borders, images,
-and everything else.
+Cell shading is honored (`bgcolor`, or `background-color` in a `style`
+attribute). That is a floor, not the feature set: office_script remains the
+answer for merges, borders, images, and everything else.
 """
 
 import re

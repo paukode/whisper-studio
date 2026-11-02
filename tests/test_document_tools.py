@@ -253,9 +253,8 @@ def test_create_docx_renders_the_supported_markup(tmp_path, monkeypatch):
     ],
 )
 def test_create_docx_honors_cell_background_colors(cell_html, expected, tmp_path, monkeypatch):
-    """The regression that exposed the whole gap: the previous textutil
-    converter dropped cell shading silently, so a user asking for a colored
-    table got an uncolored one with no error."""
+    """A user asking for a colored table gets the cell shading, not an
+    uncolored table with no error."""
     monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: str(tmp_path))
     out = _exec_create_docx(
         {"path": "c.docx", "html_content": f"<table><tr>{cell_html}</tr></table>"}, "", {}

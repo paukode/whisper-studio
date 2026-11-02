@@ -8,7 +8,7 @@ otherwise a connected workspace's `path`; otherwise ~/Documents/<filename>.
 
 The document is fully built at tool-call time. For a workspace destination
 the bytes ride in a "create_document" approval payload (server/approval/
-bootstrap.py's _do_create_document re-resolves the workspace root at click
+executors.py's _do_create_document re-resolves the workspace root at click
 time). For an absolute destination the finished bytes are STAGED into the
 app sandbox first (server/workspace/paths.py's stage_file_bytes) and the
 "save_to_path" approval simply moves the ready file into place — by the
