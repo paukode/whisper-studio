@@ -126,6 +126,10 @@ def _resolve_sandbox_permissions(payload: dict) -> tuple[str, str, str]:
         # out of: accept the value and ignore it, with no justification or
         # agent check.
         return "workspace-write", justification, ""
+    if perms == "danger-full-access" and bypass_sandbox.held_back():
+        # Bypass asks no card for the escalation, and a read-only scope keeps
+        # the sandbox: with no person to read the justification, refuse it.
+        return "", "", bypass_sandbox.HELD_BACK_REFUSAL
     if perms == "danger-full-access":
         if payload.get("__agent__"):
             return (

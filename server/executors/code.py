@@ -161,6 +161,8 @@ def _python_write_mode(payload: dict) -> tuple[str, str]:
         # A Bypass turn runs with no sandbox: the escalation means nothing
         # there, so it is accepted and ignored.
         return "workspace", ""
+    if bypass_sandbox.held_back():
+        return "", bypass_sandbox.HELD_BACK_REFUSAL
     if payload.get("__agent__"):
         return "", (
             "danger-full-access is not permitted from an unattended subagent. "
