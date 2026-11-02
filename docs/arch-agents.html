@@ -324,7 +324,9 @@
         of this. A manifest of the team's members is written to disk at the same time, so a restart can
         find every member's record from the team id alone.</p></li>
     </ol>
-    <p>A running team can be stopped mid-flight: <code>POST /api/teams/{team_id}/stop</code> sets a stop
+    <p>A running team can be stopped mid-flight: Stop in the task list or agent pane sends
+      <code>POST /api/background-tasks/{task_id}/stop</code>, which reaches <code>stop_team</code>
+      through <code>cancel_task</code>. That sets a stop
       flag and cancels the gather task, and each member publishes a <code>stopped</code> event as its
       loop is cancelled. The flag is what distinguishes the two ways a gather can be cancelled. With it
       set, the model gets each member's salvage report in place of a bare "stopped by user". Without it
