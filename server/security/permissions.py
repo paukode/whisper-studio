@@ -342,8 +342,15 @@ def approval_floor(
     # justification first", so no bypass mode, category override, trusted-
     # skill flag, blanket session approval, custom rule, or dontAsk default
     # may cover it. Without this, "Yes, all cli" would silently convert every
-    # later escalated call into an unconfined auto-run.
-    if str(tool_input.get("sandbox_permissions") or "").strip() == "danger-full-access":
+    # later escalated call into an unconfined auto-run. In bypassPermissions
+    # commands run with no sandbox at all (the user's rule 2026-11-02,
+    # server/security/bypass_sandbox.py), so there is nothing to escalate out
+    # of: the value is accepted and ignored, with no card. A read-only scope
+    # there keeps the sandbox, and the executors refuse the escalation.
+    if (
+        str(tool_input.get("sandbox_permissions") or "").strip() == "danger-full-access"
+        and mode != MODE_BYPASS
+    ):
         return "sandbox-escalation"
 
     # A terminal_run typed into the user's visible terminal. That shell runs

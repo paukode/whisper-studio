@@ -40,19 +40,25 @@ def test_readonly_rule_order_keeps_secret_denies_last(tmp_path):
     assert global_deny < dev_allow < first_secret_deny
 
 
-def test_escalation_always_resolves_to_ask():
-    """No blanket grant may cover danger-full-access: not session approvals,
-    not bypass mode, not a trusted skill."""
+def test_escalation_resolves_to_ask_outside_bypass():
+    """No blanket grant may cover danger-full-access outside Bypass: not
+    session approvals, not a trusted skill. In Bypass commands have no
+    sandbox, so the request means nothing and asks no card."""
     tool_input = {
         "command": "touch ~/x",
         "sandbox_permissions": "danger-full-access",
         "justification": "test",
     }
+    for mode in ("default", "acceptEdits", "auto"):
+        assert (
+            resolve_static_decision("terminal_run", tool_input, "cli", {"cli": "allow"}, mode, True)
+            == "ask"
+        ), mode
     assert (
         resolve_static_decision(
             "terminal_run", tool_input, "cli", {"cli": "allow"}, "bypassPermissions", True
         )
-        == "ask"
+        == "allow"
     )
     # An ordinary workspace-write call with the same grants resolves to allow.
     plain = {"command": "echo hi"}
