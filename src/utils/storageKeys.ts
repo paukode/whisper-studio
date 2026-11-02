@@ -28,4 +28,6 @@ export const STORAGE_KEYS = {
   /** Agent reports this viewer has opened: a JSON list of the most recent
    *  keys, one per report agent (team id, report timestamp, agent id) */
   AGENT_REPORT_SEEN: 'whisper_agent_report_seen',
+  /** The release version whose Update notice this viewer dismissed */
+  UPDATE_DISMISSED: 'whisper_update_dismissed',
 } as const;
