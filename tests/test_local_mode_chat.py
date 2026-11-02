@@ -298,3 +298,25 @@ def test_local_mode_subagent_refuses_a_cloud_model(user_layer, registry, monkeyp
         raw = b"".join(r.iter_raw()).decode()
     frames = [json.loads(ln[6:]) for ln in raw.splitlines() if ln.startswith("data: {")]
     assert frames and "Local mode" in frames[0]["error"]
+
+
+def test_a_transcript_reader_with_no_context_size_fails_the_turn_visibly(
+    user_layer, registry, no_cloud, local_path, client, monkeypatch
+):
+    """Condensation sizes the transcript by the reader's context window. When
+    that window is unknown (windows.context_window raises ValueError), the
+    turn fails with a visible setup error instead of guessing a size."""
+    from server.chat.engine import windows
+
+    user_layer["model_mode"] = "local"
+    registry["local_gemma"] = GEMMA
+
+    def unknown(model_key, meta=None):
+        raise ValueError(f"On-device model {model_key!r} is not installed")
+
+    monkeypatch.setattr(windows, "input_budget", unknown)
+    frames = _turn(client, "lm-condense-ctx", model="local_gemma", transcript="Speaker 1: hi")
+    errors = _errors(frames)
+    assert [e.get("error_code") for e in errors] == ["TURN_SETUP_FAILED"]
+    assert "is not installed" in errors[0]["error"]
+    assert local_path == []

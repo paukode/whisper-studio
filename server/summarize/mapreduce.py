@@ -404,26 +404,34 @@ def _cache_key(text: str, cfg: dict, map_model: str, limit: int, max_out: int) -
 def _condense(
     text: str, cfg: dict, *, engine: str, max_out: int, chat_model_key: str | None = None
 ) -> tuple[str, bool]:
-    """Map every chunk and join the extracts. Returns ``(text, complete)``;
-    ``complete`` is False when a chunk came back empty, so the caller does not
-    cache a result with a gap in it. Raises when any chunk's map call failed
-    (the caller then truncates and says why) or when nothing was extracted."""
+    """Map every chunk and join the extracts. A chunk whose map call failed
+    keeps its place as a visible ``[Segment i of n failed: ...]`` marker, so
+    the reader knows that part is missing and why. Returns
+    ``(text, complete)``; ``complete`` is False when a chunk failed or came
+    back empty, so the caller does not cache a result with a gap in it.
+    Raises when nothing was extracted (the caller then truncates and says
+    why)."""
     local = _is_local_engine(engine)
     chunk_chars = cfg["local_chunk_chars"] if local else cfg["chunk_chars"]
     chunks = _chunk(text, chunk_chars, cfg["overlap_chars"], cfg["max_chunks"])
     if not chunks:
         raise RuntimeError("the transcript produced no chunks")
     n = len(chunks)
-    errors: list[str] = []
+    errors: list[tuple[int, str]] = []
     results = _map_all(chunks, engine, cfg, chat_model_key=chat_model_key, errors=errors)
-    if errors:
-        # A failed segment would leave a silent hole in the notes; the caller
-        # truncates the raw transcript instead and names the error.
-        raise RuntimeError(f"{len(errors)} of {n} segments failed: {errors[0]}")
     extracts = [r.strip() for r in results if r.strip()]
     if not extracts:
+        if errors:
+            raise RuntimeError(f"{len(errors)} of {n} segments failed: {errors[0][1]}")
         raise RuntimeError("every map extraction came back empty")
-    condensed = "\n\n".join(extracts)
+    failed = dict(errors)
+    parts = []
+    for i, r in enumerate(results, 1):
+        if i in failed:
+            parts.append(f"[Segment {i} of {n} failed: {failed[i]}. Its part is missing.]")
+        elif r.strip():
+            parts.append(r.strip())
+    condensed = "\n\n".join(parts)
     # Bound the condensed result to what the reader takes, so the "reduce" turn
     # does not overflow. The map input is already sized for the map engine.
     if len(condensed) > max_out:
@@ -444,7 +452,7 @@ def _condense(
         len(condensed),
         engine,
     )
-    return NOTE_PREFIX + condensed, len(extracts) == n
+    return NOTE_PREFIX + condensed, len(extracts) == n and not errors
 
 
 def _map_all(
@@ -453,14 +461,14 @@ def _map_all(
     cfg: dict,
     *,
     chat_model_key: str | None = None,
-    errors: list[str] | None = None,
+    errors: list[tuple[int, str]] | None = None,
 ) -> list[str]:
     """Run the per-chunk map calls, preserving order. The chunks are independent
     by construction (each extraction prompt is self-contained), so the cloud
     path fans them out with bounded concurrency to cut first-token latency. The
     local path (the alias or a specific on-device key) stays serial: a single
     llama.cpp instance cannot run concurrent completions. A failed chunk's
-    reason is appended to ``errors``."""
+    1-based index and reason are appended to ``errors``."""
     n = len(chunks)
 
     def run(i: int, c: str) -> str:
@@ -544,11 +552,11 @@ def _map_chunk(
     cfg: dict,
     *,
     chat_model_key: str | None = None,
-    errors: list[str] | None = None,
+    errors: list[tuple[int, str]] | None = None,
 ) -> str:
     """Extract raw material from one chunk. A failed chunk returns ``""`` with
-    its reason appended to ``errors``, so the other chunks still finish and
-    ``_condense`` then fails the whole condensation with that reason."""
+    ``(i, reason)`` appended to ``errors``, so the other chunks still finish
+    and ``_condense`` marks that segment as failed in the notes."""
     try:
         return one_shot(
             MAP_SYSTEM,
@@ -564,7 +572,7 @@ def _map_chunk(
     except Exception as e:
         log.warning("map extraction failed for chunk %d/%d: %s", i, n, e)
         if errors is not None:
-            errors.append(str(e))
+            errors.append((i, str(e)))
         return ""
 
 
