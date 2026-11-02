@@ -2,6 +2,7 @@ import React, { useCallback, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { get } from '@/api/client';
 import { useUIStore } from '@/stores/uiStore';
+import { toError } from '@/utils/toError';
 
 interface Plugin {
   name: string;
@@ -24,9 +25,8 @@ interface PluginsPayload {
 }
 
 async function fetchPlugins(): Promise<PluginsPayload> {
-  const data = await get<{ plugins?: Plugin[]; plugins_dir?: string } | Plugin[]>('/api/plugins');
-  if (Array.isArray(data)) return { plugins: data, pluginsDir: '' };
-  return { plugins: data.plugins ?? [], pluginsDir: data.plugins_dir ?? '' };
+  const data = await get<{ plugins: Plugin[]; plugins_dir: string }>('/api/plugins');
+  return { plugins: data.plugins, pluginsDir: data.plugins_dir };
 }
 
 // A minimal, correct plugin the loader accepts. Mirrors the shape the backend
@@ -267,7 +267,7 @@ export const PluginsPanel: React.FC = () => {
 
       {error && (
         <p className="settings-empty" role="alert">
-          Could not load plugins. The plugins API may not be available.
+          Could not load plugins: {toError(error).message}
         </p>
       )}
 
