@@ -107,6 +107,10 @@ class _PtySession:
         # Total bytes ever produced. Used so a poller can record an absolute
         # offset that survives buffer trims (rare in practice but defensive).
         self.bytes_produced = 0
+        # The assistant's terminal_run that timed out here and may still run
+        # in the foreground: {"marker", "script"}. Cleared once its marker
+        # prints (assistant_run_pending) or the shell is idle again.
+        self.pending_run: dict | None = None
 
     @property
     def alive(self) -> bool:
@@ -399,21 +403,34 @@ def _strip_ansi(text: str) -> str:
 
 
 def _clean_command_output(raw: str, command: str, marker: str) -> str:
-    """Slice the marker line out, strip the echoed command, strip ANSI.
+    """Slice the marker line out, strip the echoed input, strip ANSI.
     Returns just the command's stdout/stderr, ready to hand to the model.
-    """
+
+    The echoed input is the command line (or the line that sources its
+    script) and the marker printf line. A shell echoes typed-ahead input
+    when it reads it, and a canonical tty echoes it at once, so the line
+    with the printf echo is dropped wherever it stands."""
     # Cut at the marker line (everything after is shell prompt noise).
     marker_re = re.compile(rf"__CLAUDE_DONE_{marker}:\d+")
     m = marker_re.search(raw)
     if m:
         raw = raw[: m.start()]
+    sourced = _needs_script(command)
+    if sourced:
+        # A sourced script prints a start line first: the echoed source line
+        # (which a line editor may wrap anywhere) lies before it.
+        start = re.search(rf"__CLAUDE_START_{marker}\r?\n", raw)
+        if start:
+            raw = raw[start.end() :]
     # Strip ANSI + bare-CR control characters.
     cleaned = _strip_ansi(raw)
+    # The echoed marker printf (with the prompt it follows) is no output.
+    lines = [ln for ln in cleaned.split("\n") if f"__CLAUDE_DONE_{marker}:%d" not in ln]
     # The shell typically echoes the command back as the first line(s).
-    # Drop a leading line if it contains the literal command — best-effort,
+    # Drop a leading line if it contains the literal command; best-effort,
     # don't over-trim if the command appears in a later line.
-    lines = cleaned.split("\n")
-    if lines and command.split("\n")[0].strip() and command.split("\n")[0].strip() in lines[0]:
+    first = command.split("\n")[0].strip()
+    if lines and first and not sourced and first in lines[0]:
         lines = lines[1:]
     return "\n".join(lines).strip("\r\n")
 
@@ -423,10 +440,79 @@ def _clean_command_output(raw: str, command: str, marker: str) -> str:
 # wiring the marker watcher into the asyncio.Event subscriber list.
 _MARKER_POLL_INTERVAL = 0.05
 
+# A canonical-mode tty holds at most MAX_CANON (1024 on macOS) bytes of one
+# input line: a longer line is cut, loses its newline, and the next line
+# typed is glued onto it (a field session was left at "pipe pipe quote>").
+# A command longer than this, or one with a line break, is written to a
+# script file and the terminal gets one short line that sources it.
+_INLINE_COMMAND_MAX = 900
 
-def _build_run_payload(command: str, marker: str) -> str:
+# Ctrl-U, the line-kill key of the tty and of zsh, bash and readline: it
+# clears any half-typed input before the command is typed.
+_KILL_LINE = "\x15"
+
+
+def _marker_line(marker: str) -> str:
+    return f"printf '\\n__CLAUDE_DONE_{marker}:%d\\n' $?"
+
+
+def _script_path_token(marker: str) -> str:
+    """The file name of the script a long command is sourced from."""
+    return f"terminal-run-{marker}.sh"
+
+
+def _source_line(script: str) -> str:
+    import shlex
+
+    return f". {shlex.quote(script)}"
+
+
+def _needs_script(command: str) -> bool:
+    return "\n" in command or "\r" in command or len(command.encode("utf-8")) > _INLINE_COMMAND_MAX
+
+
+def _write_command_script(command: str, marker: str, script_dir: str | None) -> str:
+    """Write ``command`` to an owner-only (0700) script for the shell to
+    source. In ``script_dir`` (the chat session's scratch folder) when given,
+    else in a private temp folder."""
+    import tempfile
+
+    folder = script_dir if script_dir and os.path.isdir(script_dir) else None
+    if folder is None:
+        folder = tempfile.mkdtemp(prefix="whisper-terminal-")
+    path = os.path.join(folder, _script_path_token(marker))
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o700)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        # The start line lets _clean_command_output find where output begins.
+        f.write(f"printf '__CLAUDE_START_{marker}\\n'\n")
+        f.write(command if command.endswith("\n") else command + "\n")
+    return path
+
+
+def _remove_script(path: str | None) -> None:
+    if not path:
+        return
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+    # The private temp folder made for it, if that is where it went.
+    folder = os.path.dirname(path)
+    if os.path.basename(folder).startswith("whisper-terminal-"):
+        try:
+            os.rmdir(folder)
+        except OSError:
+            pass
+
+
+def _build_run_payload(command: str, marker: str, script: str | None = None) -> str:
     """Build the bytes written to the PTY to run ``command`` and print the
     completion marker with its exit code.
+
+    It starts with Ctrl-U, so input a person or an earlier run left half
+    typed is cleared and never glued to the command. With ``script`` the
+    command line is a short line that sources that file (see
+    _INLINE_COMMAND_MAX).
 
     The command and the marker printf go on SEPARATE input lines. Joining them
     with ``;`` on one line breaks when the command's last line ends in a ``#``
@@ -437,11 +523,38 @@ def _build_run_payload(command: str, marker: str) -> str:
     leading ``\\n`` in the printf keeps the marker on its own line even when the
     command's output has no trailing newline.
     """
-    return f"{command}\nprintf '\\n__CLAUDE_DONE_{marker}:%d\\n' $?\n"
+    line = _source_line(script) if script else command
+    return f"{_KILL_LINE}{line}\n{_marker_line(marker)}\n"
+
+
+def assistant_run_pending(session: "_PtySession") -> bool:
+    """True while the assistant's timed-out run in ``session`` has not
+    printed its completion marker. Once it has, the record and its script
+    file are cleared."""
+    pending = session.pending_run
+    if not pending:
+        return False
+    done = re.compile(rf"__CLAUDE_DONE_{pending['marker']}:\d+")
+    with session.output_lock:
+        text = bytes(session.output_buffer).decode("utf-8", errors="replace")
+    if done.search(text) or not session.alive:
+        clear_pending_run(session)
+        return False
+    return True
+
+
+def clear_pending_run(session: "_PtySession") -> None:
+    pending = session.pending_run
+    session.pending_run = None
+    if pending:
+        _remove_script(pending.get("script"))
 
 
 async def run_in_session(
-    session: _PtySession, command: str, timeout: float = _DEFAULT_TIMEOUT_S
+    session: _PtySession,
+    command: str,
+    timeout: float = _DEFAULT_TIMEOUT_S,
+    script_dir: str | None = None,
 ) -> dict:
     """Send `command` into the session and capture stdout/stderr + exit
     code by waiting for a unique completion marker. Use for the visible
@@ -462,10 +575,21 @@ async def run_in_session(
     with session.output_lock:
         start_pos = len(session.output_buffer)
 
-    payload = _build_run_payload(command, marker)
+    script = None
+    if _needs_script(command):
+        try:
+            script = _write_command_script(command, marker, script_dir)
+        except OSError as e:
+            return {
+                "output": f"failed to write the command script: {e}",
+                "exit_code": -1,
+                "timed_out": False,
+            }
+    payload = _build_run_payload(command, marker, script)
     try:
         os.write(session.master_fd, payload.encode("utf-8"))
     except OSError as e:
+        _remove_script(script)
         return {"output": f"failed to write to terminal: {e}", "exit_code": -1, "timed_out": False}
 
     deadline = time.monotonic() + timeout
@@ -475,13 +599,17 @@ async def run_in_session(
             text = bytes(session.output_buffer[start_pos:]).decode("utf-8", errors="replace")
         m = marker_re.search(text)
         if m:
+            _remove_script(script)
             return {
                 "output": _clean_command_output(text, command, marker),
                 "exit_code": int(m.group(1)),
                 "timed_out": False,
             }
 
-    # Timed out — return whatever output accumulated, capped.
+    # Timed out: the command may still hold the foreground. Remember it, so
+    # a later run is not typed into it (assistant_run_pending), and keep the
+    # script it is sourcing until it ends.
+    session.pending_run = {"marker": marker, "script": script}
     with session.output_lock:
         text = bytes(session.output_buffer[start_pos:]).decode("utf-8", errors="replace")
     return {
@@ -747,13 +875,14 @@ async def run_in_sandbox(
         # our command isn't lost in the warmup. Drain by recording the
         # buffer position AFTER a short settle delay.
         await asyncio.sleep(0.15)
-        result = await run_in_session(session, command, timeout)
+        result = await run_in_session(session, command, timeout, script_dir=scratch_dir)
         return result
     finally:
         try:
             session.kill()
         except Exception:
             pass
+        clear_pending_run(session)
         with _sessions_lock:
             _sessions.pop(session.id, None)
 

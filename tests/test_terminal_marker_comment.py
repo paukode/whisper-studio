@@ -23,7 +23,7 @@ def test_marker_is_on_a_separate_line_from_command():
     assert printf_line_idx > cmd_line_idx
 
     # Nothing appears after the command on its own line (no `; printf`).
-    assert lines[cmd_line_idx].strip() == command
+    assert lines[cmd_line_idx].strip().lstrip("\x15") == command
     assert ";" not in lines[cmd_line_idx]
 
 
