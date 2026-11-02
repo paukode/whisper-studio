@@ -14,7 +14,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from server.hooks import config_loader as cfg
-from server.hooks.engine import dry_run
+from server.hooks.engine import _current_workspace, dry_run
 from server.hooks.schema import (
     DEFAULT_TIMEOUT,
     HOOK_EVENTS,
@@ -42,20 +42,11 @@ def _hook_row(h: HookDef) -> dict:
     }
 
 
-def _workspace() -> str | None:
-    try:
-        from server.workspace import get_workspace_path
-
-        return get_workspace_path()
-    except Exception:
-        return None
-
-
 @router.get("")
 async def get_hooks():
     """User hooks (by event) plus the project-hook trust status."""
     by_event = cfg.load_user_hooks()
-    ws = _workspace()
+    ws = _current_workspace()
     project_status = cfg.project_trust_status(ws)
     project_hooks = cfg.normalize_config(cfg._project_hooks_raw(ws), source="project")
     return {
@@ -139,7 +130,7 @@ async def test_hook(request: Request):
     payload = build_stdin_payload(
         event,
         session_id="test-session",
-        workspace=_workspace() or "",
+        workspace=_current_workspace() or "",
         tool_name=body.get("tool_name", "ws_write_file"),
         tool_input=body.get("tool_input", {"path": "/example.txt"}),
         tool_output=body.get("tool_output"),
@@ -182,7 +173,7 @@ async def test_hook(request: Request):
 @router.post("/project/approve")
 async def approve_project(request: Request):
     """Trust the current workspace's project hooks (mirrors trusted skills)."""
-    ws = _workspace()
+    ws = _current_workspace()
     if not ws:
         return _err("No workspace connected")
     if not cfg.approve_project_hooks(ws):
@@ -193,7 +184,7 @@ async def approve_project(request: Request):
 @router.post("/project/revoke")
 async def revoke_project(request: Request):
     """Drop trust for the current workspace's project hooks (they go inert)."""
-    ws = _workspace()
+    ws = _current_workspace()
     if not ws:
         return _err("No workspace connected")
     if not cfg.revoke_project_hooks(ws):

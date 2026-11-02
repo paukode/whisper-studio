@@ -176,12 +176,9 @@ def _try_json(text: str) -> dict | None:
 
 
 def _current_workspace() -> str | None:
-    try:
-        from server.workspace import get_workspace_path
+    from server.workspace import get_workspace_path
 
-        return get_workspace_path()
-    except Exception:
-        return None
+    return get_workspace_path()
 
 
 async def check_stop_hooks(

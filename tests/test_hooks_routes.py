@@ -107,7 +107,7 @@ def test_project_approve_flow(client, monkeypatch):
     (ws / ".whisper" / "settings.json").write_text(
         json.dumps({"hooks": {"PreToolUse": [{"command": "exit 2", "matcher": "*"}]}})
     )
-    monkeypatch.setattr("server.hooks.routes._workspace", lambda: str(ws))
+    monkeypatch.setattr("server.hooks.routes._current_workspace", lambda: str(ws))
 
     body = c.get("/api/hooks").json()
     assert body["project"]["status"] == "pending_approval"
