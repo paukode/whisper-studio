@@ -1,6 +1,6 @@
 /**
- * Recording controller — the meeting-recorder engine, extracted from
- * Header.tsx and decoupled from the viewed session.
+ * Recording controller: the meeting-recorder engine, decoupled from the
+ * viewed session.
  *
  * The recording binds to its OWNING session at start(): the websocket
  * carries that session id, every transcript/interim/speaker_update

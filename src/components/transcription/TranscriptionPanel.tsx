@@ -129,8 +129,8 @@ export const targetsFor = (mode: string) => {
   return TRANSLATE_TARGETS;
 };
 // NOTE: this panel only renders/edits transcript segments. Recording is owned
-// entirely by the top-right Record button in Header.tsx, which captures mic +
-// system audio directly. There is deliberately no second "Record" affordance
+// by services/recordingController.ts, started from the Record button in the
+// header. There is deliberately no second "Record" affordance
 // here.
 
 /** Whether a scroll container is close enough to its bottom to keep
@@ -326,7 +326,7 @@ export const TranscriptionPanel: React.FC = () => {
   const translateMode = useSettingsStore((s) => s.config.translateMode);
   const translateTarget = useSettingsStore((s) => s.config.translateTarget);
 
-  // Audio capture and the transcription socket are owned by Header.tsx — wiring
+  // Audio capture and the transcription socket are owned by recordingController: wiring
   // a second pipeline here would spawn a duplicate WebSocket and a confusing
   // second Record button.
 
@@ -487,8 +487,8 @@ export const TranscriptionPanel: React.FC = () => {
     window.dispatchEvent(new CustomEvent(SET_TRANSLATE_EVENT, { detail: { mode, target } }));
   }, []);
 
-  // Diarization participant-count hint. 0 = auto. Header.tsx keeps the
-  // latest value and sends it on the recording WebSocket (on change while
+  // Diarization participant-count hint. 0 = auto. recordingController keeps
+  // the latest value and sends it on the recording WebSocket (on change while
   // recording, and at connect for hints set beforehand).
   const [speakerCount, setSpeakerCount] = useState(0);
   const handleSpeakerCountChange = useCallback((count: number) => {
