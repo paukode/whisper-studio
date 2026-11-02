@@ -3268,6 +3268,28 @@ input.segment-speaker {
     color: var(--callout);
 }
 
+/* Update notice under the header (src/components/common/UpdateNotice.tsx):
+   an info callout with a 3px left bar, flat, no shadow. */
+.update-notice {
+    margin: 8px 12px 0; padding: 8px 12px;
+    border-left: 3px solid var(--callout);
+    border-radius: var(--radius-md); box-shadow: none;
+    font-family: var(--font-sans); flex-shrink: 0;
+}
+.update-notice__row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.update-notice__text { flex: 1; min-width: 200px; font-size: var(--fs-small); color: var(--text-primary); }
+.update-notice__current { color: var(--text-muted); }
+.update-notice__update { text-decoration: none; }
+.update-notice__commands {
+    margin-top: 6px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    font-size: var(--fs-caption); color: var(--text-secondary);
+}
+.update-notice__commands code {
+    font-family: var(--font-mono); padding: 2px 6px; border-radius: var(--radius-sm);
+    background: var(--bg-secondary); border: 1px solid var(--border); color: var(--text-primary);
+    user-select: all;
+}
+
 /* Workspace expand tab */
 .ws-expand-tab {
     display: flex; flex-direction: column; align-items: center; justify-content: center;

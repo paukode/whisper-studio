@@ -194,15 +194,17 @@
         (<code class="path">server/infrastructure/tls.py</code>). This loosens nothing: a certificate
         still has to chain to a root <em>you</em> trust. If the trust store cannot be installed, the
         server does not start and says why.</li>
-      <li><b>No telemetry.</b> Nothing is reported anywhere about you, your files, or your usage, and
-        nothing phones home on a timer. See <a href="#what-leaves">What leaves the machine</a> for the
-        complete list of outbound traffic.</li>
+      <li><b>No telemetry.</b> Nothing is reported anywhere about you, your files, or your usage. The
+        only automatic request is the update check, which sends no user data. See
+        <a href="#what-leaves">What leaves the machine</a> for the complete list of outbound
+        traffic.</li>
     </ul>
 
     <h2 id="what-leaves">What leaves the machine</h2>
     <p>Everything below happens only because you asked for it, either directly, by a setting you
-      chose, or by sending a message that made the assistant use a tool. Nothing else goes out, and
-      nothing goes out on a timer.</p>
+      chose, or by sending a message that made the assistant use a tool. The one exception is the
+      update check in the last row: it runs automatically and sends no user data. Nothing else goes
+      out.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>What</th><th>Where it goes</th><th>When</th></tr></thead>
       <tbody>
@@ -261,6 +263,14 @@
             remote, the GitHub API through <code>gh</code></td>
           <td>When a tool call you approved runs such a command. The sandbox leaves the network open by
             default; the opt-in <a href="#egress">egress policy</a> narrows it.</td>
+        </tr>
+        <tr>
+          <td>An update check: one GET request with a fixed User-Agent and no user data (no version, no
+            token, no content). GitHub sees your IP address.</td>
+          <td>The GitHub API, <code>api.github.com/repos/paukode/whisper-studio/releases/latest</code></td>
+          <td>Automatically when the app starts, at most once every 6 hours (30 minutes after a failed
+            check), in every model mode, Local included. See
+            <a href="installation.html#updates">Update to a new release</a>.</td>
         </tr>
       </tbody>
     </table></div>
