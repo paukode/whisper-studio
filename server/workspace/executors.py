@@ -860,8 +860,8 @@ def run_workspace_command(
         # Said for every failure, so neither the model nor the claim check
         # (server/goals/evidence.py) reads a failed command as done.
         output += f"\n(exit code {result.returncode})"
-    if write_mode != "open" and result.returncode not in (0, None):
-        # A confined run that failed on a write the OS refused: say which
+    if result.returncode not in (0, None):
+        # A sandboxed run that failed on something the OS refused: say which
         # sandbox it was and how to ask for more, the way terminal_run does.
         from server.sandbox import classify_sandbox_denial
 

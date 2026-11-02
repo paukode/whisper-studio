@@ -771,30 +771,62 @@ def _setuid_hint(programs: list[str]) -> str:
     names = ", ".join(programs)
     return (
         f"[sandbox] {names} could not start: macOS never lets a sandboxed command "
-        "start a setuid program, whatever the permission mode, so retrying or "
-        "escalating does not help. To find processes use pgrep -fl <pattern> "
-        "(it runs here); for a background command use task_status or task_output."
+        "start a setuid program. An escalated run (danger-full-access) is still "
+        "sandboxed, so retrying or escalating does not help. In Bypass mode "
+        "commands run with no sandbox. Otherwise, to find processes use pgrep -fl "
+        "<pattern> instead of ps (it runs here); for a background command use "
+        "task_status or task_output."
     )
 
 
+# sandbox-exec saying it could not apply its profile: the process is already
+# inside a sandbox, and macOS lets no sandboxed process enter a second one.
+# A test suite that wraps its own commands in sandbox-exec fails so (exit 71).
+_NESTED_SANDBOX_RE = re.compile(
+    r"^.*sandbox_apply: Operation not permitted.*$", re.MULTILINE | re.IGNORECASE
+)
+
+NESTED_SANDBOX_HINT = (
+    "[sandbox] A nested sandbox-exec could not start (sandbox_apply: Operation "
+    "not permitted): macOS lets no sandboxed process start a second sandbox. "
+    "Every sandboxed run here is inside one, an escalated run "
+    "(danger-full-access) too, so retrying or escalating does not help. In "
+    "Bypass mode commands run with no sandbox, so a nested sandbox-exec works "
+    "there. Otherwise skip the step that needs sandbox-exec, or ask the user to "
+    "run it in their own terminal."
+)
+
+
 def classify_sandbox_denial(output: str, write_mode: str) -> str | None:
-    """Best-effort classification: does a failed confined command's output look
-    like the OS sandbox denying a write? Returns a model-facing hint naming the
-    effective mode and the escalation path, or None.
+    """Best-effort classification: does a failed sandboxed command's output
+    look like the OS sandbox refusing it? Returns a model-facing hint, or None.
 
-    A setuid program the sandbox could not start (``ps``) is no write denial:
-    it gets its own hint, which names the tool that works instead.
+    Two refusals are no write denial and get their own hint in every write
+    mode, "open" (an escalated run, still under sandbox-exec) included: a
+    setuid program the sandbox could not start (``ps``), and a nested
+    sandbox-exec. Their text is specific, so it never misreads an ordinary
+    error.
 
-    Only meaningful for confined modes — under "open" the same strings are
-    ordinary filesystem errors, so the caller must not pass those here."""
-    if write_mode not in ("workspace", "readonly") or not output:
+    A write denial is classified only for the confined modes: under "open"
+    the same strings are ordinary filesystem errors. The write hint names the
+    effective mode and the escalation path."""
+    if write_mode not in ("workspace", "readonly", "open") or not output:
         return None
-    signatures = _DENIAL_SIGNATURES.get(sandbox_backend(), ())
+    if sandbox_backend() != "sandbox-exec":
+        return None
+    signatures = _DENIAL_SIGNATURES["sandbox-exec"]
     if not any(sig in output for sig in signatures):
         return None
-    setuid, rest = _setuid_programs(output) if sandbox_backend() == "sandbox-exec" else ([], "")
-    if setuid and not any(sig in rest for sig in signatures):
-        return _setuid_hint(setuid)
+    hints: list[str] = []
+    rest = output
+    if _NESTED_SANDBOX_RE.search(rest):
+        hints.append(NESTED_SANDBOX_HINT)
+        rest = _NESTED_SANDBOX_RE.sub("", rest)
+    setuid, rest = _setuid_programs(rest)
+    if setuid:
+        hints.append(_setuid_hint(setuid))
+    if write_mode == "open" or not any(sig in rest for sig in signatures):
+        return "\n".join(hints) or None
     mode_label = (
         "read-only (no writes anywhere)"
         if write_mode == "readonly"
@@ -803,12 +835,12 @@ def classify_sandbox_denial(output: str, write_mode: str) -> str | None:
             "session's scratch folder, temp, and /dev)"
         )
     )
-    write_hint = (
+    hints.append(
         f"[sandbox] This command ran under the {mode_label} OS sandbox, and the "
         "failure above looks like a sandbox write denial. If the blocked write is "
         "genuinely needed, retry the same command through terminal_run with "
         "sandbox_permissions='danger-full-access' and a one-line justification; "
         "the user will be asked to approve that exact command before it runs "
-        "unconfined."
+        "with no write limits (still inside the OS sandbox)."
     )
-    return f"{_setuid_hint(setuid)}\n{write_hint}" if setuid else write_hint
+    return "\n".join(hints)

@@ -232,7 +232,7 @@ def do_run_python(payload: dict) -> tuple[bool, str]:
     # print loop can't flood the model's context with unbounded output.
     if len(output) > 100_000:
         output = output[:100_000] + "\n... (truncated)"
-    if result.returncode not in (0, None) and write_mode in ("workspace", "readonly"):
+    if result.returncode not in (0, None):
         from server.sandbox import classify_sandbox_denial
 
         hint = classify_sandbox_denial(output, write_mode)
