@@ -280,7 +280,7 @@ def execute_memory_list(
     return "\n\n".join(parts)
 
 
-@register_executor("memory_delete", read_only=False, concurrent_safe=False, destructive=True)
+@register_executor("memory_delete", read_only=False, concurrent_safe=False)
 def execute_memory_delete(
     tool_input: dict, transcript: str = "", attachments: dict | None = None
 ) -> str:

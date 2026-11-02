@@ -674,7 +674,7 @@ def _exec_save_file(tool_input, transcript, current_attachments):
     return _stage_and_request_save(dest, filename, data)
 
 
-@register_executor("ws_delete_file", read_only=False, concurrent_safe=False, destructive=True)
+@register_executor("ws_delete_file", read_only=False, concurrent_safe=False)
 def _exec_ws_delete_file(tool_input, transcript, current_attachments):
     ws = get_workspace_path()
     if not ws:
