@@ -51,7 +51,7 @@ data/global_memory/             # Global tier (cross-workspace)
   .dream_meta.json              # Dream consolidation metadata
 
 data/memory/
-  myproject/                    # Project tier (slug = workspace folder name)
+  myproject-1a2b3c4d/           # Project tier (slug = folder name + 8-char path hash)
     MEMORY.md                   # Auto-generated index
     project_goals.md
     reference_dashboards.md
@@ -133,13 +133,15 @@ When `auto_memory` is enabled:
 
 ## Feature Flags
 
-All three memory flags default **ON** (overridable in `config.json` under `feature_flags`).
+All five memory flags default **ON** (overridable in `config.user.json` under `feature_flags`).
 
 | Flag | Default | What it gates |
 |---|---|---|
 | `auto_memory` | on | Both tiers: recall, extraction, memory tools |
 | `session_memory` | on | Per-session structured summaries |
 | `dream_consolidation` | on | Per-tier consolidation agent |
+| `learning_review_fork` | on | Post-turn review as a fork of the live turn (off: the excerpt-based extraction agent) |
+| `skill_self_improvement` | on | The assistant may create and patch its own skills; the review may update them |
 
 Secret scanning is not a flag: it always runs on every memory write and cannot be disabled.
 
@@ -175,7 +177,7 @@ The check runs after every turn (cheap file reads); when due, a 4-phase agent (O
 
 ```
 server/memory/
-  __init__.py          # Public API: init_memory(), MEMORY_TOOLS, MEMORY_TOOL_NAMES
+  __init__.py          # init_memory(): data directories at startup
   memdir.py            # Tier/scope resolution, MEMORY.md load + rebuild_index()
   scan.py              # File scanning, YAML frontmatter parsing, manifest building
   recall.py            # recall_memory_context(): two-tier scan + Haiku selection
@@ -185,6 +187,8 @@ server/memory/
   dream.py             # record_and_maybe_dream(): per-tier consolidation
   tools.py             # Bedrock tool schemas (memory_read/write/list/delete, scope param)
   executor.py          # Tool implementations (scope routing, atomic writes)
+  review_fork.py       # Post-turn learning review as a fork of the live turn
+  router.py            # HTTP routes for the memory panel (/api/memory)
   prompts.py           # System prompts for extraction, recall, consolidation
 ```
 
@@ -192,12 +196,14 @@ server/memory/
 
 | File | What it does |
 |---|---|
-| `chat/routes.py` | Recall before prompt build, extraction + dream after end_turn, tools in pool |
-| `openai_bedrock/stream.py` | Same post-turn hooks for GPT-5.x turns |
+| `chat/routes.py` | Recall before prompt build |
+| `chat/engine/runner.py` | Post-turn hooks (`_fire_memory_hooks`): extraction or review fork, session memory, dream |
+| `local/server_stream.py` | The same post-turn hooks for on-device turns |
+| `chat/tool_pool.py` | Memory tools in the catalog |
 | `prompts/__init__.py` | memory_context and session_memory_context prompt sections |
 | `tool_router.py` | Memory tool dispatch |
 | `agents/config.py` | memory_extractor agent type (uses prompts.EXTRACTION_SYSTEM_PROMPT) |
-| `infrastructure/feature_flags.py` | 3 flag registrations |
+| `infrastructure/feature_flags.py` | 5 flag registrations |
 | `infrastructure/sessions.py` | Drops per-session extraction state on session delete |
 | `main.py` | Init, executor import |
 
@@ -207,7 +213,7 @@ server/memory/
 
 **Memories not being created:**
 - Check the Memory row in the "+ More" toolbar menu is On, or type `/memory` for status
-- Extraction triggers every 3rd turn per session — send at least 3 messages
+- Extraction triggers every 3rd turn per session: send at least 3 messages
 - Check the server terminal for `Memory extraction` log entries
 - Plain chat writes go to `data/global_memory/`, not the project folder
 
@@ -217,7 +223,7 @@ server/memory/
 - Server logs show warnings on recall failure
 
 **Secret scanner blocking writes:**
-- This is intentional — remove the secret from the content
+- This is intentional: remove the secret from the content
 - Check server terminal for the specific rule that fired
 
 **Dream not running:**
