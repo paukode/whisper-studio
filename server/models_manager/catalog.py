@@ -166,11 +166,7 @@ def _static_entries() -> tuple[ModelEntry, ...]:
             sentinel_rel="hyperparams.yaml",
             ensure_module="server.diarization.embedder",
             ensure_func="_ensure_ecapa_files",
-            note=(
-                "Fallback speaker encoder, used automatically when "
-                "ReDimNet2 is unavailable (offline first run) or when "
-                "speaker_embedder is set to ecapa."
-            ),
+            note="Speaker encoder used when speaker_embedder is set to ecapa.",
         ),
         ModelEntry(
             key="qwen3_embed",

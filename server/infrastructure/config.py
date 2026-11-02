@@ -145,7 +145,7 @@ DEFAULTS = {
     # Which speaker encoder produces the embeddings behind "Speaker N":
     #   "redimnet" — ReDimNet2-B2, 0.57% EER on VoxCeleb1-O (default)
     #   "ecapa"    — ECAPA-VoxCeleb, the previous encoder, ~1% EER
-    # ReDimNet2 downloads on first use and falls back to ECAPA if it can't.
+    # ReDimNet2 downloads on first use; a failed load is an error, never ECAPA.
     # Changing this invalidates stored voiceprints (vectors from different
     # encoders are not comparable), which the gallery files per encoder.
     "speaker_embedder": "redimnet",
