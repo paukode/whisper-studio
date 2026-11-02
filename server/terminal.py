@@ -298,15 +298,26 @@ def _create_pty_session(
             os.close(slave_fd)
             raise
 
-    process = subprocess.Popen(
-        shell_cmd,
-        stdin=slave_fd,
-        stdout=slave_fd,
-        stderr=slave_fd,
-        cwd=cwd,
-        env=env,
-        preexec_fn=_child_acquire_ctty,
-    )
+    try:
+        process = subprocess.Popen(
+            shell_cmd,
+            stdin=slave_fd,
+            stdout=slave_fd,
+            stderr=slave_fd,
+            cwd=cwd,
+            env=env,
+            preexec_fn=_child_acquire_ctty,
+        )
+    except BaseException:
+        # A failed spawn (no controlling tty, a missing folder) leaks nothing.
+        os.close(master_fd)
+        os.close(slave_fd)
+        if profile_path:
+            try:
+                os.unlink(profile_path)
+            except OSError:
+                pass
+        raise
     os.close(slave_fd)
 
     # Set master_fd to non-blocking
