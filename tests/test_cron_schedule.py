@@ -680,3 +680,24 @@ def test_interval_minutes_is_refused_by_the_tool_and_the_routes(temp_cron):
     preview = asyncio.run(CR.preview_schedule(_Req({"interval_minutes": 5})))
     assert "interval_minutes is no longer accepted" in preview["error"]
     assert C.load_cron_jobs()[0]["schedule"] == {"type": "interval", "seconds": 300}
+
+
+def test_an_unreadable_job_file_is_never_overwritten(temp_cron, monkeypatch):
+    import asyncio
+
+    import apscheduler.schedulers.asyncio as aps
+
+    with open(C.CRON_PATH, "w") as f:
+        f.write('{"jobs": [ {"name": "half-typed"')
+    before = _stored_bytes()
+    monkeypatch.setattr(C, "_scheduler", None)
+    monkeypatch.setattr(C, "_server_loop", None)
+    monkeypatch.setattr(aps, "AsyncIOScheduler", _FakeScheduler)
+
+    asyncio.run(C.init_scheduler())  # boot goes on with nothing armed
+    assert C._scheduler.added == []
+    with pytest.raises(C.CronJobsUnreadable):
+        C.load_cron_jobs()
+    with pytest.raises(C.CronJobsUnreadable):
+        C._mutate_jobs(lambda jobs: jobs.clear())
+    assert _stored_bytes() == before

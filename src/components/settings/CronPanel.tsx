@@ -607,7 +607,7 @@ export const CronPanel: React.FC = () => {
         </span>
       </div>
 
-      {fetchError && <p className="settings-empty" role="alert">Could not load scheduled tasks. Requires <code>pip install apscheduler</code>.</p>}
+      {fetchError && <p className="settings-empty" role="alert">Could not load scheduled tasks: {fetchError instanceof Error ? fetchError.message : String(fetchError)}</p>}
 
       {adding && (
         <ScheduleForm

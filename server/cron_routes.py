@@ -14,7 +14,7 @@ by-value import would freeze a stale reference.
 
 import json
 
-from fastapi import Request
+from fastapi import HTTPException, Request
 from fastapi.responses import Response
 
 from server import cron_scheduler as _cs
@@ -51,8 +51,12 @@ from server.cron_scheduler import (
 
 @router.get("")
 async def get_cron_jobs():
+    try:
+        jobs = load_cron_jobs()
+    except _cs.CronJobsUnreadable as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
     return {
-        "jobs": [_job_public(j) for j in load_cron_jobs()],
+        "jobs": [_job_public(j) for j in jobs],
         "scheduler_active": _cs._scheduler is not None
         and getattr(_cs._scheduler, "running", False),
         "system_timezone": _default_tz_name(),

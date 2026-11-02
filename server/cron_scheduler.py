@@ -169,13 +169,25 @@ def _report_old_jobs(jobs: list[dict]) -> None:
         )
 
 
+class CronJobsUnreadable(RuntimeError):
+    """cron_jobs.json exists but cannot be read as a job list. Reading it as
+    empty would let the next write replace every stored job."""
+
+
 def load_cron_jobs() -> list[dict]:
-    """The jobs as stored, unchanged (old-format jobs included)."""
+    """The jobs as stored, unchanged (old-format jobs included). A missing
+    file is no jobs; a file that cannot be read raises CronJobsUnreadable."""
     try:
         with open(CRON_PATH) as f:
-            return json.load(f).get("jobs", [])
-    except Exception:
+            data = json.load(f)
+    except FileNotFoundError:
         return []
+    except (OSError, ValueError) as e:
+        raise CronJobsUnreadable(f"{CRON_PATH} cannot be read: {e}") from e
+    jobs = data.get("jobs", []) if isinstance(data, dict) else None
+    if not isinstance(jobs, list):
+        raise CronJobsUnreadable(f"{CRON_PATH} does not hold a job list")
+    return jobs
 
 
 def save_cron_jobs(jobs: list[dict]):
@@ -348,7 +360,13 @@ async def init_scheduler():
     except Exception as exc:
         log.warning("cron: history init failed: %s", exc)
 
-    jobs = load_cron_jobs()
+    try:
+        jobs = load_cron_jobs()
+    except CronJobsUnreadable as e:
+        # Boot goes on with nothing armed; the Settings list and every cron
+        # change report the same error until the file is fixed.
+        log.error("cron: no jobs scheduled: %s", e)
+        jobs = []
     _report_old_jobs(jobs)
     try:
         from apscheduler.schedulers.asyncio import AsyncIOScheduler
