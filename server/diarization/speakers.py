@@ -37,10 +37,6 @@ from server.diarization import embedder, voiceprints
 
 log = logging.getLogger("whisper-studio")
 
-# Speaker encoders are trained on ~3 s utterances. Below ~1 s the
-# embedding is dominated by phoneme content, not speaker identity. The
-# upstream VAD buffer makes most utterances comfortably exceed this bar.
-MIN_EMBED_SAMPLES = embedder.MIN_EMBED_SAMPLES
 # Threshold calibration. These are PER ENCODER: cosine similarity means
 # something different in each embedding space, and reusing one encoder's
 # numbers for another is how every utterance ends up as "Speaker 1".

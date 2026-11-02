@@ -54,7 +54,8 @@ REDIMNET_VARIANT = "b2"
 # the Settings model card checks for "Installed" (see models_manager).
 REDIMNET_SENTINEL = os.path.join("checkpoints", f"{REDIMNET_VARIANT}-vox2-lm.pt")
 
-# Embeddings shorter than this are phoneme noise, not identity.
+# Speaker encoders are trained on ~3 s utterances. Below ~1 s the embedding
+# is dominated by phoneme content, not speaker identity.
 MIN_EMBED_SAMPLES = 16000  # 1.0 s @ 16 kHz
 
 _encoder = None
@@ -153,14 +154,6 @@ def _get_encoder():
         _encoder_name = NAME_ECAPA
         log.info("Speaker ID model loaded (ECAPA).")
         return _encoder
-
-
-def reset() -> None:
-    """Drop the loaded encoder so the next embed re-reads the config (tests, config change)."""
-    global _encoder, _encoder_name
-    with _lock:
-        _encoder = None
-        _encoder_name = None
 
 
 def preload() -> None:
