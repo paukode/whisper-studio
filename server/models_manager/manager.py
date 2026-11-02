@@ -489,9 +489,9 @@ def _stop_if_serving(key: str) -> bool:
     can register on the server between the check and the stop, so a turn
     that began after _refuse_if_answering is refused here instead of killed.
     Returns whether it stopped; raises ModelBusy when a turn streams from it
-    or a load or switch holds it. A failing stop is logged and does not block
-    the delete (the file unlink still works; the running server keeps its
-    mapped copy until it exits)."""
+    or a load or switch holds it, and Conflict with the reason when the stop
+    itself fails (the delete is refused, so no weights go from under a
+    running server)."""
     from server.local import serving
 
     if serving.resident_key() != key:
@@ -501,8 +501,7 @@ def _stop_if_serving(key: str) -> bool:
             log.info("Stopped the model server before deleting %s.", key)
             return True
     except Exception as e:
-        log.warning("Could not stop the model server before deleting %s: %s", key, e)
-        return False
+        raise Conflict(f"Could not stop the model server before deleting this model: {e}") from e
     if serving.resident_key() != key:
         return False  # it stopped being resident meanwhile: nothing to stop
     if serving.busy_turns() > 0:

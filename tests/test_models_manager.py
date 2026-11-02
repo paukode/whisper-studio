@@ -782,3 +782,21 @@ def test_bundled_infrastructure_models_flagged(client):
     assert by_key["ecapa_speaker"]["bundled"] is True
     assert by_key["whisper_large_v3"]["bundled"] is False
     assert by_key["parakeet"]["bundled"] is False
+
+
+def test_a_server_that_fails_to_stop_refuses_the_delete(client, home, monkeypatch):
+    """A failing stop used to be logged while the weights were deleted from
+    under the running server."""
+    from server.local import serving
+
+    install_fake(home, "local_gemma")
+    monkeypatch.setattr(serving, "resident_key", lambda: "local_gemma")
+
+    def stuck(key, started=None):
+        raise RuntimeError("SIGTERM ignored")
+
+    monkeypatch.setattr(serving, "stop_if_idle", stuck)
+    r = client.delete("/api/models/local_gemma")
+    assert r.status_code == 409
+    assert "SIGTERM ignored" in r.json()["detail"]
+    assert (home / "models" / get_entry("local_gemma").dir_name).exists()
