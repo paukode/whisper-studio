@@ -44,7 +44,10 @@ python-docx==1.2.0
 # blocks entity-expansion payloads. Already transitive via markitdown, but
 # the lint must not silently lose its parser if that dep tree changes.
 defusedxml==0.7.1
-mcp==1.27.2
+mcp==2.3.0
+# server/mcp.py builds the streamable-HTTP client for remote MCP servers with
+# httpx2 directly (the HTTP layer of the MCP and openai SDKs).
+httpx2==2.16.0
 # Runtime tool-input validation against the issued JSON Schema, before execution.
 jsonschema==4.26.0
 # server/tool_inputs.py builds its schema Registry with referencing directly.

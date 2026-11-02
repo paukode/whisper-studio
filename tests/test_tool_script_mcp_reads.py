@@ -21,14 +21,14 @@ from server.workflows.runtime import WorkflowRun
 
 class _Hint:
     def __init__(self, read_only: bool):
-        self.readOnlyHint = read_only
+        self.read_only_hint = read_only
 
 
 class _McpTool:
     def __init__(self, name: str, read_only: bool | None = None):
         self.name = name
         self.description = "Stub MCP tool for read-only permission tests"
-        self.inputSchema = {
+        self.input_schema = {
             "type": "object",
             "properties": {"table": {"type": "string"}},
             "required": ["table"] if name == "describe_table" else [],

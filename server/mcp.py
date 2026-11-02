@@ -16,6 +16,7 @@ import os
 import shutil
 import tempfile
 import uuid
+from contextlib import asynccontextmanager
 
 from server.approval.markers import approval_request
 from server.infrastructure.async_tasks import spawn
@@ -30,13 +31,11 @@ MCP_CONFIG_PATH = os.path.join(DATA_DIR, "mcp_servers.json")
 
 # How long an MCP elicitation (a server asking the human for input mid-call)
 # waits for an answer before the callback declines on the human's behalf. This
-# bounds TWO things at once: the specific in-flight `call_tool()` invocation
-# (and, transitively, whatever awaited it — e.g. a live chat turn's tool
-# batch, which will sit idle but connected), and the server's single shared
-# receive loop (see `_build_elicitation_callback`'s docstring for why one
-# elicitation blocks that server's other traffic until it resolves). A few
-# minutes is long enough for a human to notice and answer, short enough that
-# a forgotten prompt doesn't wedge either of those indefinitely.
+# bounds the in-flight `call_tool()` invocation that is waiting on it (and,
+# transitively, whatever awaited it, e.g. a live chat turn's tool batch, which
+# sits idle but connected). A few minutes is long enough for a human to notice
+# and answer, short enough that a forgotten prompt does not wedge the call
+# indefinitely.
 ELICITATION_TIMEOUT_S = 300
 
 # How long one MCP tool call may run before it is abandoned with an error
@@ -59,26 +58,13 @@ def _call_timeout_s(server_config: dict) -> float:
     return value if value > 0 else CALL_TIMEOUT_S
 
 
-async def _send_cancelled(session, request_id, reason: str) -> bool:
-    """Tell the server to stop a request this client has given up on (the
-    protocol's notifications/cancelled), so an abandoned tool call does not
-    keep working, and its side effects keep landing, after the model has
-    been told it failed. False when the server could not be told."""
-    if request_id is None:
-        return False
-    from mcp import types
-
-    note = types.ClientNotification(
-        types.CancelledNotification(
-            params=types.CancelledNotificationParams(requestId=request_id, reason=reason)
-        )
-    )
-    try:
-        await asyncio.wait_for(session.send_notification(note), timeout=5)
-        return True
-    except Exception as e:  # noqa: BLE001 - the error result says what happened
-        log.warning("MCP cancel notification for request %s failed: %s", request_id, e)
-        return False
+@asynccontextmanager
+async def _owned_http_transport(http_client, transport_cm):
+    """Enter a streamable-HTTP transport and close the HTTP client it was
+    given when it exits; the transport never closes a client it was given."""
+    async with http_client:
+        async with transport_cm as streams:
+            yield streams
 
 
 # How long a server gets to finish its handshake and first listing. Every
@@ -195,7 +181,7 @@ def _file_signature(path: str) -> tuple[int, int, int] | None:
 
 async def _list_all(fetch, field: str) -> list:
     """Every item of a paginated MCP listing (tools/list, resources/list).
-    Follows nextCursor until the server stops returning one; a cursor seen
+    Follows next_cursor until the server stops returning one; a cursor seen
     twice ends the walk so a buggy server cannot loop it forever."""
     import mcp.types as types
 
@@ -205,7 +191,7 @@ async def _list_all(fetch, field: str) -> list:
     while True:
         result = await fetch(params=types.PaginatedRequestParams(cursor=cursor) if cursor else None)
         items.extend(getattr(result, field))
-        cursor = result.nextCursor
+        cursor = result.next_cursor
         if not cursor or cursor in seen:
             return items
         seen.add(cursor)
@@ -458,7 +444,8 @@ class MCPManager:
 
         url = (config.get("url") or "").strip()
         if url:
-            from mcp.client.streamable_http import streamablehttp_client
+            import httpx2
+            from mcp.client.streamable_http import streamable_http_client
 
             headers = None
             token_env_var = (config.get("bearer_token_env_var") or "").strip()
@@ -478,7 +465,15 @@ class MCPManager:
                         )
                     return
                 headers = {"Authorization": f"Bearer {token}"}
-            transport_cm = streamablehttp_client(url, headers=headers)
+            # Headers and timeouts live on the HTTP client the transport is
+            # given. A bare client times out reads after 5 s, too short for
+            # the long-lived event stream, so reads get the SDK's own 300 s.
+            # Redirects stay off: the transport follows same-origin ones
+            # itself, so the bearer token never leaves the server's origin.
+            http_client = httpx2.AsyncClient(headers=headers, timeout=httpx2.Timeout(30, read=300))
+            transport_cm = _owned_http_transport(
+                http_client, streamable_http_client(url, http_client=http_client)
+            )
         else:
             from mcp.client.stdio import stdio_client
 
@@ -487,24 +482,19 @@ class MCPManager:
         elicitation_callback = self._build_elicitation_callback(name)
 
         async def on_message(message) -> None:
-            # Runs on the session's receive loop, which must keep pumping to
-            # deliver the listing's own response, so the re-list runs in a
-            # task of its own.
+            # The SDK hands over each server notification as the notification
+            # model itself. The re-list runs in a task of its own (spawn) so
+            # its errors are logged there and it outlives this handler.
             import mcp.types as types
 
-            root = getattr(message, "root", None)
-            if isinstance(root, types.ToolListChangedNotification):
+            if isinstance(message, types.ToolListChangedNotification):
                 spawn(self._relist(name, ready, "tools"), name=f"mcp-relist-tools:{name}")
-            elif isinstance(root, types.ResourceListChangedNotification):
+            elif isinstance(message, types.ResourceListChangedNotification):
                 spawn(self._relist(name, ready, "resources"), name=f"mcp-relist-resources:{name}")
 
         ended = "the server closed the connection"
         try:
-            async with transport_cm as transport_streams:
-                # stdio_client yields (read_stream, write_stream);
-                # streamablehttp_client yields (read_stream, write_stream,
-                # get_session_id). Only the first two are ever needed here.
-                read_stream, write_stream = transport_streams[0], transport_streams[1]
+            async with transport_cm as (read_stream, write_stream):
                 async with ClientSession(
                     read_stream,
                     write_stream,
@@ -863,12 +853,8 @@ class MCPManager:
         self._active_calls.setdefault(server_name, []).append(call_entry)
         timeout_s = _call_timeout_s(session_info.get("config") or {})
         stop_event = session_info.get("stop_event")
-        request: dict = {}
 
         async def _call():
-            # The SDK's send_request takes this id and bumps it before its
-            # first await, so it is the id of this call's tools/call request.
-            request["id"] = getattr(session, "_request_id", None)
             return await session.call_tool(original_name, arguments=call_arguments)
 
         async def _call_until_stopped():
@@ -907,28 +893,20 @@ class MCPManager:
                 else:
                     parts.append(str(content))
             output = "\n".join(parts)
-            if result.isError:
+            if result.is_error:
                 output = f"[MCP Error] {output}"
             return output
         except TimeoutError:
             log.warning(
                 "MCP tool call timed out after %.0fs (%s/%s)", timeout_s, server_name, original_name
             )
-            told = await _send_cancelled(
-                session, request.get("id"), f"no answer within {timeout_s:.0f} seconds"
-            )
-            if not told:
-                log.warning(
-                    "MCP server %s could not be asked to cancel %s", server_name, original_name
-                )
-            stop = (
-                "the server was asked to cancel it"
-                if told
-                else "the server could not be told to stop, so it may still be running it"
-            )
+            # Abandoning the call cancels its request task, and the SDK sends
+            # the server notifications/cancelled for that request id before
+            # the cancellation completes (a blocked write is logged by the SDK).
             return (
                 f"[MCP Error] {original_name} on server '{server_name}' did not answer "
-                f"within {timeout_s:.0f} seconds. The call was abandoned and {stop}. It "
+                f"within {timeout_s:.0f} seconds. The call was abandoned and the server "
+                "was asked to cancel it. It "
                 "may already have done part or all of its work: check the result before "
                 "calling it again, since a retry can repeat its effects. A tool that "
                 "legitimately runs longer needs a higher call_timeout_seconds for this "
@@ -950,26 +928,19 @@ class MCPManager:
         """Build the `elicitation_callback` bound into `ClientSession` for
         one server's connection.
 
-        Task/cancel-scope note: the MCP SDK invokes this callback from
-        `ClientSession._received_request`, which runs on the SAME task as
-        the session's own receive loop — a task the SDK spawns (via its
-        internal task group's `start_soon`) when `ClientSession.__aenter__`
-        runs, i.e. inside `_serve`'s already-owned context. We never enter or
-        exit a context manager here, and we never touch that task group's
-        cancel scope directly — we only `await` a plain `asyncio.Future`
-        (resolved later by a completely different task, `resolve_elicitation`,
-        via ordinary cross-task asyncio; this app runs one event loop, so no
-        thread-hop or extra scope is involved). That keeps this callback
-        fully inside the ownership `_serve` already holds: if `_serve`'s own
-        contexts get torn down (stop_server, or the whole task cancelled),
-        the cancellation reaches this `await` exactly as it would any other
-        code running on that task tree, and our `finally` still runs.
-
-        One consequence of running on the shared receive-loop task: while
-        this callback is waiting, that server's connection cannot process
-        any OTHER incoming message (further elicitations, notifications,
-        the response to this very call) until it returns — which is exactly
-        why the timeout below is bounded rather than open-ended.
+        Task/cancel-scope note: the MCP SDK runs each inbound server request,
+        this callback included, in a task of its own inside the session's
+        task group, i.e. inside `_serve`'s already-owned context. We never
+        enter or exit a context manager here, and we never touch that task
+        group's cancel scope directly: we only `await` a plain
+        `asyncio.Future` (resolved later by a completely different task,
+        `resolve_elicitation`, via ordinary cross-task asyncio; this app runs
+        one event loop, so no thread-hop or extra scope is involved). If
+        `_serve`'s own contexts get torn down (stop_server, or the whole task
+        cancelled), the cancellation reaches this `await` exactly as it would
+        any other code running on that task tree, and our `finally` still
+        runs. The connection keeps processing other messages while this
+        waits; the timeout below bounds the call that is waiting on it.
         """
 
         async def _callback(context, params):
@@ -993,7 +964,7 @@ class MCPManager:
             elicitation_id = uuid.uuid4().hex
             message = getattr(params, "message", "") or ""
             mode = getattr(params, "mode", "form")
-            requested_schema = getattr(params, "requestedSchema", None)
+            requested_schema = getattr(params, "requested_schema", None)
             url = getattr(params, "url", None)
 
             loop = asyncio.get_running_loop()
@@ -1126,7 +1097,7 @@ class MCPManager:
                 continue
             seen.add(safe_name)
             mcp_tool = tool_info["mcp_tool"]
-            schema = dict(mcp_tool.inputSchema)
+            schema = dict(mcp_tool.input_schema)
             schema.pop("$schema", None)
             schema.pop("additionalProperties", None)
             if "type" not in schema:

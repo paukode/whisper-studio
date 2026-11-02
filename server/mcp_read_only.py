@@ -11,7 +11,7 @@ kept from read-only agents otherwise (fail closed):
 - the user says so in mcp_servers.json: ``"read_only": true`` on a server
   marks all its tools, ``"read_only_tools": [...]`` names some of them, and
   ``"read_only": false`` stops trusting the server's own hints;
-- otherwise the server marks the tool with MCP's ``readOnlyHint`` annotation.
+- otherwise the server marks the tool with MCP's ``readOnlyHint`` annotation (``read_only_hint`` in the SDK).
 """
 
 from __future__ import annotations
@@ -44,4 +44,4 @@ def is_read_only_mcp_tool(tool_name: str) -> bool:
         if entry.get("read_only") is False:
             return False
     annotations = getattr(info.get("mcp_tool"), "annotations", None)
-    return bool(getattr(annotations, "readOnlyHint", False))
+    return bool(getattr(annotations, "read_only_hint", False))

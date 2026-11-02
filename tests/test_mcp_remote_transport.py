@@ -1,6 +1,6 @@
 """Remote/HTTP MCP transport.
 
-A server config with a `url` key uses `streamablehttp_client` instead of
+A server config with a `url` key uses `streamable_http_client` instead of
 `StdioServerParameters`/`stdio_client`. An optional `bearer_token_env_var`
 names an environment variable read at connect time; the actual token value
 is never persisted into mcp_servers.json — only the env var name is.
@@ -35,13 +35,13 @@ class _FakeTool:
     def __init__(self, name):
         self.name = name
         self.description = "desc"
-        self.inputSchema = {"type": "object"}
+        self.input_schema = {"type": "object"}
 
 
 class _FakeToolsResult:
     def __init__(self):
         self.tools = [_FakeTool("ping")]
-        self.nextCursor = None
+        self.next_cursor = None
 
 
 class _FakeSession:
@@ -66,16 +66,16 @@ class _FakeSession:
 
 
 class _FakeStreamableCtx:
-    """Records the url/headers streamablehttp_client was invoked with, and
-    yields the 3-tuple the real transport does: (read, write,
-    get_session_id_callback)."""
+    """Records the url and the HTTP client streamable_http_client was invoked
+    with, and yields the pair the real transport does: (read, write)."""
 
-    def __init__(self, record, url, headers):
+    def __init__(self, record, url, http_client):
         record["url"] = url
-        record["headers"] = headers
+        record["headers"] = http_client.headers
+        record["http_client"] = http_client
 
     async def __aenter__(self):
-        return ("read-stream", "write-stream", lambda: None)
+        return ("read-stream", "write-stream")
 
     async def __aexit__(self, *exc):
         return False
@@ -90,8 +90,8 @@ def _install_fakes(monkeypatch, record):
     )
     monkeypatch.setattr(
         mcp.client.streamable_http,
-        "streamablehttp_client",
-        lambda url, headers=None: _FakeStreamableCtx(record, url, headers),
+        "streamable_http_client",
+        lambda url, http_client=None: _FakeStreamableCtx(record, url, http_client),
         raising=False,
     )
 
@@ -114,6 +114,11 @@ def test_url_config_uses_streamable_http_transport(monkeypatch):
         assert mgr._sessions["remote-srv"]["status"] == "connected"
         assert "mcp__remote-srv__ping" in mgr._tools
         assert record["url"] == "https://example.com/mcp"
+        assert "authorization" not in record["headers"]
+        # Redirects stay with the transport, which keeps them on the origin.
+        assert record["http_client"].follow_redirects is False
+        await mgr.stop_server("remote-srv")
+        assert record["http_client"].is_closed
 
     asyncio.run(scenario())
 
@@ -162,7 +167,7 @@ def test_bearer_token_read_from_env_and_sent_as_auth_header(monkeypatch):
             "remote-srv",
             {"url": "https://example.com/mcp", "bearer_token_env_var": "MY_MCP_TOKEN"},
         )
-        assert record["headers"] == {"Authorization": "Bearer s3cr3t-value"}
+        assert record["headers"]["authorization"] == "Bearer s3cr3t-value"
 
     asyncio.run(scenario())
 

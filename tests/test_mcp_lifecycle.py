@@ -17,13 +17,13 @@ class _FakeTool:
     def __init__(self, name):
         self.name = name
         self.description = "desc"
-        self.inputSchema = {"type": "object"}
+        self.input_schema = {"type": "object"}
 
 
 class _FakeToolsResult:
     def __init__(self):
         self.tools = [_FakeTool("ping")]
-        self.nextCursor = None
+        self.next_cursor = None
 
 
 class _FakeSession:

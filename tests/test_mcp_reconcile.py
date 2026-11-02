@@ -302,9 +302,9 @@ def test_every_change_publishes_one_app_wide_event(config_path, monkeypatch):
 
 def test_list_all_follows_cursors_and_stops_on_a_repeated_one():
     pages = {
-        None: SimpleNamespace(tools=["a", "b"], nextCursor="p2"),
-        "p2": SimpleNamespace(tools=["c"], nextCursor="p3"),
-        "p3": SimpleNamespace(tools=["d"], nextCursor=None),
+        None: SimpleNamespace(tools=["a", "b"], next_cursor="p2"),
+        "p2": SimpleNamespace(tools=["c"], next_cursor="p3"),
+        "p3": SimpleNamespace(tools=["d"], next_cursor=None),
     }
 
     async def fetch(params=None):
@@ -313,16 +313,16 @@ def test_list_all_follows_cursors_and_stops_on_a_repeated_one():
     assert asyncio.run(_list_all(fetch, "tools")) == ["a", "b", "c", "d"]
 
     async def looping(params=None):
-        return SimpleNamespace(tools=["x"], nextCursor="same")
+        return SimpleNamespace(tools=["x"], next_cursor="same")
 
     assert asyncio.run(_list_all(looping, "tools")) == ["x", "x"]
 
 
 _GROWING_SERVER = textwrap.dedent(
     """
-    from mcp.server.fastmcp import Context, FastMCP
+    from mcp.server.mcpserver import Context, MCPServer
 
-    server = FastMCP("growing")
+    server = MCPServer("growing")
 
     @server.tool()
     async def grow(ctx: Context) -> str:

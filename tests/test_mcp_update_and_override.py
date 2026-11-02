@@ -39,7 +39,7 @@ def _stub_tool(name: str):
     t = MagicMock()
     t.name = name
     t.description = f"stub tool {name}"
-    t.inputSchema = {"type": "object", "properties": {}}
+    t.input_schema = {"type": "object", "properties": {}}
     return t
 
 
