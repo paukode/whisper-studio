@@ -70,16 +70,17 @@ def enabled() -> bool:
 
 
 def _load() -> dict:
+    """The stored gallery, or an empty one when no file exists yet. An
+    unreadable or wrongly shaped file raises: treating it as empty would let
+    the next save overwrite every stored identity."""
     try:
         with open(_store_path(), encoding="utf-8") as fh:
             data = json.load(fh)
-        if isinstance(data, dict) and isinstance(data.get("encoders"), dict):
-            return data
     except FileNotFoundError:
-        pass
-    except Exception as e:
-        log.warning("Voiceprint store unreadable (%s); starting empty.", e)
-    return {"version": VERSION, "encoders": {}}
+        return {"version": VERSION, "encoders": {}}
+    if not (isinstance(data, dict) and isinstance(data.get("encoders"), dict)):
+        raise ValueError(f"Voiceprint store {_store_path()} has an unexpected shape")
+    return data
 
 
 def _save(data: dict) -> None:

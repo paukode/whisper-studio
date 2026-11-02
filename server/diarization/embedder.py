@@ -9,10 +9,9 @@ ReDimNet2-B2 (default)
     embeds ~1.25 s slices, well under the ~3 s ECAPA was trained for.
     3.6M params, 15 MB checkpoint, MIT licensed, loaded through torch.hub.
 
-ECAPA-VoxCeleb (fallback)
-    What shipped before. Kept as the automatic fallback because ReDimNet2
-    arrives over the network on first use: a blocked or offline first run
-    must degrade to a working encoder, not to no speaker labels at all.
+ECAPA-VoxCeleb
+    The other choice for ``speaker_embedder``. Each encoder loads only when
+    it is the configured one; a load failure raises, it never switches.
 
 Both happen to emit 192 dimensions, but vectors from different encoders
 are NOT comparable. Anything that persists an embedding must record which
@@ -74,8 +73,8 @@ def configured_name() -> str:
 def active_name() -> str | None:
     """The encoder actually loaded, or None before the first embed.
 
-    Not the same as ``configured_name()``: a ReDimNet2 load failure falls
-    back to ECAPA, and callers that persist vectors need the truth.
+    Callers that persist vectors read this rather than ``configured_name()``:
+    the config can change after the encoder loaded.
     """
     return _encoder_name
 
@@ -136,25 +135,19 @@ def _load_ecapa():
 
 
 def _get_encoder():
-    """Lazily load the configured encoder, falling back to ECAPA."""
+    """Lazily load the configured encoder. A load failure raises."""
     global _encoder, _encoder_name
     if _encoder is not None:
         return _encoder
     with _lock:
         if _encoder is not None:
             return _encoder
-        want = configured_name()
-        if want == NAME_REDIMNET:
-            try:
-                log.info("Loading Speaker ID model (ReDimNet2-%s)...", REDIMNET_VARIANT)
-                _encoder = _load_redimnet()
-                _encoder_name = NAME_REDIMNET
-                log.info("Speaker ID model loaded (ReDimNet2-%s).", REDIMNET_VARIANT)
-                return _encoder
-            except Exception as e:
-                # Offline first run, torch.hub blocked, upstream repo moved.
-                # A worse encoder beats no speaker labels.
-                log.warning("ReDimNet2 unavailable (%s); falling back to ECAPA.", e)
+        if configured_name() == NAME_REDIMNET:
+            log.info("Loading Speaker ID model (ReDimNet2-%s)...", REDIMNET_VARIANT)
+            _encoder = _load_redimnet()
+            _encoder_name = NAME_REDIMNET
+            log.info("Speaker ID model loaded (ReDimNet2-%s).", REDIMNET_VARIANT)
+            return _encoder
         log.info("Loading Speaker ID model (ECAPA)...")
         _encoder = _load_ecapa()
         _encoder_name = NAME_ECAPA
@@ -200,11 +193,7 @@ def encode(audio: np.ndarray | None) -> np.ndarray | None:
     """One window -> L2-normalized embedding, or None if it is too short to mean anything."""
     if audio is None or len(audio) < MIN_EMBED_SAMPLES:
         return None
-    try:
-        return _normalize(_forward(audio.astype(np.float32)[None, :])[0])
-    except Exception as e:
-        log.warning("Speaker embedding failed: %s", e)
-        return None
+    return _normalize(_forward(audio.astype(np.float32)[None, :])[0])
 
 
 def encode_batch(windows: list[np.ndarray]) -> list[np.ndarray | None]:
@@ -224,11 +213,7 @@ def encode_batch(windows: list[np.ndarray]) -> list[np.ndarray | None]:
     for row, i in enumerate(usable):
         w = windows[i]
         batch[row, : len(w)] = w
-    try:
-        vectors = _forward(batch)
-    except Exception as e:
-        log.warning("Speaker embedding batch failed: %s", e)
-        return out
+    vectors = _forward(batch)
     for row, i in enumerate(usable):
         out[i] = _normalize(vectors[row])
     return out

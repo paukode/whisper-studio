@@ -164,8 +164,8 @@ class LiveLabeller:
                 diarization.executor, diarization.embed, audio
             )
         if embedding is None:
-            # Too short or a failed embed: speaker continuity is the best
-            # guess and never pollutes the cluster space.
+            # Too short to embed: speaker continuity is the best guess and
+            # never pollutes the cluster space.
             return self._speakers.fallback_label()
         duration = len(audio) / SAMPLE_RATE if audio is not None else None
         return self._speakers.assign(chunk_id, embedding, duration, text)
