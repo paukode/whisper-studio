@@ -192,7 +192,7 @@ describe('SSEEventDataSchema', () => {
   });
 
   it('parses usage event', () => {
-    const input = { usage: { input_tokens: 100, output_tokens: 50 } };
+    const input = { usage: { input_tokens: 100, output_tokens: 50, total_prompt: 100, total_output: 50, estimated_cost_usd: 0.01 } };
     const result = SSEEventDataSchema.safeParse(input);
     expect(result.success).toBe(true);
     if (result.success) expect(result.data.usage?.input_tokens).toBe(100);

@@ -95,6 +95,7 @@ describe('readSSEStream', () => {
           output_tokens: 2,
           total_input: 100,
           total_output: 40,
+          total_prompt: 100,
           estimated_cost_usd: 0.01,
         },
       },
@@ -141,22 +142,6 @@ describe('readSSEStream', () => {
     expect(result.outputTokens).toBe(2012);
   });
 
-  it('usage frame falls back to per-round counts when totals are absent', async () => {
-    const res = sseResponse([
-      { usage: { input_tokens: 7, output_tokens: 3 } },
-    ]);
-
-    const result = await readSSEStream(
-      res,
-      'sess-usage-round',
-      new AbortController().signal,
-      SETTINGS,
-    );
-
-    expect(result.inputTokens).toBe(7);
-    expect(result.outputTokens).toBe(3);
-  });
-
   it('ws_workspace_prompt uses the real tool_use_id as toolId, not the hardcoded placeholder', async () => {
     const res = sseResponse([
       {
@@ -179,7 +164,7 @@ describe('readSSEStream', () => {
     expect(withPrompt!.toolUse![0].toolId).toBe('tu_abc123');
   });
 
-  it('ws_workspace_prompt falls back to the hardcoded id when tool_use_id is missing', async () => {
+  it('ws_workspace_prompt without a tool_use_id draws no dead card and says why', async () => {
     const res = sseResponse([
       {
         ws_workspace_prompt: {
@@ -190,12 +175,14 @@ describe('readSSEStream', () => {
       },
     ]);
 
-    const sessionId = 'sess-ws-prompt-fallback';
+    const sessionId = 'sess-ws-prompt-noid';
     await readSSEStream(res, sessionId, new AbortController().signal, SETTINGS);
 
     const messages = getChatStore(sessionId).getState().messages;
-    const withPrompt = messages.find((m) => m.toolUse?.some((t) => t.toolName === 'ws_workspace_prompt'));
-    expect(withPrompt!.toolUse![0].toolId).toBe('ws_workspace_prompt');
+    expect(messages.some((m) => m.toolUse?.some((t) => t.toolName === 'ws_workspace_prompt'))).toBe(false);
+    expect(useUIStore.getState().toasts.map((t) => t.message)).toContain(
+      'The workspace folder prompt arrived without its tool call id, so it cannot resume the turn.',
+    );
   });
 
   it('commits the prose that led up to a card before the card itself', async () => {
@@ -348,7 +335,7 @@ describe('sendApprovalContinuation', () => {
     // produces: frames, but not one text frame. This used to commit NOTHING,
     // so an approved turn looked dead and the user had to prod the model.
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      sseResponse([{ usage: { input_tokens: 10, output_tokens: 0 } }]),
+      sseResponse([{ usage: { input_tokens: 10, output_tokens: 0, total_prompt: 10, total_output: 0, estimated_cost_usd: 0 } }]),
     );
 
     await sendApprovalContinuation(approval, 'sess-resume', true, undefined, {

@@ -515,20 +515,23 @@ export async function readSSEStream(
 
           // ── ws_workspace_prompt ──
           if (parsed.ws_workspace_prompt) {
-            hasPendingApprovals = true;
             // server/tool_executor.py merges the real tool_use_id into this
             // payload before emitting it (see prompt_parsed = {**prompt_parsed,
             // "tool_use_id": state.tool_id}). Use it as the toolId so the
             // resume flow (WorkspacePromptCard) can answer the ACTUAL paused
             // tool_use block via the answers-array continuation path instead
             // of a hardcoded id that never matches anything server-side.
-            // Fall back to the old hardcoded string only if some older/odd
-            // payload shape omits the field.
             const wp = parsed.ws_workspace_prompt as Record<string, unknown>;
-            const toolUseId =
-              typeof wp.tool_use_id === 'string' && wp.tool_use_id
-                ? wp.tool_use_id
-                : 'ws_workspace_prompt';
+            const toolUseId = typeof wp.tool_use_id === 'string' ? wp.tool_use_id : '';
+            if (!toolUseId) {
+              // A card without its id could never resume the paused turn.
+              useUIStore.getState().addToast({
+                type: 'error',
+                message: 'The workspace folder prompt arrived without its tool call id, so it cannot resume the turn.',
+              });
+              continue;
+            }
+            hasPendingApprovals = true;
             // Same ordering rule as the event cards: commit the prose that led
             // up to the picker first, so the folder buttons sit at the bottom
             // of the conversation where the user is already looking.
@@ -928,27 +931,17 @@ export async function readSSEStream(
           }
 
           // ── usage ──
-          // The backend (server/chat/engine/runner.py) sends BOTH per-round
-          // counts (`input_tokens`/`output_tokens`) and cumulative running
-          // totals (`total_prompt`/`total_input`/`total_output`) on every usage
-          // frame, and its `estimated_cost_usd` is cumulative too. Prefer the
-          // totals so the counter reflects the whole turn instead of collapsing
-          // to the last round; fall back to per-round for any emitter that
-          // omits totals.
+          // The backend (server/chat/engine/runner.py) sends cumulative running
+          // totals on every usage frame, and its `estimated_cost_usd` is
+          // cumulative too, so the counter reflects the whole turn.
           //
           // `total_prompt` is the input side: it counts every prompt token sent,
           // where `total_input` counts only the portion that missed the prompt
-          // cache — a few tokens on a warm turn, which is what made the counter
-          // read "4 in / 4,012 out". Older emitters that predate total_prompt
-          // fall back to total_input.
+          // cache (a few tokens on a warm turn).
           if (parsed.usage) {
-            inputTokens =
-              parsed.usage.total_prompt ??
-              parsed.usage.total_input ??
-              parsed.usage.input_tokens ??
-              inputTokens;
-            outputTokens = parsed.usage.total_output ?? parsed.usage.output_tokens ?? outputTokens;
-            const cost = parsed.usage.estimated_cost_usd ?? 0;
+            inputTokens = parsed.usage.total_prompt;
+            outputTokens = parsed.usage.total_output;
+            const cost = parsed.usage.estimated_cost_usd;
             // context_used/context_max are real per-round token counts (WS-F);
             // feed them to the status bar's context meter.
             const ctxUsed = parsed.usage.context_used;
