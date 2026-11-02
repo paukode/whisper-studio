@@ -161,8 +161,8 @@ function installToast(res: InstallResult) {
 
 /** Compact quant picker for one repo: a single dropdown of quants (recommended
  *  preselected, size in each label) next to one Download button, on one row.
- *  The quant list is still fetched lazily — on first interaction with the
- *  select — so browsing a long result list doesn't hammer the detail endpoint. */
+ *  The quant list is still fetched lazily (on first interaction with the
+ *  select), so browsing a long result list does not hammer the detail endpoint. */
 const RepoRow: React.FC<{ result: BrowseResult }> = ({ result }) => {
   // `activated` flips true on the first interaction with the select, which
   // enables the detail fetch. Until then the row shows a placeholder option and
