@@ -5495,6 +5495,22 @@ button.ws-git-status-badge:hover {
     max-height: 220px;
     overflow-y: auto;
 }
+/* A finished agent's report: markdown in the chat's body font. */
+.bg-tasks-report {
+    margin: 6px 0 0;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    font-size: var(--fs-small);
+    line-height: 1.55;
+    word-break: break-word;
+    max-height: 320px;
+    overflow-y: auto;
+}
+.bg-tasks-report .markdown-content > :first-child { margin-top: 0; }
+.bg-tasks-report .markdown-content > :last-child { margin-bottom: 0; }
 /* The countdown line under a finished row: full when it finishes, gone
    when the row leaves. */
 .bg-tasks-linger { height: 2px; background: var(--bg-surface); }
