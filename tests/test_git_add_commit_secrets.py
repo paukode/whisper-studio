@@ -238,3 +238,90 @@ def test_the_refusal_names_file_line_and_kind_never_the_value():
     text = security.format_refusal(findings)
     assert "s.py:12" in text
     assert key not in text
+
+
+# --- Review fixes: inline keys, non-UTF-8 files, YAML values, hidden keys ---
+
+
+def _fake_service_account():
+    """A service-account JSON whose key sits in one string, built at runtime.
+    The key id is not random, so only the key itself can trip the scan."""
+    import json
+
+    dashes = "-" * 5
+    body = "\n".join(_rand(string.ascii_letters + string.digits + "+/", 64, i) for i in range(3))
+    key = f"{dashes}BEGIN PRIVATE KEY{dashes}\n{body}\n{dashes}END PRIVATE KEY{dashes}\n"
+    doc = {
+        "type": "service_account",
+        "project_id": "demo-project",
+        "private_key_id": "key-one",
+        "private_key": key,
+        "client_email": "bot@demo-project.iam.gserviceaccount.com",
+    }
+    return json.dumps(doc, indent=2) + "\n"
+
+
+def test_a_service_account_json_key_is_refused_with_its_line(repo):
+    text = _fake_service_account()
+    (repo / "sa.json").write_text(text)
+    key_line = next(i for i, ln in enumerate(text.split("\n"), 1) if '"private_key":' in ln)
+
+    ok, out = gx.do_git_add_commit({"message": "m", "all": True})
+
+    assert not ok
+    assert f"sa.json:{key_line}" in out
+    assert "Private key" in out
+    assert _commits(repo) == 1
+
+
+def test_a_non_utf8_text_file_commits(repo):
+    (repo / "latin1.txt").write_bytes(b"caf\xe9 au lait\n")
+
+    ok, out = gx.do_git_add_commit({"message": "m", "all": True})
+
+    assert ok, out
+    assert "latin1.txt" in _run(repo, "show", "--name-only", "HEAD").stdout
+
+
+def test_a_non_utf8_file_with_a_secret_is_still_refused(repo):
+    data = b"caf\xe9\nkey = '" + _fake_aws_key().encode() + b"'\n"
+    (repo / "notes.txt").write_bytes(data)
+
+    ok, out = gx.do_git_add_commit({"message": "m", "all": True})
+
+    assert not ok
+    assert "notes.txt:2" in out
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "password: {v}",
+        "  db_password: {v}",
+        "  - api_token: {v}  # rotated weekly",
+        "PASSWORD={v} # prod",
+        "export DB_SECRET={v}   # set by ops",
+    ],
+)
+def test_unquoted_yaml_and_commented_env_values_match(template):
+    findings = _scan(template.format(v=_fake_password()))
+    assert [f.label for f in findings] == ["Password or secret assignment"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "password: changeme",
+        "  token: ${API_TOKEN}",
+        "secret_name: my-app-db-credentials",
+        "api_key: Optional[str] = None",
+        "PASSWORD=your-password-here # fill in",
+    ],
+)
+def test_yaml_and_env_placeholders_never_match(text):
+    assert _scan(text) == []
+
+
+def test_a_placeholder_does_not_hide_a_real_key_on_the_same_line():
+    line = "k = ['AK" + "IAIOSFODNN7" + "EXAMPLE', '" + _fake_aws_key() + "']"
+    assert [f.label for f in _scan(line)] == [_scan(_fake_aws_key())[0].label]

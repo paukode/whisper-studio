@@ -166,10 +166,12 @@
       <li>Provider keys with a known shape, for example AWS access keys, GitHub, Slack, OpenAI,
         Anthropic and Stripe keys, and JSON Web Tokens. These rules come from
         <code class="path">server/memory/secret_scanner.py</code>.</li>
-      <li>A private key block: a <code>BEGIN ... PRIVATE KEY</code> line with a key body after it. A
-        line that only names the format does not match.</li>
-      <li>A password, secret, token or API key assignment with a random value, in code or in a
-        <code>.env</code> file.</li>
+      <li>A private key block: a <code>BEGIN ... PRIVATE KEY</code> line with a key body after it. The
+        body can be on the next lines or on the same line, for example in the JSON string of a
+        cloud service-account file. A line that only names the format does not match.</li>
+      <li>A password, secret, token or API key assignment with a random value. The scan reads code,
+        <code>.env</code> files (also with a comment at the end of the line) and YAML files (also
+        with no quotes around the value).</li>
       <li>A password inside a URL, for example <code>postgres://user:value@host</code>.</li>
     </ul>
     <p>The scan ignores placeholders. Examples are <code>your-api-key-here</code>,

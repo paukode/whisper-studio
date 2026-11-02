@@ -29,6 +29,12 @@ _PROVIDER_RULES = tuple(r for r in RULES if r[0] != "private-key-header")
 
 _KEY_HEADER = re.compile(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----")
 _KEY_BODY = re.compile(r"^[A-Za-z0-9+/=]{40,}$")
+# Header and body on ONE line: a key held in a JSON string (a cloud
+# service-account file) or an escaped literal. "\\n" is the two characters
+# a JSON string uses for a newline.
+_KEY_INLINE = re.compile(
+    r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----(?:\\n|\s)*([A-Za-z0-9+/=]{40,})"
+)
 # PEM and PGP armor headers that can sit between the BEGIN line and the body.
 _KEY_ARMOR = re.compile(r"^(?:Proc-Type|DEK-Info|Version|Comment|Hash):|^$")
 
@@ -43,8 +49,16 @@ _SECRET_NAME = (
 _QUOTED_ASSIGN = re.compile(
     r"(?i)[\"']?\b" + _SECRET_NAME + r"[\"']?\s*(?::=|=|:)\s*([\"'])([^\"'\s]{12,})\1(?!\s*\+)"
 )
-# NAME=value on its own line (.env files, shell exports).
-_ENV_ASSIGN = re.compile(r"(?i)^\s*(?:export\s+)?" + _SECRET_NAME + r"\s*=\s*([^\s\"'#]{12,})\s*$")
+# NAME=value on its own line (.env files, shell exports), with an optional
+# trailing comment.
+_ENV_ASSIGN = re.compile(
+    r"(?i)^\s*(?:export\s+)?" + _SECRET_NAME + r"\s*=\s*([^\s\"'#]{12,})\s*(?:#.*)?$"
+)
+# name: value with no quotes on its own line (YAML: docker-compose, k8s,
+# application.yml), also as a list item, with an optional trailing comment.
+_YAML_ASSIGN = re.compile(
+    r"(?i)^\s*(?:-\s+)?" + _SECRET_NAME + r"\s*:\s+([^\s\"'#]{12,})\s*(?:#.*)?$"
+)
 # scheme://user:password@host
 _URL_PASSWORD = re.compile(r"\b[a-z][a-z0-9+.\-]*://[^/\s:@'\"]+:([^/\s:@'\"]{8,})@")
 
@@ -120,17 +134,19 @@ def _line_findings(text: str) -> list[str]:
     """Return the labels of the secrets on one added line."""
     labels: list[str] = []
     for _rule_id, label, pattern in _PROVIDER_RULES:
-        match = pattern.search(text)
-        if match and not _is_placeholder(match.group(1)):
+        # Every match counts: a placeholder must not hide a real key that
+        # sits later on the same line.
+        if any(not _is_placeholder(m.group(1)) for m in pattern.finditer(text)):
             labels.append(label)
     if labels:
         return labels
     for match in _QUOTED_ASSIGN.finditer(text):
         if _looks_random(match.group(2)):
             return ["Password or secret assignment"]
-    match = _ENV_ASSIGN.match(text)
-    if match and _looks_random(match.group(1)):
-        return ["Password or secret assignment"]
+    for assign in (_ENV_ASSIGN, _YAML_ASSIGN):
+        match = assign.match(text)
+        if match and _looks_random(match.group(1)):
+            return ["Password or secret assignment"]
     match = _URL_PASSWORD.search(text)
     if match and _looks_random(match.group(1)):
         return ["Password in a URL"]
@@ -138,10 +154,16 @@ def _line_findings(text: str) -> list[str]:
 
 
 def _private_key_blocks(lines: list[tuple[int, str]]) -> list[int]:
-    """Line numbers of BEGIN headers that a key body follows."""
+    """Line numbers of BEGIN headers that a key body follows, on the same
+    line or on the next lines."""
     found: list[int] = []
     for i, (lineno, text) in enumerate(lines):
         if not _KEY_HEADER.search(text):
+            continue
+        inline = _KEY_INLINE.search(text)
+        if inline:
+            if not _is_placeholder(inline.group(1)):
+                found.append(lineno)
             continue
         for _next_no, nxt in lines[i + 1 : i + 6]:
             body = nxt.strip().strip("\"',").replace("\\n", "")
