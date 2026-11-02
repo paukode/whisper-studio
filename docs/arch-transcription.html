@@ -52,8 +52,8 @@
       <li><b>Binary frames</b> carry raw <code>PCM16</code> mono audio at <b>16 kHz</b>. They are
         processed strictly in order: the VAD buffer and the decoder are stateful, and decode is faster
         than real time, so awaiting each frame inline keeps ordering trivial without dropping audio.</li>
-      <li><b>Text frames</b> are JSON control messages: <code>ping</code>, <code>set_model</code> /
-        <code>set_backend</code> (a live engine switch), <code>set_translate</code> (translator and
+      <li><b>Text frames</b> are JSON control messages: <code>ping</code>, <code>set_model</code> (a live engine
+        switch), <code>set_translate</code> (translator and
         target changes mid-recording), <code>set_speakers</code> (a participant-count hint), and
         <code>stop</code>.</li>
     </ul>
