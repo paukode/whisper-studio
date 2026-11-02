@@ -456,10 +456,6 @@ async def do_terminal_run(payload: dict) -> tuple[bool, str]:
 _CONTROL_KEYS = frozenset("\x03\x04\x11")
 
 _WAIT_REASON_HINTS = {
-    "stdin_read": (
-        "The program is waiting for input (blocked reading stdin). Send the next "
-        "line with terminal_send."
-    ),
     "inferred_idle": (
         "Output went quiet and the program appears to be waiting. If it prompted, "
         "send input with terminal_send; otherwise it may still be working — send an "

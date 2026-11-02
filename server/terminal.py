@@ -493,15 +493,6 @@ async def run_in_session(
 _SETTLE_WINDOW_S = 0.4
 _SEND_POLL_INTERVAL = 0.05
 
-# `ps -o wchan` substrings that mean "blocked reading a terminal".
-#
-# Honesty note: under normal privileges macOS `ps -o wchan` usually returns "-"
-# for other processes, so stdin_read usually cannot be PROVEN and the
-# classifier conservatively reports inferred_idle instead of over-claiming. The
-# signature is kept for the host where wchan is exposed; otherwise it simply
-# never matches.
-_TTY_READ_WCHANS = ("ttyin",)
-
 
 def _foreground_pgrp(session: "_PtySession") -> int | None:
     """The process group currently in the FOREGROUND of the PTY — the group
@@ -514,56 +505,19 @@ def _foreground_pgrp(session: "_PtySession") -> int | None:
         return None
 
 
-def _wait_channel(pid: int) -> str:
-    """Best-effort kernel wait-channel for `pid` — what the process is blocked
-    in right now. Empty string when it can't be read. Used only as a positive
-    signal for `stdin_read`; a miss falls back to `inferred_idle`."""
-    try:
-        out = subprocess.run(
-            ["ps", "-o", "wchan=", "-p", str(pid)],
-            capture_output=True,
-            text=True,
-            timeout=1.0,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return ""
-    return out.stdout.strip()
-
-
-def _blocked_on_tty_read(pgrp: int) -> bool:
-    """True when the foreground group's leader is positively blocked reading
-    the terminal (i.e. prompting for input). Conservative: unknown → False, so
-    the caller reports the weaker `inferred_idle` rather than over-claiming."""
-    if pgrp is None or pgrp <= 0:
-        return False
-    return any(sig in _wait_channel(pgrp) for sig in _TTY_READ_WCHANS)
-
-
 def classify_wait_reason(session: "_PtySession", *, settled: bool) -> str:
     """Why did an interactive send stop waiting?
 
     session_exit  — the shell process is gone.
-    stdin_read    — a foreground child is blocked reading the terminal
-                    (it is prompting for input).
-    inferred_idle — output went quiet and either control returned to the
-                    shell prompt, or a child is waiting but we can't prove
-                    it's a stdin read.
+    inferred_idle — output went quiet: control returned to the shell prompt,
+                    or a child is waiting (macOS cannot prove it is a stdin
+                    read).
     timeout       — output never settled within the budget.
     """
     if not session.alive:
         return "session_exit"
     if not settled:
         return "timeout"
-    fg = _foreground_pgrp(session)
-    try:
-        shell_pgrp = os.getpgid(session.process.pid)
-    except OSError:
-        shell_pgrp = None
-    if fg is not None and shell_pgrp is not None and fg == shell_pgrp:
-        # Control is back at the shell prompt — ready for the next command.
-        return "inferred_idle"
-    if _blocked_on_tty_read(fg):
-        return "stdin_read"
     return "inferred_idle"
 
 
@@ -579,9 +533,8 @@ async def send_and_wait(
     ``{output, wait_reason, session_alive}``.
 
     "Ready" means output has stayed quiet for `settle` seconds (the program is
-    waiting), or the session exited. The wait_reason names which, and whether a
-    quiet program is specifically blocked reading stdin (`stdin_read`) or merely
-    idle (`inferred_idle`). This is the contract that lets a caller drive an
+    waiting), or the session exited. The wait_reason names which. This is the
+    contract that lets a caller drive an
     interactive REPL without a fixed sleep or a completion marker.
     """
     timeout = max(0.2, min(float(timeout), _MAX_TIMEOUT_S))

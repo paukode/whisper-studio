@@ -2,10 +2,8 @@
 input (with a typed wait reason), and terminal_send drives a persistent
 interactive PTY whose state survives across calls.
 
-These use a real PTY. On macOS `ps -o wchan` usually cannot prove a tty read,
-so the classifier honestly reports inferred_idle; the assertions below check
-the reasons that always hold: session_exit, fast idle return, and state
-persistence. stdin_read is covered by forcing the tty-read probe.
+These use a real PTY. The assertions check session_exit, fast idle return,
+and state persistence.
 """
 
 import asyncio
@@ -26,7 +24,7 @@ def test_send_returns_fast_when_a_repl_goes_idle():
             # The REPL settles well inside the budget — the whole point is that
             # we return on readiness, not on the timeout.
             assert elapsed < 10
-            assert r["wait_reason"] in ("stdin_read", "inferred_idle")
+            assert r["wait_reason"] == "inferred_idle"
             assert r["session_alive"]
         finally:
             s.kill()
@@ -55,43 +53,6 @@ def test_session_exit_is_detected():
         r = await t.send_and_wait(s, "exit\n", timeout=15)
         assert r["wait_reason"] == "session_exit"
         assert not r["session_alive"]
-
-    asyncio.run(go())
-
-
-def test_stdin_read_when_provable(monkeypatch):
-    """When the OS positively reports a tty read, the reason is stdin_read (not
-    the weaker inferred_idle). Forced here, since macOS ps usually cannot report
-    a tty read (see the module docstring)."""
-    monkeypatch.setattr(t, "_blocked_on_tty_read", lambda _pgrp: True)
-
-    async def go():
-        s = t._create_pty_session("/tmp", hidden=True)
-        try:
-            await asyncio.sleep(0.3)
-            r = await t.send_and_wait(s, "python3 -q\n", timeout=15)
-            assert r["wait_reason"] == "stdin_read"
-        finally:
-            s.kill()
-
-    asyncio.run(go())
-
-
-def test_control_at_shell_prompt_is_idle_not_stdin_read(monkeypatch):
-    """Even if the tty-read probe would say yes, control being back at the shell
-    prompt (fg pgrp == shell pgrp) reports inferred_idle: the shell IS reading
-    stdin, but 'ready for the next command' is the more useful fact."""
-    monkeypatch.setattr(t, "_blocked_on_tty_read", lambda _pgrp: True)
-
-    async def go():
-        s = t._create_pty_session("/tmp", hidden=True)
-        try:
-            await asyncio.sleep(0.3)
-            r = await t.send_and_wait(s, "echo hi\n", timeout=15)
-            assert "hi" in r["output"]
-            assert r["wait_reason"] == "inferred_idle"
-        finally:
-            s.kill()
 
     asyncio.run(go())
 

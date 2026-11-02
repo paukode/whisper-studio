@@ -85,7 +85,7 @@ _RUN_OWN_HEADS = ("Error:", "[", "No workspace", "No command")
 # A call that has not finished: moved to the background, a terminal program
 # still waiting for input or still printing, a command past its time limit.
 _PENDING_RE = re.compile(
-    r"^\[Background Task Started\]|^wait_reason:\s*(?:stdin_read|timeout)\b"
+    r"^\[Background Task Started\]|^wait_reason:\s*timeout\b"
     r"|^TIMED OUT after\b|^exit_code:\s*None\b",
     re.MULTILINE,
 )
