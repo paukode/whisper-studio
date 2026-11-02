@@ -209,9 +209,11 @@ def test_ws_run_command_marks_a_chat_command_and_not_an_agents(tmp_path, monkeyp
         _wait_finished(task_id)
     assert registry.get_task(ids["chat"])["meta"].get(task_wake.WAKE_META_KEY) is True
     assert task_wake.WAKE_META_KEY not in registry.get_task(ids["agent"])["meta"]
-    # The chat is told not to poll; the agent, with no wake, still polls.
+    # The chat is told not to poll; the agent, with no wake, is told to
+    # block on task_wait for this task, never to poll.
     assert "comes back to you" in texts["chat"] and "do not poll" in texts["chat"]
-    assert "Check on it with task_status" in texts["agent"]
+    assert "task_wait" in texts["agent"] and ids["agent"] in texts["agent"]
+    assert "comes back to you" not in texts["agent"]
 
 
 def test_the_background_cap_fits_a_release_build():

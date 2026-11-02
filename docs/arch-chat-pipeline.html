@@ -284,11 +284,13 @@
       <li><b>A repeating cycle</b> of up to four distinct calls (<code>MAX_CYCLE_PERIOD</code>)
         repeated three times over (<code>CYCLE_REPEATS</code>).</li>
       <li><b>A per-turn cap</b> for a runaway-prone tool. The defaults are
-        <code>web_search</code> 50, <code>spawn_agent</code> 50, and <code>team_create</code> 20,
-        overridable with the <code>tool_loop_caps</code> config key.</li>
+        <code>web_search</code> 50, <code>spawn_agent</code> 50, <code>team_create</code> 20 and
+        <code>sleep</code> 10. The <code>tool_loop_caps</code> config key changes them. From the third
+        <code>sleep</code> call in a turn (<code>SLEEP_NOTE_FROM</code>), each result has a note that
+        points the model at <code>task_wait</code> and <code>workflow_wait</code>.</li>
     </ul>
-    <p>Polling is legitimate repetition, so <code>task_status</code>, <code>task_output</code>,
-      <code>sleep</code>, <code>ci_status</code>, <code>git_status</code> and their kind are exempt
+    <p>Some tools repeat on purpose, so <code>task_status</code>, <code>task_output</code>,
+      <code>task_wait</code>, <code>workflow_wait</code>, <code>sleep</code>, <code>ci_status</code>, <code>git_status</code> and their kind are exempt
       from the streak and cycle checks; the caps still apply. A byte-identical large payload (512
       characters or more) coming back a second time is replaced by a stub pointing at the earlier
       result, so a repeated read does not re-enter the context in full.</p>

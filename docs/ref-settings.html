@@ -390,14 +390,16 @@
     <p>The loop guard (<code class="path">server/chat/loop_guard.py</code>, gated by the
       <code>tool_loop_guard</code> feature flag) refuses a tool call that repeats the same arguments
       after two identical results, a call that has already failed three times unchanged, and a
-      repeating cycle of calls. It also caps the two tools that run away most: <code>web_search</code>
-      at 50 calls a turn, <code>spawn_agent</code> at 50 and <code>team_create</code> at 20. The
+      repeating cycle of calls. It also caps the tools that run away most: <code>web_search</code>
+      at 50 calls a turn, <code>spawn_agent</code> at 50, <code>team_create</code> at 20 and
+      <code>sleep</code> at 10. From the third <code>sleep</code> call in a turn, each result has a
+      note. The note tells the model to use <code>task_wait</code> or <code>workflow_wait</code>. The
       <code>tool_loop_caps</code> object overlays those numbers by tool name, and a cap of
       <code>0</code> turns that tool's cap off:</p>
     <div class="code-block"><pre><code>"tool_loop_caps": { "web_search": 10, "team_create": 0 }</code></pre></div>
-    <p>Pollers that legitimately repeat (<code>task_status</code>, <code>sleep</code>,
-      <code>ci_status</code>, <code>git_status</code> and friends) are exempt from the repeat checks;
-      caps still apply to them.</p>
+    <p>Tools that repeat on purpose (<code>task_status</code>, <code>task_wait</code>,
+      <code>workflow_wait</code>, <code>sleep</code>, <code>ci_status</code>, <code>git_status</code>
+      and similar tools) are exempt from the repeat checks. The caps still apply to them.</p>
 
     <h2 id="feature-flags">Feature flags</h2>
     <p>The <code>feature_flags</code> key is a small namespace of booleans that gate optional behavior

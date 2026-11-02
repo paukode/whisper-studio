@@ -959,10 +959,11 @@ def _background_started_message(
             f"Raw output file: {output_path}"
         )
     return head + (
-        "The command is running in the background. Check on it with task_status "
-        f"{{'task_id': '{task_id}'}} and read its output with task_output "
-        f"{{'task_id': '{task_id}'}}; wait a while between checks (30s, then "
-        f"1-2 min) rather than polling immediately. Raw output file: {output_path}"
+        "The command is running in the background. Do other work in the meantime. "
+        f"To wait for it, call task_wait {{'task_ids': ['{task_id}']}}: it blocks in "
+        "one call until the command ends, so do not poll with sleep or task_status. "
+        f"Read its output with task_output {{'task_id': '{task_id}'}}. "
+        f"Raw output file: {output_path}"
     )
 
 

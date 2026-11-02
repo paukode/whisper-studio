@@ -156,8 +156,9 @@
         <code>[WS_APPROVAL]</code> write gate, unless <code>isolation: 'worktree'</code> gives it its own
         git worktree to write into. Its result is folded into a later turn by
         <code class="path">server/agents/completion_inject.py</code> (<code>inject_completions</code>);
-        the model polls with <code>task_status</code> / <code>task_output</code> and cancels with
-        <code>task_cancel</code>. Two separate limits apply: a detached spawn is refused while
+        the model does not poll. It ends the turn or does other work, and the result wakes it. To wait in
+        the turn, it calls <code>task_wait</code>, which blocks in one call until the agent ends. It
+        reads the output with <code>task_output</code> and cancels with <code>task_cancel</code>. Two separate limits apply: a detached spawn is refused while
         <code>DETACHED_PER_SESSION_CAP = 8</code> agent runs of any kind are running in the session,
         and a server-wide semaphore, <code>DETACHED_CONCURRENCY = 2</code>, decides how many of those actually
         run at a time, so fire-and-forget spawns cannot starve the shared model-call pool that blocking
