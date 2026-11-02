@@ -140,14 +140,14 @@ def test_runtime_view_is_live(monkeypatch):
 
 
 def test_registry_reads_id_from_chat_models_not_meta(monkeypatch):
-    """Regression: ids live in the parallel chat_models map. Reading them from
-    chat_model_meta yields None and invents "local:<key>", which then overwrites
-    a built-in's real sentinel and breaks key_for_id()."""
-    cfg = {
-        "chat_models": {"local_gemma": "local:gemma-4-12b-it-qat-q4_0"},
-        "chat_model_meta": {"local_gemma": {"is_local": True, "label": "G"}},
-    }
-    monkeypatch.setattr("server.infrastructure.config.load_config", lambda *a, **k: cfg)
+    """Regression: ids live in the parallel ``ids`` map of
+    unfiltered_chat_models. Reading them from the meta map yields None and
+    invents "local:<key>", which then overwrites a recommended model's real
+    id and breaks key_for_id()."""
+    monkeypatch.undo()  # the autouse fixture stubs _config_local_models itself
+    ids = {"local_gemma": "local:gemma-4-12b-it-qat-q4_0"}
+    meta = {"local_gemma": {"is_local": True, "label": "G"}}
+    monkeypatch.setattr("server.infrastructure.config.unfiltered_chat_models", lambda: (ids, meta))
     assert R._config_local_models()["local_gemma"]["id"] == "local:gemma-4-12b-it-qat-q4_0"
 
 
