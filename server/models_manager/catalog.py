@@ -294,8 +294,12 @@ def gguf_paths(entry: ModelEntry) -> list[str]:
         ):
             if os.path.exists(path):
                 found.append(path)
-        partials = os.path.join(download, f"{_short_hash(name + '.metadata')}.*.incomplete")
-        found.extend(glob.glob(partials))
+        # hf hashes the metadata file's BASENAME and keeps the partial next to
+        # it, so a shard in a repo subfolder ("Q4_K_M/x-00001-of-00003.gguf")
+        # has its partial under download/Q4_K_M/.
+        sub = os.path.dirname(name)
+        partial = f"{_short_hash(os.path.basename(name) + '.metadata')}.*.incomplete"
+        found.extend(glob.glob(os.path.join(glob.escape(os.path.join(download, sub)), partial)))
     return found
 
 

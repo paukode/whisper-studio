@@ -885,6 +885,46 @@ def test_a_partial_shard_download_counts_and_is_deleted(client, two_quants):
     assert str(hf.incomplete_path("etag123")) in gguf_paths(entry)
 
 
+def test_a_partial_shard_in_a_repo_subfolder_counts_and_is_deleted(client, home, monkeypatch):
+    """A quant stored in a repo subfolder ("Q4_K_M/x-00001-of-00002.gguf") has
+    its hf partial under download/Q4_K_M/, named from the basename only."""
+    from pathlib import Path
+
+    from huggingface_hub._local_folder import get_local_download_paths
+
+    from server.local import registry
+    from server.models_manager.catalog import bytes_on_disk, gguf_paths
+
+    monkeypatch.setattr(
+        registry,
+        "_config_local_models",
+        lambda: {
+            "local_sub": {
+                "repo_id": "org/S-GGUF",
+                "dir": "org--S-GGUF",
+                "is_local": True,
+                "id": "local:s-q4",
+                "label": "S Q4",
+                "filename": "Q4_K_M/S-Q4_K_M-00001-of-00002.gguf",
+            },
+        },
+    )
+    folder = home / "models" / "org--S-GGUF"
+    (folder / "Q4_K_M").mkdir(parents=True)
+    (folder / "Q4_K_M" / "S-Q4_K_M-00001-of-00002.gguf").write_bytes(b"4" * 100)
+    hf = get_local_download_paths(Path(folder), "Q4_K_M/S-Q4_K_M-00002-of-00002.gguf")
+    partial = hf.incomplete_path("etag9")
+    partial.write_bytes(b"p" * 30)
+
+    entry = get_entry("local_sub")
+    assert str(partial) in gguf_paths(entry)
+    assert bytes_on_disk(entry) == 130
+
+    r = client.delete("/api/models/local_sub")
+    assert r.status_code == 200 and r.json()["deleted"] is True
+    assert not partial.exists()
+
+
 def test_download_failure_reasons_name_the_cause():
     import errno
 
