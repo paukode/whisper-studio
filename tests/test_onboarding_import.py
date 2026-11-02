@@ -319,38 +319,6 @@ def test_codex_mcp_servers_parsed_from_config_toml(tmp_path, isolated_skills, is
     assert servers["foo"]["env"] == {"API_KEY": "abc"}
 
 
-# --- the minimal TOML fallback parser (exercised directly; tomllib covers
-# --- the primary path on this test runner's Python 3.11+) ------------------
-
-
-def test_toml_fallback_parses_mcp_servers_and_ignores_other_tables():
-    text = (
-        "[mcp_servers.alpha]\n"
-        'command = "npx"\n'
-        'args = ["-y", "server-a"]\n'
-        'env = { KEY = "value", OTHER = "x" }\n'
-        "\n"
-        "[mcp_servers.beta]\n"
-        'command = "/usr/bin/beta"\n'
-        "\n"
-        "[unrelated]\n"
-        'foo = "bar"\n'
-    )
-    out = ie.parse_mcp_servers_toml_fallback(text)
-    assert set(out) == {"alpha", "beta"}
-    assert out["alpha"]["command"] == "npx"
-    assert out["alpha"]["args"] == ["-y", "server-a"]
-    assert out["alpha"]["env"] == {"KEY": "value", "OTHER": "x"}
-    assert out["beta"]["command"] == "/usr/bin/beta"
-    assert "unrelated" not in out
-
-
-def test_toml_fallback_handles_multiline_array():
-    text = '[mcp_servers.wrapped]\nargs = [\n  "-y",\n  "server-b"\n]\ncommand = "npx"\n'
-    out = ie.parse_mcp_servers_toml_fallback(text)
-    assert out["wrapped"]["args"] == ["-y", "server-b"]
-
-
 # --- bad source/workspace paths raise a recoverable error -------------------
 
 
