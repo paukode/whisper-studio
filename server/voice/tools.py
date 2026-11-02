@@ -317,12 +317,9 @@ def _background_status(ctx: ToolContext) -> str:
             "One request is paused waiting for the user's decision: "
             f"{ctx.pending.get('summary') or ctx.pending.get('question') or ctx.pending.get('action')}"
         )
-    try:
-        from server.agents.registry import agent_registry
+    from server.agents.registry import agent_registry
 
-        agents = agent_registry.list_all(ctx.session_id)
-    except Exception:  # noqa: BLE001 - status must never fail
-        agents = []
+    agents = agent_registry.list_all(ctx.session_id)
     active = [a for a in agents if getattr(a, "status", "") in ("running", "pending", "starting")]
     recent = [a for a in agents if a not in active]
     if active:

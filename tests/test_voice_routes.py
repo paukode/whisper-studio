@@ -39,6 +39,20 @@ def test_status_available_when_sdk_and_credentials(monkeypatch):
     assert body["region"]  # resolved from bedrock_region when voice.region is blank
 
 
+def test_status_reports_a_broken_aws_profile(monkeypatch):
+    """A credential lookup that raises (for example a missing profile) is shown
+    as the reason, not hidden behind "No AWS credentials found"."""
+    monkeypatch.setattr(voice_routes, "sdk_availability", lambda: (True, None))
+
+    def boom():
+        raise RuntimeError("The config profile (nobody) could not be found")
+
+    monkeypatch.setattr(voice_routes, "_credentials_present", boom)
+    body = _client().get("/api/voice/status").json()
+    assert body["available"] is False
+    assert "could not be found" in body["reason"]
+
+
 def test_status_disabled_by_config(monkeypatch):
     monkeypatch.setattr(voice_routes, "sdk_availability", lambda: (True, None))
     monkeypatch.setattr(

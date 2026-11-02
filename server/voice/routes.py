@@ -69,12 +69,11 @@ def voice_settings() -> dict[str, Any]:
 
 
 def _credentials_present() -> bool:
-    try:
-        import botocore.session
+    """Whether botocore resolves AWS credentials. A broken profile raises (for
+    example ProfileNotFound), and the caller reports that error."""
+    import botocore.session
 
-        return botocore.session.get_session().get_credentials() is not None
-    except Exception:  # noqa: BLE001
-        return False
+    return botocore.session.get_session().get_credentials() is not None
 
 
 @router.get("/api/voice/status")
@@ -89,13 +88,17 @@ async def voice_status() -> dict[str, Any]:
         available, reason = sdk_availability()
     if available and not settings.get("enabled", True):
         available, reason = False, "Voice mode is disabled in config (voice.enabled)."
-    if available and not await asyncio.get_running_loop().run_in_executor(
-        None, _credentials_present
-    ):
-        available, reason = (
-            False,
-            ("No AWS credentials found. Voice mode uses the same credentials as chat."),
-        )
+    if available:
+        try:
+            present = await asyncio.get_running_loop().run_in_executor(None, _credentials_present)
+        except Exception as e:  # noqa: BLE001 - reported to the user as the reason
+            available, reason = False, f"AWS credentials could not be read: {e}"
+        else:
+            if not present:
+                available, reason = (
+                    False,
+                    "No AWS credentials found. Voice mode uses the same credentials as chat.",
+                )
     return {
         "available": available,
         "reason": reason,
