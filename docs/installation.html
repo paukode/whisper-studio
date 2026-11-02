@@ -228,8 +228,9 @@ bash setup.sh</code></pre></div>
         are deliberately not gated here: the script installs them itself further down.</p></li>
       <li><h4>Creates the venv and installs Python deps</h4><p>Builds an isolated
         <code class="path">venv/</code> and installs from <code class="path">requirements.txt</code>. It
-        prefers an extension-capable (Homebrew) Python so vector search can use sqlite-vec, referenced by
-        absolute path only, and falls back to a numpy vector search otherwise. Your default
+        needs a Python whose SQLite can load extensions (Homebrew's), because vector search uses
+        sqlite-vec; that Python is referenced by absolute path only, and setup stops with an error when
+        none is found. Your default
         <code>python3</code> and shell config are left untouched.</p></li>
       <li><h4>Fetches Playwright Chromium</h4><p>The Playwright pip package carries no browser, so the
         script runs <code>playwright install chromium</code> for the live-preview browser tools. It is

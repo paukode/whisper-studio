@@ -99,7 +99,7 @@
     <dl class="spec">
       <dt><code class="path">Qwen3-Embedding-0.6B</code></dt>
       <dd>The local default. 1024-dimensional, L2-normalized vectors on <code>transformers</code> +
-        <code>torch</code> (MPS on Apple Silicon, CPU fallback). Pooling takes the last token's hidden
+        <code>torch</code> (on the Apple silicon GPU through MPS; without MPS the embedder fails with an error). Pooling takes the last token's hidden
         state; queries get an instruction prefix, documents do not. Loaded lazily and unloaded after a
         build so an index run does not hold roughly 1 GB resident alongside the chat model.</dd>
       <dt><code class="path">Cohere Embed v4</code></dt>
