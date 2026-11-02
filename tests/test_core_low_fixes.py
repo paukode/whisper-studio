@@ -211,3 +211,16 @@ def test_execute_task_tool_reports_invalid_status(monkeypatch, tmp_path):
     assert "error" in out
     assert out.get("updated") is None
     assert "bogus" in out["error"]
+
+
+def test_a_task_db_read_error_raises_and_caches_nothing(monkeypatch):
+    import sqlite3
+
+    def broken():
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(tt, "_get_conn", broken)
+    tt._task_store.pop("sess-db-error", None)
+    with pytest.raises(sqlite3.OperationalError):
+        tt.get_session_tasks("sess-db-error")
+    assert "sess-db-error" not in tt._task_store
