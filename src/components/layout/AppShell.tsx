@@ -291,7 +291,7 @@ const AppShell: React.FC = () => {
           style={{ flex: '1 1 0%', minHeight: 220 }}
         >
           <ChatPanel />
-          <TranscriptionPanel hidden={false} />
+          <TranscriptionPanel />
         </Splitter>
       ) : (
         <div style={{ display: 'flex', flex: '1 1 0%', minHeight: 220, minWidth: 0, overflow: 'hidden' }}>

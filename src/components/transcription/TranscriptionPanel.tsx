@@ -1,4 +1,5 @@
-import { forwardRef, useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { CHAT_INSERT_EVENT, SEGMENT_EDIT_EVENT } from '@/utils/uiEvents';
 import { createPortal } from 'react-dom';
 import { getActiveTranscriptionStore, useActiveTranscriptionStore } from '@/stores/sessionRuntimes';
 import { useSessionStore } from '@/stores/sessionStore';
@@ -83,7 +84,7 @@ export const TRANSLATOR_UNAVAILABLE_BADGE = 'Apple translation unavailable here'
  *  Apple's on-device translator support (Whisper always targets English and
  *  needs no picker). Flags mark which translator can produce each target so
  *  the pickers can annotate/limit; Apple's set was probed on-device. */
-export const TRANSLATE_TARGETS = [
+const TRANSLATE_TARGETS = [
   { code: 'en', name: 'English', canary: true, apple: true },
   { code: 'ar', name: 'Arabic', canary: false, apple: true },
   { code: 'bg', name: 'Bulgarian', canary: true, apple: false },
@@ -132,10 +133,6 @@ export const targetsFor = (mode: string) => {
 // system audio directly. There is deliberately no second "Record" affordance
 // here.
 
-/** Custom event names used to talk to ChatInput / TranscriptSegment without
- * an extra global store. ChatInput listens for `whisper-chat-insert` and
- * inserts the text into its composer (without auto-sending). TranscriptSegment
- * listens for `whisper-segment-edit` to enter edit mode programmatically. */
 /** Whether a scroll container is close enough to its bottom to keep
  *  auto-following new transcript text. The slack absorbs sub-pixel scroll
  *  positions and the height of a partially revealed last line. */
@@ -145,8 +142,6 @@ export const isNearBottom = (el: {
   clientHeight: number;
 }): boolean => el.scrollHeight - el.scrollTop - el.clientHeight < 48;
 
-export const CHAT_INSERT_EVENT = 'whisper-chat-insert';
-export const SEGMENT_EDIT_EVENT = 'whisper-segment-edit';
 
 interface MenuItem {
   action: string;
@@ -303,12 +298,8 @@ function TranscriptContextMenu({ state, onClose }: { state: ContextMenuState; on
   );
 }
 
-export interface TranscriptionPanelProps {
-  hidden?: boolean;
-}
-
 /**
- * Transcript panel matching the vanilla HTML structure exactly.
+ * Transcript panel.
  *
  * Structure:
  *   div.panel#transcriptPanel
@@ -319,8 +310,7 @@ export interface TranscriptionPanelProps {
  *       div.transcript-empty#transcriptEmpty (empty state)
  *       div.transcript-segments#transcriptSegments
  */
-export const TranscriptionPanel = forwardRef<HTMLDivElement, TranscriptionPanelProps>(
-  ({ hidden }, ref) => {
+export const TranscriptionPanel: React.FC = () => {
   const segments = useActiveTranscriptionStore((s) => s.segments);
   const interimText = useActiveTranscriptionStore((s) => s.interimText);
   const speakerNames = useActiveTranscriptionStore((s) => s.speakerNames);
@@ -506,7 +496,7 @@ export const TranscriptionPanel = forwardRef<HTMLDivElement, TranscriptionPanelP
   const liveSpeakerName = getSpeakerDisplayName(liveSpeakerKey);
 
   return (
-    <div ref={ref} className={`panel${hidden ? ' hidden' : ''}`} id="transcriptPanel">
+    <div className="panel" id="transcriptPanel">
       <div className="panel-header">
         <h2>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -711,6 +701,4 @@ export const TranscriptionPanel = forwardRef<HTMLDivElement, TranscriptionPanelP
       {ctxMenu && <TranscriptContextMenu state={ctxMenu} onClose={() => setCtxMenu(null)} />}
     </div>
   );
-});
-
-TranscriptionPanel.displayName = 'TranscriptionPanel';
+};

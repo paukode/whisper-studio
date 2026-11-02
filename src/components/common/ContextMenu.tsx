@@ -250,7 +250,6 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({ items, position, onClo
               <Submenu
                 items={item.children ?? []}
                 onClose={onClose}
-                parentRef={menuRef}
                 className={className}
                 letterShortcuts={letterShortcuts}
               />
@@ -267,7 +266,6 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({ items, position, onClo
 const Submenu: React.FC<{
   items: MenuItem[];
   onClose: () => void;
-  parentRef: React.RefObject<HTMLDivElement | null>;
   className?: string;
   letterShortcuts?: boolean;
 }> = ({ items, onClose, className, letterShortcuts }) => {

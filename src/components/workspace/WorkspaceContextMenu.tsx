@@ -478,14 +478,12 @@ export const WorkspaceContextMenu: React.FC<WorkspaceContextMenuProps> = ({
 
   const handleCut = useCallback(() => {
     _clipboard = { operation: 'cut', paths: [path] };
-    window.dispatchEvent(new CustomEvent('workspace-clipboard-change', { detail: _clipboard }));
     useUIStore.getState().addToast({ type: 'info', message: `Cut: ${fileName}`, duration: 1500, persist: false });
     onClose();
   }, [path, fileName, onClose]);
 
   const handleCopyFile = useCallback(() => {
     _clipboard = { operation: 'copy', paths: [path] };
-    window.dispatchEvent(new CustomEvent('workspace-clipboard-change', { detail: _clipboard }));
     useUIStore.getState().addToast({ type: 'info', message: `Copied: ${fileName}`, duration: 1500, persist: false });
     onClose();
   }, [path, fileName, onClose]);
