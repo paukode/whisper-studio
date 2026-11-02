@@ -79,26 +79,17 @@ def record_artifact(
     return entry
 
 
-def forget_session(session_id: str) -> None:
-    with _lock:
-        _versions.pop(session_id, None)
-
-
 def _history_artifacts(session_id: str) -> list[dict]:
     """Artifacts the frontend persisted on assistant messages, oldest first."""
     if not session_id:
         return []
-    try:
-        from server.infrastructure.sessions import _get_conn
+    from server.infrastructure.sessions import _get_conn
 
-        with _get_conn() as conn:
-            row = conn.execute(
-                "SELECT chat_history FROM sessions WHERE id = ?", (session_id,)
-            ).fetchone()
-        history = json.loads(row["chat_history"]) if row and row["chat_history"] else []
-    except Exception as e:  # noqa: BLE001 - history is a fallback, never a failure
-        log.debug("artifact history unavailable for %s: %s", session_id, e)
-        return []
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT chat_history FROM sessions WHERE id = ?", (session_id,)
+        ).fetchone()
+    history = json.loads(row["chat_history"]) if row and row["chat_history"] else []
     out: list[dict] = []
     for msg in history or []:
         if not isinstance(msg, dict) or msg.get("role") != "assistant":
@@ -317,12 +308,9 @@ def execute_edit_artifact(
 
 def activate_artifact_tools(session_id: str) -> None:
     """Once an artifact exists, its read and edit tools are advertised."""
-    try:
-        from server.chat.tool_activation import activate
+    from server.chat.tool_activation import activate
 
-        activate(session_id, ["read_artifact", "edit_artifact"])
-    except Exception as e:  # noqa: BLE001
-        log.debug("artifact tool activation skipped: %s", e)
+    activate(session_id, ["read_artifact", "edit_artifact"])
 
 
 READ_ARTIFACT_TOOL = {
@@ -391,7 +379,6 @@ __all__ = [
     "apply_edits",
     "execute_edit_artifact",
     "execute_read_artifact",
-    "forget_session",
     "latest_artifact",
     "list_artifacts",
     "record_artifact",

@@ -761,7 +761,7 @@ def test_a_reply_about_a_card_an_earlier_turn_made_ends_the_turn(claims_only):
     from server import artifacts
 
     sid = "claims-earlier-card"
-    artifacts.forget_session(sid)
+    artifacts._versions.pop(sid, None)
     # What the earlier turn's create_artifact call left (tool_router).
     artifacts.record_artifact(sid, title="Pipeline", html="<p>pipeline</p>")
     try:
@@ -770,14 +770,14 @@ def test_a_reply_about_a_card_an_earlier_turn_made_ends_the_turn(claims_only):
         assert len(adapter.calls) == 1
         assert "stop_hook_block" not in out
     finally:
-        artifacts.forget_session(sid)
+        artifacts._versions.pop(sid, None)
 
 
 def test_a_reply_about_a_card_the_session_never_had_is_held_once(claims_only):
     from server import artifacts
 
     sid = "claims-no-card"
-    artifacts.forget_session(sid)
+    artifacts._versions.pop(sid, None)
     correction = "Correction: there is no artifact card in this session yet."
     adapter = _Replies(_ABOUT_THE_CARD, *[correction] * 10)
     out = _run(sid, adapter, "which colour is the deploy stage?", history=_CARD_TURN)
