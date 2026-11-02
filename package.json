@@ -32,14 +32,15 @@
     "zustand": "^5.0.16"
   },
   "devDependencies": {
-    "@testing-library/jest-dom": "^6.9.1",
-    "@testing-library/react": "^16.3.2",
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.2.1",
     "eslint": "^10.14.0",
     "eslint-plugin-react-hooks": "^7.1.1",
-    "jsdom": "^29.0.2",
+    "jsdom": "^29.1.1",
     "prettier": "^3.8.3",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.72.1",
