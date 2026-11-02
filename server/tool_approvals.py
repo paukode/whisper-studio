@@ -253,13 +253,13 @@ async def gate_approval(
         if command_runs_trusted_skill(ws_parsed.get("command", "")):
             auto_allow_trusted = True
 
-    # Precedence: the hard floors (github-destructive, a delete outside the
-    # workspace, sandbox escalation, a visible terminal run, MCP-approve), app
-    # storage, category mode override, bypassPermissions (not for a save or
-    # folder reach outside the workspace), trusted skill, session approvals,
-    # custom rules, approved
-    # launch.json preview (allow), dontAsk, acceptEdits, auto (classifier),
-    # ask. See server.security.permissions.resolve_static_decision.
+    # Precedence: the hard floors (github-destructive, MCP-approve, and
+    # outside bypass a delete outside the workspace, sandbox escalation, a
+    # visible terminal run), app storage, category mode override,
+    # bypassPermissions (allows the rest, anywhere), trusted skill, session
+    # approvals, custom rules, approved launch.json preview (allow), dontAsk,
+    # acceptEdits, auto (classifier), ask. See
+    # server.security.permissions.resolve_static_decision.
     if secret == "ask":
         # Not the classifier, a session approval or a rule: a person, each time.
         decision = "ask"
