@@ -690,3 +690,10 @@ def test_an_unreadable_job_file_is_never_overwritten(temp_cron, monkeypatch):
     with pytest.raises(C.CronJobsUnreadable):
         C._mutate_jobs(lambda jobs: jobs.clear())
     assert _stored_bytes() == before
+
+
+def test_an_unknown_timezone_is_refused_not_swapped_for_another():
+    with pytest.raises(ValueError, match="unknown timezone 'Not/AZone'"):
+        CS._zone("Not/AZone")
+    with pytest.raises(ValueError, match="unknown timezone"):
+        CS.validate_schedule({"type": "at", "run_at": "2099-01-01T09:00:00", "tz": "Not/AZone"})

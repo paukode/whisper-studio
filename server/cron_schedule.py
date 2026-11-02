@@ -16,46 +16,39 @@ from datetime import datetime, timedelta, timezone
 def _system_tz_name() -> str:
     """The host's IANA timezone name (e.g. 'America/New_York').
 
-    Resolves from $TZ, then the /etc/localtime symlink (macOS), then
-    falls back to UTC. No third-party dependency.
+    Resolves from $TZ, then the /etc/localtime symlink (macOS). Raises when
+    neither names a zone. No third-party dependency.
     """
     tz = (os.environ.get("TZ") or "").strip()
     if tz:
         return tz
-    try:
-        target = os.path.realpath("/etc/localtime")
-        marker = "zoneinfo/"
-        if marker in target:
-            return target.split(marker, 1)[1]
-    except Exception:
-        pass
-    return "UTC"
+    target = os.path.realpath("/etc/localtime")
+    marker = "zoneinfo/"
+    if marker in target:
+        return target.split(marker, 1)[1]
+    raise RuntimeError(f"cannot read the system timezone: /etc/localtime points at {target}")
 
 
 def _default_tz_name() -> str:
     """Config override (cron_timezone) if set, else the host system zone."""
-    try:
-        from server.infrastructure.config import load_config
+    from server.infrastructure.config import load_config
 
-        cfg = (load_config().get("cron_timezone") or "").strip()
-        if cfg:
-            return cfg
-    except Exception:
-        pass
+    cfg = (load_config().get("cron_timezone") or "").strip()
+    if cfg:
+        return cfg
     return _system_tz_name()
 
 
 def _zone(name: str | None):
-    """A ZoneInfo for name (or the default zone), UTC on failure."""
+    """A ZoneInfo for name (or the default zone). An unknown zone raises
+    ValueError, never a silent switch to another zone."""
     from zoneinfo import ZoneInfo
 
+    zone = name or _default_tz_name()
     try:
-        return ZoneInfo(name or _default_tz_name())
-    except Exception:
-        try:
-            return ZoneInfo(_system_tz_name())
-        except Exception:
-            return timezone.utc
+        return ZoneInfo(zone)
+    except (KeyError, ValueError) as e:  # ZoneInfoNotFoundError is a KeyError
+        raise ValueError(f"unknown timezone '{zone}'") from e
 
 
 def _parse_dt(s: str) -> datetime:
