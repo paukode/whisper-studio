@@ -9,6 +9,5 @@ only ``sonic_client`` touches it, lazily):
                    normal chat engine, so Claude stays the brain)
   session.py       one live voice conversation: stream lifecycle, transcript,
                    tool dispatch, 8-minute stream renewal
-  routes.py        /ws/voice (browser <-> session), /api/voice/status and
-                   /api/voice/settings
+  routes.py        /ws/voice (browser <-> session) and /api/voice/status
 """
