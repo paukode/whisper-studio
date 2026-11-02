@@ -50,7 +50,7 @@ def test_spawn_agent_detach_returns_task_id_immediately(monkeypatch):
 def test_spawn_agent_detach_cap(monkeypatch):
     from server import agent_tools
 
-    for i in range(agent_tools.DETACHED_PER_SESSION_CAP):
+    for i in range(agent_tools.spawn.DETACHED_PER_SESSION_CAP):
         registry.create_task("agent", session_id="sess-cap", title=f"a{i}")
     out = json.loads(
         asyncio.run(

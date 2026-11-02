@@ -36,12 +36,6 @@ def unregister(agent_id: str) -> None:
         _live.pop(agent_id, None)
 
 
-def get(agent_id: str) -> dict | None:
-    with _lock:
-        ext = _live.get(agent_id)
-        return dict(ext) if ext is not None else None
-
-
 def extend(agent_id: str, *, rounds: int = 0, seconds: float = 0.0) -> dict | None:
     """Add rounds and seconds to a running agent's budget. None when no such
     agent is running (finished agents are resumed, not extended)."""
@@ -57,8 +51,3 @@ def extend(agent_id: str, *, rounds: int = 0, seconds: float = 0.0) -> dict | No
             # runner pinned finish_at); one more refused call ends it again.
             ext.pop("finish")
         return dict(ext)
-
-
-def live_ids() -> list[str]:
-    with _lock:
-        return list(_live)

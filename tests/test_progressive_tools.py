@@ -193,7 +193,7 @@ def test_tool_search_keyword_activation_and_opt_out():
 
 
 def test_tool_search_activation_batch_cap():
-    from server.agent_tools import _ACTIVATE_BATCH_MAX, execute_tool_search
+    from server.agent_tools.search_tools import _ACTIVATE_BATCH_MAX, execute_tool_search
 
     catalog = [_tool(f"widget_{i}", "widget maker") for i in range(10)]
     out = json.loads(

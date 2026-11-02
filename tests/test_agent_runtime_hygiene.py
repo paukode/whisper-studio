@@ -1,67 +1,10 @@
-"""Agent runtime hygiene: two medium findings.
-
-(A) The runtime tool loop must inject the internal __session_id__ into a COPY
-    of the model's tool input. tu["input"] is the exact dict replayed inside the
-    assistant message every turn; mutating it leaks __session_id__ into the
-    transcript (where the model can imitate it), and executors that only .get()
-    it never clean it up. _with_session_id() returns a copy and leaves the
-    original pristine.
-
-(B) The in-memory agent registry only ever grew: register()/update_status()
-    added entries but nothing pruned them. cleanup_completed() removes completed
-    agents older than its age threshold; it must drop stale ones while keeping
-    recent and still-running agents.
-"""
+"""The in-memory agent registry prunes finished agents: cleanup_completed()
+removes completed agents older than its age threshold and keeps recent and
+still-running ones."""
 
 import time
 
 from server.agents.registry import AgentRegistry
-from server.agents.runtime import _with_session_id
-
-# --- (A) input-copy leaves the model's tool_input pristine ---
-
-
-def test_with_session_id_returns_a_copy_without_touching_original():
-    original = {"path": "notes.txt", "mode": "read"}
-
-    call_input = _with_session_id(original, "sess-abc")
-
-    # The copy carries the internal id for the executor...
-    assert call_input["__session_id__"] == "sess-abc"
-    assert call_input["path"] == "notes.txt"
-    assert call_input["mode"] == "read"
-    # ...but the original (== tu["input"], replayed in the transcript) is
-    # untouched: no internal key, and it is a distinct object.
-    assert "__session_id__" not in original
-    assert call_input is not original
-
-
-def test_with_session_id_survives_executor_pop():
-    # Many executors do tool_input.pop("__session_id__", ...). That must not
-    # reach back into tu["input"], so simulate an executor mutating the copy.
-    original = {"query": "hello"}
-
-    call_input = _with_session_id(original, "sess-xyz")
-    call_input.pop("__session_id__", None)  # executor consumes/strips it
-
-    assert original == {"query": "hello"}
-    assert "__session_id__" not in original
-
-
-def test_with_session_id_also_stamps_agent_marker():
-    # refuse_if_agent() (github mutations) and MCP's elicitation callback
-    # both gate on __agent__ — every tool call this unattended loop dispatches
-    # must carry it, or an unattended subagent could answer a human-gated
-    # question on nobody's behalf.
-    original = {"path": "notes.txt"}
-
-    call_input = _with_session_id(original, "sess-abc")
-
-    assert call_input["__agent__"] is True
-    assert "__agent__" not in original
-
-
-# --- (B) cleanup_completed prunes stale entries, keeps recent + active ---
 
 
 def test_cleanup_completed_prunes_old_keeps_recent_and_active():

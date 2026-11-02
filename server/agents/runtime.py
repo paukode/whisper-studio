@@ -30,13 +30,11 @@ from server.agents.providers.base import AGENT_CALL_CONCURRENCY
 from server.agents.registry import agent_registry
 from server.agents.runtime_support import (  # noqa: F401 - re-exported for callers/tests
     _agent_finished,
-    _distill_structured,
     _enter_agent_worktree,
     _git_executor,
     _harvest_worktree,
     _resolve_agent_model,
     _spawned_by_released_turn,
-    _with_session_id,
     budget_readout,
     distill_run_output,
     no_agent_model_reason,

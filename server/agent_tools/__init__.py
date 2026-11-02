@@ -1,7 +1,5 @@
-"""Additional (non-workspace) tools for Whisper Studio.
-
-Split out of the former single ``server/agent_tools.py`` (900 lines) into
-focused submodules, one per tool family:
+"""Additional (non-workspace) tools for Whisper Studio, one submodule per
+tool family:
 
     schemas:       the ``*_TOOL`` schema dicts + the ``AGENT_TOOLS`` list
     config_tools:  config_get / config_set
@@ -16,13 +14,11 @@ focused submodules, one per tool family:
                    used via spawn_agent as a persistent .whisper/agents/
                    <name>.md custom type; see server/agents/custom_config.py)
 
-Every name external code reads off ``server.agent_tools`` is re-exported here
-so importers (server/tool_router.py, server/chat/*, tests) keep working
-unchanged. The dispatch that maps a tool name to one of these executors lives
-in server/tool_router.py.
+The package exposes the executors server/tool_router.py dispatches to and
+the ``AGENT_TOOLS`` catalog list server/chat/tool_pool.py reads.
 """
 
-from .config_tools import _mask_secrets, execute_config_get, execute_config_set  # noqa: F401
+from .config_tools import execute_config_get, execute_config_set  # noqa: F401
 from .cross_session import (  # noqa: F401
     execute_list_sessions,
     execute_send_session_message,
@@ -32,45 +28,17 @@ from .mcp_tools import (  # noqa: F401
     execute_read_mcp_resource,
 )
 from .promote import execute_promote_agent_type  # noqa: F401
-from .schemas import (  # noqa: F401
-    AGENT_TOOLS,
-    CONFIG_GET_TOOL,
-    CONFIG_SET_TOOL,
-    LIST_AGENTS_TOOL,
-    LIST_MCP_RESOURCES_TOOL,
-    LIST_SESSIONS_TOOL,
-    NOTIFY_USER_TOOL,
-    PROMOTE_AGENT_TYPE_TOOL,
-    READ_MCP_RESOURCE_TOOL,
-    SEND_MESSAGE_TOOL,
-    SEND_SESSION_MESSAGE_TOOL,
-    SESSION_SEARCH_TOOL,
-    SKILL_INVOKE_TOOL,
-    SKILL_LIST_TOOL,
-    SKILL_MANAGE_TOOL,
-    SPAWN_AGENT_TOOL,
-    TEAM_CREATE_TOOL,
-    TEAM_DELETE_TOOL,
-    TOOL_SEARCH_TOOL,
-)
-from .search_tools import (  # noqa: F401
-    _ACTIVATE_BATCH_MAX,
-    _SCHEMA_BYTES_MAX,
-    execute_tool_search,
-)
+from .schemas import AGENT_TOOLS  # noqa: F401
+from .search_tools import execute_tool_search  # noqa: F401
 from .session_search_tool import execute_session_search  # noqa: F401
 from .skill_manage import execute_skill_manage  # noqa: F401
 from .skill_tools import execute_skill_list  # noqa: F401
 from .spawn import (  # noqa: F401
-    DETACHED_PER_SESSION_CAP,
-    _start_detached_from_tool,
     execute_list_agents,
     execute_send_message,
     execute_spawn_agent,
 )
 from .teams import (  # noqa: F401
-    _teams,
-    _terminal_paragraph,
     execute_team_create,
     execute_team_delete,
 )

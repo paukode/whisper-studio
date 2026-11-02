@@ -8,7 +8,7 @@ Backs the header's task list: the rows, a row's live output tail, and Stop.
 import asyncio
 import json
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter
 from fastapi.responses import Response
 
 from server.tasks import registry
@@ -64,22 +64,3 @@ async def stop_background_task(task_id: str):
 
     ok = await stop_row(task)
     return {"stopped": bool(ok), "status": "stopping" if ok else task["status"]}
-
-
-@router.post("/stop-session")
-async def stop_session_background_tasks(request: Request):
-    body = await request.json()
-    session_id = (body.get("session_id") or "").strip()
-    if not session_id:
-        return _err(400, "session_id required")
-    import asyncio
-
-    from server.tasks.agents import _running, cancel_task
-    from server.tasks.shell import stop_session_tasks
-
-    stopped = await asyncio.to_thread(stop_session_tasks, session_id)
-    for task_id in list(_running.keys()):
-        task = registry.get_task(task_id)
-        if task and task.get("session_id") == session_id and cancel_task(task_id):
-            stopped.append(task_id)
-    return {"stopped": stopped}

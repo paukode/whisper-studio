@@ -284,19 +284,3 @@ def stop_task(task_id: str) -> bool:
     if finished:
         emit_task_event(finished.get("session_id") or "", "task_stopped", finished)
     return True
-
-
-def stop_session_tasks(session_id: str) -> list[str]:
-    """Stop every running background task started by the given session (ESC).
-
-    Candidates come from the REGISTRY, not the in-memory handle map, so
-    re-adopted tasks (which have no Popen after a server restart) are
-    covered too.
-    """
-    if not session_id:
-        return []
-    stopped = []
-    for task in registry.list_tasks(session_id=session_id, status="running", kind="shell"):
-        if stop_task(task["task_id"]):
-            stopped.append(task["task_id"])
-    return stopped

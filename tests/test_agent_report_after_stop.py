@@ -39,7 +39,6 @@ def test_a_stopped_team_keeps_its_reports_without_waking_the_parent(monkeypatch,
     rows, wakes = rows_and_wakes
     monkeypatch.setattr(spawn_mod, "_active_agent_counts", {})
     monkeypatch.setattr(teams, "SALVAGE_WAIT_S", 0.2)
-    monkeypatch.setattr(teams, "team_manifest", lambda *a, **k: None)
 
     async def _hanging_run_agent(task, **kwargs):
         await asyncio.Event().wait()

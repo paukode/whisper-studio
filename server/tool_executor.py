@@ -340,10 +340,9 @@ async def execute_tool_batch(
 
     ``unattended`` marks every dispatched call as originating from a turn with
     no human present (subagents today). It stamps ``__agent__`` onto the call
-    input exactly like ``server.agents.runtime._with_session_id`` already does
-    for the pre-migration agent loop, so high-blast-radius executors (GitHub
-    mutations via ``refuse_if_agent``, MCP's elicitation callback) keep
-    refusing to act or answer on a human's behalf.
+    input, so high-blast-radius executors (GitHub mutations via
+    ``refuse_if_agent``, MCP's elicitation callback) keep refusing to act or
+    answer on a human's behalf.
 
     Returns ToolState objects in the same order as the input tool_uses.
     """

@@ -84,7 +84,7 @@ class TurnContext:
     # so approval-gated and pause-inducing tools resolve without a human:
     # WS_APPROVAL executes inline, WS_WORKSPACE_PROMPT and ask_user_question
     # refuse instead of pausing, and every dispatched call is stamped
-    # __agent__ (mirrors server.agents.runtime._with_session_id).
+    # __agent__.
     unattended: bool = False
     # Alternate key for turn-scoped, session_id-keyed global state (goal
     # store, the auto-mode circuit breaker, the paused-turn store, and the

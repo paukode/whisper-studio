@@ -24,7 +24,6 @@ import json
 import logging
 import os
 import re
-import time
 from collections import Counter
 from datetime import datetime, timezone
 
@@ -284,7 +283,6 @@ class AgentJournal:
 
     def __init__(self, agent_id: str, dir_path: str):
         self.agent_id = agent_id
-        self.dir = dir_path
         self.events_path = os.path.join(dir_path, "events.jsonl")
         self.messages_path = os.path.join(dir_path, "messages.json")
         self.report_path = os.path.join(dir_path, "report.md")
@@ -513,17 +511,3 @@ def close_quietly(
         )
     except Exception as e:  # noqa: BLE001 - the record must never take the run down
         log.warning("agent journal close failed for %s: %s", journal.agent_id, e)
-
-
-def team_manifest(session_id: str, team_id: str, payload: dict) -> None:
-    """Record which agents make up a team, so a restart can find every
-    member's journal from the team id alone."""
-    d = os.path.join(agents_root(), _safe(session_id), "teams")
-    try:
-        os.makedirs(d, exist_ok=True)
-        _write_atomic(
-            os.path.join(d, f"{_safe(team_id)}.json"),
-            json.dumps({**payload, "written_at": _now(), "t": time.time()}, default=str),
-        )
-    except OSError as e:
-        log.debug("agent journal: team manifest not written: %s", e)

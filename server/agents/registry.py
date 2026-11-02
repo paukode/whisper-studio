@@ -72,10 +72,6 @@ class AgentRegistry:
             agents = [a for a in agents if a.session_id == session_id]
         return agents
 
-    def remove(self, agent_id: str) -> None:
-        with self._lock:
-            self._agents.pop(agent_id, None)
-
     def cleanup_completed(self, max_age_seconds: float = 3600) -> int:
         """Remove completed agents older than max_age_seconds."""
         cutoff = time.time() - max_age_seconds

@@ -7,7 +7,7 @@ import asyncio
 import json
 import uuid
 
-from server.agents.journal import RELAY_NOTE, REPORT_CHARS, team_manifest
+from server.agents.journal import RELAY_NOTE, REPORT_CHARS
 from server.agents.journal import load as load_journal
 from server.tasks.events import emit_agent_report
 
@@ -42,25 +42,6 @@ def stop_team(team_id: str) -> bool:
     team["stop_requested"] = True
     task.cancel()
     return True
-
-
-def _terminal_paragraph(text: str, max_chars: int = 300) -> str:
-    """Return the final non-empty paragraph of ``text``, capped at ``max_chars``.
-
-    Agents conclude with their findings — head-slicing keeps the opening
-    narration and loses the conclusion. Walk from the end backwards so the
-    visible summary is the actual finding.
-    """
-    if not text:
-        return ""
-    cleaned = text.strip()
-    if not cleaned:
-        return ""
-    paragraphs = [p.strip() for p in cleaned.split("\n\n") if p.strip()]
-    tail = paragraphs[-1] if paragraphs else cleaned
-    if len(tail) <= max_chars:
-        return tail
-    return "…" + tail[-(max_chars - 1) :]
 
 
 def _status_label(r: dict) -> str:
@@ -290,11 +271,6 @@ async def execute_team_create(
             await _settle_cancelled_members(gather_task)
             orphaned = _reports_from_journals(agents, member_ids, session_id)
             _teams[team_id]["agents"] = orphaned
-            team_manifest(
-                session_id,
-                team_id,
-                {"team_id": team_id, "team_name": team_name, "members": orphaned},
-            )
             emit_agent_report(
                 session_id,
                 {
@@ -320,20 +296,6 @@ async def execute_team_create(
         _teams.get(team_id, {}).pop("task", None)
 
     _teams[team_id]["agents"] = list(agent_results)
-    team_manifest(
-        session_id,
-        team_id,
-        {
-            "team_id": team_id,
-            "team_name": team_name,
-            "description": description,
-            "members": [
-                {k: r.get(k) for k in ("name", "agent_id", "agent_type", "status", "stop_reason")}
-                for r in agent_results
-            ],
-        },
-    )
-
     summary = _team_summary(team_name, agent_results, stopped_by_user)
 
     if progress_channel:
