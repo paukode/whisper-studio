@@ -230,7 +230,10 @@ async def start_preview_session(payload: dict) -> tuple[bool, str]:
         command = [str(command), *[str(a) for a in args]]
         port = payload.get("port")
     else:
-        resolved = pinned_config(payload) or resolve_launch_command(name)
+        try:
+            resolved = pinned_config(payload) or resolve_launch_command(name)
+        except ValueError as e:
+            return False, str(e)
         if not resolved:
             return False, missing_config_message(name, payload.get("cwd"))
         command, port = resolved["command"], resolved["port"]

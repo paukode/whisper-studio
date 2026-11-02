@@ -77,7 +77,10 @@ def resolve_named(tool_name: str, tool_input: dict) -> dict | None:
     workspace = get_workspace_path()
     if not workspace:
         return None
-    resolved = resolve_launch_command(name)
+    try:
+        resolved = resolve_launch_command(name)
+    except ValueError:
+        return None  # the call fails at execution, with the read error
     if not resolved:
         return None
     return {**resolved, "workspace": os.path.realpath(workspace)}

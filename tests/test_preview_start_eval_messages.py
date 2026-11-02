@@ -50,6 +50,14 @@ def test_a_name_in_a_project_folders_own_file_says_to_pass_the_command(ws):
     assert "pass that entry's runtimeExecutable" in out
 
 
+def test_a_malformed_launch_json_names_its_error(ws):
+    """A JSON error used to read as 'It has no configurations.'"""
+    (ws / ".whisper" / "launch.json").write_text('{"configurations": [')
+    out = _start(session_name="web")
+    assert out.startswith(f"Could not read {ws / '.whisper' / 'launch.json'}: ")
+    assert "no configurations" not in out
+
+
 def test_an_unresolved_name_still_reaches_the_gate(ws):
     # The config may be added before the card is answered
     # (tests/test_preview_launch_trust.py), so the call is not refused early.

@@ -8,10 +8,7 @@ config file present at all.
 from __future__ import annotations
 
 import json
-import logging
 import os
-
-log = logging.getLogger("whisper-studio")
 
 
 def _launch_config_path() -> str | None:
@@ -24,8 +21,9 @@ def _launch_config_path() -> str | None:
 
 
 def load_launch_configs() -> dict[str, dict]:
-    """{name: {runtimeExecutable, runtimeArgs, port}}. Fails soft — a missing
-    or malformed file just means no named configs are available."""
+    """{name: {runtimeExecutable, runtimeArgs, port}}. A missing file (or no
+    workspace) has none; a file that cannot be read or parsed raises
+    ValueError naming it and the error."""
     return _load(_launch_config_path())
 
 
@@ -35,11 +33,12 @@ def _load(path: str | None) -> dict[str, dict]:
     try:
         with open(path, errors="replace") as f:
             data = json.load(f)
-        configs = data.get("configurations", [])
-        return {c["name"]: c for c in configs if isinstance(c, dict) and c.get("name")}
-    except Exception as e:  # noqa: BLE001
-        log.warning("Failed to load .whisper/launch.json: %s", e)
-        return {}
+    except (OSError, ValueError) as e:
+        raise ValueError(f"Could not read {path}: {e}") from e
+    configs = data.get("configurations", []) if isinstance(data, dict) else None
+    if not isinstance(configs, list):
+        raise ValueError(f"Could not read {path}: 'configurations' must be a list")
+    return {c["name"]: c for c in configs if isinstance(c, dict) and c.get("name")}
 
 
 def resolve_launch_command(name: str) -> dict | None:
@@ -76,7 +75,13 @@ def missing_config_message(name: str, cwd: str | None = None) -> str:
         have = "That file does not exist."
     msg = f"No launch configuration named '{name}' in {path}. {have}"
     other = os.path.join(os.path.expanduser(cwd), ".whisper", "launch.json") if cwd else ""
-    if other and os.path.realpath(other) != os.path.realpath(path) and name in _load(other):
+    if not other or os.path.realpath(other) == os.path.realpath(path):
+        return f"{msg} Use one of those names, or pass runtimeExecutable and runtimeArgs."
+    try:
+        in_other = name in _load(other)
+    except ValueError as e:
+        return f"{msg} {e}"
+    if in_other:
         return (
             f"{msg} {other} has '{name}', but only the connected workspace's "
             ".whisper/launch.json is read: pass that entry's runtimeExecutable, "
