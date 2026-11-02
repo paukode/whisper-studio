@@ -193,11 +193,7 @@ def test_reserved_companion_bytes_zero_when_no_companion_dirs_exist(tmp_path, mo
         "server.diarization.embedder.REDIMNET_CACHE_DIR",
     ):
         monkeypatch.setattr(target, missing)
-    service._reserved_companion_bytes.cache_clear()
-    try:
-        assert service._reserved_companion_bytes() == 0
-    finally:
-        service._reserved_companion_bytes.cache_clear()
+    assert service._reserved_companion_bytes() == 0
 
 
 def test_reserved_companion_bytes_counts_only_the_active_asr_backend(tmp_path, monkeypatch):
@@ -217,18 +213,10 @@ def test_reserved_companion_bytes_counts_only_the_active_asr_backend(tmp_path, m
     monkeypatch.setattr("server.diarization.embedder.REDIMNET_CACHE_DIR", missing)
 
     monkeypatch.setattr(cfg, "load_config", lambda: {"transcription_backend": "streaming"})
-    service._reserved_companion_bytes.cache_clear()
-    try:
-        assert service._reserved_companion_bytes() == 5000  # parakeet only ("streaming" alias)
-    finally:
-        service._reserved_companion_bytes.cache_clear()
+    assert service._reserved_companion_bytes() == 5000  # parakeet only ("streaming" alias)
 
     monkeypatch.setattr(cfg, "load_config", lambda: {"transcription_backend": "whisper"})
-    service._reserved_companion_bytes.cache_clear()
-    try:
-        assert service._reserved_companion_bytes() == 9000  # whisper only
-    finally:
-        service._reserved_companion_bytes.cache_clear()
+    assert service._reserved_companion_bytes() == 9000  # whisper only
 
 
 def test_reserved_companion_bytes_never_counts_index_models(tmp_path, monkeypatch):
@@ -249,11 +237,7 @@ def test_reserved_companion_bytes_never_counts_index_models(tmp_path, monkeypatc
         "server.index.config.RERANK_MODEL_DIR",
     ):
         monkeypatch.setattr(target, str(big_index_model))
-    service._reserved_companion_bytes.cache_clear()
-    try:
-        assert service._reserved_companion_bytes() == 0
-    finally:
-        service._reserved_companion_bytes.cache_clear()
+    assert service._reserved_companion_bytes() == 0
 
 
 # ── search: arch filtering, dedup, ranking ───────────────────────────

@@ -64,7 +64,6 @@ def _dir_size_bytes(path: str) -> int:
     return total
 
 
-@lru_cache(maxsize=1)
 def _reserved_companion_bytes() -> int:
     """On-disk size of the companion models that plausibly stay resident in
     memory ALONGSIDE a chat session on THIS machine: whichever single ASR
@@ -81,8 +80,10 @@ def _reserved_companion_bytes() -> int:
     already-installed and working local model, was graded "won't fit".
 
     Only ONE ASR backend is ever loaded (``transcription_backend`` picks one),
-    so only that one's directory is measured — never both. Imports lazily so
-    this stays cheap to call from the read-only /browse endpoints."""
+    so only that one's directory is measured, never both. Measured on every
+    call (a walk of two or three folders), so a model downloaded or a backend
+    switched since the last call counts at once. Imports lazily so this stays
+    cheap to call from the read-only /browse endpoints."""
     dirs: list[str] = []
     from server.asr import resolve_name
     from server.infrastructure.config import load_config
