@@ -5,12 +5,27 @@ import { mergeDeliveries } from '@/hooks/chatStream/deliveries';
 import type { WrittenLabel } from '@/hooks/chatStream/activityLabels';
 import { activeMs, beginWait, endAllWaits, endWait, waitKindOfTool, type WaitSpan, type WaitKind } from '@/hooks/chatStream/waitClock';
 
+/** One wait reason per tool row. An untagged frame's row carries the tool
+ *  name as its id, so two parallel untagged sleeps share an id; the sequence
+ *  number keeps their waits apart. */
+let toolWaitSeq = 0;
+const toolWaitReason = (toolId: string) => `tool:${toolId}#${++toolWaitSeq}`;
+
+/** The oldest open wait reason of a tool id. Untagged rows complete in
+ *  order, so the oldest one is the call a result belongs to. Object keys
+ *  keep their insertion order. */
+function firstToolWaitReason(reasons: Record<string, WaitKind>, toolId: string): string | undefined {
+  const prefix = `tool:${toolId}#`;
+  return Object.keys(reasons).find((r) => r.startsWith(prefix));
+}
+
 /**
  * Generic pending approval. The shape is the same regardless of action —
  * `preview` tells the banner which renderer to use, `payload` carries
  * preview-specific fields (e.g. {path, original, content} for diff,
  * {command} for command, {paths} for list).
  */
+
 export interface PendingApproval {
   toolUseId: string;
   action: string;
@@ -341,7 +356,7 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
       const kind = trace.status === 'running' ? waitKindOfTool(trace.toolName) : null;
       return {
         currentStreamToolUse: [...state.currentStreamToolUse, trace],
-        ...(kind ? beginWait(state, `tool:${trace.toolId}`, kind, performance.now()) : {}),
+        ...(kind ? beginWait(state, toolWaitReason(trace.toolId), kind, performance.now()) : {}),
       };
     });
   },
@@ -363,15 +378,16 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
       const idx = state.currentStreamToolUse.findIndex(
         (t) => t.toolId === key && t.status === 'running',
       );
-      if (idx === -1) return state;
+      // A wait tool (sleep, a question) that leaves 'running' ends its wait,
+      // also when a segment flush already committed its row: the wait must
+      // not stay open until the stream ends.
+      const ended = updates.status !== undefined && updates.status !== 'running';
+      const reason = ended ? firstToolWaitReason(state.waitReasons, key) : undefined;
+      const waits = reason ? endWait(state, reason, performance.now()) : {};
+      if (idx === -1) return reason ? waits : state;
       const next = state.currentStreamToolUse.slice();
       next[idx] = { ...next[idx], ...updates };
-      // A wait tool (sleep, a question) that leaves 'running' ends its wait.
-      const ended = updates.status !== undefined && updates.status !== 'running';
-      return {
-        currentStreamToolUse: next,
-        ...(ended ? endWait(state, `tool:${key}`, performance.now()) : {}),
-      };
+      return { currentStreamToolUse: next, ...waits };
     });
   },
 
