@@ -50,7 +50,17 @@ def build_git_status_prompt(workspace_path: str) -> str:
         lines.append(f"Status: {', '.join(parts)}" if parts else "Status: (clean)")
 
     # Recent commits (a repository with no commit yet has none to show).
+    # Whether a commit exists is read from rev-parse's exit code (0 yes,
+    # 1 no), never from git's message text, which a localized git translates.
     try:
+        head = _run_git(
+            ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"], cwd=git_root, timeout=5
+        )
+        if head.returncode == 1:
+            return "\n".join(lines) + "\n"
+        if head.returncode != 0:
+            lines.append(f"Recent commits: unavailable ({head.stderr.strip()})")
+            return "\n".join(lines) + "\n"
         result = _run_git(["log", "-5", "--oneline"], cwd=git_root, timeout=5)
     except subprocess.TimeoutExpired:
         lines.append("Recent commits: unavailable (git log timed out)")
@@ -59,7 +69,7 @@ def build_git_status_prompt(workspace_path: str) -> str:
         lines.append("Recent commits:")
         for commit_line in result.stdout.strip().split("\n"):
             lines.append(f"  {commit_line}")
-    elif result.returncode != 0 and "does not have any commits" not in result.stderr:
+    elif result.returncode != 0:
         lines.append(f"Recent commits: unavailable ({result.stderr.strip()})")
 
     return "\n".join(lines) + "\n"

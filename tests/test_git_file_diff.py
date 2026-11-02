@@ -293,3 +293,56 @@ def test_git_diff_tool_reports_a_git_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(git_diff, "_run_git", broken)
     with pytest.raises(RuntimeError, match="index file corrupt"):
         git_diff.fetch_single_file_git_diff(str(tmp_path), str(tmp_path / "a.txt"))
+
+
+def _localized(real_run_git):
+    """A git that answers every failure in another language: the diff must
+    decide 'new file' by exit code, never by English message text."""
+
+    def run(args, **kwargs):
+        result = real_run_git(args, **kwargs)
+        if result.returncode != 0:
+            result.stderr = "Schwerwiegend: Pfad befindet sich nicht in 'HEAD'\n"
+        return result
+
+    return run
+
+
+def test_a_staged_new_file_is_added_with_a_localized_git(client, monkeypatch):
+    c, work = client
+    (work / "new.txt").write_text("fresh\n")
+    _git(["add", "new.txt"], work)
+    monkeypatch.setattr(file_diff, "_run_git", _localized(file_diff._run_git))
+
+    data = file_diff.build_file_diff(str(work), "new.txt")
+
+    assert data["mode"] == "full"
+    assert data["status"] == "added"
+    assert data["new"] == "fresh\n"
+
+
+def test_a_file_in_a_repository_with_no_commit_is_added_with_a_localized_git(tmp_path, monkeypatch):
+    work = tmp_path / "fresh"
+    work.mkdir()
+    _git(["init", "-q"], work)
+    (work / "n.txt").write_text("new\n")
+    _git(["add", "n.txt"], work)
+    monkeypatch.setattr(file_diff, "_run_git", _localized(file_diff._run_git))
+
+    data = file_diff.build_file_diff(str(work), "n.txt")
+
+    assert data["mode"] == "full"
+    assert data["status"] == "added"
+
+
+def test_the_git_prompt_skips_commits_in_an_empty_repository_with_a_localized_git(
+    tmp_path, monkeypatch
+):
+    from server.git import prompts
+
+    _git(["init", "-q"], tmp_path)
+    monkeypatch.setattr(prompts, "_run_git", _localized(prompts._run_git))
+
+    text = prompts.build_git_status_prompt(str(tmp_path))
+
+    assert "Recent commits" not in text

@@ -344,6 +344,15 @@ def _is_tracked(workspace: str, rel_path: str) -> bool:
     return result.returncode == 0
 
 
+def _has_head(workspace: str) -> bool:
+    """Whether the repository has a commit. Decided by exit code (0 yes,
+    1 no), never by git's message text, which a localized git translates."""
+    result = _git(["rev-parse", "--verify", "--quiet", "HEAD^{commit}"], workspace)
+    if result.returncode not in (0, 1):
+        raise _GitFailed(f"git rev-parse failed: {result.stderr.strip()}")
+    return result.returncode == 0
+
+
 def _numstat(workspace: str, rel_path: str) -> tuple[bool, int, int]:
     """Read one file's numstat against HEAD.
 
@@ -352,10 +361,10 @@ def _numstat(workspace: str, rel_path: str) -> tuple[bool, int, int]:
     counts at zero. A repository with no commit yet has no HEAD to compare
     with and also reads as zero.
     """
+    if not _has_head(workspace):
+        return (False, 0, 0)
     result = _git(["--no-optional-locks", "diff", "HEAD", "--numstat", "--", rel_path], workspace)
     if result.returncode != 0:
-        if "bad revision 'HEAD'" in result.stderr:
-            return (False, 0, 0)
         raise _GitFailed(f"git diff failed: {result.stderr.strip()}")
     for line in result.stdout.strip().split("\n"):
         if line.startswith("-\t-\t"):
@@ -374,23 +383,27 @@ def _has_nul_bytes(abs_path: str) -> bool:
         return False
 
 
-# git show's answers when the path (or HEAD itself) is not in HEAD: the file
-# is newly added, not a failure.
-_NOT_IN_HEAD = (
-    "does not exist in 'HEAD'",
-    "exists on disk, but not in 'HEAD'",
-    "invalid object name 'HEAD'",
-)
+def _in_head(workspace: str, rel_path: str) -> bool:
+    """Whether HEAD has the path. ls-tree exits 0 either way and prints
+    nothing for an absent path, so no message text is read."""
+    result = _git(
+        ["--literal-pathspecs", "ls-tree", "--full-tree", "-z", "HEAD", "--", rel_path],
+        workspace,
+    )
+    if result.returncode != 0:
+        raise _GitFailed(f"git ls-tree failed: {result.stderr.strip()}")
+    return bool(result.stdout)
 
 
 def _show_head(workspace: str, rel_path: str) -> str | None:
-    """The file's text at HEAD, or None when it is not in HEAD."""
-    result = _git(["show", f"HEAD:{rel_path}"], workspace)
-    if result.returncode == 0:
-        return result.stdout
-    if any(m in result.stderr for m in _NOT_IN_HEAD):
+    """The file's text at HEAD, or None when it is not in HEAD (a new file,
+    or a repository with no commit yet)."""
+    if not _has_head(workspace) or not _in_head(workspace, rel_path):
         return None
-    raise _GitFailed(f"git show failed: {result.stderr.strip()}")
+    result = _git(["show", f"HEAD:{rel_path}"], workspace)
+    if result.returncode != 0:
+        raise _GitFailed(f"git show failed: {result.stderr.strip()}")
+    return result.stdout
 
 
 def _read_text(abs_path: str) -> str | None:
