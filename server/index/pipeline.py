@@ -601,18 +601,28 @@ def query(ws_path: str, text: str, k: int = 8, graph_hop: bool = True) -> dict:
     """Retrieve for a question: dense vector top-k, the BM25 keyword top-k, and
     one GraphRAG hop — returned SEPARATELY so the caller fuses them.
 
-    Returns ``{matches, keyword, related}``: ``matches`` are dense (cosine-
+    Returns ``{matches, keyword, related, dense_error}``: ``matches`` are dense (cosine-
     ranked) chunks, ``keyword`` are BM25 chunks (each with ``_bm25``; gated by
     the ``rag_hybrid_search`` flag) catching exact terms — filenames, ids, codes
     — that dense embeddings miss, and ``related`` are the entity-graph hop off
     the dense matches. They're kept apart so a multi-index caller can fuse the
     dense lists globally (cosine is comparable) rather than per-index by rank.
+    ``dense_error`` is the reason the dense leg could not run, or "".
     """
     from server.infrastructure.feature_flags import is_enabled
 
     t0 = time.time()
     qv = embedder.embed_query(text)
-    matches = store.search(ws_path, qv, k=k)
+    dense_error = ""
+    try:
+        matches = store.search(ws_path, qv, k=k)
+    except RuntimeError as e:
+        # An index from an older build can hold unusable vectors (see
+        # store.base). The keyword and entity legs still work, so the folder
+        # keeps grounding on them; the caller reports the dense failure.
+        matches = []
+        dense_error = str(e)
+        log.warning("Dense search failed for %s: %s", ws_path, e)
     keyword: list[dict] = []
     if is_enabled("rag_hybrid_search"):
         try:
@@ -630,7 +640,7 @@ def query(ws_path: str, text: str, k: int = 8, graph_hop: bool = True) -> dict:
         len(related),
         time.time() - t0,
     )
-    return {"matches": matches, "keyword": keyword, "related": related}
+    return {"matches": matches, "keyword": keyword, "related": related, "dense_error": dense_error}
 
 
 # Grounding excerpt budget. Matches get a near-full chunk (chunks are bounded
@@ -737,7 +747,7 @@ def retrieve_grounding(
     of which workspace is connected.
 
     The second value is ``{folders, passages, sources,
-    best_score, dense_muted}``, where ``sources`` lists every injected passage
+    best_score, dense_muted, dense_errors}``, where ``sources`` lists every injected passage
     with its retrieval provenance (``kind``: keyword / semantic / entity /
     related, plus entity-name chips) — the payload behind the chat's "Answer
     sources" surface.
@@ -782,6 +792,9 @@ def retrieve_grounding(
 
     related: list[dict] = []
     searched_roots: set[str] = set()
+    # Folders whose dense leg could not run (unusable vectors from an older
+    # build): they still ground on keywords and entities.
+    dense_errors: dict[str, str] = {}
     # Which retrieval legs surfaced each chunk (by file+line key), and the
     # query-named entities that anchored it. Feeds the per-passage "sources"
     # meta so the UI can say HOW each passage got here — matched words
@@ -816,6 +829,8 @@ def retrieve_grounding(
                 log.warning("Grounding query failed for %s: %s", p, e)
                 continue
             searched_roots.add(root)
+            if res["dense_error"]:
+                dense_errors[root] = res["dense_error"]
             for m in res.get("matches", []):
                 m = dict(m)
                 m["_abs"] = os.path.join(root, m["path"])
@@ -964,6 +979,7 @@ def retrieve_grounding(
             "sources": [],
             "best_score": round(best_dense, 3),
             "dense_muted": dense_muted,
+            "dense_errors": dense_errors,
         }
 
     # Auto-merge (parent-document retrieval): when a SMALL, focused document has
@@ -1096,4 +1112,5 @@ def retrieve_grounding(
         "sources": sources,
         "best_score": round(best_dense, 3),
         "dense_muted": dense_muted,
+        "dense_errors": dense_errors,
     }

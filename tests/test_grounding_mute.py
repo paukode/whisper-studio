@@ -164,3 +164,26 @@ def test_weak_seeds_do_not_expand_even_when_best_is_on_topic(monkeypatch):
     assert meta["passages"] == 2, "the weak match still grounds; it just doesn't seed the hop"
     assert len(expands) == 1
     assert len(expands[0]) == 1, "only the on-topic seed feeds the hop"
+
+
+def test_a_folder_with_unusable_vectors_still_grounds_on_keywords(monkeypatch):
+    """An index from an older build can hold vectors the dense search refuses.
+    The folder keeps its keyword hits and the meta names the dense failure,
+    instead of the whole folder dropping out of grounding."""
+    ws = "/fake/ws-badvec"
+    _index_chunk(ws, cos=0.9, text="quarterly budget planning notes")
+    monkeypatch.setattr(pipeline.embedder, "embed_query", lambda q: _unit(0))
+
+    def refuse(ws_path, qv, k=8):
+        raise RuntimeError("holds 1 unusable vector(s). Re-index this folder to fix it.")
+
+    monkeypatch.setattr(store, "search", refuse)
+    from server.infrastructure import feature_flags
+
+    monkeypatch.setattr(feature_flags, "is_enabled", lambda name: True)
+
+    g, meta = pipeline.retrieve_grounding([ws], "quarterly budget", forced=True)
+
+    assert "notes.md" in g
+    assert meta["folders"] == 1
+    assert "Re-index this folder" in next(iter(meta["dense_errors"].values()))
