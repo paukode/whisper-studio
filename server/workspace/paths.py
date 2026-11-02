@@ -17,70 +17,24 @@ log = logging.getLogger("whisper-studio")
 
 
 def _atomic_write_text(full: str, content: str) -> None:
-    """Write `content` to `full` atomically: write to a unique sibling temp
-    file, fsync it, then os.replace into place.
-
-    The temp file gets a UNIQUE name (via tempfile.mkstemp) rather than a
-    per-process constant (`.name.tmp.<pid>`). Two concurrent writes to the same
-    destination therefore use distinct temp files and cannot clobber each
-    other's partial write before the atomic replace.
-
-    Preserves the destination's existing permissions when overwriting; a new
-    file gets the process umask default (matching a plain open()) instead of
-    mkstemp's restrictive 0o600.
-    """
-    parent = os.path.dirname(full) or "."
-    os.makedirs(parent, exist_ok=True)
-    basename = os.path.basename(full)
-    # Capture pre-existing mode so we can restore it after the replace
-    existing_mode: int | None = None
-    try:
-        existing_mode = stat.S_IMODE(os.stat(full).st_mode)
-    except FileNotFoundError:
-        pass
-    fd, tmp = tempfile.mkstemp(dir=parent, prefix=f".{basename}.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as f:
-            f.write(content)
-            f.flush()
-            try:
-                os.fsync(f.fileno())
-            except OSError:
-                # fsync not supported on all filesystems; non-fatal
-                pass
-        # Decide the destination mode, then apply it to the temp file so the
-        # atomic replace lands with the right permissions (no window where
-        # `full` briefly carries the wrong mode).
-        if existing_mode is not None:
-            target_mode: int | None = existing_mode
-        else:
-            # New file: match a plain open()'s umask-derived permissions rather
-            # than mkstemp's 0o600, which would silently tighten new files.
-            umask = os.umask(0)
-            os.umask(umask)
-            target_mode = 0o666 & ~umask
-        if target_mode is not None:
-            try:
-                os.chmod(tmp, target_mode)
-            except OSError as e:
-                log.debug("could not set mode on %s: %s", tmp, e)
-        os.replace(tmp, full)
-    except Exception:
-        # Best-effort cleanup of the temp file on failure
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
-        raise
+    """Write ``content`` to ``full`` atomically as UTF-8 (see
+    :func:`_atomic_write_bytes`)."""
+    _atomic_write_bytes(full, content.encode("utf-8"))
 
 
 def _atomic_write_bytes(full: str, data: bytes) -> None:
-    """Byte-mode counterpart to `_atomic_write_text`: the exact same
-    atomic temp-file-then-rename pattern (unique mkstemp sibling, fsync,
-    permission-preserving os.replace), just opened in 'wb' with no
-    `_normalize_lf` pass — binary content (e.g. a base64-decoded save_file
-    payload) must round-trip byte-for-byte, not have its line endings
-    rewritten.
+    """Write ``data`` to ``full`` atomically: write a unique sibling temp file
+    (tempfile.mkstemp), fsync it, then os.replace it into place.
+
+    The unique temp name means two concurrent writes to the same destination
+    cannot clobber each other's partial write before the replace. Binary
+    content round-trips byte for byte (no line-ending pass).
+
+    Preserves the destination's existing permissions when overwriting; a new
+    file gets the process umask default (matching a plain open()) instead of
+    mkstemp's restrictive 0o600. A failed fsync or chmod fails the write: the
+    caller is told, rather than getting a file that is not durable or carries
+    the wrong mode.
     """
     parent = os.path.dirname(full) or "."
     os.makedirs(parent, exist_ok=True)
@@ -95,13 +49,9 @@ def _atomic_write_bytes(full: str, data: bytes) -> None:
         with os.fdopen(fd, "wb") as f:
             f.write(data)
             f.flush()
-            try:
-                os.fsync(f.fileno())
-            except OSError:
-                # fsync not supported on all filesystems; non-fatal
-                pass
+            os.fsync(f.fileno())
         if existing_mode is not None:
-            target_mode: int | None = existing_mode
+            target_mode = existing_mode
         else:
             # New file: match a plain open()'s umask-derived permissions
             # rather than mkstemp's 0o600, which would silently tighten
@@ -109,14 +59,12 @@ def _atomic_write_bytes(full: str, data: bytes) -> None:
             umask = os.umask(0)
             os.umask(umask)
             target_mode = 0o666 & ~umask
-        if target_mode is not None:
-            try:
-                os.chmod(tmp, target_mode)
-            except OSError as e:
-                log.debug("could not set mode on %s: %s", tmp, e)
+        # Applied to the temp file so the atomic replace lands with the right
+        # permissions (no window where ``full`` carries the wrong mode).
+        os.chmod(tmp, target_mode)
         os.replace(tmp, full)
-    except Exception:
-        # Best-effort cleanup of the temp file on failure
+    except BaseException:
+        # Remove the temp file on failure; the destination is untouched.
         try:
             os.remove(tmp)
         except OSError:

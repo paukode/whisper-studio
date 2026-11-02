@@ -76,3 +76,26 @@ def test_bytes_does_not_normalize_line_endings():
         _atomic_write_bytes(target, data)
         with open(target, "rb") as f:
             assert f.read() == data
+
+
+def test_a_failed_fsync_fails_the_write_and_leaves_the_old_file(tmp_path, monkeypatch):
+    """A failed fsync used to be swallowed, a silent durability downgrade."""
+    import pytest
+
+    target = tmp_path / "f.txt"
+    target.write_text("old")
+
+    def no_fsync(fd):
+        raise OSError(45, "Operation not supported")
+
+    monkeypatch.setattr(os, "fsync", no_fsync)
+    with pytest.raises(OSError, match="not supported"):
+        _atomic_write_text(str(target), "new")
+    assert target.read_text() == "old"
+    assert [p.name for p in tmp_path.iterdir()] == ["f.txt"]
+
+
+def test_text_is_written_as_utf8(tmp_path):
+    target = tmp_path / "u.txt"
+    _atomic_write_text(str(target), "café")
+    assert target.read_bytes() == "café".encode()
