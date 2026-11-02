@@ -62,12 +62,15 @@ def _discover_migrations() -> list[dict]:
 
         module = importlib.import_module(f"server.migrations.{info.name}")
         version = getattr(module, "VERSION", None)
-        description = getattr(module, "DESCRIPTION", info.name)
+        description = getattr(module, "DESCRIPTION", None)
         migrate_fn = getattr(module, "migrate", None)
 
-        if version is None or migrate_fn is None:
-            log.warning("Migration %s missing VERSION or migrate(), skipping", info.name)
-            continue
+        # A migration that cannot run would leave the schema behind and fail
+        # later, far from the cause: refuse it here.
+        if version is None or description is None or migrate_fn is None:
+            raise RuntimeError(
+                f"Migration {info.name} must define VERSION, DESCRIPTION and migrate()"
+            )
 
         migrations.append(
             {
