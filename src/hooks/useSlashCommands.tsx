@@ -48,7 +48,7 @@ export interface UseSlashCommandsOptions {
   attachWorkspaceFileAsChip: (path: string) => Promise<void> | void;
   /** Fetch + upload a workspace file and return its attachment record (no
    *  chip) — used by the non-blocking `/file:path question` auto-send. */
-  uploadWorkspaceFile: (path: string) => Promise<{ id: string; filename: string } | null>;
+  uploadWorkspaceFile: (path: string) => Promise<{ id: string; filename: string }>;
 }
 
 export interface UseSlashCommandsResult {
@@ -103,8 +103,11 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
     // non-blocking: the message + working indicator appear immediately while
     // the file is fetched/converted/uploaded in the background.
     if (cmd?.startsWith('file:')) {
-      const filePath = cmd.slice(5);
-      const question = parts.slice(1).join(' ').trim();
+      // Read the path and question from the raw input: the path keeps its
+      // case (case-sensitive volumes) and the question its line breaks.
+      const fileMatch = /^\/file:(\S*)(?:\s+([\s\S]*))?$/i.exec(input);
+      const filePath = fileMatch?.[1] ?? '';
+      const question = (fileMatch?.[2] ?? '').trim();
       if (!filePath) {
         addToast({ type: 'info', message: 'Usage: /file:path [question]', duration: 3000, persist: false });
         return true;
@@ -135,11 +138,14 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
       };
 
       void (async () => {
-        const att = await uploadWorkspaceFile(filePath);
-        if (!att) {
+        let att: { id: string; filename: string };
+        try {
+          att = await uploadWorkspaceFile(filePath);
+        } catch (e) {
+          const why = toError(e).message;
           chat().setStreaming(false);
-          patchMessage({ content: `${question}\n\n_[Could not attach ${fileName}]_` });
-          addToast({ type: 'error', message: `Could not attach ${fileName}`, duration: 3000 });
+          patchMessage({ content: `${question}\n\n_[Could not attach ${fileName}: ${why}]_` });
+          addToast({ type: 'error', message: `Could not attach ${fileName}: ${why}` });
           return;
         }
         // Record the real id on the already-shown message so a later
