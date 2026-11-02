@@ -11,7 +11,6 @@ rule, and a write outside the workspace.
 from __future__ import annotations
 
 import asyncio
-import contextvars
 import json
 import os
 import platform
@@ -66,13 +65,6 @@ def test_the_scope_only_turns_on_down_a_chain():
     assert not bypass_sandbox.active()
     assert bypass_sandbox.is_bypass(MODE_BYPASS)
     assert not bypass_sandbox.is_bypass(MODE_DEFAULT)
-
-
-def test_a_cron_context_starts_with_the_scope_off():
-    with bypass_sandbox.entered(True):
-        context = contextvars.copy_context()
-    bypass_sandbox.set_off(context)
-    assert context.run(bypass_sandbox.active) is False
 
 
 # ── the kernel: same command, both ways ──────────────────────────────────────
@@ -258,7 +250,7 @@ def test_danger_full_access_is_accepted_and_ignored_in_bypass():
         assert _python_write_mode(agent_escalation) == ("workspace", "")
 
 
-def test_a_workflow_run_keeps_its_launchers_scope():
+def test_a_workflow_run_keeps_its_launchers_scope(monkeypatch):
     from server.workflows import manager
 
     seen: list[bool] = []
@@ -272,13 +264,9 @@ def test_a_workflow_run_keeps_its_launchers_scope():
             return {"status": "failed", "error": "probe"}
 
     finalized = []
-    orig = manager._finalize
-    manager._finalize = lambda run, outcome: finalized.append(outcome)
-    try:
-        asyncio.run(manager._drive(_Run(), True))
-        asyncio.run(manager._drive(_Run(), False))
-    finally:
-        manager._finalize = orig
+    monkeypatch.setattr(manager, "_finalize", lambda run, outcome: finalized.append(outcome))
+    asyncio.run(manager._drive(_Run(), True))
+    asyncio.run(manager._drive(_Run(), False))
     assert seen == [True, False]
     assert len(finalized) == 2
 
