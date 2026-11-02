@@ -30,7 +30,7 @@ WORKFLOW_MAX_AGENTS = 1000
 # Every run gets a hard budget in agent OUTPUT tokens (the work measure —
 # input is dominated by cheap cache reads, and output is the number a user
 # can read off any provider's pricing page). Callers that set no budget get
-# this default; None is only possible for pre-migration rows.
+# this default.
 DEFAULT_WORKFLOW_BUDGET_TOKENS = 600_000
 _LINE_LIMIT = 10 * 1024 * 1024
 
@@ -131,7 +131,7 @@ class WorkflowRun:
         model_id: str = "",
         effort_label: str | None = None,
         workspace_path: str | None = None,
-        budget_tokens: int | None = None,
+        budget_tokens: int = DEFAULT_WORKFLOW_BUDGET_TOKENS,
         depth: int = 0,
         journal: Journal | None = None,
         resume_cache: dict | None = None,
@@ -432,7 +432,7 @@ class WorkflowRun:
             return await self._error(
                 mid, rpc.ERR_AGENT_CAP, f"agent cap {WORKFLOW_MAX_AGENTS} reached"
             )
-        if self.budget_tokens is not None and self.tokens_out >= self.budget_tokens:
+        if self.tokens_out >= self.budget_tokens:
             return await self._error(
                 mid, rpc.ERR_BUDGET, f"budget {self.budget_tokens} output tokens exhausted"
             )
@@ -472,7 +472,7 @@ class WorkflowRun:
             # at a time, and this re-check sees the tokens accrued by earlier
             # completions — bounding overshoot to the concurrency limit instead
             # of the whole 1000-agent cap.
-            if self.budget_tokens is not None and self.tokens_out >= self.budget_tokens:
+            if self.tokens_out >= self.budget_tokens:
                 return await self._error(
                     mid, rpc.ERR_BUDGET, f"budget {self.budget_tokens} output tokens exhausted"
                 )

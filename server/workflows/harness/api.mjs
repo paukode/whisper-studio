@@ -88,7 +88,7 @@ export function makeApi(rpcCall, notify, meta, args) {
 
   // budget.total is the run's output-token cap (default 600k, set server-side);
   // spent()/remaining() are live RPC reads of the run's output-token ledger.
-  const budgetTotal = args?.__budget_total__ ?? null;
+  const budgetTotal = args.__budget_total__;
   const budget = {
     total: budgetTotal,
     async spent() {
@@ -96,7 +96,6 @@ export function makeApi(rpcCall, notify, meta, args) {
       return r?.spent ?? 0;
     },
     async remaining() {
-      if (budgetTotal == null) return Infinity;
       const r = await rpcCall("budget_spent", {});
       return Math.max(0, budgetTotal - (r?.spent ?? 0));
     },

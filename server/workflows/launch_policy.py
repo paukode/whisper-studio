@@ -77,7 +77,7 @@ def drop_session_grants(session_id: str) -> None:
         _session_grants.pop(session_id, None)
 
 
-def launch_decision(budget_tokens: int | None) -> str:
+def launch_decision(budget_tokens: int) -> str:
     """Resolve "auto" | "ask" | "deny" for a new-script launch."""
     from server.security.permissions import (
         MODE_AUTO,
@@ -97,10 +97,6 @@ def launch_decision(budget_tokens: int | None) -> str:
         return "auto"
     if mode == MODE_DONT_ASK:
         return "deny"
-    if (
-        mode == MODE_AUTO
-        and budget_tokens is not None
-        and budget_tokens <= WORKFLOW_AUTO_MAX_TOKENS
-    ):
+    if mode == MODE_AUTO and budget_tokens <= WORKFLOW_AUTO_MAX_TOKENS:
         return "auto"
     return "ask"

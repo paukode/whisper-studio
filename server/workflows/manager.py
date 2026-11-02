@@ -406,9 +406,7 @@ def _make_nested_runner(session_id, model_key, model_id, effort_label, workspace
             }
         # Depth-1 child inherits the parent's REMAINING budget so nested spend
         # can't exceed the parent's cap; its usage is merged back into the parent.
-        child_budget = None
-        if parent.budget_tokens is not None:
-            child_budget = max(0, parent.budget_tokens - parent.tokens_out)
+        child_budget = max(0, parent.budget_tokens - parent.tokens_out)
         child_id = uuid.uuid4().hex[:12]
         # Give the nested run its own row so it is queryable and its journal dir
         # isn't an orphan; namespace the name under the parent.
