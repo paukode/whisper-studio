@@ -466,3 +466,14 @@ def test_a_headless_run_caches_its_prompt_prefix(monkeypatch):
     assert "cache_control" in first["system"][0]
     assert "cache_control" in str(first["messages"][-1])
     assert second["tools"] == first["tools"] and second["system"] == first["system"]
+
+
+def test_session_rows_are_not_relabelled_as_agent_progress():
+    """A typed row the session stream delivers (an agent report, a cron
+    event) never becomes a team_progress frame; agent runtime events do."""
+    from server.chat.engine.tool_rounds import _route_event
+
+    assert _route_event({"type": "agent_report", "agentReport": {}}) is None
+    assert _route_event({"type": "cron_event", "phase": "done"}) is None
+    progress = {"phase": "tool_call", "agent_id": "a1"}
+    assert _route_event(progress) == {"team_progress": progress}

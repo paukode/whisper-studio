@@ -68,6 +68,10 @@ def _route_event(ev: dict) -> dict | None:
         "ci_progress",
         "ci_result",
         "session_message",
+        # A finished agent's report row (server/tasks/events.py
+        # emit_agent_report): the session stream delivers it, and relabelled
+        # here it failed the team_progress schema while a turn waited on it.
+        "agent_report",
         # A workflow's own events reach the UI two other ways: the run
         # card's per-run EventSource for live progress, and a task_event
         # (above) for the terminal outcome. Without this they were
