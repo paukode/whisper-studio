@@ -32,3 +32,18 @@ export function stripMarkdownTitle(raw: string | null | undefined): string {
 
   return s || raw.trim();
 }
+
+/**
+ * A multi-line Markdown task as one plain line for a card header or tail:
+ * each line loses its Markdown markers and fenced-code fence lines are
+ * dropped, so "## Goal\n- use ws_glob" reads "Goal use ws_glob".
+ */
+export function plainTaskPreview(raw: string | null | undefined): string {
+  if (!raw) return raw ?? '';
+  const lines = raw
+    .split('\n')
+    .filter((line) => !/^\s*(```|~~~)/.test(line))
+    .map((line) => stripMarkdownTitle(line))
+    .filter(Boolean);
+  return lines.join(' ').replace(/\s+/g, ' ').trim() || raw.trim();
+}
