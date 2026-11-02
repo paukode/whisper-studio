@@ -135,16 +135,10 @@ def _default_model_key() -> str:
     """The configured default chat model key — the right fallback when an id
     cannot be reversed. Never "" (an empty key infers the standard ladder, which
     would clamp ultracode away just as silently as the old "sonnet" did)."""
-    try:
-        from server.infrastructure.config import load_config
+    from server.infrastructure.config import load_config
 
-        cfg = load_config()
-        key = cfg.get("default_chat_model")
-        if key and key in (cfg.get("chat_models") or {}):
-            return key
-        return next(iter(cfg.get("chat_models") or {}), "sonnet5.5")
-    except Exception:
-        return "sonnet5.5"
+    # load_config guarantees default_chat_model names a chat_models entry.
+    return load_config()["default_chat_model"]
 
 
 def _preview(
