@@ -11,29 +11,31 @@ reviewed properly.
 
 ## Setup
 
-1. **Pick a model with Ultracode.** Click the model chip in the composer. Opus
-   4.8 and above, Fable, Sonnet 5 and 5.5, and the GPT models from 5.5 on
-   (GPT-6.1 Sol and GPT-6 Astra, Sol and Luna included) expose Ultracode. Haiku has no effort
-   levels at all, and the older models (Sonnet 4.6, Opus 4.7 and below,
-   GPT-5.4) top out at Max.
+1. **Pick a model with Ultracode.** Open **How it thinks** in the composer and
+   pick the model in the **Model** row. Every shipped cloud model except Haiku
+   has Ultracode: Opus 5.5, Sonnet 5.5, Fable 5.1, GPT-6.1 Sol, GPT-6 Astra and
+   GPT-6 Luna. Haiku has no effort levels, and on-device models have Thinking
+   levels only.
 
-   Ultracode is orchestration, not a reasoning value, so it does not require a
-   model with the deepest reasoning rung: it rides whatever each model's top
-   rung is. That is why Sonnet 5 has it even though its ladder stops one step
-   below Opus's.
-2. **Set the effort chip to Ultracode.** This is the switch. Nothing else in the
-   UI turns workflows on.
-3. **Connect the workspace.** Workspace chip, then pick the cloned folder.
+   Ultracode is orchestration, not a reasoning value: it rides whatever each
+   model's top reasoning rung is.
+2. **Set Thinking to Ultracode.** In the same panel, set the **Thinking** row to
+   Ultracode. This is the switch. Nothing else in the UI turns workflows on.
+3. **Connect the workspace.** Open the workspace control in the composer and
+   pick the cloned folder.
 
-That is the whole setup. Whether a launch needs your approval depends on your
-permission mode (Settings, Keys and permissions):
+That is the whole setup. Whether a launch needs your approval depends on the
+**Workflow runs** row under Settings > Keys and permissions > Permissions >
+Per-Category Defaults. When that row is "Use global setting", the global
+permission mode applies:
 
-| Mode for the `workflow` category | What happens on launch |
+| Mode | What happens on launch |
 | --- | --- |
-| `default` (what you get out of the box) | Shows a preview card with the full script; you click Run |
-| `auto` | Runs immediately, no card, while the run's budget is within 600k output tokens |
-| `bypassPermissions` | Runs immediately, any budget |
-| `dontAsk` | Declines, and tells the assistant why |
+| Asks first (what you get out of the box) | Shows a preview card with the full script; you click Approve & run |
+| Plan or Accept edits | Shows the preview card |
+| Auto | Runs immediately, no card, while the run's budget is within 600k output tokens |
+| Bypass | Runs immediately, any budget |
+| Don't ask | Declines, and tells the assistant why |
 
 Out of the box that means your first run of a new script shows a card. Trusted
 saved workflows and resumes skip this gate entirely.
@@ -77,11 +79,11 @@ of a green card over a missing report.
 
 Watch it from two places:
 
-- **The chat card**, live, with a **Stop** button while it runs and a
-  **Refresh** button once it has ended.
-- **The Background Tasks panel**, alongside detached agents and shell commands:
-  a workflow run is an ordinary background task there, and its finish posts the
-  same kind of task card into the session.
+- **The chat card**, live, with one row per agent (**Open** shows that agent's
+  feed in the dock), a **Stop** button while it runs, and a **Refresh** button
+  when the run failed, was stopped or went stale.
+- **The header's Background tasks list**, alongside detached agents and shell
+  commands: a workflow run is an ordinary background task there.
 
 ## Keep chatting while it runs
 
@@ -89,9 +91,8 @@ Send your next message straight away. The swarm is not a chat turn: the stream
 slot is released when the launching turn finishes, so the composer is live again
 after a few seconds while the run keeps going for however long it takes.
 
-When it finishes you get a task card in the session, and the assistant is told
-the outcome on your next message, so you can simply ask "what did the review
-find?" and it will know.
+When it finishes, the assistant gets the outcome at the start of your next
+message, so you can simply ask "what did the review find?" and it will know.
 
 ## Reusing a workflow
 
@@ -111,9 +112,11 @@ a preview from then on, including via the slash command:
   your account's quota is paced rather than failed.
 - 1000 agents per run, 600k output tokens by default. Both raise catchable
   errors inside the script rather than dying silently.
-- Stop a run from its card in chat.
+- Stop a run from its card in chat or from the header's Background tasks list.
 - Workflows do not nest more than one level: a script can call a saved workflow,
-  but that workflow cannot call another. A nested run inherits whatever budget
+  but that workflow cannot call another. The called workflow must be saved and
+  approved (from its preview card once, or earlier in this session); if not,
+  `workflow()` returns status failed. A nested run inherits whatever budget
   the parent has left, and spends back into the parent's total.
 - A run can be resumed: ask the assistant to resume it by run id and every agent
   call that already completed replays from the run's journal, free and instant,
@@ -121,16 +124,17 @@ a preview from then on, including via the slash command:
 
 ## If it does not fan out
 
-- **You got one agent instead of a swarm.** Check the effort chip actually says
+- **You got one agent instead of a swarm.** Check that Thinking shows
   Ultracode. Any other level, and the workflow tools are not offered to the
   model at all.
 - **A preview card on the first run.** Either the run's budget is above 600k,
-  or the `workflow` category is not on `auto`. Approving the card covers the
+  or the Workflow runs mode is not Auto (or Bypass). Approving the card covers the
   rest of the session for that exact script, and trusts a saved workflow
   durably: one approval, no repeat cards.
-- **Nothing about workflows in Settings.** By design: approval and management
-  happen in chat (ask the assistant, or `workflow_list` / `workflow_delete`).
-  Runs live on their chat card and in the Background Tasks panel.
+- **Settings has only the Workflow runs launch mode.** You save, list and
+  delete workflows in chat (`workflow_save`, `workflow_list`,
+  `workflow_delete`). Runs live on their chat card and in the header's
+  Background tasks list.
 - **A run says failed but the agents all worked.** Check whether the script
   promised a file it did not write: a missing deliverable fails the run, and the
   error names the path.
