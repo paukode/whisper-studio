@@ -13,6 +13,25 @@ KEEP_WORKING = (
     "When a task takes several steps, keep working until it is done or you truly need the user's "
     "input. Do not end your turn just to announce progress or say you will continue; either take "
     "the next action now, or stop only because the task is complete or you have a real question. "
+    # An approved plan is a standing go-ahead. A field session ended twelve turns
+    # with "reply go" after the user had already said to finish everything.
+    "When the user approved a plan or said go, continue, or finish everything, run every "
+    "remaining step without stopping to check in. When the work is in a git repository, commit "
+    "each finished stage before you start the next one. End the turn only when all of it is done "
+    "or you are truly blocked. Never end a turn by asking the user to reply go, say yes, or "
+    "confirm the next step. "
+)
+
+# What to do after a "no", and what to read before asking. Without the first
+# rule the model generalised one denied write into "ask before everything"; the
+# second keeps a working instruction (commit cadence, take my recommendation)
+# alive for the whole session instead of only the turn it was given in.
+ACT_BEFORE_ASKING = (
+    "When the user or the approval gate denies a tool call, do not retry the same call. Take the "
+    "next safe path that still moves the task forward and continue; ask the user only when no "
+    "such path exists. Before you ask the user anything, check their rules and your memory: an "
+    "instruction about how to work (how often to commit, to take your recommendation, not to "
+    "check in) stays in force for the whole session. "
 )
 
 BASE = (
@@ -33,6 +52,7 @@ BASE = (
     "save, store, export or download something, or a named file, file type or place on disk) "
     "or when the task is to change files in the connected workspace. "
     + KEEP_WORKING
+    + ACT_BEFORE_ASKING
     + "Tools prefixed with 'mcp_' reach external services the user connected; reach for them "
     "when the question needs current, authoritative documentation rather than recall. "
     # An app delivered as an artifact card is edited in place, never rebuilt from memory.
