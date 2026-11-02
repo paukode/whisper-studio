@@ -1,4 +1,7 @@
-"""Security tests for `_exec_ws_merge_worktree` in server/workspace/executors.py.
+"""Security tests for the worktree merge in server/workspace/executors.py.
+
+`_exec_ws_merge_worktree` asks for approval (the [WS_APPROVAL] sentinel);
+`do_ws_merge_worktree` runs the merge once the mode or a person allows it.
 
 Regression guard for a command-injection fix. The merge executor used to emit
 a shell `{"action": "command", "command": f"git merge --no-ff {branch} ..."}`
@@ -7,8 +10,8 @@ characters without spaces (brace expansion `{a,b}`, `;`, `(`) and the message
 was single-quoted, so a crafted worktree name yielded command injection (or, at
 minimum, broke the `-m '...'` quoting).
 
-The fix runs the merge with ARGV — `["git", "merge", "--no-ff", branch, "-m",
-msg]` via subprocess.run — the same argv approach do_git_merge and the sibling
+The fix runs the merge with ARGV, `["git", "merge", "--no-ff", branch, "-m",
+msg]` via subprocess.run, the same argv approach do_git_merge and the sibling
 worktree ops (ws_create_worktree, ws_diff_worktree) use. These tests assert the
 metacharacter branch/name reaches git as one literal argument, never a shell
 string, and that a normal branch still merges end-to-end.
@@ -19,8 +22,9 @@ import subprocess
 
 import pytest
 
+from server.approval.markers import APPROVAL
 from server.workspace import executors
-from server.workspace.executors import _exec_ws_merge_worktree
+from server.workspace.executors import _exec_ws_merge_worktree, do_ws_merge_worktree
 
 
 @pytest.fixture(autouse=True)
@@ -35,8 +39,18 @@ class _FakeCompleted:
     def __init__(self, argv):
         self.args = argv
         self.returncode = 0
-        self.stdout = "Merge made by the 'ort' strategy.\n"
+        reads_branch = argv[1:3] == ["rev-parse", "--abbrev-ref"]
+        self.stdout = "main\n" if reads_branch else "Merge made by the 'ort' strategy.\n"
         self.stderr = ""
+
+
+def _merge(name):
+    """Ask, then run what was asked: the two halves the approval gate joins."""
+    out = _exec_ws_merge_worktree({"name": name}, [], [])
+    if not out.startswith(APPROVAL):
+        return out
+    _ok, text = do_ws_merge_worktree(json.loads(out[len(APPROVAL) :]))
+    return text
 
 
 def _capture_subprocess(monkeypatch):
@@ -48,7 +62,8 @@ def _capture_subprocess(monkeypatch):
     calls = []
 
     def fake_run(args, **kwargs):
-        calls.append({"argv": list(args), "kwargs": kwargs})
+        if list(args[1:3]) != ["rev-parse", "--abbrev-ref"]:
+            calls.append({"argv": list(args), "kwargs": kwargs})
         return _FakeCompleted(list(args))
 
     monkeypatch.setattr(executors.subprocess, "run", fake_run)
@@ -71,10 +86,8 @@ def test_merge_worktree_metacharacter_name_is_single_argv_arg(tmp_path, monkeypa
         "base": "HEAD",
     }
 
-    out = _exec_ws_merge_worktree({"name": evil_name}, [], [])
-
-    # No shell `[WS_APPROVAL]` command payload is emitted any more.
-    assert not out.startswith("[WS_APPROVAL]")
+    out = _merge(evil_name)
+    assert json.loads(out)["merged"] is True
 
     assert calls, "git should have been invoked via subprocess.run"
     record = calls[0]
@@ -86,7 +99,7 @@ def test_merge_worktree_metacharacter_name_is_single_argv_arg(tmp_path, monkeypa
     assert argv[1] == "merge"
     assert "--no-ff" in argv
 
-    # The metacharacter branch is exactly one literal element — never split on
+    # The metacharacter branch is exactly one literal element, never split on
     # `;`, never glued to another token, never expanded.
     assert argv.count(evil_branch) == 1
     # No argv element is itself a composite shell command line.
@@ -121,12 +134,11 @@ def test_merge_worktree_single_quote_name_does_not_break(tmp_path, monkeypatch):
         "base": "HEAD",
     }
 
-    out = _exec_ws_merge_worktree({"name": name}, [], [])
-    assert not out.startswith("[WS_APPROVAL]")
+    _merge(name)
     argv = calls[0]["argv"]
     assert branch in argv
     m = argv.index("-m")
-    # The quote survives intact as a plain argv element — no shell parsing.
+    # The quote survives intact as a plain argv element: no shell parsing.
     assert argv[m + 1] == f"Merge worktree {name}"
 
 
@@ -183,11 +195,11 @@ def test_merge_worktree_normal_branch_merges(git_repo, monkeypatch):
         "base": "HEAD",
     }
 
-    out = _exec_ws_merge_worktree({"name": name}, [], [])
+    out = _merge(name)
     payload = json.loads(out)
     assert payload["merged"] is True
     assert payload["branch"] == branch
-    # The branch's file is now present in the main worktree — the merge really
+    # The branch's file is now present in the main worktree: the merge really
     # happened, with the descriptive commit message intact.
     assert (git_repo / "feature.txt").read_text() == "from the worktree\n"
     log = subprocess.run(
@@ -214,8 +226,150 @@ def test_merge_worktree_injection_name_does_not_execute_shell(git_repo, monkeypa
         "base": "HEAD",
     }
 
-    out = _exec_ws_merge_worktree({"name": evil_name}, [], [])
-    # Merge fails because the branch does not exist — but no shell ran.
+    out = _merge(evil_name)
+    # Merge fails because the branch does not exist, but no shell ran.
     assert out.startswith("Failed to merge worktree")
-    assert not out.startswith("[WS_APPROVAL]")
     assert not sentinel.exists(), "shell metacharacters must not be executed"
+
+
+# --- the approval card, per permission mode -------------------------------
+
+
+def _feature_repo(git_repo):
+    name = "feature"
+    branch = f"whisper/{name}"
+    wt_path = git_repo / ".worktrees" / name
+    _git(git_repo, "worktree", "add", "-b", branch, str(wt_path))
+    (wt_path / "feature.txt").write_text("from the worktree\n")
+    _git(wt_path, "add", "feature.txt")
+    _git(wt_path, "commit", "-m", "add feature file")
+    executors._WORKTREES[name] = {"branch": branch}
+    return name, branch
+
+
+@pytest.fixture
+def connected_repo(git_repo, monkeypatch):
+    from server.security.permissions import MODE_DEFAULT
+
+    monkeypatch.setattr(executors, "get_workspace_path", lambda: str(git_repo))
+    monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: str(git_repo))
+    monkeypatch.setattr(
+        "server.workspace.state.load_workspace_config", lambda: {"path": str(git_repo)}
+    )
+    monkeypatch.setattr(
+        "server.security.permissions.load_permissions",
+        lambda: {"mode": MODE_DEFAULT, "rules": [], "category_modes": {}},
+    )
+    return git_repo
+
+
+class _State:
+    def __init__(self, output, root):
+        self.tool_id = "tu_merge"
+        self.tool_name = "ws_merge_worktree"
+        self.output = output
+        self.side_effects = []
+        self.status = "pending"
+        self.duration_ms = 0
+        self.stats = None
+        self.ws_root_taken = True
+        self.ws_root = root
+
+
+def _gate(name, root, *, mode, unattended=False):
+    import asyncio
+
+    from server.approval.bootstrap import register_defaults
+    from server.tool_executor import process_tool_results
+
+    register_defaults()
+    output = _exec_ws_merge_worktree({"name": name, "__session_id__": "s1"}, [], [])
+    assert output.startswith(APPROVAL)
+    results, events, _pending, _q = asyncio.run(
+        process_tool_results(
+            [_State(output, str(root))],
+            budget_fn=lambda _n, out: out,
+            session_approvals={},
+            config={},
+            model_id="",
+            recent_messages=[],
+            mode=mode,
+            unattended=unattended,
+        )
+    )
+    request = None
+    for raw in events:
+        event = json.loads(raw)
+        if "approval_request" in event:
+            request = event["approval_request"]
+    return json.dumps(results), request
+
+
+def _merged(repo):
+    return (repo / "feature.txt").exists()
+
+
+def test_merge_card_names_branch_and_target_in_asking_modes(connected_repo):
+    from server.security.permissions import MODE_ACCEPT_EDITS, MODE_AUTO, MODE_DEFAULT
+
+    name, branch = _feature_repo(connected_repo)
+    target = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=connected_repo,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    for mode in (MODE_DEFAULT, MODE_ACCEPT_EDITS, MODE_AUTO):
+        _out, request = _gate(name, connected_repo, mode=mode)
+        assert request is not None, mode
+        assert request["action"] == "ws_merge_worktree"
+        assert request["summary"] == f"Merge worktree branch {branch} into {target}"
+        assert request["payload"]["command"] == (
+            f"git merge --no-ff {branch} -m 'Merge worktree {name}'"
+        )
+    assert not _merged(connected_repo)
+
+
+def test_merge_runs_with_no_card_in_bypass(connected_repo):
+    from server.security.permissions import MODE_BYPASS
+
+    name, _branch = _feature_repo(connected_repo)
+    out, request = _gate(name, connected_repo, mode=MODE_BYPASS)
+    assert request is None and '\\"merged\\": true' in out
+    assert _merged(connected_repo)
+
+
+def test_merge_is_denied_in_dont_ask(connected_repo):
+    from server.security.permissions import MODE_DONT_ASK
+
+    name, _branch = _feature_repo(connected_repo)
+    out, request = _gate(name, connected_repo, mode=MODE_DONT_ASK)
+    assert request is None and "[Denied" in out
+    assert not _merged(connected_repo)
+
+
+def test_merge_is_refused_unattended(connected_repo):
+    from server.security.permissions import VALID_MODES
+
+    name, _branch = _feature_repo(connected_repo)
+    for mode in VALID_MODES:
+        out, request = _gate(name, connected_repo, mode=mode, unattended=True)
+        assert request is None, mode
+        assert "not permitted from an unattended subagent" in out, mode
+    assert not _merged(connected_repo)
+
+
+def test_merge_is_blocked_in_plan_mode(connected_repo):
+    from server.tool_executor import _PLAN_MODE_BLOCKED
+
+    assert "ws_merge_worktree" in _PLAN_MODE_BLOCKED
+
+
+def test_a_yes_after_a_branch_switch_merges_nothing(connected_repo):
+    name, _branch = _feature_repo(connected_repo)
+    out = _exec_ws_merge_worktree({"name": name}, [], [])
+    payload = json.loads(out[len(APPROVAL) :])
+    _git(connected_repo, "checkout", "-b", "elsewhere")
+    ok, text = do_ws_merge_worktree(payload)
+    assert not ok and "Nothing was merged" in text
+    assert not _merged(connected_repo)

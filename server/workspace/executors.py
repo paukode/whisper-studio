@@ -1048,8 +1048,35 @@ def _exec_ws_diff_worktree(tool_input, transcript, current_attachments):
         return f"Diff error: {e}"
 
 
+def _merge_argv(name: str, branch: str) -> list[str]:
+    """The merge, as argv, never a shell string. Git ref names permit
+    shell-active characters (brace expansion `{a,b}`, `;`, `(`) and quotes, so
+    the branch and the name go to git as literal argv elements, the same way
+    do_git_merge and the sibling worktree ops do. The `-m` message keeps a
+    descriptive merge commit."""
+    return ["git", "merge", "--no-ff", branch, "-m", f"Merge worktree {name}"]
+
+
+def _current_branch(ws: str) -> tuple[str | None, str | None]:
+    """(branch checked out in ``ws``, error). A detached HEAD reads "HEAD"."""
+    result = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        capture_output=True,
+        text=True,
+        cwd=ws,
+        timeout=15,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        return None, f"Cannot read the current branch: {detail}"
+    return result.stdout.strip(), None
+
+
 @register_executor("ws_merge_worktree", read_only=False, concurrent_safe=False)
 def _exec_ws_merge_worktree(tool_input, transcript, current_attachments):
+    """Ask to merge a worktree branch into the current branch. The merge runs
+    in do_ws_merge_worktree once the permission mode or a person allows it."""
+    session_id = tool_input.pop("__session_id__", "")
     ws = get_workspace_path()
     if not ws:
         return "No workspace connected."
@@ -1057,27 +1084,61 @@ def _exec_ws_merge_worktree(tool_input, transcript, current_attachments):
     info = _WORKTREES.get(name)
     if not info:
         return f"Worktree '{name}' not found."
-    # Run the merge with ARGV, never a shell string. Git ref names permit
-    # shell-active characters (brace expansion `{a,b}`, `;`, `(`) and quotes,
-    # so interpolating the branch/name into a shell `command` payload was a
-    # command-injection vector. Passing them as literal argv elements, the
-    # same way do_git_merge and the sibling worktree ops (ws_create_worktree,
-    # ws_diff_worktree) do, means the shell never parses them. The `-m`
-    # message keeps the user-facing behavior (a descriptive merge commit).
+    target, err = _current_branch(ws)
+    if err:
+        return f"Error: {err}"
+    return approval_request(
+        {
+            "action": "ws_merge_worktree",
+            "name": name,
+            "branch": info["branch"],
+            "target": target,
+            "session_id": session_id,
+        }
+    )
+
+
+def do_ws_merge_worktree(payload: dict) -> tuple[bool, str]:
+    """Run an allowed worktree merge. The branch comes from the worktree
+    registry, not the payload, and the merge runs only into the branch the
+    card named."""
+    from server.approval.spec import refuse_if_agent
+
+    refusal = refuse_if_agent(payload, what="A worktree merge")
+    if refusal:
+        return False, refusal.error
+    ws = get_workspace_path()
+    if not ws:
+        return False, "No workspace connected."
+    name = payload.get("name", "")
+    info = _WORKTREES.get(name)
+    if not info:
+        return False, f"Worktree '{name}' not found."
     branch = info["branch"]
-    msg = f"Merge worktree {name}"
+    if branch != payload.get("branch"):
+        return False, f"Worktree '{name}' is now on {branch}, not the branch that was approved."
+    target, err = _current_branch(ws)
+    if err:
+        return False, err
+    if target != payload.get("target"):
+        return (
+            False,
+            f"The current branch is now {target}, not {payload.get('target')}. Nothing was merged.",
+        )
     try:
         result = subprocess.run(
-            ["git", "merge", "--no-ff", branch, "-m", msg],
+            _merge_argv(name, branch),
             capture_output=True,
             text=True,
             cwd=ws,
             timeout=30,
         )
-        if result.returncode != 0:
-            detail = (result.stderr or result.stdout).strip()
-            return f"Failed to merge worktree: {detail}"
-        output = (result.stdout + result.stderr).strip()
-        return json.dumps({"merged": True, "name": name, "branch": branch, "output": output})
-    except Exception as e:
-        return f"Merge error: {e}"
+    except Exception as e:  # noqa: BLE001 (surface any spawn failure)
+        return False, f"Merge error: {e}"
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        return False, f"Failed to merge worktree: {detail}"
+    output = (result.stdout + result.stderr).strip()
+    return True, json.dumps(
+        {"merged": True, "name": name, "branch": branch, "target": target, "output": output}
+    )

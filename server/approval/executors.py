@@ -586,6 +586,19 @@ async def _do_git_merge(payload: dict) -> ApprovalOutcome:
     return ApprovalOutcome(ok=ok, output=output if ok else None, error=None if ok else output)
 
 
+async def _do_ws_merge_worktree(payload: dict) -> ApprovalOutcome:
+    from server.workspace.executors import do_ws_merge_worktree
+
+    ok, output = await asyncio.to_thread(do_ws_merge_worktree, payload)
+    return ApprovalOutcome(ok=ok, output=output if ok else None, error=None if ok else output)
+
+
+def _ws_merge_render(p: dict) -> str:
+    from server.workspace.executors import _merge_argv
+
+    return shlex.join(_merge_argv(str(p.get("name", "?")), str(p.get("branch", "?"))))
+
+
 async def _do_git_stash(payload: dict) -> ApprovalOutcome:
     from server.git.executor import do_git_stash
 

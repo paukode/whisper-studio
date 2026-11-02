@@ -491,7 +491,12 @@ def get_worktree_tools() -> list[dict]:
         },
         {
             "name": "ws_merge_worktree",
-            "description": "[Workspace] Merge a worktree branch back into the current branch. Requires user approval.",
+            "description": (
+                "[Workspace] Merge a worktree branch back into the current branch "
+                "(git merge --no-ff). Follows the permission mode: Bypass merges with no "
+                "card, Don't ask and unattended runs refuse, the other modes show an "
+                "approval card naming the branch and the target."
+            ),
             "input_schema": {
                 "type": "object",
                 "properties": {

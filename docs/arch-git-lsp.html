@@ -268,8 +268,12 @@
         <tr><td><code>ws_merge_worktree</code></td><td>Merges the task branch back into the current branch (<code>git merge --no-ff</code>).</td></tr>
       </tbody>
     </table></div>
-    <p><code>ws_create_worktree</code> and <code>ws_merge_worktree</code> run with no approval card,
-      in every permission mode; plan mode refuses <code>ws_merge_worktree</code> before it runs. The
+    <p><code>ws_create_worktree</code> runs with no approval card in every permission mode.
+      <code>ws_merge_worktree</code> follows the permission mode like <code>git_merge</code>: Bypass
+      merges with no card, Don't ask refuses, an unattended run (a subagent or a scheduled task)
+      refuses, plan mode refuses before it runs, and the other modes show a card with the argv-built
+      <code>git merge --no-ff</code> command, the worktree branch, and the target branch. A Yes after
+      the current branch changed merges nothing. The
       three tools are always in the catalog. Without a connected workspace they answer "No workspace
       connected", and in a folder that is not a git repository <code>ws_create_worktree</code> answers
       "Workspace is not a git repository".</p>

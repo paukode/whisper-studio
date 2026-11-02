@@ -50,6 +50,7 @@ from .executors import (
     _do_terminal_run,
     _do_terminal_send,
     _do_write,
+    _do_ws_merge_worktree,
     _gh_api_render,
     _gh_api_summary,
     _gh_render,
@@ -62,6 +63,7 @@ from .executors import (
     _summary_delete,
     _summary_save,
     _summary_write,
+    _ws_merge_render,
 )
 from .registry import register
 from .spec import ApprovalSpec
@@ -482,6 +484,20 @@ def register_defaults() -> None:
         ),
     )
     register(
+        "ws_merge_worktree",
+        ApprovalSpec(
+            category="cli",
+            preview="command",
+            summary=lambda p: (
+                f"Merge worktree branch {p.get('branch', '?')} into {p.get('target', '?')}"
+            ),
+            executor=_do_ws_merge_worktree,
+            risk_hint="medium",
+            payload_fields=["name", "branch", "target", "session_id"],
+            render_command=_ws_merge_render,
+        ),
+    )
+    register(
         "git_stash",
         ApprovalSpec(
             category="cli",
@@ -835,6 +851,7 @@ _WORKSPACE_BOUND = {
             "git_delete_branch",
             "git_merge",
             "git_stash",
+            "ws_merge_worktree",
             "github",
             "github_destructive",
             "github_api_write",

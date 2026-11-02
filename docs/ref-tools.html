@@ -124,7 +124,7 @@
         <tr><td><code>ws_open_folder</code></td><td>Connect a specific folder as the workspace. The card appears the first time you reach into a folder you have not granted before; the grant is remembered afterwards, for that folder and everything beneath it, and approving it also connects the folder.</td><td><span class="badge">approval</span></td></tr>
         <tr><td><code>ws_create_worktree</code></td><td>Create an isolated task worktree for multi-file changes, under <code class="path">&lt;repo&gt;/.worktrees/&lt;name&gt;</code> on branch <code>whisper/&lt;name&gt;</code>.</td><td><span class="badge badge--muted">no prompt</span></td></tr>
         <tr><td><code>ws_diff_worktree</code></td><td>Show the diff between the worktree branch and the main branch.</td><td><span class="badge badge--muted">read</span></td></tr>
-        <tr><td><code>ws_merge_worktree</code></td><td>Merge a worktree branch back into the current branch. It runs the merge directly, with no card, but it is one of the six tools plan mode refuses.</td><td><span class="badge badge--muted">no prompt</span></td></tr>
+        <tr><td><code>ws_merge_worktree</code></td><td>Merge a worktree branch back into the current branch (<code>git merge --no-ff</code>). The card names the worktree branch and the target branch. Bypass merges with no card, Don't ask and unattended runs refuse, and it is one of the six tools plan mode refuses.</td><td><span class="badge">approval</span></td></tr>
       </tbody>
     </table></div>
 

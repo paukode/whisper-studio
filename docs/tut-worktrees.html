@@ -65,9 +65,12 @@
 
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg></span>
-      <div class="callout__body"><p>Read the diff before you ask for the merge. <b>The merge does not
-        show an approval card.</b> <a href="tut-permissions.html">Plan mode</a> blocks it, but in the
-        other modes the merge runs as a usual tool call.</p></div>
+      <div class="callout__body"><p>Read the diff before you ask for the merge. The merge obeys
+        the <a href="tut-permissions.html">permission mode</a>. Bypass merges and does not show a card.
+        The <b>Don't ask</b> mode stops the merge. Plan mode blocks the merge.</p>
+        <p>A subagent or a scheduled task cannot merge. In the other modes, an approval card shows the worktree branch and the branch that
+        gets the merge. If the current branch changes before you approve, the tool does not
+        merge.</p></div>
     </div>
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
