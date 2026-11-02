@@ -62,11 +62,6 @@ export type CompletionItemKindEnum = Record<string, number>;
 
 // ── Positions & ranges (0-based LSP <-> 1-based Monaco) ──
 
-/** LSP position (0-based) -> Monaco position (1-based). */
-export function lspToMonacoPosition(pos: LspPosition): { lineNumber: number; column: number } {
-  return { lineNumber: pos.line + 1, column: pos.character + 1 };
-}
-
 /** Monaco position (1-based) -> LSP position (0-based). */
 export function monacoToLspPosition(lineNumber: number, column: number): LspPosition {
   return { line: lineNumber - 1, character: column - 1 };
