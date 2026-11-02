@@ -139,6 +139,20 @@ def _bind_to_workspace(spec, state, ws_parsed: dict) -> str | None:
     return turn_workspace_refusal(spec, ws_parsed)
 
 
+def _explainer_input(spec, ws_parsed: dict, secret: str | None) -> dict:
+    """What the risk explainer reads: the fields the card shows, never the
+    server's own stamps. Bypass stamps ``secret_access`` on every call, so
+    passing it on made the explainer warn about a Keychain read the call
+    never asked for. It goes only with a card that asks for that read."""
+    shown = spec.build_payload(ws_parsed)
+    for key in list(shown):
+        if key.startswith("__") or key in (WORKSPACE_ROOT_KEY, "session_id"):
+            shown.pop(key)
+    if secret != "ask":
+        shown.pop(secret_reads.SECRET_ACCESS_KEY, None)
+    return shown
+
+
 def _settle_secret_access(spec, ws_parsed: dict, mode: str) -> str | None:
     """Settle the payload's credential-store read for ``mode``: None when the
     call asks for none, else "allow" | "ask" | "deny" (secret_reads.decision).
@@ -345,7 +359,7 @@ async def gate_approval(
     if config and model_id:
         explanation = await explain_permission(
             tool_name=state.tool_name,
-            tool_input=ws_parsed,
+            tool_input=_explainer_input(spec, ws_parsed, secret),
             recent_messages=recent_messages or [],
             config=config,
             session_id=cost_session_id,
