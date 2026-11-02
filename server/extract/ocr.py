@@ -24,9 +24,9 @@ import logging
 
 log = logging.getLogger("whisper-studio")
 
-# After a Bedrock auth/permission failure we stop trying Haiku for the rest of
-# the process and go straight to Apple Vision, rather than hammering a denied
-# endpoint on every upload.
+# After a Bedrock auth/permission failure we stop trying the Haiku reader (which
+# runs only when Apple Vision finds no text) for the rest of the process,
+# rather than hammering a denied endpoint on every upload.
 _haiku_ocr_disabled = False
 
 _OCR_PROMPT = (
