@@ -529,7 +529,7 @@ async def route_tool(
         from server.agent_tools import execute_send_message
 
         output = execute_send_message(
-            tool_input, from_id=_nesting["agent_id"] if _nesting else "main"
+            tool_input, session_id, from_id=_nesting["agent_id"] if _nesting else "main"
         )
         return output, side_effects
 

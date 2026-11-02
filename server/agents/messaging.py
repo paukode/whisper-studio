@@ -22,7 +22,7 @@ class MessageBus:
 
     def __init__(self):
         self._mailboxes: dict[str, list[AgentMessage]] = {}
-        # agent_id -> owning chat session ("" = untagged/legacy)
+        # agent_id -> owning chat session
         self._sessions: dict[str, str] = {}
         self._lock = threading.Lock()
 
@@ -34,29 +34,16 @@ class MessageBus:
                 self._mailboxes[to_id] = []
             self._mailboxes[to_id].append(msg)
 
-    def broadcast(self, from_id: str, content: str, agent_ids: list[str] | None = None) -> int:
-        """Broadcast a message to multiple agents.
-
-        If agent_ids is None, sends to all mailboxes IN THE SENDER'S SESSION
-        (or, for untagged senders like "main", only untagged/same-session
-        mailboxes) — a broadcast from one session must never bleed into
-        another session's agents.
-        """
+    def broadcast(self, from_id: str, content: str, session_id: str) -> int:
+        """Send a message to every other mailbox of ``session_id``: a
+        broadcast from one session never reaches another session's agents."""
         msg_template = AgentMessage(from_id=from_id, to_id="*", content=content)
         count = 0
         with self._lock:
-            if agent_ids:
-                targets = agent_ids
-            else:
-                sender_session = self._sessions.get(from_id, "")
-                targets = [
-                    aid for aid in self._mailboxes if self._sessions.get(aid, "") == sender_session
-                ]
+            targets = [aid for aid in self._mailboxes if self._sessions.get(aid, "") == session_id]
             for aid in targets:
                 if aid == from_id:
                     continue
-                if aid not in self._mailboxes:
-                    self._mailboxes[aid] = []
                 self._mailboxes[aid].append(
                     AgentMessage(
                         from_id=from_id,

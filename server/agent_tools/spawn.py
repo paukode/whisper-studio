@@ -564,7 +564,7 @@ async def execute_spawn_agent(
     return json.dumps(result_payload)
 
 
-def execute_send_message(tool_input: dict, from_id: str = "main") -> str:
+def execute_send_message(tool_input: dict, session_id: str, from_id: str = "main") -> str:
     """Send inter-agent message.
 
     ``from_id`` defaults to "main" (interactive chat, i.e. no particular
@@ -572,6 +572,7 @@ def execute_send_message(tool_input: dict, from_id: str = "main") -> str:
     calling agent's id here when this call originates from inside an
     agent's own turn (server.agents.runtime.agent_nesting_ctx), so a
     receiving agent's mailbox shows the true sender instead of "main".
+    A broadcast reaches the agents of ``session_id`` (the calling turn's).
     """
     from server.agents.messaging import message_bus
 
@@ -580,7 +581,7 @@ def execute_send_message(tool_input: dict, from_id: str = "main") -> str:
     is_broadcast = tool_input.get("broadcast", False)
 
     if is_broadcast:
-        count = message_bus.broadcast(from_id, content)
+        count = message_bus.broadcast(from_id, content, session_id)
         return json.dumps({"sent": True, "broadcast": True, "recipients": count})
     elif to_id:
         from server.agents.registry import agent_registry
@@ -595,11 +596,12 @@ def execute_send_message(tool_input: dict, from_id: str = "main") -> str:
             if _journal.find_dir(to_id):
                 from server.tasks.agents import resume_agent
 
-                session_id = str(
-                    tool_input.get("__session_id__") or getattr(info, "session_id", "") or ""
-                )
                 try:
-                    resume_agent(to_id, content, session_id=session_id)
+                    resume_agent(
+                        to_id,
+                        content,
+                        session_id=session_id or getattr(info, "session_id", "") or "",
+                    )
                 except Exception as e:  # noqa: BLE001 - report, never raise into the tool
                     return json.dumps({"error": f"could not resume agent {to_id}: {e}"})
                 return json.dumps(
@@ -614,6 +616,8 @@ def execute_send_message(tool_input: dict, from_id: str = "main") -> str:
                         ),
                     }
                 )
+            elif info is None:
+                return json.dumps({"error": f"no agent {to_id} is running or recorded"})
         message_bus.send(from_id, to_id, content)
         return json.dumps({"sent": True, "to": to_id})
     else:
