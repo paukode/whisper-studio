@@ -4109,6 +4109,13 @@ input.segment-speaker {
 .ws-git-changes.expanded .ws-git-changes-list {
     display: block;
 }
+.ws-git-error {
+    padding: 8px 14px;
+    font-size: 12px;
+    color: var(--danger);
+    white-space: pre-wrap;
+    word-break: break-word;
+}
 /* Font matches .ws-file-tree above it — the two lists read as one
  * column, so they must not differ in family or size. */
 .ws-git-change-item {
@@ -6076,6 +6083,7 @@ button.ws-git-status-badge:hover {
     text-overflow: ellipsis;
 }
 .asb-git.dirty { color: var(--accent); }
+.asb-git.asb-git-error { color: var(--danger); }
 .asb-git-icon { opacity: 0.7; }
 .asb-git-count { opacity: 0.85; }
 .asb-ahead { color: var(--accent-live); }

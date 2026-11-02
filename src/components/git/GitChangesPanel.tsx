@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getGitChanges, gitRestoreFile } from '@/api/git';
+import { gitQueryErrorMessage } from '@/hooks/useGitStatusBar';
 import type { GitFileStatus as GitFileStatusType } from '@/api/git';
 import { GitFileStatus } from './GitFileStatus';
 import { GitDiffViewer } from './GitDiffViewer';
@@ -35,10 +36,13 @@ export const GitChangesPanel: React.FC<GitChangesPanelProps> = ({ onFileOpen }) 
   // invalidate ['git-changes'] (debounced) to refetch. react-query dedupes
   // concurrent fetches and coalesces an invalidate-during-fetch into a single
   // trailing refetch — replacing the old manual in-flight/stale tracking.
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, error } = useQuery({
     queryKey: ['git-changes'],
     queryFn: getGitChanges,
   });
+  // A git failure (HTTP 5xx with git's message) is shown in place of the
+  // list, never read as an empty, clean tree. A 4xx means no repository.
+  const loadError = gitQueryErrorMessage(error);
   const files = (data?.files ?? []) as GitFileStatusType[];
   const branch = data?.branch ?? '';
   const perFileStats: Record<string, { added: number; removed: number }> = data?.per_file_stats ?? {};
@@ -122,7 +126,7 @@ export const GitChangesPanel: React.FC<GitChangesPanelProps> = ({ onFileOpen }) 
   const totalCount = files.length;
 
   return (
-    <div className={`ws-git-changes${expanded ? ' expanded' : ''}`} style={{ display: totalCount > 0 || isLoading ? undefined : 'none' }}>
+    <div className={`ws-git-changes${expanded ? ' expanded' : ''}`} style={{ display: totalCount > 0 || isLoading || loadError ? undefined : 'none' }}>
       {/* Header — click to collapse/expand */}
       <div className="ws-git-changes-header" onClick={toggleExpand} role="button" tabIndex={0}>
         <span className={`file-tree-chevron${expanded ? ' file-tree-chevron-expanded' : ''}`} style={{ fontSize: '8px', marginRight: 4 }}>
@@ -162,11 +166,17 @@ export const GitChangesPanel: React.FC<GitChangesPanelProps> = ({ onFileOpen }) 
           </div>
         )}
 
-        {!isLoading && files.length === 0 && (
+        {loadError && (
+          <div className="ws-git-error" role="alert">
+            {loadError}
+          </div>
+        )}
+
+        {!loadError && !isLoading && files.length === 0 && (
           <div style={{ padding: '8px 14px', fontSize: '12px', color: 'var(--text-muted)' }}>No changes</div>
         )}
 
-        {stagedFiles.length > 0 && (
+        {!loadError && stagedFiles.length > 0 && (
           <>
             <div className="ws-git-section-title">Staged ({stagedFiles.length})</div>
             {stagedFiles.map((file) => {
@@ -187,7 +197,7 @@ export const GitChangesPanel: React.FC<GitChangesPanelProps> = ({ onFileOpen }) 
           </>
         )}
 
-        {unstagedFiles.length > 0 && (
+        {!loadError && unstagedFiles.length > 0 && (
           <>
             {stagedFiles.length > 0 && (
               <div className="ws-git-section-title">Changes ({unstagedFiles.length})</div>

@@ -33,7 +33,7 @@ export const AppStatusBar: React.FC = () => {
   const setTaskPanelOpen = useBackgroundTaskStore((s) => s.setPanelOpen);
   const taskPanelOpen = useBackgroundTaskStore((s) => s.panelOpen);
 
-  const git = useGitStatusBar(wsConnected);
+  const { status: git, error: gitError } = useGitStatusBar(wsConnected);
   const voiceStatus = useVoiceStore((s) => s.status);
   const voiceRegion = useVoiceStore((s) => s.region);
   const { renewIn: voiceRenewIn } = useVoiceClock();
@@ -58,7 +58,14 @@ export const AppStatusBar: React.FC = () => {
         </span>
       )}
 
-      {git?.branch && (
+      {gitError && (
+        <span className="asb-seg asb-git asb-git-error" title={gitError}>
+          <span className="asb-git-icon">⎇</span>
+          git status failed
+        </span>
+      )}
+
+      {!gitError && git?.branch && (
         <span
           className={`asb-seg asb-git${git.clean ? '' : ' dirty'}`}
           title={
