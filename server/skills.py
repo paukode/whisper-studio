@@ -149,9 +149,23 @@ def load_skills_config() -> dict:
 
 
 def save_skills_config(config: dict):
-    os.makedirs(os.path.dirname(SKILLS_CONFIG_PATH), exist_ok=True)
-    with open(SKILLS_CONFIG_PATH, "w") as f:
-        json.dump(config, f, indent=2)
+    """Atomic write (temp file + os.replace), so a crash mid-write can never
+    leave a half-written file that reads as "nothing disabled or trusted"."""
+    import tempfile
+
+    directory = os.path.dirname(SKILLS_CONFIG_PATH)
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".skills_config.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(config, f, indent=2)
+        os.replace(tmp, SKILLS_CONFIG_PATH)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def command_runs_trusted_skill(command: str) -> bool:
