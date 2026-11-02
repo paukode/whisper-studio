@@ -5,8 +5,10 @@ import {
   type SessionSearchResponse,
 } from '@/types/schemas/session.schema';
 
-export function getSessions(): Promise<Session[]> {
-  return get<Session[]>('/api/sessions');
+/** The session list as summary rows (server list_session_summaries). The
+ *  caller validates the shape. */
+export function getSessions(): Promise<unknown> {
+  return get<unknown>('/api/sessions');
 }
 
 /** Content search behind the sidebar's "Search message content" toggle. */

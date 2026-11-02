@@ -19,6 +19,7 @@ import { useIndexSearchStore } from './indexSearchStore';
 import { useComposerAttachmentsStore } from './composerAttachmentsStore';
 import { useCronUnreadStore } from './cronUnreadStore';
 import { refreshSessionUsage } from './sessionUsage';
+import { toError } from '@/utils/toError';
 
 
 /** Deleting a session that owns the live recording must stop the engine
@@ -194,29 +195,20 @@ export const useSessionStore = create<SessionState>()(persist((set, get) => ({
 
   loadSessions: async () => {
     try {
-      const raw = await sessionsApi.getSessions();
-      const parsed = SessionListResponseSchema.safeParse(raw);
-      const summaries: SessionSummary[] = parsed.success
-        ? parsed.data.map((s) => ({
-            id: s.id,
-            title: s.title,
-            date: s.date,
-            segmentCount: s.segmentCount,
-            chatCount: s.chatCount,
-            workspacePath: s.workspacePath,
-            pinned: s.pinned,
-            archived: s.archived,
-          }))
-        : (Array.isArray(raw) ? raw : []).map((s) => ({
-            id: s.id,
-            title: s.title || 'Untitled',
-            date: ('date' in s ? String((s as Record<string, unknown>).date ?? '') : ''),
-            segmentCount: 0,
-            chatCount: s.chatHistory?.length ?? 0,
-            workspacePath: '',
-            pinned: false,
-            archived: false,
-          }));
+      // A list that does not match the summary schema is an error (with
+      // the reason), never a list of zeroed rows.
+      const summaries: SessionSummary[] = SessionListResponseSchema.parse(
+        await sessionsApi.getSessions(),
+      ).map((s) => ({
+        id: s.id,
+        title: s.title,
+        date: s.date,
+        segmentCount: s.segmentCount,
+        chatCount: s.chatCount,
+        workspacePath: s.workspacePath,
+        pinned: s.pinned,
+        archived: s.archived,
+      }));
       // Sort by date descending (most recent first)
       summaries.sort((a, b) => {
         if (!a.date && !b.date) return 0;
@@ -229,7 +221,7 @@ export const useSessionStore = create<SessionState>()(persist((set, get) => ({
       console.warn('Failed to load sessions:', err);
       useUIStore.getState().addToast({
         type: 'error',
-        message: 'Failed to load sessions',
+        message: `Failed to load sessions: ${toError(err).message}`,
         duration: 4000,
       });
     }
