@@ -22,8 +22,7 @@ import { AppearancePanel } from './AppearancePanel';
 /** The flat tab ids. Each is a valid `settingsTab` value: every
  *  `openSettings(<id>)` caller (ChatPanel, MoreMenu, the command palette,
  *  slash commands, tests) lands on its rail item + sub-tab through
- *  {@link TAB_ROUTE}. A retired panel's id is removed, not aliased: 'stats'
- *  went with the Stats tab, and an unknown id opens the default. */
+ *  {@link TAB_ROUTE}. An unknown id opens the default. */
 export type SettingsTabId =
   | 'apikeys'
   | 'model-mode'
@@ -68,10 +67,9 @@ export const SETTINGS_TABS: SettingsTab[] = [
 ];
 
 /* ────────────────────────────────────────────────────────────────────────
-   Grouped left rail. Each rail item renders one or more EXISTING panels under
-   a secondary sub-tab strip; nothing about a panel's internals changes — the
-   restructure only groups and gates which panel shows. Single-panel items
-   (Model mode, MCP servers) render their one panel with no sub-tab strip.
+   Grouped left rail. Each rail item renders one or more panels under a
+   secondary sub-tab strip. Single-panel items (Model mode, MCP servers)
+   render their one panel with no sub-tab strip.
    ──────────────────────────────────────────────────────────────────────── */
 
 type RailItemId =
@@ -228,7 +226,7 @@ const ALL_RAIL_ITEMS: RailItem[] = RAIL_GROUPS.flatMap((g) => g.items);
 /** Resolve any `settingsTab` value to its rail item + sub-tab. Built from the
  *  rail so it can never drift: every rail id and every sub-tab id (which
  *  include every flat tab id) is routable. Unknown values fall back to the
- *  first destination (API keys), preserving the pre-restructure default. */
+ *  first destination (API keys). */
 export const TAB_ROUTE: Record<string, { rail: RailItemId; sub: string }> = (() => {
   const map: Record<string, { rail: RailItemId; sub: string }> = {};
   for (const item of ALL_RAIL_ITEMS) {

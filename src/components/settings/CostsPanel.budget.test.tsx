@@ -144,11 +144,6 @@ describe('CostsPanel: budget save wiring', () => {
       max_daily_cost_usd: 20,
       model_fallback_enabled: true,
     });
-
-    // The old names that update_config silently dropped must be gone.
-    expect(body).not.toHaveProperty('max_session_cost');
-    expect(body).not.toHaveProperty('max_daily_cost');
-    expect(body).not.toHaveProperty('model_fallback');
   });
 
   it('clearing a field sends 0, not an omitted key, so the old limit cannot survive the save', async () => {

@@ -427,7 +427,7 @@ describe('CostsPanel: how it draws the report', () => {
 });
 
 describe('CostsPanel: a wrong answer is an error, not an empty view', () => {
-  it('the old /daily shape fails loudly with the reason', async () => {
+  it('a response that does not match the schema fails loudly with the reason', async () => {
     getMock.mockImplementation((url: string) =>
       Promise.resolve(url.startsWith('/api/costs/usage') ? { days: [] } : {}),
     );

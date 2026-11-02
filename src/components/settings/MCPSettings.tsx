@@ -42,15 +42,12 @@ function parseToolNameList(raw: string): string[] {
 
 /** Copying a JSON snippet from docs/chat often converts straight quotes to
  *  curly ones (" " ' '), which are invalid JSON. Normalize them back. */
-export const dequoteSmart = (s: string): string =>
+const dequoteSmart = (s: string): string =>
   s.replace(/[“”]/g, '"').replace(/[‘’]/g, "'");
 
-/** Parse the args text field into a string[]. args is just JSON: it must be a
- *  JSON array of strings (empty field = no args). There is no comma-split or
- *  wrap-as-one-arg fallback — invalid input is a hard error, never reinterpreted
- *  (silently wrapping a bracketed string as one arg is exactly what broke
- *  launched commands). The only leniency is normalizing curly quotes to straight
- *  ones, the copy-paste artifact that turns a valid array into invalid JSON. */
+/** Parse the args text field into a string[]: a JSON array of strings (empty
+ *  field = no args). Invalid input is an error, never reinterpreted. Curly
+ *  quotes, a copy-paste artifact, are normalized to straight ones first. */
 export function parseMcpArgs(raw: string): { args: string[] } | { error: string } {
   const trimmed = raw.trim();
   if (!trimmed) return { args: [] };

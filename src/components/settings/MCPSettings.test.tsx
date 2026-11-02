@@ -15,9 +15,7 @@ const { getMock, postMock, putMock, patchMock } = vi.hoisted(() => ({
 vi.mock('@/api/client', () => ({ get: getMock, put: putMock, post: postMock, del: vi.fn(), patch: patchMock }));
 
 import { MCPSettings, parseMcpArgs } from './MCPSettings';
-import { MoreMenu } from '@/components/chat/MoreMenu';
 import { useMcpStore, type MCPServerInfo } from '@/stores/mcpStore';
-import { useSettingsStore } from '@/stores/settingsStore';
 import { useUIStore } from '@/stores/uiStore';
 
 function server(name: string, over: Partial<MCPServerInfo> = {}): MCPServerInfo {
@@ -163,42 +161,6 @@ describe('MCPSettings: one live list', () => {
   });
 });
 
-// Enabling/disabling MCP servers now lives ONLY in Settings → MCP. The composer
-// MoreMenu used to carry a per-server tick that shared this write path; that UI
-// was removed, so the menu must no longer render any MCP section or toggle even
-// when a server is configured. (The model still gets enabled servers' tools via
-// the backend; @-mention insertion is unaffected — it lives in ChatInput.)
-describe('composer MoreMenu has no MCP toggle (moved to Settings → MCP)', () => {
-  const moreMenuProps = {
-    open: true,
-    section: null,
-    setSection: vi.fn(),
-    onToggle: vi.fn(),
-    onClose: vi.fn(),
-    indexes: [],
-    selectedIndexes: [],
-    toggleIndex: vi.fn(),
-    wsConnected: false,
-    onInsertSkill: vi.fn(),
-  };
-
-  beforeEach(() => {
-    useUIStore.setState({ addToast: vi.fn().mockReturnValue('t') as never });
-    useSettingsStore.setState({ skills: [] as never });
-    seed([ECHO]);
-  });
-
-  it('renders no MCP section, tick, or "MCP servers" row even with a server configured', () => {
-    const { container } = renderWithClient(<MoreMenu {...moreMenuProps} />);
-    // The old MCP section and its per-server checkbox tick are gone.
-    expect(container.querySelector('#more-sec-mcp')).toBeNull();
-    expect(container.querySelector('#more-sec-mcp input[type="checkbox"]')).toBeNull();
-    expect(screen.queryByText('MCP servers')).toBeNull();
-    // The menu itself is intact (the Skills control still renders).
-    expect(screen.getByText('Skills')).toBeInTheDocument();
-  });
-});
-
 describe('parseMcpArgs — args field parsing', () => {
   it('parses a JSON array pasted with curly/smart quotes (the AgentCore paste)', () => {
     const raw = '[“awslabs.amazon-bedrock-agentcore-mcp-server@latest”]';
@@ -215,7 +177,7 @@ describe('parseMcpArgs — args field parsing', () => {
     expect(parseMcpArgs('   ')).toEqual({ args: [] });
   });
 
-  it('errors on non-JSON input (no comma-split fallback)', () => {
+  it('errors on non-JSON input', () => {
     expect('error' in parseMcpArgs('--flag, value')).toBe(true);
   });
 

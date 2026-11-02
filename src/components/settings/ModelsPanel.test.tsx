@@ -378,9 +378,9 @@ describe('ModelsPanel', () => {
     );
   });
 
-  it('shows a local-chat model even if it appears in the Bedrock hide-list', async () => {
-    // Local models are deleted, never tombstoned, so the chat_models_disabled
-    // list must NOT hide a local-chat row (that list is Bedrock-only now).
+  it('shows a local-chat model even if it is hidden from the picker', async () => {
+    // chat_models_disabled hides a model from the composer picker only; the
+    // Models list still shows its row.
     api.get.mockImplementation((url: string) =>
       url === '/api/models/catalog'
         ? Promise.resolve({

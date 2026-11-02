@@ -49,8 +49,8 @@ interface PermissionRule {
 }
 
 // Egress control for sandboxed commands (server/sandbox.py +
-// server/security/egress_policy.py). DEFAULT-OFF: "permissive" matches
-// today's behavior exactly (no domain restriction, no proxy).
+// server/security/egress_policy.py). The default, "permissive", has no
+// domain restriction and no proxy.
 type NetworkPolicyTier = 'permissive' | 'curated' | 'restrictive';
 
 interface NetworkPolicy {
@@ -407,13 +407,13 @@ export const PermissionsPanel: React.FC = () => {
       )}
 
       {/* Egress / network policy for sandboxed commands (terminal_run, aws_cli,
-          run_python, hooks). Default-off: "permissive" is today's behavior. */}
+          run_python, hooks). The default is "permissive". */}
       <div className="settings-form">
         <h4>Sandbox Network Policy</h4>
         <p className="settings-item-desc" style={{ marginBottom: 8 }}>
           Restricts which internet domains commands run inside the sandbox
-          (terminal, AWS CLI, Python) can reach. Permissive matches today's
-          behavior exactly — nothing changes unless you switch tiers.
+          (terminal, AWS CLI, Python) can reach. Permissive puts no limit on
+          outbound domains.
         </p>
 
         <label htmlFor="networkPolicyTierSelect">Tier</label>

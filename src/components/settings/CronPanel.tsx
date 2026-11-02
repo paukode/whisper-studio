@@ -9,7 +9,7 @@ import { useSessionStore } from '@/stores/sessionStore';
 import { useUIStore } from '@/stores/uiStore';
 import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer';
 
-/** Seconds before a primed Delete reverts to its resting label. */
+/** Milliseconds before a primed Delete reverts to its resting label. */
 const DELETE_CONFIRM_TIMEOUT_MS = 4000;
 
 // ── Small time helpers ────────────────────────────────────────────────────────
