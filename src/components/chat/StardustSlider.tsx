@@ -6,7 +6,7 @@ import React, { useEffect, useRef } from 'react';
  * trailing a colour-shifting comet tail. The groove (--bg-inset) and the orb
  * highlight (--text-primary) are read from the live theme and re-read whenever
  * `colorKey` changes; the per-stop colours come from `readColors`, so a caller
- * can drive it off effort tiers, context-window sizes, or anything else. Honours
+ * can drive it off context-window sizes or anything else. Honours
  * prefers-reduced-motion (no idle twinkle or drift).
  *
  * `value`/`onChange` speak in STOP INDICES (0..count-1) — the caller maps those
@@ -30,7 +30,7 @@ export function parseColor(c: string): RGB {
   return [150, 150, 150];
 }
 
-export function mix(a: RGB, b: RGB, t: number): RGB {
+function mix(a: RGB, b: RGB, t: number): RGB {
   return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
 }
 
@@ -48,8 +48,6 @@ interface Props {
   ariaLabel: string;
   /** Screen-reader text for a stop index (e.g. "High", "32K tokens"). */
   valueText: (index: number) => string;
-  /** Optional stop that gets an extra glow/sparkle (effort's ultracode). */
-  boostIndex?: number;
   /** When true, the track is non-interactive and dimmed. */
   disabled?: boolean;
 }
@@ -72,7 +70,6 @@ export const StardustSlider: React.FC<Props> = ({
   colorKey,
   ariaLabel,
   valueText,
-  boostIndex = -1,
   disabled = false,
 }) => {
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -96,7 +93,6 @@ export const StardustSlider: React.FC<Props> = ({
     target: Math.max(0, value),
     col: [150, 150, 150] as RGB,
     palette: [] as RGB[],
-    boostIdx: boostIndex,
     track: [30, 30, 36] as RGB,
     hi: [255, 255, 255] as RGB,
     w: 240,
@@ -117,10 +113,9 @@ export const StardustSlider: React.FC<Props> = ({
   };
 
   useEffect(() => {
-    eng.boostIdx = boostIndex;
     readPalette();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [colorKey, boostIndex]);
+  }, [colorKey]);
 
   useEffect(() => {
     eng.target = Math.max(0, value);
@@ -188,7 +183,6 @@ export const StardustSlider: React.FC<Props> = ({
       const orbX = r + frac * (W - 2 * r);
       const cy = H / 2;
       const now = t / 1000;
-      const boost = Math.abs(eng.disp - eng.boostIdx) < 0.5 && eng.boostIdx >= 0;
       const tail = Math.min(orbX, W * 0.42 + 22);
 
       ctx.clearRect(0, 0, W, H);
@@ -198,7 +192,6 @@ export const StardustSlider: React.FC<Props> = ({
       ctx.fillStyle = `rgb(${Math.round(eng.track[0])},${Math.round(eng.track[1])},${Math.round(eng.track[2])})`;
       ctx.fillRect(0, 0, W, H);
 
-      const sparkleBoost = boost ? 1.7 : 1;
       for (let i = 0; i < eng.parts.length; i++) {
         const p = eng.parts[i];
         if (!reduce) {
@@ -211,9 +204,9 @@ export const StardustSlider: React.FC<Props> = ({
         if (p.x > orbX || p.x < orbX - tail) continue;
         const along = (p.x - (orbX - tail)) / tail; // 0 at tail end, 1 near orb
         const twk = reduce ? 0.8 : 0.35 + 0.65 * Math.abs(Math.sin(now * p.sp + p.ph));
-        const a = twk * along * (p.bright ? 0.95 * sparkleBoost : 0.7);
+        const a = twk * along * (p.bright ? 0.95 : 0.7);
         ctx.beginPath();
-        ctx.arc(p.x, p.y, p.r * (p.bright ? sparkleBoost : 1), 0, 6.2832);
+        ctx.arc(p.x, p.y, p.r, 0, 6.2832);
         if (p.bright) {
           const b = mix([cr, cg, cb], eng.hi, 0.55);
           ctx.fillStyle = `rgba(${Math.round(b[0])},${Math.round(b[1])},${Math.round(b[2])},${Math.min(a, 1)})`;
@@ -223,8 +216,8 @@ export const StardustSlider: React.FC<Props> = ({
         ctx.fill();
       }
 
-      const g = ctx.createRadialGradient(orbX, cy, 0.5, orbX, cy, H * (boost ? 1.15 : 0.9));
-      g.addColorStop(0, `rgba(${cr},${cg},${cb},${boost ? 0.7 : 0.55})`);
+      const g = ctx.createRadialGradient(orbX, cy, 0.5, orbX, cy, H * 0.9);
+      g.addColorStop(0, `rgba(${cr},${cg},${cb},0.55)`);
       g.addColorStop(0.5, `rgba(${cr},${cg},${cb},0.2)`);
       g.addColorStop(1, `rgba(${cr},${cg},${cb},0)`);
       ctx.fillStyle = g;
@@ -303,20 +296,14 @@ export const StardustSlider: React.FC<Props> = ({
     wrap.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
     wrap.addEventListener('keydown', onKey);
-    let ro: ResizeObserver | null = null;
-    if (typeof ResizeObserver === 'function') {
-      ro = new ResizeObserver(build);
-      ro.observe(wrap);
-    } else {
-      window.addEventListener('resize', build);
-    }
+    const ro = new ResizeObserver(build);
+    ro.observe(wrap);
     build();
     eng.raf = requestAnimationFrame(frame);
 
     return () => {
       cancelAnimationFrame(eng.raf);
-      if (ro) ro.disconnect();
-      else window.removeEventListener('resize', build);
+      ro.disconnect();
       wrap.removeEventListener('pointerdown', onDown);
       wrap.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
