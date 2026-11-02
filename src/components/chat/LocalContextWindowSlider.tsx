@@ -47,7 +47,7 @@ const nearestMarkIndex = (value: number): number =>
 const recMem = (ctx: number): string =>
   RECOMMENDED_MEMORY[ctx] ?? RECOMMENDED_MEMORY[MARKS[nearestMarkIndex(ctx)]];
 
-/** Note shown under the slider. Above 16K it becomes a memory warning: the
+/** Note shown under the slider. Above 32K it becomes a memory warning: the
  *  user keeps control, but the recommended memory is spelled out (no
  *  machine-specific reference). */
 function memoryNote(ctx: number): { text: string; warn: boolean } {
@@ -64,7 +64,7 @@ function memoryNote(ctx: number): { text: string; warn: boolean } {
   };
 }
 
-/** Rich body for the above-16K confirmation dialog: the cost of the chosen size
+/** Rich body for the above-32K confirmation dialog: the cost of the chosen size
  *  plus the full recommended-memory table (chosen row highlighted). */
 const ContextWarningBody: React.FC<{ ctx: number }> = ({ ctx }) => (
   <div className="ctx-warn-body">
@@ -100,7 +100,7 @@ const ContextWarningBody: React.FC<{ ctx: number }> = ({ ctx }) => (
  * Toolbar control (on-device models only) to set the local model's context
  * window: a badge that opens a slider popover. Because
  * llama.cpp fixes n_ctx at load time, committing a different size RELOADS the
- * model at that size behind the shared "loading model" banner. Above 16K, a
+ * model at that size behind the shared "loading model" banner. Above 32K, a
  * confirmation dialog (with the memory requirements) gates the reload. Hidden
  * for cloud models. The chosen value is persisted (localStorage) by the store.
  */
@@ -125,7 +125,7 @@ export const LocalContextWindowSlider: React.FC = () => {
   );
 
   // Commit on close: if the size changed, reload the model at the new size.
-  // Above 16K, confirm first (memory requirements); cancel reverts the slider.
+  // Above 32K, confirm first (memory requirements); cancel reverts the slider.
   // Reads live store values so a stale closure can't reload the wrong size.
   const commit = async () => {
     setOpen(false);

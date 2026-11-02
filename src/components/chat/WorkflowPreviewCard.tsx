@@ -1,5 +1,5 @@
 /**
- * Approval preview for a NEW workflow script (WS-D). Shows the phases as a
+ * Approval preview for a NEW workflow script. Shows the phases as a
  * stepper, the script (collapsible), the budget, and Approve/Deny. Approve
  * launches the run via the REST API; the run then executes detached and its
  * completion arrives as a WorkflowRunCard.

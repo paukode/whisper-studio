@@ -76,10 +76,10 @@ const ACTIVITY_EXEMPT_TOOLS: ReadonlySet<string> = new Set([
   // calls would hide the one thing the tool exists to show, so it draws as a
   // row of its own that opens on the picture.
   'preview_screenshot',
-  // Workflow runtime cards (WS-D) have their own interactive UI.
+  // Workflow runtime cards have their own interactive UI.
   'workflow_preview',
   'workflow_started',
-  // CI watch + autofix cards (WS-J) render their own status/findings UI.
+  // CI watch + autofix cards render their own status/findings UI.
   'ci_started',
   'ci_diagnosis',
 ]);
@@ -228,8 +228,8 @@ function statusGlyph(status: ToolUseEvent['status']) {
 }
 
 /** Pull the human-readable subject from a group's most informative tool:
- *  prefer team_create.team_name, fall back to spawn_agent.task, then the
- *  first agent's task in a team, then the literal "Agent". */
+ *  the first team_create.team_name or spawn_agent.task, else the literal
+ *  "Agent activity". */
 function deriveAgentTitle(tools: ToolUseEvent[]): string {
   for (const t of tools) {
     const input = (t.input ?? {}) as Record<string, unknown>;

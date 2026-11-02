@@ -57,7 +57,7 @@ export function withBrowseOption(question: string, options: string[]): string[] 
   return [...withoutOther, 'Browse…'];
 }
 
-/** Interactive user question card matching vanilla renderUserQuestion */
+/** Interactive single-question card (rows saved with the singular userQuestion). */
 export const UserQuestionCard: React.FC<{
   question: string;
   options: string[];

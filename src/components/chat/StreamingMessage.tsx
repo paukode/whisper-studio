@@ -25,7 +25,7 @@ export interface StreamingMessageProps {
 }
 
 /**
- * Renders a streaming assistant message matching the original:
+ * Renders a streaming assistant message:
  *  - Its own bubble for a turn with nothing committed yet, or, embedded, the
  *    tail of the turn's bubble
  *  - Live elapsed timer during thinking (100ms updates, "X.Ys")
@@ -51,8 +51,8 @@ export const StreamingMessage: React.FC<StreamingMessageProps> = ({ content, isS
   // Deliveries the server verified in the text streamed so far: the chips the
   // committed message keeps, shown the moment each one is verified.
   const liveDeliveries = useActiveChatStore((s) => s.liveDeliveries);
-  // Local on-device models don't emit thinking: the pre-first-token wait is
-  // just generation warm-up, so label it honestly rather than "Thinking…".
+  // On an on-device model the wait before the first token, with no thinking
+  // text yet, is generation warm-up, so it reads "Generating…", not "Thinking…".
   const isLocalModel = useSettingsStore((s) => s.models.find((m) => m.key === s.selectedModel)?.is_local ?? false);
 
   // Live timer

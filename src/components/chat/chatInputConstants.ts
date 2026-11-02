@@ -12,13 +12,13 @@
 export const SUPPORTED_ATTACHMENT_SUMMARY =
   'images, PDF, Office docs, audio, video, code, text';
 
-/* ── Slash command definitions (matching vanilla commands.js) ── */
+/* ── Slash command definitions ── */
 
 /* A slash-command argument option. A plain string is both shown and inserted
  * verbatim (e.g. `/effort low`). The object form lets the label shown in the
  * autocomplete differ from the value inserted after the command — used by
- * `/model` so the picker shows the version label ("Sonnet 4.6") while the
- * command still inserts the model key ("sonnet"), matching the model box under
+ * `/model` so the picker shows the version label ("Sonnet 5.5") while the
+ * command still inserts the model key ("sonnet5.5"), matching the model box under
  * the composer. */
 export type SlashOption = string | { label: string; value: string };
 export const optLabel = (o: SlashOption): string => (typeof o === 'string' ? o : o.label);
@@ -42,6 +42,7 @@ export interface SlashCommand {
 // easy to scan and find. When adding a command, insert it in sorted position.
 export const BASE_SLASH_COMMANDS: SlashCommand[] = [
   { cmd: 'btw ', icon: '💬', desc: 'Ask a side question', category: 'ai' },
+  { cmd: 'ci ', icon: '🧪', desc: 'Watch CI for a branch, or `ci autofix` a failing run', category: 'ai' },
   { cmd: 'clear ', icon: '🧹', desc: 'Clear chat display', category: 'general' },
   { cmd: 'doctor ', icon: '🩺', desc: 'Run diagnostics', category: 'debug' },
   { cmd: 'doctor context ', icon: '📏', desc: 'Rightsize the system prompt', category: 'debug' },
@@ -62,7 +63,6 @@ export const BASE_SLASH_COMMANDS: SlashCommand[] = [
   { cmd: 'theme ', icon: '🎨', desc: 'Switch theme', options: ['auto', 'light', 'dark'], category: 'settings' },
   { cmd: 'verbosity ', icon: '📏', desc: 'Set response length', options: ['brief', 'normal', 'detailed'], category: 'ai' },
   { cmd: 'workflow ', icon: '⚙️', desc: 'Run a saved workflow by name', category: 'ai' },
-  { cmd: 'ci ', icon: '🧪', desc: 'Watch CI for a branch, or `ci autofix` a failing run', category: 'ai' },
   { cmd: 'workspace ', icon: '📁', desc: 'Connect workspace', category: 'workspace' },
 ];
 

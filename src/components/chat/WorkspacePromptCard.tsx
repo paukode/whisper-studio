@@ -72,7 +72,7 @@ export const WorkspacePromptCard: React.FC<WorkspacePromptCardProps> = ({
           window.dispatchEvent(new CustomEvent('whisper-workspace-refresh'));
         }
       } catch {
-        // Unreachable backend: leave the panel exactly as it is (PR #71).
+        // Unreachable backend: leave the panel exactly as it is.
       }
     })();
     return () => { cancelled = true; };

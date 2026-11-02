@@ -175,7 +175,7 @@ const TurnSegmentView: React.FC<TurnSegmentProps> = ({ rows, indices, taskCheckp
               );
             }
             const tool = entry;
-            // Workflow runtime cards (WS-D)
+            // Workflow runtime cards
             if (tool.toolName === 'workflow_preview') {
               return <WorkflowPreviewCard key={`wf-preview-${idx}`} preview={tool.input as never} />;
             }
@@ -183,7 +183,7 @@ const TurnSegmentView: React.FC<TurnSegmentProps> = ({ rows, indices, taskCheckp
               const wi = tool.input as { run_id?: string; name?: string };
               return wi.run_id ? <WorkflowRunCard key={`wf-run-${idx}`} runId={wi.run_id} name={wi.name} /> : null;
             }
-            // CI watch + autofix cards (WS-J)
+            // CI watch + autofix cards
             if (tool.toolName === 'ci_started') {
               const ci = tool.input as { task_id?: string; branch?: string };
               return ci.task_id ? <CIStatusCard key={`ci-${idx}`} taskId={ci.task_id} branch={ci.branch} /> : null;

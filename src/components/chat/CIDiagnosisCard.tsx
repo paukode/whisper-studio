@@ -1,4 +1,4 @@
-/** Findings list for a CI autofix (WS-J), shown just above the fix preview. */
+/** Findings list for a CI autofix, shown just above the fix preview. */
 import React from 'react';
 import { ICON } from '@/components/chat/activityIcons';
 

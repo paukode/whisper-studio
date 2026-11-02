@@ -38,7 +38,7 @@ export interface ChatInputProps {
 
 /**
  * Chat input form with slash-command and @-mention autocomplete
- * matching the vanilla skill-autocomplete CSS classes.
+ * (skill-autocomplete CSS classes).
  */
 export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
   const [text, setText] = useState('');
@@ -100,9 +100,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
     handlePaste,
   } = useComposerDragDrop(uploadFilesAsChips);
   useComposerChatEvents(chatStream);
-  // Long-lived SSE for out-of-band session notifications (cron firings
-  // in particular). Stays connected for the lifetime of the chat view
-  // so background events appear inline without a page refresh.
 
   /* ── Workspace dropdown helpers ── */
   const recentPaths = useRecentWorkspaces(workOpen).slice(0, 5);
@@ -278,7 +275,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
     [allSessions, sessionId],
   );
 
-  // Index search picker (point D): which indexed workspaces this session
+  // Index search picker: which indexed workspaces this session
   // searches. Default = all indexed when no workspace is connected; empty (off)
   // when one is. Sent as selected_search_indexes per turn.
   const { data: indexListData } = useQuery({
@@ -319,8 +316,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
     () =>
       BASE_SLASH_COMMANDS.map((c) =>
         c.cmd === 'model '
-          // Show the version label ("Sonnet 4.6") in the picker but insert the
-          // model key ("sonnet") the /model handler validates against — so the
+          // Show the version label ("Sonnet 5.5") in the picker but insert the
+          // model key ("sonnet5.5") the /model handler validates against — so the
           // autocomplete matches the model box under the composer.
           ? { ...c, options: models.map((m) => ({ label: m.name, value: m.key })) }
           : c,
@@ -707,9 +704,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
       <div className="composer-box">
         {/* Attachment preview. Chips grow with the filename but cap their
          * inner label at a sane width — beyond that the name is ellipsized
-         * and the full text is revealed on hover via `title`. Removes the
-         * old rigid `max-width: 200px` overflow that pushed the × button
-         * outside the chip on long names. */}
+         * and the full text is revealed on hover via `title`, so the ×
+         * button stays inside the chip on long names. */}
         <div className="attachment-preview" id="attachmentPreview" style={attachments.length > 0 ? { display: 'flex' } : undefined}>
           {attachments.map((att, idx) => {
             const uploading = att.id.startsWith('_uploading_');
@@ -750,7 +746,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
             onPaste={handlePaste}
           />
 
-          {/* Autocomplete popup — uses vanilla skill-autocomplete CSS classes */}
+          {/* Autocomplete popup (skill-autocomplete CSS classes) */}
           {acVisible && acItems.length > 0 && acRect && (
             <div
               ref={acRef}
@@ -966,7 +962,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="10" x2="4" y2="14"/><line x1="8" y1="7" x2="8" y2="17"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="16" y1="8" x2="16" y2="16"/><line x1="20" y1="11" x2="20" y2="13"/></svg>
               </button>
-              {/* Item 5: Stop button during streaming (or while voice work is still
+              {/* Stop button during streaming (or while voice work is still
                *  finishing after a hang-up), send button otherwise. One button, one
                *  meaning. A message still goes into the running turn, by Enter; the
                *  placeholder above says so. */}

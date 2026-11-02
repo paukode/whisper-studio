@@ -1,5 +1,5 @@
 /**
- * Data-retention consent flow for Mythos-class models (e.g. Fable 5).
+ * Data-retention consent flow for models flagged requires_data_retention.
  *
  * Such models only work when the AWS account's Bedrock data-retention mode is
  * `provider_data_share`. Rather than flip that account-wide setting permanently,
@@ -307,7 +307,7 @@ async function commitSwitch(targetKey: string, leavingLocal: boolean): Promise<v
  *  - target requires retention → ALWAYS show the consent screen (explicit
  *    acknowledgement on every switch, even when retention is already on);
  *    the backend is only called when retention is actually off. Cancel
- *    leaves the selection unchanged (the bound <select> reverts).
+ *    leaves the selection unchanged.
  *  - leaving a retention model while retention is on → switch, then show the
  *    matching turn-off screen.
  *  - otherwise → switch directly.

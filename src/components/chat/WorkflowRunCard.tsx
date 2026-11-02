@@ -1,5 +1,5 @@
 /**
- * Inline card for a launched/completed workflow run (WS-D). Subscribes to the
+ * Inline card for a launched/completed workflow run. Subscribes to the
  * run's SSE stream for live phase/agent/cost plus each sub-agent's state,
  * rendered as the shared agent rows (Open puts an agent's full feed in the
  * dock). Offers Stop while running and Refresh when terminal.

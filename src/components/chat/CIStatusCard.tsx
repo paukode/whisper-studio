@@ -1,5 +1,5 @@
 /**
- * Inline card for a CI watch (WS-J). Renders live from the ciStore (fed by the
+ * Inline card for a CI watch. Renders live from the ciStore (fed by the
  * session event stream); if the store has nothing yet (e.g. after a reload) it
  * fetches a one-shot status snapshot. When the run failed, an Autofix button
  * plans the fix and drops the approvable workflow preview into the chat.

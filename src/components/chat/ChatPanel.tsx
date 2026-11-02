@@ -67,7 +67,7 @@ const PendingNotes: React.FC = () => {
 };
 
 /**
- * Chat panel matching the vanilla #chatPanelWrap structure exactly.
+ * Chat panel (#chatPanelWrap).
  *
  * Structure:
  *   div.panel#chatPanelWrap  (adds .chat-panel-active when messages exist)
@@ -178,7 +178,7 @@ export const ChatPanel: React.FC = () => {
   }
 
   // Hydrate the Tasks store for this session so the in-chat task row and the
-  // Tasks drawer reflect the plan even on a restored conversation (the live
+  // Tasks panel reflect the plan even on a restored conversation (the live
   // `todo_update` SSE events don't replay). The server list is authoritative
   // and is written even when empty, so a session with no (or cleared) tasks
   // resolves to [] instead of each message falling back to its own partial
@@ -305,9 +305,7 @@ export const ChatPanel: React.FC = () => {
         </h2>
         {/* Workspace mode indicator, shown when workspace connected.
          * Reads the actual permission mode (default / auto / plan /
-         * acceptEdits / bypassPermissions / dontAsk). The old code hard-
-         * coded a binary plan/auto split which made every non-plan mode
-         * misreport as "Auto Mode". */}
+         * acceptEdits / bypassPermissions / dontAsk). */}
         {wsConnected && (
           <div className="ws-mode-indicator" id="wsModeIndicator" title={`Permission mode: ${modeLabel}`}>
             {modeLabel}
