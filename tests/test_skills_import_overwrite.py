@@ -124,6 +124,40 @@ def test_ticked_a_failed_copy_restores_the_old_version(skills_dir, monkeypatch):
     assert "flat twin" in (skills_dir / "alpha.md").read_text()
 
 
+def _trust(*names):
+    config = skills_mod.load_skills_config()
+    config["trusted"] = list(names)
+    skills_mod.save_skills_config(config)
+
+
+def test_ticked_a_replaced_trusted_skill_is_no_longer_trusted(skills_dir, monkeypatch):
+    _install_alpha(monkeypatch, skills_dir)
+    _trust("alpha", "other")
+    script = skills_dir / "alpha" / "scripts" / "run.py"
+
+    res = si.import_local(NEW_ALPHA, ["pack/alpha"], overwrite=True)
+    _reload(monkeypatch, skills_dir)
+
+    assert res["imported"] and res["imported"][0]["replaced"] is True
+    assert skills_mod.load_skills_config()["trusted"] == ["other"]
+    assert script.is_file()
+    assert skills_mod.command_runs_trusted_skill(f"python3 {script}") is False
+
+
+def test_ticked_a_failed_copy_keeps_the_trust(skills_dir, monkeypatch):
+    _install_alpha(monkeypatch, skills_dir)
+    _trust("alpha")
+
+    def broken(src, dest):
+        raise si.SkillImportError("copy failed")
+
+    monkeypatch.setattr(si, "_copy_skill_folder", broken)
+    res = si.import_local(NEW_ALPHA, ["pack/alpha"], overwrite=True)
+
+    assert res["errors"]
+    assert skills_mod.load_skills_config()["trusted"] == ["alpha"]
+
+
 def test_ticked_a_skill_that_comes_with_the_app_is_not_replaced(skills_dir, monkeypatch):
     # meeting_notes ships in the repo skills/ folder.
     assert "meeting_notes" in si._bundled_skill_keys()

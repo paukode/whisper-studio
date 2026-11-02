@@ -403,6 +403,32 @@ def _replace_targets(subpath: str, name: str, dest: str) -> tuple[list[str], dic
     return targets, None
 
 
+def _drop_trust(key: str) -> list[str]:
+    """Remove every trusted entry whose name key is ``key`` (the imported name
+    and each replaced skill's loaded name) from skills_config, the way delete
+    does. Returns the removed names so a failed copy can put them back."""
+    from server import skills as _sk
+
+    config = _sk.load_skills_config()
+    trusted = config.get("trusted", [])
+    removed = [n for n in trusted if _sk.skill_name_key(n) == key]
+    if removed:
+        config["trusted"] = [n for n in trusted if n not in removed]
+        _sk.save_skills_config(config)
+    return removed
+
+
+def _restore_trust(names: list[str]) -> None:
+    """Put back the trusted entries _drop_trust removed, after the old skill
+    went back into the skills folder."""
+    from server import skills as _sk
+
+    config = _sk.load_skills_config()
+    trusted = config.setdefault("trusted", [])
+    trusted.extend(n for n in names if n not in trusted)
+    _sk.save_skills_config(config)
+
+
 def _import_one(tmp: str, subpath: str, claimed: set[str], overwrite: bool = False) -> dict:
     """Validate and copy a single skill folder. Returns a per-skill result.
     ``claimed`` holds the name keys this import already wrote, so two selected
@@ -454,7 +480,12 @@ def _import_one(tmp: str, subpath: str, claimed: set[str], overwrite: bool = Fal
 
     backup_dir = tempfile.mkdtemp(prefix="whisper_skillbackup_") if targets else ""
     moved: list[tuple[str, str]] = []
+    untrusted: list[str] = []
     try:
+        if targets:
+            # Trust belongs to the reviewed files, not to the name: new files
+            # under a trusted name would run their scripts with no card.
+            untrusted = _drop_trust(key)
         for i, target in enumerate(targets):
             parked = os.path.join(backup_dir, str(i))
             shutil.move(target, parked)
@@ -464,6 +495,8 @@ def _import_one(tmp: str, subpath: str, claimed: set[str], overwrite: bool = Fal
         shutil.rmtree(dest, ignore_errors=True)
         for target, parked in moved:
             shutil.move(parked, target)
+        if untrusted:
+            _restore_trust(untrusted)
         if backup_dir:
             shutil.rmtree(backup_dir)
         if isinstance(e, SkillImportError):
