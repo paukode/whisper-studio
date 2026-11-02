@@ -28,42 +28,37 @@ def _short_reason(exc: BaseException) -> str:
     """Map a download failure to a one-line reason a user can act on.
 
     Categorises the common huggingface_hub / OS failures (repo or file missing,
-    gated repo, auth, network, disk full) and falls back to the exception type
-    and message. Best-effort: the hf exception imports are optional, so a broken
-    or absent huggingface_hub never turns a real failure into a crash here.
+    gated repo, auth, network, disk full); anything else is named by its
+    exception type and message.
     """
     # Disk full is an OSError regardless of where it came from.
     if isinstance(exc, OSError) and exc.errno == errno.ENOSPC:
         return "not enough disk space to store the model"
 
-    try:
-        from huggingface_hub.utils import (
-            EntryNotFoundError,
-            GatedRepoError,
-            HfHubHTTPError,
-            LocalEntryNotFoundError,
-            RepositoryNotFoundError,
-        )
-    except Exception:  # pragma: no cover - hf missing/renamed; use the fallback
-        RepositoryNotFoundError = EntryNotFoundError = GatedRepoError = ()  # type: ignore
-        HfHubHTTPError = LocalEntryNotFoundError = ()  # type: ignore
+    import httpx
+    from huggingface_hub.errors import (
+        EntryNotFoundError,
+        GatedRepoError,
+        HfHubHTTPError,
+        LocalEntryNotFoundError,
+        RepositoryNotFoundError,
+    )
 
-    if RepositoryNotFoundError and isinstance(exc, RepositoryNotFoundError):
+    if isinstance(exc, RepositoryNotFoundError):
         return "repository not found on Hugging Face (check repo_id, or that it is public)"
-    if GatedRepoError and isinstance(exc, GatedRepoError):
+    if isinstance(exc, GatedRepoError):
         return "this repository is gated; accept its license and set an HF token"
-    if EntryNotFoundError and isinstance(exc, EntryNotFoundError):
+    if isinstance(exc, EntryNotFoundError):
         return "file not found in the repository (check the filename)"
-    if LocalEntryNotFoundError and isinstance(exc, LocalEntryNotFoundError):
+    if isinstance(exc, LocalEntryNotFoundError):
         return "could not reach Hugging Face and no local copy is cached (network error?)"
-    if HfHubHTTPError and isinstance(exc, HfHubHTTPError):
+    if isinstance(exc, HfHubHTTPError):
         return f"Hugging Face request failed: {exc}"
-
-    # Network-ish failures from the underlying requests stack.
-    name = type(exc).__name__
-    if name in {"ConnectionError", "ConnectTimeout", "ReadTimeout", "Timeout"}:
+    # huggingface_hub 1.x talks to the Hub through httpx.
+    if isinstance(exc, (httpx.TransportError, ConnectionError)):
         return "network error reaching Hugging Face"
 
+    name = type(exc).__name__
     reason = str(exc).strip().splitlines()[0] if str(exc).strip() else name
     return f"{name}: {reason}" if str(exc).strip() else name
 

@@ -883,3 +883,17 @@ def test_a_partial_shard_download_counts_and_is_deleted(client, two_quants):
     entry = get_entry("local_q4")
     assert bytes_on_disk(entry) == 240
     assert str(hf.incomplete_path("etag123")) in gguf_paths(entry)
+
+
+def test_download_failure_reasons_name_the_cause():
+    import errno
+
+    import httpx
+
+    from server.models_manager.worker import _short_reason
+
+    assert _short_reason(OSError(errno.ENOSPC, "No space")) == (
+        "not enough disk space to store the model"
+    )
+    assert _short_reason(httpx.ConnectError("refused")) == "network error reaching Hugging Face"
+    assert _short_reason(ValueError("bad shard")) == "ValueError: bad shard"

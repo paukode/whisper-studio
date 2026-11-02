@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 import os
-import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 
@@ -30,24 +29,11 @@ class InstallError(Exception):
 
 
 @lru_cache(maxsize=1)
-def _total_memory_bytes() -> int | None:
+def _total_memory_bytes() -> int:
     """Physical RAM of the machine THIS process is running on, measured at
-    call time, never a constant for any particular machine. Works on macOS
-    via ``os.sysconf``; falls back to ``sysctl hw.memsize`` for a Python
-    build that doesn't expose those keys. ``None`` if neither path succeeds,
-    so callers omit the fit verdict rather than guess."""
-    try:
-        return int(os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE"))
-    except (ValueError, OSError, AttributeError):
-        pass
-    try:
-        out = subprocess.run(
-            ["sysctl", "-n", "hw.memsize"], capture_output=True, text=True, timeout=5
-        )
-        return int(out.stdout.strip())
-    except Exception as e:  # pragma: no cover - environment dependent
-        log.debug("Could not determine total memory: %s", e)
-        return None
+    call time, never a constant for any particular machine (``os.sysconf``,
+    which macOS Python always provides)."""
+    return int(os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE"))
 
 
 def _dir_size_bytes(path: str) -> int:
