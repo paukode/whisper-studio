@@ -319,9 +319,7 @@ def usage_report(start: date, end: date, granularity: str, split: str) -> dict:
     for row in _query(start, end, split):
         day = date.fromisoformat(row["day"])
         key = row["k"] or ""
-        i = index.get(_natural_bucket(day, granularity)[0])
-        if i is None:  # outside the range (cannot happen with the WHERE bounds)
-            continue
+        i = index[_natural_bucket(day, granularity)[0]]
         bucket_groups[i].setdefault(key, _Group()).add(row)
         key_groups.setdefault(key, _Group()).add(row)
         totals.add(row)
