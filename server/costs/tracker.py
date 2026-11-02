@@ -128,23 +128,9 @@ def _read_pricing_file(path: str, *, required: bool = False) -> dict:
 def _load_pricing() -> dict:
     """Default rates from pricing.example.json, overlaid PER KEY by pricing.json
     (user entries win). A missing or broken example file raises (see
-    _read_pricing_file).
-
-    An override entry equal to a rate some release shipped for that key is a
-    stale seeded copy of an old template, not a user decision: it is skipped
-    (and logged) so a later rate correction is never shadowed."""
-    from server.costs.pricing_history import is_shipped
-
+    _read_pricing_file)."""
     table = _read_pricing_file(PRICING_EXAMPLE_PATH, required=True)
     for key, entry in _read_pricing_file(PRICING_PATH).items():
-        if is_shipped(key, entry):
-            if entry != table.get(key):
-                log.info(
-                    "pricing.json entry for %r equals a rate an earlier release shipped; "
-                    "using the current default instead",
-                    key,
-                )
-            continue
         log.info("pricing.json overrides the rates for %r", key)
         table[key] = entry
     return table
