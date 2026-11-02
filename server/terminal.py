@@ -471,16 +471,26 @@ def _needs_script(command: str) -> bool:
     return "\n" in command or "\r" in command or len(command.encode("utf-8")) > _INLINE_COMMAND_MAX
 
 
-def _write_command_script(command: str, marker: str, script_dir: str | None) -> str:
-    """Write ``command`` to an owner-only (0700) script for the shell to
-    source. In ``script_dir`` (the chat session's scratch folder) when given,
-    else in a private temp folder."""
-    import tempfile
+def command_script_dir() -> str:
+    """The folder for the script files long commands are sourced from: an
+    app-owned folder in the data root, made owner-only (0700).
 
-    folder = script_dir if script_dir and os.path.isdir(script_dir) else None
-    if folder is None:
-        folder = tempfile.mkdtemp(prefix="whisper-terminal-")
-    path = os.path.join(folder, _script_path_token(marker))
+    Not the session scratch folder or temp: a sandboxed command may write
+    those, and could change a script after its approval card and before the
+    (unconfined) visible shell sources it. This folder is in
+    server.infrastructure.paths.app_config_dirs, so the OS sandbox denies
+    writes to it even when a workspace holds the data root."""
+    from server.infrastructure.paths import terminal_scripts_root
+
+    folder = terminal_scripts_root()
+    os.makedirs(folder, mode=0o700, exist_ok=True)
+    return folder
+
+
+def _write_command_script(command: str, marker: str) -> str:
+    """Write ``command`` to an owner-only (0700) script in command_script_dir
+    for the shell to source."""
+    path = os.path.join(command_script_dir(), _script_path_token(marker))
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o700)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         # The start line lets _clean_command_output find where output begins.
@@ -496,13 +506,6 @@ def _remove_script(path: str | None) -> None:
         os.unlink(path)
     except OSError:
         pass
-    # The private temp folder made for it, if that is where it went.
-    folder = os.path.dirname(path)
-    if os.path.basename(folder).startswith("whisper-terminal-"):
-        try:
-            os.rmdir(folder)
-        except OSError:
-            pass
 
 
 def _build_run_payload(command: str, marker: str, script: str | None = None) -> str:
@@ -554,7 +557,6 @@ async def run_in_session(
     session: _PtySession,
     command: str,
     timeout: float = _DEFAULT_TIMEOUT_S,
-    script_dir: str | None = None,
 ) -> dict:
     """Send `command` into the session and capture stdout/stderr + exit
     code by waiting for a unique completion marker. Use for the visible
@@ -578,7 +580,7 @@ async def run_in_session(
     script = None
     if _needs_script(command):
         try:
-            script = _write_command_script(command, marker, script_dir)
+            script = _write_command_script(command, marker)
         except OSError as e:
             return {
                 "output": f"failed to write the command script: {e}",
@@ -875,7 +877,7 @@ async def run_in_sandbox(
         # our command isn't lost in the warmup. Drain by recording the
         # buffer position AFTER a short settle delay.
         await asyncio.sleep(0.15)
-        result = await run_in_session(session, command, timeout, script_dir=scratch_dir)
+        result = await run_in_session(session, command, timeout)
         return result
     finally:
         try:

@@ -240,9 +240,11 @@ def _still_running(program: str) -> str:
 # Programs that hold the terminal's foreground while sitting at a prompt of
 # their own: a nested shell (bash, nix develop's bash), a multiplexer, a
 # remote or elevated shell. They count as idle only while a line editor reads
-# the terminal (canonical input mode off, _line_editor_reading): a shell that
-# runs a script (`bash script.sh`) or `sudo make` keeps canonical mode and is
-# busy, so a command is never typed into its stdin.
+# the terminal (canonical input mode off, _line_editor_reading) AND the leader
+# is alone in its group (_group_has_only_leader): a shell that runs a script
+# (`bash script.sh`) or `sudo make` keeps canonical mode, and a script that
+# runs a pager, a REPL or fzf keeps that child in its own group. Both are
+# busy, so a command is never typed into their stdin.
 _PROMPT_HOSTS = frozenset(
     {
         "sh",
@@ -289,6 +291,32 @@ def _process_name(pid: int) -> str:
     return os.path.basename(name).lstrip("-")
 
 
+def _group_has_only_leader(pgid: int) -> bool:
+    """True when process group ``pgid`` holds only its leader. An interactive
+    shell at its prompt runs each job in a group of its own (job control), so
+    its group holds only itself; a `bash script.sh` keeps every child it runs
+    in its group. Unknown (``ps`` fails) counts as not alone, so busy."""
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["ps", "-ax", "-o", "pgid=,pid="],
+            capture_output=True,
+            text=True,
+            timeout=1.0,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if out.returncode != 0:
+        return False
+    members = set()
+    for row in out.stdout.splitlines():
+        parts = row.split()
+        if len(parts) == 2 and parts[0] == str(pgid):
+            members.add(parts[1])
+    return members == {str(pgid)}
+
+
 def _line_editor_reading(session) -> bool:
     """True when canonical input mode is off on the PTY: a line editor (zsh's
     ZLE, readline, a multiplexer or ssh client in raw mode) reads each key.
@@ -308,9 +336,10 @@ def _foreground_program(session) -> str | None:
 
     The login shell is its own session and group leader (setsid at spawn), so
     its pid is its group id; a foreground child runs in a group of its own.
-    That group is idle only when its leader is a prompt host AND a line editor
-    reads the terminal: a nested interactive shell at its prompt, not a
-    `bash script.sh` that runs. Unknown (the fd or the shell is gone) is not
+    That group is idle only when its leader is a prompt host, a line editor
+    reads the terminal and the leader is alone in its group: a nested
+    interactive shell at its prompt, not a `bash script.sh` that runs (or
+    whose child, a pager or a REPL, reads the keys). Unknown (the fd or the shell is gone) is not
     busy: the write then fails on its own and says so. Returns "" for a busy
     group whose leader's name cannot be read. Blocking (it may ask ``ps``)."""
     from server.terminal import _foreground_pgrp
@@ -324,7 +353,7 @@ def _foreground_program(session) -> str | None:
         return None
     # A group's id is its leader's pid.
     name = _process_name(fg)
-    if name in _PROMPT_HOSTS and _line_editor_reading(session):
+    if name in _PROMPT_HOSTS and _line_editor_reading(session) and _group_has_only_leader(fg):
         return None
     return name
 
@@ -460,14 +489,7 @@ async def do_terminal_run(payload: dict) -> tuple[bool, str]:
             except FileNotFoundError as e:
                 return False, str(e)
         show_visible_session(session, opened=opened)
-        from server.workspace.paths import own_scratch_dir
-
-        result = await run_in_session(
-            session,
-            command,
-            timeout=timeout,
-            script_dir=own_scratch_dir(payload.get("session_id")),
-        )
+        result = await run_in_session(session, command, timeout=timeout)
 
     # Format the result for the model: exit code on its own line, then
     # output. Marking the boundary explicitly makes it easier for the
@@ -506,6 +528,9 @@ async def do_terminal_run(payload: dict) -> tuple[bool, str]:
 # (interrupt), Ctrl-D (end of input), Ctrl-Q (resume output a Ctrl-S paused).
 _CONTROL_KEYS = frozenset("\x03\x04\x11")
 
+# The one key terminal_send target='visible' may send (_send_keys_to_visible).
+_INTERRUPT_KEY = "\x03"
+
 _WAIT_REASON_HINTS = {
     "inferred_idle": (
         "Output went quiet and the program appears to be waiting. If it prompted, "
@@ -543,7 +568,7 @@ async def do_terminal_send(payload: dict) -> tuple[bool, str]:
     if target not in ("interactive", "visible"):
         return False, f"invalid target {target!r}: must be 'interactive' or 'visible'"
     if target == "visible":
-        return await _send_keys_to_visible(text, payload.get("timeout", 10.0))
+        return await _send_keys_to_visible(payload, text)
 
     # Validate whatever LOOKS like a command: the first non-empty line. An empty
     # send (read-only poll), bare REPL expressions, and a send of only the keys
@@ -594,22 +619,51 @@ async def do_terminal_send(payload: dict) -> tuple[bool, str]:
     return True, f"wait_reason: {reason}\n{hint}\n---\n{output}"
 
 
-async def _send_keys_to_visible(text: str, timeout) -> tuple[bool, str]:
-    """Send only stop keys (Ctrl-C, Ctrl-D, Ctrl-Q) to the user's visible
-    terminal, to stop a run of the assistant that timed out there. It types
-    no command, so the visible terminal's command floor is not involved."""
-    from server.terminal import latest_visible_session, send_and_wait
+async def _send_keys_to_visible(payload: dict, text: str) -> tuple[bool, str]:
+    """Send Ctrl-C to the user's visible terminal, to stop the assistant's
+    own visible run that timed out and still holds that terminal.
 
-    if not text or not set(text) <= _CONTROL_KEYS:
+    Nothing else goes there: no command, no other key, no key while the
+    terminal is idle or runs a program the user started (their dev server,
+    their own shell, which a Ctrl-D would close). The visible run itself was
+    approved under the visible-terminal floor; this only interrupts it, so a
+    session approval of terminal_send cannot reach anything else in that
+    terminal. An unattended subagent never touches the user's terminal."""
+    from server.terminal import (
+        assistant_run_pending,
+        clear_pending_run,
+        latest_visible_session,
+        send_and_wait,
+    )
+
+    if payload.get("__agent__"):
         return False, (
-            "target='visible' sends only \\x03 (Ctrl-C), \\x04 (Ctrl-D) or \\x11 "
-            "(Ctrl-Q), with no other text. Use terminal_run mode='visible' to run a command there."
+            "target='visible' is not permitted from an unattended subagent: only "
+            "the top-level session can stop a command in the user's terminal."
+        )
+    if text != _INTERRUPT_KEY:
+        return False, (
+            "target='visible' sends only '\\x03' (Ctrl-C), with no other text, to stop "
+            "your own visible command that timed out. Use terminal_run mode='visible' to "
+            "run a command there."
         )
     session = latest_visible_session()
     if session is None:
         return False, "No visible terminal is open."
+    if (
+        assistant_run_pending(session)
+        and await asyncio.to_thread(_foreground_program, session) is None
+    ):
+        # The shell is at its prompt again, but the marker never printed (the
+        # command read its stdin, say): the run is over.
+        clear_pending_run(session)
+    if not assistant_run_pending(session):
+        return False, (
+            "No command of yours is still running in the visible terminal, so no key "
+            "was sent. Ctrl-C there would reach the user's own shell or program."
+        )
     try:
-        wait = max(0.5, min(float(timeout), float(_MAX_TIMEOUT_S)))
+        wait = max(0.5, min(float(payload.get("timeout", 10.0)), float(_MAX_TIMEOUT_S)))
     except (TypeError, ValueError):
         return False, "timeout must be a number (seconds)"
     result = await send_and_wait(session, text, timeout=wait)

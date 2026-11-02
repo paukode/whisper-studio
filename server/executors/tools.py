@@ -286,9 +286,9 @@ TERMINAL_SEND_TOOL = {
         "the first command line is validated. Default read budget 10s, max 300s. "
         "Writes are confined to the workspace, this session's scratch folder and "
         "temp; a new workspace opens a fresh terminal. Call terminal_close when done. "
-        "With target='visible' it sends only a stop key (Ctrl-C, Ctrl-D, Ctrl-Q) to the "
-        "user's visible terminal, to stop a terminal_run mode='visible' that timed out "
-        "and still runs there."
+        "With target='visible' it sends only Ctrl-C to the user's visible terminal, and "
+        "only to stop your own terminal_run mode='visible' that timed out and still runs "
+        "there."
     ),
     "input_schema": {
         "type": "object",
@@ -315,8 +315,8 @@ TERMINAL_SEND_TOOL = {
                 "enum": ["interactive", "visible"],
                 "description": (
                     "interactive (default): this chat's persistent terminal. visible: "
-                    "the user's visible terminal, for a stop key only (\\x03, \\x04 or "
-                    "\\x11 with no other text)."
+                    "the user's visible terminal, for Ctrl-C only (\\x03 with no other "
+                    "text) while your own timed-out visible run still runs there."
                 ),
             },
             "cwd": {

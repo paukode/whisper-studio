@@ -15,6 +15,7 @@ until it ends (terminal_send target='visible' sends it Ctrl-C).
 
 import asyncio
 import os
+import tempfile
 import time
 
 import pytest
@@ -64,9 +65,9 @@ def _long_command(size: int = 1500) -> str:
     return command
 
 
-def test_a_long_command_runs_in_an_idle_shell(tmp_path):
+def test_a_long_command_runs_in_an_idle_shell():
     async def body(s, shell_pgrp):
-        result = await t.run_in_session(s, _long_command(), timeout=10, script_dir=str(tmp_path))
+        result = await t.run_in_session(s, _long_command(), timeout=10)
         assert result["timed_out"] is False, result
         assert result["exit_code"] == 0
         out = result["output"]
@@ -74,15 +75,15 @@ def test_a_long_command_runs_in_an_idle_shell(tmp_path):
         # Only the command's output: no echoed source line or marker printf.
         assert "terminal-run-" not in out and "__CLAUDE_DONE_" not in out
         # The script it was sourced from is gone.
-        assert list(tmp_path.iterdir()) == []
+        assert os.listdir(t.command_script_dir()) == []
 
     _in_terminal(body)
 
 
-def test_a_multi_line_command_runs_and_keeps_its_exit_code(tmp_path):
+def test_a_multi_line_command_runs_and_keeps_its_exit_code():
     async def body(s, shell_pgrp):
         command = "echo one\n# a comment line\necho two\nfalse"
-        result = await t.run_in_session(s, command, timeout=10, script_dir=str(tmp_path))
+        result = await t.run_in_session(s, command, timeout=10)
         assert result["timed_out"] is False, result
         assert result["exit_code"] == 1
         assert result["output"].split() == ["one", "two"]
@@ -90,10 +91,11 @@ def test_a_multi_line_command_runs_and_keeps_its_exit_code(tmp_path):
     _in_terminal(body)
 
 
-def test_the_script_file_is_owner_only(tmp_path):
-    path = t._write_command_script("echo hi", "abcd1234abcd1234", str(tmp_path))
+def test_the_script_file_is_owner_only():
+    path = t._write_command_script("echo hi", "abcd1234abcd1234")
     try:
         assert os.stat(path).st_mode & 0o777 == 0o700
+        assert os.stat(os.path.dirname(path)).st_mode & 0o777 == 0o700
         assert open(path).read().endswith("\necho hi\n")
     finally:
         t._remove_script(path)
@@ -147,6 +149,48 @@ def test_a_shell_running_a_script_is_busy(tmp_path):
         assert await asyncio.to_thread(_foreground_program, s) == "bash"
 
     _in_terminal(body)
+
+
+def test_a_script_whose_child_reads_raw_keys_is_busy(tmp_path):
+    """A script that runs a pager, a REPL or fzf: the child turns canonical
+    mode off, but it runs in the script's group, so the terminal is busy."""
+    job = _script(
+        tmp_path,
+        "exec 3<&0\n/usr/bin/python3 -c 'import tty,time; tty.setraw(0); time.sleep(20)' <&3\n",
+    )
+
+    async def body(s, shell_pgrp):
+        from server.executors.terminal_run import _line_editor_reading
+
+        os.write(s.master_fd, f"/bin/bash --noprofile --norc {job}\n".encode())
+        assert await _wait_for(
+            lambda: t._foreground_pgrp(s) not in (None, shell_pgrp) and _line_editor_reading(s),
+            timeout=8,
+        )
+        # Give the child time to take the keys (raw mode) before the check.
+        await asyncio.sleep(0.5)
+        assert _line_editor_reading(s)
+        assert await asyncio.to_thread(_foreground_program, s) == "bash"
+
+    _in_terminal(body)
+
+
+def test_scripts_live_where_a_sandboxed_command_cannot_write(tmp_path):
+    """The visible shell sources the script unconfined, so it is not in the
+    scratch folder or temp: the OS sandbox denies writes to its folder even
+    for a workspace that holds the data root."""
+    from server.infrastructure.paths import data_root
+    from server.sandbox import _generate_macos_profile
+
+    folder = t.command_script_dir()
+    assert not folder.startswith(tempfile.gettempdir())
+    profile = _generate_macos_profile(
+        data_root(), write_mode="workspace", scratch_dir=str(tmp_path)
+    )
+    deny = f'(deny file-write* (subpath "{folder}"))'
+    allow = f'(allow file-write* (subpath "{os.path.realpath(data_root())}"))'
+    assert deny in profile
+    assert profile.index(deny) > profile.index(allow)
 
 
 def test_a_nested_shell_at_its_prompt_is_idle():
@@ -225,20 +269,54 @@ def test_a_timed_out_visible_run_refuses_further_runs_until_stopped(
     _in_terminal(body, monkeypatch)
 
 
-def test_visible_target_sends_only_stop_keys(monkeypatch):
+def test_visible_target_sends_only_ctrl_c(monkeypatch):
     monkeypatch.setattr(t, "latest_visible_session", lambda: None)
 
     async def go():
         typed = await do_terminal_send(
             {"session_id": "s1", "input": "rm -rf build", "target": "visible"}
         )
+        eof = await do_terminal_send({"session_id": "s1", "input": "\x04", "target": "visible"})
         none_open = await do_terminal_send(
             {"session_id": "s1", "input": "\x03", "target": "visible"}
         )
         bad = await do_terminal_send({"session_id": "s1", "input": "\x03", "target": "other"})
-        return typed, none_open, bad
+        return typed, eof, none_open, bad
 
-    typed, none_open, bad = asyncio.run(go())
+    typed, eof, none_open, bad = asyncio.run(go())
     assert typed[0] is False and "only" in typed[1]
+    assert eof[0] is False and "only" in eof[1]
     assert none_open == (False, "No visible terminal is open.")
     assert bad[0] is False and "invalid target" in bad[1]
+
+
+def test_visible_target_refuses_an_unattended_agent(monkeypatch):
+    def no_terminal():
+        raise AssertionError("an agent call looked up the visible terminal")
+
+    monkeypatch.setattr(t, "latest_visible_session", no_terminal)
+    ok, text = asyncio.run(
+        do_terminal_send(
+            {"session_id": "s1", "input": "\x03", "target": "visible", "__agent__": True}
+        )
+    )
+    assert not ok and "unattended subagent" in text
+
+
+def test_visible_target_never_interrupts_the_users_own_program(monkeypatch, tmp_path):
+    """With no timed-out run of the assistant, Ctrl-C is not sent: the
+    foreground program is the user's own (a dev server, say)."""
+    job = _script(tmp_path, "echo user-job\nsleep 20\n")
+
+    async def body(s, shell_pgrp):
+        os.write(s.master_fd, f"/bin/bash --noprofile --norc {job}\n".encode())
+        assert await _wait_for(lambda: "user-job" in _buffer(s))
+        assert s.pending_run is None
+        ok, text = await do_terminal_send(
+            {"session_id": "s1", "input": "\x03", "target": "visible", "timeout": 1}
+        )
+        assert not ok and "No command of yours" in text
+        await asyncio.sleep(0.3)
+        assert t._foreground_pgrp(s) != shell_pgrp, "the user's program was stopped"
+
+    _in_terminal(body, monkeypatch)
