@@ -1648,27 +1648,6 @@ input.segment-speaker {
     word-break: break-word;
 }
 
-/* The final team_results step gets prominent treatment — accent-tinted
- * background so the agent's actual answer pops above the procedural
- * spawn / send_message steps. */
-.agent-step-result {
-    border: 1px solid var(--accent);
-    background: var(--accent-dim);
-    border-radius: var(--radius-md);
-    overflow: hidden;
-}
-.agent-step-result .agent-step-header {
-    background: var(--accent-dim);
-    color: var(--accent);
-    cursor: default;
-}
-.agent-step-result .agent-step-header:hover { background: var(--accent-dim); }
-.agent-step-result .agent-step-name { color: var(--accent); }
-.agent-step-result .agent-step-output {
-    background: var(--bg-primary);
-    color: var(--text-primary);
-}
-
 /* ─── "Jump to new messages" pill ────────────────────────────────────────
  * Floats at the bottom of the chat-messages scroll area when the user
  * has scrolled up and new live messages (typically cron firings)

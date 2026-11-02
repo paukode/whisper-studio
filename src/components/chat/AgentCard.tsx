@@ -2,7 +2,7 @@
  * AgentCard: inline grouping of consecutive agent-orchestration tool calls.
  *
  * Replaces a vertical stack of standalone per-call rows (spawn_agent,
- * send_message xN, list_agents, team_results) with a single collapsible
+ * send_message xN, list_agents) with a single collapsible
  * card. The header shows the agents icon, "Agent · <task>", the step count
  * and a status mark. Body, when expanded, lists every step with its own
  * collapsible output.
@@ -26,20 +26,16 @@ import { ICON, iconFor } from '@/components/chat/activityIcons';
  * AGENT_TOOLS set on the backend includes utility tools (config_get,
  * skill_invoke, etc.) that aren't agent-orchestration: keep those out
  * of the grouping so they continue to render as standalone chips.
- *
- * `team_results` is the synthetic SSE event that lands the orchestrator's
- * final aggregated output; it belongs in the card, not as its own bubble.
  */
-export const AGENT_GROUP_TOOLS = new Set<string>([
+const AGENT_GROUP_TOOLS = new Set<string>([
   'spawn_agent',
   'send_message',
   'list_agents',
   'team_create',
   'team_delete',
-  'team_results',
 ]);
 
-export function isAgentGroupTool(name: string): boolean {
+function isAgentGroupTool(name: string): boolean {
   return AGENT_GROUP_TOOLS.has(name);
 }
 
@@ -71,7 +67,7 @@ export function groupAgentTools(tools: ToolUseEvent[]): GroupedTool[] {
  *  ask_user_question, emitted program). The list is small on purpose:
  *  most tools are "internal" reads/writes/searches that benefit from
  *  collapsing into a single activity row. */
-export const ACTIVITY_EXEMPT_TOOLS: ReadonlySet<string> = new Set([
+const ACTIVITY_EXEMPT_TOOLS: ReadonlySet<string> = new Set([
   'ws_workspace_prompt',
   'ask_user_question',
   'create_artifact',
@@ -87,15 +83,6 @@ export const ACTIVITY_EXEMPT_TOOLS: ReadonlySet<string> = new Set([
   'ci_started',
   'ci_diagnosis',
 ]);
-
-/** Human-friendly label for a tool name in trace chips. Falls back to the
- *  raw name for tools without a nicer label. */
-const TOOL_LABELS: Record<string, string> = {
-  create_artifact: 'Artifact',
-};
-export function friendlyToolName(name: string): string {
-  return TOOL_LABELS[name] ?? name;
-}
 
 /**
  * Second-pass grouping: walk the output of ``groupAgentTools`` and bundle
@@ -123,7 +110,7 @@ export type ActivityEntry = { kind: 'activity'; tools: ToolUseEvent[] };
 /** Task-management tool calls collapse into a TaskCard: the inline,
  *  live-updating task list rendered in the conversation (the floating
  *  Tasks panel was retired in its favour). */
-export const TASK_CARD_TOOLS: ReadonlySet<string> = new Set([
+const TASK_CARD_TOOLS: ReadonlySet<string> = new Set([
   'task_create',
   'task_update',
   'task_list',
@@ -288,23 +275,6 @@ interface AgentStepProps {
 }
 
 function AgentStep({ tool }: AgentStepProps) {
-  // team_results is the high-value payload: render its body inline,
-  // not behind another `<details>`, so the user sees the agent's final
-  // answer immediately when the card is expanded.
-  if (tool.toolName === 'team_results') {
-    const body = formatTeamResults(tool.input);
-    return (
-      <div className="agent-step agent-step-result">
-        <div className="agent-step-header">
-          <span className="agent-step-icon">{iconFor(tool.toolName)}</span>
-          <span className="agent-step-name">Result</span>
-          {statusGlyph(tool.status)}
-        </div>
-        {body && <pre className="agent-step-output">{body}</pre>}
-      </div>
-    );
-  }
-
   const subject = summariseStepInput(tool);
   return (
     <details className={`agent-step ${tool.status === 'complete' ? 'done' : tool.status}`}>
@@ -323,29 +293,6 @@ function AgentStep({ tool }: AgentStepProps) {
       )}
     </details>
   );
-}
-
-function formatTeamResults(input: Record<string, unknown> | unknown): string {
-  if (!input || typeof input !== 'object') return '';
-  // team_results payload shape varies; handle the common cases:
-  //   { results: [{ agent_id, name, output, ... }] }
-  //   { output: string }
-  //   <anything else>: pretty-print as JSON.
-  const obj = input as Record<string, unknown>;
-  if (typeof obj.output === 'string') return obj.output;
-  if (Array.isArray(obj.results)) {
-    return obj.results.map((r: unknown) => {
-      const rr = (r ?? {}) as Record<string, unknown>;
-      const name = (rr.name as string | undefined) ?? (rr.agent_id as string | undefined) ?? 'agent';
-      const out = (rr.output as string | undefined) ?? '';
-      return `${name}:\n${out}`;
-    }).join('\n\n');
-  }
-  try {
-    return JSON.stringify(obj, null, 2);
-  } catch {
-    return String(obj);
-  }
 }
 
 export interface AgentCardProps {
