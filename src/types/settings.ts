@@ -1,4 +1,3 @@
-export type { ThemeKey } from './theme';
 
 export type ModelMode = 'cloud' | 'hybrid' | 'local';
 export type IndexCapability = 'embed' | 'rerank' | 'ner' | 'index_llm';
