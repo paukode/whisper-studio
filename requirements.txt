@@ -6,9 +6,9 @@ pydantic==2.14.2
 uvicorn[standard]==0.49.0
 # The workspace watcher behind the live file tree (server/workspace/watcher.py).
 # uvicorn[standard] brings it in already; pinned because the app imports it.
-watchfiles==1.2.0
+watchfiles==1.3.0
 websockets==16.0
-boto3==1.43.25
+boto3==1.43.123
 # server/infrastructure/errors.py imports urllib3 (botocore's transport) directly.
 urllib3==2.8.0
 # Voice mode (Nova 2 Sonic) speaks Bedrock's bidirectional stream, which boto3
@@ -21,14 +21,14 @@ aws-sdk-bedrock-runtime[awscrt]==0.11.0
 smithy-aws-core==0.11.0
 smithy-http==0.5.0
 numpy==2.4.6
-python-multipart==0.0.32
+python-multipart==0.0.33
 Pillow==12.2.0
-markitdown[all]==0.1.6
+markitdown[all]==0.1.9
 # Attachment extraction: scanned-PDF rasterization (BSD/Apache) + native macOS OCR (MIT).
-pypdfium2==5.9.0
+pypdfium2==5.14.0
 ocrmac==1.0.1
 # Document-creation tools (create_pdf): pure Python, no system libraries needed.
-reportlab==5.0.0
+reportlab==5.1.0
 # create_pptx/create_xlsx, office_script and inspect_document import these
 # directly; markitdown[all] also pulls them in, pinned here so the document
 # tools do not depend on that extra's tree.
@@ -49,11 +49,11 @@ mcp==1.27.2
 jsonschema==4.26.0
 # server/tool_inputs.py builds its schema Registry with referencing directly.
 referencing==0.37.0
-tavily-python==0.7.25
+tavily-python==0.8.5
 # TLS verification against the OS trust store (macOS keychain), not only the
 # bundled certifi list: the packaged runtime failed every HTTPS fetch behind a
 # TLS-intercepting corporate proxy. Injected at startup in server/main.py.
-truststore==0.10.4
+truststore==0.10.5
 # OpenAI GPT models on Bedrock (GPT-5.5 / GPT-5.4): the Responses API on the
 # bedrock-mantle endpoint. The openai SDK targets
 # https://bedrock-mantle.{region}.api.aws/openai/v1 with a short-lived bearer
@@ -63,7 +63,7 @@ aws-bedrock-token-generator==1.1.0
 torch==2.11.0
 torchaudio==2.11.0
 setuptools==81.0.0
-webrtcvad-wheels==2.0.14
+webrtcvad-wheels==2.0.14.post1
 # Code tools (server/code_tools). ruff checks, and in a workspace that
 # configures ruff also fixes and formats, every Python file the assistant
 # writes, and backs lsp_diagnostics; it runs as `python -P -m ruff` with the
@@ -73,10 +73,10 @@ webrtcvad-wheels==2.0.14
 # there. The launch commands live in server/code_tools/commands.py.
 ruff==0.14.2
 pyflakes==3.4.0
-python-lsp-server==1.14.0
-nodeenv==1.10.0
+python-lsp-server==1.15.0
+nodeenv==1.12.0
 ripgrep==15.1.0
-APScheduler==3.11.2
+APScheduler==3.11.3
 # SKILL.md front matter (server/folder_skills.py).
 pyyaml==6.0.3
 mlx-whisper==0.4.3
@@ -115,5 +115,5 @@ python-igraph==1.0.0
 leidenalg==0.12.0
 
 # Dev / test
-pytest==9.0.3
+pytest==9.2.0
 httpx==0.28.1
