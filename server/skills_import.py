@@ -7,7 +7,7 @@ download everything. Reuses the clone hygiene from ``server/git/executor.py``.
 
 Two entry points:
   - ``preview(url)``  — cheap tree scan listing candidate skills (no blob fetch)
-  - ``import_skills(url, subpaths, overwrite)`` — sparse-fetch, validate, copy
+  - ``import_skills(url, subpaths)``: sparse-fetch, validate, copy
 """
 
 from __future__ import annotations
@@ -312,8 +312,12 @@ def _copy_skill_folder(src: str, dst: str) -> int:
     return total
 
 
-def _import_one(tmp: str, subpath: str, overwrite: bool) -> dict:
-    """Validate and copy a single skill folder. Returns a per-skill result."""
+def _import_one(tmp: str, subpath: str, claimed: set[str]) -> dict:
+    """Validate and copy a single skill folder. Returns a per-skill result.
+    ``claimed`` holds the name keys this import already wrote, so two selected
+    folders that declare one name cannot both land."""
+    from server import skills as _sk
+
     src = os.path.realpath(os.path.join(tmp, subpath)) if subpath else os.path.realpath(tmp)
     tmp_root = os.path.realpath(tmp)
     if not (src == tmp_root or src.startswith(tmp_root + os.sep)) or not os.path.isdir(src):
@@ -332,32 +336,26 @@ def _import_one(tmp: str, subpath: str, overwrite: bool) -> dict:
     if not dest:
         return {"subpath": subpath, "status": "error", "reason": "invalid destination name"}
 
-    if os.path.exists(dest) and not overwrite:
+    # Never replace an installed skill: the same name (or the same folder)
+    # is a conflict the user resolves by renaming or deleting the old one.
+    key = _sk.skill_name_key(skill["name"])
+    taken = _sk.skill_name_taken(skill["name"]) or (skill["name"] if key in claimed else None)
+    if taken or os.path.exists(dest):
         return {
             "subpath": subpath,
             "name": skill["name"],
             "status": "conflict",
-            "reason": "already exists",
+            "reason": f"a skill named {taken or skill['name']} already exists",
         }
-    # The old version waits OUTSIDE the skills folder: a backup inside it
-    # would load as a skill of the same name and replace the new one.
-    backup_dir = ""
-    if os.path.exists(dest):
-        backup_dir = tempfile.mkdtemp(prefix="whisper_skillbackup_")
-        shutil.move(dest, os.path.join(backup_dir, "skill"))
-
     try:
         _copy_skill_folder(src, dest)
-    except BaseException as e:
+    except SkillImportError as e:
         shutil.rmtree(dest, ignore_errors=True)
-        if backup_dir:
-            shutil.move(os.path.join(backup_dir, "skill"), dest)
-            shutil.rmtree(backup_dir)
-        if isinstance(e, SkillImportError):
-            return {"subpath": subpath, "name": skill["name"], "status": "error", "reason": str(e)}
+        return {"subpath": subpath, "name": skill["name"], "status": "error", "reason": str(e)}
+    except BaseException:
+        shutil.rmtree(dest, ignore_errors=True)
         raise
-    if backup_dir:
-        shutil.rmtree(backup_dir)
+    claimed.add(key)
     return {
         "subpath": subpath,
         "name": skill["name"],
@@ -366,7 +364,7 @@ def _import_one(tmp: str, subpath: str, overwrite: bool) -> dict:
     }
 
 
-def import_skills(url: str, subpaths: list[str], overwrite: bool = False) -> dict:
+def import_skills(url: str, subpaths: list[str]) -> dict:
     """Sparse-fetch the given subpaths from ``url`` and copy valid skill folders
     into SKILLS_DIR. Returns {imported, conflicts, errors} lists. The caller is
     responsible for reloading the skill registry afterwards."""
@@ -377,10 +375,11 @@ def import_skills(url: str, subpaths: list[str], overwrite: bool = False) -> dic
     os.makedirs(SKILLS_DIR, exist_ok=True)
     tmp = tempfile.mkdtemp(prefix="whisper_skillimport_")
     results: list[dict] = []
+    claimed: set[str] = set()
     try:
         _sparse_fetch(url, tmp, subpaths)
         for sp in subpaths:
-            results.append(_import_one(tmp, sp, overwrite))
+            results.append(_import_one(tmp, sp, claimed))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return {
@@ -496,9 +495,7 @@ def preview_local(files: list[tuple[str, bytes]]) -> dict:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def import_local(
-    files: list[tuple[str, bytes]], subpaths: list[str], overwrite: bool = False
-) -> dict:
+def import_local(files: list[tuple[str, bytes]], subpaths: list[str]) -> dict:
     """Rebuild the uploaded tree and copy the selected skill folders into
     SKILLS_DIR. Returns {imported, conflicts, errors}. The caller reloads the
     skill registry afterwards (identical to the git path)."""
@@ -508,6 +505,7 @@ def import_local(
     os.makedirs(SKILLS_DIR, exist_ok=True)
     tmp = tempfile.mkdtemp(prefix="whisper_skillimportlocal_")
     results: list[dict] = []
+    claimed: set[str] = set()
     try:
         available = set(_reconstruct_tree(files, tmp))
         dirs = set(_skill_dirs_from_tree(sorted(available)))
@@ -519,7 +517,7 @@ def import_local(
                     {"subpath": sp, "status": "error", "reason": "not in uploaded folder"}
                 )
                 continue
-            results.append(_import_one(tmp, sp, overwrite))
+            results.append(_import_one(tmp, sp, claimed))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return {

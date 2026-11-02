@@ -136,19 +136,17 @@ def test_import_one_copies_skips_symlinks_and_dedupes(tmp_path, monkeypatch):
     dest_root = tmp_path / "skills"
     dest_root.mkdir()
     monkeypatch.setattr(skills_import, "SKILLS_DIR", str(dest_root))
+    monkeypatch.setattr(skills, "SKILLS", {})
 
-    r1 = skills_import._import_one(str(checkout), "eng/arch", overwrite=False)
+    r1 = skills_import._import_one(str(checkout), "eng/arch", set())
     assert r1["status"] == "imported"
     imported = dest_root / "arch"
     assert (imported / "SKILL.md").is_file()
     assert (imported / "scripts" / "a.py").is_file()
     assert not (imported / "evil").exists()  # symlink skipped
 
-    r2 = skills_import._import_one(str(checkout), "eng/arch", overwrite=False)
+    r2 = skills_import._import_one(str(checkout), "eng/arch", set())
     assert r2["status"] == "conflict"
-    r3 = skills_import._import_one(str(checkout), "eng/arch", overwrite=True)
-    assert r3["status"] == "imported"
-    # No backup is left in the skills folder, where it would load as a skill.
     assert [p.name for p in dest_root.iterdir()] == ["arch"]
 
 
@@ -159,13 +157,13 @@ def test_import_refuses_reserved_name(tmp_path, monkeypatch):
     (src / "SKILL.md").write_text("---\nname: terminal_run\ndescription: d\n---\nb\n")
     monkeypatch.setattr(skills_import, "SKILLS_DIR", str(tmp_path / "sk"))
     (tmp_path / "sk").mkdir()
-    r = skills_import._import_one(str(checkout), "terminal_run", overwrite=False)
+    r = skills_import._import_one(str(checkout), "terminal_run", set())
     assert r["status"] == "error" and "reserved" in r["reason"]
 
 
 def test_import_rejects_bad_url():
     with pytest.raises(skills_import.SkillImportError):
-        skills_import.import_skills("file:///etc", ["x"], overwrite=False)
+        skills_import.import_skills("file:///etc", ["x"])
 
 
 def test_fetch_descriptions_degrades_gracefully(tmp_path):

@@ -33,6 +33,7 @@ def skills_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(si, "SKILLS_DIR", str(d))
     monkeypatch.setattr(skills_mod, "SKILLS_DIR", str(d))
     monkeypatch.setattr(skills_mod, "SKILLS_CONFIG_PATH", str(tmp_path / "skills_config.json"))
+    monkeypatch.setattr(skills_mod, "SKILLS", {})
     return d
 
 
@@ -72,7 +73,7 @@ def test_preview_local_detects_folders():
 
 
 def test_import_local_copies_and_hot_reloads(skills_dir):
-    res = si.import_local(_two_skill_tree(), ["pack/alpha"], overwrite=False)
+    res = si.import_local(_two_skill_tree(), ["pack/alpha"])
     assert [r["name"] for r in res["imported"]] == ["alpha"]
     assert res["conflicts"] == [] and res["errors"] == []
     # Copied under the basename, scripts included.
@@ -83,39 +84,54 @@ def test_import_local_copies_and_hot_reloads(skills_dir):
     assert "alpha" in loaded and loaded["alpha"]["is_folder"] is True
 
 
-def test_import_local_conflict_then_overwrite(skills_dir):
-    tree = _two_skill_tree()
-    assert si.import_local(tree, ["pack/alpha"])["imported"]
-    # Second import without overwrite → conflict, not a clobber.
-    again = si.import_local(tree, ["pack/alpha"], overwrite=False)
-    assert again["imported"] == [] and len(again["conflicts"]) == 1
-    # With overwrite it succeeds.
-    forced = si.import_local(tree, ["pack/alpha"], overwrite=True)
-    assert [r["name"] for r in forced["imported"]] == ["alpha"]
-
-
-def test_overwrite_keeps_no_backup_that_could_shadow_the_new_version(skills_dir):
+def test_an_installed_skill_is_never_replaced(skills_dir, monkeypatch):
     old = [("pack/alpha/SKILL.md", _skill_md("alpha", "old version"))]
     new = [("pack/alpha/SKILL.md", _skill_md("alpha", "new version"))]
     assert si.import_local(old, ["pack/alpha"])["imported"]
-    assert si.import_local(new, ["pack/alpha"], overwrite=True)["imported"]
-    assert sorted(p.name for p in skills_dir.iterdir()) == ["alpha"]
-    loaded = skills_mod.load_skills(str(skills_dir))
-    assert loaded["alpha"]["description"] == "new version"
+    monkeypatch.setattr(skills_mod, "SKILLS", skills_mod.load_skills(str(skills_dir)))
+
+    again = si.import_local(new, ["pack/alpha"])
+
+    assert again["imported"] == []
+    assert again["conflicts"][0]["reason"] == "a skill named alpha already exists"
+    assert "old version" in (skills_dir / "alpha" / "SKILL.md").read_text()
 
 
-def test_a_failed_overwrite_restores_the_old_version(skills_dir, monkeypatch):
-    old = [("pack/alpha/SKILL.md", _skill_md("alpha", "old version"))]
-    assert si.import_local(old, ["pack/alpha"])["imported"]
+def test_a_folder_with_another_name_but_a_taken_skill_name_is_a_conflict(skills_dir, monkeypatch):
+    """The loaded name decides, not the folder: 'alpha-v2' declaring the name
+    'alpha' would load over the installed alpha."""
+    assert si.import_local(_two_skill_tree(), ["pack/alpha"])["imported"]
+    monkeypatch.setattr(skills_mod, "SKILLS", skills_mod.load_skills(str(skills_dir)))
 
+    res = si.import_local([("pack/alpha-v2/SKILL.md", _skill_md("alpha"))], ["pack/alpha-v2"])
+
+    assert res["imported"] == [] and len(res["conflicts"]) == 1
+    assert not (skills_dir / "alpha-v2").exists()
+
+
+def test_two_selected_folders_with_one_name_import_once(skills_dir):
+    tree = [
+        ("pack/one/SKILL.md", _skill_md("same", "first")),
+        ("pack/two/SKILL.md", _skill_md("same", "second")),
+    ]
+
+    res = si.import_local(tree, ["pack/one", "pack/two"])
+
+    assert [r["subpath"] for r in res["imported"]] == ["pack/one"]
+    assert [r["subpath"] for r in res["conflicts"]] == ["pack/two"]
+
+
+def test_a_failed_copy_leaves_no_partial_skill(skills_dir, monkeypatch):
     def broken(src, dest):
+        import os
+
+        os.makedirs(dest)
         raise si.SkillImportError("copy failed")
 
     monkeypatch.setattr(si, "_copy_skill_folder", broken)
-    res = si.import_local(old, ["pack/alpha"], overwrite=True)
+    res = si.import_local(_two_skill_tree(), ["pack/alpha"])
     assert res["errors"] and res["errors"][0]["reason"] == "copy failed"
-    assert sorted(p.name for p in skills_dir.iterdir()) == ["alpha"]
-    assert "old version" in (skills_dir / "alpha" / "SKILL.md").read_text()
+    assert list(skills_dir.iterdir()) == []
 
 
 def test_import_local_rejects_path_escape(skills_dir):
@@ -174,7 +190,7 @@ def test_route_local_preview_and_import_roundtrip(client, skills_dir):
     r2 = client.post(
         "/api/skills/import/local",
         files=_multipart(_two_skill_tree()),
-        data={"subpaths": json.dumps(["pack/alpha", "pack/beta"]), "overwrite": "false"},
+        data={"subpaths": json.dumps(["pack/alpha", "pack/beta"])},
     )
     assert r2.status_code == 200
     assert {x["name"] for x in r2.json()["imported"]} == {"alpha", "beta"}
@@ -188,6 +204,6 @@ def test_route_local_import_bad_subpaths_json(client):
     r = client.post(
         "/api/skills/import/local",
         files=_multipart(_two_skill_tree()),
-        data={"subpaths": "not-json", "overwrite": "false"},
+        data={"subpaths": "not-json"},
     )
     assert r.status_code == 400

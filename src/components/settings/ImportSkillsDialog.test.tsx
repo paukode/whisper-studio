@@ -134,4 +134,51 @@ describe('ImportSkillsDialog — local folder mode', () => {
     // Clean success closes the dialog.
     expect(onClose).toHaveBeenCalled();
   });
+
+  it('names a skill that was not imported because one with the same name exists', async () => {
+    const fetchMock = vi.fn(async (u: string, _init?: RequestInit) => {
+      if (u === '/api/skills/import/local/preview') {
+        return {
+          ok: true,
+          json: async () => ({
+            skills: [
+              { subpath: 'pack/alpha', name: 'alpha', hasScripts: false, scriptFiles: [], fileCount: 1 },
+            ],
+          }),
+        };
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          imported: [],
+          conflicts: [{ subpath: 'pack/alpha', name: 'alpha', reason: 'a skill named alpha already exists' }],
+          errors: [],
+        }),
+      };
+    });
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+    const { onClose } = renderDialog();
+    fireEvent.click(screen.getByRole('tab', { name: 'From local folder' }));
+    const input = screen.getByLabelText('Choose skills folder') as HTMLInputElement;
+    Object.defineProperty(input, 'files', {
+      value: [fileWithRelPath('pack/alpha/SKILL.md')],
+      configurable: true,
+    });
+    fireEvent.change(input);
+    await waitFor(() => expect(screen.getByText('pack/alpha')).toBeInTheDocument());
+
+    // There is no way to replace an installed skill from this dialog.
+    expect(screen.queryByText('Overwrite existing')).toBeNull();
+    const row = screen.getByText('pack/alpha').closest('label') as HTMLElement;
+    fireEvent.click(row.querySelector('input[type="checkbox"]') as HTMLElement);
+    fireEvent.click(screen.getByRole('button', { name: /Import/ }));
+
+    await waitFor(() =>
+      expect(screen.getByText(/Not imported, a skill with the same name exists: alpha/)).toBeInTheDocument(),
+    );
+    const body = (fetchMock.mock.calls[1][1] as unknown as { body: FormData }).body;
+    expect(body.has('overwrite')).toBe(false);
+    expect(onClose).not.toHaveBeenCalled();
+  });
 });

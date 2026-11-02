@@ -13,7 +13,7 @@ interface PreviewSkill {
 
 interface ImportResult {
   imported: Array<{ name: string }>;
-  conflicts: Array<{ name?: string; subpath: string }>;
+  conflicts: Array<{ name?: string; subpath: string; reason?: string }>;
   errors: Array<{ subpath: string; reason: string }>;
 }
 
@@ -40,7 +40,6 @@ export const ImportSkillsDialog: React.FC<{
   const [error, setError] = useState('');
   const [skills, setSkills] = useState<PreviewSkill[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [overwrite, setOverwrite] = useState(false);
   const [filter, setFilter] = useState('');
   const [searchDesc, setSearchDesc] = useState(false);
   const [summary, setSummary] = useState('');
@@ -116,14 +115,17 @@ export const ImportSkillsDialog: React.FC<{
   const applyResult = (r: ImportResult) => {
     onImported();
     // Clean success: close the dialog. If some skills hit conflicts/errors,
-    // keep it open with a summary so the user can enable overwrite and retry.
+    // keep it open with a summary. An installed skill is never replaced: the
+    // user renames or deletes it first.
     if (r.conflicts.length === 0 && r.errors.length === 0) {
       onClose();
       return;
     }
     const parts = [`Imported ${r.imported.length}`];
-    if (r.conflicts.length)
-      parts.push(`${r.conflicts.length} already existed (enable overwrite to replace)`);
+    if (r.conflicts.length) {
+      const names = r.conflicts.map((c) => c.name || c.subpath).join(', ');
+      parts.push(`Not imported, a skill with the same name exists: ${names}`);
+    }
     if (r.errors.length) parts.push(`${r.errors.length} failed`);
     setSummary(parts.join(' · '));
   };
@@ -138,13 +140,11 @@ export const ImportSkillsDialog: React.FC<{
         const r = await post<ImportResult>('/api/skills/import', {
           url: url.trim(),
           subpaths: [...selected],
-          overwrite,
         });
         applyResult(r);
       } else {
         const fd = buildForm(localFiles);
         fd.append('subpaths', JSON.stringify([...selected]));
-        fd.append('overwrite', overwrite ? 'true' : 'false');
         const resp = await fetch('/api/skills/import/local', { method: 'POST', body: fd });
         if (!resp.ok) throw new Error(await readErrorBody(resp));
         applyResult((await resp.json()) as ImportResult);
@@ -362,11 +362,7 @@ export const ImportSkillsDialog: React.FC<{
                 </label>
               ))}
             </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <label style={{ display: 'flex', gap: '6px', alignItems: 'center', fontSize: '14px' }}>
-                <input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} />
-                Overwrite existing
-              </label>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
               <button
                 className="btn btn-primary btn-sm"
                 onClick={() => void doImport()}
