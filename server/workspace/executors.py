@@ -652,7 +652,7 @@ def _exec_save_file(tool_input, transcript, current_attachments):
     else:
         folder = tool_input.get("suggested_location") or "Documents"
         if folder not in ("Documents", "Downloads"):
-            folder = "Documents"
+            return f"Error: suggested_location must be Documents or Downloads (got {folder!r})."
         dest = os.path.join(os.path.expanduser(f"~/{folder}"), filename)
 
     content = tool_input.get("content", "")
