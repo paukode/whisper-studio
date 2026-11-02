@@ -102,18 +102,6 @@ async def _run_detached(
     from server.agents.event_bus import event_bus
     from server.agents.runtime import run_agent
 
-    config = None
-    if read_only:
-        # No human is present to approve writes and agents auto-approve the
-        # [WS_APPROVAL] gate, so detached runs get the read-only tool filter.
-        # Resolve through get_agent_config (NOT the raw AGENT_TYPES table) so
-        # a custom or ephemeral type resolves here exactly as run_agent would.
-        import dataclasses
-
-        from server.agents.config import get_agent_config
-
-        config = dataclasses.replace(get_agent_config(agent_type), read_only=True)
-
     channel = f"task-events:{task_id}"
     queue = event_bus.subscribe(channel)
     pump = asyncio.create_task(_pump_events(queue, session_id, task_id, out_path))
@@ -122,6 +110,17 @@ async def _run_detached(
     stop_reason = "error"
     turns_used = 0
     try:
+        config = None
+        if read_only:
+            # No human is present to approve writes and agents auto-approve the
+            # [WS_APPROVAL] gate, so detached runs get the read-only tool filter.
+            # Resolve through get_agent_config (NOT the raw AGENT_TYPES table) so
+            # a custom or ephemeral type resolves here exactly as run_agent would.
+            import dataclasses
+
+            from server.agents.config import get_agent_config
+
+            config = dataclasses.replace(get_agent_config(agent_type), read_only=True)
         async with _semaphore():
             result = await run_agent(
                 task,

@@ -59,3 +59,16 @@ def test_agent_round_error_is_a_failed_run(monkeypatch):
     assert any(event.get("phase") == "failed" for event in emitted)
     meta = load(aid, sid)["meta"]
     assert meta["status"] == "failed" and meta["stop_reason"] == "error"
+
+
+def test_unknown_agent_type_fails_instead_of_running_as_general():
+    import pytest
+
+    from server.agents.config import UnknownAgentType, get_agent_config
+    from server.agents.runtime import run_agent
+
+    with pytest.raises(UnknownAgentType):
+        get_agent_config("no-such-reviewer")
+    result = asyncio.run(run_agent("review", agent_type="no-such-reviewer", session_id="s1"))
+    assert result.status == "failed" and result.stop_reason == "error"
+    assert "unknown agent type 'no-such-reviewer'" in result.output

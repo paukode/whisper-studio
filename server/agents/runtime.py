@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from server.agents import extensions as budget_extensions
 from server.agents.config import (
     AgentConfig,
+    UnknownAgentType,
     get_agent_config,
     with_run_limits,
 )
@@ -152,7 +153,16 @@ async def run_agent(
 
     # Resolve config; a config passed in takes the limits it leaves unset from
     # Settings too (with_run_limits).
-    config = get_agent_config(agent_type) if config is None else with_run_limits(config)
+    try:
+        config = get_agent_config(agent_type) if config is None else with_run_limits(config)
+    except UnknownAgentType as e:
+        return AgentResult(
+            agent_id="",
+            agent_type=agent_type,
+            output=f"[Agent Error] {e}",
+            status="failed",
+            stop_reason="error",
+        )
     # Agents approve their own writes, so an agent may only read when it is
     # started from a plan-mode turn or by a read-only agent (a resume through
     # send_message included; server.agents.tool_access.read_only_scope), the
