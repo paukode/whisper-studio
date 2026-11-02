@@ -299,10 +299,14 @@ def _verify_api(payload: dict, cwd: str, mutation_out: str) -> tuple[bool, str]:
             f"{mutation_out}\n[GraphQL mutation sent — state not independently verified]".strip(),
         )
     if method == "DELETE":
-        rc, _ = run_gh(["api", endpoint], cwd=cwd, timeout=30)
-        if rc != 0:
+        rc, out = run_gh(["api", endpoint], cwd=cwd, timeout=30)
+        if rc == 0:
+            return False, f"{endpoint} still exists after DELETE."
+        # Only a 404 proves the delete; a timeout, rate limit or auth error
+        # on the re-read says nothing about the resource.
+        if "HTTP 404" in out or "Not Found" in out:
             return True, f"Verified: {endpoint} no longer exists (deleted)."
-        return False, f"{endpoint} still exists after DELETE."
+        return True, f"{mutation_out}\n[deletion not re-verified: {out}]".strip()
     # Re-GET the resource by its returned url when present.
     try:
         url = json.loads(mutation_out).get("url") if mutation_out else None

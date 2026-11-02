@@ -157,3 +157,20 @@ def test_do_api_write_delete_verifies_gone(monkeypatch):
     _mock_gh(monkeypatch, responder)
     ok, msg = gx.do_github_api_write({"endpoint": "repos/o/r/git/refs/heads/x", "method": "DELETE"})
     assert ok is True and "deleted" in msg
+
+
+def test_do_api_write_delete_with_a_failed_reread_is_not_verified(monkeypatch):
+    """A timed-out re-read used to be reported as a verified delete."""
+    calls = {"n": 0}
+
+    def responder(args, kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return 0, ""
+        return -1, "gh command timed out after 30s."
+
+    _mock_gh(monkeypatch, responder)
+    ok, msg = gx.do_github_api_write({"endpoint": "repos/o/r/git/refs/heads/x", "method": "DELETE"})
+    assert ok is True
+    assert "Verified" not in msg
+    assert "[deletion not re-verified: gh command timed out after 30s.]" in msg
