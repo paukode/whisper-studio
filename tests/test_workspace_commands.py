@@ -24,6 +24,19 @@ def test_needs_stdin_redirect_false_when_already_redirected():
     assert _needs_stdin_redirect("cat <<EOF") is False
 
 
+def test_an_input_redirect_without_a_space_keeps_its_file():
+    """'wc -l <data.csv' used to get '< /dev/null' too, and read nothing."""
+    assert _needs_stdin_redirect("wc -l <data.csv") is False
+    assert _needs_stdin_redirect("sort <f | head -1") is False
+    assert _needs_stdin_redirect("tr a b <<<word") is False
+
+
+def test_a_quoted_or_escaped_less_than_is_not_a_redirect():
+    assert _needs_stdin_redirect("echo '<tag>'") is True
+    assert _needs_stdin_redirect('grep "a<b" f') is True
+    assert _needs_stdin_redirect("echo a\\<b") is True
+
+
 def test_apply_stdin_redirect_appends_when_no_pipe():
     assert _apply_stdin_redirect("echo hi") == "echo hi < /dev/null"
 

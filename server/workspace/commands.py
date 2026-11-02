@@ -31,9 +31,24 @@ _EXIT_CODE_MEANINGS = {
 
 
 def _needs_stdin_redirect(command: str) -> bool:
-    """Check if command needs < /dev/null to prevent stdin hangs."""
-    if "< " in command or "<<" in command:
-        return False
+    """Check if command needs < /dev/null to prevent stdin hangs: True unless
+    it already redirects input somewhere. Any unquoted, unescaped ``<``
+    counts (``<file``, ``< file``, ``<<EOF``, ``<<<word``), so ``wc -l
+    <data.csv`` keeps reading its file."""
+    in_single = in_double = False
+    i = 0
+    while i < len(command):
+        ch = command[i]
+        if ch == "\\" and not in_single:
+            i += 2
+            continue
+        if ch == "'" and not in_double:
+            in_single = not in_single
+        elif ch == '"' and not in_single:
+            in_double = not in_double
+        elif ch == "<" and not in_single and not in_double:
+            return False
+        i += 1
     return True
 
 
