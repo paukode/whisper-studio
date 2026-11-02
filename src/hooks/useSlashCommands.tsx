@@ -9,6 +9,8 @@ import { useSessionStore } from '@/stores/sessionStore';
 import { useGoalStore } from '@/stores/goalStore';
 import { launchRun } from '@/api/workflows';
 import { startWatch, planAutofix } from '@/api/ci';
+import { clearSessionGoal, setSessionGoal } from '@/api/goals';
+import { toError } from '@/utils/toError';
 import { activeEffortLevel, noChatModelHint, useSettingsStore } from '@/stores/settingsStore';
 import type { SettingsState } from '@/stores/settingsStore';
 import type { UseChatStreamReturn } from '@/hooks/useChatStream';
@@ -547,29 +549,40 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
             }
           })();
         } else if (goalText.toLowerCase() === 'clear') {
-          useGoalStore.getState().clearGoal(sessionId);
-          void fetch(`/api/sessions/${sessionId}/goal`, { method: 'DELETE' }).catch(() => {});
-          addToast({ type: 'success', message: 'Goal cleared.', duration: 2000, persist: false });
+          void (async () => {
+            try {
+              await clearSessionGoal(sessionId);
+            } catch (e) {
+              addToast({ type: 'error', message: `Could not clear the goal: ${toError(e).message}` });
+              return;
+            }
+            useGoalStore.getState().clearGoal(sessionId);
+            addToast({ type: 'success', message: 'Goal cleared.', duration: 2000, persist: false });
+          })();
         } else if (!goalText) {
           addToast({ type: 'info', message: 'Usage: /goal <text>  ·  /goal clear  ·  /goal gate add <command>', duration: 3000, persist: false });
         } else {
-          useGoalStore.getState().setGoal(sessionId, goalText, true);
-          void fetch(`/api/sessions/${sessionId}/goal`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ goal: goalText }),
-          }).catch(() => {});
-          // Claude Code semantics: the goal text IS the first message. Arming
-          // the completion gate alone left the composer empty and nothing
-          // running, which read as a swallowed message. If a turn is already
-          // streaming, fold it into that turn instead of starting a second.
-          if (getChatStore(sessionId).getState().isStreaming) {
-            void chatStream.sendMidTurn(goalText);
-            addToast({ type: 'success', message: 'Goal set. Steering the running turn toward it.', duration: 2500, persist: false });
-          } else {
-            void chatStream.send(goalText);
-            addToast({ type: 'success', message: 'Goal set. Working toward it now.', duration: 2500, persist: false });
-          }
+          // The goal is armed on the server first: a refused or failed write
+          // says why and sends nothing, so no turn runs without its gate.
+          void (async () => {
+            try {
+              await setSessionGoal(sessionId, goalText);
+            } catch (e) {
+              addToast({ type: 'error', message: `Could not set the goal: ${toError(e).message}` });
+              return;
+            }
+            useGoalStore.getState().setGoal(sessionId, goalText, true);
+            // Claude Code semantics: the goal text IS the first message, so
+            // arming the gate also starts the work. If a turn is already
+            // streaming, fold it into that turn instead of starting a second.
+            if (getChatStore(sessionId).getState().isStreaming) {
+              void chatStream.sendMidTurn(goalText);
+              addToast({ type: 'success', message: 'Goal set. Steering the running turn toward it.', duration: 2500, persist: false });
+            } else {
+              void chatStream.send(goalText);
+              addToast({ type: 'success', message: 'Goal set. Working toward it now.', duration: 2500, persist: false });
+            }
+          })();
         }
         return true;
       }
