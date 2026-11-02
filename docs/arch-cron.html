@@ -84,8 +84,8 @@
       APScheduler <code>AsyncIOScheduler</code> and arms every enabled
       job. Jobs themselves live in <code class="path">data/cron_jobs.json</code>, mutated under a lock via an
       atomic temp-file write so a concurrent toggle, delete, and create can never last-write-wins over
-      each other. APScheduler is an optional dependency: if it is not installed, cron is simply disabled
-      and the rest of the app runs normally.</p>
+      each other. APScheduler is a required dependency: if it is not installed, <code>init_scheduler()</code>
+      fails with an import error.</p>
 
     <p>When a job fires, <code>_make_runner()</code> stamps <code>last_run</code> and bumps
       <code>run_count</code> under the file lock, then schedules <code>_execute_cron_prompt()</code> as a
@@ -180,15 +180,13 @@
     <p><code class="path">server/cron_history.py</code> persists every run to the <code>cron_runs</code> table
       in the shared <code>sessions.db</code> (WAL mode, concurrent reads plus a single writer). Each run
       carries a lease: written as <code>running</code> when the job fires, updated to <code>ok</code> or
-      <code>failed</code> when it finishes. On startup, <code>reconcile_stale(all_running=True)</code>
-      marks <em>every</em> lease still in <code>running</code> as failed regardless of age - the
-      scheduler was down, so no live run can own one. The 15-minute cutoff
-      (<code>STALE_RUN_SEC</code>) belongs to the <em>periodic</em> reconciler, which must not kill a
-      job that is legitimately still running.</p>
+      <code>failed</code> when it finishes. On startup, <code>reconcile_interrupted()</code>
+      marks <em>every</em> lease still in <code>running</code> as failed regardless of age: the
+      scheduler was down, so no live run can own one.</p>
     <p>Old runs are pruned per job to a configurable ceiling (default 200, from
       <code>cron_max_runs_per_job</code>).</p>
     <div class="spec">
-      <dt><code class="path">server/cron_history.py</code></dt><dd>Lease-based run store: <code>start_run</code>, <code>finish_run</code>, <code>list_runs</code>, <code>recent_runs</code>, <code>reconcile_stale</code>.</dd>
+      <dt><code class="path">server/cron_history.py</code></dt><dd>Lease-based run store: <code>start_run</code>, <code>finish_run</code>, <code>list_runs</code>, <code>recent_runs</code>, <code>reconcile_interrupted</code>.</dd>
       <dt><code>cron_runs</code></dt><dd>Table keyed by <code>run_id</code>, indexed on <code>(job_id, started_at DESC)</code>; carries status, timestamps, duration, text, and next run.</dd>
     </div>
 
@@ -264,7 +262,7 @@
       <dt><code class="path">server/cron_routes.py</code></dt><dd>The /api/cron/* HTTP handlers, registered on the shared cron_scheduler router.</dd>
       <dt><code class="path">server/cron_history.py</code></dt><dd>Lease-based run history in <code>sessions.db</code>, stale reconciliation, and pruning.</dd>
       <dt><code class="path">server/cron_run.py</code></dt><dd>The unattended run: model resolution (per-job override then the Haiku-first fallback), <code>run_turn</code> on the unified engine with <code>unattended=True</code> approval auto-execution, the completion verifier, and live <code>cron_progress</code> frames.</dd>
-      <dt><code class="path">server/cron_events.py</code></dt><dd>Live run progress (<code>emit_progress</code>) and stop: the cooperative per-job flag plus <code>asyncio</code> task cancellation.</dd>
+      <dt><code class="path">server/cron_events.py</code></dt><dd>Live run progress (<code>emit_progress</code>) and stop: <code>request_stop</code> cancels the run's registered <code>asyncio</code> task.</dd>
       <dt><code class="path">data/cron_jobs.json</code></dt><dd>The persisted job list, mutated under a lock via atomic temp-file writes.</dd>
     </div>
 
