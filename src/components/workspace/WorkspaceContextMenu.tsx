@@ -316,8 +316,8 @@ export const WorkspaceContextMenu: React.FC<WorkspaceContextMenuProps> = ({
         size: 'lg',
         body: renderRefList(results),
       });
-    } catch {
-      useUIStore.getState().addToast({ type: 'error', message: 'Find references not available', duration: 2000 });
+    } catch (err) {
+      useUIStore.getState().addToast({ type: 'error', message: `Find references failed: ${toError(err).message}` });
     }
   }, [fileName, onClose]);
 
@@ -371,8 +371,8 @@ export const WorkspaceContextMenu: React.FC<WorkspaceContextMenuProps> = ({
         size: 'lg',
         body,
       });
-    } catch {
-      useUIStore.getState().addToast({ type: 'error', message: 'Timeline not available', duration: 2000 });
+    } catch (err) {
+      useUIStore.getState().addToast({ type: 'error', message: `Timeline failed: ${toError(err).message}` });
     }
   }, [path, fileName, onClose]);
 
@@ -467,8 +467,8 @@ export const WorkspaceContextMenu: React.FC<WorkspaceContextMenuProps> = ({
         size: 'lg',
         body: renderRefList(results),
       });
-    } catch {
-      useUIStore.getState().addToast({ type: 'error', message: 'Search not available', duration: 2000 });
+    } catch (err) {
+      useUIStore.getState().addToast({ type: 'error', message: `Search failed: ${toError(err).message}` });
     }
   }, [path, onClose]);
 

@@ -41,6 +41,8 @@ def test_rg_missing_is_an_error_not_a_grep_run(client, monkeypatch):
     monkeypatch.setattr("server.search.engine.get_rg_path", missing)
     r = c.get("/api/workspace/grep", params={"pattern": "hello"})
     assert r.status_code == 500
+    # The JSON {error} shape the UI reads, with the resolver's reason.
+    assert "ripgrep (rg) not found" in r.json()["error"]
 
 
 def test_file_history_outside_a_repository_is_an_error(client):

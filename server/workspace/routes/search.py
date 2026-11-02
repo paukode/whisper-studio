@@ -37,14 +37,21 @@ async def ws_file_history(request: Request, limit: int = 30):
             status_code=404,
             media_type="application/json",
         )
-    result = await asyncio.to_thread(
-        subprocess.run,
-        ["git", "log", f"--max-count={limit}", "--format=%H|%an|%ar|%s", "--", path],
-        cwd=ws,
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
+    try:
+        result = await asyncio.to_thread(
+            subprocess.run,
+            ["git", "log", f"--max-count={limit}", "--format=%H|%an|%ar|%s", "--", path],
+            cwd=ws,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return Response(
+            content=json.dumps({"error": f"git log failed: {e}"}),
+            status_code=500,
+            media_type="application/json",
+        )
     if result.returncode != 0:
         first = (result.stderr.strip().splitlines() or ["git log failed"])[0]
         return Response(
@@ -91,20 +98,27 @@ async def ws_grep_endpoint(request: Request, limit: int = 50):
     # "rg" would miss all of those under a packaged app's minimal PATH.
     # Imported lazily: the server.search package pulls server.workspace back
     # in at import time, so a top-level import here is circular. A missing rg
-    # raises with the resolver's reason (a 500), never a different search.
+    # is a JSON 500 with the resolver's reason, never a different search.
     from server.search.engine import get_rg_path
 
-    rg_bin = get_rg_path()
-    # "--" ends the options: a pattern such as "--pre=<program>" is searched
-    # for, never read as an rg flag.
-    result = await asyncio.to_thread(
-        subprocess.run,
-        [rg_bin, "--json", "-m", str(limit), "-i", "--", pattern, search_dir],
-        capture_output=True,
-        text=True,
-        timeout=15,
-        cwd=ws,
-    )
+    try:
+        rg_bin = get_rg_path()
+        # "--" ends the options: a pattern such as "--pre=<program>" is
+        # searched for, never read as an rg flag.
+        result = await asyncio.to_thread(
+            subprocess.run,
+            [rg_bin, "--json", "-m", str(limit), "-i", "--", pattern, search_dir],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            cwd=ws,
+        )
+    except (RuntimeError, OSError, subprocess.TimeoutExpired) as e:
+        return Response(
+            content=json.dumps({"error": f"Search failed: {e}"}),
+            status_code=500,
+            media_type="application/json",
+        )
     results = []
     for line in result.stdout.strip().split("\n"):
         if not line:
