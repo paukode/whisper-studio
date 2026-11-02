@@ -48,3 +48,14 @@ def test_nested_links_close_in_order():
     out = convert('<a href="https://outer.example/">out<a href="https://inner.example/">in</a></a>')
     assert "[in](https://inner.example/)" in out
     assert out.count("[") == out.count("]")
+
+
+def test_svg_text_stays_out_after_a_nested_end_tag():
+    out = convert('<p>before</p><svg><path d="M0"></path><text>icon label</text></svg><p>after</p>')
+    assert "icon label" not in out
+    assert "before" in out and "after" in out
+
+
+def test_code_inside_pre_keeps_the_block_whitespace():
+    out = convert("<pre><code>a = 1</code>\n    indented\n</pre>")
+    assert "\n    indented" in out

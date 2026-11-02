@@ -16,8 +16,10 @@ class _HTMLToText(HTMLParser):
     def __init__(self):
         super().__init__()
         self._parts = []
-        self._skip = False
-        self._in_pre = False
+        # Depths, not flags: a nested end tag (</code> inside <pre>) must not
+        # end the outer element early.
+        self._skip = 0
+        self._in_pre = 0
         self._block_tags = {
             "p",
             "div",
@@ -37,16 +39,16 @@ class _HTMLToText(HTMLParser):
             "footer",
         }
         self._heading_tags = {"h1", "h2", "h3", "h4", "h5", "h6"}
-        self._skip_tags = {"script", "style", "noscript", "svg", "path"}
+        self._skip_tags = {"script", "style", "noscript", "svg"}
         self._current_heading = None
         self._link_hrefs = []
 
     def handle_starttag(self, tag, attrs):
         tag = tag.lower()
         if tag in self._skip_tags:
-            self._skip = True
+            self._skip += 1
         if tag == "pre" or tag == "code":
-            self._in_pre = True
+            self._in_pre += 1
         if tag in self._heading_tags:
             level = int(tag[1])
             self._current_heading = "#" * level + " "
@@ -71,9 +73,9 @@ class _HTMLToText(HTMLParser):
     def handle_endtag(self, tag):
         tag = tag.lower()
         if tag in self._skip_tags:
-            self._skip = False
+            self._skip = max(0, self._skip - 1)
         if tag == "pre" or tag == "code":
-            self._in_pre = False
+            self._in_pre = max(0, self._in_pre - 1)
         if tag in self._heading_tags:
             self._current_heading = None
             self._parts.append("\n")
