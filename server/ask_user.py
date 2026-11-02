@@ -45,9 +45,10 @@ ASK_USER_TOOL = {
 SLEEP_TOOL = {
     "name": "sleep",
     "description": (
-        "Wait for a specified number of seconds. Use when waiting for a background process, "
-        "rate-limiting retries, or when the user asks you to pause. "
-        "Maximum 30 seconds per call."
+        "Wait for a specified number of seconds. Use for rate-limiting retries, or when "
+        "the user asks you to pause. Do not use it to wait for background tasks, agents "
+        "or workflows: call task_wait or workflow_wait, which block until the work ends, "
+        "or end the turn. Maximum 30 seconds per call."
     ),
     "input_schema": {
         "type": "object",

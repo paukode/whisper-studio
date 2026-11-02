@@ -251,9 +251,9 @@ def _start_detached_from_tool(
                     if isolation == "worktree"
                     else "Running in the background (read-only). "
                 )
-                + "Poll with task_status/"
-                "task_output; a completion update will be injected into a later "
-                "turn. Do not wait idle — continue other work."
+                + "Do not poll it. End the turn or do other work: its "
+                "completion wakes you with the report. To block until it "
+                "finishes, call task_wait with this task_id."
             ),
         }
     )
