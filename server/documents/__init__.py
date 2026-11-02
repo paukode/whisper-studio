@@ -19,5 +19,3 @@ server/main.py imports `server.documents.executors` at boot (in
 _EXECUTOR_MODULES) so the @register_executor decorators fire; that import is
 this package's only required side effect.
 """
-
-from .tools import DOCUMENT_TOOLS  # noqa: F401
