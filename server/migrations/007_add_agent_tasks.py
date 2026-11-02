@@ -1,8 +1,7 @@
 """Unified background-task registry.
 
 One table for every long-running unit of work the server owns: background
-shell commands (today's server/background_tasks.py in-memory dict), detached
-agent runs, and future workflow runs. Rows carry a lease (status='running' +
+shell commands, detached agent runs and workflow runs (server/tasks/registry.py). Rows carry a lease (status='running' +
 owner_pid) so work interrupted by a restart is reconciled on boot instead of
 hanging forever, and shell tasks whose child process survived the restart can
 be re-adopted rather than falsely failed.
