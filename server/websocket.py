@@ -329,9 +329,9 @@ async def websocket_endpoint(
     # Reject cross-site WebSocket handshakes (the HTTP Origin middleware does
     # not see WS upgrades). Prevents a malicious page from opening this audio
     # channel against the local app.
-    from server.infrastructure.security import is_ws_origin_allowed
+    from server.infrastructure.security import is_ws_origin_present_and_allowed
 
-    if not is_ws_origin_allowed(websocket.headers.get("origin")):
+    if not is_ws_origin_present_and_allowed(websocket.headers.get("origin")):
         await websocket.close(code=1008)
         return
     await websocket.accept()

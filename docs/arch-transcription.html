@@ -60,9 +60,10 @@
     <p>A recording session is a WebSocket to
       <code>/ws?session_id=...&amp;backend=...&amp;dictation=...&amp;take=...</code>, where
       <code>take</code> names one press of Record and the watchdog's reconnects repeat it. Before the handshake completes,
-      the server rejects any cross-site origin (the HTTP origin middleware never sees WebSocket
-      upgrades, so <code>is_ws_origin_allowed</code> guards it here), closing with code
-      <code>1008</code>. Two frame types then flow up the socket:</p>
+      the server rejects a handshake with no origin or a cross-site origin (the HTTP origin
+      middleware never sees WebSocket upgrades, so <code>is_ws_origin_present_and_allowed</code>
+      guards it here), closing with code <code>1008</code>. Only pages open this socket, and a
+      page always sends an origin. Two frame types then flow up the socket:</p>
     <ul>
       <li><b>Binary frames</b> carry raw <code>PCM16</code> mono audio at <b>16 kHz</b>. They are
         processed strictly in order: the VAD buffer and the decoder are stateful, and decode is faster

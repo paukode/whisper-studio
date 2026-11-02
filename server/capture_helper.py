@@ -58,9 +58,9 @@ def _error_lines(message: str) -> list[dict]:
 
 @router.websocket("/ws/capture-helper")
 async def capture_helper_socket(websocket: WebSocket) -> None:
-    from server.infrastructure.security import is_ws_origin_allowed
+    from server.infrastructure.security import is_ws_origin_present_and_allowed
 
-    if not is_ws_origin_allowed(websocket.headers.get("origin")):
+    if not is_ws_origin_present_and_allowed(websocket.headers.get("origin")):
         await websocket.close(code=1008)
         return
     await websocket.accept()

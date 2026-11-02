@@ -24,7 +24,7 @@ def client(monkeypatch):
     monkeypatch.delenv("WHISPER_HOME", raising=False)
     app = FastAPI()
     app.include_router(capture_helper.router)
-    return TestClient(app)
+    return TestClient(app, headers={"origin": "http://127.0.0.1:41430"})
 
 
 def test_status_is_available_with_an_executable_helper(client, tmp_path, monkeypatch):
@@ -111,3 +111,16 @@ def test_a_cross_site_page_is_refused(client, tmp_path, monkeypatch):
             "/ws/capture-helper", headers={"origin": "https://evil.example"}
         ) as ws:
             ws.receive_text()
+
+
+@pytest.mark.parametrize("origin", [None, ""])
+def test_a_handshake_with_no_origin_is_refused(client, tmp_path, monkeypatch, origin):
+    """Only pages use the relay, and pages always send an Origin."""
+    monkeypatch.setattr(capture_helper, "helper_path", lambda: _stand_in(tmp_path, "cat"))
+    client.headers.pop("origin")
+    headers = {} if origin is None else {"origin": origin}
+
+    with pytest.raises(WebSocketDisconnect) as refused:
+        with client.websocket_connect("/ws/capture-helper", headers=headers) as ws:
+            ws.receive_text()
+    assert refused.value.code == 1008
