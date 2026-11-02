@@ -121,3 +121,25 @@ def annotate_messages_cache(messages: list[dict], ttl: str) -> list[dict]:
     final_block["cache_control"] = {"type": "ephemeral", "ttl": ttl}
     out[-1] = last
     return out
+
+
+def agent_cache_args(system: str) -> dict:
+    """The prompt-cache arguments of an engine AnthropicAdapter for an agent
+    or headless run.
+
+    The whole run's system prompt is fixed when the run starts, so it is the
+    static block; there is no dynamic tail. The ``prompt_caching`` flag
+    applies as it does for chat and cron. The engine then checkpoints the
+    tools, the system block and the last message, so every round after the
+    first reads the earlier rounds from the cache instead of paying full
+    input price for them again.
+    """
+    from server.infrastructure.feature_flags import is_enabled
+
+    caching_on = bool(system) and is_enabled("prompt_caching")
+    return {
+        "system_static": system if caching_on else "",
+        "system_dynamic": "",
+        "caching_on": caching_on,
+        "cache_ttl": CACHE_TTL,
+    }

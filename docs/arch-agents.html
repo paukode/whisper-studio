@@ -57,7 +57,17 @@
       Anthropic-on-Bedrock and OpenAI GPT-on-Bedrock (the Responses API via bedrock-mantle).
       <code class="path">server/agents/providers/</code> holds the one-shot structured-output
       adapters (<code>_distill_structured</code>), <code>AGENT_CALL_CONCURRENCY</code> and
-      <code>model_key_for_id</code>. On calling
+      <code>model_key_for_id</code>.</p>
+    <p>A Claude agent uses prompt caching when the <code>prompt_caching</code> flag is on. The
+      runtime gives the whole agent system prompt to the adapter as its static block
+      (<code>agent_cache_args</code> in <code class="path">server/chat/caching.py</code>). Each
+      round puts checkpoints on the last tool, the system block and the last message. That is
+      three of the four breakpoints Bedrock allows. Round 2 sends the same prefix, so it reads the
+      earlier rounds from the cache. Headless runs use the same checkpoints. The structured-output
+      call sends no checkpoints. Its only tool is <code>emit_result</code>, so its prefix never
+      matches the agent loop cache. A cache write costs two times the input price, and only a
+      repair retry reads it back. A GPT agent sends one <code>prompt_cache_key</code> for its session. The cost
+      log records cache reads and writes for both providers. On calling
       <code>run_agent</code>, the runtime:</p>
     <ol class="steps">
       <li><h4>Guards recursion</h4><p>Depth is capped. An agent that spawns an agent that spawns an

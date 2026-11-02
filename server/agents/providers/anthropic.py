@@ -93,6 +93,12 @@ class AnthropicBedrockAdapter:
                     "effort": api_effort_for(effort_label, meta, self.model_key)
                 }
 
+        # No cache_control here. The only caller is the structured-output
+        # call, whose tools ([emit_result]) never match the agent loop's
+        # cached prefix (tools come first). A 1h write bills 2x input and
+        # is read back only on the rare repair retry, so a checkpoint would
+        # about double the cost of every structured step.
+
         bedrock = self._bedrock_client()
         request_body = json.dumps(body)
         label = f"agent call ({self.model_key or self.model_id})"
