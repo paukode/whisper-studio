@@ -99,6 +99,13 @@ async def route_tool(
 
     # --- Background-task tools (unified registry; distinct from the todo
     # tracker's task_* family above) ---
+    # A blocking wait runs on the loop (asyncio.sleep between reads), never on
+    # a worker thread, so a long wait holds no thread.
+    if tool_name == "task_wait":
+        from server.tasks.wait import execute_task_wait
+
+        return await execute_task_wait(tool_input, session_id), side_effects
+
     from server.tasks.tools import BACKGROUND_TASK_TOOL_NAMES
 
     if tool_name in BACKGROUND_TASK_TOOL_NAMES:
@@ -440,6 +447,11 @@ async def route_tool(
         from server.workflows.tools import execute_workflow_status
 
         return execute_workflow_status(tool_input, session_id), side_effects
+
+    if tool_name == "workflow_wait":
+        from server.workflows.tools import execute_workflow_wait
+
+        return await execute_workflow_wait(tool_input, session_id), side_effects
 
     if tool_name == "workflow_save":
         from server.workflows.tools import execute_workflow_save

@@ -69,10 +69,14 @@ def activation_key(agent_id: str) -> str:
 
 
 # Tools that run other agents and return once they finish: spawn_agent (inline;
-# a detached spawn returns at once), team_create and skill_invoke. Each agent
-# they start runs on its own round and time limits, so the time the caller
-# spends waiting on them does not use the caller's own time (ToolScope.waited).
-WAITS_ON_AGENTS = frozenset({"spawn_agent", "team_create", "skill_invoke"})
+# a detached spawn returns at once), team_create and skill_invoke, and the
+# blocking waits task_wait and workflow_wait (server/tasks/wait.py). Each agent
+# they start or wait on runs on its own round and time limits, so the time the
+# caller spends waiting on them does not use the caller's own time
+# (ToolScope.waited).
+WAITS_ON_AGENTS = frozenset(
+    {"spawn_agent", "team_create", "skill_invoke", "task_wait", "workflow_wait"}
+)
 
 
 @dataclass
