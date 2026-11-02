@@ -213,12 +213,9 @@ async def index_remove(request: Request):
     # Drop this folder's scheduled job and re-sync the background agent — its
     # settings/DB are gone now, so a lingering job would silently re-create it.
     scheduler.apply_workspace(_abspath(path))
-    try:
-        from . import agent
+    from . import agent
 
-        agent.regenerate()
-    except Exception:  # noqa: BLE001 — removal must succeed regardless
-        pass
+    agent.regenerate()
     return {"removed": True}
 
 

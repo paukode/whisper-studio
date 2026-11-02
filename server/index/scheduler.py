@@ -51,13 +51,15 @@ def apply_workspace(ws_path: str) -> None:
     scheduler is absent."""
     if _scheduler is None:
         return
+    from apscheduler.jobstores.base import JobLookupError
+
     from . import wssettings
 
     jid = _job_id(ws_path)
     try:
         _scheduler.remove_job(jid)
-    except Exception:
-        pass
+    except JobLookupError:
+        pass  # no job installed for this folder yet
     sch = wssettings.get_settings(ws_path)["schedule"]
     if not sch.get("enabled"):
         return
@@ -107,13 +109,10 @@ def apply_all() -> None:
 
 
 async def init_index_scheduler() -> None:
-    """Start the index scheduler at app startup (best-effort)."""
+    """Start the index scheduler at app startup."""
     global _scheduler
-    try:
-        from apscheduler.schedulers.asyncio import AsyncIOScheduler
-    except ImportError:
-        log.info("APScheduler not installed — scheduled index refresh disabled")
-        return
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
     _scheduler = AsyncIOScheduler()
     _scheduler.start()
     apply_all()

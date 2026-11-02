@@ -46,18 +46,15 @@ def _agent_log_path() -> str:
 
 # ── app-running detection (PID file written by the server lifespan) ──────────
 def mark_app_running() -> None:
-    try:
-        os.makedirs(_STORAGE, exist_ok=True)
-        with open(_PID_PATH, "w") as f:
-            f.write(str(os.getpid()))
-    except Exception:  # noqa: BLE001
-        pass
+    os.makedirs(_STORAGE, exist_ok=True)
+    with open(_PID_PATH, "w") as f:
+        f.write(str(os.getpid()))
 
 
 def mark_app_stopped() -> None:
     try:
         os.remove(_PID_PATH)
-    except Exception:  # noqa: BLE001
+    except FileNotFoundError:
         pass
 
 
@@ -65,7 +62,7 @@ def _app_running() -> bool:
     try:
         with open(_PID_PATH) as f:
             pid = int(f.read().strip())
-    except Exception:  # noqa: BLE001
+    except FileNotFoundError:
         return False
     try:
         os.kill(pid, 0)
@@ -78,10 +75,7 @@ def _app_running() -> bool:
 def _opted_in_workspaces() -> list[str]:
     out = []
     for ws in store.list_indexed_workspaces():
-        try:
-            s = wssettings.get_settings(ws)
-        except Exception:  # noqa: BLE001
-            continue
+        s = wssettings.get_settings(ws)
         if s["refresh_when_closed"] and s["schedule"]["enabled"]:
             out.append(ws)
     return out
@@ -92,10 +86,7 @@ def _wake_intervals() -> list[dict]:
     Wakes daily at each hour; the worker's cadence check gates weekly/every-N."""
     hours = set()
     for ws in _opted_in_workspaces():
-        try:
-            hours.add(int(wssettings.get_settings(ws)["schedule"]["hour"]))
-        except Exception:  # noqa: BLE001
-            pass
+        hours.add(int(wssettings.get_settings(ws)["schedule"]["hour"]))
     return [{"Hour": h, "Minute": 0} for h in sorted(hours)]
 
 
@@ -161,7 +152,7 @@ def uninstall() -> dict:
         _launchctl("unload", _PLIST_PATH)
         try:
             os.remove(_PLIST_PATH)
-        except Exception:  # noqa: BLE001
+        except FileNotFoundError:
             pass
         log.info("Index refresh agent removed")
     return {"installed": False}

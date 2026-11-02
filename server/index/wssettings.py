@@ -134,7 +134,7 @@ def _pending_all() -> dict:
     try:
         with open(_PENDING_PATH) as f:
             return json.load(f)
-    except Exception:
+    except FileNotFoundError:
         return {}
 
 
@@ -166,18 +166,12 @@ def get_settings(ws_path: str) -> dict:
     if not os.path.exists(store.db_path(ws_path)):
         pend = _pending_get(ws_path)
         return _validated(pend) if pend is not None else copy.deepcopy(_DEFAULTS)
-    try:
-        meta = store.get_meta(ws_path)
-    except Exception:
-        return copy.deepcopy(_DEFAULTS)
+    meta = store.get_meta(ws_path)
     raw = meta.get("settings")
     if raw is None:
         pend = _pending_get(ws_path)
         seeded = _validated(pend if pend is not None else _DEFAULTS)
-        try:
-            store.set_meta(ws_path, settings=seeded)
-        except Exception:
-            pass
+        store.set_meta(ws_path, settings=seeded)
         _pending_clear(ws_path)  # promote pre-index config into the index, then forget it
         return seeded
     return _validated(raw)
