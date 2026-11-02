@@ -13,6 +13,8 @@ import os
 from fastapi import Request
 from fastapi.responses import Response
 
+from server.security.permissions import bypass_now
+
 from .. import router
 from ..paths import (
     _WS_BINARY_EXTS,
@@ -20,8 +22,8 @@ from ..paths import (
     _atomic_write_bytes,
     _atomic_write_text,
     _normalize_lf,
-    _ws_path_allowed,
     _ws_validate_path,
+    ws_path_changeable,
 )
 from ..state import get_workspace_path
 from ..write_undo import UndoRefused, get_backup, undo_write
@@ -481,9 +483,13 @@ async def ws_undo_endpoint(request: Request):
             media_type="application/json",
         )
     backup = get_backup(tool_use_id)
-    # The path is the server's own record, never the request's; it must still
-    # be inside the workspace (or the writing session's scratch folder).
-    if backup is not None and not _ws_path_allowed(backup.full, ws, backup.session_id):
+    # The path is the server's own record, never the request's; the write
+    # executors' own rule must still let it change (ws_path_changeable: the
+    # workspace or the writing session's scratch folder, and in Bypass the
+    # rest of the machine, where a Bypass write may have landed).
+    if backup is not None and not ws_path_changeable(
+        backup.full, ws, backup.session_id, bypass_now()
+    ):
         return Response(
             content=json.dumps({"error": f"{backup.path} is outside the workspace now"}),
             status_code=403,
