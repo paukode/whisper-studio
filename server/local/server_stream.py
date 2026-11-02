@@ -70,8 +70,8 @@ def _spawn_session_update(model_key: str, messages: list[dict], session_id: str)
             ),
             name="local-session-memory-update",
         )
-    except Exception as e:  # never let memory bookkeeping disrupt a turn
-        log.debug("Could not spawn local session update: %s", e)
+    except Exception as e:  # noqa: BLE001 (the turn already finished; say why memory is off)
+        log.warning("Could not start the local session memory update: %s", e)
 
 
 def _spawn_extraction(
@@ -109,8 +109,8 @@ def _spawn_extraction(
             ),
             name="local-auto-memory-extract",
         )
-    except Exception as e:  # never let memory bookkeeping disrupt a turn
-        log.debug("Could not spawn local memory extraction: %s", e)
+    except Exception as e:  # noqa: BLE001 (the turn already finished; say why memory is off)
+        log.warning("Could not start the local memory extraction: %s", e)
 
 
 def _spawn_dream(ws_path: str | None) -> None:
@@ -134,8 +134,8 @@ def _spawn_dream(ws_path: str | None) -> None:
         from server.memory.dream import record_and_maybe_dream
 
         spawn(record_and_maybe_dream(ws_path), name="local-dream-consolidation")
-    except Exception as e:  # never let memory bookkeeping disrupt a turn
-        log.debug("Could not spawn local dream consolidation: %s", e)
+    except Exception as e:  # noqa: BLE001 (the turn already finished; say why memory is off)
+        log.warning("Could not start the local dream consolidation: %s", e)
 
 
 def _spawn_memory_hooks(
