@@ -375,6 +375,10 @@ def _exec_ws_list_dir(tool_input, transcript, current_attachments):
             fp = os.path.join(full, name)
             if os.path.isdir(fp):
                 entries.append(f"  {name}/")
+            elif os.path.islink(fp) and not os.path.exists(fp):
+                # A dangling symlink has no size; one used to fail the whole
+                # listing with "No such file or directory".
+                entries.append(f"  {name}  (broken link to {os.readlink(fp)})")
             else:
                 sz = os.path.getsize(fp)
                 entries.append(f"  {name}  ({sz} bytes)")
