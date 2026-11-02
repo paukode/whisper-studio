@@ -1552,6 +1552,7 @@ async def chat_endpoint(request: Request):
             session_memory_context=session_memory_context,
             ultracode=ultracode_active,
             deferred_tool_index=_deferred_index,
+            permission_mode=mode,
         )
 
         # Filter out UI-only rows (cron_event, etc.) before building the
