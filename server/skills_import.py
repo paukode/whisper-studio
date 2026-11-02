@@ -7,7 +7,7 @@ download everything. Reuses the clone hygiene from ``server/git/executor.py``.
 
 Two entry points:
   - ``preview(url)``  — cheap tree scan listing candidate skills (no blob fetch)
-  - ``import_skills(url, subpaths)``: sparse-fetch, validate, copy
+  - ``import_skills(url, subpaths, overwrite)``: sparse-fetch, validate, copy
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ import tempfile
 
 from server import folder_skills
 from server.git.executor import _GIT_URL_RE
-from server.infrastructure.paths import skills_root
+from server.infrastructure.paths import repo_root, skills_root
 
 log = logging.getLogger("whisper-studio")
 
@@ -312,10 +312,107 @@ def _copy_skill_folder(src: str, dst: str) -> int:
     return total
 
 
-def _import_one(tmp: str, subpath: str, claimed: set[str]) -> dict:
+def _bundled_skill_keys() -> set[str]:
+    """The name keys of the skills the app ships (repo skills/, seeded into
+    the user's skills folder on first run). An import never replaces one."""
+    from server import skills as _sk
+
+    keys: set[str] = set()
+    src = os.path.join(repo_root(), "skills")
+    if not os.path.isdir(src):
+        return keys
+    for name, _skill in _sk.load_skills(src).items():
+        keys.add(_sk.skill_name_key(name))
+    return keys
+
+
+def _flat_skill_name(filepath: str) -> str | None:
+    """The name a flat .md skill file loads under (server/skills.py
+    load_skills), or None when the file does not load as a skill."""
+    from server import skills as _sk
+
+    try:
+        with open(filepath, errors="replace") as f:
+            content = f.read()
+    except OSError:
+        return None
+    if not content.startswith("---") or content.find("---", 3) < 0:
+        return None
+    fname = os.path.basename(filepath)
+    return _sk.frontmatter_name(content) or fname.replace(".md", "").replace("-", "_")
+
+
+def _installed_paths(name: str) -> list[str]:
+    """Every file or folder in SKILLS_DIR that loads as a skill of ``name``:
+    the folder skill of that name, and each flat .md skill (top level, or in a
+    plain subfolder) whose loaded name matches. Read from the disk, the way
+    load_skills reads it."""
+    from server import skills as _sk
+
+    key = _sk.skill_name_key(name)
+    found: list[str] = []
+    if not os.path.isdir(SKILLS_DIR):
+        return found
+    for entry in sorted(os.listdir(SKILLS_DIR)):
+        full = os.path.join(SKILLS_DIR, entry)
+        if entry.endswith(".md") and os.path.isfile(full):
+            loaded = _flat_skill_name(full)
+            if loaded and _sk.skill_name_key(loaded) == key:
+                found.append(full)
+        elif os.path.isdir(full):
+            if folder_skills.is_folder_skill(full):
+                skill = folder_skills.load_folder_skill(full)
+                if skill and _sk.skill_name_key(skill.get("name", "")) == key:
+                    found.append(full)
+                continue
+            for sub in sorted(os.listdir(full)):
+                sub_full = os.path.join(full, sub)
+                if sub.endswith(".md") and os.path.isfile(sub_full):
+                    loaded = _flat_skill_name(sub_full)
+                    if loaded and _sk.skill_name_key(loaded) == key:
+                        found.append(sub_full)
+    return found
+
+
+def _conflict(subpath: str, name: str, reason: str) -> dict:
+    return {"subpath": subpath, "name": name, "status": "conflict", "reason": reason}
+
+
+def _replace_targets(subpath: str, name: str, dest: str) -> tuple[list[str], dict | None]:
+    """What an overwrite import of ``name`` into ``dest`` replaces, or the
+    conflict that stops it. Never a bundled skill, never a skill the skills
+    folder does not hold, never another skill's folder."""
+    from server import skills as _sk
+
+    targets = _installed_paths(name)
+    taken = _sk.skill_name_taken(name)
+    if (targets or taken) and _sk.skill_name_key(name) in _bundled_skill_keys():
+        return [], _conflict(
+            subpath, name, f"{name} is a skill that comes with the app, import does not replace it"
+        )
+    if taken and not targets:
+        return [], _conflict(
+            subpath, name, f"a skill named {taken} already exists outside the skills folder"
+        )
+    if os.path.lexists(dest) and dest not in targets:
+        return [], _conflict(
+            subpath,
+            name,
+            f"the folder {os.path.basename(dest)} already holds something other than {name}",
+        )
+    return targets, None
+
+
+def _import_one(tmp: str, subpath: str, claimed: set[str], overwrite: bool = False) -> dict:
     """Validate and copy a single skill folder. Returns a per-skill result.
     ``claimed`` holds the name keys this import already wrote, so two selected
-    folders that declare one name cannot both land."""
+    folders that declare one name cannot both land.
+
+    Without ``overwrite`` a taken name (or folder) is a conflict. With it, the
+    import replaces the installed skill of that name (_replace_targets): the
+    old version waits OUTSIDE the skills folder, where it cannot load as a
+    second skill of the name, until the copy succeeds, and goes back if the
+    copy fails."""
     from server import skills as _sk
 
     src = os.path.realpath(os.path.join(tmp, subpath)) if subpath else os.path.realpath(tmp)
@@ -336,37 +433,58 @@ def _import_one(tmp: str, subpath: str, claimed: set[str]) -> dict:
     if not dest:
         return {"subpath": subpath, "status": "error", "reason": "invalid destination name"}
 
-    # Never replace an installed skill: the same name (or the same folder)
-    # is a conflict the user resolves by renaming or deleting the old one.
     key = _sk.skill_name_key(skill["name"])
-    taken = _sk.skill_name_taken(skill["name"]) or (skill["name"] if key in claimed else None)
-    if taken or os.path.exists(dest):
-        return {
-            "subpath": subpath,
-            "name": skill["name"],
-            "status": "conflict",
-            "reason": f"a skill named {taken or skill['name']} already exists",
-        }
+    if key in claimed:
+        return _conflict(
+            subpath, skill["name"], f"another selected folder already imports {skill['name']}"
+        )
+    targets: list[str] = []
+    if overwrite:
+        targets, refused = _replace_targets(subpath, skill["name"], dest)
+        if refused:
+            return refused
+    else:
+        # The same name (or the same folder) is a conflict the user resolves
+        # by renaming or deleting the old one, or by ticking overwrite.
+        taken = _sk.skill_name_taken(skill["name"])
+        if taken or os.path.lexists(dest):
+            return _conflict(
+                subpath, skill["name"], f"a skill named {taken or skill['name']} already exists"
+            )
+
+    backup_dir = tempfile.mkdtemp(prefix="whisper_skillbackup_") if targets else ""
+    moved: list[tuple[str, str]] = []
     try:
+        for i, target in enumerate(targets):
+            parked = os.path.join(backup_dir, str(i))
+            shutil.move(target, parked)
+            moved.append((target, parked))
         _copy_skill_folder(src, dest)
-    except SkillImportError as e:
+    except BaseException as e:
         shutil.rmtree(dest, ignore_errors=True)
-        return {"subpath": subpath, "name": skill["name"], "status": "error", "reason": str(e)}
-    except BaseException:
-        shutil.rmtree(dest, ignore_errors=True)
+        for target, parked in moved:
+            shutil.move(parked, target)
+        if backup_dir:
+            shutil.rmtree(backup_dir)
+        if isinstance(e, SkillImportError):
+            return {"subpath": subpath, "name": skill["name"], "status": "error", "reason": str(e)}
         raise
+    if backup_dir:
+        shutil.rmtree(backup_dir)
     claimed.add(key)
     return {
         "subpath": subpath,
         "name": skill["name"],
         "status": "imported",
         "hasScripts": skill["has_scripts"],
+        "replaced": bool(targets),
     }
 
 
-def import_skills(url: str, subpaths: list[str]) -> dict:
+def import_skills(url: str, subpaths: list[str], overwrite: bool = False) -> dict:
     """Sparse-fetch the given subpaths from ``url`` and copy valid skill folders
-    into SKILLS_DIR. Returns {imported, conflicts, errors} lists. The caller is
+    into SKILLS_DIR. ``overwrite`` replaces an installed skill of the same name
+    (_import_one). Returns {imported, conflicts, errors} lists. The caller is
     responsible for reloading the skill registry afterwards."""
     url = _validate_url(url)
     subpaths = [s.strip().strip("/") for s in (subpaths or []) if s is not None]
@@ -379,7 +497,7 @@ def import_skills(url: str, subpaths: list[str]) -> dict:
     try:
         _sparse_fetch(url, tmp, subpaths)
         for sp in subpaths:
-            results.append(_import_one(tmp, sp, claimed))
+            results.append(_import_one(tmp, sp, claimed, overwrite))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return {
@@ -495,10 +613,13 @@ def preview_local(files: list[tuple[str, bytes]]) -> dict:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def import_local(files: list[tuple[str, bytes]], subpaths: list[str]) -> dict:
+def import_local(
+    files: list[tuple[str, bytes]], subpaths: list[str], overwrite: bool = False
+) -> dict:
     """Rebuild the uploaded tree and copy the selected skill folders into
-    SKILLS_DIR. Returns {imported, conflicts, errors}. The caller reloads the
-    skill registry afterwards (identical to the git path)."""
+    SKILLS_DIR. ``overwrite`` replaces an installed skill of the same name
+    (_import_one). Returns {imported, conflicts, errors}. The caller reloads
+    the skill registry afterwards (identical to the git path)."""
     subpaths = [s.strip().strip("/") for s in (subpaths or []) if s is not None]
     if not subpaths:
         raise SkillImportError("no skills selected")
@@ -517,7 +638,7 @@ def import_local(files: list[tuple[str, bytes]], subpaths: list[str]) -> dict:
                     {"subpath": sp, "status": "error", "reason": "not in uploaded folder"}
                 )
                 continue
-            results.append(_import_one(tmp, sp, claimed))
+            results.append(_import_one(tmp, sp, claimed, overwrite))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return {

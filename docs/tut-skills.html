@@ -104,11 +104,17 @@
     </ul>
     <p>Each skill has a unique name. Case and the difference between "-" and "_" do not
       make a different name. Thus, "Deploy-Staging" and "deploy_staging" are the same name.
-      The app does not save, rename, or import a skill when a different skill has that name.</p>
-    <p>The app does not replace the skill that you have. The editor shows "A skill named
-      deploy_staging already exists". The import dialog shows "Not imported, a skill with
-      the same name exists" and the names. To continue, use a different name, or delete the
+      The app does not save or rename a skill when a different skill has that name.</p>
+    <p>The editor does not replace the skill that you have. It shows "A skill named
+      deploy_staging already exists". To continue, use a different name, or delete the
       skill that you have.</p>
+    <p>The import dialog has an "Overwrite existing" checkbox. It is clear at the start. When
+      the checkbox is clear, the import does not replace the skill that you have. The dialog
+      shows "Not imported, a skill with the same name exists" and the names. When you select
+      the checkbox, the import replaces the skill that has the same name.</p>
+    <p>The app keeps the old skill until the copy is complete. If the copy fails, the app puts
+      back the old skill. The import does not replace a skill that comes with the app. It also
+      does not use the name of a built-in tool.</p>
     <p>"Settings", "Import project" copies skills, instructions, and MCP servers from a Claude
       Code or Codex CLI project. Refer to <a href="tut-mcp-plugins.html#import-project">Import a
       Claude Code or Codex project</a>.</p>

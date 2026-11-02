@@ -227,14 +227,19 @@ async def import_preview(request: Request):
 @router.post("/import")
 async def import_skills_endpoint(request: Request):
     """Sparse-fetch selected skill folders from a git URL into /skills/ and
-    hot-reload — no app restart."""
+    hot-reload, no app restart. ``overwrite`` true replaces an installed skill
+    of the same name; false (the default) reports it as a conflict."""
     from server import skills_import
 
     body = await request.json()
+    overwrite = body.get("overwrite", False)
+    if not isinstance(overwrite, bool):
+        return _json_error("overwrite must be true or false", 400)
     try:
         result = skills_import.import_skills(
             body.get("url", ""),
             body.get("subpaths", []),
+            overwrite,
         )
     except skills_import.SkillImportError as e:
         return _json_error(str(e), 400)
@@ -284,11 +289,12 @@ async def import_local_preview(files: list[UploadFile] = File(...)):
 async def import_local_endpoint(
     files: list[UploadFile] = File(...),
     subpaths: str = Form("[]"),
+    overwrite: str = Form("false"),
 ):
     """Copy selected skill folders from an uploaded local tree into /skills/ and
     hot-reload, no app restart. ``subpaths`` is a JSON array of the folders the
-    user selected in the preview. An installed skill of the same name is never
-    replaced; it comes back as a conflict."""
+    user selected in the preview. ``overwrite`` "true" replaces an installed
+    skill of the same name; "false" (the default) reports it as a conflict."""
     from server import skills_import
 
     try:
@@ -297,9 +303,12 @@ async def import_local_endpoint(
             raise ValueError("subpaths must be a JSON array")
     except (ValueError, TypeError):
         return _json_error("invalid subpaths (expected a JSON array)", 400)
+    flag = overwrite.strip().lower()
+    if flag not in ("true", "false"):
+        return _json_error("overwrite must be true or false", 400)
     try:
         tree = await _read_upload_tree(files)
-        result = skills_import.import_local(tree, selected)
+        result = skills_import.import_local(tree, selected, flag == "true")
     except skills_import.SkillImportError as e:
         return _json_error(str(e), 400)
     except Exception as e:

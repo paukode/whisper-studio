@@ -40,6 +40,9 @@ export const ImportSkillsDialog: React.FC<{
   const [error, setError] = useState('');
   const [skills, setSkills] = useState<PreviewSkill[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Off by default: a taken name is a conflict. Ticked, the import replaces
+  // the installed skill of that name (never one that comes with the app).
+  const [overwrite, setOverwrite] = useState(false);
   const [filter, setFilter] = useState('');
   const [searchDesc, setSearchDesc] = useState(false);
   const [summary, setSummary] = useState('');
@@ -112,19 +115,24 @@ export const ImportSkillsDialog: React.FC<{
       return next;
     });
 
-  const applyResult = (r: ImportResult) => {
+  const applyResult = (r: ImportResult, replacing: boolean) => {
     onImported();
     // Clean success: close the dialog. If some skills hit conflicts/errors,
-    // keep it open with a summary. An installed skill is never replaced: the
-    // user renames or deletes it first.
+    // keep it open with a summary. Unticked, a taken name is a conflict the
+    // user resolves by ticking Overwrite existing (or renaming the old one);
+    // ticked, a conflict names its own reason (a skill that comes with the
+    // app, a folder that holds another skill).
     if (r.conflicts.length === 0 && r.errors.length === 0) {
       onClose();
       return;
     }
     const parts = [`Imported ${r.imported.length}`];
-    if (r.conflicts.length) {
+    if (r.conflicts.length && !replacing) {
       const names = r.conflicts.map((c) => c.name || c.subpath).join(', ');
       parts.push(`Not imported, a skill with the same name exists: ${names}`);
+    } else if (r.conflicts.length) {
+      const items = r.conflicts.map((c) => `${c.name || c.subpath} (${c.reason ?? 'conflict'})`).join(', ');
+      parts.push(`Not imported: ${items}`);
     }
     if (r.errors.length) parts.push(`${r.errors.length} failed`);
     setSummary(parts.join(' · '));
@@ -140,14 +148,16 @@ export const ImportSkillsDialog: React.FC<{
         const r = await post<ImportResult>('/api/skills/import', {
           url: url.trim(),
           subpaths: [...selected],
+          overwrite,
         });
-        applyResult(r);
+        applyResult(r, overwrite);
       } else {
         const fd = buildForm(localFiles);
         fd.append('subpaths', JSON.stringify([...selected]));
+        fd.append('overwrite', overwrite ? 'true' : 'false');
         const resp = await fetch('/api/skills/import/local', { method: 'POST', body: fd });
         if (!resp.ok) throw new Error(await readErrorBody(resp));
-        applyResult((await resp.json()) as ImportResult);
+        applyResult((await resp.json()) as ImportResult, overwrite);
       }
     } catch (e) {
       setError(errMsg(e));
@@ -362,7 +372,14 @@ export const ImportSkillsDialog: React.FC<{
                 </label>
               ))}
             </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <label
+                style={{ display: 'flex', gap: '6px', alignItems: 'center', fontSize: '14px' }}
+                title="Replace an installed skill that has the same name. A skill that comes with the app is never replaced."
+              >
+                <input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} />
+                Overwrite existing
+              </label>
               <button
                 className="btn btn-primary btn-sm"
                 onClick={() => void doImport()}

@@ -34,9 +34,11 @@ def skill_name_key(name: str) -> str:
 
 def skill_name_taken(name: str, ignore: str = "") -> str | None:
     """The loaded skill that already holds ``name``, or None. ``ignore`` is the
-    skill being edited or renamed, which may keep its own name. Every save,
-    rename and import refuses a taken name: two skills with one name would
-    load as one and silently replace the other."""
+    skill being edited or renamed, which may keep its own name. Every save
+    and rename refuses a taken name, and so does an import unless the user
+    ticked overwrite (server/skills_import.py, which then replaces the old
+    skill): two skills with one name would load as one and silently replace
+    the other."""
     key = skill_name_key(name)
     if not key:
         return None
