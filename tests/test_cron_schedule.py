@@ -336,24 +336,13 @@ def test_reconcile_all_running_at_boot_fails_fresh_lease(monkeypatch, tmp_path):
     from server import cron_history as H
 
     monkeypatch.setattr(H, "DB_PATH", str(tmp_path / "hist.db"))
-    # A lease opened seconds ago — well under the 15-min stale cutoff.
+    # A lease opened seconds ago.
     H.start_run("run-fresh", "job-1", "job", "sess")
     # The boot pass reconciles EVERY running row regardless of age.
-    assert H.reconcile_stale(all_running=True) == 1
+    assert H.reconcile_interrupted() == 1
     runs = H.list_runs("job-1")
     assert runs[0]["status"] == "failed"
     assert "[interrupted]" in (runs[0]["text"] or "")
-
-
-def test_reconcile_periodic_leaves_fresh_lease_running(monkeypatch, tmp_path):
-    from server import cron_history as H
-
-    monkeypatch.setattr(H, "DB_PATH", str(tmp_path / "hist2.db"))
-    H.start_run("run-fresh", "job-2", "job", "sess")
-    # The periodic reconciler keeps the 15-min cutoff, so a fresh lease that is
-    # still legitimately executing is left alone.
-    assert H.reconcile_stale() == 0
-    assert H.list_runs("job-2")[0]["status"] == "running"
 
 
 # ── Fired one-shot 'at' job never arms / can't be re-enabled (fix 2) ──────────

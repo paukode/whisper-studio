@@ -351,7 +351,7 @@ def test_cron_history_lease_transitions_running_to_terminal(monkeypatch, tmp_pat
     assert runs[0]["finished_at"] is not None
 
     # A boot-time reconcile after a clean finish must not touch it.
-    assert H.reconcile_stale(all_running=True) == 0
+    assert H.reconcile_interrupted() == 0
 
 
 # ── Boot-time downtime catch-up actually fires (not a dropped coroutine) ────

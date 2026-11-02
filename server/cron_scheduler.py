@@ -353,7 +353,7 @@ async def init_scheduler():
     try:
         from server import cron_history
 
-        reconciled = cron_history.reconcile_stale(all_running=True)
+        reconciled = cron_history.reconcile_interrupted()
         if reconciled:
             log.info("cron: reconciled %d interrupted run(s) to failed", reconciled)
     except Exception as exc:
