@@ -28,6 +28,7 @@ export default defineConfig(({ command }) => {
       '/static/modules': backendHttp,
       '/static/style.css': backendHttp,
       '/static/fonts': backendHttp,
+      '/docs-site': backendHttp,
       '/ws': {
         target: backendWs,
         ws: true,
