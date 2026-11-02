@@ -5683,7 +5683,7 @@ button.ws-git-status-badge:hover {
 }
 .agent-ev-brief { margin-bottom: 4px; }
 /* Reports are written line by line (FINDINGS, EVIDENCE, ...); keep the breaks. */
-.agent-pane-report { padding: 8px 12px; border-top: 1px solid var(--border); white-space: pre-wrap; }
+.agent-pane-report { padding: 8px 12px; border-top: 1px solid var(--border); }
 .agent-pane-report > summary { font-size: var(--fs-caption); color: var(--text-muted); cursor: pointer; margin-bottom: 6px; }
 
 /* notify_user title header inside a toast */
