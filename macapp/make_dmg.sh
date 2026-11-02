@@ -13,13 +13,17 @@ APP_DIR="$DIST_DIR/Whisper Studio.app"
 
 [[ -d "$APP_DIR" ]] || { echo "ERROR: $APP_DIR not found — run macapp/build_app.sh first" >&2; exit 1; }
 
-# Version, same rule as build_app.sh: git describe, else 0.1.0.
-VERSION="$(git -C "$REPO_ROOT" describe --tags --always 2>/dev/null || echo "0.1.0")"
-VERSION="${VERSION#v}"
-[[ -n "$VERSION" ]] || VERSION="0.1.0"
+# Version, same rule as build_app.sh: git describe. Outside a git checkout
+# there is no version to derive, so packaging stops (APP_VERSION still wins).
 # APP_VERSION overrides the derived version verbatim (e.g. a feature build
 # labelled 2.6.0-sonic); VERSION_SUFFIX appends to whatever was derived.
-if [[ -n "${APP_VERSION:-}" ]]; then VERSION="$APP_VERSION"; fi
+if [[ -n "${APP_VERSION:-}" ]]; then
+    VERSION="$APP_VERSION"
+else
+    VERSION="$(git -C "$REPO_ROOT" describe --tags --always)" \
+        || { echo "ERROR: cannot derive a version (not a git checkout); set APP_VERSION" >&2; exit 1; }
+    VERSION="${VERSION#v}"
+fi
 VERSION="${VERSION}${VERSION_SUFFIX:-}"
 # DMG filename must not contain path separators.
 VERSION="${VERSION//\//-}"
@@ -33,8 +37,7 @@ mkdir -p "$STAGING"
 # Clone rather than copy: the bundle is several GB (a full Python runtime
 # plus the speech models), and a real copy needs that much free space again
 # just to stage it. APFS clones cost nothing until something is written.
-# Fall back to a plain copy if the volume cannot clone.
-cp -Rc "$APP_DIR" "$STAGING/" 2>/dev/null || cp -R "$APP_DIR" "$STAGING/"
+cp -Rc "$APP_DIR" "$STAGING/"
 ln -s /Applications "$STAGING/Applications"
 # First-launch instructions for recipients of an ad-hoc build (how to clear
 # the Gatekeeper warning). A Developer ID build opens without them.

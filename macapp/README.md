@@ -266,7 +266,8 @@ disable-library-validation, audio-input), required by CPython/torch and
 llama.cpp Metal under the hardened runtime.
 
 Bundle id defaults to `io.paukode.whisper-studio` (override with `BUNDLE_ID`).
-Version comes from `git describe --tags --always`, falling back to `0.1.0`.
+Version comes from `git describe --tags --always` (or `APP_VERSION`); outside a
+git checkout the build stops.
 
 ## Known v1 limitations
 
@@ -284,5 +285,4 @@ Version comes from `git describe --tags --always`, falling back to `0.1.0`.
   Whisper Studio menu for flows that need a real Chrome tab. Inside the
   shell, native system/app capture (see "Audio sources" above) covers the
   meeting use case instead, so the tab row is hidden there.
-- The app icon is a plain solid-colour placeholder.
 - Intel Macs are unsupported (arm64-only binaries throughout).

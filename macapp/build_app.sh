@@ -114,13 +114,17 @@ command -v curl >/dev/null || die "curl not found"
 command -v rsync >/dev/null || die "rsync not found"
 command -v codesign >/dev/null || die "codesign not found (install Command Line Tools)"
 
-# Version, same rule as make_dmg.sh: git describe, else 0.1.0.
-VERSION="$(git -C "$REPO_ROOT" describe --tags --always 2>/dev/null || echo "0.1.0")"
-VERSION="${VERSION#v}"
-[[ -n "$VERSION" ]] || VERSION="0.1.0"
+# Version, same rule as make_dmg.sh: git describe. Outside a git checkout
+# there is no version to derive, so the build stops (APP_VERSION still wins).
+if [[ -n "${APP_VERSION:-}" ]]; then
+    VERSION="$APP_VERSION"
+else
+    VERSION="$(git -C "$REPO_ROOT" describe --tags --always)" \
+        || die "cannot derive a version (not a git checkout); set APP_VERSION"
+    VERSION="${VERSION#v}"
+fi
 # APP_VERSION overrides the derived version verbatim (e.g. a feature build
 # labelled 2.6.0-sonic); VERSION_SUFFIX appends to whatever was derived.
-if [[ -n "${APP_VERSION:-}" ]]; then VERSION="$APP_VERSION"; fi
 VERSION="${VERSION}${VERSION_SUFFIX:-}"
 
 log "Building Whisper Studio.app (version $VERSION, identity: $SIGN_IDENTITY)"
@@ -136,8 +140,8 @@ log "[a] Frontend build (npm run build)"
 # hangs at 0% CPU instead of exiting (a known rollup/esbuild worker-teardown
 # flake), which would stall the whole packaging build forever. So run it in the
 # background, wait for vite's "built in" completion line, then reap the process
-# if it lingers. A genuine build failure (no completion line, early exit) still
-# surfaces via the missing-index.html check below.
+# if it lingers. A build that exits on its own must exit 0: a tsc error stops
+# before vite, and the old static/dist it leaves behind must never ship.
 FE_LOG="$BUILD_DIR/frontend-build.log"
 mkdir -p "$BUILD_DIR"
 (cd "$REPO_ROOT" && npm run build) > "$FE_LOG" 2>&1 &
@@ -171,9 +175,9 @@ else
         pkill -9 -P "$FE_PID" 2>/dev/null || true
         kill -9 "$FE_PID" 2>/dev/null || true
         tail -5 "$FE_LOG" 2>/dev/null || true
-        die "frontend build hung (no output for 10 min) — see $FE_LOG"
+        die "frontend build hung (no output for 10 min), see $FE_LOG"
     fi
-    wait "$FE_PID" || true         # exited on its own; the check below is the gate
+    wait "$FE_PID" || { tail -20 "$FE_LOG"; die "frontend build failed, see $FE_LOG"; }
 fi
 tail -3 "$FE_LOG" 2>/dev/null || true
 [[ -f "$REPO_ROOT/static/dist/index.html" ]] \
@@ -359,43 +363,10 @@ plutil -lint -s "$CONTENTS_DIR/Info.plist" || die "generated Info.plist is inval
 # f.2: shell binary.
 cp "$BUILD_DIR/shell/WhisperStudio" "$CONTENTS_DIR/MacOS/WhisperStudio"
 
-# f.3: app icon. The real icon lives in the repo (macapp/icon/AppIcon.icns,
-# built from icon.svg: the "W." monogram on deep indigo); the generated solid-colour
-# placeholder below is only the fallback if it is ever removed.
-if [[ -f "$MACAPP_DIR/icon/AppIcon.icns" ]]; then
-    cp "$MACAPP_DIR/icon/AppIcon.icns" "$RES_DIR/AppIcon.icns"
-else
-ICON_DIR="$BUILD_DIR/icon"
-if [[ ! -f "$ICON_DIR/AppIcon.icns" ]]; then
-    substep "generating placeholder AppIcon.icns"
-    rm -rf "$ICON_DIR"
-    mkdir -p "$ICON_DIR/AppIcon.iconset"
-    "$PY_BIN" - "$ICON_DIR/base.png" <<'PYEOF'
-import struct, sys, zlib
-size = 1024
-r, g, b = 0x4B, 0x3F, 0x8F  # muted violet placeholder
-row = bytes([0]) + bytes([r, g, b, 255]) * size
-raw = row * size
-def chunk(tag, data):
-    out = struct.pack(">I", len(data)) + tag + data
-    return out + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
-png = b"\x89PNG\r\n\x1a\n"
-png += chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 6, 0, 0, 0))
-png += chunk(b"IDAT", zlib.compress(raw))
-png += chunk(b"IEND", b"")
-open(sys.argv[1], "wb").write(png)
-PYEOF
-    for s in 16 32 128 256 512; do
-        sips -z "$s" "$s" "$ICON_DIR/base.png" \
-            --out "$ICON_DIR/AppIcon.iconset/icon_${s}x${s}.png" >/dev/null
-        d=$((s * 2))
-        sips -z "$d" "$d" "$ICON_DIR/base.png" \
-            --out "$ICON_DIR/AppIcon.iconset/icon_${s}x${s}@2x.png" >/dev/null
-    done
-    iconutil -c icns "$ICON_DIR/AppIcon.iconset" -o "$ICON_DIR/AppIcon.icns"
-fi
-cp "$ICON_DIR/AppIcon.icns" "$RES_DIR/AppIcon.icns"
-fi
+# f.3: app icon (macapp/icon/AppIcon.icns, built from icon.svg: the "W."
+# monogram on deep indigo).
+[[ -f "$MACAPP_DIR/icon/AppIcon.icns" ]] || die "macapp/icon/AppIcon.icns missing"
+cp "$MACAPP_DIR/icon/AppIcon.icns" "$RES_DIR/AppIcon.icns"
 
 # f.4: Python runtime. Bytecode caches are excluded: the shell redirects
 # runtime .pyc writes to WHISPER_HOME via PYTHONPYCACHEPREFIX (a post-signing
@@ -447,24 +418,12 @@ cp "$REPO_ROOT/rules/global/rules.md" "$RES_DIR/backend/rules/global/"
 # Always-on speech models (language ID + speaker encoder, ~170MB): shipped
 # inside the bundle and seeded into the user's models dir on first launch
 # (server/main.py::_seed_bundled_models), so transcription needs no download.
-# Cached in build-app/downloads like every other stage; the repo venv provides
-# huggingface_hub (run setup.sh once on the build machine if it is missing).
+# Cached in build-app/downloads like every other stage; fetched with the
+# bundled interpreter, whose pinned huggingface_hub stage b installed.
 substep "bundled speech models (language ID + speaker encoder)"
 BUNDLED_MODELS_CACHE="$BUILD_DIR/downloads/bundled-models"
 mkdir -p "$BUNDLED_MODELS_CACHE"
-# Prefer the repo venv; on a bare builder (CI) make a tiny throwaway venv with
-# just huggingface_hub, cached in build-app/ like every other stage.
-if [[ -x "$REPO_ROOT/venv/bin/python" ]]; then
-    HF_PY="$REPO_ROOT/venv/bin/python"
-else
-    HF_VENV="$BUILD_DIR/hf-venv"
-    if [[ ! -x "$HF_VENV/bin/python" ]]; then
-        python3 -m venv "$HF_VENV"
-        "$HF_VENV/bin/pip" install --quiet "huggingface_hub>=0.24"
-    fi
-    HF_PY="$HF_VENV/bin/python"
-fi
-"$HF_PY" - "$BUNDLED_MODELS_CACHE" <<'PYEOF'
+"$PY_BIN" - "$BUNDLED_MODELS_CACHE" <<'PYEOF'
 import os
 import sys
 
