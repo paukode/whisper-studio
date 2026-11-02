@@ -116,7 +116,7 @@ def _spawn_extraction(
 def _spawn_dream(model_key: str, ws_path: str | None) -> None:
     """Fire-and-forget dream consolidation after a local turn.
 
-    Mirrors the cloud paths (chat/routes.py and openai_bedrock/stream.py):
+    Mirrors the cloud path (server/chat/engine/runner.py _fire_memory_hooks):
     record the session against each memory tier and consolidate any tier that
     is due. The consolidator agent runs on a cloud model, so the
     dream_consolidation flag is off in Local mode with a visible reason

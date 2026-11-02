@@ -4,12 +4,13 @@ Two-tier layout:
     data/global_memory/              global tier: cross-workspace facts, alive
         MEMORY.md                    even in plain chat with no workspace open
         *.md                         topic files with YAML frontmatter
-        .cursor.json                 extraction cursor + throttle state
+        .cursor.json                 extraction cursor + throttle state (this
+                                     tier only)
+        .dream_meta.json             dream consolidation metadata
     data/memory/<workspace_slug>/    project tier: scoped to one workspace
         MEMORY.md                    index file (max 200 lines, 25 KB)
         *.md
-        .cursor.json
-        .dream_meta.json             dream consolidation metadata
+        .dream_meta.json
 
 data/global_memory/ deliberately lives OUTSIDE data/memory/ so it can never
 collide with a workspace slug (slugs sanitize to [a-zA-Z0-9._-], so a marker

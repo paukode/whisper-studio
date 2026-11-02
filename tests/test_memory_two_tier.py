@@ -212,7 +212,7 @@ def test_memory_md_write_and_delete_blocked(mem_dirs, no_workspace):
     r = _write("MEMORY.md", "user")
     assert "Cannot write MEMORY.md" in r
     r2 = EX.execute_memory_delete({"filename": "MEMORY.md"})
-    assert "Cannot delete MEMORY.md" in r2
+    assert "MEMORY.md is regenerated automatically and cannot be deleted" in r2
 
 
 def test_memory_md_guard_is_case_insensitive(mem_dirs, no_workspace):
@@ -222,7 +222,7 @@ def test_memory_md_guard_is_case_insensitive(mem_dirs, no_workspace):
         r = _write(variant, "user")
         assert "Cannot write MEMORY.md" in r, variant
     r2 = EX.execute_memory_delete({"filename": "memory.md"})
-    assert "Cannot delete MEMORY.md" in r2
+    assert "MEMORY.md is regenerated automatically and cannot be deleted" in r2
 
 
 # ── Recall (tier merge) ──────────────────────────────────────────────────────

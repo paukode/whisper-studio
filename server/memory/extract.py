@@ -7,8 +7,7 @@ to memory tools + read-only workspace tools.
 Runs with or without a workspace: with one, the agent sees both tiers and
 routes writes by scope; without one, everything lands in global memory.
 Cursor/throttle state is keyed by session id (a cursor is an index into one
-session's message list, so keying it by workspace, as the old code did,
-corrupted it whenever two sessions shared a workspace). It is always
+session's message list). It is always
 persisted in the GLOBAL tier dir: a session can connect or disconnect a
 workspace mid-life, so a workspace-dependent anchor would lose the cursor
 on every flip.
@@ -70,12 +69,7 @@ def _load_state(memory_dir: str) -> dict:
 
 
 def _load_cursor(memory_dir: str, session_id: str) -> int:
-    """Load this session's cursor from disk. Returns 0 if not found.
-
-    The legacy format ({"last_message_index": N}, keyed per workspace) is
-    ignored on purpose: those indices pointed into whichever session last
-    wrote them, so they are meaningless for any specific session.
-    """
+    """Load this session's cursor from disk. Returns 0 if not found."""
     try:
         return int(_load_state(memory_dir).get("sessions", {}).get(session_id, 0))
     except (AttributeError, TypeError, ValueError):

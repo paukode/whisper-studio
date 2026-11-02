@@ -289,7 +289,7 @@ def execute_memory_delete(
         return err
 
     if os.path.basename(os.path.normpath(filename)).lower() == ENTRYPOINT_NAME.lower():
-        return "Error: Cannot delete MEMORY.md. Edit it instead."
+        return "Error: MEMORY.md is regenerated automatically and cannot be deleted."
 
     abs_path, found_scope, err = _locate_existing(filename, scope)
     if err:
