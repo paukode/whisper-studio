@@ -182,7 +182,10 @@ def test_partial_failure_is_not_cached(monkeypatch):
         return "x"
 
     monkeypatch.setattr(mr, "one_shot", flaky)
-    mr.maybe_condense_transcript(text, config=cfg)
+    first = mr.maybe_condense_transcript(text, config=cfg)
+    # One failed segment fails the whole condensation visibly: the reader gets
+    # the truncation marker with the reason, never notes with a silent hole.
+    assert "truncated here" in first and "throttled" in first
     after_first = n["calls"]
     mr.maybe_condense_transcript(text, config=cfg)
     assert n["calls"] > after_first  # the hole is filled on the next turn

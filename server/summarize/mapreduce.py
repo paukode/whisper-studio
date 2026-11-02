@@ -142,12 +142,9 @@ def _cfg(config: dict | None = None) -> dict:
     Numeric fields are coerced to int so a malformed value never raises later in
     the hot path (the size gate and thresholds must not crash a chat turn)."""
     cfg = dict(_DEFAULTS)
-    try:
-        user = (config or load_config()).get("map_reduce_summary") or {}
-        if isinstance(user, dict):
-            cfg.update({k: v for k, v in user.items() if k in _DEFAULTS})
-    except Exception as e:  # never let a config read break summarisation
-        log.warning("map_reduce_summary config read failed (%s); using defaults", e)
+    user = (config or load_config()).get("map_reduce_summary") or {}
+    if isinstance(user, dict):
+        cfg.update({k: v for k, v in user.items() if k in _DEFAULTS})
     for k in _INT_FIELDS:
         try:
             cfg[k] = int(cfg[k])
@@ -241,13 +238,9 @@ def _input_budget(model_key: str | None, n_ctx: int | None = None) -> int | None
     """The reader's input budget in tokens, or None when unknown."""
     if not model_key:
         return None
-    try:
-        from server.chat.engine.windows import input_budget
+    from server.chat.engine.windows import input_budget
 
-        return input_budget(model_key, _requested_window_meta(model_key, n_ctx))
-    except Exception as e:  # noqa: BLE001 - sizing must never break a chat turn
-        log.debug("input budget for %s unavailable: %s", model_key, e)
-        return None
+    return input_budget(model_key, _requested_window_meta(model_key, n_ctx))
 
 
 def _requested_window_meta(model_key: str, n_ctx: int | None) -> dict | None:
@@ -412,8 +405,9 @@ def _condense(
     text: str, cfg: dict, *, engine: str, max_out: int, chat_model_key: str | None = None
 ) -> tuple[str, bool]:
     """Map every chunk and join the extracts. Returns ``(text, complete)``;
-    ``complete`` is False when any chunk's map call failed, so the caller does
-    not cache a result with a hole in it. Raises when nothing was extracted."""
+    ``complete`` is False when a chunk came back empty, so the caller does not
+    cache a result with a gap in it. Raises when any chunk's map call failed
+    (the caller then truncates and says why) or when nothing was extracted."""
     local = _is_local_engine(engine)
     chunk_chars = cfg["local_chunk_chars"] if local else cfg["chunk_chars"]
     chunks = _chunk(text, chunk_chars, cfg["overlap_chars"], cfg["max_chunks"])
@@ -422,11 +416,13 @@ def _condense(
     n = len(chunks)
     errors: list[str] = []
     results = _map_all(chunks, engine, cfg, chat_model_key=chat_model_key, errors=errors)
+    if errors:
+        # A failed segment would leave a silent hole in the notes; the caller
+        # truncates the raw transcript instead and names the error.
+        raise RuntimeError(f"{len(errors)} of {n} segments failed: {errors[0]}")
     extracts = [r.strip() for r in results if r.strip()]
     if not extracts:
-        # Every map call failed or came back empty; the caller truncates the
-        # raw transcript rather than hand the model nothing.
-        raise RuntimeError(errors[0] if errors else "every map extraction came back empty")
+        raise RuntimeError("every map extraction came back empty")
     condensed = "\n\n".join(extracts)
     # Bound the condensed result to what the reader takes, so the "reduce" turn
     # does not overflow. The map input is already sized for the map engine.
@@ -448,7 +444,7 @@ def _condense(
         len(condensed),
         engine,
     )
-    return NOTE_PREFIX + condensed, len(extracts) == n and not errors
+    return NOTE_PREFIX + condensed, len(extracts) == n
 
 
 def _map_all(
@@ -550,9 +546,9 @@ def _map_chunk(
     chat_model_key: str | None = None,
     errors: list[str] | None = None,
 ) -> str:
-    """Extract raw material from one chunk. A single failed chunk returns ``""``
-    (logged, its reason appended to ``errors``) rather than sinking the whole
-    condensation."""
+    """Extract raw material from one chunk. A failed chunk returns ``""`` with
+    its reason appended to ``errors``, so the other chunks still finish and
+    ``_condense`` then fails the whole condensation with that reason."""
     try:
         return one_shot(
             MAP_SYSTEM,
