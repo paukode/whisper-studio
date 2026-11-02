@@ -240,7 +240,6 @@ async def _run_grounding(
             selected_indexes,
             primary_query,
             extra_queries=extra_queries or None,
-            return_meta=True,
             forced=forced,
         ),
     )

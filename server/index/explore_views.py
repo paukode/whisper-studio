@@ -27,12 +27,9 @@ from server.index.config import SALIENCE_GRAPH_FLOOR
 _LABEL_GROUPS: dict[str, str] = {
     "person": "people",
     "job title": "roles",
-    "role": "roles",
     "organization": "organizations",
-    "company": "organizations",
     "team": "organizations",
     "location": "places",
-    "place": "places",
 }
 GROUP_ORDER = ("people", "organizations", "roles", "topics", "places")
 GROUP_TITLES = {
@@ -82,11 +79,6 @@ def _is_low_signal(entity: dict) -> bool:
     if _group_for(entity["label"]) == "people" and not looks_like_person_name(entity["name"]):
         return True
     return False
-
-
-def _like_escape(q: str) -> str:
-    """Escape LIKE metacharacters so a literal query never becomes a wildcard."""
-    return q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _entity_rollup(conn) -> list[dict]:

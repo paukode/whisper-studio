@@ -78,7 +78,7 @@ def test_auto_turn_mutes_off_topic_corpus(monkeypatch):
     monkeypatch.setattr(pipeline.embedder, "embed_query", lambda q: _unit(0))
     expands = _spy_expand(monkeypatch)
 
-    g, meta = pipeline.retrieve_grounding([ws], "how is the weather in krakow", return_meta=True)
+    g, meta = pipeline.retrieve_grounding([ws], "how is the weather in krakow")
 
     assert g == ""
     assert meta["passages"] == 0
@@ -95,9 +95,7 @@ def test_forced_turn_keeps_weak_matches(monkeypatch):
     monkeypatch.setattr(pipeline.embedder, "embed_query", lambda q: _unit(0))
     expands = _spy_expand(monkeypatch)
 
-    g, meta = pipeline.retrieve_grounding(
-        [ws], "how is the weather in krakow", return_meta=True, forced=True
-    )
+    g, meta = pipeline.retrieve_grounding([ws], "how is the weather in krakow", forced=True)
 
     assert "notes.md" in g
     assert meta["passages"] >= 1
@@ -111,7 +109,7 @@ def test_on_topic_dense_grounds_and_expands(monkeypatch):
     monkeypatch.setattr(pipeline.embedder, "embed_query", lambda q: _unit(0))
     expands = _spy_expand(monkeypatch)
 
-    g, meta = pipeline.retrieve_grounding([ws], "budget planning status", return_meta=True)
+    g, meta = pipeline.retrieve_grounding([ws], "budget planning status")
 
     assert "notes.md" in g
     assert meta["dense_muted"] is False
@@ -127,7 +125,7 @@ def test_keyword_hit_survives_dense_mute(monkeypatch):
     monkeypatch.setattr(pipeline.embedder, "embed_query", lambda q: _unit(0))
     expands = _spy_expand(monkeypatch)
 
-    g, meta = pipeline.retrieve_grounding([ws], "ZZQX7", return_meta=True)
+    g, meta = pipeline.retrieve_grounding([ws], "ZZQX7")
 
     assert "notes.md" in g
     assert meta["passages"] >= 1
@@ -160,7 +158,7 @@ def test_weak_seeds_do_not_expand_even_when_best_is_on_topic(monkeypatch):
     monkeypatch.setattr(pipeline.embedder, "embed_query", lambda q: _unit(0))
     expands = _spy_expand(monkeypatch)
 
-    _, meta = pipeline.retrieve_grounding([ws], "budget planning status", return_meta=True)
+    _, meta = pipeline.retrieve_grounding([ws], "budget planning status")
 
     assert meta["dense_muted"] is False
     assert meta["passages"] == 2, "the weak match still grounds; it just doesn't seed the hop"

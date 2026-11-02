@@ -131,7 +131,6 @@ _CODE_LABELS = [
     "location",
 ]
 ENTITY_PROFILES = {"business": _BUSINESS_LABELS, "code": _CODE_LABELS}
-DEFAULT_ENTITY_PROFILE = os.environ.get("WHISPER_INDEX_ENTITY_PROFILE", "business")
 
 # Source-code file extensions -> the "code" entity profile. Every other file
 # (docs, notes, transcripts, markdown) uses "business". Picked automatically per
@@ -182,15 +181,10 @@ def profile_for_ext(ext: str) -> str:
     return "code" if (ext or "").lower() in CODE_EXTENSIONS else "business"
 
 
-def labels_for_profile(profile: str | None) -> list[str]:
-    """Entity label set for an entity profile (defaults to business)."""
-    return ENTITY_PROFILES.get(profile or DEFAULT_ENTITY_PROFILE, _BUSINESS_LABELS)
+def labels_for_profile(profile: str) -> list[str]:
+    """Entity label set for an entity profile."""
+    return ENTITY_PROFILES[profile]
 
-
-# ``ENTITY_LABELS`` stays as the union of both profiles so any label a past index
-# stored still round-trips through the label-canonicalization map, and code that
-# imports it keeps working. New extraction uses the per-workspace profile.
-ENTITY_LABELS = _CODE_LABELS + [lbl for lbl in _BUSINESS_LABELS if lbl not in _CODE_LABELS]
 
 # GLiNER is *called* at a permissive floor so recall stays high (especially on
 # Polish text, where span confidences run lower); junk is removed downstream by

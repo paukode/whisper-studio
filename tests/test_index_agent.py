@@ -106,7 +106,7 @@ def test_a_refresh_before_the_app_ever_migrated_still_logs_its_paid_calls(monkey
 
     monkeypatch.setattr(agent, "_app_running", lambda: False)
     monkeypatch.setattr(agent.store, "list_indexed_workspaces", lambda: ["/ws"])
-    monkeypatch.setattr(agent.store, "has_index", lambda ws: True)
+    monkeypatch.setattr(agent.paths, "is_indexed", lambda ws: True)
     monkeypatch.setattr(agent.store, "get_meta", lambda ws: {})
     monkeypatch.setattr(agent.store, "set_meta", lambda ws, **kw: None)
     monkeypatch.setattr(

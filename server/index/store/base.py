@@ -49,10 +49,6 @@ _MAX_NODE_FANOUT = 60
 # are these two files linked" detail). The full count is still the edge weight.
 _EDGE_ENTITY_SAMPLE = 8
 
-# For the unified (all-workspaces) graph: an entity appearing in more files than
-# this across the whole corpus is boilerplate and excluded from edges.
-_MAX_FILE_FANOUT = 25
-
 # Salience filter: generic category words ("function", "service", "concept", …)
 # that GLiNER faithfully tags as entities but that carry no relationship signal.
 # Excluded from co-occurrence edges so they don't clutter the graph or inflate

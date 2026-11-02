@@ -192,10 +192,6 @@ def regenerate() -> None:
         log.warning("Index agent sync failed: %s", e)
 
 
-def status() -> dict:
-    return {"installed": is_installed()}
-
-
 # ── the worker (run by launchd) ──────────────────────────────────────────────
 def _due(sched: dict, last: float, now: float) -> bool:
     freq = sched.get("frequency", "daily")
@@ -239,7 +235,7 @@ def run() -> int:
             # Only touch folders with an index under the ACTIVE embed backend; a
             # store.get_meta() read below opens (and would fabricate) that backend's
             # db, so skip folders indexed only under the other embedder.
-            if not store.has_index(ws):
+            if not paths.is_indexed(ws):
                 continue
             s = wssettings.get_settings(ws)
             if not (s["refresh_when_closed"] and s["schedule"]["enabled"]):
@@ -267,17 +263,5 @@ if __name__ == "__main__":
 
     require_macos_arm64()
 
-    import argparse
-
     logging.basicConfig(level=logging.INFO)
-    parser = argparse.ArgumentParser(prog="server.index.agent")
-    parser.add_argument("action", choices=["sync", "uninstall", "status", "run"])
-    action = parser.parse_args().action
-    if action == "sync":
-        print(sync())
-    elif action == "uninstall":
-        print(uninstall())
-    elif action == "status":
-        print(status())
-    else:
-        sys.exit(run())
+    sys.exit(run())

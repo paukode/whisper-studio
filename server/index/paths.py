@@ -64,6 +64,11 @@ def db_path(ws_path: str, embed_backend: str | None = None) -> str:
     return os.path.join(workspace_index_dir(ws_path), _db_filename(embed_backend))
 
 
-def is_indexed(ws_path: str, embed_backend: str | None = None) -> bool:
-    """Whether the folder has an index for the given (or active) embed backend."""
-    return os.path.exists(db_path(ws_path, embed_backend))
+def is_indexed(ws_path: str) -> bool:
+    """Whether an index DB exists for the active embed backend, WITHOUT creating
+    one. Read paths MUST gate on this before calling store helpers that open the
+    DB (stats, graph views): opening a missing db path creates the file, so an
+    unguarded read of a folder indexed under the OTHER embed backend (indexes are
+    per backend) fabricates an empty active-backend index and reports it as
+    empty."""
+    return os.path.exists(db_path(ws_path))

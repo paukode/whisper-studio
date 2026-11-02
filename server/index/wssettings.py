@@ -163,7 +163,7 @@ def get_settings(ws_path: str) -> dict:
     would otherwise create an empty index DB (store._connect always creates it).
     For an indexed folder, read the meta; on first read seed it from any pending
     pre-index config, else defaults."""
-    if not os.path.exists(store.db_path(ws_path)):
+    if not paths.is_indexed(ws_path):
         pend = _pending_get(ws_path)
         return _validated(pend) if pend is not None else copy.deepcopy(_DEFAULTS)
     meta = store.get_meta(ws_path)
@@ -228,7 +228,7 @@ def update_settings(ws_path: str, patch: dict) -> dict:
     if "refresh_when_closed" in patch:
         cur["refresh_when_closed"] = bool(patch["refresh_when_closed"])
     validated = _validated(cur)
-    if os.path.exists(store.db_path(ws_path)):
+    if paths.is_indexed(ws_path):
         store.set_meta(ws_path, settings=validated)
     else:
         _pending_set(ws_path, validated)

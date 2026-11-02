@@ -23,7 +23,6 @@ from .config import (
     GLINER_MODEL_DIR,
     GLINER_SENTINEL,
     LABEL_THRESHOLDS,
-    labels_for_profile,
 )
 from .relations_vocab import PREDICATES, canonicalize_predicate
 from .salience import is_hard_junk
@@ -327,10 +326,6 @@ def unload() -> None:
         log.info("NER model(s) unloaded.")
 
 
-def is_loaded() -> bool:
-    return _model is not None or _gliner2_model is not None
-
-
 def _windows(text: str) -> list[str]:
     """Overlapping GLiNER-sized windows covering the chunk (its tail would otherwise
     never be scanned, since a chunk is ~1600 chars and _MAX_CHARS=1200). Capped at
@@ -372,16 +367,14 @@ def _extract_via_gliner2(text: str, labels: list[str]) -> list[dict]:
 
 def extract_entities(
     text: str,
-    labels: list[str] | None = None,
-    backend: str | None = None,
+    labels: list[str],
     ner_model: str = "gliner",
 ) -> list[dict]:
     """Return distinct entities in ``text`` as ``[{name, label, score}]``.
 
     Routes to the active NER backend: on-device GLiNER/GLiNER2, Claude Haiku on
     Bedrock, or any on-device chat model (LLM NER with the same prompt as the
-    Haiku path). ``labels`` is the workspace's entity profile (defaults
-    to the business set); ``ner_model`` picks the on-device family ("gliner" default,
+    Haiku path). ``labels`` is the file's entity label set; ``ner_model`` picks the on-device family ("gliner" default,
     or "gliner2"). Spans are kept only if they clear their label's confidence floor
     and pass the hard-junk gate; ``score`` is the model's span confidence (used
     downstream to weight salience). Names are deduped case-insensitively, keeping
@@ -389,8 +382,7 @@ def extract_entities(
     """
     if not text.strip():
         return []
-    labels = labels or labels_for_profile(None)
-    eng = backend or _ner_backend()
+    eng = _ner_backend()
     if eng == "haiku":
         return _extract_via_haiku(text[:_HAIKU_MAX_CHARS], labels)
     if eng != "gliner":
@@ -435,7 +427,7 @@ def extract_entities(
 
 
 def extract_relations_gliner2(
-    text: str, entity_names: list[str], labels: list[str] | None = None
+    text: str, entity_names: list[str], labels: list[str]
 ) -> list[tuple[str, str, str, float]]:
     """Native GLiNER2 relation extraction — the local, LLM-free replacement for the
     per-file LLM relations pass. One schema pass (entities + the closed predicate
@@ -449,7 +441,6 @@ def extract_relations_gliner2(
     by_lower = {n.lower(): n for n in names}
     # Pass predicates in a readable form; canonicalize the returned label back.
     rel_labels = [p.replace("_", " ") for p in PREDICATES]
-    labels = labels or labels_for_profile(None)
     # GLiNER2 over-generates: it scores many predicates for the same pair. Keep one
     # best-scoring predicate per directed (source, target) pair, above a confidence
     # floor, so the graph gets clean single edges instead of a fan of noisy guesses.

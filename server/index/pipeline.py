@@ -56,25 +56,15 @@ from .query_gate import has_content_word
 log = logging.getLogger("whisper-studio")
 
 # Directories never worth indexing — VCS, deps, build output, caches.
+# Dot directories are skipped separately (see _iter_files), so none are listed here.
 _IGNORE_DIRS = {
-    ".git",
-    ".svn",
-    ".hg",
     "node_modules",
     "venv",
-    ".venv",
     "__pycache__",
-    ".mypy_cache",
-    ".pytest_cache",
     "dist",
     "build",
-    ".next",
-    ".cache",
     "target",
-    ".idea",
-    ".vscode",
     "models",
-    ".DS_Store",
 }
 
 # Everything we know how to turn into text: plain text/code, spreadsheets
@@ -555,7 +545,6 @@ def _build_locked(ws_path: str, ws_root: str, progress) -> dict:
                 ws_path,
                 last_indexed_at=datetime.now(timezone.utc).isoformat(),
                 embed_model=embed_model,
-                embed_backend=_embed_backend,
                 workspace=ws_root,
                 context_mode=cc_mode,
             )
@@ -732,11 +721,10 @@ def retrieve_grounding(
     k: int = 12,
     *,
     extra_queries: list[str] | None = None,
-    return_meta: bool = False,
     forced: bool = False,
-):
+) -> tuple[str, dict]:
     """Search the given indexed workspaces and return a cited Markdown context
-    block (or '' if nothing). Used to ground a chat answer when the user has
+    block (or '' if nothing) and its meta. Used to ground a chat answer when the user has
     selected indexes to search.
 
     Retrieves for ``question`` plus any ``extra_queries`` (e.g. a
@@ -748,7 +736,7 @@ def retrieve_grounding(
     files. Source links use absolute paths so they reveal in Finder regardless
     of which workspace is connected.
 
-    With ``return_meta`` the second value is ``{folders, passages, sources,
+    The second value is ``{folders, passages, sources,
     best_score, dense_muted}``, where ``sources`` lists every injected passage
     with its retrieval provenance (``kind``: keyword / semantic / entity /
     related, plus entity-name chips) — the payload behind the chat's "Answer
@@ -971,15 +959,13 @@ def retrieve_grounding(
     matches = deduped
 
     if not matches:
-        if return_meta:
-            return "", {
-                "folders": folders_searched,
-                "passages": 0,
-                "sources": [],
-                "best_score": round(best_dense, 3),
-                "dense_muted": dense_muted,
-            }
-        return ""
+        return "", {
+            "folders": folders_searched,
+            "passages": 0,
+            "sources": [],
+            "best_score": round(best_dense, 3),
+            "dense_muted": dense_muted,
+        }
 
     # Auto-merge (parent-document retrieval): when a SMALL, focused document has
     # a chunk among the top matches, splice in its remaining chunks right after
@@ -1079,37 +1065,36 @@ def retrieve_grounding(
         for m in related_uniq:
             out.append(f"- {_fmt(m, _GROUND_RELATED_CHARS)}")
     text = "\n".join(out)
-    if return_meta:
-        # Structured per-passage provenance, mirroring the grounding block: one
-        # entry per injected passage with HOW it was retrieved. Persisted per
-        # answer so the chat's grounding chip can show the passages behind it.
-        def _kind(m: dict) -> str:
-            lg = legs_by_key.get(_key(m)) or set()
-            if "keyword" in lg:
-                return "keyword"
-            if "semantic" in lg:
-                return "semantic"
-            return "entity" if "entity" in lg else "semantic"
 
-        def _source(m: dict, kind: str, entities: list | None) -> dict:
-            return {
-                "path": m.get("path"),
-                "abs": m.get("_abs"),
-                "ws": m.get("_ws"),
-                "start_line": m.get("start_line"),
-                "end_line": m.get("end_line"),
-                "kind": kind,
-                "entities": entities or [],
-                "snippet": " ".join((m.get("text") or "").split())[:240],
-            }
+    # Structured per-passage provenance, mirroring the grounding block: one
+    # entry per injected passage with HOW it was retrieved. Persisted per
+    # answer so the chat's grounding chip can show the passages behind it.
+    def _kind(m: dict) -> str:
+        lg = legs_by_key.get(_key(m)) or set()
+        if "keyword" in lg:
+            return "keyword"
+        if "semantic" in lg:
+            return "semantic"
+        return "entity" if "entity" in lg else "semantic"
 
-        sources = [_source(m, _kind(m), ent_names_by_key.get(_key(m))) for m in matches]
-        sources += [_source(r, "related", r.get("shared_entity_names")) for r in related_uniq]
-        return text, {
-            "folders": folders_searched,
-            "passages": len(matches),
-            "sources": sources,
-            "best_score": round(best_dense, 3),
-            "dense_muted": dense_muted,
+    def _source(m: dict, kind: str, entities: list | None) -> dict:
+        return {
+            "path": m.get("path"),
+            "abs": m.get("_abs"),
+            "ws": m.get("_ws"),
+            "start_line": m.get("start_line"),
+            "end_line": m.get("end_line"),
+            "kind": kind,
+            "entities": entities or [],
+            "snippet": " ".join((m.get("text") or "").split())[:240],
         }
-    return text
+
+    sources = [_source(m, _kind(m), ent_names_by_key.get(_key(m))) for m in matches]
+    sources += [_source(r, "related", r.get("shared_entity_names")) for r in related_uniq]
+    return text, {
+        "folders": folders_searched,
+        "passages": len(matches),
+        "sources": sources,
+        "best_score": round(best_dense, 3),
+        "dense_muted": dense_muted,
+    }

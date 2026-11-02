@@ -114,7 +114,7 @@ async def index_list():
         # embed backend; only surface (and read) the ones present under the ACTIVE
         # backend, so a read never fabricates an empty active-backend db for a
         # folder indexed under the other embedder.
-        if not store.has_index(ws):
+        if not paths.is_indexed(ws):
             continue
         s = store.stats(ws)
         out.append(

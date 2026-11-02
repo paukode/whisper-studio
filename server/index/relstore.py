@@ -2,7 +2,7 @@
 
 Split out of ``store`` to keep it under the file-size budget. Relations are keyed
 by node id (so entity dedup repoints them instead of dangling — see
-store._merge_group), scoped by source file ``path`` for incremental replace, and
+store.entities._merge_group), scoped by source file ``path`` for incremental replace, and
 carry optional verbatim evidence + line provenance so a fact is citable. Facts are
 aggregated across files at read time (noisy-OR over observations), so the same
 fact stated in several files reinforces confidence rather than duplicating.

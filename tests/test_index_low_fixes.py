@@ -67,7 +67,6 @@ def test_cohere_index_stamps_cohere_embed_model(tmp_path, monkeypatch):
     pipeline.build(str(ws))
     meta = store.get_meta(str(ws))
 
-    assert meta["embed_backend"] == "cohere"
     assert meta["embed_model"] == config.COHERE_EMBED_MODEL_ID
 
 
@@ -82,7 +81,6 @@ def test_qwen3_index_stamps_qwen3_embed_model(tmp_path, monkeypatch):
     pipeline.build(str(ws))
     meta = store.get_meta(str(ws))
 
-    assert meta["embed_backend"] == "qwen3"
     assert meta["embed_model"] == config.EMBED_MODEL
 
 

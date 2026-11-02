@@ -9,7 +9,6 @@ assistant-queryable face of the knowledge graph — distinct from
 
 from __future__ import annotations
 
-import logging
 import os
 from urllib.parse import quote
 
@@ -18,8 +17,6 @@ from server.workspace import get_workspace_path
 
 from . import paths
 from .citations import citation_link
-
-log = logging.getLogger("whisper-studio")
 
 
 def _cite(ws: str, path: str, start: int | None, end: int | None) -> str:

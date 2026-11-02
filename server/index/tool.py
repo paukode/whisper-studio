@@ -9,7 +9,6 @@ yet (the model can't index — that's a user action in the workspace dialog).
 
 from __future__ import annotations
 
-import logging
 import os
 
 from server.executors import register_executor
@@ -17,8 +16,6 @@ from server.workspace import get_workspace_path
 
 from . import paths
 from .citations import citation_link
-
-log = logging.getLogger("whisper-studio")
 
 _SNIPPET_CHARS = 240
 

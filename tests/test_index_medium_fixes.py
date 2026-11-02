@@ -91,7 +91,7 @@ def test_stats_for_unindexed_is_empty_and_creates_no_db():
     """store.stats() on a folder with no active-backend index reports empty and
     does NOT create a db file (opening a missing path would fabricate one)."""
     ws = "/fake/ws-never-indexed"
-    assert store.has_index(ws) is False
+    assert paths.is_indexed(ws) is False
     s = store.stats(ws)
     assert s["files"] == 0 and s["chunks"] == 0 and s["nodes"] == 0
     assert s["last_indexed_at"] is None
@@ -115,7 +115,7 @@ def test_index_list_skips_other_backend_without_fabricating(monkeypatch):
     # Active backend is qwen3 (index.db), which does NOT exist for this folder.
     monkeypatch.setattr(model_mode, "resolve_backend", lambda cap, config=None: "qwen3")
     assert store.list_indexed_workspaces() == [ws]  # still discoverable
-    assert store.has_index(ws) is False  # but not under the active backend
+    assert paths.is_indexed(ws) is False  # but not under the active backend
 
     out = asyncio.run(routes.index_list())
     assert out["indexes"] == []  # skipped, not shown as a zeroed index

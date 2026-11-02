@@ -144,7 +144,8 @@ def test_cohere_rerank_aligns_scores_to_input_order(monkeypatch):
             )
 
     monkeypatch.setattr(embedder_cohere, "_bedrock", lambda: _Client())
-    scores = reranker.rerank("q", ["doc-a", "doc-b"], backend="cohere")
+    monkeypatch.setattr(reranker, "_rerank_backend", lambda: "cohere")
+    scores = reranker.rerank("q", ["doc-a", "doc-b"])
     assert scores == [0.1, 0.9]
 
 
@@ -154,7 +155,8 @@ def test_cohere_rerank_best_effort_on_failure(monkeypatch):
             raise RuntimeError("bedrock down")
 
     monkeypatch.setattr(embedder_cohere, "_bedrock", lambda: _Client())
-    assert reranker.rerank("q", ["a"], backend="cohere") == []
+    monkeypatch.setattr(reranker, "_rerank_backend", lambda: "cohere")
+    assert reranker.rerank("q", ["a"]) == []
 
 
 # ── Haiku NER ────────────────────────────────────────────────────────────────
@@ -179,9 +181,8 @@ def test_haiku_ner_validates_labels_and_dedups(monkeypatch):
     monkeypatch.setattr(infra, "_get_bedrock_client", lambda: _Client())
     # Haiku labels are validated against the ACTIVE profile (the labels passed in),
     # not a global union — an off-profile label is dropped, casing is canonicalized.
-    out = extractor.extract_entities(
-        "some text", labels=["person", "library", "API"], backend="haiku"
-    )
+    monkeypatch.setattr(extractor, "_ner_backend", lambda: "haiku")
+    out = extractor.extract_entities("some text", labels=["person", "library", "API"])
     names = [e["name"] for e in out]
     assert names == ["Ada Lovelace", "boto3", "the api"]
     assert {e["label"] for e in out} == {"person", "library", "API"}
@@ -209,10 +210,10 @@ def test_gliner2_path_flattens_and_filters(monkeypatch):
 
     monkeypatch.setattr(extractor, "_load_gliner2", lambda: None)
     monkeypatch.setattr(extractor, "_gliner2_model", _FakeG2())
+    monkeypatch.setattr(extractor, "_ner_backend", lambda: "gliner")
     out = extractor.extract_entities(
         "some text",
         labels=["person", "organization", "concept"],
-        backend="gliner",
         ner_model="gliner2",
     )
     by = {e["name"]: e for e in out}
@@ -281,7 +282,9 @@ def test_gliner2_native_relations(monkeypatch):
 
     monkeypatch.setattr(extractor, "_load_gliner2", lambda: None)
     monkeypatch.setattr(extractor, "_gliner2_model", _FakeG2())
-    rels = extractor.extract_relations_gliner2("Ann works at Acme.", ["Ann", "Acme", "Bob"])
+    rels = extractor.extract_relations_gliner2(
+        "Ann works at Acme.", ["Ann", "Acme", "Bob"], labels=["person", "organization"]
+    )
     # works_at wins the Ann->Acme pair (1 + 4*min(0.9,0.8) = 4.2); Bob->Acme is
     # dropped by the floor; Acme->Nobody dropped (unknown tail).
     assert rels == [("Ann", "Acme", "works_at", 4.2)]

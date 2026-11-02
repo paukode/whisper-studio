@@ -1,4 +1,4 @@
-"""Cohere Embed v4 backend (Amazon Bedrock) — text → 1536-d L2-normalized vectors.
+"""Cohere Embed v4 backend (Amazon Bedrock): text to 1536-d L2-normalized vectors.
 
 The cloud counterpart to the on-device Qwen3 embedder. Called via bedrock-runtime
 InvokeModel against Embed v4's global profile (``global.cohere.embed-v4:0``) in
@@ -7,22 +7,16 @@ asymmetric recipe:
 documents are embedded with ``input_type=search_document`` and queries with
 ``search_query``. Cohere vectors are not unit-length, so we L2-normalize each row
 to match the store's cosine search (dot product on unit vectors).
-
-No weights are downloaded or held resident — it's a network call — so unload()/
-is_loaded() are no-ops kept for API parity with the on-device embedder.
 """
 
 from __future__ import annotations
 
 import json
-import logging
 import threading
 
 import numpy as np
 
 from .config import COHERE_EMBED_DIM, COHERE_EMBED_MODEL_ID
-
-log = logging.getLogger("whisper-studio")
 
 # Cohere caps a single embed request at 96 texts.
 _MAX_TEXTS_PER_CALL = 96
@@ -107,12 +101,3 @@ def embed_documents(texts: list[str]) -> np.ndarray:
 def embed_query(text: str) -> np.ndarray:
     """Embed a search query (search_query) -> (dim,) float32."""
     return _invoke([text], "search_query")[0]
-
-
-def unload() -> None:
-    """No-op: nothing is resident (Bedrock is a network call)."""
-    return
-
-
-def is_loaded() -> bool:
-    return False

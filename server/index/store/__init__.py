@@ -1,20 +1,17 @@
-"""SQLite-backed workspace index store.
+"""SQLite-backed workspace index store, in focused submodules that share one
+connection factory and one in-process cache:
 
-Split out of the former single ``server/index/store.py`` (1156 lines) into
-focused submodules that share one connection factory and one in-process cache:
-
-    base      — _connect, caches, schema, write-gen, vector primitives
-    files     — get_manifest / replace_file / touch_file / delete_file
-    entities  — description context + node dedup (lexical + semantic)
-    meta      — set/get meta, has_index, stats, remove_index, list_indexed_workspaces
-    search    — vector search (cached), GraphRAG hop, chunk fetch, FTS keyword
-    graph     — cached file-graph + explorer view wrappers over graph_views/explore_views
+    base      _connect, caches, schema, write-gen, sqlite-vec search
+    files     get_manifest / replace_file / touch_file / delete_file
+    entities  description context + node dedup (lexical + semantic)
+    meta      set/get meta, stats, remove_index, list_indexed_workspaces
+    search    vector search (cached), GraphRAG hop, chunk fetch, FTS keyword
+    graph     cached file-graph + explorer view wrappers over graph_views/explore_views
 
 Every name external code (and graph_views) reads off ``server.index.store`` is
-re-exported here — the full public API plus the private helpers/constants other
-modules reference (``_connect``, ``_invalidate``, ``_active_dim``,
-``_norm_entity``, the fanout/generic-name constants) and ``db_path`` — so
-``from server.index import store`` and ``store.<name>`` keep resolving.
+re-exported here: the public API plus the private helpers and constants other
+modules reference (``_connect``, ``_invalidate``, ``_norm_entity``, the fanout
+and generic-name constants) and ``db_path``, so ``store.<name>`` resolves.
 """
 
 from __future__ import annotations
@@ -24,17 +21,13 @@ from ..paths import db_path  # noqa: F401
 from .base import (  # noqa: F401
     _EDGE_ENTITY_SAMPLE,
     _GENERIC_ENTITY_NAMES,
-    _MAX_FILE_FANOUT,
     _MAX_NODE_FANOUT,
-    _active_dim,
     _bump_write_gen,
     _connect,
     _fetch_chunks,
     _invalidate,
 )
 from .entities import (  # noqa: F401
-    _embed_names,
-    _merge_group,
     _norm_entity,
     dedupe_entities,
     entities_for_description,
@@ -59,14 +52,12 @@ from .graph import (  # noqa: F401
 )
 from .meta import (  # noqa: F401
     get_meta,
-    has_index,
     list_indexed_workspaces,
     remove_index,
     set_meta,
     stats,
 )
 from .search import (  # noqa: F401
-    _term_expr,
     chunks_for_file,
     expand,
     fts_search,

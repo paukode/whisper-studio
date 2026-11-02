@@ -103,12 +103,6 @@ def ensure_rerank_model() -> str:
     return RERANK_MODEL_DIR
 
 
-def is_downloaded() -> bool:
-    import os
-
-    return os.path.exists(RERANK_SENTINEL)
-
-
 def is_loaded() -> bool:
     return _model is not None
 
@@ -178,14 +172,14 @@ def _middle_ids(query: str, doc: str, budget: int) -> list[int]:
 _mps_oom_disabled = False
 
 
-def rerank(query: str, passages: list[str], backend: str | None = None) -> list[float]:
+def rerank(query: str, passages: list[str]) -> list[float]:
     """Relevance score for each passage given the query, aligned to input order.
     Routes to the active rerank backend (on-device Qwen3-Reranker, or Cohere
     Rerank 3.5 on Bedrock in cloud mode). Returns [] on any failure so the
     caller keeps its existing fused order."""
     if not passages:
         return []
-    if (backend or _rerank_backend()) == "cohere":
+    if _rerank_backend() == "cohere":
         return _rerank_cohere(query, passages)
     global _mps_oom_disabled
     if _mps_oom_disabled:

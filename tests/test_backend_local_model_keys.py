@@ -64,9 +64,8 @@ def test_extract_entities_routes_to_local_llm(monkeypatch):
         return '[{"name": "Acme", "label": "Company"}]'
 
     monkeypatch.setattr(rt, "complete", fake_complete)
-    out = extractor.extract_entities(
-        "Acme hired Bob.", labels=["Company", "Person"], backend="local_qwen35_9b"
-    )
+    monkeypatch.setattr(extractor, "_ner_backend", lambda: "local_qwen35_9b")
+    out = extractor.extract_entities("Acme hired Bob.", labels=["Company", "Person"])
     assert out == [{"name": "Acme", "label": "Company", "score": 0.8}]
     assert seen["key"] == "local_qwen35_9b"
 
@@ -82,9 +81,8 @@ def test_extract_entities_local_llm_skips_when_model_missing(monkeypatch):
         raise AssertionError("complete() must not be called when the model is missing")
 
     monkeypatch.setattr(rt, "complete", boom)
-    out = extractor.extract_entities(
-        "Acme hired Bob.", labels=["Company", "Person"], backend="local_qwen35_9b"
-    )
+    monkeypatch.setattr(extractor, "_ner_backend", lambda: "local_qwen35_9b")
+    out = extractor.extract_entities("Acme hired Bob.", labels=["Company", "Person"])
     assert out == []
 
 
@@ -99,5 +97,6 @@ def test_extract_entities_refuses_an_uninstalled_engine(monkeypatch):
         raise AssertionError("GLiNER must not load for an unknown engine")
 
     monkeypatch.setattr(extractor, "_load", boom)
+    monkeypatch.setattr(extractor, "_ner_backend", lambda: "local_gone")
     with pytest.raises(RuntimeError, match="not an installed on-device model"):
-        extractor.extract_entities("Acme hired Bob.", labels=["Company"], backend="local_gone")
+        extractor.extract_entities("Acme hired Bob.", labels=["Company"])
