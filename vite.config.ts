@@ -5,7 +5,7 @@ import { resolve } from 'path';
 export default defineConfig(({ command }) => {
   // setup.sh picks the backend port (41430, or the nearest free one) and
   // exports BACKEND_PORT for vite. Plain ``npm run dev`` uses 41430. Bind everything to 127.0.0.1 (not ``localhost``) so
-  // we never go through the OS resolver — guest/captive Wi-Fi, IPv6
+  // we never go through the OS resolver, guest/captive Wi-Fi, IPv6
   // ``::1`` mismatches, and stale /etc/hosts entries all stop mattering.
   const backendPort = process.env.BACKEND_PORT || '41430';
   const backendHttp = `http://127.0.0.1:${backendPort}`;
@@ -37,7 +37,7 @@ export default defineConfig(({ command }) => {
     // Stop the dev server from watching worktree directories. When the
     // assistant runs `git worktree add` (via the enter_worktree tool or
     // any other path), the new directory appears inside the workspace
-    // and chokidar would otherwise stream every file in as a change —
+    // and chokidar would otherwise stream every file in as a change,
     // triggering an HMR cascade that ends with a full page reload (e.g.
     // tsconfig detection) and severs the live chat stream.
     //
@@ -55,7 +55,7 @@ export default defineConfig(({ command }) => {
       ],
     },
   },
-  // Only set base for production builds — dev server serves from /
+  // Only set base for production builds, dev server serves from /
   base: command === 'build' ? '/static/dist/' : '/',
   build: {
     outDir: 'static/dist',

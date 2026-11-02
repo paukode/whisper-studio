@@ -37,7 +37,7 @@ pricing.json.bak.*
 *.pt
 *.onnx
 
-# Node — match a directory AND a bare symlink named node_modules (worktree
+# Node, match a directory AND a bare symlink named node_modules (worktree
 # tooling sometimes symlinks it in; the trailing-slash form ignores dirs only).
 node_modules/
 node_modules

@@ -1,5 +1,5 @@
 # ============================================================================
-# Build the macOS app (Apple Silicon) — assembles dist-app/Whisper Studio.app
+# Build the macOS app (Apple Silicon), assembles dist-app/Whisper Studio.app
 # and the drag-to-install DMG on every change that affects the shipped app,
 # entirely via macapp/build_app.sh + macapp/make_dmg.sh (the same scripts used
 # locally, so CI and a laptop build are byte-for-byte the same process).

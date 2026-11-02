@@ -20,7 +20,7 @@
 <body>
 <div id="c"></div>
 <script>
-/* Chart host — runs inside a `sandbox="allow-scripts"` iframe, so it has an
+/* Chart host, runs inside a `sandbox="allow-scripts"` iframe, so it has an
  * opaque origin and cannot reach the app's DOM, storage, or backend API.
  * A Vega-Lite spec is model-authored and therefore attacker-influenceable
  * (prompt injection through an attachment or a fetched page), which is why
@@ -80,7 +80,7 @@ function houseConfig(t) {
       gridOpacity: 1,
       gridWidth: 1,
     },
-    // Category axes get no grid — one gridline set is enough.
+    // Category axes get no grid, one gridline set is enough.
     axisX: { labelAngle: 0 },
     axisBand: { grid: false },
     axisPoint: { grid: false },
@@ -199,7 +199,7 @@ window.addEventListener('message', (e) => {
 
 // Re-render on a size change so the chart stays fitted when the chat pane is
 // resized, or (filling) when the user drags the chart taller or shorter.
-// Debounced — a drag fires dozens of these.
+// Debounced, a drag fires dozens of these.
 let resizeTimer = null;
 new ResizeObserver(() => {
   if (!lastSpec) return;

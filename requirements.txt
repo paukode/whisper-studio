@@ -71,7 +71,7 @@ huggingface_hub==1.18.0
 
 # Live browser preview: the assistant-driven preview tools (preview_start/
 # click/screenshot/etc.) run a headless Chromium via Playwright. Pip ships the
-# package only, not the browser binary — setup.sh runs `playwright install
+# package only, not the browser binary, setup.sh runs `playwright install
 # chromium` to fetch the build this pinned version expects (playwright 1.61.0 →
 # chromium v1228). Keep this pin and that download step in lockstep.
 playwright==1.61.0
@@ -82,7 +82,7 @@ playwright==1.61.0
 # transformers >= 5.7, gliner 0.2.29 allows < 5.17). Vectors search via
 # sqlite-vec, so the venv's Python must load SQLite extensions (setup.sh checks).
 gliner==0.2.29
-# GLiNER2 (fastino) — optional alternative on-device NER model, selectable per
+# GLiNER2 (fastino), optional alternative on-device NER model, selectable per
 # workspace (ner_model="gliner2"). Reuses the same torch/transformers runtime;
 # only adds peft/accelerate. English-strong; the default stays gliner_large.
 gliner2==1.3.2

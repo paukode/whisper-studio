@@ -332,7 +332,7 @@
     --space-5: 24px;
     --space-6: 32px;
 
-    /* Motion — the consent dialog's springy entrance */
+    /* Motion, the consent dialog's springy entrance */
     --ease-spring: cubic-bezier(0.34, 1.3, 0.64, 1);
 
     /* Z-index ladder: sidebar 10 < dropdown 900 < modal 1500. Toasts (2000,

@@ -1,4 +1,4 @@
-/* Terminal Panel — full-width bottom panel */
+/* Terminal Panel, full-width bottom panel */
 
 .ws-terminal-panel {
     position: relative;
@@ -178,7 +178,7 @@
     color: var(--text-secondary);
 }
 
-/* Worktree-session chip — shown when the chat is in an isolated worktree */
+/* Worktree-session chip, shown when the chat is in an isolated worktree */
 .ws-terminal-worktree-chip {
     margin-left: 6px;
     padding: 1px 6px;

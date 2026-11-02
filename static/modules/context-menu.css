@@ -1,4 +1,4 @@
-/* Context Menu — Generic reusable styles */
+/* Context Menu, Generic reusable styles */
 
 .ws-context-menu {
     position: fixed; z-index: 9999; min-width: 200px;
@@ -95,7 +95,7 @@
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
-   Compact variant — for menus that don't need icons or chunky padding
+   Compact variant, for menus that don't need icons or chunky padding
    (e.g. the sidebar session menu). Aims for a refined macOS / VS Code
    "File → New → New Window" look: narrow, subtle hover, no leading icons.
    Scoped via .ws-context-menu--compact so consumers like
@@ -106,7 +106,7 @@
     padding: 4px 0;
     font-size: var(--fs-small);
     border-radius: var(--radius-md);
-    /* No scroll gutter for short menus — only show when actually overflowing. */
+    /* No scroll gutter for short menus, only show when actually overflowing. */
     overflow: visible;
 }
 .ws-context-menu--compact .ws-ctx-item {
@@ -116,7 +116,7 @@
 /* Hide the icon column entirely so labels start flush left. */
 .ws-context-menu--compact .ws-ctx-icon { display: none; }
 
-/* Subtle hover that doesn't shout — neutral row tint, no white text. */
+/* Subtle hover that doesn't shout, neutral row tint, no white text. */
 .ws-context-menu--compact .ws-ctx-item:hover,
 .ws-context-menu--compact .ws-ctx-item.ws-ctx-active {
     background: var(--bg-hover);

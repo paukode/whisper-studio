@@ -1,5 +1,5 @@
 /* ================================================================
-   Whisper Studio — Core Styles
+   Whisper Studio: Core Styles
    Theme definitions are in modules/themes.css
    ================================================================ */
 
@@ -16,9 +16,9 @@ button, input, select, textarea { font-family: inherit; }
    reading. Reach for a token, not a literal px size, in new rules.
 
      --fs-caption   13px   timestamps · badges · chips · sub-meta
-     --fs-small     14px   secondary chrome — toolbar, dropdowns, meta
-     --fs-body      15px   default chrome/UI — sidebar items, form labels, menus
-     --fs-content   17px   reading — chat messages, editor, terminal
+     --fs-small     14px   secondary chrome, toolbar, dropdowns, meta
+     --fs-body      15px   default chrome/UI, sidebar items, form labels, menus
+     --fs-content   17px   reading, chat messages, editor, terminal
      --fs-title     19px   section titles / assistant H1
      --fs-h1        25px   modal & dialog headings
    ================================================================ */
@@ -238,7 +238,7 @@ body {
     background: var(--accent-live);
     box-shadow: 0 0 0 2px var(--accent-dim);
 }
-/* Idle "Ready": calm neutral dot, no alarming red halo — the transcription
+/* Idle "Ready": calm neutral dot, no alarming red halo, the transcription
    socket simply isn't connected until you record, which is not an error. */
 .status-dot.ready {
     background: var(--text-muted);
@@ -384,7 +384,7 @@ body {
 }
 
 /* ================================================================
-   AUDIO SOURCE PICKER — mic (always) + optional Chrome tab audio.
+   AUDIO SOURCE PICKER, mic (always) + optional Chrome tab audio.
    Popover reuses the theme-picker elevation + entrance keyframe.
    ================================================================ */
 .capture-source-wrap { position: relative; display: inline-block; }
@@ -447,7 +447,7 @@ body {
 }
 .capture-source-action.remove:hover { background: var(--accent-record-dim); }
 
-/* Native (macOS shell) per-app source list — refreshed on menu open;
+/* Native (macOS shell) per-app source list, refreshed on menu open;
    scrolls past a handful of entries so the popover stays compact. */
 .capture-source-apps { max-height: 220px; overflow-y: auto; }
 .capture-source-empty {
@@ -591,7 +591,7 @@ body {
 .panels .resize-handle.hidden { display: none; }
 
 /* While a splitter/dock drag is live (class set by src/utils/dragGuards.ts),
-   embedded content must not swallow mouse events — otherwise the drag's
+   embedded content must not swallow mouse events, otherwise the drag's
    mousemove/mouseup stream dies as soon as the cursor crosses an iframe or a
    PDF embed and the handle sticks to the cursor. */
 body.ws-embed-drag iframe,
@@ -612,13 +612,13 @@ body.ws-embed-drag embed {
 }
 .panel-header h2 svg { opacity: 0.5; }
 /* flex-wrap: the transcript header carries four controls (engine select,
- * speaker-count select, Export, Clear) which overflow a narrow panel —
+ * speaker-count select, Export, Clear) which overflow a narrow panel,
  * wrapping onto a second row beats clipping them. */
 .panel-header-actions {
     display: flex; gap: 6px; align-items: center;
     flex-wrap: wrap; justify-content: flex-end;
 }
-/* Live transcription-engine switch — styled to sit alongside the .btn-sm
+/* Live transcription-engine switch, styled to sit alongside the .btn-sm
  * Export/Clear buttons in the transcript panel header. */
 .transcript-engine-select {
     padding: 4px 8px; font-size: var(--fs-caption); font-weight: 500;
@@ -727,7 +727,7 @@ body.ws-embed-drag embed {
 .segment-translation-pending { color: var(--text-muted); }
 /* Marks a turn that started while the previous speaker was still talking:
  * the cut between them is an estimate, so the badge says so rather than
- * letting the transcript imply a clean boundary. Deliberately quiet — this
+ * letting the transcript imply a clean boundary. Deliberately quiet, this
  * is a caveat, not an error. */
 .segment-overlap-badge {
     float: left; margin: 2px 6px 0 0;
@@ -768,7 +768,7 @@ body.ws-embed-drag embed {
 }
 
 /* Live, word-by-word draft from the Parakeet streaming backend. It's a real
- * .transcript-segment row, so it already lines up under the speaker boxes —
+ * .transcript-segment row, so it already lines up under the speaker boxes,
  * same timestamp/speaker/text grid as committed segments. We only soften it so
  * it reads as "not yet committed": the text is dimmed + italic and carries a
  * blinking caret marking active transcription. The speaker rail keeps its full
@@ -939,7 +939,7 @@ input.segment-speaker {
     position: relative;
 }
 
-/* Attached-file chips rendered inside a user message bubble — mirrors the
+/* Attached-file chips rendered inside a user message bubble, mirrors the
  * ChatGPT / Claude.ai pattern of showing the file pinned to the message it
  * was sent with. Read-only (no × button), full filename on hover. */
 .msg-attachments {
@@ -1127,7 +1127,7 @@ input.segment-speaker {
 }
 /* Rich text in assistant messages */
 /* (heading sizes are defined in the second .chat-msg.assistant block
- * further down — kept there as the single source of truth for the
+ * further down, kept there as the single source of truth for the
  * assistant's typographic hierarchy.) */
 .chat-msg.assistant ul, .chat-msg.assistant ol { margin: 3px 0 3px 16px; padding: 0; }
 .chat-msg.assistant li { margin: 2px 0; }
@@ -1184,7 +1184,7 @@ input.segment-speaker {
        reflow into a giant vertical wall that defeats the max-height. */
     white-space: pre;
     /* Stop wheel-at-bottom from bubbling up and scrolling the outer
-       chat panel — important when a big streamed HTML block dominates
+       chat panel, important when a big streamed HTML block dominates
        the assistant message. */
     overscroll-behavior: contain;
 }
@@ -1262,7 +1262,7 @@ input.segment-speaker {
 .composer-bar { display: flex; align-items: center; gap: 6px; }
 .composer-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-shrink: 0; }
 
-/* Workflow cards (WS-D ultracode runtime) — inline preview + run. */
+/* Workflow cards (WS-D ultracode runtime), inline preview + run. */
 .workflow-card {
     border: 1px solid var(--border); border-radius: var(--radius-sm);
     padding: 12px 14px; margin: 8px 0; background: var(--bg-surface);
@@ -1322,7 +1322,7 @@ input.segment-speaker {
 .ci-finding-fix { display: flex; align-items: baseline; gap: 6px; color: var(--text-secondary, inherit); margin-top: 2px; }
 .ci-finding-fix-mark { display: inline-flex; align-self: center; flex-shrink: 0; color: var(--text-muted); }
 
-/* Goal banner (WS-E completion gate) — sits just above the composer. */
+/* Goal banner (WS-E completion gate), sits just above the composer. */
 .goal-banner {
     display: flex; align-items: center; gap: 8px;
     margin: 0 16px; padding: 6px 10px;
@@ -1396,14 +1396,14 @@ input.segment-speaker {
     color: #fff;
 }
 /* Pulse spread capped at 3px so it stays within the 8px gap between
- * buttons in .chat-input-row — at 6px the shadow visually overlapped the
+ * buttons in .chat-input-row, at 6px the shadow visually overlapped the
  * adjacent send / attach buttons. */
 @keyframes mic-pulse {
     0%, 100% { box-shadow: 0 0 0 0 var(--accent-record-dim); }
     50%      { box-shadow: 0 0 0 3px transparent; }
 }
 
-/* Dictation hint — shown under the input row while voice dictation is active.
+/* Dictation hint, shown under the input row while voice dictation is active.
    Surfaces the hands-free submit phrases so they are discoverable in context. */
 .dictation-hint {
     display: flex;
@@ -1443,7 +1443,7 @@ input.segment-speaker {
     display: none; flex-wrap: wrap; gap: 6px;
     padding-bottom: 8px;
 }
-/* Attachment chip — grows with content but caps the filename at a sane
+/* Attachment chip, grows with content but caps the filename at a sane
  * width. The label itself is the only ellipsized element so the chip box
  * always contains its own close button. */
 .attachment-chip {
@@ -1576,7 +1576,7 @@ input.segment-speaker {
     border-top: 1px solid var(--border);
 }
 
-/* Each step inside the card — slightly recessed compared to top-level
+/* Each step inside the card, slightly recessed compared to top-level
  * activity rows so the visual nesting reads "these belong to the card". */
 .agent-step {
     border: 1px solid var(--border);
@@ -1677,7 +1677,7 @@ input.segment-speaker {
 
 /* ─── Cron event card ─────────────────────────────────────────────────────
  * Inline rendering for a ChatMessage with role='cron_event'. Three
- * variants by event_type — `created` and `deleted` collapse to a
+ * variants by event_type, `created` and `deleted` collapse to a
  * single-line pill; `fired` is a collapsible card with the cron's
  * markdown output inside. Failures pre-open and switch to red accent
  * so the user notices.
@@ -1700,7 +1700,7 @@ input.segment-speaker {
     flex-shrink: 0;
 }
 
-/* Pill variants — cron_created / cron_deleted */
+/* Pill variants, cron_created / cron_deleted */
 .cron-event-pill {
     display: inline-flex;
     align-items: center;
@@ -1752,7 +1752,7 @@ input.segment-speaker {
     box-shadow: 0 0 0 1px color-mix(in srgb, var(--danger) 18%, transparent);
 }
 .cron-event-fired .cron-event-summary {
-    /* Informational header strip — not interactive. The full markdown
+    /* Informational header strip, not interactive. The full markdown
      * body is always rendered below, so this row just labels the run. */
     display: flex;
     align-items: center;
@@ -2211,7 +2211,7 @@ input.segment-speaker {
     min-width: 220px; max-height: 300px; overflow-y: auto;
     /* Cap the panel: a nowrap row (e.g. a deep workspace path under Recent)
        would otherwise widen the absolutely-positioned menu to fit and push
-       it past the window edge — bounded, the row ellipsizes instead. */
+       it past the window edge, bounded, the row ellipsizes instead. */
     max-width: min(420px, calc(100vw - 24px));
     /* Menus are not documents: without this, a click that drifts a pixel
        starts a text selection on the row label and swallows the click. */
@@ -2264,7 +2264,7 @@ input.segment-speaker {
     }
     .sidebar.collapsed { width: 0; min-width: 0; box-shadow: none; }
     /* Sits just under the drawer (z-index 100) and over the app, covering the
-       header too — so the toggle can't get trapped behind an open drawer. */
+       header too, so the toggle can't get trapped behind an open drawer. */
     .sidebar-scrim {
         display: block; position: fixed; inset: 0; z-index: 99;
         background: rgba(0, 0, 0, 0.45);
@@ -2470,7 +2470,7 @@ input.segment-speaker {
 .settings-item-actions .btn-sm { padding: 3px 8px; font-size: var(--fs-caption); }
 
 /* Base rule for the shared .settings-panel-header hook (title + optional
-   action buttons) — used by every settings panel that has one (Plugins,
+   action buttons), used by every settings panel that has one (Plugins,
    Import project, and any future one), not just the panel that happened to
    get patched first. It previously had NO layout rule at all, so a title
    and a button row (or a lone title before an intro paragraph) just
@@ -2604,11 +2604,11 @@ input.segment-speaker {
 }
 .settings-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
 /* Used both as a block-level intro paragraph (Feature Flags, Hooks,
-   Permissions, Workflows, Model mode — nothing below it had breathing room
+   Permissions, Workflows, Model mode, nothing below it had breathing room
    since this had no margin-bottom) and as an inline aside next to a label
    (cron run stats, save-status text). The inline call sites already set
    their own margin (0, or a left offset) via inline style, which wins over
-   this base rule in the cascade — so this margin-bottom only takes effect
+   this base rule in the cascade, so this margin-bottom only takes effect
    where nothing more specific overrides it, i.e. exactly the intro-paragraph
    case that needs it. */
 .settings-hint { font-size: var(--fs-caption); color: var(--text-muted); display: block; margin: 2px 0 12px; }
@@ -2671,7 +2671,7 @@ input.segment-speaker {
  * AppShell, so the slot already governs its width via its own grow
  * ratio. We just need the panel to fill the slot's *height*. The
  * legacy 22% / 58% flex-basis was inherited from when this lived
- * inside a row-flex .panels — in a column-flex parent it silently
+ * inside a row-flex .panels, in a column-flex parent it silently
  * became "height: 58%" and left a 42% blank strip below the tree. */
 .workspace-panel {
     flex: 1 1 auto; min-width: 180px;
@@ -2679,7 +2679,7 @@ input.segment-speaker {
     min-height: 0;
 }
 .workspace-panel.ws-ide-open {
-    /* No height constraint — fill the slot so the file tree and the
+    /* No height constraint, fill the slot so the file tree and the
      * editor both reach the bottom of the workspace pane. */
     max-width: none;
 }
@@ -2889,7 +2889,7 @@ input.segment-speaker {
 }
 .ws-markdown-preview img { max-width: 100%; }
 
-/* Notebook viewer — `.ipynb` cells rendered by NotebookViewer.tsx, which emits
+/* Notebook viewer, `.ipynb` cells rendered by NotebookViewer.tsx, which emits
    `notebook-*` classes. All colors resolve through theme tokens so it reads
    correctly in light and dark mode. */
 .notebook-viewer {
@@ -2919,7 +2919,7 @@ input.segment-speaker {
 }
 .notebook-cell:last-child { margin-bottom: 0; }
 
-/* Markdown cells read as prose — no monospace, softer background. */
+/* Markdown cells read as prose, no monospace, softer background. */
 .notebook-cell-markdown { background: var(--bg-primary); padding: 4px 16px; }
 
 /* Code cells: accent rail + monospace input, clearly distinct from markdown. */
@@ -3016,7 +3016,7 @@ input.segment-speaker {
     overflow-wrap: anywhere; max-height: 4.5em; overflow: hidden;
 }
 
-/* Local-model context-window badge — styled like the effort badge (it reuses
+/* Local-model context-window badge, styled like the effort badge (it reuses
    the .effort-pop* popover), in the accent color. Turns amber above 16K
    to echo the memory warning shown in the popover. */
 .ctx-badge {
@@ -3089,7 +3089,7 @@ input.segment-speaker {
 }
 .help-tip:hover .help-tip-bubble, .help-tip:focus .help-tip-bubble { opacity: 1; pointer-events: auto; }
 
-/* "+ More" overflow popover — the bar's less-frequent controls live here. */
+/* "+ More" overflow popover, the bar's less-frequent controls live here. */
 .more-btn { position: relative; }
 
 .more-pop { min-width: 232px; max-width: 300px; }
@@ -3229,7 +3229,7 @@ input.segment-speaker {
     margin-right: 8px;
 }
 
-/* Permission explainer — risk levels */
+/* Permission explainer, risk levels */
 .risk-badge {
     display: inline-block; padding: 1px 7px; border-radius: var(--radius-sm);
     font-size: var(--fs-caption); font-weight: 500; letter-spacing: 0.08em;
@@ -3290,7 +3290,7 @@ input.segment-speaker {
 .ws-recent { margin-top: 12px; display: flex; flex-direction: column; min-height: 0; }
 /* Resized dialog: the browser and the workspace list share the spare height
    instead of stopping at their 260px caps. The floor lives on the CONTAINERS
-   (their lists then shrink to whatever is left, staying the scrollers) — a floor
+   (their lists then shrink to whatever is left, staying the scrollers), a floor
    on the lists themselves makes them overflow the box they sit in and paint over
    the rows below. Squeeze past the floor and the body scrolls instead. */
 .ws-connect-dialog.is-sized .ws-browser,
@@ -3942,7 +3942,7 @@ input.segment-speaker {
     white-space: pre-wrap;
     word-break: break-word;
 }
-/* Font matches .ws-file-tree above it — the two lists read as one
+/* Font matches .ws-file-tree above it, the two lists read as one
  * column, so they must not differ in family or size. */
 .ws-git-change-item {
     display: flex;
@@ -4342,7 +4342,7 @@ button.ws-git-status-badge:hover {
     box-shadow: var(--shadow-md);
 }
 
-/* ---- Chat messages: staged entrance (committed messages only —
+/* ---- Chat messages: staged entrance (committed messages only,
         the streaming container renders separately and must not
         re-animate on every token) ---- */
 @keyframes msgIn {
@@ -4623,7 +4623,7 @@ button.ws-git-status-badge:hover {
 }
 
 /* ════════════════════════════════════════════════════════════════
-   Buddy companion — cosmetic, client-animated SVG creature.
+   Buddy companion, cosmetic, client-animated SVG creature.
    No server polling; all motion is CSS. Reflects the per-machine roll.
    ════════════════════════════════════════════════════════════════ */
 .buddy-widget {
@@ -4691,7 +4691,7 @@ button.ws-git-status-badge:hover {
 @keyframes buddySpin { to { transform: rotate(360deg); } }
 .buddy-propeller { animation: buddySpin 0.7s linear infinite; }
 
-/* Rarity aura — only the upper tiers glow, so legendary feels special. */
+/* Rarity aura, only the upper tiers glow, so legendary feels special. */
 .buddy-creature[data-rarity="epic"]      { filter: drop-shadow(0 0 5px color-mix(in srgb, #da77f2 60%, transparent)); }
 .buddy-creature[data-rarity="legendary"] { filter: drop-shadow(0 0 7px color-mix(in srgb, #ffa94d 75%, transparent)); }
 .buddy-creature[data-shiny="1"]          { filter: drop-shadow(0 0 6px rgba(255,255,255,0.7)); }
@@ -4984,10 +4984,10 @@ button.ws-git-status-badge:hover {
 }
 
 /* The select-mode action row: replaces search+Import+Select inside
-   .session-toolbar (same row, same position — right above the list — not a
+   .session-toolbar (same row, same position, right above the list, not a
    separate bar elsewhere), so the select-all checkbox, Import, Export, and
    Delete are always in one place regardless of mode. Wraps onto a second
-   line at the default (narrow) sidebar width instead of overflowing —
+   line at the default (narrow) sidebar width instead of overflowing,
    checkbox+count don't grow, so the action buttons consistently wrap
    together as one group rather than splitting mid-button. */
 .session-select-bar {
@@ -5332,7 +5332,7 @@ button.ws-git-status-badge:hover {
 /* Same pill as the Local badge, deliberately NOT accent-coloured: an on-device
    model too small to be given the tool pool, so it installs (and runs)
    chat-only. Muted rather than amber because it sits directly beside the author
-   / Local badges — in the dark theme the warn accent is close enough to
+   / Local badges, in the dark theme the warn accent is close enough to
    --accent that it read as another decorative chip instead of a qualifier. All
    three colour channels are restated; overriding only `color` would leave the
    accent-tinted fill and border of the base badge behind it. */
@@ -5645,7 +5645,7 @@ button.ws-git-status-badge:hover {
 }
 
 /* ============================================================
- * Notifications bell — header dropdown over the durable
+ * Notifications bell, header dropdown over the durable
  * notify_user log (/api/notifications). Same elevated-panel
  * look as the background-tasks panel.
  * ============================================================ */
