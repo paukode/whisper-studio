@@ -187,11 +187,12 @@ def test_ensure_available_explains_missing_binary(monkeypatch):
     assert "setup.sh" in str(e.value)
 
 
-def test_ensure_available_accepts_unknown_build(monkeypatch):
-    """An unparseable version must not block startup."""
+def test_ensure_available_refuses_an_unknown_build(monkeypatch):
+    """An unreadable build used to count as "probably fine"."""
     monkeypatch.setattr(LS, "binary_path", lambda: "/usr/bin/llama-server")
     monkeypatch.setattr(LS, "installed_build", lambda: None)
-    assert LS.ensure_available() == "/usr/bin/llama-server"
+    with pytest.raises(LS.LlamaServerUnavailable, match="Could not read the build"):
+        LS.ensure_available()
 
 
 # ── one pinned build for the Mac app and setup.sh ────────────────────────────
@@ -279,7 +280,7 @@ def test_the_gate_reads_the_build_never_a_semantic_version(tmp_path, monkeypatch
     exe = _stand_in_llama_server(tmp_path, output)
     monkeypatch.setenv("WHISPER_LLAMA_SERVER_PATH", exe)
     assert LS.installed_build() == build
-    if build is None or build >= LS.MIN_BUILD:
+    if build is not None and build >= LS.MIN_BUILD:
         assert LS.ensure_available() == exe
     else:
         with pytest.raises(LS.LlamaServerUnavailable):

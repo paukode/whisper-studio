@@ -99,32 +99,30 @@ def binary_path() -> str | None:
 
 
 def installed_build() -> int | None:
-    """The installed build number, or None if it can't be determined.
+    """The installed build number, or None when there is no binary or its
+    ``--version`` output names no build (ensure_available refuses both).
 
     llama-server prints its build to stderr and also loads a GPU backend on
-    ``--version``, so this is best-effort and short-timeout: an unknown build is
-    treated as "probably fine" rather than blocking startup.
+    ``--version``. A ``--version`` that cannot run raises
+    LlamaServerUnavailable with the reason.
     """
     exe = binary_path()
     if not exe:
         return None
     try:
         out = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=60)
-        blob = f"{out.stderr}\n{out.stdout}"
-    except Exception as e:  # pragma: no cover - environment dependent
-        log.debug("llama-server --version failed: %s", e)
-        return None
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise LlamaServerUnavailable(f"Could not run '{exe} --version': {e}") from e
+    blob = f"{out.stderr}\n{out.stdout}"
     import re
 
-    # MIN_BUILD compares the build number. Since llama.cpp took semantic
-    # versions it prints "version: 0.5.0 (build 10350, commit 7fe450e)", before
-    # that "version: 10090 (7347430f4)", and older builds "build: 3901" or a bare
-    # "b3901" tag. A semantic version's major is never the build, so "version:"
-    # only counts when the "(" of the commit follows the number.
-    m = (
-        re.search(r"^\s*version:\s*(\d+)\s*\(", blob, re.I | re.M)
-        or re.search(r"build[:\s]+(\d+)", blob, re.I)
-        or re.search(r"\bb(\d{4,})\b", blob)
+    # MIN_BUILD compares the build number, read the way setup.sh's
+    # llama_server_build reads it: "version: 0.5.0 (build 10350, commit
+    # 7fe450e)" since llama.cpp took semantic versions, "version: 10090
+    # (7347430f4)" before. A semantic version's major is never the build, so
+    # "version:" only counts when the "(" of the commit follows the number.
+    m = re.search(r"^\s*version:\s*(\d+)\s*\(", blob, re.I | re.M) or re.search(
+        r"build[:\s]+(\d+)", blob, re.I
     )
     return int(m.group(1)) if m else None
 
@@ -138,7 +136,12 @@ def ensure_available() -> str:
             "Run 'bash setup.sh', which installs the pinned llama.cpp build."
         )
     build = installed_build()
-    if build is not None and build < MIN_BUILD:
+    if build is None:
+        raise LlamaServerUnavailable(
+            f"Could not read the build of {exe} from its --version output, so it may be "
+            f"older than build {MIN_BUILD}. Run 'bash setup.sh' to install the pinned build."
+        )
+    if build < MIN_BUILD:
         raise LlamaServerUnavailable(
             f"llama-server build {build} is too old for current model architectures "
             f"(need >= {MIN_BUILD}; older builds fail with 'unknown model "
