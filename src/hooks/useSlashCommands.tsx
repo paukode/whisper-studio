@@ -252,8 +252,12 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
               useUIStore.getState().pushDialog({
                 kind: 'open', title: false, size: 'lg', body: <ContextReportPanel report={r} />,
               });
-            } catch {
-              addToast({ type: 'error', message: 'Context report failed.', duration: 3000 });
+            } catch (e) {
+              addToast({
+                type: 'error',
+                message: e instanceof Error ? e.message : 'Context report failed.',
+                duration: 3000,
+              });
             }
           })();
           return true;

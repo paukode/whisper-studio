@@ -10,7 +10,7 @@ import logging
 import os
 import sqlite3
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 log = logging.getLogger("whisper-studio")
 
@@ -257,7 +257,7 @@ async def doctor(model: str = None):
 
 
 @router.get("/context")
-async def doctor_context(question: str = ""):
+async def doctor_context():
     """Rightsize the prompt: per-section cost, and what is being paid for twice.
 
     The credentials/connectivity checks above catch things that fail loudly.
@@ -269,7 +269,7 @@ async def doctor_context(question: str = ""):
     from server.workspace import get_workspace_path
 
     try:
-        return build_context_report(ws_path=get_workspace_path(), question=question)
-    except Exception as e:  # noqa: BLE001 — a diagnostics endpoint must not 500
+        return build_context_report(ws_path=get_workspace_path())
+    except Exception as e:  # noqa: BLE001 - any failure is reported with its reason
         log.warning("context report failed: %s", e)
-        return {"error": str(e)}
+        raise HTTPException(status_code=500, detail=f"Context report failed: {e}") from e
