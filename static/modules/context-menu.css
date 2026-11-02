@@ -94,9 +94,6 @@
     border-radius: 3px; outline: none; box-sizing: border-box;
 }
 
-/* Cut file dimming */
-.ws-tree-cut { opacity: 0.45; }
-
 /* ─────────────────────────────────────────────────────────────────────────
    Compact variant — for menus that don't need icons or chunky padding
    (e.g. the sidebar session menu). Aims for a refined macOS / VS Code

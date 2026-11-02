@@ -60,8 +60,6 @@
 /* ---- Body text ---- */
 .markdown-content p { margin: 0.7em 0; }
 
-/* Compact the agent/team event log rendering to caption size. */
-.team-event-text .markdown-content { font-size: var(--fs-caption); line-height: 1.45; }
 .markdown-content ul,
 .markdown-content ol { margin: 0.6em 0; padding-left: 1.5em; }
 .markdown-content li { margin: 0.25em 0; }

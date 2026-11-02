@@ -11,7 +11,7 @@ button, input, select, textarea { font-family: inherit; }
 /* ================================================================
    FONT-SIZE SCALE  (single source of truth for typography)
    ----------------------------------------------------------------
-   Every font size flows through these seven tokens — no literal px
+   Every font size flows through these six tokens — no literal px
    sizes remain in the stylesheets. The scale is anchored at a 17px
    reading body, one step above the web default, for comfortable reading.
    Never introduce a literal px size; always reach for a token.
@@ -22,7 +22,6 @@ button, input, select, textarea { font-family: inherit; }
      --fs-content   17px   reading — chat messages, editor, terminal
      --fs-title     19px   section titles / assistant H1
      --fs-h1        25px   modal & dialog headings
-     --fs-hero      44px   one-of-a-kind welcome banner only
    ================================================================ */
 :root {
     --fs-caption: 13px;
@@ -31,7 +30,6 @@ button, input, select, textarea { font-family: inherit; }
     --fs-content: 17px;
     --fs-title: 19px;
     --fs-h1: 25px;
-    --fs-hero: 44px;
 }
 
 body {
@@ -918,14 +916,6 @@ input.segment-speaker {
 }
 .chat-panel-active .chat-welcome-center { display: none; }
 .chat-panel-active #chatPanelHeader { display: flex !important; }
-
-.chat-welcome {
-    color: var(--text-muted); font-size: var(--fs-small); line-height: 1.6;
-    padding: 14px 16px;
-    background: var(--bg-elevated);
-    border-radius: var(--radius-lg);
-    border: 1px solid var(--border);
-}
 
 .chat-msg {
     padding: 10px 14px; border-radius: var(--radius-lg);
@@ -2021,9 +2011,6 @@ input.segment-speaker {
     display: flex; align-items: center; gap: 6px;
     padding: 0; flex-wrap: wrap; flex: 1; min-width: 0;
 }
-/* Pills separate themselves; the old dividers are not drawn. */
-.toolbar-sep { display: none; }
-
 /* ---- Composer groups (src/components/chat/ComposerGroups.tsx) ----
    One row, never two: the groups shrink in a set order as the composer
    narrows (container queries on .composer-box), and every segment keeps
@@ -2352,22 +2339,6 @@ input.segment-speaker {
     border-radius: var(--radius-lg); transition: all 0.15s;
 }
 .settings-close:hover { background: var(--bg-hover); color: var(--text-primary); }
-
-.settings-tabs {
-    display: flex; border-bottom: 1px solid var(--border);
-    padding: 0 20px; gap: 0;
-}
-.settings-tab {
-    padding: 9px 13px; font-size: var(--fs-small); font-weight: 600;
-    color: var(--text-muted); background: none; border: none;
-    border-bottom: 2px solid transparent;
-    cursor: pointer; transition: all 0.15s;
-    letter-spacing: 0.3px;
-}
-.settings-tab:hover { color: var(--text-secondary); }
-.settings-tab.active {
-    color: var(--accent); border-bottom-color: var(--accent);
-}
 
 /* ---- Grouped left rail (replaces the wrapping top tab strip) ----
    Below the header the dialog splits into a fixed, non-scrolling rail of
@@ -3116,8 +3087,6 @@ input.segment-speaker {
    scrolls). Their option lists are short, so no scrolling is lost. */
 .effort-pop { overflow: visible; max-height: none; }
 
-.toolbar-dropdown-sep { border-top: 1px solid var(--border); margin: 4px 6px; }
-
 /* "?" help tip: hover, keyboard focus, or touch (tap focuses the button)
    shows the bubble: a solid card in the theme's colors, below and to the
    right of the "?", so it is never cut off by the edge above it. When
@@ -3757,20 +3726,6 @@ input.segment-speaker {
 
 /* Voice-to-code */
 
-/* ================================================================
-   WORKSPACE TERMINAL
-   ================================================================ */
-.ws-terminal {
-    background: var(--bg-code);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    padding: 8px 0;
-    margin: 6px 0;
-    font-family: var(--font-mono);
-    font-size: var(--fs-small);
-    overflow: hidden;
-}
-
 /* Write/create specific verb colors */
 
 /* Diff stats inline */
@@ -3952,9 +3907,6 @@ input.segment-speaker {
 .user-question-block + .user-question-block {
     margin-top: 2px; padding-top: 12px; border-top: 1px solid var(--border);
 }
-.user-question-num {
-    font-size: var(--fs-caption); text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted);
-}
 .user-question-opts { display: flex; flex-direction: column; gap: 6px; }
 .uq-opt {
     display: flex; align-items: center; gap: 10px; width: 100%;
@@ -4042,14 +3994,6 @@ input.segment-speaker {
 }
 
 /* ── Tool call toggle button ─────────────────────────────────────────────── */
-
-/* ---- Git Indicator ---- */
-#gitBranchName {
-    max-width: 120px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
 
 /* Git Changes Panel (below file tree) */
 .ws-git-changes {
@@ -4534,14 +4478,6 @@ button.ws-git-status-badge:hover {
     box-shadow: var(--shadow-lg);
     animation: wdDialogIn 0.34s var(--ease-spring);
 }
-
-/* Tab strip: wrap to a second row so every tab stays visible (there are 12),
-   instead of overflowing/clipping the later ones off the modal edge. */
-.settings-tabs {
-    flex-wrap: wrap;
-    row-gap: 0;
-}
-.settings-tab { white-space: nowrap; }
 
 /* ---- Message actions: revealed on hover or keyboard focus ---- */
 .msg-actions {
@@ -5455,33 +5391,6 @@ button.ws-git-status-badge:hover {
     to { transform: rotate(360deg); }
 }
 
-/* ---- Toolbar dropdowns: per-menu sizing ---- */
-
-/* Mode menu lists exactly seven fixed rows — show them all, no scroll. */
-#modeDropdown {
-    max-height: none;
-}
-
-/* Skills + MCP menus share one catalog pattern: wider panel, readable
-   wrapped descriptions, and a height that shows "Manage" + the header +
-   about five entries before scrolling. Any future MCP servers or skills
-   inherit this automatically. */
-#skillsDropdown,
-#mcpDropdown {
-    min-width: 320px;
-    max-height: 348px;
-}
-
-#skillsDropdown .toolbar-dropdown-item-desc,
-#mcpDropdown .toolbar-dropdown-item-desc {
-    white-space: normal;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-    line-height: 1.45;
-}
-
 .skill-handle {
     margin-left: 8px;
     font-size: var(--fs-caption);
@@ -6068,29 +5977,6 @@ button.ws-git-status-badge:hover {
 .asb-ahead { color: var(--accent-live); }
 .asb-behind { color: var(--accent-record); }
 .asb-spacer { flex: 1 1 auto; }
-.asb-context {
-    font-variant-numeric: tabular-nums;
-}
-.asb-ctx-track {
-    display: inline-block;
-    width: 48px;
-    height: 6px;
-    border-radius: 3px;
-    background: var(--border);
-    overflow: hidden;
-    vertical-align: middle;
-}
-.asb-ctx-fill {
-    display: block;
-    height: 100%;
-    background: var(--accent);
-    transition: width 0.3s ease;
-}
-.asb-ctx-fill.hot { background: var(--accent-record); }
-.asb-tokens {
-    font-variant-numeric: tabular-nums;
-    opacity: 0.85;
-}
 .asb-tasks {
     background: none;
     border: 1px solid var(--border);

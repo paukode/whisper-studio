@@ -75,18 +75,6 @@
 
 .ws-terminal-tab-label { cursor: default; }
 
-.ws-terminal-tab-rename {
-    background: var(--bg-primary);
-    border: 1px solid var(--accent);
-    color: var(--text-primary);
-    font-size: var(--fs-caption);
-    font-family: inherit;
-    padding: 0 4px;
-    width: 80px;
-    border-radius: 2px;
-    outline: none;
-}
-
 /* Header actions (new terminal, close panel) */
 .ws-terminal-actions {
     display: flex;
