@@ -161,6 +161,50 @@ def test_watch_max_polls_times_out(monkeypatch):
     assert out["timed_out"] is True
 
 
+def _flaky(answers):
+    """A provider call that walks `answers`; an exception instance is raised."""
+    seq = iter(answers)
+
+    def call(*_a, **_k):
+        item = next(seq)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    return call
+
+
+def test_one_failed_poll_does_not_end_the_watch(monkeypatch):
+    """A transient gh failure mid-watch used to keep polling; it still does."""
+    blip = provider.GhError("gh run view failed (exit 1): connection reset")
+    done = {"run_id": 1, "status": "completed", "conclusion": "success", "jobs": []}
+    monkeypatch.setattr(provider, "latest_run", _flaky([blip, {"run_id": 1, "status": "queued"}]))
+    monkeypatch.setattr(
+        provider,
+        "get_run",
+        _flaky([{"run_id": 1, "status": "in_progress", "jobs": []}, blip, blip, done]),
+    )
+    out = asyncio.run(watcher.watch_branch("b", cwd="/repo", sleep=_no_sleep(), max_polls=10))
+    assert out["status"] == "completed" and out["conclusion"] == "success"
+
+
+def test_gh_failing_in_a_row_fails_the_watch_with_its_message(monkeypatch):
+    err = provider.GhError("gh run view failed (exit 4): gh auth login")
+    monkeypatch.setattr(provider, "latest_run", lambda *a, **k: {"run_id": 1, "status": "queued"})
+    monkeypatch.setattr(provider, "get_run", _flaky([err] * watcher._MAX_GH_FAILURES))
+    with pytest.raises(provider.GhError, match="gh auth login"):
+        asyncio.run(watcher.watch_branch("b", cwd="/repo", sleep=_no_sleep(), max_polls=10))
+
+
+def test_a_failed_last_run_lookup_is_an_error_not_no_run(monkeypatch):
+    """When the last lookup failed, the runs are unknown, not absent."""
+    blip = provider.GhError("gh run list failed (exit 1): timeout")
+    answers = [None] * (watcher._RESOLVE_RETRIES - 1) + [blip]
+    monkeypatch.setattr(provider, "latest_run", _flaky(answers))
+    with pytest.raises(provider.GhError, match="could not list the runs for b"):
+        asyncio.run(watcher.watch_branch("b", cwd="/repo", sleep=_no_sleep()))
+
+
 def test_registry_accepts_ci_kind(tmp_path, monkeypatch):
     monkeypatch.setenv("WHISPER_DATA_DIR", str(tmp_path))
     from server.tasks import registry

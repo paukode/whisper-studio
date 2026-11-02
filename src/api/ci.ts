@@ -50,7 +50,14 @@ export interface CIWatchState {
   status: string; // task status: running | completed | failed | stopped | interrupted
   terminal: boolean;
   branch: string;
-  run: (CIRun & { failed_jobs?: string[]; timed_out?: boolean; cancelled?: boolean }) | null;
+  run:
+    | (CIRun & {
+        failed_jobs?: string[];
+        timed_out?: boolean;
+        cancelled?: boolean;
+        error?: string | null;
+      })
+    | null;
 }
 
 /** Re-attach to the EXACT run a watch followed (survives reload), by task id. */

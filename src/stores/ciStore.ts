@@ -18,6 +18,8 @@ export interface CIWatch {
   timed_out: boolean;
   cancelled: boolean;
   terminal: boolean;
+  /** Why the watch or the status lookup failed (gh's message), else ''. */
+  error: string;
 }
 
 interface CIStoreState {
@@ -39,6 +41,7 @@ const EMPTY: CIWatch = {
   timed_out: false,
   cancelled: false,
   terminal: false,
+  error: '',
 };
 
 export const useCIStore = create<CIStoreState>((set) => ({
@@ -83,6 +86,7 @@ export const useCIStore = create<CIStoreState>((set) => ({
             failing: Boolean(payload.failing),
             timed_out: Boolean(payload.timed_out),
             cancelled: Boolean(payload.cancelled),
+            error: typeof payload.error === 'string' ? payload.error : '',
             terminal: true,
           },
         },

@@ -485,8 +485,9 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
                 standalone: true,
               });
             }
-          } catch {
-            addToast({ type: 'error', message: 'CI unavailable — is the GitHub CLI (gh) installed and authed?', duration: 3500 });
+          } catch (e) {
+            const reason = e instanceof Error ? e.message : String(e);
+            addToast({ type: 'error', message: `CI failed: ${reason}`, duration: 6000 });
           }
         })();
         return true;
