@@ -14,14 +14,11 @@ import { useUIStore } from '@/stores/uiStore';
  * AudioContext, fully torn down on stop().
  */
 export interface UseChatInputMicOptions {
-  /** Called with each transcript fragment as it arrives from the server. */
   /** Called for each transcript update. `isFinal` is false for the live,
    *  word-by-word interim draft (replaces the prior draft) and true for a
    *  settled sentence (commit it). Mirrors the meeting recorder's
    *  interim/transcript split so dictation reveals word-by-word. */
   onTranscript: (text: string, isFinal: boolean) => void;
-  /** Called when an unrecoverable error occurs (e.g. mic permission denied). */
-  onError?: (err: Error) => void;
   /** Optional session id — when set, server keeps speaker profiles in
    *  the per-session bucket so reconnects don't lose voice memory. */
   sessionId?: string | null;
@@ -45,7 +42,7 @@ const CHUNK_SECONDS = 0.5;
 const CHUNK_SAMPLES = Math.round(CHUNK_SECONDS * SAMPLE_RATE);
 
 export function useChatInputMic(opts: UseChatInputMicOptions): UseChatInputMicResult {
-  const { onTranscript, onError, sessionId } = opts;
+  const { onTranscript, sessionId } = opts;
 
   const [isRecording, setIsRecording] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
@@ -275,12 +272,11 @@ export function useChatInputMic(opts: UseChatInputMicOptions): UseChatInputMicRe
       if (cancelled()) { teardown(); return; }
       const e = err instanceof Error ? err : new Error(String(err));
       setError(e.message);
-      onError?.(e);
       teardown();
       setIsConnecting(false);
       setIsRecording(false);
     }
-  }, [isRecording, isConnecting, flushPcm, teardown, onError, sessionId]);
+  }, [isRecording, isConnecting, flushPcm, teardown, sessionId]);
 
   const toggle = useCallback(() => {
     if (isRecording || isConnecting) stop();
