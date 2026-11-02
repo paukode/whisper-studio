@@ -185,7 +185,7 @@ export const PermissionsPanel: React.FC = () => {
     void saveMode.run(async () => {
       await useSettingsStore.getState().setPermissionMode(mode);
     });
-  }, [mode, updateConfig, saveMode]);
+  }, [mode, saveMode]);
 
   const handleSaveNetworkPolicy = useCallback(() => {
     const custom_allowed_domains = customDomainsText
