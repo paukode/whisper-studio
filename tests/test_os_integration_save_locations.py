@@ -74,9 +74,9 @@ def test_open_with_still_rejects_paths_outside_every_root(tmp_path, monkeypatch)
     assert resp.status_code == 404
 
 
-def test_save_locations_source_failure_is_non_fatal(tmp_path, monkeypatch):
-    # If load_save_locations() ever raised, it must not break /open-with for
-    # files reachable through the workspace/indexed roots.
+def test_a_failing_roots_source_is_an_error_not_a_404(tmp_path, monkeypatch):
+    """A failing index store or save-locations read used to be skipped, so a
+    file in an indexed folder answered 404 'File not found'."""
     ws = tmp_path / "ws"
     ws.mkdir()
     f = ws / "in-workspace.txt"
@@ -90,7 +90,8 @@ def test_save_locations_source_failure_is_non_fatal(tmp_path, monkeypatch):
     monkeypatch.setattr(os_integration, "load_save_locations", _boom)
 
     with patch("server.workspace.routes.os_integration.subprocess.Popen") as popen:
-        resp = _client().post("/api/workspace/open-with", json={"path": str(f)})
+        client = TestClient(_client().app, raise_server_exceptions=False)
+        resp = client.post("/api/workspace/open-with", json={"path": str(f)})
 
-    assert resp.status_code == 200
-    popen.assert_called_once_with(["open", str(f)])
+    assert resp.status_code == 500
+    popen.assert_not_called()

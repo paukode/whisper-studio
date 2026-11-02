@@ -84,25 +84,18 @@ def _resolve_indexed_file(path: str) -> str | None:
     Grounded-index citations link files by *absolute* path, and those files can
     live in an indexed folder that is not the connected workspace (or with no
     workspace connected at all). So an absolute path is accepted when it sits
-    inside the connected workspace or any known indexed workspace — the same
-    trust boundary /reveal uses. A relative path resolves against the connected
-    workspace. Returns the realpath of an existing file, or None.
+    inside the connected workspace or any known indexed workspace (the
+    /reveal roots without the save_file folders). A relative path resolves
+    against the connected workspace. Returns the realpath of an existing file,
+    or None.
     """
     if not path:
         return None
     if os.path.isabs(path):
         full = os.path.realpath(path)
-        roots: list[str] = []
-        ws = get_workspace_path()
-        if ws:
-            roots.append(os.path.realpath(ws))
-        try:  # lazy import to avoid a workspace<->index module cycle
-            from server.index import store as _index_store
+        from .os_integration import _inside_any, allowed_roots
 
-            roots += [os.path.realpath(r) for r in _index_store.list_indexed_workspaces()]
-        except Exception:
-            pass
-        inside = any(full == r or full.startswith(r + os.sep) for r in roots)
+        inside = _inside_any(full, allowed_roots(include_save_locations=False))
         if not inside or not os.path.isfile(full):
             return None
         return full

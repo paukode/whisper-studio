@@ -135,7 +135,6 @@ def _isolate_app_databases(tmp_path_factory, monkeypatch, _db_template):
 _WS_STATE_MODULES = (
     "server.workspace.paths",
     "server.workspace.state",
-    "server.workspace.routes.recent",
     "server.workspace",
 )
 

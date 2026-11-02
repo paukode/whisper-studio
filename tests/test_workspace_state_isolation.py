@@ -17,7 +17,6 @@ import os
 
 from server.infrastructure.paths import data_root
 from server.workspace import state
-from server.workspace.routes import recent
 
 
 def _real(filename: str) -> str:
@@ -33,12 +32,6 @@ def test_workspace_state_paths_are_redirected_away_from_the_real_data_root():
         live = getattr(state, attr)
         assert live != _real(filename)
         assert not live.startswith(data_root()), f"{attr} still points inside the real app home"
-
-
-def test_the_route_module_copy_is_redirected_too():
-    """server/workspace/routes/recent.py imports the constant by value, so the
-    source module alone is not enough."""
-    assert recent.RECENT_WORKSPACES_PATH == state.RECENT_WORKSPACES_PATH
 
 
 def test_connect_then_disconnect_leaves_the_real_config_untouched(tmp_path):

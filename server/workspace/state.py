@@ -57,12 +57,35 @@ def _write_json_atomically(path: str, data) -> None:
         raise
 
 
-def load_workspace_config() -> dict:
+def _read_json_state(path: str, kind: type, missing):
+    """Read one of the small workspace state files.
+
+    A missing file is the only expected case and gives ``missing``. A file
+    that cannot be read, does not parse, or holds the wrong JSON type raises
+    ValueError naming the file, so a damaged file never reads as "nothing
+    connected" and is never overwritten with that default by the next save.
+    """
     try:
-        with open(WORKSPACE_CONFIG_PATH) as f:
-            return json.load(f)
-    except Exception:
-        return {"path": None}
+        with open(path) as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        return missing
+    except (OSError, ValueError) as e:
+        raise ValueError(f"Could not read {path}: {e}") from e
+    if not isinstance(data, kind):
+        raise ValueError(f"Could not read {path}: expected a JSON {kind.__name__}")
+    return data
+
+
+def _read_path_list(path: str) -> list[str]:
+    data = _read_json_state(path, list, [])
+    if not all(isinstance(p, str) for p in data):
+        raise ValueError(f"Could not read {path}: expected a list of folder paths")
+    return data
+
+
+def load_workspace_config() -> dict:
+    return _read_json_state(WORKSPACE_CONFIG_PATH, dict, {"path": None})
 
 
 def save_workspace_config(config: dict):
@@ -243,11 +266,11 @@ def get_workspace_path() -> str | None:
 
 
 def load_recent_workspaces() -> list[str]:
-    try:
-        with open(RECENT_WORKSPACES_PATH) as f:
-            return json.load(f)
-    except Exception:
-        return []
+    return _read_path_list(RECENT_WORKSPACES_PATH)
+
+
+def save_recent_workspaces(recent: list[str]) -> None:
+    _write_json_atomically(RECENT_WORKSPACES_PATH, recent)
 
 
 def save_recent_workspace(path: str):
@@ -256,7 +279,7 @@ def save_recent_workspace(path: str):
         recent.remove(path)
     recent.insert(0, path)
     recent = recent[:10]
-    _write_json_atomically(RECENT_WORKSPACES_PATH, recent)
+    save_recent_workspaces(recent)
 
 
 def _workspace_prompt_payload(tool_name: str, tool_input: dict) -> str:
@@ -389,11 +412,7 @@ def load_save_locations() -> list[str]:
     list — never 'connected' or 'indexed' — that lets a file saved this way
     stay clickable/revealable via /open-with and /reveal afterward without
     the heavyweight persistent-workspace machinery."""
-    try:
-        with open(SAVE_LOCATIONS_PATH) as f:
-            return json.load(f)
-    except Exception:
-        return []
+    return _read_path_list(SAVE_LOCATIONS_PATH)
 
 
 def record_save_location(path: str) -> None:
