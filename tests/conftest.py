@@ -191,7 +191,8 @@ def _drop_cached_bedrock_clients():
             infra._BEDROCK_CLIENTS.clear()
     recall = sys.modules.get("server.memory.recall")
     if recall is not None:
-        recall._reset_recall_client_cache()
+        with recall._RECALL_CLIENT_LOCK:
+            recall._RECALL_CLIENTS.clear()
     labels = sys.modules.get("server.chat.engine.activity_labels")
     if labels is not None:
         with labels._CLIENT_LOCK:

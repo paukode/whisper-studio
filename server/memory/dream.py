@@ -134,13 +134,12 @@ def release_lock(memory_dir: str) -> None:
         pass
 
 
-async def dream_consolidate(memory_dir: str, *, scope: str, model_id: str) -> str:
-    """Run dream consolidation over one memory tier. Returns summary of changes."""
-    if not should_consolidate(memory_dir):
-        return "Consolidation not needed yet (requires 24h + 5 turn-ends since last run)."
-
+async def dream_consolidate(memory_dir: str, *, scope: str) -> None:
+    """Run dream consolidation over one memory tier (the caller checked it is
+    due) and log the outcome."""
     if not acquire_lock(memory_dir):
-        return "Consolidation already in progress (locked by another process)."
+        log.info("Dream consolidation (%s) already in progress, skipped", scope)
+        return
 
     try:
         from server.agents.runtime import run_agent
@@ -164,26 +163,18 @@ async def dream_consolidate(memory_dir: str, *, scope: str, model_id: str) -> st
 
         if result.status == "completed":
             log.info("Dream consolidation (%s) completed: %d turns", scope, result.turns_used)
-            return f"Consolidation complete. {result.turns_used} turns used.\n\n{result.output}"
         else:
             log.warning("Dream consolidation %s: %s", result.status, result.output[:200])
-            return f"Consolidation {result.status}: {result.output[:500]}"
 
     except Exception as e:
         log.error("Dream consolidation failed: %s", e, exc_info=True)
-        return f"Consolidation failed: {e}"
     finally:
         release_lock(memory_dir)
 
 
-async def record_and_maybe_dream(ws_path: str | None, *, model_id: str) -> None:
+async def record_and_maybe_dream(ws_path: str | None) -> None:
     """Post-turn hook: bump per-tier session counters and consolidate any tier
-    that is due. Fire-and-forget; feature-flag gated internally.
-
-    This is what actually TRIGGERS dream consolidation. (The original
-    dream_consolidate was never called from anywhere: sessions were recorded,
-    thresholds accrued, and the consolidation agent never ran.)
-    """
+    that is due. Fire-and-forget; feature-flag gated internally."""
     from server.infrastructure.feature_flags import is_enabled
 
     if not is_enabled("dream_consolidation"):
@@ -201,6 +192,6 @@ async def record_and_maybe_dream(ws_path: str | None, *, model_id: str) -> None:
         try:
             record_session(memory_dir)
             if should_consolidate(memory_dir):
-                await dream_consolidate(memory_dir, scope=scope, model_id=model_id)
+                await dream_consolidate(memory_dir, scope=scope)
         except Exception as e:
             log.warning("dream consolidation (%s) skipped: %s", scope, e)

@@ -1127,4 +1127,4 @@ def _fire_memory_hooks(messages, session_id, ws_path, model_id, fork=None) -> No
     if is_enabled("dream_consolidation"):
         from server.memory.dream import record_and_maybe_dream
 
-        spawn(record_and_maybe_dream(ws_path, model_id=model_id), name="dream-consolidation")
+        spawn(record_and_maybe_dream(ws_path), name="dream-consolidation")

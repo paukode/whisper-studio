@@ -213,7 +213,7 @@ def test_memory_hooks_call_session_update_extraction_and_dream(monkeypatch):
     monkeypatch.setattr(
         STREAM, "_spawn_extraction", lambda mk, msgs, sid, ws: seen.append(("extract", sid, ws))
     )
-    monkeypatch.setattr(STREAM, "_spawn_dream", lambda mk, ws: seen.append(("dream", ws)))
+    monkeypatch.setattr(STREAM, "_spawn_dream", lambda ws: seen.append(("dream", ws)))
     STREAM._spawn_memory_hooks("local_gemma", _messages(1), "s3", "/ws")
     assert seen == [("session", "s3"), ("extract", "s3", "/ws"), ("dream", "/ws")]
 

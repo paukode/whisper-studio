@@ -55,13 +55,6 @@ def _get_recall_client(region: str):
     )
 
 
-def _reset_recall_client_cache() -> None:
-    """Test hook, drops cached clients so monkeypatched boto3 takes effect
-    (tests/conftest.py resets between tests, same as the chat client cache)."""
-    with _RECALL_CLIENT_LOCK:
-        _RECALL_CLIENTS.clear()
-
-
 def _resolve_tiers(ws_path: str | None) -> list[tuple[str, str]]:
     """Return [(scope, memory_dir)] for the tiers alive right now."""
     tiers: list[tuple[str, str]] = []

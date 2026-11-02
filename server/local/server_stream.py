@@ -113,7 +113,7 @@ def _spawn_extraction(
         log.debug("Could not spawn local memory extraction: %s", e)
 
 
-def _spawn_dream(model_key: str, ws_path: str | None) -> None:
+def _spawn_dream(ws_path: str | None) -> None:
     """Fire-and-forget dream consolidation after a local turn.
 
     Mirrors the cloud path (server/chat/engine/runner.py _fire_memory_hooks):
@@ -131,14 +131,9 @@ def _spawn_dream(model_key: str, ws_path: str | None) -> None:
         if not is_enabled("dream_consolidation"):
             return
         from server.infrastructure.async_tasks import spawn
-        from server.local.runtime import local_model_meta
         from server.memory.dream import record_and_maybe_dream
 
-        model_id = local_model_meta(model_key).get("id", "")
-        spawn(
-            record_and_maybe_dream(ws_path, model_id=model_id),
-            name="local-dream-consolidation",
-        )
+        spawn(record_and_maybe_dream(ws_path), name="local-dream-consolidation")
     except Exception as e:  # never let memory bookkeeping disrupt a turn
         log.debug("Could not spawn local dream consolidation: %s", e)
 
@@ -152,7 +147,7 @@ def _spawn_memory_hooks(
     offline)."""
     _spawn_session_update(model_key, messages, session_id)
     _spawn_extraction(model_key, messages, session_id, ws_path)
-    _spawn_dream(model_key, ws_path)
+    _spawn_dream(ws_path)
 
 
 def _tool_results_to_messages(tool_results: list[dict], names_by_id: dict[str, str]) -> list[dict]:
