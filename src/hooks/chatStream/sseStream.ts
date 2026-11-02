@@ -303,8 +303,7 @@ export async function readSSEStream(
           const validated = SSEEventDataSchema.safeParse(raw);
           // When validation fails we still pass the raw payload through (some
           // SSE event types are intentionally loose Record<string, unknown>),
-          // but we log loudly. The old silent fallback hid malformed
-          // approval_request events that then crashed the banner.
+          // but we log loudly.
           if (!validated.success) {
             console.warn('SSE: payload failed Zod validation', { issues: validated.error.issues, raw });
           }
@@ -822,9 +821,7 @@ export async function readSSEStream(
           // The final structured payload from execute_team_create. Fold it
           // into the same turn-local report; it reaches the conversation on
           // the committed assistant message alongside the team_create trace,
-          // where the agent rows render it. (The old fallback that created a
-          // standalone JSON message here is gone — that was the ghost
-          // "Agent activity" card.)
+          // where the agent rows render it.
           if (parsed.team_results) {
             store().foldTeamResults(parsed.team_results);
           }
@@ -942,7 +939,7 @@ export async function readSSEStream(
             inputTokens = parsed.usage.total_prompt;
             outputTokens = parsed.usage.total_output;
             const cost = parsed.usage.estimated_cost_usd;
-            // context_used/context_max are real per-round token counts (WS-F);
+            // context_used/context_max are real per-round token counts;
             // feed them to the status bar's context meter.
             const ctxUsed = parsed.usage.context_used;
             const ctxMax = parsed.usage.context_max;

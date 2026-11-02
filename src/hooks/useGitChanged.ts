@@ -4,13 +4,10 @@ import { useEffect } from 'react';
  * Single shared subscription to the global `/api/git/events` SSE.
  *
  * The status bar, the Git Changes panel, and the terminal panel all react to
- * the same global `git-changed` frame, but each used to open its own
- * EventSource. On a single-origin HTTP/1.1 app that burned three of the
- * browser's ~6 per-origin connection slots, and those long-lived sockets
- * starved one-shot requests (file uploads) and a second session's chat
- * stream until a turn finished. Collapsing them to one ref-counted
- * connection frees two slots with no change in latency: the backend pushes a
- * single frame and it is fanned out to every listener in-process.
+ * the same global `git-changed` frame through ONE ref-counted EventSource,
+ * fanned out to every listener in-process. On a single-origin HTTP/1.1 app
+ * each long-lived socket takes one of the browser's ~6 per-origin slots, and
+ * extra ones would starve uploads and a second session's chat stream.
  *
  * Each consumer still keeps its own debounce and refetch, so the fan-out only
  * replaces the transport, not the per-consumer behaviour.
@@ -27,7 +24,7 @@ function openSource(): void {
     try {
       const parsed = JSON.parse(e.data) as { type?: string };
       // Only `git-changed` is actionable; `no-workspace`, keep-alive comment
-      // lines, and malformed frames are ignored (as each consumer did before).
+      // lines, and malformed frames are ignored.
       if (parsed.type === 'git-changed') {
         for (const cb of listeners) cb();
       }

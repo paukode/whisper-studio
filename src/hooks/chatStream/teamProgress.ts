@@ -249,8 +249,8 @@ export function spawnLabel(task: string, maxLen = 60): string {
 }
 
 /** All team reports produced by an agent-tool group, in tool order. Matches
- *  team_create AND inline spawn_agent (each inline spawn is a one-member team
- *  since PR #223): prefer the exact team_id from the tool's result JSON, fall
+ *  team_create AND inline spawn_agent (each inline spawn is a one-member
+ *  team): prefer the exact team_id from the tool's result JSON, fall
  *  back to a name match (team_name for team_create; the spawn label derived
  *  from the task for spawn_agent) while the tool is still running. Shared by
  *  ChatMessage (committed) and StreamingMessage (live). */

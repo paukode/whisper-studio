@@ -58,14 +58,10 @@ export interface UseSlashCommandsResult {
 }
 
 /**
- * Slash-command dispatcher for the chat composer. Extracted verbatim from
- * ChatInput.tsx — interprets `/effort`, `/model`, `/doctor`, `/help`,
- * `/btw`, `/rename`, `/subagent`, `/file:…`, and the rest. Side effects go
- * through the same store actions and SSE stream the component used; this
- * hook just owns the (large) switch so the component body stays readable.
- *
- * Dependencies are passed in and aliased to their original local names
- * (SLASH_COMMANDS) so the moved switch body is byte-for-byte identical.
+ * Slash-command dispatcher for the chat composer: interprets `/effort`,
+ * `/model`, `/doctor`, `/help`, `/btw`, `/rename`, `/subagent`, `/file:…`,
+ * and the rest. Side effects go through the store actions and the chat
+ * stream; this hook owns the (large) switch so ChatInput stays readable.
  */
 export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommandsResult {
   const {
@@ -197,8 +193,8 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
           // (Fable 5) must show the consent screen on EVERY switch, no
           // matter which surface initiates it. Only toast if the switch
           // actually happened (the user may cancel the consent dialog).
-          // Confirm with the version label ("Sonnet 4.6"), matching the model
-          // box and the autocomplete — not the raw key ("sonnet").
+          // Confirm with the version label ("Sonnet 5.5"), matching the model
+          // box and the autocomplete, not the raw key ("sonnet5.5").
           const pickedLabel = models.find((m) => m.key === arg)?.name ?? arg;
           void requestModelChange(arg).then((switched) => {
             if (switched) {
@@ -216,8 +212,8 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
         return true;
       }
       case 'verbosity': {
-        // Verbosity is the unified Response length control (stored as GPT-5.x's
-        // native verbosity low/medium/high; shown as Brief/Normal/Detailed).
+        // Verbosity is the unified Response length control (stored as the
+        // OpenAI models' native verbosity low/medium/high; shown as Brief/Normal/Detailed).
         // Accept either the visible labels or the raw stored levels.
         const alias: Record<string, 'low' | 'medium' | 'high'> = {
           brief: 'low', low: 'low',
@@ -405,10 +401,8 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
           return true;
         }
         void (async () => {
-          // Launch on the composer's CURRENT model and effort. Sending neither
-          // used to drop the run onto the configured default model at the
-          // provider's default reasoning, so the same saved workflow behaved
-          // differently depending on how it was started.
+          // Launch on the composer's CURRENT model and effort, so a saved
+          // workflow behaves the same however it was started.
           const settings = useSettingsStore.getState();
           const { selectedModel } = settings;
           const effortLevel = activeEffortLevel(settings);

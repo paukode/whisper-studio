@@ -49,14 +49,9 @@ export interface UseChatAutocompleteResult {
 
 /**
  * Slash-command and @-mention autocomplete state machine for the chat
- * composer. Extracted verbatim from ChatInput.tsx — owns the popup state
- * (items, visibility, selection index, mode, submenu, screen rect) and
- * the text-mutation handlers that insert a chosen completion back into
- * the textarea.
- *
- * Inputs are aliased to their original local names (SLASH_COMMANDS, etc.)
- * so the moved function bodies remain byte-for-byte identical to the
- * original component code.
+ * composer: owns the popup state (items, visibility, selection index,
+ * mode, submenu, screen rect) and the text-mutation handlers that insert a
+ * chosen completion back into the textarea.
  */
 export function useChatAutocomplete(opts: UseChatAutocompleteOptions): UseChatAutocompleteResult {
   const {
@@ -222,7 +217,7 @@ export function useChatAutocomplete(opts: UseChatAutocompleteOptions): UseChatAu
       const cmd = SLASH_COMMANDS.find((c) => '/' + c.cmd === item.insert || item.insert === c.cmd);
       if (cmd?.options) {
         // Show options as sub-items. Display the label but insert the value
-        // (they differ for /model: label "Sonnet 4.6" vs value "sonnet").
+        // (they differ for /model: label "Sonnet 5.5" vs value "sonnet5.5").
         const subItems: ACItem[] = cmd.options.map((opt) => ({
           icon: cmd.icon,
           name: optLabel(opt),
@@ -451,7 +446,7 @@ export function useChatAutocomplete(opts: UseChatAutocompleteOptions): UseChatAu
         setAcMode('slash');
         setAcSubCmd(cmd.cmd);
         // Match either the shown label or the inserted value so typing "son"
-        // (or "sonnet") both surface "Sonnet 4.6".
+        // (or "sonnet5") both surface "Sonnet 5.5".
         const filtered = cmd.options.filter(
           (o) =>
             optLabel(o).toLowerCase().startsWith(optQuery) ||
