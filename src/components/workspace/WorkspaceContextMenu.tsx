@@ -58,14 +58,14 @@ function escapeRegExp(str: string): string {
 }
 
 /**
- * Full context menu for workspace file tree matching the original vanilla JS.
+ * Full context menu for the workspace file tree.
  *
- * File menu (from screenshot): Open, Open Preview, Open With...,
+ * File menu: Open, Open Preview, Open With...,
  *   Select for Compare, Find File References, Open Timeline,
  *   Add File to Chat, Cut, Copy, Copy Path, Copy Relative Path,
  *   Rename, Duplicate, Delete, Reveal in Finder.
  *
- * Folder menu (from screenshot): New File..., New Folder...,
+ * Folder menu: New File..., New Folder...,
  *   Find in Folder..., Add Folder to Chat, Paste,
  *   Copy Path, Copy Relative Path, Rename..., Delete,
  *   Reveal in Finder.
@@ -576,13 +576,13 @@ export const WorkspaceContextMenu: React.FC<WorkspaceContextMenuProps> = ({
   }
 
   // ═══════════════════════════════════════════════
-  // Build menu items — exact match to vanilla screenshots
+  // Build menu items
   // ═══════════════════════════════════════════════
 
   const items: MenuItem[] = [];
 
   if (type === 'file') {
-    // ── File context menu (matches file_right_click.png) ──
+    // ── File context menu ──
     items.push({ label: 'Open', icon: '📄', onClick: handleOpen });
     items.push({ label: 'Open Preview', icon: '👁', onClick: () => void handleOpenPreview() });
     items.push({ label: 'Open With\u2026', icon: '📂', onClick: () => void handleOpenWith() });
@@ -614,7 +614,7 @@ export const WorkspaceContextMenu: React.FC<WorkspaceContextMenuProps> = ({
 
     items.push({ label: 'Reveal in Finder', icon: '📂', shortcut: `${OPT}${MOD}R`, onClick: handleRevealInFinder });
   } else {
-    // ── Folder context menu (matches folder_right_click.png) ──
+    // ── Folder context menu ──
     items.push({ label: 'New File\u2026', icon: '📄', onClick: handleNewFileStart, closeOnClick: false });
     items.push({ label: 'New Folder\u2026', icon: '📁', onClick: handleNewFolderStart, closeOnClick: false });
     items.push({ label: '', separator: true });

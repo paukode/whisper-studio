@@ -4,10 +4,8 @@ import { createScreencastSocket } from '@/api/preview';
 /**
  * LivePanel — the body of a live-preview dock panel. Streams the assistant's
  * headless preview browser for session `name` via the CDP screencast
- * WebSocket and renders the JPEG frames. View-only; the dock owns open/close.
- *
- * (Extracted from the former standalone LivePreviewPane so the same screencast
- * body can live inside the generalized RightDock.)
+ * WebSocket and renders the JPEG frames. View-only; the dock (RightDock) owns
+ * open/close.
  */
 const RECONNECT_MS = 1500;
 type Status = 'connecting' | 'live' | 'closed';

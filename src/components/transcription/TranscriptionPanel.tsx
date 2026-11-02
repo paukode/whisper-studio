@@ -82,8 +82,7 @@ export const TRANSLATOR_UNAVAILABLE_NOTICE =
 export const TRANSLATOR_UNAVAILABLE_BADGE = 'Apple translation unavailable here';
 
 /** Target languages for translation lines: the union of what Canary and
- *  Apple's on-device translator support (Whisper always targets English and
- *  needs no picker). Flags mark which translator can produce each target so
+ *  Apple's on-device translator support. Flags mark which translator can produce each target so
  *  the pickers can annotate/limit; Apple's set was probed on-device. */
 const TRANSLATE_TARGETS = [
   { code: 'en', name: 'English', canary: true, apple: true },

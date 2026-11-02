@@ -25,9 +25,8 @@ export function useDiffQuery<T>(queryKey: QueryKey, queryFn: () => Promise<T>): 
   // A retry only proceeds while the window has focus (query-core gates it on
   // focusManager as well as the network), so a first attempt that fails just
   // as the user tabs away leaves the query parked in `paused`: pending, not
-  // fetching, no error, no data. That combination used to satisfy no branch
-  // of the dialog at all and it sat blank with nothing to act on. Treat a
-  // paused query as a stall the reader can retry out of.
+  // fetching, no error, no data, which no other branch of the dialog shows.
+  // Treat a paused query as a stall the reader can retry out of.
   const stalled = isPending && fetchStatus === 'paused';
 
   // Not refetch(): with no data cached, Query.fetch sees a non-idle

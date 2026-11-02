@@ -43,7 +43,7 @@ export interface WorkspacePanelProps {
 }
 
 /**
- * Full workspace panel matching the original ws-ide-layout structure.
+ * Full workspace panel (ws-ide-layout).
  * Routes files to appropriate viewers based on backend binary detection
  * and extension-based detection for CSV/TSV, markdown, and notebooks.
  */
@@ -152,7 +152,7 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({ onCollapse }) =>
   const wsIndexed = !!wsIndexStatus?.indexed;
 
   /**
-   * File open handler matching the original openFileViewer flow:
+   * File open handler:
    * 1. Query backend for file metadata (binary detection)
    * 2. Route to appropriate viewer based on type
    */
@@ -541,7 +541,7 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({ onCollapse }) =>
             )}
           </div>
 
-          {/* Git changes panel — below file tree, matching vanilla ws-git-changes */}
+          {/* Git changes panel, below the file tree */}
           <GitChangesPanel onFileOpen={handleFileSelect} />
         </div>
 

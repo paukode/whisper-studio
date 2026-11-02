@@ -18,7 +18,7 @@ export interface GitChangesPanelProps {
 }
 
 /**
- * Git changes panel matching the vanilla ws-git-changes structure.
+ * Git changes panel (ws-git-changes).
  *
  * Features:
  * - Shows current branch and file count badge
@@ -27,7 +27,7 @@ export interface GitChangesPanelProps {
  * - Discard/restore button per file with confirm dialog
  * - Click file to open in editor, click its status letter for the diff
  * - Live refresh via the /api/git/events SSE stream (debounced 150ms)
- * - Listens for whisper-git-refresh events from SSE
+ * - Listens for whisper-git-refresh window events (sent after approved writes)
  */
 export const GitChangesPanel: React.FC<GitChangesPanelProps> = ({ onFileOpen }) => {
   const queryClient = useQueryClient();
@@ -35,7 +35,7 @@ export const GitChangesPanel: React.FC<GitChangesPanelProps> = ({ onFileOpen }) 
   // Git status loads via react-query. The SSE + event listeners below
   // invalidate ['git-changes'] (debounced) to refetch. react-query dedupes
   // concurrent fetches and coalesces an invalidate-during-fetch into a single
-  // trailing refetch — replacing the old manual in-flight/stale tracking.
+  // trailing refetch.
   const { data, isLoading, error } = useQuery({
     queryKey: ['git-changes'],
     queryFn: getGitChanges,
@@ -72,9 +72,8 @@ export const GitChangesPanel: React.FC<GitChangesPanelProps> = ({ onFileOpen }) 
 
   // Subscribe to the shared /api/git/events SSE — the backend GitFileWatcher
   // pushes a `git-changed` event within ~1s of any .git/HEAD, config, or
-  // branch ref change. Replaces the old 15s polling loop entirely: zero
-  // traffic when idle, instant update when something changes. One connection
-  // is shared with the status bar and terminal panel.
+  // branch ref change: no traffic when idle. One connection is shared with
+  // the status bar and terminal panel.
   useGitChanged(refreshDebounced);
 
   // User-initiated refresh signals (discard file, approval applied,
@@ -108,10 +107,7 @@ export const GitChangesPanel: React.FC<GitChangesPanelProps> = ({ onFileOpen }) 
       if (!ok) return;
       try {
         await gitRestoreFile(path);
-        // Await the status refresh so the toast and the panel agree. The
-        // previous fire-and-forget call let the toast claim "Discarded"
-        // before the panel reflected the file as clean — and on a silent
-        // git-restore failure the panel would still show it as modified.
+        // Await the status refresh so the toast and the panel agree.
         await queryClient.refetchQueries({ queryKey: ['git-changes'] });
         useUIStore.getState().addToast({ type: 'success', message: `Discarded changes to ${name}`, duration: 2000 });
       } catch (err) {

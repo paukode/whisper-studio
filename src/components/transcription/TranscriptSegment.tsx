@@ -12,7 +12,7 @@ export interface TranscriptSegmentProps {
 
 /**
  * Map a speaker string like "Speaker 2" or "SPEAKER_01" to a CSS class
- * `speaker-1` through `speaker-6`, matching the vanilla stylesheet.
+ * `speaker-1` through `speaker-6` (style.css).
  *
  * Exported so the live (interim) row in TranscriptionPanel can colour its
  * speaker rail to match the segment it will commit into.
@@ -68,7 +68,7 @@ function renderSegmentText(segment: TranscriptSegmentType): React.ReactNode {
 }
 
 /**
- * Renders a single transcript segment matching the vanilla HTML structure:
+ * Renders a single transcript segment:
  *
  *   div.transcript-segment
  *     div.segment-speaker.speaker-N[data-speaker]
@@ -271,8 +271,8 @@ const TranscriptSegmentImpl: React.FC<TranscriptSegmentProps> = ({
 // so memo skips every segment except the one that actually changed.
 export const TranscriptSegment = React.memo(TranscriptSegmentImpl);
 
-/** The Whisper translate-to-English companion line: the English text of the
- *  segment's chunks (in chunk order) plus a "Translating…" tail while any
+/** The translation companion line (Canary or Apple, any target): the
+ *  translated text of the segment's chunks (in chunk order) plus a "Translating…" tail while any
  *  chunk's translation is still decoding. Renders nothing for segments with
  *  no translation activity, so non-translated transcripts are unchanged. */
 const SegmentTranslation: React.FC<{ segment: TranscriptSegmentType }> = ({ segment }) => {

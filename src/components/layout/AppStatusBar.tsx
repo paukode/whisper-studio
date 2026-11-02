@@ -13,8 +13,7 @@ import { useVoiceClock } from '@/hooks/useVoiceClock';
  * sync, and a running background-task count that opens the tasks panel.
  *
  * Tokens, cost and the context meter deliberately live in ONE place, the
- * composer's TokenCounter, which is where the eye already is while typing;
- * this strip used to duplicate them from the same store fields.
+ * composer's TokenCounter, which is where the eye already is while typing.
  *
  * Every datum is read from an existing store (no new plumbing): the model
  * from settingsStore, git from the shared /api/git status + events, tasks

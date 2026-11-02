@@ -8,7 +8,7 @@ export interface StatusBarProps {
 }
 
 /**
- * Status bar matching the original #wsStatusBar:
+ * Status bar (#wsStatusBar):
  *   Ln/Col | UTF-8 | Language
  */
 export const StatusBar: React.FC<StatusBarProps> = ({ filePath, line, col }) => {

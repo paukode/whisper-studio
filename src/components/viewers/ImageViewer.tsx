@@ -9,7 +9,7 @@ export interface ImageViewerProps {
 }
 
 /**
- * Image viewer matching the original ws-image-viewer:
+ * Image viewer (ws-image-viewer):
  *   + / - / 1:1 buttons and wheel-scroll zoom.
  *   Uses width percentage sizing (not CSS transform) to avoid scroll area issues.
  */

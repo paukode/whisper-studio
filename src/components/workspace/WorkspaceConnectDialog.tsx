@@ -36,7 +36,7 @@ import {
 } from './workspaceConnectHelpers';
 
 /**
- * Workspace connect dialog overlay matching the vanilla HTML structure.
+ * Workspace connect dialog overlay.
  * Includes folder browser and recent workspaces.
  */
 export const WorkspaceConnectDialog: React.FC = () => {
@@ -88,8 +88,8 @@ export const WorkspaceConnectDialog: React.FC = () => {
   const sortedEntries = React.useMemo(() => sortList(browserEntries), [browserEntries, sortList]);
   const sortedFiles = React.useMemo(() => sortList(browserFiles), [browserFiles, sortList]);
 
-  // Recent workspaces — shared hook (same react-query key + shape as the
-  // toolbar Workspace dropdown).
+  // Recent workspaces: shared hook (same react-query key + shape as the
+  // composer's workspace group).
   const recentWorkspaces = useRecentWorkspaces(isOpen);
   const queryClient = useQueryClient();
 
@@ -521,7 +521,7 @@ export const WorkspaceConnectDialog: React.FC = () => {
     (wsPath: string) => {
       setPath(wsPath);
       setBrowserOpen(false);
-      // Auto-connect like vanilla JS (wsConnectConfirm.click())
+      // Auto-connect the picked folder.
       void connectTo(wsPath);
     },
     [connectTo],

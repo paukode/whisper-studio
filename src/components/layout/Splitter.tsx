@@ -17,7 +17,7 @@ import { suppressEmbeddedPointerEvents } from '@/utils/dragGuards';
  * the new ratio from clientX/clientY relative to the container's bounding
  * rect and calls onChange. No DOM mutation happens here.
  *
- * Min sizes are enforced by CSS min-width / min-height on the inner panels;
+ * Min sizes are enforced by the inline slot1Min / slot2Min styles;
  * the ratio is additionally clamped to [MIN_RATIO, MAX_RATIO] to keep state sane.
  */
 export interface SplitterProps {

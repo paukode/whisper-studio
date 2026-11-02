@@ -139,7 +139,7 @@ const SessionCronBadge: React.FC<{ sessionId: string }> = ({ sessionId }) => {
 };
 
 /**
- * Sidebar matching the vanilla templates/index.html structure exactly.
+ * Sidebar.
  *
  * Structure:
  *   aside.sidebar.collapsed
@@ -261,7 +261,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed }) => {
   // Export this session in one of three formats. Each format mirrors an
   // existing entry point so users get identical output regardless of where
   // they trigger the export from:
-  //   conversation-txt → matches /export slash command + ChatInput export
+  //   conversation-txt → matches the /export slash command
   //   transcript-txt   → matches TranscriptionPanel "Export" button
   //   combined-md      → matches ChatPanel header "Export" button (.md)
   const handleExport = useCallback(

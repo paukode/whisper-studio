@@ -16,12 +16,9 @@ export interface WordViewerProps {
 /**
  * Word document viewer using mammoth.js.
  * Fetches the raw binary, converts to HTML, renders in a scrollable div.
- * Matches the original _ideShowWord from viewers.js.
  *
- * Safety: mammoth.convertToHtml produces sanitized output from .docx binary
- * format — it only generates a controlled subset of HTML tags (p, strong, em,
- * table, ul, ol, li, h1-h6, img, a, br) from the document XML. This is the
- * same approach used by the original vanilla JS implementation.
+ * Safety: a .docx can come from anywhere, so mammoth's HTML is sanitized
+ * (sanitizeHtml, DOMPurify) before it is rendered.
  */
 export const WordViewer: React.FC<WordViewerProps> = ({ filePath, onEdit, rawUrl }) => {
   const fileName = filePath.split('/').pop() ?? filePath;
@@ -77,15 +74,8 @@ export const WordViewer: React.FC<WordViewerProps> = ({ filePath, onEdit, rawUrl
   );
 };
 
-/**
- * Renders mammoth-generated HTML content safely.
- * mammoth only outputs a controlled subset of HTML from docx XML structure,
- * matching the original vanilla JS approach (viewers.js _ideShowWord).
- */
+/** Renders mammoth's HTML, already sanitized by sanitizeHtml (DOMPurify). */
 const WordHtmlContent: React.FC<{ html: string }> = ({ html }) => {
-  // dangerouslySetInnerHTML is intentional: `html` is the controlled subset
-  // mammoth emits from docx XML. (No react/no-danger rule is configured here,
-  // so no disable directive is needed.)
   const innerHtml = useHtmlProp(html);
   return <div className="ws-word-content markdown-body" style={{ flex: 1, overflow: 'auto', padding: 16 }} dangerouslySetInnerHTML={innerHtml} />;
 };

@@ -50,7 +50,7 @@ export interface ContextMenuProps {
 }
 
 /**
- * VS Code-style context menu matching the original ws-context-menu.
+ * VS Code-style context menu (ws-context-menu).
  * Uses the ws-ctx-* CSS classes from modules/context-menu.css.
  * Supports keyboard navigation, submenus, danger items, shortcuts.
  */

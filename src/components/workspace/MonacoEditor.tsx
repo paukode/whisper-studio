@@ -142,9 +142,8 @@ export interface MonacoEditorProps {
 }
 
 /**
- * Wraps @monaco-editor/react with Whisper Studio theme integration,
- * matching the original vanilla JS editor config exactly:
- *   DM Mono 13px, minimap off, wordWrap off, tabSize 4,
+ * Wraps @monaco-editor/react with Whisper Studio theme integration:
+ *   DM Mono 14px, minimap off, wordWrap off, tabSize 4,
  *   bracket colorization, smooth cursor, custom themes, Cmd+S/W keybindings,
  *   cursor position tracking, and live theme switching.
  */

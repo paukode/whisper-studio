@@ -25,7 +25,7 @@ import { useVoiceClock } from '@/hooks/useVoiceClock';
 // right cross-browser way to capture mic + system audio together is at the OS
 // layer — a virtual loopback device (e.g. BlackHole 2ch on macOS) combined
 // with the mic into one Aggregate Device, which getUserMedia() then picks up
-// as a single input. See README → "Capturing system audio (macOS)".
+// as a single input. See docs/tut-voice.html#system-audio.
 
 /** The menu's mode swatches, drawn in the active palette's canvas colors. */
 function themeSwatch(key: ThemeKey, light: string, dark: string): string {
@@ -201,7 +201,7 @@ export const Header: React.FC = () => {
           </svg>
         </button>
 
-        {/* Audio-source picker: mic (always) + optional Chrome tab audio.
+        {/* Audio-source picker: the mic and, in the Mac app, native app or system audio.
           * Sits beside Record so sources are armed just before starting. */}
         <CaptureSourceMenu />
 
