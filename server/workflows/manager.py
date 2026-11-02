@@ -91,6 +91,12 @@ def _task_result_text(status: str, outcome: dict) -> str:
         f"{outcome.get('tokens_in', 0) + outcome.get('tokens_out', 0)} tokens"
         + (" (budget cap reached)" if outcome.get("cap_reached") else "")
     )
+    incomplete = int(outcome.get("agents_incomplete", 0) or 0)
+    if incomplete:
+        head += (
+            f"\n{incomplete} agent(s) stopped at a limit before they finished "
+            '(status "incomplete"): their results are partial. Re-run the remainder.'
+        )
     if outcome.get("error"):
         return f"{head}\n\nError: {outcome['error']}"
     body = _render_result(outcome.get("result"))
@@ -152,7 +158,7 @@ def resolve_workflow_effort(effort_label: str | None, model_key: str) -> str | N
     return effort_for_model(model_key, effort_label)
 
 
-def resolve_workflow_workspace(raw: str | None) -> tuple[str | None, str]:
+def resolve_workflow_workspace(raw: str | None, *, bypass: bool = False) -> tuple[str | None, str]:
     """Resolve the workspace a run is pinned to. Returns (path, error) — path
     is ``None`` with error set on a bad explicit path, or ``None`` with no
     error when nothing is connected and none was given (nothing to pin to).
@@ -165,6 +171,11 @@ def resolve_workflow_workspace(raw: str | None) -> tuple[str | None, str]:
     Omitted, it snapshots whatever is connected RIGHT NOW, so a workspace
     switch after launch can never redirect an already-running run's later
     agents.
+
+    ``bypass`` (the Bypass permission mode) skips the folder-grant check: in
+    Bypass a run may be pinned to any existing folder with no card, the way
+    every other tool reaches outside the workspace in Bypass. The folder must
+    still exist.
     """
     from server.workspace.state import get_workspace_path
 
@@ -180,7 +191,7 @@ def resolve_workflow_workspace(raw: str | None) -> tuple[str | None, str]:
         # remembered, so this only ever fires the first time.
         from server.security.folder_grants import needs_grant
 
-        if needs_grant(resolved, connected):
+        if not bypass and needs_grant(resolved, connected):
             return None, (
                 f"Error: '{raw}' is outside the connected workspace and has not been "
                 "approved yet. Call ws_open_folder with that path first so the user "
@@ -557,6 +568,7 @@ def _finalize(run: WorkflowRun, outcome: dict) -> None:
             "phase": "completed",
             "status": status,
             "agents_spawned": outcome.get("agents_spawned", 0),
+            "agents_incomplete": outcome.get("agents_incomplete", 0),
             "cost_usd": outcome.get("cost_usd", 0.0),
             "cap_reached": bool(outcome.get("cap_reached")),
             "error": outcome.get("error", ""),
@@ -599,7 +611,13 @@ def _row_to_dict(row) -> dict:
                 d[k.replace("_json", "")] = None
         d.pop(k, None)
     d["cap_reached"] = bool(d.get("cap_reached"))
-    d["live"] = row["run_id"] in _live
+    live = _live.get(row["run_id"])
+    d["live"] = live is not None
+    if live is not None:
+        # The row's counters are written once, at the run's end. A live run
+        # reads the in-memory ledger instead, or a status check mid-run shows
+        # 0 agents and $0 while agents have already finished.
+        d.update(live.live_counters())
     return d
 
 
