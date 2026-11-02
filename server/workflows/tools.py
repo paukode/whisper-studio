@@ -126,15 +126,9 @@ def _model_key_for(model_id: str) -> str:
     global lookup, and the run would silently drop from ultracode to Sonnet's
     max. Callers must supply their own default (see _default_model_key).
     """
-    try:
-        from server.infrastructure.config import load_config
+    from server.agents.providers.base import model_key_for_id
 
-        for k, v in (load_config().get("chat_models", {}) or {}).items():
-            if v == model_id:
-                return k
-    except Exception:
-        pass
-    return ""
+    return model_key_for_id(model_id)
 
 
 def _default_model_key() -> str:

@@ -151,14 +151,9 @@ def resolve_workflow_effort(effort_label: str | None, model_key: str) -> str | N
     kept a manually approved run reasoning shallower than an auto-approved one.
     ``None`` out means the model has no effort support (Haiku).
     """
-    try:
-        from server.chat.infra import effort_for_model
+    from server.chat.infra import effort_for_model
 
-        return effort_for_model(model_key, effort_label)
-    except Exception:  # noqa: BLE001 — config unavailable; infer from the key
-        from server.infrastructure.effort import resolve_effort
-
-        return resolve_effort({}, model_key, effort_label)
+    return effort_for_model(model_key, effort_label)
 
 
 def resolve_workflow_workspace(raw: str | None) -> tuple[str | None, str]:

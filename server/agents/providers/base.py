@@ -153,25 +153,19 @@ def model_key_for_id(model_id: str) -> str:
     """Reverse lookup id -> chat_models key ('' when unknown)."""
     if not model_id:
         return ""
-    try:
-        from server.infrastructure.config import load_config
+    from server.infrastructure.config import load_config
 
-        for key, mid in (load_config().get("chat_models") or {}).items():
-            if mid == model_id:
-                return key
-    except Exception:
-        pass
+    for key, mid in (load_config().get("chat_models") or {}).items():
+        if mid == model_id:
+            return key
     return ""
 
 
 def _is_openai(model_key: str, model_id: str) -> bool:
-    try:
-        from server.openai_bedrock.runtime import is_openai_model
+    from server.openai_bedrock.runtime import is_openai_model
 
-        if model_key and is_openai_model(model_key):
-            return True
-    except Exception:
-        pass
+    if model_key and is_openai_model(model_key):
+        return True
     return "openai" in (model_id or "").lower()
 
 

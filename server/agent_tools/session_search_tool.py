@@ -21,12 +21,9 @@ _TOP_HIT_WINDOW = 3
 
 
 def _enabled() -> bool:
-    try:
-        from server.infrastructure.feature_flags import is_enabled
+    from server.infrastructure.feature_flags import is_enabled
 
-        return is_enabled("session_search")
-    except Exception:  # noqa: BLE001
-        return True
+    return is_enabled("session_search")
 
 
 def _int(value, default: int | None) -> int | None:

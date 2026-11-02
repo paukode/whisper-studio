@@ -41,12 +41,9 @@ def _ok(**payload) -> str:
 
 
 def _enabled() -> bool:
-    try:
-        from server.infrastructure.feature_flags import is_enabled
+    from server.infrastructure.feature_flags import is_enabled
 
-        return is_enabled("skill_self_improvement")
-    except Exception:  # noqa: BLE001
-        return True
+    return is_enabled("skill_self_improvement")
 
 
 def _reload() -> None:
