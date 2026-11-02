@@ -117,7 +117,7 @@ def _evict_if_full() -> None:
 
 
 def get_branch(path: str) -> str:
-    """Get current branch name. Falls back to HEAD SHA if detached, or 'HEAD' on error."""
+    """Current branch name, or "HEAD" when HEAD is detached or unreadable."""
     from server.git.filesystem import resolve_git_dir
 
     git_dir = resolve_git_dir(path)
@@ -148,7 +148,6 @@ def get_default_branch(path: str) -> str:
     """Resolve default branch name.
 
     Priority: origin/HEAD symref > origin/main > origin/master > 'main' fallback.
-    Uses filesystem reads first, falls back to subprocess for remote show.
     """
     from server.git.filesystem import resolve_git_dir
 

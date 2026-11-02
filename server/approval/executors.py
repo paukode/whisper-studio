@@ -241,7 +241,7 @@ async def _do_save_to_path(payload: dict) -> ApprovalOutcome:
     create_docx/pptx/xlsx/pdf) build their full content at tool-call time
     and stage it in the app sandbox (server/workspace/paths.py's
     stage_file_bytes); approving here just moves the ready file into place.
-    Unlike _do_write/_do_create above, this does NOT require a connected
+    Unlike _do_write above, this does NOT require a connected
     workspace — get_workspace_path() is never consulted.
 
     Re-validates everything here (not just in the tool executors) — this is

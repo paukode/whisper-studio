@@ -2,7 +2,7 @@
 
 - ci_watch:   start watching a branch's latest run detached; returns a task id.
 - ci_status:  the latest run + failed jobs for a branch (one-shot).
-- ci_autofix: diagnose a failing run and hand back an APPROVABLE WS-D workflow
+- ci_autofix: diagnose a failing run and hand back an APPROVABLE workflow
               (via the shared workflow_preview card) that fixes then verifies.
 
 Dispatched directly in tool_router so they run async on the server loop.
@@ -121,8 +121,8 @@ async def execute_ci_autofix(
     if not plan.get("script"):
         return plan.get("summary", "No actionable failure found."), []
 
-    # Reuse WS-D's approval preview: the generated fix workflow runs only after
-    # the user approves it, with D's budget/journal/run card.
+    # Reuse the workflow approval preview: the generated fix workflow runs only
+    # after the user approves it, with the workflow budget, journal and run card.
     preview = {
         "workflow_preview": {
             "script": plan["script"],
@@ -132,9 +132,9 @@ async def execute_ci_autofix(
             "budget_tokens": plan.get("budget_tokens"),
             "args": None,
             "model_id": model_id,
-            # Carried for the same reason WS-D's own preview carries it: the
-            # card's launch must reason at the turn's effort, not the provider
-            # default. See server/workflows/tools.py::_preview.
+            # Carried for the same reason the workflow tool's own preview
+            # carries it: the card's launch must reason at the turn's effort,
+            # not the provider default. See server/workflows/tools.py::_preview.
             "effort_label": effort_label or "",
             # Pin to the SAME repo the CI plan was diagnosed against — already
             # resolved above via resolve_target, not re-derived from

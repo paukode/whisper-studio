@@ -137,8 +137,7 @@ async def git_events_endpoint():
     """Server-Sent Events stream — fires when the git file watcher detects
     a change to .git/HEAD, .git/config, or the current branch ref.
 
-    Replaces the frontend's 15s `setInterval` poll. Each `git-changed`
-    event carries the current branch and head SHA so the panel can
+    Each `git-changed` event carries the current branch and head SHA so the panel can
     refetch only when state actually changed.
     """
     from server.git.core import get_cached_branch, get_cached_head

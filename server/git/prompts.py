@@ -78,20 +78,6 @@ def build_git_instructions_prompt() -> str:
     a place here: intent disambiguation where guessing wrong is not reversible,
     the shape of output the user expects, and constraints that span tools so no
     single description can hold them.
-
-    What that rule removed, and why it is safe to have removed it:
-    - "How to clone" was a near-verbatim copy of git_clone's own description.
-    - The safety protocol (never update config, never skip hooks, never --amend,
-      never -i, warn on secret files) guarded against flags these tools do not
-      expose, and git_add_commit already says it never amends and rejects secret
-      files. The one real hole was the shell, which the shell rule below covers.
-    - The GitHub bullets restated the github / github_api / github_api_write
-      descriptions, which already carry the argv shape, the read-vs-mutate split,
-      the hard-blocked actions, and the "never claim a state a tool did not
-      confirm" rule.
-    - Step-by-step commit and branch-deletion procedures were multi-step
-      completion the model does unprompted, and git_delete_branch's own
-      description carries the one real ordering constraint (be on another branch).
     """
     return """# Commits
 

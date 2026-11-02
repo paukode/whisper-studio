@@ -12,7 +12,7 @@ security-critical: the payload can in principle be forged via a direct
 POST /api/approval/execute, and without the gate a crafted staged_path
 could 'move' any readable file on disk into a user-visible folder.
 
-Unlike _do_write/_do_create, this executor must NEVER require a connected
+Unlike _do_write, this executor must NEVER require a connected
 workspace — get_workspace_path() is not consulted at all.
 """
 

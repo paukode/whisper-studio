@@ -1,12 +1,11 @@
 """Propose a fix for a failing run as an APPROVABLE workflow.
 
 The autofix never writes or pushes on its own. It diagnoses the failure and
-emits a WS-D workflow *script*; that script is handed to the user through the
+emits a workflow *script*; that script is handed to the user through the
 same preview/approve path as any workflow (budget cap, journal, run card). On
-approval, D drives it: a fix agent applies the minimal edits, then the
-verify_change tool (WS-E) proves the gate passes before the user commits.
-
-This is the capstone tie-together: J diagnoses, D gates + runs, E verifies.
+approval, the workflow runner drives it: a fix agent applies the minimal
+edits, then the verify_change tool proves the gate passes before the user
+commits.
 """
 
 from __future__ import annotations
@@ -24,7 +23,7 @@ AUTOFIX_BUDGET_TOKENS = 200_000
 
 
 def build_autofix_script(branch: str, findings: list[dict]) -> str:
-    """A valid WS-D workflow script that fixes then verifies. Findings are
+    """A valid workflow script that fixes then verifies. Findings are
     embedded as double-encoded JSON and re-parsed in-script, so their text
     never has to survive template-literal escaping."""
     b = json.dumps(branch)
