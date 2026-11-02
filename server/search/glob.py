@@ -13,6 +13,7 @@ from server.search.engine import (
     pagination_hint,
     rg_raw,
     truncate_large_output,
+    unreadable_note,
 )
 from server.workspace import get_workspace_path
 
@@ -40,7 +41,9 @@ def exec_ws_glob(tool_input, transcript, current_attachments):
     except Exception as e:
         return f"Search error: {e}"
 
-    if returncode != 0 and stderr.strip():
+    # Exit 2 with output: rg listed what it could but some paths were unreadable.
+    partial = returncode == 2 and stdout.strip()
+    if returncode != 0 and stderr.strip() and not partial:
         return f"Search error (exit {returncode}): {stderr.strip()}"
 
     files = stdout.rstrip("\n").split("\n") if stdout.strip() else []
@@ -56,6 +59,8 @@ def exec_ws_glob(tool_input, transcript, current_attachments):
         result += f"\n{hint}"
     else:
         result += f"\n({len(paginated)} files)"
+    if partial:
+        result += "\n" + unreadable_note(stderr)
     return truncate_large_output(result)
 
 

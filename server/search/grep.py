@@ -18,6 +18,7 @@ from server.search.engine import (
     pagination_hint,
     rg_raw,
     truncate_large_output,
+    unreadable_note,
 )
 from server.workspace import get_workspace_path
 
@@ -82,7 +83,10 @@ def exec_ws_grep(tool_input, transcript, current_attachments):
     # rg exit code 1 = no matches (not an error)
     if returncode == 1:
         return _no_match_message(output_mode)
-    if returncode != 0:
+    # Exit 2 with output: rg found matches but could not read some paths (for
+    # example a macOS-protected folder). Keep the matches and say what failed.
+    partial = returncode == 2 and stdout.strip()
+    if returncode != 0 and not partial:
         return f"Search error (exit {returncode}): {stderr.strip()}"
 
     lines = stdout.rstrip("\n").split("\n") if stdout.strip() else []
@@ -90,6 +94,8 @@ def exec_ws_grep(tool_input, transcript, current_attachments):
         return _no_match_message(output_mode)
 
     result = _format_output(lines, output_mode, head_limit, offset)
+    if partial:
+        result += "\n" + unreadable_note(stderr)
     return truncate_large_output(result)
 
 
@@ -205,12 +211,16 @@ def _build_grep_args(
         type_globs = _resolve_type_globs(file_type)
         if not type_globs:
             raise ValueError(f"unknown file type {file_type!r} (see rg --type-list)")
-        dir_globs = _parse_glob_patterns(glob_filter)
-        for dg in dir_globs:
+        patterns = _parse_glob_patterns(glob_filter)
+        # An exclusion ("!dir") already narrows a --type search (AND semantics).
+        for g in (g for g in patterns if g.startswith("!")):
+            args.extend(["--glob", g])
+        includes = [g for g in patterns if not g.startswith("!")]
+        if not includes:
+            args.extend(["--type", file_type])
+        for dg in includes:
             for tg in type_globs:
-                # Combine: "server/**" + "*.py" → "server/**/*.py"
-                combined = f"{dg.rstrip('/')}/{tg}" if dg.endswith("**") else f"{dg}/{tg}"
-                args.extend(["--glob", combined])
+                args.extend(["--glob", _combine_dir_and_type_glob(dg, tg)])
     elif file_type:
         args.extend(["--type", file_type])
     elif glob_filter:
@@ -224,6 +234,28 @@ def _build_grep_args(
         args.append(pattern)
 
     return args
+
+
+_GLOB_META = set("*?[{")
+
+
+def _combine_dir_and_type_glob(dir_glob: str, type_glob: str) -> str:
+    """One --glob that means "files of this type under this folder". rg treats
+    --type and a positive --glob as OR (the glob wins), so the two are merged:
+
+      "server" or "server/" + "*.py"   -> "server/**/*.py" (the whole subtree)
+      "server/**" + "*.py"             -> "server/**/*.py"
+
+    A glob that already names files ("*.test.ts", "src/**/*.tsx") cannot take a
+    type as well; that raises so the caller reports it."""
+    if not any(c in _GLOB_META for c in dir_glob):
+        return f"{dir_glob.rstrip('/')}/**/{type_glob}"
+    if dir_glob.endswith("**"):
+        return f"{dir_glob}/{type_glob}"
+    raise ValueError(
+        f"glob {dir_glob!r} already names files, so it cannot be combined with type; "
+        "use a folder glob (for example 'src/**') or drop one of the two"
+    )
 
 
 def _resolve_type_globs(file_type: str) -> list[str]:
