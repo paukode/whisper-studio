@@ -66,8 +66,7 @@ def _coerce_rates(val: object) -> dict | None:
 def _coerce_pricing_entry(val: object) -> dict | None:
     """Validate/normalize one raw pricing entry. Returns a clean dict, or None
     for anything malformed (missing/non-numeric input|output, a long_context
-    tier without its rates or a positive ``above``) so a typo in the file
-    can't take pricing down; the model just bills $0 and logs."""
+    tier without its rates or a positive ``above``)."""
     entry = _coerce_rates(val)
     if entry is None:
         return None
@@ -86,24 +85,40 @@ def _coerce_pricing_entry(val: object) -> dict | None:
     return entry
 
 
-def _read_pricing_file(path: str) -> dict:
-    """Parse one pricing JSON file into {key: entry}. Missing file gives {} (the
-    overlay is optional). Keys starting with "_" or "$" are annotations and are
-    skipped. Unreadable/malformed file gives {} and a loud log (never crashes)."""
+def _read_pricing_file(path: str, *, required: bool = False) -> dict:
+    """Parse one pricing JSON file into {key: entry}. Keys starting with "_"
+    or "$" are annotations and are skipped.
+
+    The shipped table (``required``) must exist, parse, and hold only valid
+    entries: anything else raises ValueError naming the file, since a broken
+    table would bill every model $0 and no cost cap could ever trip. The
+    user's overlay is optional: a missing file gives {}, an unreadable file
+    or a malformed entry is logged and left out."""
     try:
         with open(path) as f:
             raw = json.load(f)
-    except FileNotFoundError:
+    except FileNotFoundError as e:
+        if required:
+            raise ValueError(f"The pricing table {path} is missing") from e
         return {}
     except Exception as e:  # unreadable / invalid JSON
+        if required:
+            raise ValueError(f"The pricing table {path} cannot be read: {e}") from e
         log.error("Ignoring unreadable pricing file %s: %s", path, e)
         return {}
+    if not isinstance(raw, dict):
+        if required:
+            raise ValueError(f"The pricing table {path} is not a JSON object")
+        log.error("Ignoring pricing file %s: not a JSON object", path)
+        return {}
     out: dict[str, dict] = {}
-    for key, val in raw.items() if isinstance(raw, dict) else []:
+    for key, val in raw.items():
         if key.startswith(("_", "$")):
             continue
         entry = _coerce_pricing_entry(val)
         if entry is None:
+            if required:
+                raise ValueError(f"Malformed pricing entry {key!r} in {path}")
             log.error("Skipping malformed pricing entry %r in %s", key, path)
             continue
         out[key] = entry
@@ -112,15 +127,15 @@ def _read_pricing_file(path: str) -> dict:
 
 def _load_pricing() -> dict:
     """Default rates from pricing.example.json, overlaid PER KEY by pricing.json
-    (user entries win). A missing example file degrades to {} (all models bill
-    $0 and log) rather than crashing the cost tracker.
+    (user entries win). A missing or broken example file raises (see
+    _read_pricing_file).
 
     An override entry equal to a rate some release shipped for that key is a
     stale seeded copy of an old template, not a user decision: it is skipped
     (and logged) so a later rate correction is never shadowed."""
     from server.costs.pricing_history import is_shipped
 
-    table = _read_pricing_file(PRICING_EXAMPLE_PATH)
+    table = _read_pricing_file(PRICING_EXAMPLE_PATH, required=True)
     for key, entry in _read_pricing_file(PRICING_PATH).items():
         if is_shipped(key, entry):
             if entry != table.get(key):
