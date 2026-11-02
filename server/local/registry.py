@@ -1,4 +1,4 @@
-"""The on-device model registry — built-in defaults plus anything in config.
+"""The on-device model registry: config entries over the curated recommendations.
 
 Adding a local model is a ONE-place change: give it an entry in ``chat_models``
 with ``is_local: true`` and the weight fields, and it becomes downloadable,
@@ -35,7 +35,7 @@ loader fields (``repo_id``, ``filename``, ``dir``) describe one model, and
 splitting them across two config sections is how you get a model that shows in
 the UI but cannot load (or vice versa).
 
-Recommended vs shipped: the app ships NO local chat models by default — a fresh
+Recommended models: the app ships NO local chat models by default; a fresh
 install has an empty on-device catalog until the user downloads one from Settings
 > Models > Discover. ``RECOMMENDED_LOCAL_MODELS`` below is a curated set the
 Discover tab surfaces for one-click install; a recommended model only enters the
@@ -65,8 +65,8 @@ def _required_fields(entry: dict) -> tuple[str, ...]:
 
 
 # Curated on-device models the Discover tab offers for one-click install. These
-# are NOT shipped into the catalog — a recommended model only appears (and only
-# becomes loadable) once its weights are on disk. `id` is a sentinel that never
+# are NOT in the catalog by themselves: a recommended model appears once a
+# chat_models entry with its key exists (a Discover install writes one). `id` is a sentinel that never
 # reaches Bedrock (the router branches on the "local:" prefix before any AWS
 # call). 32K ctx default: the FULL tool pool ("Tools: All") renders a ~17.2K-token
 # prompt, so a 16K window rejects the first tool turn; 32K loads on an M3/18GB

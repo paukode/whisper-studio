@@ -3,9 +3,7 @@
 The engine assembles the tool catalog (progressive disclosure included) and
 the LocalAdapter converts it with ``_to_openai_fn`` — llama-server expects the
 OpenAI function format. Execution goes through the engine's shared safety
-pipeline (``execute_tool_batch`` + ``process_tool_results``); the old
-``run_tool_round``/``get_tool_schemas`` wrappers that predated the engine are
-gone with the loops that used them.
+pipeline (``execute_tool_batch`` + ``process_tool_results``).
 
 SAFETY INVARIANT (load-bearing — do not break):
     Destructive tools (write / delete / cli) never mutate anything inside the
@@ -17,10 +15,10 @@ SAFETY INVARIANT (load-bearing — do not break):
     ``/api/approval/execute`` endpoint (model-agnostic), which the approval
     card calls on "Yes".
 
-The local path stays fully offline: the local TurnContext passes
-``tool_exec_model_id=""`` so the permission LLM explainer never fires (it is
-gated on a truthy model id), and the auto-mode classifier falls back to asking
-instead of calling Bedrock.
+The local TurnContext passes ``tool_exec_model_id=""`` so the permission LLM
+explainer never fires (it is gated on a truthy model id). A local turn is
+offline in Local mode; in Hybrid mode the auto-mode classifier, memory
+extraction and dream consolidation use cloud models.
 """
 
 from __future__ import annotations

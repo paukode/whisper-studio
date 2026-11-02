@@ -76,9 +76,8 @@ def is_available() -> bool:
 def ensure_available() -> None:
     if not is_available():
         raise MlxServerUnavailable(
-            "mlx-lm is not installed, so MLX-format models cannot run. "
-            "Install it with 'venv/bin/pip install mlx-lm' or rerun "
-            "'bash setup.sh --local'."
+            "mlx-lm is missing from this install, so MLX-format models cannot run. "
+            "Run 'bash setup.sh' (a source checkout) or reinstall the app."
         )
 
 

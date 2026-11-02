@@ -9,8 +9,8 @@ Both engines speak the same OpenAI-compatible SSE, so one parser serves both
 (the only dialect difference — the reasoning delta field name — is folded in
 below).
 
-Speaking llama-server's OpenAI-compatible endpoint means upstream llama.cpp
-does the jobs a hand-rolled in-process path had to solve per model family:
+Speaking the engines' OpenAI-compatible endpoint means they do the per-family
+work:
 
   * ``tool_calls`` arrive already parsed into OpenAI shape (name + JSON
     arguments), for every family upstream supports — so a new GGUF in config gets
@@ -18,8 +18,7 @@ does the jobs a hand-rolled in-process path had to solve per model family:
   * reasoning arrives on ``reasoning_content``, so the thinking channel needs no
     marker splitter and can never leak raw markers into the answer.
   * real token counts arrive on ``usage`` (with ``stream_options.include_usage``),
-    so the counter and context meter report measured tokens rather than the
-    chars/4 guess a hand-rolled path had to make.
+    so the counter and context meter report measured tokens.
 
 Because of that, this module contains NO model-specific tokens. There is no
 fallback runtime: if llama-server cannot serve the model, the turn errors.
@@ -153,9 +152,9 @@ def _spawn_memory_hooks(
 def _tool_results_to_messages(tool_results: list[dict], names_by_id: dict[str, str]) -> list[dict]:
     """Executed results → native OpenAI ``tool`` messages.
 
-    The in-process path had to fold results into a plain user turn; here the
-    template consumes them as real tool responses, which is a much stronger
-    signal that this text is a tool result rather than the user talking.
+    The template consumes them as real tool responses, a much stronger signal
+    than a plain user turn that this text is a tool result rather than the
+    user talking.
     """
     msgs = []
     for r in tool_results:
@@ -261,10 +260,9 @@ async def _stream_round(base_url: str, payload: dict):
         async with client.stream(
             "POST",
             f"{base_url}/v1/chat/completions",
-            # include_usage is what makes llama-server append a final chunk
-            # carrying prompt/completion token counts. WITHOUT it the stream ends
-            # with only a `timings` object, and output falls back to the chars/4
-            # estimate (see the fallback documented at the top of this module).
+            # include_usage is what makes the server append a final chunk
+            # carrying prompt/completion token counts; without it the stream
+            # ends with only a `timings` object and no counts.
             json={**payload, "stream": True, "stream_options": {"include_usage": True}},
         ) as resp:
             if resp.status_code != 200:

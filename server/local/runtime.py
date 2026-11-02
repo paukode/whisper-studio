@@ -1,4 +1,4 @@
-"""On-device model metadata and prompts — fully isolated from Bedrock/Claude.
+"""On-device model metadata and prompts.
 
 The weights themselves live in a llama-server subprocess (see
 server/local/llama_server.py); this module owns everything *around* that: the
@@ -7,10 +7,9 @@ request, capability flags, and the local system prompt. Only one model is
 resident at a time, matching the memory-constrained on-device build (e.g.
 M3/18GB).
 
-There is deliberately no in-process engine any more. llama-server is the single
-on-device backend, so a model added to config.user.json is served through upstream's
-own template and tool-call parsers rather than marker code maintained here — and
-when it is unavailable, local turns fail loudly instead of silently degrading.
+The engines (llama-server for GGUF, mlx_lm's server for MLX) serve a model
+added to config.user.json through their own templates and tool-call parsers,
+and when one is unavailable, local turns fail loudly.
 """
 
 from __future__ import annotations
@@ -34,10 +33,11 @@ MODELS_DIR = models_root()
 # The registry is config-driven — see server/local/registry.py. This module-level
 # name is kept as a LIVE VIEW for the many callsites that read it like a dict
 # (``key in LOCAL_MODELS``, ``LOCAL_MODELS[key]["ctx"]``, iteration): it resolves
-# the merged built-in + config registry on every access, so a model added to
+# the effective registry (config entries over recommendations) on every access, so a model added to
 # config.user.json is picked up without a restart and without touching this file.
 class _LocalModelsView(Mapping):
-    """Read-only Mapping over the effective registry (built-ins + config)."""
+    """Read-only Mapping over the effective registry (config entries over
+    recommendations)."""
 
     def _resolved(self) -> dict[str, dict]:
         from server.local.registry import local_models

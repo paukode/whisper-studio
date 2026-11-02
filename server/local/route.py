@@ -11,7 +11,8 @@ LocalAdapter with the LOCAL policy: the completion gate runs only while a goal
 is active, and its judge is this same resident model (server/goals/
 local_judge.py); an empty tool-executor model id keeps the permission
 explainer offline, and compaction summarizes via the resident on-device model.
-The path stays fully offline end to end.
+In Local mode the turn stays offline end to end; in Hybrid mode the auto-mode
+classifier, memory extraction and dream consolidation use cloud models.
 """
 
 from __future__ import annotations
@@ -48,10 +49,10 @@ def local_chat_response(
     if not is_local_model(model_key):
         return None
 
-    # Approval continuations flow through the SAME generic branch as the cloud
-    # paths now: routes.py rebuilds the canonical messages from the unified
-    # pause store before calling here, so a local resume is just a normal
-    # engine turn continuing from the restored history.
+    # Approval continuations flow through the same generic branch as the
+    # cloud paths: routes.py rebuilds the canonical messages from the unified
+    # pause store before calling here, so a local resume is a normal engine
+    # turn continuing from the restored history.
 
     from server.local.runtime import supports_tools
 

@@ -115,7 +115,7 @@ def is_official_author(author: str | None) -> bool:
     return bool(author) and author.lower() in _OFFICIAL
 
 
-# Curated GGUF publishers browsed by default (design §8). "Search all of HF" is
+# Curated GGUF publishers browsed by default. "Search all of HF" is
 # an explicit opt-in (``all=1``) to keep quality/safety high.
 TRUSTED_AUTHORS: tuple[str, ...] = (
     "unsloth",
@@ -374,7 +374,7 @@ class QuantOption:
 def group_gguf_files(files: list[tuple[str, int]]) -> list[QuantOption]:
     """Fold a repo's ``[(filename, size_bytes)]`` into per-quant options.
 
-    Rules (design §4/§5):
+    Rules:
       * only ``*.gguf`` files;
       * ``*mmproj*`` projector files are dropped (vision, not chat);
       * shards (``-00001-of-000NN.gguf``) collapse to ONE option — sizes summed,
@@ -440,7 +440,7 @@ def group_gguf_files(files: list[tuple[str, int]]) -> list[QuantOption]:
     return options
 
 
-# Preference ladder for the pre-selected "recommended" quant (design §5):
+# Preference ladder for the pre-selected "recommended" quant:
 # Q4_K_M, then Unsloth's UD-Q4_K_XL, then nearby 4/5-bit K-quants.
 _RECOMMENDED_ORDER = (
     "Q4_K_M",

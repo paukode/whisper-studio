@@ -1,7 +1,7 @@
-"""Install / uninstall a browsed GGUF as a config-driven local chat model.
+"""Install or remove a browsed GGUF or MLX model as a config-driven local chat model.
 
-This is the P0 "config path" (design §9): a browser install writes exactly the
-same ``chat_models`` dict entry a user would add by hand
+A browser install writes exactly the same ``chat_models`` dict entry a user
+would add by hand
 (server/local/registry.py), into the USER layer (``config.user.json``), then
 enqueues the download through the existing models-manager queue. Nothing
 downstream is new — the registry merges the entry in, the models catalog derives
@@ -27,11 +27,12 @@ from server.model_browser import compat
 
 log = logging.getLogger("whisper-studio")
 
-# Context-window default and cap. 32768 is BOTH the floor and the default: the
-# full tool pool alone renders ~12K tokens, so a smaller window rejects the
-# first tool-using turn (see server/local/llama_server.py). We also cap at 32768
-# by default so a 256K-capable model still loads on an 18GB Mac; a power user can
-# raise ``ctx`` in config or via the chat-input slider afterwards.
+# Context-window default, floor and cap (see resolve_ctx). 32768 is the
+# default and the floor for an explicit request: the full tool pool alone
+# renders ~17.2K tokens, so a 16K window rejects the first tool-using turn. A
+# header context is capped at 32768 (a smaller one is kept as the model's
+# real window) so a 256K-capable model still loads on an 18GB Mac; a power
+# user can raise ``ctx`` in config or with the chat-input slider.
 DEFAULT_CTX = 32768
 CTX_CAP = 32768
 
@@ -49,7 +50,7 @@ def _key_part(text: str) -> str:
 def registry_key(repo_id: str, quant: str) -> str:
     """A unique, collision-proof config/registry key for (repo, quant). The
     ``local_`` prefix keeps it clearly on-device and away from the static
-    catalog keys (whisper/parakeet/…) and the built-in ``local_gemma`` key."""
+    catalog keys (whisper/parakeet/…) and the recommended ``local_gemma`` key."""
     return f"local_{_key_part(repo_id)}__{_key_part(quant)}"
 
 

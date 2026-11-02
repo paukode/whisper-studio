@@ -60,9 +60,10 @@ def _static_entries() -> tuple[ModelEntry, ...]:
 
     ``dir_name``/``sentinel_rel`` are computed from the modules' own path
     constants (relative to their MODELS_DIR) so the catalog checks exactly the
-    files their ensure functions download. The three ASR sentinels are local
-    variables inside the ensure functions, so their basenames are mirrored here
-    with a pointer to the source.
+    files their ensure functions download. Whisper's sentinel is the module's
+    WHISPER_SENTINEL; the Parakeet and Canary sentinels are local variables
+    inside their ensure functions, so their basenames are mirrored here with a
+    pointer to the source.
     """
     from server.asr import canary_translator, parakeet_backend, whisper_backend
     from server.diarization import embedder as speaker_embedder
@@ -78,9 +79,7 @@ def _static_entries() -> tuple[ModelEntry, ...]:
             group=GROUP_TRANSCRIPTION,
             repo_id=whisper_backend.WHISPER_REPO_ID,
             dir_name=rel(whisper_backend.WHISPER_MODEL_DIR, whisper_backend.MODELS_DIR),
-            # Mirrors whisper_backend._ensure_model's weight_file check
-            # (this MLX repo ships npz weights, not safetensors).
-            sentinel_rel="weights.npz",
+            sentinel_rel=whisper_backend.WHISPER_SENTINEL,
             ensure_module="server.asr.whisper_backend",
             ensure_func="_ensure_model",
             note=(
@@ -217,7 +216,7 @@ def _static_entries() -> tuple[ModelEntry, ...]:
 def _local_chat_entries() -> list[ModelEntry]:
     """One entry per on-device chat model in the config-driven registry.
 
-    Re-read on every call (the registry is a live built-ins + config merge).
+    Re-read on every call (the registry is a live view of config.user.json).
     The sentinel matches ``server.local.runtime.is_downloaded``: for GGUF the
     weight file itself, for MLX the completion marker ensure_downloaded writes
     after the whole snapshot lands (config.json arrives long before the
@@ -230,7 +229,7 @@ def _local_chat_entries() -> list[ModelEntry]:
     static_keys = {e.key for e in _static_entries()}
     out: list[ModelEntry] = []
     for key, m in local_models().items():
-        if key in static_keys:  # defensive: a config key must not shadow a built-in entry
+        if key in static_keys:  # a config key must not shadow a static catalog entry
             log.warning("Local model key %r collides with a catalog entry; skipping.", key)
             continue
         is_mlx = m.get("engine") == "mlx"

@@ -1,11 +1,8 @@
 """Lifecycle for the ``llama-server`` subprocess that serves on-device models.
 
-Why a subprocess instead of the in-process llama-cpp-python bindings: upstream
-llama.cpp's server owns the tool-calling and reasoning parsers for every model
-family it supports, so a new GGUF dropped into config gets tool calls and a
-thinking channel WITHOUT us hand-writing a per-family parser. The bindings expose
-no such parser (only Functionary/ChatML handlers that would replace the model's
-own template), which is why the previous path was hardcoded to Gemma's markers.
+Why llama.cpp's own server: it owns the tool-calling and reasoning parsers for
+every model family it supports, so a new GGUF dropped into config gets tool
+calls and a thinking channel without a hand-written per-family parser.
 
 What this module owns:
   * finding the pinned binary (the app's bundled copy, or setup.sh's)
@@ -310,12 +307,12 @@ def ensure_serving(key: str, n_ctx: int | None = None) -> str:
     if key not in models:
         raise RuntimeError(f"Unknown local model: {key}")
     meta = models[key]
-    # Explicit request > the user's last slider choice (sticky, shared with the
-    # in-process runtime) > the model default. Without the sticky tier a lazy
-    # chat-turn start would restart the server back down at 16K even though the
-    # badge says 32K/64K.
-    # 32K floor: with the full tool pool always advertised (~12K tokens of
-    # schemas), 16K left almost no room for transcript + conversation.
+    # Explicit request > the user's last slider choice (sticky, kept in
+    # runtime.py) > the model's ctx > 32768. Without the sticky tier a lazy
+    # chat-turn start would restart the server at the model default even
+    # though the badge shows the user's choice. 32768 is the default, not a
+    # floor: the full tool pool alone renders ~17.2K tokens, so a 16K window
+    # rejects the first turn.
     target_ctx = int(n_ctx or requested_n_ctx() or meta.get("ctx") or 32768)
 
     with _lock:
@@ -375,9 +372,8 @@ def ensure_serving(key: str, n_ctx: int | None = None) -> str:
             # request at a time is also what the UI does.
             "--parallel",
             "1",
-            # Reuse cached prompt prefixes across turns via KV shifting — the
-            # subprocess equivalent of the in-process prefix cache, so a follow-up
-            # turn doesn't re-prefill the whole system+tools prompt.
+            # Reuse cached prompt prefixes across turns via KV shifting, so a
+            # follow-up turn doesn't re-prefill the whole system+tools prompt.
             "--cache-reuse",
             "256",
             # Extract reasoning into a separate channel instead of leaking the raw

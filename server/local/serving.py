@@ -9,9 +9,9 @@ cross-engine residency rule: ONE local model resident at a time across BOTH
 engines, because chat weights and the ASR stack already share unified memory
 on the memory-constrained on-device build (e.g. M3/18GB).
 
-Callers that used to import llama_server directly (chat routes, engine
-windows, main's lifecycle hooks, the models manager) go through here instead,
-so adding a third engine stays a one-module change.
+Callers (chat routes, engine windows, main's lifecycle hooks, the models
+manager) go through here rather than an engine module, so adding a third
+engine stays a one-module change.
 """
 
 from __future__ import annotations
@@ -198,8 +198,8 @@ _transition_lock = threading.Lock()
 
 
 def engine_of(key: str | None) -> str:
-    """``"mlx"`` or ``"gguf"`` for a registry key (unknown keys read as gguf,
-    matching the pre-MLX default for every existing entry)."""
+    """``"mlx"`` or ``"gguf"`` for a registry key: gguf unless the entry says
+    ``"engine": "mlx"`` (unknown keys read as gguf)."""
     if not key:
         return "gguf"
     from server.local.runtime import LOCAL_MODELS
