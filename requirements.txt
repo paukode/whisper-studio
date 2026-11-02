@@ -1,4 +1,4 @@
-fastapi==0.136.3
+fastapi==0.162.0
 # Some routes import starlette (server/voice/routes.py) and pydantic request
 # models directly; fastapi only sets a floor for both.
 starlette==1.10.0
