@@ -165,3 +165,17 @@ def test_build_turn_context_only_considers_last_three_messages():
     assert "kept 2" in context
     assert "kept 3" in context
     assert "dropped" not in context
+
+
+def test_a_missing_classifier_model_asks_instead_of_using_another(monkeypatch):
+    import boto3
+
+    record: dict = {}
+    monkeypatch.setattr(boto3, "client", lambda *a, **k: _FakeBedrock(record))
+    config = {"chat_models": {"sonnet5.5": "test-sonnet", "opus5.5": "test-opus"}}
+
+    result = asyncio.run(auto_mode.classify_tool_call("Read", {"path": "foo.txt"}, config))
+
+    assert result["decision"] == "confirm"
+    assert "not configured" in result["reason"]
+    assert "invoke_thread" not in record, "no other model may classify the call"
