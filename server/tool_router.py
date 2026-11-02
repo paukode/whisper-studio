@@ -131,17 +131,6 @@ async def route_tool(
         )
         return output, side_effects
 
-    # --- Worktree tools ---
-    if tool_name in ("ws_create_worktree", "ws_diff_worktree", "ws_merge_worktree"):
-        from server.skills import execute_tool
-
-        output = await _submit(
-            loop,
-            executor,
-            lambda ci=tool_input: execute_tool(tool_name, ci, transcript, attachments),
-        )
-        return output, side_effects
-
     # --- Sleep ---
     if tool_name == "sleep":
         secs = min(float(tool_input.get("seconds", 3)), 30)
@@ -293,15 +282,15 @@ async def route_tool(
 
     # --- Workspace open folder ---
     if tool_name == "ws_open_folder":
+        from server.approval.markers import APPROVAL, is_app_request
         from server.workspace import execute_ws_open_folder
 
         result = await _submit(loop, executor, lambda ci=tool_input: execute_ws_open_folder(ci))
-        try:
-            parsed = json.loads(result)
-            if parsed.get("__ws_switch__"):
-                side_effects.append({"ws_folder_opened": parsed["__ws_switch__"]})
-        except Exception:
-            pass
+        if is_app_request(result, APPROVAL):
+            return result, side_effects  # the folder_access card
+        parsed = json.loads(result)
+        if parsed.get("__ws_switch__"):
+            side_effects.append({"ws_folder_opened": parsed["__ws_switch__"]})
         return result, side_effects
 
     # --- Notebook tools ---
