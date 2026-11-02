@@ -72,7 +72,7 @@ def _hook_from_body(body: dict, *, hook_id: str = "") -> HookDef | JSONResponse:
     on_error = body.get("on_error", "ignore")
     if on_error not in ("ignore", "block"):
         return _err('on_error must be "ignore" or "block"')
-    matcher = body.get("matcher") or "*"
+    matcher = body.get("matcher", body.get("tool", "*")) or "*"
     bad_matcher = matcher_error(matcher)
     if bad_matcher:
         return _err(bad_matcher)
