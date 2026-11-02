@@ -66,7 +66,6 @@ async def explain_permission(
     tool_input: dict,
     recent_messages: list[dict],
     config: dict,
-    model_id: str,
     session_id: str = "",
 ) -> dict | None:
     """
@@ -78,7 +77,7 @@ async def explain_permission(
 
     try:
         result = await asyncio.wait_for(
-            _call_explainer(tool_name, tool_input, recent_messages, config, model_id, session_id),
+            _call_explainer(tool_name, tool_input, recent_messages, config, session_id),
             timeout=_EXPLAINER_TIMEOUT,
         )
         return result
@@ -95,7 +94,6 @@ async def _call_explainer(
     tool_input: dict,
     recent_messages: list[dict],
     config: dict,
-    model_id: str,
     session_id: str = "",
 ) -> dict | None:
     import boto3

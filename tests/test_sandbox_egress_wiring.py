@@ -9,6 +9,8 @@ identical) is the regression gate that matters most.
 
 import os
 
+import pytest
+
 import server.sandbox as sandbox
 from server.security import egress_policy
 
@@ -167,22 +169,23 @@ def test_run_sandboxed_default_permissive_end_to_end(tmp_path):
 # ── proxy singleton lifecycle ────────────────────────────────────────────────
 
 
-def test_ensure_proxy_running_is_idempotent():
-    egress_policy._reset_proxy_for_tests()
-    try:
-        addr1 = egress_policy.ensure_proxy_running()
-        addr2 = egress_policy.ensure_proxy_running()
-        assert addr1 == addr2
-    finally:
-        egress_policy._reset_proxy_for_tests()
+@pytest.fixture()
+def fresh_proxy(monkeypatch):
+    """A fresh proxy singleton for the test, closed afterwards."""
+    monkeypatch.setattr(egress_policy, "_proxy_instance", None)
+    yield
+    if egress_policy._proxy_instance is not None:
+        egress_policy._proxy_instance._sock.close()
 
 
-def test_proxy_binds_to_loopback_ephemeral_port():
-    egress_policy._reset_proxy_for_tests()
-    try:
-        host, port = egress_policy.ensure_proxy_running()
-        assert host == "127.0.0.1"
-        assert port not in (80, 443)
-        assert port > 0
-    finally:
-        egress_policy._reset_proxy_for_tests()
+def test_ensure_proxy_running_is_idempotent(fresh_proxy):
+    addr1 = egress_policy.ensure_proxy_running()
+    addr2 = egress_policy.ensure_proxy_running()
+    assert addr1 == addr2
+
+
+def test_proxy_binds_to_loopback_ephemeral_port(fresh_proxy):
+    host, port = egress_policy.ensure_proxy_running()
+    assert host == "127.0.0.1"
+    assert port not in (80, 443)
+    assert port > 0

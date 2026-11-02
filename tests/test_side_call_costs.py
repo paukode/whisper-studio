@@ -154,7 +154,7 @@ def test_an_explainer_call_the_timeout_abandoned_is_still_logged(monkeypatch):
     config = {"chat_models": {"haiku": haiku_id}, "permission_explainer_enabled": True}
     monkeypatch.setattr("server.infrastructure.cloud_guard.cloud_allowed", lambda *a, **k: True)
     got = asyncio.run(
-        explainer.explain_permission("Bash", {"cmd": "ls"}, [], config, "m", session_id="s-exp")
+        explainer.explain_permission("Bash", {"cmd": "ls"}, [], config, session_id="s-exp")
     )
     assert got is None  # timed out for the caller
     deadline = time.monotonic() + 5

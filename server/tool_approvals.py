@@ -348,7 +348,6 @@ async def gate_approval(
             tool_input=ws_parsed,
             recent_messages=recent_messages or [],
             config=config,
-            model_id=model_id,
             session_id=cost_session_id,
         )
 

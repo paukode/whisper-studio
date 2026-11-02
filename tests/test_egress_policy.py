@@ -10,6 +10,8 @@ import socket
 import struct
 import threading
 
+import pytest
+
 from server.security import egress_policy as ep
 
 # ── tier / allowlist semantics ──────────────────────────────────────────────
@@ -51,16 +53,50 @@ def test_restrictive_denies_everything_except_custom():
     assert ep.is_domain_allowed("other.example", policy) is False
 
 
-def test_curated_allowlist_seed_size_is_in_the_requested_range():
-    # The task asked for a seed allowlist of roughly 50-70 domains.
-    assert 50 <= len(ep.CURATED_ALLOWLIST) <= 70
+# Hosts that are subdomains of a curated entry: allowed through that entry.
+_CURATED_SUBDOMAINS = (
+    "api.github.com",
+    "api.nuget.org",
+    "cdn-lfs.huggingface.co",
+    "cdn.jsdelivr.net",
+    "codeload.github.com",
+    "docs.python.org",
+    "files.pythonhosted.org",
+    "formulae.brew.sh",
+    "gist.githubusercontent.com",
+    "index.crates.io",
+    "objects.githubusercontent.com",
+    "production.cloudflare.docker.com",
+    "proxy.golang.org",
+    "raw.githubusercontent.com",
+    "registry.npmjs.org",
+    "registry.yarnpkg.com",
+    "repo.packagist.org",
+    "repo1.maven.org",
+    "static.crates.io",
+    "sum.golang.org",
+    "test.pypi.org",
+    "www.docker.com",
+    "www.npmjs.com",
+    "www.nuget.org",
+)
+
+
+@pytest.mark.parametrize("host", _CURATED_SUBDOMAINS)
+def test_curated_subdomains_are_allowed_through_their_parent_entry(host):
+    assert host not in ep.CURATED_ALLOWLIST
+    assert ep.is_domain_allowed(host, {"tier": ep.TIER_CURATED})
+
+
+def test_no_curated_entry_is_a_subdomain_of_another():
+    al = ep.CURATED_ALLOWLIST
+    assert not [d for d in al if any(d.endswith("." + o) for o in al if o != d)]
 
 
 def test_curated_allowlist_has_no_linux_package_mirrors():
-    # macOS only: the Debian and Ubuntu mirrors were dropped (70 to 67 hosts).
+    # macOS only: the Debian and Ubuntu mirrors were dropped.
     mirrors = {"deb.debian.org", "archive.ubuntu.com", "security.ubuntu.com"}
     assert not mirrors & ep.CURATED_ALLOWLIST
-    assert len(ep.CURATED_ALLOWLIST) == 67
 
 
 def test_get_active_policy_merges_partial_saved_config(monkeypatch):

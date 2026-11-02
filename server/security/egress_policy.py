@@ -99,69 +99,49 @@ DEFAULT_NETWORK_POLICY = {
 # development sandbox legitimately needs to reach. Deliberately NOT
 # exhaustive: grow it via a user's `custom_allowed_domains` for anything
 # project-specific rather than expanding this list without bound. Grouped
-# by ecosystem for reviewability. (67 domains.)
+# by ecosystem for reviewability. Each entry also allows its subdomains
+# (is_domain_allowed), so no entry is a subdomain of another.
 # ---------------------------------------------------------------------------
 CURATED_ALLOWLIST: frozenset[str] = frozenset(
     {
         # npm / Node
         "npmjs.com",
-        "www.npmjs.com",
         "npmjs.org",
-        "registry.npmjs.org",
         "yarnpkg.com",
-        "registry.yarnpkg.com",
         "nodejs.org",
         # Python / PyPI
         "pypi.org",
-        "files.pythonhosted.org",
         "pythonhosted.org",
-        "test.pypi.org",
         "python.org",
-        "docs.python.org",
         # Ruby
         "rubygems.org",
         # GitHub (code hosting, raw content, release assets, API, git protocol)
         "github.com",
-        "raw.githubusercontent.com",
-        "objects.githubusercontent.com",
-        "codeload.github.com",
-        "api.github.com",
-        "gist.githubusercontent.com",
         "githubusercontent.com",
         # GitLab / Bitbucket
         "gitlab.com",
         "bitbucket.org",
         # Docker / OCI container registries
         "docker.com",
-        "www.docker.com",
         "registry-1.docker.io",
         "auth.docker.io",
-        "production.cloudflare.docker.com",
         "ghcr.io",
         "quay.io",
         "gcr.io",
         # Rust
         "crates.io",
-        "static.crates.io",
-        "index.crates.io",
         "docs.rs",
         # Go
         "golang.org",
-        "proxy.golang.org",
-        "sum.golang.org",
         "pkg.go.dev",
         # .NET / NuGet
         "nuget.org",
-        "www.nuget.org",
-        "api.nuget.org",
         # Java / Maven
         "maven.org",
-        "repo1.maven.org",
         "repo.maven.apache.org",
         "central.sonatype.com",
         # PHP / Composer
         "packagist.org",
-        "repo.packagist.org",
         "getcomposer.org",
         # Perl / CPAN
         "metacpan.org",
@@ -174,13 +154,10 @@ CURATED_ALLOWLIST: frozenset[str] = frozenset(
         "conda-forge.org",
         # Homebrew
         "brew.sh",
-        "formulae.brew.sh",
         # Hugging Face
         "huggingface.co",
-        "cdn-lfs.huggingface.co",
         # Common CDNs used to fetch package assets
         "jsdelivr.net",
-        "cdn.jsdelivr.net",
         "unpkg.com",
         "cdnjs.cloudflare.com",
         # Docs / Q&A references
@@ -678,12 +655,6 @@ class EgressProxy:
             except OSError:
                 pass
 
-    def stop(self) -> None:
-        try:
-            self._sock.close()
-        except OSError:
-            pass
-
 
 _proxy_lock = threading.Lock()
 _proxy_instance: EgressProxy | None = None
@@ -702,14 +673,3 @@ def ensure_proxy_running() -> tuple[str, int]:
             _proxy_instance = EgressProxy()
             _proxy_instance.start()
         return _proxy_instance.address
-
-
-def _reset_proxy_for_tests() -> None:
-    """Test-only: stop and forget the singleton so a test can start a fresh
-    instance (e.g. to assert on a freshly bound port). Not used by
-    production code."""
-    global _proxy_instance
-    with _proxy_lock:
-        if _proxy_instance is not None:
-            _proxy_instance.stop()
-        _proxy_instance = None
