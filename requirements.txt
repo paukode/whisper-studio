@@ -63,8 +63,8 @@ truststore==0.10.5
 # token minted from AWS credentials by aws-bedrock-token-generator.
 openai==3.42.1
 aws-bedrock-token-generator==1.1.0
-torch==2.11.0
-torchaudio==2.11.0
+torch==2.15.0
+torchaudio==2.11.1
 setuptools==81.0.0
 webrtcvad-wheels==2.0.14.post1
 # Code tools (server/code_tools). ruff checks, and in a workspace that
@@ -87,7 +87,7 @@ mlx==0.32.4
 parakeet-mlx==0.5.2
 # MLX-format chat models (server/local/mlx_server.py).
 mlx-lm==0.32.2
-speechbrain==1.1.0
+speechbrain==1.1.2
 # Speaker clustering (server/diarization/speakers.py) and the Canary tokenizer
 # (server/asr/canary/tokenizer.py) import these directly.
 scipy==1.18.1
