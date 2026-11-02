@@ -204,12 +204,9 @@ def _child_acquire_ctty():
     process group — the shell keeps its startup $COLUMNS/$LINES forever
     and never rewraps on resize."""
     os.setsid()
-    try:
-        fcntl.ioctl(0, termios.TIOCSCTTY, 0)
-    except OSError:
-        # Degrade to the old no-ctty behavior (shell works, resize doesn't)
-        # rather than failing the spawn — preexec exceptions abort Popen.
-        pass
+    # A failure here aborts Popen with the error (preexec exceptions do),
+    # rather than leaving a terminal that never rewraps on resize.
+    fcntl.ioctl(0, termios.TIOCSCTTY, 0)
 
 
 def _create_pty_session(
@@ -717,7 +714,8 @@ async def open_visible_session(cwd: str) -> _PtySession:
     kind the panel's + button opens, once its shell has printed its prompt or
     the wait ran out. Call on the event loop: the reader task needs it."""
     if not os.path.isdir(cwd):
-        cwd = os.path.expanduser("~")
+        # The command was approved for this folder: never type it elsewhere.
+        raise FileNotFoundError(f"cwd not found: {cwd}")
     _reap_dead_sessions()
     session = _create_pty_session(cwd, _OPENED_COLS, _OPENED_ROWS)
     deadline = time.monotonic() + _SHELL_READY_TIMEOUT_S

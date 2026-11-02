@@ -411,7 +411,10 @@ async def do_terminal_run(payload: dict) -> tuple[bool, str]:
                 session = None
         opened = session is None
         if session is None:
-            session = await open_visible_session(cwd)
+            try:
+                session = await open_visible_session(cwd)
+            except FileNotFoundError as e:
+                return False, str(e)
         show_visible_session(session, opened=opened)
         result = await run_in_session(session, command, timeout=timeout)
 

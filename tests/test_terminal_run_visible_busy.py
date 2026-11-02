@@ -162,3 +162,15 @@ def test_the_new_tab_note_names_the_busy_program(monkeypatch, shown):
         assert "sleep is running" in text and "new terminal tab" in text
 
     _with_visible_terminal(monkeypatch, body)
+
+
+def test_a_visible_terminal_never_opens_outside_its_folder(tmp_path):
+    import asyncio
+
+    import pytest
+
+    from server import terminal
+
+    gone = str(tmp_path / "gone")
+    with pytest.raises(FileNotFoundError, match="cwd not found"):
+        asyncio.run(terminal.open_visible_session(gone))
