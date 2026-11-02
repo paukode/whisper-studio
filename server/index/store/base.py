@@ -10,6 +10,7 @@ cache and one write-gen protocol. Everything else imports these from here rather
 from __future__ import annotations
 
 import logging
+import math
 import os
 import sqlite3
 import threading
@@ -259,6 +260,14 @@ def _vec_search(ws_path: str, query_vec: np.ndarray, k: int) -> list[tuple[int, 
             "SELECT chunk_id, distance FROM vchunks WHERE emb MATCH ? AND k=? ORDER BY distance",
             (q, min(k, n)),
         ).fetchall()
+        bad = [c for c, d in rows if d is None or not math.isfinite(d)]
+        if bad:
+            # A zero or NaN vector stored by an older build has no cosine
+            # distance (sqlite-vec returns NULL). Only a rebuild re-embeds it.
+            raise RuntimeError(
+                f"The search index for {ws_path} holds {len(bad)} unusable vector(s) "
+                f"(chunk {bad[0]}) from an older build. Re-index this folder to fix it."
+            )
         return [(int(c), float(d)) for c, d in rows]
     finally:
         conn.close()

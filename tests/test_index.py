@@ -104,6 +104,29 @@ def test_store_search_ranks_by_cosine():
     assert res[0]["score"] > res[1]["score"]
 
 
+def test_a_zero_vector_from_an_older_build_asks_for_a_reindex():
+    """An older build stored zero vectors for bad embeddings; sqlite-vec gives
+    them a NULL cosine distance. Search names the fix instead of a TypeError."""
+    ws = "/fake/ws-zero-vec"
+    store.replace_file(
+        ws,
+        "a.py",
+        {"hash": "h1", "size": 1, "mtime": 1.0},
+        [
+            {"start_line": 1, "end_line": 2, "text": "alpha", "vec": _unit(1), "entities": []},
+            {
+                "start_line": 3,
+                "end_line": 4,
+                "text": "blank",
+                "vec": np.zeros(EMBED_DIM, dtype=np.float32),
+                "entities": [],
+            },
+        ],
+    )
+    with pytest.raises(RuntimeError, match="Re-index this folder"):
+        store.search(ws, _unit(1), k=5)
+
+
 def test_store_graph_expand_via_shared_entity():
     ws = "/fake/ws-graph"
     ent = [{"name": "PaymentService", "label": "service"}]
