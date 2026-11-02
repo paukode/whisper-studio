@@ -20,7 +20,7 @@ import tempfile
 
 from server import folder_skills
 from server.git.executor import _GIT_URL_RE
-from server.infrastructure.paths import repo_root, skills_root
+from server.infrastructure.paths import skills_root
 
 log = logging.getLogger("whisper-studio")
 
@@ -312,20 +312,6 @@ def _copy_skill_folder(src: str, dst: str) -> int:
     return total
 
 
-def _bundled_skill_keys() -> set[str]:
-    """The name keys of the skills the app ships (repo skills/, seeded into
-    the user's skills folder on first run). An import never replaces one."""
-    from server import skills as _sk
-
-    keys: set[str] = set()
-    src = os.path.join(repo_root(), "skills")
-    if not os.path.isdir(src):
-        return keys
-    for name, _skill in _sk.load_skills(src).items():
-        keys.add(_sk.skill_name_key(name))
-    return keys
-
-
 def _flat_skill_name(filepath: str) -> str | None:
     """The name a flat .md skill file loads under (server/skills.py
     load_skills), or None when the file does not load as a skill."""
@@ -380,16 +366,12 @@ def _conflict(subpath: str, name: str, reason: str) -> dict:
 
 def _replace_targets(subpath: str, name: str, dest: str) -> tuple[list[str], dict | None]:
     """What an overwrite import of ``name`` into ``dest`` replaces, or the
-    conflict that stops it. Never a bundled skill, never a skill the skills
-    folder does not hold, never another skill's folder."""
+    conflict that stops it. Never a skill the skills folder does not hold,
+    never another skill's folder."""
     from server import skills as _sk
 
     targets = _installed_paths(name)
     taken = _sk.skill_name_taken(name)
-    if (targets or taken) and _sk.skill_name_key(name) in _bundled_skill_keys():
-        return [], _conflict(
-            subpath, name, f"{name} is a skill that comes with the app, import does not replace it"
-        )
     if taken and not targets:
         return [], _conflict(
             subpath, name, f"a skill named {taken} already exists outside the skills folder"

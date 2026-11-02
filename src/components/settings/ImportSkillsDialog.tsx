@@ -41,7 +41,7 @@ export const ImportSkillsDialog: React.FC<{
   const [skills, setSkills] = useState<PreviewSkill[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   // Off by default: a taken name is a conflict. Ticked, the import replaces
-  // the installed skill of that name (never one that comes with the app).
+  // the installed skill of that name.
   const [overwrite, setOverwrite] = useState(false);
   const [filter, setFilter] = useState('');
   const [searchDesc, setSearchDesc] = useState(false);
@@ -120,8 +120,8 @@ export const ImportSkillsDialog: React.FC<{
     // Clean success: close the dialog. If some skills hit conflicts/errors,
     // keep it open with a summary. Unticked, a taken name is a conflict the
     // user resolves by ticking Overwrite existing (or renaming the old one);
-    // ticked, a conflict names its own reason (a skill that comes with the
-    // app, a folder that holds another skill).
+    // ticked, a conflict names its own reason (a folder that holds another
+    // skill, a name held outside the skills folder).
     if (r.conflicts.length === 0 && r.errors.length === 0) {
       onClose();
       return;
@@ -309,7 +309,9 @@ export const ImportSkillsDialog: React.FC<{
         )}
 
         {error && <div style={{ color: 'var(--accent-record)' }}>{error}</div>}
-        {summary && <div style={{ color: 'var(--success)' }}>{summary}</div>}
+        {/* Only a partial import leaves a summary (a clean one closes the
+            dialog), so it always names something that was not imported. */}
+        {summary && <div role="status" style={{ color: 'var(--warning)' }}>{summary}</div>}
 
         {skills.length > 0 && (
           <>
@@ -375,7 +377,7 @@ export const ImportSkillsDialog: React.FC<{
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <label
                 style={{ display: 'flex', gap: '6px', alignItems: 'center', fontSize: '14px' }}
-                title="Replace an installed skill that has the same name. A skill that comes with the app is never replaced."
+                title="Replace an installed skill that has the same name."
               >
                 <input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} />
                 Overwrite existing

@@ -204,7 +204,7 @@ describe('ImportSkillsDialog: local folder mode', () => {
           conflicts: [{
             subpath: 'pack/meeting-notes',
             name: 'meeting_notes',
-            reason: 'meeting_notes is a skill that comes with the app, import does not replace it',
+            reason: 'the folder meeting-notes already holds something other than meeting_notes',
           }],
           errors: [],
         }),
@@ -229,8 +229,9 @@ describe('ImportSkillsDialog: local folder mode', () => {
     fireEvent.click(screen.getByLabelText('Overwrite existing'));
     fireEvent.click(screen.getByRole('button', { name: /Import/ }));
 
-    await waitFor(() => expect(screen.getByText(/comes with the app/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/already holds something other/)).toBeInTheDocument());
     expect(screen.getByText(/Not imported: meeting_notes/)).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveStyle({ color: 'var(--warning)' });
     const body = (fetchMock.mock.calls[1][1] as unknown as { body: FormData }).body;
     expect(body.get('overwrite')).toBe('true');
     expect(onClose).not.toHaveBeenCalled();

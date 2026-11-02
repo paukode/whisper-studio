@@ -4,7 +4,8 @@ Unticked, a taken name is a conflict. Ticked, the import replaces the
 installed skill that holds the name: the folder skill of that name, or a flat
 .md skill whose loaded name matches. The old version waits outside the skills
 folder until the copy succeeds and comes back when it fails. A skill that
-comes with the app, and a reserved built-in tool name, are never replaced.
+came with the app is replaced like any other; a reserved built-in tool name
+is never taken.
 Saving, editing or renaming a skill still never takes another skill's name.
 """
 
@@ -158,9 +159,10 @@ def test_ticked_a_failed_copy_keeps_the_trust(skills_dir, monkeypatch):
     assert skills_mod.load_skills_config()["trusted"] == ["alpha"]
 
 
-def test_ticked_a_skill_that_comes_with_the_app_is_not_replaced(skills_dir, monkeypatch):
-    # meeting_notes ships in the repo skills/ folder.
-    assert "meeting_notes" in si._bundled_skill_keys()
+def test_ticked_a_skill_that_came_with_the_app_is_replaced(skills_dir, monkeypatch):
+    # The seeded copy belongs to the user, who can already edit or delete it.
+    # In a source install the skills folder IS the repo skills/ folder, so a
+    # "shipped" check there matched every skill and the tick never worked.
     (skills_dir / "meeting-notes.md").write_bytes(_skill_md("meeting_notes", "shipped"))
     _reload(monkeypatch, skills_dir)
 
@@ -170,10 +172,10 @@ def test_ticked_a_skill_that_comes_with_the_app_is_not_replaced(skills_dir, monk
         overwrite=True,
     )
 
-    assert res["imported"] == []
-    assert "comes with the app" in res["conflicts"][0]["reason"]
-    assert "shipped" in (skills_dir / "meeting-notes.md").read_text()
-    assert not (skills_dir / "meeting-notes").exists()
+    assert res["conflicts"] == []
+    assert [s["name"] for s in res["imported"]] == ["meeting_notes"]
+    assert not (skills_dir / "meeting-notes.md").exists()
+    assert "imported" in (skills_dir / "meeting-notes" / "SKILL.md").read_text()
 
 
 def test_ticked_a_reserved_built_in_name_is_still_refused(skills_dir):
