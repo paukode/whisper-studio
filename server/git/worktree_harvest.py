@@ -34,9 +34,6 @@ log = logging.getLogger("whisper-studio")
 
 _APPLY_LOCK = threading.Lock()
 _GIT_TIMEOUT = 60
-# git's well-known empty-tree object id (sha1). Used only as a last-resort base
-# when the branch point is unknown AND git can't report the repo's empty tree.
-_EMPTY_TREE_SHA1 = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
 
 class _PathConflict(Exception):
@@ -199,14 +196,20 @@ def _materialize(repo_root: str, path: str, blob_sha: str, dmode: str) -> None:
         if is_symlink
         else ["git", "cat-file", "--filters", "--path", path, blob_sha]
     )
-    content = subprocess.run(
+    blob = subprocess.run(
         cat_args,
         cwd=repo_root,
         capture_output=True,
         timeout=_GIT_TIMEOUT,
         stdin=subprocess.DEVNULL,
         env=_git_env(),
-    ).stdout
+    )
+    if blob.returncode != 0:
+        # A failed read (a missing object, a required smudge filter such as
+        # git-lfs not installed) must not write an empty file over the user's.
+        err = (blob.stderr or b"").decode(errors="replace").strip()
+        raise RuntimeError(f"git cat-file failed for {path}: {err}")
+    content = blob.stdout
     abspath = os.path.join(repo_root, path)
     _rm_path(abspath)  # replace cleanly (file <-> symlink <-> directory type change)
     os.makedirs(os.path.dirname(abspath) or ".", exist_ok=True)
@@ -262,12 +265,23 @@ def harvest_agent_worktree(
 
         # Diff against the BRANCH POINT so committed agent work is included. If
         # the base is unknown (repo had no commit when the worktree was made),
-        # fall back to the empty tree so everything reads as new — never the
-        # worktree's own HEAD, which would hide whatever the agent committed.
+        # diff against the repo's empty tree so everything reads as new, never
+        # the worktree's own HEAD, which would hide whatever the agent committed.
         base = base_commit
         if not base:
             empty = _run(["git", "hash-object", "-t", "tree", "/dev/null"], cwd=worktree_path)
-            base = _text(empty).strip() or _EMPTY_TREE_SHA1
+            base = _text(empty).strip()
+            if empty.returncode != 0 or not base:
+                err = (empty.stderr or b"").decode(errors="replace").strip()
+                return {
+                    "status": "error",
+                    "files": 0,
+                    "conflicts": 0,
+                    "note": (
+                        f"could not compute the empty tree to diff the worktree at "
+                        f"{worktree_path} ({err}); it was left in place."
+                    ),
+                }
         entries = _changed_entries(worktree_path, base)
         if entries is None:
             return {

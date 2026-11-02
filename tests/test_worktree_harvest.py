@@ -348,3 +348,31 @@ def test_run_agent_applies_only_on_genuine_finish(monkeypatch, repo):
     monkeypatch.setattr(rt, "_run_agent_loop", _limited)
     asyncio.run(rt.run_agent("t", session_id="", model_id_override="m", isolation="worktree"))
     assert seen["apply"] is False  # stopped_early -> keep the worktree
+
+
+def test_a_failed_blob_read_does_not_blank_the_users_file(repo):
+    """git cat-file failing (missing object, missing smudge filter) used to
+    write an empty file over the user's and count it as applied."""
+    from server.git.worktree_harvest import _materialize
+
+    with pytest.raises(RuntimeError, match="git cat-file failed for base.txt"):
+        _materialize(repo, "base.txt", "1" * 40, "100644")
+    assert (pathlib.Path(repo) / "base.txt").read_text() == "base\n"
+
+
+def test_an_unknown_base_with_no_empty_tree_is_an_error(repo, monkeypatch):
+    from server.git import worktree_harvest as wh
+
+    s = _spawn(repo)
+    real_run = wh._run
+
+    def fake_run(args, cwd):
+        if args[:2] == ["git", "hash-object"]:
+            return subprocess.CompletedProcess(args, 128, b"", b"fatal: broken")
+        return real_run(args, cwd)
+
+    monkeypatch.setattr(wh, "_run", fake_run)
+    out = harvest_agent_worktree(repo, s.worktree_path, s.worktree_branch, "agent:ag1", True)
+    assert out["status"] == "error"
+    assert "fatal: broken" in out["note"]
+    assert pathlib.Path(s.worktree_path).exists()
