@@ -37,13 +37,10 @@ from server.goals import store as goal_store
 log = logging.getLogger("whisper-studio")
 
 
-def _flag_on(name: str, default: bool = True) -> bool:
-    try:
-        from server.infrastructure.feature_flags import is_enabled
+def _flag_on(name: str) -> bool:
+    from server.infrastructure.feature_flags import is_enabled
 
-        return is_enabled(name)
-    except Exception:
-        return default
+    return is_enabled(name)
 
 
 def _task_running(task_id: str) -> bool:

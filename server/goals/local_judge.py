@@ -42,7 +42,6 @@ MIN_TAIL_CHARS = 2_000
 # kept free for the chat template and estimate error.
 _CHARS_PER_TOKEN = 3
 _SLACK_TOKENS = 512
-_DEFAULT_CTX = 32768
 
 _aux_note_logged = False
 
@@ -55,18 +54,16 @@ def tail_budget_chars(n_ctx: int, goal: str) -> int:
     return min(DEFAULT_CAP_CHARS, prompt_chars - fixed)
 
 
-def _window(model_key: str) -> int:
+def _window(model_key: str) -> int | None:
     """The resident context window: llama-server's real --ctx-size, or MLX's
-    recorded size, else the registry's, else the 32K default."""
+    recorded size, else the registry's (which always records one). None when
+    neither knows the model."""
     from server.local import serving
     from server.local.runtime import local_model_meta
 
     n = serving.resident_n_ctx() if serving.resident_key() == model_key else None
     n = n or local_model_meta(model_key).get("ctx")
-    try:
-        return int(n) if n else _DEFAULT_CTX
-    except (TypeError, ValueError):
-        return _DEFAULT_CTX
+    return int(n) if n else None
 
 
 def _note_unused_aux_key() -> None:
@@ -109,6 +106,8 @@ async def evaluate_on_device(
         return not_checked(f"{label} could not check the goal: {reason}")
 
     n_ctx = _window(model_key)
+    if n_ctx is None:
+        return failed("its context window is not known")
     cap = tail_budget_chars(n_ctx, goal)
     if cap < MIN_TAIL_CHARS:
         return failed(

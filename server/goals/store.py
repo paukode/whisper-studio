@@ -29,13 +29,15 @@ _EMPTY_STATE = {
 def _load_state(session_id: str) -> dict:
     with _get_conn() as conn:
         row = conn.execute("SELECT goal_state FROM sessions WHERE id = ?", (session_id,)).fetchone()
-    if not row or not row["goal_state"]:
+    return _parse_state(row["goal_state"] if row else None)
+
+
+def _parse_state(raw: str | None) -> dict:
+    """A goal_state column value as a state dict. Only this module writes the
+    column (json.dumps of a dict), so a value that does not parse raises."""
+    if not raw:
         return dict(_EMPTY_STATE)
-    try:
-        data = json.loads(row["goal_state"])
-    except (ValueError, TypeError):
-        return dict(_EMPTY_STATE)
-    return {**_EMPTY_STATE, **(data if isinstance(data, dict) else {})}
+    return {**_EMPTY_STATE, **json.loads(raw)}
 
 
 def get_goal(session_id: str) -> dict:
@@ -46,13 +48,7 @@ def get_goal(session_id: str) -> dict:
         ).fetchone()
     if not row:
         return {"goal": "", "state": dict(_EMPTY_STATE)}
-    state = dict(_EMPTY_STATE)
-    if row["goal_state"]:
-        try:
-            state = {**_EMPTY_STATE, **json.loads(row["goal_state"])}
-        except (ValueError, TypeError):
-            pass
-    return {"goal": row["goal"] or "", "state": state}
+    return {"goal": row["goal"] or "", "state": _parse_state(row["goal_state"])}
 
 
 def set_goal(session_id: str, goal: str, *, set_at: str = "") -> dict:
