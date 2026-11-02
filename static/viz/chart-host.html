@@ -33,7 +33,8 @@
  *                                          user resized the chart) instead of
  *                                          sizing the frame to the chart
  *        {type:'export', format, id}       'svg' | 'png'
- *   out  {type:'height', height}           after every render
+ *   out  {type:'ready'}                    once, when the host has loaded
+ *        {type:'height', height}           after every render
  *        {type:'error',  message}          spec failed to compile or run
  *        {type:'exported', id, format, data}
  */

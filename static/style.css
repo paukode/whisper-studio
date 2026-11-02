@@ -11,10 +11,9 @@ button, input, select, textarea { font-family: inherit; }
 /* ================================================================
    FONT-SIZE SCALE  (single source of truth for typography)
    ----------------------------------------------------------------
-   Every font size flows through these six tokens — no literal px
-   sizes remain in the stylesheets. The scale is anchored at a 17px
-   reading body, one step above the web default, for comfortable reading.
-   Never introduce a literal px size; always reach for a token.
+   Font sizes flow through these six tokens. The scale is anchored at a
+   17px reading body, one step above the web default, for comfortable
+   reading. Reach for a token, not a literal px size, in new rules.
 
      --fs-caption   13px   timestamps · badges · chips · sub-meta
      --fs-small     14px   secondary chrome — toolbar, dropdowns, meta
@@ -951,9 +950,9 @@ input.segment-speaker {
     max-width: 100%;
 }
 .msg-attachment-chip {
-    /* Slightly larger + accent-tinted so the filename pops against the
-     * beige user bubble. Without this the chip used `--text-secondary` on
-     * `--bg-surface` and read as "background noise" against the cream
+    /* Slightly larger + accent-tinted so the filename stands out against
+     * the user bubble. Without this the chip used `--text-secondary` on
+     * `--bg-surface` and read as "background noise" against the
      * user-message background. */
     display: inline-flex;
     align-items: center;
@@ -1126,12 +1125,6 @@ input.segment-speaker {
     box-shadow: none;
     padding-left: 2px; padding-right: 2px;
 }
-/* Ephemeral slash-command toast */
-
-/* Thinking details (collapsed) */
-
-/* Conversation stats */
-
 /* Rich text in assistant messages */
 /* (heading sizes are defined in the second .chat-msg.assistant block
  * further down — kept there as the single source of truth for the
@@ -1166,7 +1159,7 @@ input.segment-speaker {
     margin: 14px 0 6px; color: var(--text-heading); font-weight: 700;
 }
 /* Heading hierarchy inside an assistant bubble. Body inherits
- * --fs-content (16px) from .chat-msg, so every heading must be at least
+ * --fs-content (17px) from .chat-msg, so every heading must be at least
  * that size to read as a heading rather than as smaller-than-body
  * de-emphasis. */
 .chat-msg.assistant h1 { font-size: var(--fs-title); }
@@ -1486,8 +1479,6 @@ input.segment-speaker {
     font-style: italic;
     white-space: nowrap;
 }
-
-/* Skill indicators */
 
 /* The column the tool traces of a turn's row stack in: activity rows, agent
    rows and cards, task rows (each row's own rules live in
@@ -1922,8 +1913,6 @@ input.segment-speaker {
 .session-message-body :first-child { margin-top: 0; }
 .session-message-body :last-child { margin-bottom: 0; }
 
-/* Fetch URL badge */
-
 /* Skill autocomplete popup */
 .skill-autocomplete {
     position: fixed; z-index: 500;
@@ -2296,10 +2285,6 @@ input.segment-speaker {
     .segment-speaker { width: 66px; font-size: var(--fs-caption); }
     .segment-text { font-size: var(--fs-small); }
 }
-
-/* ================================================================
-   CLI APPROVAL CARD
-   ================================================================ */
 
 /* ================================================================
    SETTINGS OVERLAY
@@ -2781,8 +2766,6 @@ input.segment-speaker {
     font-family: var(--font-mono);
 }
 
-/* Inline diff in editor pane */
-
 /* Tab icons */
 .ws-tab-icon { font-size: var(--fs-small); margin-right: 2px; }
 
@@ -2802,10 +2785,6 @@ input.segment-speaker {
     background: var(--bg-secondary); border-top: 1px solid var(--border);
     flex-shrink: 0; font-family: var(--font-mono);
 }
-
-/* Monaco container */
-
-/* File tree icons */
 
 /* Image viewer */
 .ws-image-viewer {
@@ -2910,8 +2889,6 @@ input.segment-speaker {
 }
 .ws-markdown-preview img { max-width: 100%; }
 
-/* Jupyter Notebook viewer */
-
 /* Notebook viewer — `.ipynb` cells rendered by NotebookViewer.tsx, which emits
    `notebook-*` classes. All colors resolve through theme tokens so it reads
    correctly in light and dark mode. */
@@ -2998,8 +2975,6 @@ input.segment-speaker {
 }
 .ws-tree-file:hover { background: var(--bg-hover); color: var(--text-primary); }
 .ws-search-result { padding-left: 8px; }
-
-/* Context menu styles moved to modules/context-menu.css */
 
 /* Local-mode "loading model into memory" banner */
 .model-loading-banner {
@@ -3151,8 +3126,6 @@ input.segment-speaker {
 }
 .more-divider { height: 1px; background: var(--border); margin: 4px 6px; }
 
-/* /doctor result card */
-
 /* Workspace connect dialog */
 .ws-connect-overlay {
     position: fixed; inset: 0; z-index: 1100;
@@ -3249,20 +3222,12 @@ input.segment-speaker {
     color: var(--danger); font-size: var(--fs-small);
 }
 
-/* File viewer modal */
-
 /* Mode indicator */
 .ws-mode-indicator {
     display: flex; gap: 2px; background: var(--bg-primary);
     border-radius: var(--radius-md); padding: 2px; border: 1px solid var(--border);
     margin-right: 8px;
 }
-
-/* Plan mode blocked card */
-
-/* Security blocked card */
-
-/* Permission mode hint */
 
 /* Permission explainer — risk levels */
 .risk-badge {
@@ -3274,8 +3239,6 @@ input.segment-speaker {
 .risk-medium { background: var(--warning-dim); color: var(--warning); }
 .risk-high { background: var(--accent-record-dim); color: var(--accent-record); }
 .exp-body { color: var(--text-primary); margin-bottom: 3px; line-height: 1.4; }
-
-/* Shadowed rule warnings */
 
 /* Workspace approval card.
  * All chrome (background, borders, text) routes through theme variables so
@@ -3304,14 +3267,6 @@ input.segment-speaker {
     color: var(--callout);
 }
 
-/* Diff toggle */
-
-/* Diff content */
-
-/* Approval actions */
-
-/* Workspace picker card (shown when no workspace connected or path outside ws) */
-
 /* Workspace expand tab */
 .ws-expand-tab {
     display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -3330,12 +3285,6 @@ input.segment-speaker {
 
 /* Workspace resize handle */
 .ws-resize-handle { flex: 0 0 6px; }
-
-/* Plan card actions */
-
-/* Build progress */
-
-/* Apply All bar */
 
 /* Recent workspaces */
 .ws-recent { margin-top: 12px; display: flex; flex-direction: column; min-height: 0; }
@@ -3724,24 +3673,6 @@ input.segment-speaker {
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
-/* Voice-to-code */
-
-/* Write/create specific verb colors */
-
-/* Diff stats inline */
-
-/* Result indicators */
-
-/* Working dot animation */
-
-/* Output line */
-
-/* Session-scoped category approval buttons */
-
-/* Auto-denied terminal line */
-
-/* Queue hint for sequential approval */
-
 /* Reset approvals button */
 #resetApprovalsBtn {
     color: var(--warning); border-color: var(--warning-border); font-size: var(--fs-caption);
@@ -3749,7 +3680,7 @@ input.segment-speaker {
 #resetApprovalsBtn:hover { background: var(--warning-dim); }
 
 /* ================================================================
-   Feature Additions v64
+   Toolbar toggle states and the token readout
    ================================================================ */
 
 /* Toolbar toggle buttons in their on state (workspace connected, local
@@ -3762,8 +3693,6 @@ input.segment-speaker {
 }
 .toolbar-btn.active:hover { background: var(--accent-dim); color: var(--accent-hover); }
 
-/* Session token/cost readout in the composer toolbar — the app's single
-   tokens/cost/context surface (the bottom status strip used to repeat it). */
 .token-counter {
     /* The usage readout at the foot of the "How it thinks" panel (and the
        Costs tiles); mono, tabular numerals. */
@@ -3806,18 +3735,6 @@ input.segment-speaker {
     .tc-ctx-fill { transition: none; }
 }
 
-/* Project config badge */
-
-/* /btw side question panel */
-
-/* Context breakdown popover */
-
-/* Feature 7: Tasks panel */
-
-/* Task items */
-
-/* Feature 18: Memory button pulse when WHISPER.md exists */
-
 /* Permissions, hooks, cron, plugins settings forms */
 .settings-list .settings-item {
     display: flex;
@@ -3830,14 +3747,6 @@ input.segment-speaker {
     font-size: 0.83em;
 }
 .settings-item-info { flex: 1; min-width: 0; }
-
-/* Plan mode indicator in header */
-
-/* Brief mode indicator */
-
-/* Cron job items */
-
-/* Feature 19: MCP @ mention autocomplete entries */
 
 /* ── AskUserQuestion widget ──────────────────────────────────────────────── */
 .user-question-wrap {
@@ -3970,10 +3879,6 @@ input.segment-speaker {
 }
 .uq-answered { font-size: var(--fs-caption); color: var(--text-muted); }
 
-/* ── Todo panel ──────────────────────────────────────────────────────────── */
-
-/* ── NotifyUser card ─────────────────────────────────────────────────────── */
-
 /* ── AskUserQuestion "Other" text input ──────────────────────────────────── */
 .user-question-other-row {
     display: flex;
@@ -3992,8 +3897,6 @@ input.segment-speaker {
     font-size: var(--fs-small);
     outline: none;
 }
-
-/* ── Tool call toggle button ─────────────────────────────────────────────── */
 
 /* Git Changes Panel (below file tree) */
 .ws-git-changes {
@@ -4395,11 +4298,8 @@ button.ws-git-status-badge:hover {
 }
 
 /* ════════════════════════════════════════════════════════════════
-   UI modernization Phase 2 — premium polish layer
-   Additive-only: these rules restyle existing classes from the end
-   of the cascade (style.css loads last). Nothing above is renamed,
-   deleted, or reordered — templates/index.html shares this sheet.
-   Tokens come from modules/themes.css.
+   Polish layer: these rules restyle existing classes from later in
+   this sheet. Tokens come from modules/themes.css.
    ════════════════════════════════════════════════════════════════ */
 
 /* ---- Focus visibility: one accent ring everywhere ---- */
@@ -5930,9 +5830,9 @@ button.ws-git-status-badge:hover {
 .notif-time { font-size: var(--fs-caption); color: var(--text-muted); flex-shrink: 0; margin-top: 2px; }
 
 /* ============================================================
- * App status bar (WS-H) — persistent bottom strip of the
- * workspace column: model, effort/mode, git, context meter,
- * per-turn tokens, background-task count. Glanceable state.
+ * App status bar: persistent bottom strip of the workspace
+ * column: model, effort/mode, git, voice, background-task count.
+ * Glanceable state.
  * ============================================================ */
 .app-status-bar {
     display: flex;
