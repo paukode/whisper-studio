@@ -228,7 +228,9 @@ describe('ModelsPanel', () => {
               },
             ],
           })
-        : Promise.resolve({ models: {} }),
+        : url === '/api/config/models-disabled'
+          ? Promise.resolve({ disabled: [], models: [] })
+          : Promise.resolve({ models: {} }),
     );
     renderPanel();
     await screen.findByText('Qwen3.6 27B (Local)');
@@ -428,6 +430,7 @@ describe('ModelsPanel', () => {
       api.get.mockImplementation((url: string) => {
         if (url === '/api/models/catalog') return Promise.resolve({ models: [row] });
         if (url === '/api/models/status' && status) return Promise.resolve(status());
+        if (url === '/api/config/models-disabled') return Promise.resolve({ disabled: [], models: [] });
         return Promise.resolve({ models: {} });
       });
 

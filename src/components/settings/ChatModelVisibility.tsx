@@ -44,10 +44,8 @@ export const ChatModelVisibility: React.FC = () => {
     queryKey: ['models-disabled'],
     queryFn: fetchModelsDisabled,
   });
-  // Defensive shapes: a malformed payload must degrade to an empty list, not
-  // crash the whole Models tab render.
-  const rows = Array.isArray(query.data?.models) ? query.data.models : [];
-  const disabled = Array.isArray(query.data?.disabled) ? query.data.disabled : [];
+  const rows = query.data?.models ?? [];
+  const disabled = query.data?.disabled ?? [];
 
   const onToggle = async (row: ModelVisibilityRow) => {
     const next = row.disabled ? disabled.filter((k) => k !== row.key) : [...disabled, row.key];
