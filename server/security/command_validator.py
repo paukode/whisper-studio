@@ -237,7 +237,7 @@ def _vet_substitutions(command: str, secret_reads: bool) -> tuple[str, str | Non
     spans = _substitutions(command)
     if not spans:
         return command, None
-    # Lazy: server.workspace pulls fastapi (see _github_tools_in_catalog).
+    # Lazy: server.workspace pulls fastapi (see _github_tools_usable).
     from server.workspace.read_only import _is_read_only_command
 
     parts, last = [], 0
@@ -492,23 +492,18 @@ _ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _CMD_WRAPPERS = frozenset({"env", "command", "sudo", "nohup", "time", "exec", "builtin"})
 
 
-def _github_tools_in_catalog() -> bool:
-    """Whether the authenticated GitHub tools are actually reachable this turn.
+def _github_tools_usable() -> bool:
+    """Whether the authenticated GitHub tools can run this turn.
 
-    Mirrors the catalog gate in server/chat/tool_pool.py: github / github_api /
-    github_api_write only enter the pool when a workspace is connected AND it
-    is a git repo. They are deferred tools, so when that gate is closed
-    tool_search cannot recover them either: it searches the same catalog they
-    were excluded from."""
-    try:
-        # Lazy: server.workspace pulls fastapi, and this module is imported
-        # from places that must stay cheap to import.
-        from server.workspace.state import get_workspace_path
+    github / github_api / github_api_write are always in the catalog
+    (server/chat/tool_pool.py); their executors refuse to run until a
+    workspace that is a git repository is connected."""
+    # Lazy: server.workspace pulls fastapi, and this module is imported from
+    # places that must stay cheap to import.
+    from server.workspace.state import get_workspace_path
 
-        ws = get_workspace_path()
-        return bool(ws) and os.path.exists(os.path.join(ws, ".git"))
-    except Exception:  # noqa: BLE001 — advice quality only, never block on this
-        return False
+    ws = get_workspace_path()
+    return bool(ws) and os.path.exists(os.path.join(ws, ".git"))
 
 
 def check_gh_command(command: str) -> str | None:
@@ -529,15 +524,15 @@ def check_gh_command(command: str) -> str | None:
     if i < len(toks):
         prog = toks[i].rsplit("/", 1)[-1]
         if prog == "gh":
-            if _github_tools_in_catalog():
+            if _github_tools_usable():
                 return (
                     "`gh` is unavailable in the command sandbox (no GitHub auth). Use the "
                     "github, github_api, or github_api_write tools — they run gh authenticated."
                 )
             return (
                 "`gh` is unavailable in the command sandbox (no GitHub auth), and the "
-                "authenticated github tools are not in this session's tool pool: they "
-                "require a connected workspace that is a git repository. Do not retry "
+                "authenticated github tools refuse to run until a workspace that is a "
+                "git repository is connected. Do not retry "
                 "`gh` through the shell. Ask the user to connect the repository as the "
                 "workspace, then use the github / github_api / github_api_write tools."
             )
