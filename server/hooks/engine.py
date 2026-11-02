@@ -21,6 +21,7 @@ Executed via server/sandbox.run_sandboxed (deny-list, process-group kill).
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import logging
 
@@ -127,8 +128,12 @@ async def run_hooks(
         if allow_rewrite and outcome.updated_input is not None:
             hook_payload = {**payload, "tool_input": outcome.updated_input}
         try:
+            # Copy the context into the worker thread: a plain run_in_executor
+            # drops context variables, and the Bypass sandbox scope
+            # (server/security/bypass_sandbox.py) must reach the command.
+            ctx = contextvars.copy_context()
             code, stdout, stderr = await loop.run_in_executor(
-                None, _run_shell_hook, hook, hook_payload, cwd, ws
+                None, ctx.run, _run_shell_hook, hook, hook_payload, cwd, ws
             )
         except Exception as e:  # timeout / spawn failure = infra error
             if hook.on_error == "block":
