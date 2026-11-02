@@ -30,7 +30,6 @@ FORBIDDEN = "forbidden"
 class Verdict:
     kind: str  # one of DENY / REDIRECT / READ / WRITE / DANGER / FORBIDDEN
     reason: str = ""
-    redirect_to: str = ""
 
     @property
     def is_read(self) -> bool:
@@ -162,13 +161,11 @@ def classify_github(args: list[str]) -> Verdict:
         return Verdict(
             REDIRECT,
             reason="use the github_api / github_api_write tools for raw REST/GraphQL.",
-            redirect_to="github_api",
         )
     if family == "repo" and verb == "clone":
         return Verdict(
             REDIRECT,
             reason="use the git_clone tool (it validates the URL and connects the workspace).",
-            redirect_to="git_clone",
         )
 
     # Catastrophic repo governance — FORBIDDEN, never approvable, never executed.

@@ -7,19 +7,13 @@ executor) by calling `register()` near their definition. The gate in
 a generic `approval_request` SSE event the frontend renders via one of
 four `preview` renderers.
 
-Replaces the old `[WS_APPROVAL]<json>` magic-string protocol whose
-per-action conditionals leaked into the frontend banner and were the
-proximate cause of "approval emitted but UI didn't render" bugs.
+An executor raises a card with the `[WS_APPROVAL]<json>` marker
+(`server/approval/markers.py`). Every per-action conditional (summary,
+preview body, payload fields) lives in the `ApprovalSpec`, so the frontend
+banner stays generic. Callers import `register` from here and the rest
+from the `registry` and `spec` submodules.
 """
 
-from .registry import all_categories, all_specs, get, register
-from .spec import ApprovalOutcome, ApprovalSpec
+from .registry import register
 
-__all__ = [
-    "ApprovalSpec",
-    "ApprovalOutcome",
-    "register",
-    "get",
-    "all_specs",
-    "all_categories",
-]
+__all__ = ["register"]

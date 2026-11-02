@@ -31,8 +31,8 @@ from server.workspace import get_workspace_path
 _LIST_VERBS = frozenset({"list"})
 _READ_STRIP_FLAGS = frozenset({"--web", "-w"})
 
-# (family, verb) -> (read_verb, expected_state | None) for verify-after-mutate.
-_VERIFY: dict[tuple[str, str], tuple[str, str | None]] = {
+# (family, verb) -> (read_verb, expected_state) for verify-after-mutate.
+_VERIFY: dict[tuple[str, str], tuple[str, str]] = {
     ("pr", "close"): ("view", "CLOSED"),
     ("pr", "reopen"): ("view", "OPEN"),
     ("pr", "merge"): ("view", "MERGED"),
@@ -140,8 +140,6 @@ def _verify_github(args: list[str], cwd: str, mutation_out: str) -> tuple[bool, 
         state = json.loads(out).get("state")
     except Exception:
         return True, f"{mutation_out}\n[state unverified]".strip()
-    if expected is None:
-        return True, f"{family} {verb} done (state now {state})."
     if state == expected:
         return True, f"Verified: {family} #{ident} is now {state}."
     return False, f"{family} #{ident} is {state} after {verb} (expected {expected})."

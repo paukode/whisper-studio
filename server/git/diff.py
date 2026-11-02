@@ -14,7 +14,6 @@ from server.git.core import (
     _run_git,
     find_git_root,
     get_default_branch,
-    get_remote_url,
 )
 from server.git.filesystem import resolve_git_dir
 
@@ -54,7 +53,6 @@ class ToolUseDiff:
     deletions: int
     changes: int
     patch: str
-    repository: str | None = None
 
 
 # --- Transient state detection ---
@@ -176,7 +174,7 @@ def fetch_single_file_git_diff(path: str, file_path: str) -> ToolUseDiff | None:
 
     if track_result.returncode == 1:
         # Untracked file: generate a synthetic diff
-        return _generate_synthetic_diff(abs_file, rel_file, git_root)
+        return _generate_synthetic_diff(abs_file, rel_file)
 
     # Get diff reference (merge base or HEAD)
     diff_ref = _get_diff_ref(git_root)
@@ -190,7 +188,7 @@ def fetch_single_file_git_diff(path: str, file_path: str) -> ToolUseDiff | None:
         raise RuntimeError(f"git diff failed: {result.stderr.strip()}")
     if not result.stdout.strip():
         return None
-    return _parse_raw_diff_to_tool_use(rel_file, result.stdout, git_root)
+    return _parse_raw_diff_to_tool_use(rel_file, result.stdout)
 
 
 # --- Parsing ---
@@ -324,7 +322,7 @@ def _get_diff_ref(git_root: str) -> str:
     return "HEAD"
 
 
-def _generate_synthetic_diff(abs_file: str, rel_file: str, git_root: str) -> ToolUseDiff | None:
+def _generate_synthetic_diff(abs_file: str, rel_file: str) -> ToolUseDiff | None:
     """Generate synthetic diff for untracked files (all lines as additions)."""
     try:
         file_size = os.path.getsize(abs_file)
@@ -346,9 +344,6 @@ def _generate_synthetic_diff(abs_file: str, rel_file: str, git_root: str) -> Too
     patch_lines.extend(f"+{line}" for line in lines)
     patch = "\n".join(patch_lines)
 
-    # Detect repository for metadata
-    repository = _get_github_repo(git_root)
-
     return ToolUseDiff(
         filename=rel_file,
         status="added",
@@ -356,11 +351,10 @@ def _generate_synthetic_diff(abs_file: str, rel_file: str, git_root: str) -> Too
         deletions=0,
         changes=line_count,
         patch=patch,
-        repository=repository,
     )
 
 
-def _parse_raw_diff_to_tool_use(filename: str, raw_diff: str, git_root: str) -> ToolUseDiff:
+def _parse_raw_diff_to_tool_use(filename: str, raw_diff: str) -> ToolUseDiff:
     """Parse raw unified diff into ToolUseDiff format."""
     additions = 0
     deletions = 0
@@ -377,8 +371,6 @@ def _parse_raw_diff_to_tool_use(filename: str, raw_diff: str, git_root: str) -> 
             elif line.startswith("-") and not line.startswith("---"):
                 deletions += 1
 
-    repository = _get_github_repo(git_root)
-
     return ToolUseDiff(
         filename=filename,
         status="modified",
@@ -386,21 +378,4 @@ def _parse_raw_diff_to_tool_use(filename: str, raw_diff: str, git_root: str) -> 
         deletions=deletions,
         changes=additions + deletions,
         patch="\n".join(patch_lines),
-        repository=repository,
     )
-
-
-def _get_github_repo(git_root: str) -> str | None:
-    """Get GitHub 'owner/repo' string if this is a github.com repo."""
-    from server.git.core import normalize_git_remote_url
-
-    remote_url = get_remote_url(git_root)
-    if not remote_url:
-        return None
-    normalized = normalize_git_remote_url(remote_url)
-    if not normalized:
-        return None
-    # Only return for github.com repos
-    if normalized.startswith("github.com/"):
-        return normalized[len("github.com/") :]
-    return None

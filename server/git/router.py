@@ -47,14 +47,11 @@ _CHANGES_CACHE_MAX = 32
 _CHANGES_TTL_SECONDS = 1.0
 
 
-def invalidate_changes_cache(workspace_path: str | None = None) -> None:
+def invalidate_changes_cache() -> None:
     """Drop cached `/api/git/changes` results. Called after any tool that
     can mutate the workspace (writes, deletes, commits) so the next fetch
     sees the new state immediately."""
-    if workspace_path is None:
-        _CHANGES_CACHE.clear()
-    else:
-        _CHANGES_CACHE.pop(os.path.normpath(workspace_path), None)
+    _CHANGES_CACHE.clear()
 
 
 class RestoreRequest(BaseModel):

@@ -31,7 +31,6 @@ _WATCH_INTERVAL_SECONDS = 1.0
 class _CacheEntry:
     value: Any
     dirty: bool
-    compute: Callable[[], Any]
 
 
 class GitFileWatcher:
@@ -127,7 +126,7 @@ class GitFileWatcher:
             if existing is not None:
                 existing.dirty = False
             else:
-                self._cache[key] = _CacheEntry(value=None, dirty=False, compute=compute)
+                self._cache[key] = _CacheEntry(value=None, dirty=False)
 
         value = compute()
 
@@ -136,9 +135,8 @@ class GitFileWatcher:
             # Only update the value if no invalidation arrived mid-compute
             if entry is not None and not entry.dirty:
                 entry.value = value
-                entry.compute = compute
             elif entry is None:
-                self._cache[key] = _CacheEntry(value=value, dirty=False, compute=compute)
+                self._cache[key] = _CacheEntry(value=value, dirty=False)
         return value
 
     def invalidate(self) -> None:

@@ -41,10 +41,6 @@ def get(action: str) -> ApprovalSpec | None:
     return _REGISTRY.get(action)
 
 
-def all_specs() -> dict[str, ApprovalSpec]:
-    return dict(_REGISTRY)
-
-
 def all_categories() -> list[str]:
     seen: list[str] = []
     for spec in _REGISTRY.values():
@@ -53,4 +49,4 @@ def all_categories() -> list[str]:
     return seen
 
 
-__all__ = ["register", "get", "all_specs", "all_categories", "_wrap_executor"]
+__all__ = ["register", "get", "all_categories"]

@@ -97,9 +97,7 @@ def test_denylist(family):
 
 def test_redirects():
     assert classify_github(["api", "repos/o/r"]).kind == REDIRECT
-    assert classify_github(["api", "repos/o/r"]).redirect_to == "github_api"
     assert classify_github(["repo", "clone", "o/r"]).kind == REDIRECT
-    assert classify_github(["repo", "clone", "o/r"]).redirect_to == "git_clone"
 
 
 def test_unknown_verb_fails_closed_to_write():
