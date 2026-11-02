@@ -427,9 +427,18 @@ def do_git_add_commit(payload: dict) -> tuple[bool, str]:
         if rc != 0:
             return False, f"staging failed: {stderr.strip()}"
     elif stage_all:
-        stdout, stderr, rc = _git(["diff", "--cached", "--name-only"], cwd)
-        stdout2, _, _ = _git(["diff", "--name-only"], cwd)
-        all_files = [f for f in (stdout.strip() + "\n" + stdout2.strip()).split("\n") if f.strip()]
+        # ``git add -A`` stages untracked files too, so every path it would
+        # stage is checked: staged, modified and untracked (not ignored).
+        all_files: list[str] = []
+        for args in (
+            ["diff", "--cached", "--name-only"],
+            ["diff", "--name-only"],
+            ["ls-files", "--others", "--exclude-standard"],
+        ):
+            stdout, stderr, rc = _git(args, cwd)
+            if rc != 0:
+                return False, f"could not list the changes to stage: {stderr.strip()}"
+            all_files.extend(f for f in stdout.split("\n") if f.strip())
         secrets = contains_secret_files(all_files)
         if secrets:
             return False, f"refusing to stage potential secret files: {', '.join(secrets)}"

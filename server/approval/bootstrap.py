@@ -223,7 +223,7 @@ def register_defaults() -> None:
             msg = msg[:57] + "…"
         files = p.get("files") or []
         if p.get("all"):
-            scope = "all staged + tracked changes"
+            scope = "all changes, new files included"
         elif files:
             scope = f"{len(files)} file{'s' if len(files) != 1 else ''}"
         else:

@@ -224,8 +224,8 @@ GIT_WRITE_TOOLS = [
         "name": "git_add_commit",
         "description": (
             "[Git] Stage files and create a git commit. Specify files to stage "
-            "or set 'all' to stage all tracked changes. Never amends unless "
-            "explicitly requested. Rejects commits containing secret files."
+            "or set 'all' to stage every change, new files included. Never "
+            "amends. Rejects commits containing secret files."
         ),
         "input_schema": {
             "type": "object",
@@ -241,7 +241,7 @@ GIT_WRITE_TOOLS = [
                 },
                 "all": {
                     "type": "boolean",
-                    "description": "Stage all tracked file changes. Default false.",
+                    "description": "Stage every change, new (untracked, not ignored) files included. Default false.",
                 },
             },
             "required": ["message"],
