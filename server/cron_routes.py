@@ -90,12 +90,9 @@ async def create_cron_job(request: Request):
     # in the Scheduled Reports inbox rather than rejecting the create.
     session_id = body.get("session_id") or ""
     if not session_id:
-        try:
-            from server.infrastructure.sessions import ensure_cron_inbox
+        from server.infrastructure.sessions import ensure_cron_inbox
 
-            session_id = ensure_cron_inbox()
-        except Exception:
-            pass
+        session_id = ensure_cron_inbox()
     # The person in Settings IS the approval here, so the create applies inline
     # (gate=False); only the model's cron_create tool goes through the gate.
     result = json.loads(execute_cron_tool("cron_create", body, session_id=session_id, gate=False))

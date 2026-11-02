@@ -118,12 +118,9 @@ def _next_run_iso(job: dict) -> str | None:
         return None
     jid = job.get("id")
     if _scheduler is not None and jid:
-        try:
-            j = _scheduler.get_job(jid)
-            if j is not None and j.next_run_time is not None:
-                return j.next_run_time.isoformat()
-        except Exception:
-            pass
+        j = _scheduler.get_job(jid)
+        if j is not None and j.next_run_time is not None:
+            return j.next_run_time.isoformat()
     projected = compute_next_run(job.get("schedule") or {})
     # A projection at or before now never arms (a one-shot 'at' whose instant
     # has passed projects its own past run_at). Report no next run rather than a
@@ -475,12 +472,9 @@ def _add_job_to_scheduler(job: dict, *, catch_up: bool = False):
                 return
         except Exception:
             return
-    try:
-        from server.infrastructure.config import load_config
+    from server.infrastructure.config import load_config
 
-        grace = int(load_config().get("cron_misfire_grace_sec", 3600))
-    except Exception:
-        grace = 3600
+    grace = int(load_config().get("cron_misfire_grace_sec", 3600))
     try:
         trigger = _build_trigger(sch, last_run_iso=job.get("last_run"))
         # Wall-clock catch-up (boot only): a cron job whose fire fell during
@@ -514,10 +508,12 @@ def _add_job_to_scheduler(job: dict, *, catch_up: bool = False):
 def _remove_job_from_scheduler(job_id: str):
     if not _scheduler:
         return
+    from apscheduler.jobstores.base import JobLookupError
+
     try:
         _scheduler.remove_job(job_id)
-    except Exception:
-        pass
+    except JobLookupError:
+        pass  # not armed (paused, fired one-shot, old format): nothing to remove
 
 
 def run_job_now(job_id: str) -> dict:
@@ -587,19 +583,13 @@ def _job_public(job: dict) -> dict:
     if running:
         out["run_state"] = "running"
     else:
-        try:
-            from server import cron_history
+        from server import cron_history
 
-            out["run_state"] = cron_history.last_status(jid)
-        except Exception:
-            out["run_state"] = None
+        out["run_state"] = cron_history.last_status(jid)
     sid = job.get("session_id", "")
-    try:
-        from server.infrastructure.sessions import get_session_meta
+    from server.infrastructure.sessions import get_session_meta
 
-        meta = get_session_meta(sid) if sid else None
-    except Exception:
-        meta = None
+    meta = get_session_meta(sid) if sid else None
     out["session_exists"] = meta is not None
     out["session_title"] = meta.get("title") if meta else None
     return out

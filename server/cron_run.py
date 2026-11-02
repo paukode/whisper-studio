@@ -600,15 +600,12 @@ async def _execute_cron_prompt(job_id: str) -> None:
         raise
     except Exception as e:
         log.error("Cron execution failed for '%s': %s", job.get("name"), e)
-        try:
-            cron_events.emit_progress(
-                session_id,
-                run_id=run_id,
-                job_name=job.get("name", ""),
-                phase="failed",
-            )
-        except Exception:
-            pass
+        cron_events.emit_progress(
+            session_id,
+            run_id=run_id,
+            job_name=job.get("name", ""),
+            phase="failed",
+        )
         _cs._push_result(
             job,
             _merge_notifications(notifications, f"[FAILED] {e}"),
