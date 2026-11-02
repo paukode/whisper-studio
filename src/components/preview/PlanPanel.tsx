@@ -46,4 +46,3 @@ export const PlanPanel: React.FC<{ planId: string }> = ({ planId }) => {
   );
 };
 
-export default PlanPanel;

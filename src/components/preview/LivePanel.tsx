@@ -69,4 +69,3 @@ export const LivePanel: React.FC<{ name: string }> = ({ name }) => {
   );
 };
 
-export default LivePanel;

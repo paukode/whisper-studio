@@ -159,4 +159,3 @@ export const RightDock: React.FC = () => {
   );
 };
 
-export default RightDock;

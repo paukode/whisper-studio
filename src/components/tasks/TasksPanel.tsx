@@ -68,4 +68,3 @@ export const TasksPanel: React.FC = () => {
   );
 };
 
-export default TasksPanel;

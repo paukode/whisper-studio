@@ -339,4 +339,3 @@ export const LiveBrowserPanel: React.FC<{
   );
 };
 
-export default LiveBrowserPanel;
