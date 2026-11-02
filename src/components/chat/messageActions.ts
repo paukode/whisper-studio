@@ -11,6 +11,13 @@ export function turnText(rows: readonly ChatMessageType[]): string {
     .join('\n\n');
 }
 
+/** The question cards a row carries: the `userQuestions` list the stream
+ *  writes, or the singular `userQuestion` of a row saved before that list. */
+export function questionsOf(m: ChatMessageType): NonNullable<ChatMessageType['userQuestions']> {
+  if (m.userQuestions?.length) return m.userQuestions;
+  return m.userQuestion ? [m.userQuestion] : [];
+}
+
 /**
  * Export one assistant turn as markdown with full metadata: the thinking,
  * the tools and the prose of every row the turn committed.
@@ -37,11 +44,12 @@ export function exportTurn(rows: readonly ChatMessageType[]): void {
     md += '\n';
   }
 
-  for (const message of rows) {
-    if (message.userQuestion) {
-      md += `## User Question\n\n`;
-      md += `**Q:** ${message.userQuestion.question}\n`;
-      md += `**Options:** ${message.userQuestion.options.join(', ')}\n\n`;
+  const questions = rows.flatMap(questionsOf);
+  if (questions.length) {
+    md += `## User Question${questions.length > 1 ? 's' : ''}\n\n`;
+    for (const q of questions) {
+      md += `**Q:** ${q.question}\n`;
+      md += `**Options:** ${q.options.join(', ')}\n\n`;
     }
   }
 

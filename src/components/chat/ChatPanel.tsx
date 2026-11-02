@@ -9,6 +9,7 @@ import { ChatMessage } from './ChatMessage';
 import { TurnBubble } from './TurnBubble';
 import { isLiveTurn, turnEntries, turnKey, spokenTurn } from './turnEntries';
 import { resolveTaskCheckpoints } from './TaskCard';
+import { questionsOf } from './messageActions';
 import { StreamingMessage } from './StreamingMessage';
 import { ICON } from './activityIcons';
 import { VoiceLiveMessage } from './VoiceLiveMessage';
@@ -262,10 +263,10 @@ export const ChatPanel: React.FC = () => {
         if (msg.toolUse?.length) {
           md += `**Tools:** ${msg.toolUse.map(t => `${t.toolName} (${t.status})`).join(', ')}\n\n`;
         }
-        if (msg.userQuestion) {
-          md += `> **Question:** ${msg.userQuestion.question}\n`;
-          md += `> **Options:** ${msg.userQuestion.options.join(', ')}\n`;
-          if (msg.userQuestion.answered) md += `> *Answered*\n`;
+        for (const q of questionsOf(msg)) {
+          md += `> **Question:** ${q.question}\n`;
+          md += `> **Options:** ${q.options.join(', ')}\n`;
+          if (q.answered) md += `> *Answered*\n`;
           md += '\n';
         }
         if (msg.content) md += `${msg.content}\n\n`;
