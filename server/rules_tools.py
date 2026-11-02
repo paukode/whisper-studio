@@ -148,7 +148,7 @@ def _prepare(tool_input: dict) -> tuple[dict | None, str]:
 
     from server.memory.secret_scanner import check_and_block
 
-    clean, _redacted, findings = check_and_block(content)
+    clean, findings = check_and_block(content)
     if not clean:
         labels = ", ".join(f["label"] for f in findings)
         return (

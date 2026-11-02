@@ -80,8 +80,7 @@ def test_pypi_token_detected():
 
 def test_new_patterns_compile():
     # Every rule (including the two new ones) must have compiled.
-    rules = SS._get_rules()
-    ids = {rule_id for rule_id, _label, _pat in rules}
+    ids = {rule_id for rule_id, _label, _pat in SS._RULES}
     assert "openai-api-key-modern" in ids
     assert "pypi-token-modern" in ids
 
@@ -102,11 +101,10 @@ def test_no_false_positive_on_prose(prose):
     assert "PyPI Token" not in labels
 
 
-def test_check_and_block_redacts_modern_openai_key():
-    clean, redacted, findings = SS.check_and_block(f"token: {_OPENAI_PROJ}")
+def test_check_and_block_blocks_modern_openai_key():
+    clean, findings = SS.check_and_block(f"token: {_OPENAI_PROJ}")
     assert clean is False
-    assert _OPENAI_PROJ not in redacted
-    assert findings
+    assert [f["rule"] for f in findings] == ["openai-api-key-modern"]
 
 
 # ── (3) slug disambiguation + old folders ────────────────────────────────────

@@ -225,13 +225,10 @@ def execute_memory_write(
     full_content = (
         f"---\nname: {name}\ndescription: {description}\ntype: {mem_type}\n---\n\n{content}"
     )
-    is_clean, redacted, findings = check_and_block(full_content)
+    is_clean, findings = check_and_block(full_content)
     if not is_clean:
         rules = ", ".join(f["label"] for f in findings)
-        return (
-            f"BLOCKED: Content contains potential secrets ({rules}). "
-            f"Secrets were redacted. Please remove sensitive data before saving to memory."
-        )
+        return f"BLOCKED: content contains potential secrets ({rules}). Remove them before saving."
 
     # Ensure parent directory exists (for nested paths like subdir/file.md)
     os.makedirs(os.path.dirname(abs_path), exist_ok=True)

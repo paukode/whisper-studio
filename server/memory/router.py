@@ -121,7 +121,7 @@ async def save_memory_file(request: Request):
     memory_dir = _tier_dir(scope)
     abs_path = _safe_path(memory_dir, filename)
 
-    is_clean, _redacted, findings = check_and_block(content)
+    is_clean, findings = check_and_block(content)
     if not is_clean:
         rules = ", ".join(f["label"] for f in findings)
         raise HTTPException(status_code=400, detail=f"Content contains potential secrets ({rules})")
