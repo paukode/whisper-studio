@@ -62,8 +62,6 @@ export interface CronEventPayload {
   run_id?: string;
   status?: 'ok' | 'failed';
   text?: string;
-  /** Legacy — kept for old persisted rows. New cards use schedule_label. */
-  interval_minutes?: number;
   /** Human-readable schedule, e.g. "every day at 09:00 · Europe/Warsaw". */
   schedule_label?: string;
   /** ISO of the next scheduled fire (absent/irrelevant for deleted). */
@@ -456,7 +454,7 @@ export interface Approval {
  * `preview` to pick a renderer. Categories come from the backend's
  * ApprovalSpec registry and are open-ended strings, not a literal union.
  */
-export type PreviewKind = 'diff' | 'command' | 'list' | 'text';
+export type PreviewKind = 'diff' | 'command' | 'text';
 export type RiskHint = 'low' | 'medium' | 'high';
 
 export interface ApprovalRequest {

@@ -5,12 +5,11 @@ import { answerApproval } from '@/hooks/chatStream/approvalLeg';
 import { useUIStore } from '@/stores/uiStore';
 import { DiffPreview } from './previews/DiffPreview';
 import { CommandPreview } from './previews/CommandPreview';
-import { FileListPreview } from './previews/FileListPreview';
 import { TextPreview } from './previews/TextPreview';
 import { ICON } from './activityIcons';
 
 /**
- * Generic approval banner. Renders one of four preview components based on
+ * Generic approval banner. Renders one of three preview components based on
  * `currentApproval.preview`, with no per-action conditionals. Adding a new
  * approval-required tool on the backend requires zero changes here.
  */
@@ -107,8 +106,6 @@ export function ApprovalBanner() {
             previewError={payload.command_preview_error as string | undefined}
           />
         );
-      case 'list':
-        return <FileListPreview paths={payload.paths as string[] | undefined} />;
       case 'text':
       default:
         return <TextPreview text={currentApproval.summary} />;

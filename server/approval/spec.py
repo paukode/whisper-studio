@@ -10,7 +10,7 @@ from typing import Literal
 
 log = logging.getLogger("whisper-studio")
 
-PreviewKind = Literal["diff", "command", "list", "text"]
+PreviewKind = Literal["diff", "command", "text"]
 RiskHint = Literal["low", "medium", "high"]
 
 # Payload key holding the workspace root a workspace-bound card was raised in.
@@ -128,9 +128,8 @@ class ApprovalSpec:
     `allow` here). Extensible, categories are discovered by walking the
     registry, not pinned to a literal union.
 
-    `preview` picks which of the four frontend renderers shows the action:
-    diff (file content changes), command (shell), list (multi-file ops),
-    text (free-form summary).
+    `preview` picks which of the three frontend renderers shows the action:
+    diff (file content changes), command (shell), text (free-form summary).
 
     `summary` produces the one-line human-readable label. Pass a string for
     constant labels or a callable that takes the tool input dict for
