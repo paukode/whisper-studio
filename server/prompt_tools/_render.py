@@ -1,9 +1,9 @@
 """Prompt rendering shared by the prompt tools.
 
-Mirrors server.skills._tool_run_skill exactly: the tool result is a model
-PROMPT (the user's arguments followed by the skill instructions), so the
-executors registering with emits_prompt=True keep the same payload shape the
-markdown prompt skills produced.
+The tool result is a model PROMPT (the user's arguments followed by the
+skill instructions) in the same USER REQUEST / SKILL INSTRUCTIONS shape as
+server.skills._tool_run_skill, so emits_prompt=True keeps it out of the
+budgeter.
 """
 
 
