@@ -8,9 +8,6 @@ analyze_document tool.
 """
 
 import io
-import logging
-
-log = logging.getLogger("whisper-studio")
 
 # MarkItDown output above this many chars -> switch to schema + sample.
 _LARGE_CHARS = 60_000
@@ -20,13 +17,9 @@ _SAMPLE_ROWS = 20
 def extract_xlsx(content: bytes, markitdown_text: str) -> str:
     if len(markitdown_text or "") <= _LARGE_CHARS:
         return markitdown_text
-    try:
-        from openpyxl import load_workbook
+    from openpyxl import load_workbook
 
-        wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
-    except Exception as e:
-        log.warning("openpyxl load failed (%s); keeping markitdown output", e)
-        return markitdown_text
+    wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
 
     parts = [
         "[Large spreadsheet: showing each sheet's dimensions, header, and first "
@@ -43,14 +36,10 @@ def extract_xlsx(content: bytes, markitdown_text: str) -> str:
 def extract_csv(content: bytes, markitdown_text: str) -> str:
     if len(markitdown_text or "") <= _LARGE_CHARS:
         return markitdown_text
-    try:
-        import csv
+    import csv
 
-        text = content.decode("utf-8", errors="replace")
-        rows = list(csv.reader(io.StringIO(text)))
-    except Exception as e:
-        log.warning("csv parse failed (%s); keeping markitdown output", e)
-        return markitdown_text
+    text = content.decode("utf-8", errors="replace")
+    rows = list(csv.reader(io.StringIO(text)))
     if not rows:
         return markitdown_text
 

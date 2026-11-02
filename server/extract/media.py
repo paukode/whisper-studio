@@ -144,16 +144,14 @@ def _transcribe_with_speakers(path: str) -> str:
 
 
 def _diarize(audio, segments) -> list:
-    """Assign a speaker label per segment via ECAPA embeddings + the existing
-    agglomerative clusterer. Falls back to a single speaker on any failure."""
+    """Assign a speaker label per segment via the configured speaker encoder's
+    embeddings + the existing agglomerative clusterer. A failure raises, and
+    extract_media reports it."""
     import numpy as np
 
+    from server.diarization.speakers import MATCH_THRESHOLD, _agglomerative, embed
+
     n = len(segments)
-    try:
-        from server.diarization.speakers import MATCH_THRESHOLD, _agglomerative, embed
-    except Exception as e:
-        log.warning("diarization unavailable (%s); labeling as one speaker", e)
-        return ["Speaker 1"] * n
 
     embeddings = []
     idxs = []
@@ -168,15 +166,11 @@ def _diarize(audio, segments) -> list:
     if len(embeddings) < 2:
         return labels
 
-    try:
-        groups = _agglomerative(
-            np.stack(embeddings),
-            distance_threshold=1.0 - MATCH_THRESHOLD,
-            expected=None,
-        )
-    except Exception as e:
-        log.warning("speaker clustering failed (%s); labeling as one speaker", e)
-        return labels
+    groups = _agglomerative(
+        np.stack(embeddings),
+        distance_threshold=1.0 - MATCH_THRESHOLD,
+        expected=None,
+    )
 
     # Number speakers by first appearance so labels read in order.
     order: dict = {}
@@ -209,48 +203,51 @@ def _frame_interval(duration_sec: float) -> float:
     return float(_FRAME_INTERVAL_SEC)
 
 
+def _required_binary(name: str, env_var: str) -> str:
+    path = resolve_binary(name, env_var)
+    if not path:
+        raise RuntimeError(f"{name} is required for video and was not found")
+    return path
+
+
 def _video_duration(path: str) -> float:
-    """Video length in seconds via ffprobe, or 0.0 if it can't be determined."""
+    """Video length in seconds via ffprobe, or 0.0 when ffprobe reports none."""
+    out = subprocess.run(
+        [
+            _required_binary("ffprobe", "WHISPER_FFPROBE_PATH"),
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            path,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     try:
-        out = subprocess.run(
-            [
-                resolve_binary("ffprobe", "WHISPER_FFPROBE_PATH") or "ffprobe",
-                "-v",
-                "error",
-                "-show_entries",
-                "format=duration",
-                "-of",
-                "default=noprint_wrappers=1:nokey=1",
-                path,
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
         return float((out.stdout or "").strip() or 0)
-    except (ValueError, OSError):
+    except ValueError:  # "N/A": no duration in the container
         return 0.0
 
 
 def _encode_frame(img) -> str:
-    """Downscale a PIL frame to <= _FRAME_MAX_DIM and return a base64 JPEG.
-    Empty string on any failure."""
+    """Downscale a PIL frame to <= _FRAME_MAX_DIM and return a base64 JPEG."""
     import base64
     import io
 
     from PIL import Image
 
-    try:
-        im = img.convert("RGB")
-        longest = max(im.size)
-        if longest > _FRAME_MAX_DIM:
-            scale = _FRAME_MAX_DIM / longest
-            im = im.resize((int(im.width * scale), int(im.height * scale)), Image.LANCZOS)
-        buf = io.BytesIO()
-        im.save(buf, format="JPEG", quality=_FRAME_JPEG_QUALITY)
-        return base64.b64encode(buf.getvalue()).decode()
-    except Exception:
-        return ""
+    im = img.convert("RGB")
+    longest = max(im.size)
+    if longest > _FRAME_MAX_DIM:
+        scale = _FRAME_MAX_DIM / longest
+        im = im.resize((int(im.width * scale), int(im.height * scale)), Image.LANCZOS)
+    buf = io.BytesIO()
+    im.save(buf, format="JPEG", quality=_FRAME_JPEG_QUALITY)
+    return base64.b64encode(buf.getvalue()).decode()
 
 
 def _sample_video_frames(path: str) -> tuple[str, list[dict]]:
@@ -262,16 +259,13 @@ def _sample_video_frames(path: str) -> tuple[str, list[dict]]:
 
     # Apple Vision directly, not the escalating engine: a text-free video
     # must not fan out into one Haiku call per blank frame.
-    try:
-        from server.extract.ocr import _ocr_with_apple_vision
-    except Exception:
-        _ocr_with_apple_vision = None
+    from server.extract.ocr import _ocr_with_apple_vision
 
     interval = _frame_interval(_video_duration(path))
     tmpdir = tempfile.mkdtemp(prefix="frames_")
     try:
         cmd = [
-            resolve_binary("ffmpeg", "WHISPER_FFMPEG_PATH") or "ffmpeg",
+            _required_binary("ffmpeg", "WHISPER_FFMPEG_PATH"),
             "-nostdin",
             "-i",
             path,
@@ -292,24 +286,18 @@ def _sample_video_frames(path: str) -> tuple[str, list[dict]]:
             except Exception:
                 continue
             # On-screen text (for text-only models + the transcript merge).
-            if _ocr_with_apple_vision is not None:
-                try:
-                    text = _ocr_with_apple_vision([img])
-                    if text and text.strip():
-                        notes.append(f"[{_fmt_ts(ts)}] {text.strip()}")
-                except Exception:
-                    pass
+            text = _ocr_with_apple_vision([img])
+            if text and text.strip():
+                notes.append(f"[{_fmt_ts(ts)}] {text.strip()}")
             # Retain the actual frame so vision models can see it, not just its
             # OCR'd text.
-            data = _encode_frame(img)
-            if data:
-                frames.append(
-                    {
-                        "data": data,
-                        "media_type": "image/jpeg",
-                        "timestamp": round(ts, 1),
-                    }
-                )
+            frames.append(
+                {
+                    "data": _encode_frame(img),
+                    "media_type": "image/jpeg",
+                    "timestamp": round(ts, 1),
+                }
+            )
         return "\n\n".join(notes), frames
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)

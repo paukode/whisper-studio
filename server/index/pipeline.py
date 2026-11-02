@@ -168,8 +168,12 @@ _SHEET_SAMPLE_ROWS = 20  # rows kept when sampling a large spreadsheet
 
 def _finish(text: str | None) -> str | None:
     """Normalize extractor output: strip + drop empty / 'nothing here' sentinels
-    (server/extract emits '[No content extracted]' / '[No text recognized]')."""
+    (server/extract emits '[No content extracted]' / '[No text recognized]').
+    An '[Error extracting ...]' marker raises, so the error text is never
+    indexed as the file's content."""
     text = (text or "").strip()
+    if text.startswith("[Error extracting "):
+        raise RuntimeError(text)
     if not text or text in {"[No content extracted]", "[No text recognized]"}:
         return None
     return text
