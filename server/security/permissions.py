@@ -294,28 +294,31 @@ def approval_floor(
     stricter in dontAsk: resolve_static_decision denies a github-destructive
     call there, since that mode never shows a card.
 
-    ``mode`` is the session's permission mode, and a category row of the
-    user's in permissions.json (category_modes) replaces it for that category.
-    In bypassPermissions the floors in BYPASS_LIFTED_FLOORS do not apply (the
-    user's decision of 2026-11-02: Bypass works like Claude Code's bypass,
-    so a delete outside the workspace, a sandbox escalation and a visible
-    terminal run show no card). github-destructive and mcp-approve keep
-    asking in every mode. ``mode`` None (a caller that only asks whether any
-    floor could apply) lifts nothing.
+    ``mode`` is the session's permission mode. In bypassPermissions the
+    floors in BYPASS_LIFTED_FLOORS do not apply (the user's decision of
+    2026-11-02: Bypass works like Claude Code's bypass, so a delete outside
+    the workspace, a sandbox escalation and a visible terminal run show no
+    card). A category row of the user's in permissions.json (category_modes)
+    can only tighten this: a row naming another mode keeps the floors under a
+    Bypass session, and a row naming bypassPermissions lifts nothing under any
+    other mode, since the ws_* executors read the session's mode too.
+    github-destructive and mcp-approve keep asking in every mode. ``mode``
+    None (a caller that only asks whether any floor could apply) lifts
+    nothing.
     """
     floor = _floor(tool_name, tool_input, category)
-    if floor in BYPASS_LIFTED_FLOORS and _effective_mode(category, mode) == MODE_BYPASS:
+    if floor in BYPASS_LIFTED_FLOORS and _bypass_lifts(category, mode):
         return None
     return floor
 
 
-def _effective_mode(category: str, mode: str | None) -> str | None:
-    """The mode that decides ``category``: the user's category row when it
-    names a valid mode, else ``mode``."""
-    if mode is None:
-        return None
+def _bypass_lifts(category: str, mode: str | None) -> bool:
+    """Whether Bypass lifts the floors for ``category``: the session's mode is
+    bypassPermissions and no category row of the user's names another mode."""
+    if mode != MODE_BYPASS:
+        return False
     row = (load_permissions().get("category_modes") or {}).get(category)
-    return row if row in VALID_MODES else mode
+    return row not in VALID_MODES or row == MODE_BYPASS
 
 
 def bypass_now() -> bool:
