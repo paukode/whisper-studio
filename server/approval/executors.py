@@ -633,7 +633,7 @@ async def _do_command(payload: dict) -> ApprovalOutcome:
     command = (payload.get("command") or "").strip()
     if not command:
         return ApprovalOutcome(ok=False, error="No command")
-    # Same validation gate as /api/workspace/shell: the sandbox alone does not
+    # Same validation gate as ws_run_command: the sandbox alone does not
     # stop an approved command from e.g. reading ~/.ssh, so the dangerous-pattern
     # and sensitive-path checks run here too.
     # The gate settled secret_access: set in Bypass, else only on a card a

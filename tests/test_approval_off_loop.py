@@ -116,24 +116,6 @@ def test_worktree_executors_run_off_the_loop(
     assert ticks >= 4, f"{executor_name} froze the loop ({ticks} ticks)"
 
 
-class _JsonRequest:
-    def __init__(self, body: dict):
-        self._body = body
-
-    async def json(self) -> dict:
-        return self._body
-
-
-def test_workspace_shell_endpoint_does_not_block_the_loop(tmp_path, monkeypatch):
-    from server.workspace.routes import shell as shell_routes
-
-    monkeypatch.setattr(shell_routes, "get_workspace_path", lambda: str(tmp_path))
-    req = _JsonRequest({"command": "sleep 0.6"})
-    resp, ticks = asyncio.run(_ticks_while(shell_routes.ws_shell_endpoint(req)))
-    assert resp["exit_code"] == 0, resp
-    assert ticks >= 5, f"/api/workspace/shell froze the loop ({ticks} ticks)"
-
-
 def test_approved_delete_of_a_large_tree_does_not_block_the_loop(workspace_dir, monkeypatch):
     from server.approval import executors
 

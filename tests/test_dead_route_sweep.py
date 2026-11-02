@@ -79,9 +79,10 @@ def test_deleted_routes_stay_deleted_and_kept_routes_remain():
     # Plan mode is driven through the permissions API; these dupes are gone.
     assert ("/api/workspace/plan-mode", "POST") not in ws
     assert ("/api/workspace/plan-mode", "GET") not in ws
-    # The one kept-and-rewired route, plus the live shell endpoint.
+    # The one kept-and-rewired route. The unapproved shell runner is gone:
+    # Reveal in Finder, its last caller, uses /reveal.
     assert ("/api/workspace/shell/tasks/stop", "POST") in ws
-    assert ("/api/workspace/shell", "POST") in ws
+    assert ("/api/workspace/shell", "POST") not in ws
 
     # The localStorage-migration import endpoint was dead; it stays deleted.
     assert ("/api/sessions/import", "POST") not in paths(sessions_router)
@@ -126,12 +127,15 @@ def test_esc_stop_flow_end_to_end(tmp_path):
     try:
         # The stopped turn's stream began here; the stop carries it as `since`.
         since = time.time()
-        r = c.post(
-            "/api/workspace/shell",
-            json={"command": "sleep 30", "background": True, "session_id": "esc-live"},
-        )
-        assert r.status_code == 200, r.text
-        task_id = r.json()["task_id"]
+        from server.shell_snapshot import wrap_command
+        from server.tasks.shell import start_shell_task
+
+        task_id = start_shell_task(
+            "sleep 30",
+            cwd=str(ws_dir),
+            session_id="esc-live",
+            exec_command=wrap_command("sleep 30", "esc-live"),
+        )["task_id"]
         time.sleep(0.3)
 
         stop_body = {"session_id": "esc-live", "since": since}

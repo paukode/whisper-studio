@@ -7,7 +7,6 @@ import base64
 import server.workspace.commands as C
 from server.workspace.commands import (
     _apply_stdin_redirect,
-    _detect_image_output,
     _interpret_exit_code,
     _is_silent_command,
     _needs_stdin_redirect,
@@ -68,19 +67,6 @@ def test_is_silent_command():
     assert _is_silent_command("mv a b") is True
     assert _is_silent_command("/bin/rm -rf x") is True
     assert _is_silent_command("ls -la") is False
-
-
-def test_detect_image_output_finds_png():
-    raw = b"\x89PNG\r\n\x1a\n" + b"\x00" * 120
-    b64 = base64.b64encode(raw).decode()
-    out = _detect_image_output(f"prefix text {b64} suffix")
-    assert out is not None
-    assert out["mime_type"] == "image/png"
-    assert out["data"] == b64
-
-
-def test_detect_image_output_none_for_plain_text():
-    assert _detect_image_output("just some normal command output") is None
 
 
 def test_truncate_shell_output_passthrough_when_small():

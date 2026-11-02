@@ -32,7 +32,6 @@ from . import routes  # noqa: E402,F401
 # --- Layer 4: shell-execution helpers ----------------------------------
 from .commands import (  # noqa: E402,F401
     _apply_stdin_redirect,
-    _detect_image_output,
     _interpret_exit_code,
     _is_silent_command,
     _needs_stdin_redirect,

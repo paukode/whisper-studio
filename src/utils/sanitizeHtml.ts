@@ -7,8 +7,7 @@ import { marked } from 'marked';
  * piping `marked.parse(...)` directly into that prop with no
  * sanitization, which let prompt-injected web pages (via web_fetch)
  * fire `<img onerror>` and similar payloads inside the SPA's
- * same-origin context — chained with the `/api/workspace/shell`
- * `user_approved` bypass that was a full RCE.
+ * same-origin context, where every local API route is in reach.
  *
  * Render path:
  *   markdown text -> marked.parse -> DOMPurify.sanitize -> safe HTML
