@@ -21,14 +21,22 @@ import { useCronUnreadStore } from './cronUnreadStore';
 import { refreshSessionUsage } from './sessionUsage';
 import { toError } from '@/utils/toError';
 
+/** Sessions whose save failure is already in the notification bell. A lasting
+ *  failure is retried every 30 s; only the first one of a run is persisted,
+ *  and a successful save clears the id so a later failure is reported again. */
+const reportedSaveFailures = new Set<string>();
+
 /** Say that a session could not be stored. One toast per session (keyed),
  *  so the 30 s retries of a lasting failure collapse into a counter instead
  *  of a stack; the session stays unsaved and the next save tries again. */
 function reportSaveFailure(id: string, what: 'create' | 'save', err: unknown): void {
   console.warn(`Failed to ${what} session:`, err);
+  const firstReport = !reportedSaveFailures.has(id);
+  reportedSaveFailures.add(id);
   useUIStore.getState().addToast({
     type: 'error',
     key: `session-save-${id}`,
+    persist: firstReport,
     message: `Could not ${what} this session, so recent changes are not stored yet: ${toError(err).message}`,
   });
 }
@@ -280,6 +288,7 @@ export const useSessionStore = create<SessionState>()(persist((set, get) => ({
     const created = saveSources(id);
     sessionsApi.createSession(newSession).then(
       () => {
+        reportedSaveFailures.delete(id);
         if (created && get().liveSessions[id]) serverCopies.set(id, created);
       },
       (err) => reportSaveFailure(id, 'create', err),
@@ -634,6 +643,7 @@ export const useSessionStore = create<SessionState>()(persist((set, get) => ({
     const saving = sessionsApi.updateSession(id, saveBody(sources));
     saving.then(
       () => {
+        reportedSaveFailures.delete(id);
         if (get().liveSessions[id]) serverCopies.set(id, sources);
       },
       (err) => reportSaveFailure(id, 'save', err),
