@@ -1,4 +1,4 @@
-"""Voice routes: status reporting, settings validation, and the /ws/voice
+"""Voice routes: status reporting and the /ws/voice
 handshake (origin guard, start message, audio + text forwarding) against a
 fake Sonic stream."""
 
@@ -62,21 +62,6 @@ def test_status_disabled_by_config(monkeypatch):
     )
     body = _client().get("/api/voice/status").json()
     assert body["available"] is False and "disabled" in body["reason"]
-
-
-def test_settings_validation(monkeypatch):
-    saved = {}
-    monkeypatch.setattr(
-        "server.infrastructure.config._load_user_config", lambda: {"voice": {"voice_id": "amy"}}
-    )
-    monkeypatch.setattr("server.infrastructure.config.save_config", lambda raw: saved.update(raw))
-    c = _client()
-    assert c.put("/api/voice/settings", json={"voice_id": "nobody"}).status_code == 400
-    assert c.put("/api/voice/settings", json={"endpointing": "sometimes"}).status_code == 400
-    assert c.put("/api/voice/settings", json={}).status_code == 400
-    r = c.put("/api/voice/settings", json={"voice_id": "matthew", "endpointing": "high"})
-    assert r.status_code == 200
-    assert saved["voice"] == {"voice_id": "matthew", "endpointing": "HIGH"}
 
 
 def test_ws_rejects_cross_site_origin():

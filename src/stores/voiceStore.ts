@@ -122,7 +122,6 @@ export interface VoiceState {
     region?: string;
     voices?: VoiceOption[];
   }) => void;
-  setVoiceId: (voiceId: string) => void;
   reset: () => void;
 }
 
@@ -276,7 +275,6 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
       ...(region ? { region } : {}),
       ...(voices ? { voices } : {}),
     }),
-  setVoiceId: (voiceId) => set({ voiceId }),
   // Ending the conversation keeps background-run state while any socket is
   // still draining it.
   reset: () =>
