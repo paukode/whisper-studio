@@ -70,6 +70,17 @@ def test_the_field_report_a_relative_delete_after_cd_asks_outside_bypass(workspa
     assert approval_floor("terminal_run", payload, "cli") == "rm"
     for mode in (MODE_DEFAULT, MODE_ACCEPT_EDITS, MODE_DONT_ASK):
         assert resolve_static_decision("terminal_run", payload, "cli", {}, mode) == "ask"
+        # A session "Yes, all cli" does not cover it outside Bypass.
+        assert resolve_static_decision("terminal_run", payload, "cli", {"cli": "allow"}, mode) == (
+            "ask"
+        )
+    # Nor does a trusted skill script.
+    assert (
+        resolve_static_decision(
+            "terminal_run", payload, "cli", {}, MODE_DEFAULT, auto_allow_trusted=True
+        )
+        == "ask"
+    )
 
     # The one-call form: the shell is still in the workspace when the call
     # arrives, so only "no known working directory" catches it.
