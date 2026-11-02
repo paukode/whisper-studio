@@ -209,3 +209,85 @@ def test_the_write_and_delete_executors_follow_the_mode(workspace, outside, app_
     app_mode(MODE_BYPASS)
     assert asyncio.run(_do_delete({"path": str(outside), "session_id": "s1"})).ok is True
     assert not outside.exists()
+
+
+# ── Review fixes: protected roots, credential stores, category rows ─────────
+
+
+@pytest.fixture
+def fake_home(tmp_path, monkeypatch):
+    """A home folder in tmp, so a failing guard can never reach the real one;
+    the delete itself is also replaced, as a second net."""
+    home = tmp_path / "home"
+    (home / "Documents").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+
+    def _never(full):
+        raise AssertionError(f"the delete of {full} ran")
+
+    monkeypatch.setattr("server.approval.executors._delete_path", _never)
+    return home
+
+
+def test_ws_delete_of_the_root_or_home_is_refused_in_bypass(workspace, fake_home, app_mode):
+    from server.workspace.paths import ws_path_changeable
+
+    app_mode(MODE_BYPASS)
+    for target in ("/", "/System", "/Users", str(fake_home)):
+        assert not ws_path_changeable(target, str(workspace), "s1", True), target
+        attended = {"path": target, "__session_id__": "s1", SECRET_READS_KEY: True}
+        agent = {"path": target, "__session_id__": "s1", "__agent__": True}
+        for tool_input in (attended, agent):
+            out = executors._exec_ws_delete_file(dict(tool_input), [], [])
+            assert not out.startswith("[WS_APPROVAL]"), (target, out)
+
+
+def test_the_delete_executor_refuses_home_in_bypass(workspace, fake_home, app_mode):
+    from server.approval.executors import _do_delete
+
+    app_mode(MODE_BYPASS)
+    for payload in (
+        {"path": str(fake_home), "session_id": "s1"},
+        {"path": str(fake_home), "session_id": "s1", "__agent__": True},
+    ):
+        assert asyncio.run(_do_delete(payload)).ok is False
+    assert fake_home.is_dir()
+
+
+def test_a_folder_below_home_stays_changeable_in_bypass(workspace, fake_home):
+    from server.workspace.paths import ws_path_changeable
+
+    assert ws_path_changeable(str(fake_home / "Documents"), str(workspace), "s1", True)
+
+
+def test_bypass_does_not_write_the_credential_stores(workspace, fake_home):
+    # The same rule as a save outside the workspace, which refuses a
+    # sensitive path in every mode.
+    from server.security.sensitive_paths import is_sensitive_path
+    from server.workspace.paths import ws_path_changeable
+
+    keys = fake_home / ".ssh" / "authorized_keys"
+    keys.parent.mkdir()
+    keys.write_text("ssh-ed25519 AAAA test\n")
+    assert is_sensitive_path(str(keys))
+    assert not ws_path_changeable(str(keys), str(workspace), "s1", True)
+    out = executors._exec_ws_write_file(
+        {"path": str(keys), "content": "x", "__session_id__": "s1", SECRET_READS_KEY: True}, [], []
+    )
+    assert out.startswith("Error:")
+
+
+def test_a_bypass_category_row_lifts_no_floor_under_another_mode(perms, workspace):
+    # A row can tighten Bypass, never loosen another mode: the ws_* executors
+    # read the session's mode, so the gate does too.
+    perms["category_modes"] = {"cli": MODE_BYPASS}
+    calls = (
+        ("ws_run_command", {"command": "rm -rf ~/Documents"}),
+        ("terminal_run", {"command": "touch ~/x", "sandbox_permissions": "danger-full-access"}),
+        ("terminal_run", {"command": "npm test", "mode": "visible"}),
+    )
+    for tool, payload in calls:
+        for mode in NON_BYPASS:
+            assert approval_floor(tool, payload, "cli", mode) is not None, (payload, mode)
+            assert resolve_static_decision(tool, payload, "cli", {}, mode) in ("ask", "deny")
+        assert approval_floor(tool, payload, "cli", MODE_BYPASS) is None, payload
