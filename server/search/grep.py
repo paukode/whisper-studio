@@ -9,7 +9,6 @@ Output modes:
   count              — per-file match counts
 """
 
-import logging
 import os
 
 from server.executors import register_executor
@@ -21,8 +20,6 @@ from server.search.engine import (
     truncate_large_output,
 )
 from server.workspace import get_workspace_path
-
-log = logging.getLogger("whisper-studio")
 
 # Default match limit — configurable via WHISPER_GREP_LIMIT env var.
 _DEFAULT_GREP_LIMIT = int(os.environ.get("WHISPER_GREP_LIMIT", 200))

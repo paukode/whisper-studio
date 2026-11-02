@@ -4,7 +4,6 @@ Finds files matching glob patterns within the connected workspace.
 Uses rg --files with --glob for fast, multi-threaded directory walking.
 """
 
-import logging
 import os
 
 from server.executors import register_executor
@@ -16,8 +15,6 @@ from server.search.engine import (
     truncate_large_output,
 )
 from server.workspace import get_workspace_path
-
-log = logging.getLogger("whisper-studio")
 
 # Default file limit — configurable via WHISPER_GLOB_LIMIT env var.
 _DEFAULT_GLOB_LIMIT = int(os.environ.get("WHISPER_GLOB_LIMIT", 500))
