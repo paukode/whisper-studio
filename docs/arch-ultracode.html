@@ -84,7 +84,7 @@ return { confirmed: results.flat().filter(f =&gt; f.verdict?.isReal) }</code></p
     <div class="table-wrap"><table>
       <thead><tr><th>Hook</th><th>What it does</th></tr></thead>
       <tbody>
-        <tr><td><code>agent(prompt, opts?)</code></td><td>Spawn one subagent. Always resolves to an object: <code>{ text, output, usage, status, agent_id, model_warning }</code>. <code>text</code> is the agent's final message; <code>model_warning</code> is set when <code>opts.model</code> was refused; <code>output</code> is the schema-validated object when <code>opts.schema</code> was given, so read <code>result.output.findings</code>, not <code>result.findings</code>. A failed agent resolves with <code>status: 'failed'</code> rather than throwing. <code>opts</code>: <code>label</code>, <code>phase</code>, <code>schema</code>, <code>model</code>, <code>effort</code>, <code>isolation:'worktree'</code>, <code>agentType</code>.</td></tr>
+        <tr><td><code>agent(prompt, opts?)</code></td><td>Spawn one subagent. Always resolves to an object: <code>{ text, output, usage, status, agent_id, stop_reason, stopped_early, model_warning }</code>. <code>status</code> is <code>'completed'</code> when the agent finished, <code>'incomplete'</code> when a round, time, or cost limit stopped it (<code>text</code> is partial and <code>stop_reason</code> names the limit), and <code>'failed'</code> when it failed. <code>text</code> is the agent's final message; <code>model_warning</code> is set when <code>opts.model</code> was refused; <code>output</code> is the schema-validated object when <code>opts.schema</code> was given, so read <code>result.output.findings</code>, not <code>result.findings</code>. A failed agent resolves with <code>status: 'failed'</code> rather than throwing. <code>opts</code>: <code>label</code>, <code>phase</code>, <code>schema</code>, <code>model</code>, <code>effort</code>, <code>isolation:'worktree'</code>, <code>agentType</code>.</td></tr>
         <tr><td><code>pipeline(items, …stages)</code></td><td>Run each item through all stages independently, <b>no barrier</b> between stages. Item A can be in stage 3 while B is still in stage 1. A stage that throws drops that item to <code>null</code> and the error is logged. <code>AgentCapError</code>, <code>BudgetExceededError</code> and a cancel are not dropped: they reject the whole call, so the script can catch them. The default for multi-stage work.</td></tr>
         <tr><td><code>parallel(thunks)</code></td><td>Run tasks concurrently and await them all - a barrier. A thrown thunk becomes <code>null</code> and the error is logged (filter before use). <code>AgentCapError</code>, <code>BudgetExceededError</code> and a cancel reject the whole call, so the script can catch them. Use only when you truly need every result together.</td></tr>
         <tr><td><code>phase(title)</code></td><td>Name the stretch of work the run is in. The card shows the current phase name; it does not nest agents under it, and a title absent from <code>meta.phases</code> logs a warning.</td></tr>
@@ -181,7 +181,11 @@ return { confirmed: results.flat().filter(f =&gt; f.verdict?.isReal) }</code></p
       <code>agent()</code> RPC into one <a href="arch-agents.html">run_agent</a> call. It maps the harness
       opts (<code>schema</code> to <code>structured_schema</code>, <code>effort</code>, <code>model</code>,
       <code>isolation</code>, <code>agentType</code>) and normalizes the result back to
-      <code>{ text, output, usage, status, agent_id, model_warning }</code>. Because it rides the
+      <code>{ text, output, usage, status, agent_id, stop_reason, stopped_early, model_warning }</code>.
+      <code>run_agent</code> keeps <code>status: 'completed'</code> for an agent that a limit stopped, so
+      the adapter reads <code>stopped_early</code> and reports <code>'incomplete'</code>. The journal
+      records the <code>stop_reason</code>, <code>workflow_status</code> lists the incomplete agents, and
+      the run's result text counts them. Because it rides the
       <a href="arch-backends.html">provider-agnostic runtime</a>, a workflow launched from a GPT-on-Bedrock
       session spawns GPT subagents, and one launched from a Claude session spawns Claude subagents -
       structured output is validated on both.</p>
@@ -210,8 +214,28 @@ return { confirmed: results.flat().filter(f =&gt; f.verdict?.isReal) }</code></p
       completed call of the earlier run replays from the cache, wherever it is in the script. Results with
       the same hash replay first in, first out in issue <code>seq</code> order (not completion order), so
       two identical parallel calls replay into the right positions. Calls with a changed prompt or opts run
-      live, and so do calls whose inputs depend on changed results. Failed calls are not cached. Same script
-      and same args means a 100% cache hit.</p>
+      live, and so do calls whose inputs depend on changed results. Failed and incomplete calls are not cached, so a
+      resume runs them again. Same script and same args means a 100% cache hit.</p>
+    <h3 id="waiting">Waiting without polling</h3>
+    <p>The model does not poll a run. It ends the turn or does other work, and the run's completion
+      wakes the chat. To block in the same turn, it calls <code>workflow_wait</code> (or
+      <code>task_wait</code> for detached agents). One call waits until the runs end or a timeout
+      passes (600 seconds by default, 1800 at most). The server reads the stores once a second inside
+      that call, so the model spends no rounds while it waits. Both tools are in
+      <code>WAITS_ON_AGENTS</code>, so the wait does not count against an agent's time limit. The loop
+      guard caps <code>sleep</code> at 10 calls a turn, and from the third call it points at the wait
+      tools.</p>
+    <p>While a run is live, <code>workflow_status</code> reads the counters (agents, tokens, cost) from
+      the running ledger. The table row holds them only from the run's end. A tool script may call
+      <code>workflow_status</code>, <code>workflow_list</code>, <code>task_status</code>,
+      <code>task_output</code>, and <code>session_search</code>: the executor registry marks them
+      read-only.</p>
+    <h3 id="limits">Budget floor and workspace</h3>
+    <p><code>workflow_run</code> refuses a <code>budget_tokens</code> below 100,000 output tokens with a
+      message, and the run does not start. A smaller budget ran out part way through a run. In the
+      Bypass permission mode, a run may be pinned to any existing folder with
+      <code>workspace_path</code>, also a folder outside the connected workspace. In the other modes, a
+      folder outside the workspace still needs a folder grant first.</p>
     <h3 id="deliverables">Deliverable verification</h3>
     <p>A script that produces files lists their paths in its return value under <code>deliverables</code> (strings, or
       <code>{path}</code> objects; relative paths resolve against the run's workspace), and

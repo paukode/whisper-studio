@@ -83,7 +83,7 @@ def test_read_only_metadata_keeps_status_output_strips_cancel():
     assert EXECUTOR_META["task_status"]["read_only"] is True
     assert EXECUTOR_META["task_output"]["read_only"] is True
     assert EXECUTOR_META["task_cancel"]["read_only"] is False
-    assert BACKGROUND_TASK_TOOL_NAMES == {"task_status", "task_output", "task_cancel"}
+    assert {"task_status", "task_output", "task_cancel"} <= BACKGROUND_TASK_TOOL_NAMES
 
 
 def test_task_output_and_cancel_enforce_session_ownership(tmp_path):
