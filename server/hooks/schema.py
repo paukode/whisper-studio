@@ -68,6 +68,17 @@ class HookOutcome:
         return self.decision == "deny"
 
 
+def matcher_error(matcher: str) -> str | None:
+    """Why a matcher can never select a tool (an invalid /regex/), or None."""
+    m = (matcher or "").strip()
+    if m.startswith("/") and m.endswith("/") and len(m) > 1:
+        try:
+            re.compile(m[1:-1])
+        except re.error as e:
+            return f"matcher {m} is not a valid regular expression: {e}"
+    return None
+
+
 def matches(matcher: str, tool_name: str | None) -> bool:
     """Does a hook's matcher select this tool? Events without a tool always
     match (tool_name is None)."""

@@ -20,6 +20,7 @@ from server.hooks.schema import (
     HOOK_EVENTS,
     HookDef,
     build_stdin_payload,
+    matcher_error,
 )
 
 router = APIRouter(prefix="/api/hooks", tags=["hooks"])
@@ -68,13 +69,20 @@ def _hook_from_body(body: dict, *, hook_id: str = "") -> HookDef | JSONResponse:
     command = (body.get("command") or "").strip()
     if not command:
         return _err("command is required")
+    on_error = body.get("on_error", "ignore")
+    if on_error not in ("ignore", "block"):
+        return _err('on_error must be "ignore" or "block"')
+    matcher = body.get("matcher") or "*"
+    bad_matcher = matcher_error(matcher)
+    if bad_matcher:
+        return _err(bad_matcher)
     return HookDef(
         event=event,
         command=command,
-        matcher=body.get("matcher") or "*",
+        matcher=matcher,
         timeout=int(body.get("timeout", DEFAULT_TIMEOUT) or DEFAULT_TIMEOUT),
         enabled=bool(body.get("enabled", True)),
-        on_error=body.get("on_error", "ignore"),
+        on_error=on_error,
         id=hook_id,
         source="user",
     )

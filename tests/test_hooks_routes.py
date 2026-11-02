@@ -152,6 +152,15 @@ def test_a_v1_file_is_not_read_or_overwritten(client, notices):
     assert hooks_file.read_bytes() == before
 
 
+def test_an_invalid_on_error_or_regex_matcher_is_refused(client):
+    c, _ = client
+    r = c.post("/api/hooks", json={"event": "PreToolUse", "command": "exit 2", "on_error": "Block"})
+    assert r.status_code == 400 and "on_error" in r.json()["error"]
+    r = c.post("/api/hooks", json={"event": "PreToolUse", "command": "exit 2", "matcher": "/[/"})
+    assert r.status_code == 400 and "regular expression" in r.json()["error"]
+    assert all(len(v) == 0 for v in c.get("/api/hooks").json()["hooks"].values())
+
+
 def test_an_unreadable_file_is_not_overwritten(client):
     c, tmp_path = client
     hooks_file = tmp_path / "data" / "hooks.json"
