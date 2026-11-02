@@ -186,14 +186,9 @@ def _exec_task_cancel(tool_input, transcript, current_attachments):
         return denied
     if task["status"] != "running":
         return f"Task {task_id} is not running (status: {task['status']})."
-    if task["kind"] == "shell":
-        from server.tasks import shell
+    from server.tasks.stop import stop_row_from_thread
 
-        ok = shell.stop_task(task_id)
-    else:
-        from server.tasks import agents
-
-        ok = agents.cancel_task(task_id)
+    ok = stop_row_from_thread(task)
     if ok:
         return f"Stop signal sent to {task['kind']} task {task_id}."
     return f"Task {task_id} could not be stopped (it may have just finished)."

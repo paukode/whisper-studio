@@ -60,25 +60,9 @@ async def stop_background_task(task_id: str):
         return _err(404, f"no background task {task_id}")
     if task["status"] != "running":
         return {"stopped": False, "status": task["status"]}
-    kind = task["kind"]
-    meta = task.get("meta") or {}
-    if kind == "shell":
-        from server.tasks.shell import stop_task
+    from server.tasks.stop import stop_row
 
-        # kill_process_group blocks; keep it off the event loop.
-        ok = await asyncio.to_thread(stop_task, task_id)
-    elif kind == "workflow":
-        from server.workflows.manager import stop_run
-
-        ok = await stop_run(str(meta.get("run_id") or ""))
-    elif kind == "ci":
-        from server.ci.manager import stop_watch
-
-        ok = stop_watch(task_id)
-    else:
-        from server.tasks.agents import cancel_task
-
-        ok = cancel_task(task_id)
+    ok = await stop_row(task)
     return {"stopped": bool(ok), "status": "stopping" if ok else task["status"]}
 
 

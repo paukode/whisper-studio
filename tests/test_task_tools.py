@@ -97,3 +97,44 @@ def test_task_output_and_cancel_enforce_session_ownership(tmp_path):
     # The owner still passes.
     ok = execute_background_task_tool("task_output", {"task_id": tid}, "owner-s")
     assert "secret output" in ok
+
+
+def _cancel_on_worker(monkeypatch, task_id, session_id):
+    """Run task_cancel the way tool_router does: on a worker thread, with
+    the server loop running."""
+    import asyncio
+
+    from server.tasks import events
+
+    async def main():
+        monkeypatch.setattr(events, "_server_loop", asyncio.get_running_loop())
+        return await asyncio.to_thread(
+            execute_background_task_tool, "task_cancel", {"task_id": task_id}, session_id
+        )
+
+    return asyncio.run(main())
+
+
+def test_task_cancel_stops_a_running_workflow(monkeypatch):
+    stopped = []
+
+    async def fake_stop_run(run_id):
+        stopped.append(run_id)
+        return True
+
+    monkeypatch.setattr("server.workflows.manager.stop_run", fake_stop_run)
+    tid = registry.create_task("workflow", session_id="s1", title="wf", meta={"run_id": "r1"})
+    msg = _cancel_on_worker(monkeypatch, tid, "s1")
+    assert stopped == ["r1"]
+    assert "Stop signal sent" in msg
+
+
+def test_task_cancel_stops_a_ci_watch(monkeypatch):
+    stopped = []
+    monkeypatch.setattr(
+        "server.ci.manager.stop_watch", lambda task_id: stopped.append(task_id) or True
+    )
+    tid = registry.create_task("ci", session_id="s1", title="ci")
+    msg = _cancel_on_worker(monkeypatch, tid, "s1")
+    assert stopped == [tid]
+    assert "Stop signal sent" in msg
