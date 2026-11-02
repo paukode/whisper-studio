@@ -136,3 +136,13 @@ def test_changes_against_real_git(client):
     }
     for f in files:
         assert (repo / f["path"]).is_file()
+
+
+def test_a_folder_that_becomes_a_repository_is_found(tmp_path):
+    """A negative answer used to be cached until restart, so `git init` in a
+    connected folder kept reading as 'not a repo'."""
+    folder = tmp_path / "later"
+    folder.mkdir()
+    assert git_core.find_git_root(str(folder)) is None
+    subprocess.run(["git", "init", "-q"], cwd=folder, check=True)
+    assert git_core.find_git_root(str(folder)) == str(folder)

@@ -22,7 +22,7 @@ from server.git.filesystem import (
 
 # --- Internal helpers ---
 
-_GIT_ROOT_CACHE: dict[str, str | None] = {}
+_GIT_ROOT_CACHE: dict[str, str] = {}
 _GIT_ROOT_CACHE_MAX = 50
 
 
@@ -76,6 +76,8 @@ def find_git_root(start_path: str) -> str | None:
 
     .git can be a directory (regular repo) or file (worktree/submodule).
     Returns the normalized (NFC) path to the repo root, or None if not found.
+    Only a found root is cached: a folder that becomes a repository later
+    (``git init``) is seen on the next call.
     """
     resolved = os.path.abspath(start_path)
 
@@ -102,8 +104,6 @@ def find_git_root(start_path: str) -> str | None:
             break
         current = parent
 
-    _evict_if_full()
-    _GIT_ROOT_CACHE[resolved] = None
     return None
 
 
