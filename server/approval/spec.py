@@ -286,9 +286,23 @@ async def execute_approved_by_human(spec: ApprovalSpec, payload: dict) -> Approv
     A workspace-bound card approved after its workspace went away is refused
     first (stale_workspace_refusal), before the hook or the executor runs.
     The origin stamps (UNREVIEWED_KEY, ``__agent__``) are dropped: a payload
-    posted back from a card is a person's yes, whatever rode along with it."""
+    posted back from a card is a person's yes, whatever rode along with it.
+
+    The action runs with the sandbox scope of the turn that raised the card
+    (server/security/bypass_sandbox.py): the gate stamps UNSANDBOXED_KEY on a
+    Bypass turn's card, so a card raised in another mode stays confined even
+    when the person changed the mode to Bypass before the click, and a
+    Bypass card runs with no sandbox after a change away."""
+    from server.security import bypass_sandbox
+
     payload.pop(UNREVIEWED_KEY, None)
     payload.pop("__agent__", None)
+    unsandboxed = payload.pop(bypass_sandbox.UNSANDBOXED_KEY, None) is True
+    with bypass_sandbox.entered(unsandboxed):
+        return await _execute_approved(spec, payload)
+
+
+async def _execute_approved(spec: ApprovalSpec, payload: dict) -> ApprovalOutcome:
     stale = stale_workspace_refusal(spec, payload)
     if stale is not None:
         log.info("approval: refused an out-of-date card: %s", stale.error)

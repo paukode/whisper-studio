@@ -21,7 +21,7 @@ from typing import NamedTuple
 from server.approval.markers import APPROVAL
 from server.approval.spec import WORKSPACE_ROOT_KEY, ApprovalOutcome, turn_workspace_refusal
 from server.auto_mode import classify_tool_call
-from server.security import secret_reads
+from server.security import bypass_sandbox, secret_reads
 from server.security.explainer import explain_permission
 from server.security.permissions import (
     FILE_WRITE_CATEGORIES,
@@ -210,6 +210,8 @@ async def gate_approval(
     # no card; anywhere else the request asks a person every time, Don't ask
     # refuses it, and so does a run with no person to ask.
     secret = _settle_secret_access(spec, ws_parsed, mode)
+    # Only the gate stamps the sandbox scope a card's yes runs with (below).
+    ws_parsed.pop(bypass_sandbox.UNSANDBOXED_KEY, None)
     if secret == "deny":
         return ApprovalStep(OUTPUT, secret_reads.REFUSED_DONT_ASK)
     if secret == "ask" and unattended:
@@ -362,6 +364,10 @@ async def gate_approval(
     # No more per-action shape: the frontend reads `preview`
     # and picks one of four renderers (diff/command/list/text).
     payload = spec.build_payload(ws_parsed)
+    # The yes runs with this turn's sandbox scope, not the mode live at the
+    # click (server/security/bypass_sandbox.py).
+    if bypass_sandbox.active():
+        payload[bypass_sandbox.UNSANDBOXED_KEY] = True
     summary = spec.render_summary(ws_parsed)
     if secret == "ask" and spec.category != secret_reads.SECRET_READ_CATEGORY:
         summary = f"READS THE KEYCHAIN AND CREDENTIAL STORES: {summary}"
