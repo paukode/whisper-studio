@@ -64,7 +64,6 @@ def _ensure_model() -> str:
         snapshot_download(
             repo_id=CANARY_REPO_ID,
             local_dir=CANARY_MODEL_DIR,
-            local_dir_use_symlinks=False,
         )
         log.info("Canary model download complete.")
     return os.path.abspath(CANARY_MODEL_DIR)

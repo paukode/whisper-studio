@@ -244,7 +244,7 @@ def test_decode_rescue_is_still_hallucination_filtered(monkeypatch):
     assert text == ""
 
 
-# ── translate-to-English companion pass ──────────────────────────────────────
+# ── Canary translation filter ────────────────────────────────────────────────
 
 
 def test_translate_utterance_keeps_short_phrases_and_drops_loops(monkeypatch):
@@ -406,14 +406,6 @@ def test_parakeet_tokens_merge_into_words():
     words = parakeet_backend._words_from_result(result)
     assert [w["text"] for w in words] == ["quarterly", "numbers"]
     assert words[0]["start"] == 0.0 and words[0]["end"] == 0.5
-
-
-def test_parakeet_words_tolerate_a_result_without_tokens():
-    from types import SimpleNamespace
-
-    from server.asr import parakeet_backend
-
-    assert parakeet_backend._words_from_result(SimpleNamespace()) == []
 
 
 def test_whisper_words_record_whether_a_space_preceded_them():

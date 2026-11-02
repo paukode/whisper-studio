@@ -38,10 +38,6 @@ WHISPER_SENTINEL = "weights.npz"
 executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="whisper-asr")
 
 _model_lock = threading.Lock()
-# Whether the weights are resident in mlx_whisper's in-memory cache (distinct
-# from _model_ready, which only tracks on-disk presence). Local mode uses this
-# to load lazily on first use and free on engine switch.
-_in_memory = False
 
 # Normalized to lowercase at definition: the match site lowercases the decoded
 # text (`text.strip().lower() in WHISPER_HALLUCINATIONS`), so any uppercase
@@ -211,9 +207,7 @@ def _ensure_model() -> str:
             from huggingface_hub import snapshot_download
 
             log.info("Downloading Whisper model %s ...", WHISPER_REPO_ID)
-            snapshot_download(
-                repo_id=WHISPER_REPO_ID, local_dir=WHISPER_MODEL_DIR, local_dir_use_symlinks=False
-            )
+            snapshot_download(repo_id=WHISPER_REPO_ID, local_dir=WHISPER_MODEL_DIR)
             log.info("Whisper model download complete.")
     return os.path.abspath(WHISPER_MODEL_DIR)
 
@@ -229,48 +223,35 @@ def _model_holder():
 
 def is_loaded() -> bool:
     """Whether the weights are resident in mlx-whisper's ModelHolder cache."""
-    try:
-        holder = _model_holder()
-        return holder.model is not None and holder.model_path == os.path.abspath(WHISPER_MODEL_DIR)
-    except Exception:
-        return _in_memory
+    holder = _model_holder()
+    return holder.model is not None and holder.model_path == os.path.abspath(WHISPER_MODEL_DIR)
 
 
 def load() -> None:
-    """Force the model into memory now (local mode's lazy loader).
+    """Force the model into memory now (the on-demand load, in every mode).
 
     mlx-whisper loads the model inside ``transcribe`` and caches it on
-    ModelHolder, so a short silent decode warms that exact cache — the first
+    ModelHolder, so a short silent decode warms that exact cache: the first
     real utterance is then instant and the memory is committed up front. Run
     on ``executor``.
     """
-    global _in_memory
     _ensure_model()
     # ~0.5s of silence: enough to trigger the model load + graph compile.
     silent = np.zeros(int(0.5 * 16000), dtype=np.float32)
     _transcribe(silent)
-    _in_memory = True
 
 
 def unload() -> None:
-    """Release the weights from mlx-whisper's ModelHolder (local mode, switch)."""
-    global _in_memory
-    try:
-        holder = _model_holder()
-        holder.model = None
-        holder.model_path = None
-    except Exception as e:  # best-effort across mlx-whisper versions
-        log.debug("Whisper ModelHolder clear on unload failed: %s", e)
-    try:
-        import mlx.core as mx
+    """Release the weights from mlx-whisper's ModelHolder (engine switch)."""
+    holder = _model_holder()
+    holder.model = None
+    holder.model_path = None
+    import mlx.core as mx
 
-        mx.clear_cache()
-    except Exception as e:
-        log.debug("Whisper mx cache clear on unload failed: %s", e)
+    mx.clear_cache()
     import gc
 
     gc.collect()
-    _in_memory = False
     log.info("Whisper model unloaded.")
 
 
@@ -279,8 +260,8 @@ def _words_from_segments(result: dict) -> list[dict]:
 
     Word timing is what lets the turn splitter cut an utterance at the
     handover instead of guessing, so a decode that returns no word data
-    (older mlx-whisper, a degenerate segment) simply yields an empty list
-    and the utterance stays whole.
+    (a degenerate segment) simply yields an empty list and the utterance
+    stays whole.
     """
     words: list[dict] = []
     for segment in result.get("segments") or []:

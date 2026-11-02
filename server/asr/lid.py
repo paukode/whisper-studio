@@ -58,7 +58,6 @@ def _ensure_model() -> str:
         snapshot_download(
             repo_id=LID_REPO_ID,
             local_dir=LID_MODEL_DIR,
-            local_dir_use_symlinks=False,
         )
         log.info("Language-ID model download complete.")
     return os.path.abspath(LID_MODEL_DIR)

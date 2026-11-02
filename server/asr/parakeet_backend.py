@@ -15,9 +15,8 @@ Design notes:
     backend, with a slightly shorter trailing-silence window: interims
     already show the text live, so settling finals a touch sooner costs
     nothing visible and trims label latency.
-  * Full-context ``generate()`` on a bounded utterance replaced an earlier
-    streaming token-draft decoder that produced duplicated sentences,
-    garbled half-words, and Metal watchdog GPU hangs.
+  * Each utterance is decoded with a full-context ``generate()`` on the
+    bounded utterance, not a streaming token-draft decoder.
 """
 
 from __future__ import annotations
@@ -78,7 +77,6 @@ def _ensure_parakeet_model() -> str:
         snapshot_download(
             repo_id=PARAKEET_REPO_ID,
             local_dir=PARAKEET_MODEL_DIR,
-            local_dir_use_symlinks=False,
         )
         log.info("Parakeet model download complete.")
     return os.path.abspath(PARAKEET_MODEL_DIR)
@@ -145,7 +143,7 @@ def warm() -> None:
 
 
 def load() -> None:
-    """Force the model into memory now (used by local mode's lazy loader).
+    """Force the model into memory now (the on-demand load, in every mode).
 
     Must run on ``executor`` so the load lands on the MLX decode thread.
     """
@@ -157,18 +155,11 @@ def _words_from_result(result) -> list[dict]:
 
     Parakeet emits SentencePiece tokens, where a leading space marks the
     start of a new word ("▁the" decodes to " the"), so tokens are merged
-    until the next one that starts a word. A result without token timings
-    yields nothing and the utterance simply never splits.
+    until the next one that starts a word.
     """
     words: list[dict] = []
-    try:
-        tokens = list(result.tokens)
-    except Exception:
-        return words
-    for token in tokens:
-        text = str(getattr(token, "text", ""))
-        start = getattr(token, "start", None)
-        end = getattr(token, "end", None)
+    for token in result.tokens:
+        text, start, end = str(token.text), token.start, token.end
         if not text.strip() or start is None or end is None:
             continue
         if words and not text.startswith((" ", "\t")):

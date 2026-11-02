@@ -478,7 +478,7 @@ for repo, dirname in (
     dest = os.path.join(cache, dirname)
     if not os.path.exists(os.path.join(dest, "hyperparams.yaml")):
         print(f"    downloading {repo} ...")
-        snapshot_download(repo_id=repo, local_dir=dest, local_dir_use_symlinks=False)
+        snapshot_download(repo_id=repo, local_dir=dest)
 print("    bundled speech models cached")
 PYEOF
 mkdir -p "$RES_DIR/backend/models-bundled"

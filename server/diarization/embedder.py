@@ -119,7 +119,6 @@ def _ensure_ecapa_files() -> str:
         snapshot_download(
             repo_id=ECAPA_REPO_ID,
             local_dir=ECAPA_MODEL_DIR,
-            local_dir_use_symlinks=False,
         )
         log.info("Speaker ID model download complete.")
     return os.path.abspath(ECAPA_MODEL_DIR)

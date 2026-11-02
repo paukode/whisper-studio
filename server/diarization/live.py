@@ -1,14 +1,10 @@
 """Speaker labels for a live recording, decided after each sentence is sent.
 
-The transcription socket used to label a sentence before sending it: embed
-it, try to cut it at a speaker handover, then send. On a busy or swapping
-Mac that took seconds per sentence (the speaker model loading on the first
-sentence, about 2 s for every handover check), and while it ran the socket
-read no audio at all, so the whole transcript fell behind live speech.
-
-Now the socket sends each final at once under a provisional label (the
-speaker of the last labelled sentence) and hands it to this labeller, one
-per connection, which works through the sentences in order on its own task:
+Labelling a sentence (embed it, check it for a speaker handover) can take
+seconds on a busy Mac, so it never blocks the socket's audio reads. The
+socket sends each final at once under a provisional label (the speaker of
+the last labelled sentence) and hands it to this labeller, one per
+connection, which works through the sentences in order on its own task:
 
 - one speaker: assign the label; if it differs from the provisional one,
   send ``speaker_update`` for that chunk (the client already applies these);
