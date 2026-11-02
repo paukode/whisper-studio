@@ -192,8 +192,12 @@
       the thing you approved is the thing that executes. An argv shape the table does not recognise
       fails closed to an approval-gated WRITE, which means a new upstream subcommand degrades to "ask a
       human" rather than slipping through as a read.</p>
-    <p>A mutation follows the <a href="arch-approval.html">permission mode</a> like the git write
-      tools: Bypass runs it with no card, Don't ask refuses it, and the other modes show the card. A
+    <p>A WRITE mutation follows the <a href="arch-approval.html">permission mode</a>: Bypass runs
+      it with no card, Don't ask refuses it, an unattended run (a subagent or a scheduled task)
+      refuses it, and the other modes show the card. A DANGER mutation
+      (<code>github-destructive</code>: a pull request merge, a close, a delete, an API DELETE)
+      always shows a card, in every mode, Bypass and Don't ask included. An unattended run refuses
+      it too. A
       <code>github_api_write</code> card shows the method, the path, and the whole request body. The
       tools use the <code>gh</code> sign-in on this Mac (or <code>GH_TOKEN</code>). When
       <code>gh</code> is not installed, or is not signed in, the call fails with a message that says
