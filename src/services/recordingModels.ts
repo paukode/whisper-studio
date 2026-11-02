@@ -2,8 +2,8 @@
  * Pre-recording model gate.
  *
  * A recording session needs the active ASR engine's weights (Parakeet for the
- * default 'streaming' backend, Whisper for the batch one) plus the ECAPA
- * speaker encoder for diarization. When any of those are not on disk yet, the
+ * default 'streaming' backend, Whisper for the batch one) plus the configured
+ * speaker encoder (ReDimNet2 or ECAPA) for diarization. When any of those are not on disk yet, the
  * websocket's lazy ensure_* path would block silently while the server
  * downloads gigabytes. This gate runs BEFORE the mic and websocket open:
  *
@@ -45,13 +45,15 @@ const ERROR_BANNER_MS = 8000;
 const READY_BANNER_MS = 700;
 
 /** Catalog keys a recording session needs: the active engine's weights plus
- *  the speaker encoder (diarization always runs). The active engine comes
- *  from the settings store — hydrated from /api/config and kept current by
- *  the transcript panel's live engine switch. */
+ *  the configured speaker encoder (diarization always runs). Both come from
+ *  the settings store, hydrated from /api/config; the engine is kept current
+ *  by the transcript panel's live engine switch. The encoder key follows the
+ *  server's own choice (server/main.py: ecapa, else ReDimNet2). */
 export function requiredRecordingModelKeys(): string[] {
-  const { transcriptionBackend } = useSettingsStore.getState().config;
+  const { transcriptionBackend, speakerEmbedder } = useSettingsStore.getState().config;
   const engineKey = transcriptionBackend === 'whisper' ? 'whisper_large_v3' : 'parakeet';
-  return [engineKey, 'ecapa_speaker'];
+  const speakerKey = speakerEmbedder === 'ecapa' ? 'ecapa_speaker' : 'redimnet_speaker';
+  return [engineKey, speakerKey];
 }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));

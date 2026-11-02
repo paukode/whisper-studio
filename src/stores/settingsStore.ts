@@ -243,6 +243,7 @@ const defaultConfig: AppConfig = {
   effortLevel: DEFAULT_EFFORT,
   permissionMode: 'default',
   transcriptionBackend: 'streaming',
+  speakerEmbedder: 'redimnet',
   translateMode: 'off',
   translateTarget: 'en',
   modelMode: 'cloud',
@@ -321,6 +322,7 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
         effortLevel: normalizeEffort(d.effort_level as string | undefined),
         permissionMode: String(d.permission_mode ?? 'default'),
         transcriptionBackend: String(d.transcription_backend ?? 'streaming'),
+        speakerEmbedder: String(d.speaker_embedder ?? 'redimnet'),
         // The dropdown's translators. Any other stored value runs none (the
         // server's resolve_translator returns None for it), so it reads as off.
         translateMode: ['off', 'canary', 'apple'].includes(String(d.translate_mode))

@@ -9,6 +9,8 @@ export interface AppConfig {
   permissionMode: string;
   /** Live ASR engine: 'whisper' (utterance) or 'streaming' (Parakeet). */
   transcriptionBackend: string;
+  /** Speaker encoder diarization runs on: 'redimnet' (ReDimNet2) or 'ecapa'. */
+  speakerEmbedder: string;
   /** Translate dropdown: 'off' | 'canary' | 'apple'. */
   translateMode: string;
   /** Target language for translation lines (ISO 639-1, default 'en'). */

@@ -57,9 +57,10 @@ function mockApi(statuses: Record<string, unknown>[]) {
   });
 }
 
-const setBackend = (backend: string) => {
+// The gate tests below run with the ECAPA encoder configured.
+const setBackend = (backend: string, speakerEmbedder = 'ecapa') => {
   useSettingsStore.setState({
-    config: { ...useSettingsStore.getState().config, transcriptionBackend: backend },
+    config: { ...useSettingsStore.getState().config, transcriptionBackend: backend, speakerEmbedder },
   });
 };
 
@@ -84,6 +85,11 @@ describe('requiredRecordingModelKeys', () => {
   it('maps the whisper backend to Whisper plus the speaker encoder', () => {
     setBackend('whisper');
     expect(requiredRecordingModelKeys()).toEqual(['whisper_large_v3', 'ecapa_speaker']);
+  });
+
+  it('checks the configured encoder: ReDimNet2, the default, not ECAPA', () => {
+    setBackend('streaming', 'redimnet');
+    expect(requiredRecordingModelKeys()).toEqual(['parakeet', 'redimnet_speaker']);
   });
 });
 
