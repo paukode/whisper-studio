@@ -291,9 +291,16 @@ class AgentJournal:
         self.meta_path = os.path.join(dir_path, "meta.json")
         self._meta: dict = {}
         self._closed = False
+        # Failure kinds already logged, so a full disk logs one line per kind.
+        self._warned: set[str] = set()
         # Sequence number of the last event written: its line index in
         # events.jsonl, which a reopened record continues from.
         self._seq = 0
+
+    def _warn(self, kind: str, err: Exception) -> None:
+        if kind not in self._warned:
+            self._warned.add(kind)
+            log.warning("agent journal: %s not written for %s: %s", kind, self.agent_id, err)
 
     # ── lifecycle ─────────────────────────────────────────────────────────
 
@@ -389,7 +396,7 @@ class AgentJournal:
             if row:
                 emit_task_event(session_id, "task_started", row)
         except Exception as e:  # noqa: BLE001 - the registry is a mirror, never the record
-            log.debug("agent journal: registry row for %s not written: %s", agent_id, e)
+            log.warning("agent journal: registry row for %s not written: %s", agent_id, e)
         return j
 
     def event(self, phase: str, **fields) -> int:
@@ -402,7 +409,7 @@ class AgentJournal:
             with open(self.events_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(line, ensure_ascii=False, default=str) + "\n")
         except (OSError, TypeError, ValueError) as e:
-            log.debug("agent journal: event not written for %s: %s", self.agent_id, e)
+            self._warn("event", e)
         return self._seq
 
     def checkpoint(self, messages: list, round_num: int) -> None:
@@ -414,7 +421,7 @@ class AgentJournal:
             self._meta["checkpoint_at"] = _now()
             self._save_meta()
         except (OSError, TypeError, ValueError) as e:
-            log.debug("agent journal: checkpoint not written for %s: %s", self.agent_id, e)
+            self._warn("checkpoint", e)
 
     def finish(
         self,
@@ -437,12 +444,12 @@ class AgentJournal:
                 _write_atomic(
                     self.messages_path, json.dumps(messages, ensure_ascii=False, default=str)
                 )
-            except (OSError, TypeError, ValueError):
-                pass
+            except (OSError, TypeError, ValueError) as e:
+                self._warn("messages", e)
         try:
             _write_atomic(self.report_path, report or "")
         except OSError as e:
-            log.debug("agent journal: report not written for %s: %s", self.agent_id, e)
+            self._warn("report", e)
         self._meta.update(
             status=status,
             stop_reason=stop_reason if stop_reason in STOP_REASONS else "error",
@@ -469,7 +476,7 @@ class AgentJournal:
                 )
                 emit_task_event(str(self._meta.get("session_id") or ""), event, finished)
         except Exception as e:  # noqa: BLE001 - mirror only
-            log.debug("agent journal: registry finish for %s failed: %s", self.agent_id, e)
+            log.warning("agent journal: registry finish for %s failed: %s", self.agent_id, e)
 
     @property
     def closed(self) -> bool:
@@ -479,7 +486,7 @@ class AgentJournal:
         try:
             _write_atomic(self.meta_path, json.dumps(self._meta, ensure_ascii=False, default=str))
         except (OSError, TypeError, ValueError) as e:
-            log.debug("agent journal: meta not written for %s: %s", self.agent_id, e)
+            self._warn("meta", e)
 
 
 def close_quietly(
@@ -505,7 +512,7 @@ def close_quietly(
             messages=messages,
         )
     except Exception as e:  # noqa: BLE001 - the record must never take the run down
-        log.debug("agent journal close failed for %s: %s", journal.agent_id, e)
+        log.warning("agent journal close failed for %s: %s", journal.agent_id, e)
 
 
 def team_manifest(session_id: str, team_id: str, payload: dict) -> None:
