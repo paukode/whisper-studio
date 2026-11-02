@@ -17,6 +17,19 @@ export interface WorkflowRun {
   started_at?: string;
   finished_at?: string | null;
   journal?: Array<Record<string, unknown>>;
+  /** Every agent call of the run in issue order, without text or output
+   *  (manager.agent_call_rows). Times are epoch seconds. */
+  agent_calls?: WorkflowAgentCall[];
+}
+
+export interface WorkflowAgentCall {
+  seq: number;
+  phase?: string;
+  label?: string;
+  status?: string;
+  agent_id?: string;
+  started_at?: number;
+  finished_at?: number;
 }
 
 export const getRun = (runId: string) => get<WorkflowRun>(`/api/workflows/runs/${encodeURIComponent(runId)}`);

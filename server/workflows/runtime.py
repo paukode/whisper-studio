@@ -18,6 +18,7 @@ import asyncio
 import contextvars
 import logging
 import os
+import time
 
 from server.infrastructure.binaries import resolve
 from server.workflows import rpc
@@ -170,6 +171,9 @@ class WorkflowRun:
         # Agents a limit stopped before they finished (status "incomplete").
         self.agents_incomplete = 0
         self._seq = 0
+        # The phase the script last entered with phase(): an agent call with
+        # no opts.phase of its own counts under it.
+        self._phase = ""
         self._sem = asyncio.Semaphore(WORKFLOW_MAX_CONCURRENCY)
         self._write_lock = asyncio.Lock()
         self._cancelled = False
@@ -269,6 +273,7 @@ class WorkflowRun:
         method = msg.get("method")
         params = msg.get("params") or {}
         if method == "phase":
+            self._phase = str(params.get("name", ""))
             self.journal.phase(params.get("name", ""))
             self._emit({"type": "phase", "name": params.get("name", "")})
         elif method == "log":
@@ -452,25 +457,35 @@ class WorkflowRun:
         seq = self._seq
         self._seq += 1
         h = call_hash(prompt, opts)
+        phase = opts.get("phase") or self._phase
 
         # Resume cache: an identical prior call replays instantly at zero cost.
         cached = self.resume_cache.get(h)
         if cached:
             result = cached.popleft()
+            hit_at = time.time()
             self.journal.agent_call(
                 {
                     "seq": seq,
                     "call_hash": h,
-                    "phase": opts.get("phase", ""),
+                    "phase": phase,
                     "label": opts.get("label", ""),
                     "status": "cache_hit",
                     "text": result.get("text", ""),
                     "output": result.get("output"),
                     "usage": result.get("usage"),
+                    "started_at": hit_at,
+                    "finished_at": hit_at,
                 }
             )
             self._emit(
-                {"type": "agent", "seq": seq, "status": "cache_hit", "label": opts.get("label", "")}
+                {
+                    "type": "agent",
+                    "seq": seq,
+                    "status": "cache_hit",
+                    "label": opts.get("label", ""),
+                    "phase": phase,
+                }
             )
             return await self._respond(mid, result)
 
@@ -493,10 +508,12 @@ class WorkflowRun:
                     "seq": seq,
                     "status": "running",
                     "label": opts.get("label", ""),
-                    "phase": opts.get("phase", ""),
+                    "phase": phase,
                 }
             )
+            started_at = time.time()
             result = await self._agent_runner(prompt, opts)
+            finished_at = time.time()
 
         self._account(result.get("usage") or {})
         if result.get("status") == "incomplete":
@@ -505,7 +522,7 @@ class WorkflowRun:
             {
                 "seq": seq,
                 "call_hash": h,
-                "phase": opts.get("phase", ""),
+                "phase": phase,
                 "label": opts.get("label", ""),
                 "status": result.get("status", "completed"),
                 # Why the agent ended ("turn_limit", "deadline", ...): an
@@ -521,6 +538,10 @@ class WorkflowRun:
                 # model was used instead — journaled so a script author can
                 # see why their override did nothing.
                 "model_warning": result.get("model_warning", ""),
+                # Wall-clock span of the call: the run card reads how many
+                # agents ran at the same time from these.
+                "started_at": started_at,
+                "finished_at": finished_at,
             }
         )
         self._emit(
@@ -530,6 +551,7 @@ class WorkflowRun:
                 "status": result.get("status", "completed"),
                 "stop_reason": result.get("stop_reason", ""),
                 "label": opts.get("label", ""),
+                "phase": phase,
                 "cost_usd": round(self.cost_usd, 4),
                 "model_warning": result.get("model_warning", ""),
             }

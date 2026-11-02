@@ -278,3 +278,37 @@ describe('chatStore: live deliveries', () => {
     expect(store.getState().messages[0].deliveries).toBeUndefined();
   });
 });
+
+describe('chatStore: wait tools close their wait', () => {
+  const tool = (toolId: string, toolName: string): ToolUseEvent => ({ toolId, toolName, input: {}, status: 'running' });
+  const segment: ChatMessage = { role: 'assistant', content: 'part', timestamp: new Date().toISOString() };
+  const openSpans = () => store.getState().waitSpans.filter((s) => s.end === null);
+
+  it('a sleep whose row a segment flush committed still ends its wait', () => {
+    store.getState().addStreamToolUse(tool('tu_sleep', 'sleep'));
+    expect(openSpans()).toHaveLength(1);
+    // A card frame from a parallel call commits the rows above it.
+    store.getState().flushStreamSegment(segment);
+    expect(store.getState().currentStreamToolUse).toEqual([]);
+    store.getState().updateStreamToolUse('tu_sleep', { status: 'complete', result: 'slept' });
+    expect(store.getState().waitReasons).toEqual({});
+    expect(openSpans()).toHaveLength(0);
+  });
+
+  it('two untagged sleeps keep the wait open until the second one ends', () => {
+    store.getState().addStreamToolUse(tool('sleep', 'sleep'));
+    store.getState().addStreamToolUse(tool('sleep', 'sleep'));
+    store.getState().updateStreamToolUse('sleep', { status: 'complete', result: 'one' });
+    expect(openSpans()).toHaveLength(1);
+    store.getState().updateStreamToolUse('sleep', { status: 'complete', result: 'two' });
+    expect(store.getState().waitReasons).toEqual({});
+    expect(openSpans()).toHaveLength(0);
+  });
+
+  it('a result for a tool that does not wait leaves an open wait alone', () => {
+    store.getState().addStreamToolUse(tool('tu_sleep', 'sleep'));
+    store.getState().addStreamToolUse(tool('tu_read', 'ws_read_file'));
+    store.getState().updateStreamToolUse('tu_read', { status: 'complete', result: 'A' });
+    expect(openSpans()).toHaveLength(1);
+  });
+});

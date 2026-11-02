@@ -50,6 +50,8 @@ export const WorkflowRunCard: React.FC<{ runId: string; name?: string }> = ({ ru
   const agents = Math.max(run?.agents_spawned ?? 0, act?.agents ?? 0, orderedAgents.length);
   const cost = Math.max(run?.cost_usd ?? 0, act?.cost_usd ?? 0);
   const phase = act?.phase ?? '';
+  const peak = act?.peak ?? 0;
+  const phases = phaseBreakdown(act?.phaseOrder ?? [], act?.phaseCounts ?? {});
 
   const report = (what: string, err: unknown) =>
     useUIStore.getState().addToast({ type: 'error', message: `Could not ${what} the workflow: ${toError(err).message}` });
@@ -75,9 +77,11 @@ export const WorkflowRunCard: React.FC<{ runId: string; name?: string }> = ({ ru
       <div className="workflow-card-meta">
         {phase && <span>phase: {phase} · </span>}
         <span>{agents} agent{agents === 1 ? '' : 's'}</span>
+        {peak > 0 && <span> · at most {peak} at once</span>}
         {cost > 0 && <span> · ${cost.toFixed(2)}</span>}
         {run?.cap_reached && <span> · cap reached</span>}
       </div>
+      {phases && <div className="workflow-card-meta workflow-card-phases">{phases}</div>}
       {orderedAgents.length > 0 && (
         <div className="workflow-card-agents">
           {orderedAgents.map((agent) => (
@@ -97,3 +101,13 @@ export const WorkflowRunCard: React.FC<{ runId: string; name?: string }> = ({ ru
     </div>
   );
 };
+
+/** "plan 1 · review 8 · fix 2": agents per script phase, in the order the
+ *  phases started. '' when the script names no phases. */
+export function phaseBreakdown(order: readonly string[], counts: Record<string, number>): string {
+  if (!order.some((p) => p)) return '';
+  return order
+    .filter((p) => (counts[p] ?? 0) > 0)
+    .map((p) => `${p || 'no phase'} ${counts[p]}`)
+    .join(' · ');
+}

@@ -112,4 +112,23 @@ describe('BackgroundTasksPanel', () => {
     expect(taskLabel(row({ kind: 'agent', title: 'Probe the org', meta: { agent_name: 'probe' } }))).toBe('probe');
     expect(taskLabel(row({ kind: 'shell', title: 'npm run build', meta: { agent_name: 'x' } }))).toBe('npm run build');
   });
+
+  it("renders a finished agent's report as markdown and keeps shell output preformatted", () => {
+    useBackgroundTaskStore.getState().upsert(row({
+      task_id: 'a1', kind: 'agent', title: 'Audit', command: null, status: 'completed',
+      finished_at: new Date(T0 + 5000).toISOString(), result_text: '## Findings\n\n- **one**\n- <b>two</b>',
+    }));
+    useBackgroundTaskStore.getState().upsert(row({
+      task_id: 's1', kind: 'shell', status: 'completed',
+      finished_at: new Date(T0 + 5000).toISOString(), result_text: '## not a heading',
+    }));
+    const { container, getAllByLabelText } = render(<BackgroundTasksPanel />);
+    for (const b of getAllByLabelText('Show details')) fireEvent.click(b);
+    const report = container.querySelector('.bg-tasks-report');
+    expect(report?.querySelector('h2')?.textContent).toBe('Findings');
+    expect(report?.querySelector('strong')?.textContent).toBe('one');
+    // Raw HTML in a report shows as text.
+    expect(report?.querySelector('b')).toBeNull();
+    expect(container.querySelector('pre.bg-tasks-tail')?.textContent).toBe('## not a heading');
+  });
 });

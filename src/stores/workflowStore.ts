@@ -13,7 +13,7 @@
  * or `s => s.activity[id]`, never a freshly-built object.
  */
 import { create } from 'zustand';
-import type { WorkflowRun } from '@/api/workflows';
+import type { WorkflowAgentCall, WorkflowRun } from '@/api/workflows';
 import type { TeamAgentReport } from '@/types/chat';
 
 export interface LiveActivity {
@@ -26,6 +26,12 @@ export interface LiveActivity {
   /** Per-agent live detail, keyed by agent_id (fallback agent_name). */
   agentReports: Record<string, TeamAgentReport>;
   agentOrder: string[];
+  /** Agents running right now, and the most that ran at the same time. */
+  running: number;
+  peak: number;
+  /** Agents dispatched per script phase ('' for none), in first-seen order. */
+  phaseCounts: Record<string, number>;
+  phaseOrder: string[];
 }
 
 interface WorkflowState {
@@ -43,7 +49,87 @@ const EMPTY_ACT: LiveActivity = {
   status: 'running',
   agentReports: {},
   agentOrder: [],
+  running: 0,
+  peak: 0,
+  phaseCounts: {},
+  phaseOrder: [],
 };
+
+/** The most agent calls that ran at the same time, from their journaled
+ *  spans. A call that ends as another starts does not overlap it, and a
+ *  cache hit (no duration) never counts. */
+export function peakConcurrency(calls: readonly WorkflowAgentCall[]): number {
+  const marks: Array<[number, number]> = [];
+  for (const c of calls) {
+    if (typeof c.started_at !== 'number' || typeof c.finished_at !== 'number') continue;
+    if (c.finished_at <= c.started_at) continue;
+    marks.push([c.started_at, 1], [c.finished_at, -1]);
+  }
+  // Ends sort before starts at the same instant.
+  marks.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  let now = 0;
+  let peak = 0;
+  for (const [, d] of marks) {
+    now += d;
+    peak = Math.max(peak, now);
+  }
+  return peak;
+}
+
+function journalStatus(status: string | undefined): TeamAgentReport['status'] {
+  if (status === 'failed' || status === 'stopped' || status === 'turn_limit') return status;
+  return 'completed';
+}
+
+function countPhase(act: Pick<LiveActivity, 'phaseCounts' | 'phaseOrder'>, phase: string, by = 1) {
+  return {
+    phaseCounts: { ...act.phaseCounts, [phase]: (act.phaseCounts[phase] ?? 0) + by },
+    phaseOrder: act.phaseOrder.includes(phase) ? act.phaseOrder : [...act.phaseOrder, phase],
+  };
+}
+
+/** Fold a snapshot's journaled agent calls into the live activity, so every
+ *  agent of the run stays listed after it finishes and after a reload. A
+ *  live row of the same agent keeps its name and task; the journal settles
+ *  its status. Counts take the larger of what was seen live and what the
+ *  journal holds (a live run's journal lacks the calls still running). */
+export function foldAgentCalls(act: LiveActivity, run: WorkflowRun): LiveActivity {
+  const calls = run.agent_calls ?? (run.journal ?? []).filter((e) => e.type === 'agent_call') as unknown as WorkflowAgentCall[];
+  if (calls.length === 0) return act;
+  const agentReports = { ...act.agentReports };
+  let agentOrder = act.agentOrder;
+  const journalPhases: Record<string, number> = {};
+  const journalOrder: string[] = [];
+  for (const c of calls) {
+    const key = c.agent_id || `seq:${c.seq}`;
+    const existing = agentReports[key];
+    agentReports[key] = {
+      ...(existing ?? {
+        name: c.label || `agent ${c.seq + 1}`,
+        task: '',
+        agent_type: 'general',
+        role: 'team' as const,
+        agent_id: c.agent_id || undefined,
+      }),
+      status: journalStatus(c.status),
+    };
+    if (!agentOrder.includes(key)) agentOrder = [...agentOrder, key];
+    const phase = c.phase ?? '';
+    journalPhases[phase] = (journalPhases[phase] ?? 0) + 1;
+    if (!journalOrder.includes(phase)) journalOrder.push(phase);
+  }
+  const phaseOrder = [...act.phaseOrder, ...journalOrder.filter((p) => !act.phaseOrder.includes(p))];
+  const phaseCounts: Record<string, number> = {};
+  for (const p of phaseOrder) phaseCounts[p] = Math.max(act.phaseCounts[p] ?? 0, journalPhases[p] ?? 0);
+  return {
+    ...act,
+    agentReports,
+    agentOrder,
+    peak: Math.max(act.peak, peakConcurrency(calls)),
+    phaseCounts,
+    phaseOrder,
+  };
+}
 
 const DETAIL_PHASES = new Set([
   'started',
@@ -126,6 +212,7 @@ export const useWorkflowStore = create<WorkflowState>((set) => ({
   upsertRun: (run) =>
     set((s) => ({
       runs: { ...s.runs, [run.run_id]: run },
+      activity: { ...s.activity, [run.run_id]: foldAgentCalls(s.activity[run.run_id] ?? EMPTY_ACT, run) },
     })),
   applyEvent: (runId, ev) =>
     set((s) => {
@@ -134,7 +221,10 @@ export const useWorkflowStore = create<WorkflowState>((set) => ({
       if (type === 'snapshot') {
         const run = ev.run as WorkflowRun | undefined;
         if (run) {
-          return { runs: { ...s.runs, [run.run_id]: run }, activity: s.activity };
+          return {
+            runs: { ...s.runs, [run.run_id]: run },
+            activity: { ...s.activity, [run.run_id]: foldAgentCalls(s.activity[run.run_id] ?? EMPTY_ACT, run) },
+          };
         }
         return { runs: s.runs, activity: s.activity };
       }
@@ -169,7 +259,16 @@ export const useWorkflowStore = create<WorkflowState>((set) => ({
       // Run-level summary shapes.
       if (type === 'phase' && typeof ev.name === 'string') next.phase = ev.name;
       if (type === 'agent') {
-        if (ev.status === 'running' || ev.status === 'cache_hit') next.agents = next.agents + 1;
+        if (ev.status === 'running' || ev.status === 'cache_hit') {
+          next.agents = next.agents + 1;
+          Object.assign(next, countPhase(next, typeof ev.phase === 'string' ? ev.phase : ''));
+        }
+        if (ev.status === 'running') {
+          next.running = next.running + 1;
+          next.peak = Math.max(next.peak, next.running);
+        } else if (ev.status !== 'cache_hit') {
+          next.running = Math.max(0, next.running - 1);
+        }
         if (typeof ev.label === 'string' && ev.label) next.lastLabel = ev.label;
         if (typeof ev.cost_usd === 'number') next.cost_usd = ev.cost_usd;
       }

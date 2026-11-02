@@ -32,6 +32,7 @@ import { syncAutoAppliedTab } from './autoApplied';
 import { toolMetaFromFrame } from './toolMeta';
 import { labelCommit, patchCommittedLabel, writtenLabelFromFrame, type WrittenLabel } from './activityLabels';
 import { patchCommittedRows } from './committedRows';
+import { activeMs } from './waitClock';
 
 // Augment Window for SSE diagnostics access
 declare global {
@@ -923,7 +924,7 @@ export async function readSSEStream(
 
           // ── thinking_stop ──
           if (parsed.thinking_stop) {
-            thinkingMs = thinkingBlockStart ? performance.now() - thinkingBlockStart : 0;
+            thinkingMs = thinkingBlockStart ? activeMs(thinkingBlockStart, performance.now(), store().waitSpans) : 0;
             store().setThinkingStop();
           }
 
@@ -953,7 +954,7 @@ export async function readSSEStream(
             if (!firstTextReceived) {
               firstTextReceived = true;
               store().setStreamStatus(null);
-              thinkingMs = thinkingBlockStart ? performance.now() - thinkingBlockStart : thinkingMs;
+              thinkingMs = thinkingBlockStart ? activeMs(thinkingBlockStart, performance.now(), store().waitSpans) : thinkingMs;
               store().setThinkingElapsed(thinkingMs);
             } else if (store().streamStatus) {
               // A mid-turn status (continuation round, compaction) is stale

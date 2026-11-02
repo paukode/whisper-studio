@@ -641,8 +641,30 @@ def get_run(run_id: str, *, journal_tail: int = 200) -> dict | None:
     if not row:
         return None
     out = _row_to_dict(row)
-    out["journal"] = jnl.tail_journal(run_id, journal_tail)
+    entries = jnl.read_journal(run_id)
+    out["journal"] = entries[-journal_tail:] if len(entries) > journal_tail else entries
+    out["agent_calls"] = agent_call_rows(entries)
     return out
+
+
+_AGENT_CALL_FIELDS = (
+    "seq",
+    "phase",
+    "label",
+    "status",
+    "agent_id",
+    "started_at",
+    "finished_at",
+)
+
+
+def agent_call_rows(entries: list[dict]) -> list[dict]:
+    """Every agent call of a run, in issue order, without its text or
+    output: what the run card lists after the agents finish or the page
+    reloads. The journal tail alone drops early calls of a long run."""
+    calls = [e for e in entries if e.get("type") == "agent_call"]
+    calls.sort(key=lambda e: e.get("seq", 0))
+    return [{k: e[k] for k in _AGENT_CALL_FIELDS if k in e} for e in calls]
 
 
 def list_runs(session_id: str | None = None, *, limit: int = 50) -> list[dict]:
