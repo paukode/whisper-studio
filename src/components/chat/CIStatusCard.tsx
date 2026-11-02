@@ -5,7 +5,7 @@
  * plans the fix and drops the approvable workflow preview into the chat.
  */
 import React, { useEffect, useState } from 'react';
-import { ciStatus, getWatch, planAutofix, stopWatch } from '@/api/ci';
+import { getWatch, planAutofix, stopWatch } from '@/api/ci';
 import { useCIStore } from '@/stores/ciStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import { activeEffortLevel, useSettingsStore } from '@/stores/settingsStore';
@@ -58,34 +58,16 @@ export const CIStatusCard: React.FC<{ taskId: string; branch?: string }> = ({ ta
           useCIStore.getState().upsert(taskId, { branch: w.branch || branch || '', status: 'watching' });
         }
       })
-      .catch(() => {
-        // No task row (server restart / pruned): fall back to the branch's
-        // latest-run snapshot, which is approximate but better than nothing.
-        if (!fresh() || !branch) return;
-        void ciStatus(branch)
-          .then((st) => {
-            if (!fresh()) return;
-            const r = st.run;
-            useCIStore.getState().upsert(taskId, {
-              branch,
-              status: r?.status || 'watching',
-              conclusion: r?.conclusion || '',
-              run_id: r?.run_id ?? null,
-              url: r?.url || '',
-              jobs: r?.jobs || [],
-              failing: Boolean(r?.failing),
-              terminal: r?.status === 'completed',
-            });
-          })
-          .catch((e: unknown) => {
-            if (!fresh()) return;
-            useCIStore.getState().upsert(taskId, {
-              branch,
-              status: 'error',
-              error: message(e),
-              terminal: true,
-            });
-          });
+      .catch((e: unknown) => {
+        // No task row (server restart / pruned): say so. The branch's latest
+        // run may not be the one this card watched, so it is never shown.
+        if (!fresh()) return;
+        useCIStore.getState().upsert(taskId, {
+          branch: branch || '',
+          status: 'error',
+          error: `This CI watch is no longer tracked: ${message(e)}`,
+          terminal: true,
+        });
       });
     return () => {
       cancelled = true;

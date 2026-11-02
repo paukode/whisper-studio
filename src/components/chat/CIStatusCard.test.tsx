@@ -2,20 +2,19 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/api/ci', () => ({
-  ciStatus: vi.fn(),
   getWatch: vi.fn(),
   planAutofix: vi.fn(),
   stopWatch: vi.fn(),
 }));
 
-import { ciStatus, getWatch, planAutofix } from '@/api/ci';
+import { getWatch, planAutofix } from '@/api/ci';
 import { CIStatusCard } from './CIStatusCard';
 import { useCIStore } from '@/stores/ciStore';
 import { useSessionStore } from '@/stores/sessionStore';
 
 /**
  * A CI watch or lookup that fails says why on the card: the watch's gh
- * message, the status lookup's error, and the autofix request's error.
+ * message, the lost watch's lookup error, and the autofix request's error.
  */
 
 beforeEach(() => {
@@ -39,11 +38,13 @@ describe('CIStatusCard errors', () => {
     expect(screen.getByText('error')).toBeTruthy();
   });
 
-  it('shows the status lookup error when the watch row is gone', async () => {
+  it('says the watch is no longer tracked when its row is gone', async () => {
     vi.mocked(getWatch).mockRejectedValue(new Error('unknown ci watch'));
-    vi.mocked(ciStatus).mockRejectedValue(new Error('gh run list failed (exit 1): timeout'));
     render(<CIStatusCard taskId="t2" branch="feat" />);
-    expect((await screen.findByRole('alert')).textContent).toContain('timeout');
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      'This CI watch is no longer tracked: unknown ci watch',
+    );
+    expect(useCIStore.getState().watches.t2?.terminal).toBe(true);
   });
 
   it('shows the autofix error instead of dropping it', async () => {
