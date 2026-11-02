@@ -19,10 +19,6 @@ from server.approval.bootstrap import register_defaults as register_approval_def
 from server.approval.router import router as approval_router
 from server.attachments import cleanup_loop
 from server.attachments import router as attachments_router
-
-# server.ask_user is a tool-descriptor module only — it has no HTTP
-# handlers, so there's nothing to mount. Import elsewhere only when
-# the tool descriptors themselves are needed.
 from server.buddy import router as buddy_router
 from server.capture_helper import router as capture_helper_router
 from server.chat import router as chat_router

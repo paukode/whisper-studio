@@ -1,11 +1,11 @@
 """
-AskUserQuestion tool — pauses the stream and presents a question with
-multiple-choice options to the user. The frontend renders a question
-widget; the user's selection is sent as the next chat message.
+Tool descriptors for ask_user_question, sleep and create_artifact.
 
-This module owns the tool *descriptors* only. The actual handling
-flows through SSE side-effects from server/tool_router.py and the
-chat stream — there's no HTTP endpoint to mount.
+ask_user_question pauses the stream and presents a question with
+multiple-choice options; the frontend renders a question widget and the
+user's selection is sent as the next chat message. The handling of all three
+flows through SSE side effects from server/tool_router.py and the chat
+stream: there's no HTTP endpoint to mount.
 """
 
 import logging
