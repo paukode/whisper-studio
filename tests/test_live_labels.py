@@ -205,3 +205,21 @@ def test_the_engine_is_warmed_when_a_recording_connects(harness):
         ws.send_json({"type": "ping"})
         _until(ws, "pong")
     assert backend.warmed.wait(2)
+
+
+def test_a_labelling_error_reaches_the_client_once(harness, monkeypatch):
+    client, backend, speakers, _, _ = harness
+
+    def broken_embed(audio):
+        raise RuntimeError("Speaker ID model could not load")
+
+    monkeypatch.setattr(diarization, "embed", broken_embed)
+    backend.script = [[_final("One.")], [_final("Two.")]]
+    with client.websocket_connect("/ws?session_id=labels-5&take=t5") as ws:
+        ws.send_bytes(_PCM)
+        ws.send_bytes(_PCM)
+        ws.send_json({"type": "stop"})
+        frames = _until(ws, "session_ended")
+    errors = [f for f in frames if f["type"] == "speaker_error"]
+    assert errors == [{"type": "speaker_error", "message": "Speaker ID model could not load"}]
+    assert [f["speaker"] for f in frames if f["type"] == "transcript"] == ["Speaker 1"] * 2

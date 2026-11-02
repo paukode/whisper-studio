@@ -60,6 +60,11 @@ MIN_EMBED_SAMPLES = 16000  # 1.0 s @ 16 kHz
 
 _encoder = None
 _encoder_name: str | None = None
+# The last load failure, as (encoder name, message). A failed load is not
+# retried on every sentence (each ReDimNet2 attempt is a torch.hub network
+# call): the same error is raised again until the encoder is installed from
+# Settings or the configured encoder changes.
+_load_error: tuple[str, str] | None = None
 _lock = threading.Lock()
 
 
@@ -104,13 +109,17 @@ def _ensure_redimnet_files() -> str:
     drops it; at 15 MB the transient load is trivial, and the files stay
     in REDIMNET_CACHE_DIR for the real load later. Gives the Settings
     model card the same blocking ensure function every other entry has.
+    A successful install clears a remembered load failure.
     """
+    global _load_error
     _load_redimnet()
+    _load_error = None
     return REDIMNET_CACHE_DIR
 
 
 def _ensure_ecapa_files() -> str:
     """Download the ECAPA encoder into models/ if absent (idempotent)."""
+    global _load_error
     hyperparams = os.path.join(ECAPA_MODEL_DIR, "hyperparams.yaml")
     if not os.path.exists(hyperparams):
         from huggingface_hub import snapshot_download
@@ -121,6 +130,8 @@ def _ensure_ecapa_files() -> str:
             local_dir=ECAPA_MODEL_DIR,
         )
         log.info("Speaker ID model download complete.")
+    if _load_error is not None and _load_error[0] == NAME_ECAPA:
+        _load_error = None
     return os.path.abspath(ECAPA_MODEL_DIR)
 
 
@@ -135,23 +146,31 @@ def _load_ecapa():
 
 
 def _get_encoder():
-    """Lazily load the configured encoder. A load failure raises."""
-    global _encoder, _encoder_name
+    """Lazily load the configured encoder. A load failure raises, and the
+    same error is raised again without a new attempt (see _load_error)."""
+    global _encoder, _encoder_name, _load_error
     if _encoder is not None:
         return _encoder
     with _lock:
         if _encoder is not None:
             return _encoder
-        if configured_name() == NAME_REDIMNET:
-            log.info("Loading Speaker ID model (ReDimNet2-%s)...", REDIMNET_VARIANT)
-            _encoder = _load_redimnet()
-            _encoder_name = NAME_REDIMNET
-            log.info("Speaker ID model loaded (ReDimNet2-%s).", REDIMNET_VARIANT)
-            return _encoder
-        log.info("Loading Speaker ID model (ECAPA)...")
-        _encoder = _load_ecapa()
-        _encoder_name = NAME_ECAPA
-        log.info("Speaker ID model loaded (ECAPA).")
+        want = configured_name()
+        if _load_error is not None and _load_error[0] == want:
+            raise RuntimeError(_load_error[1])
+        label = f"ReDimNet2-{REDIMNET_VARIANT}" if want == NAME_REDIMNET else "ECAPA"
+        log.info("Loading Speaker ID model (%s)...", label)
+        try:
+            _encoder = _load_redimnet() if want == NAME_REDIMNET else _load_ecapa()
+        except Exception as e:
+            _load_error = (
+                want,
+                f"Speaker ID model {label} could not load: {e}. "
+                "Install it in Settings > Models, then start a new recording.",
+            )
+            raise RuntimeError(_load_error[1]) from e
+        _encoder_name = want
+        _load_error = None
+        log.info("Speaker ID model loaded (%s).", label)
         return _encoder
 
 

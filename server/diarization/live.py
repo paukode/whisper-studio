@@ -13,6 +13,10 @@ connection, which works through the sentences in order on its own task:
   original chunk id, the rest take new ids from the socket's counter);
 - then the periodic re-cluster and any newly recognised names, as before.
 
+A labelling failure (the speaker model cannot load, an embed error) keeps
+the provisional label and sends ``speaker_error`` with the message, once per
+distinct error per connection.
+
 ``drain`` lets `stop` wait for every label before the client saves.
 """
 
@@ -64,6 +68,9 @@ class LiveLabeller:
         self._on_labelled = on_labelled
         self._queue: asyncio.Queue[Pending] = asyncio.Queue()
         self._worker: asyncio.Task | None = None
+        # The last labelling error sent to the client, so a failure that
+        # repeats on every sentence shows once, not once per sentence.
+        self._reported_error: str | None = None
 
     def provisional_label(self) -> str:
         """The label a sentence is sent under before it is labelled."""
@@ -93,6 +100,11 @@ class LiveLabeller:
                 raise
             except Exception as e:
                 log.warning("Speaker labelling failed for chunk %s: %s", pending.chunk_id, e)
+                # The sentence keeps its provisional label; the client is
+                # told why labels stopped changing.
+                if str(e) != self._reported_error:
+                    self._reported_error = str(e)
+                    await self._send({"type": "speaker_error", "message": str(e)})
             finally:
                 self._queue.task_done()
 

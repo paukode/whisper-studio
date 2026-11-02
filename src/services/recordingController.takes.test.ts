@@ -479,4 +479,17 @@ describe('recordingController: stop settles on the server, not on quiet', () => 
     await next;
     expect(useRecordingStore.getState().recordingSessionId).toBe('settling-session-b');
   });
+
+  it('a speaker labelling error from the server is shown and the sentence keeps its label', async () => {
+    const sid = 'speaker-error-session';
+    const sock = await startTake(sid);
+    sock._receiveMessage(final(0, 'Hello.', 'Speaker 1'));
+    sock._receiveMessage({ type: 'speaker_error', message: 'model offline' });
+
+    expect(segmentsOf(sid).map((s) => s.speaker)).toEqual(['Speaker 1']);
+    expect(useUIStore.getState().addToast).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error', source: 'recording' }),
+    );
+    expect(toastMessages()).toContain('Speaker labels stopped: model offline');
+  });
 });

@@ -12,6 +12,7 @@ Message protocol to the client:
     {"type": "interim",  "text": str}   ("" withdraws the draft on screen)
     {"type": "transcript", "text": str, "speaker": str, "chunk_id": int}
     {"type": "speaker_update", "updates": [{"chunk_id": int, "speaker": str}]}
+    {"type": "speaker_error", "message": str}   (labelling failed; labels stay provisional)
     {"type": "pong"} / {"type": "session_ended"}
 
 ``speaker_update`` carries re-clustering corrections: diarization assigns

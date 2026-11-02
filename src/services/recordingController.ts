@@ -574,6 +574,16 @@ function connectWS(t: Take): void {
             .filter((u) => typeof u?.chunk_id === 'number')
             .map((u) => ({ chunk_id: storeChunkId(t, u.chunk_id), speaker: u.speaker })),
         );
+      } else if (msg.type === 'speaker_error') {
+        // Speaker labelling failed on the server: the sentences keep their
+        // provisional labels, and the user is told why.
+        useUIStore.getState().addToast({
+          type: 'error',
+          message: `Speaker labels stopped: ${String(msg.message ?? 'unknown error')}`,
+          duration: 10000,
+          key: 'recording-speaker-error',
+          source: 'recording',
+        });
       } else if (msg.type === 'speaker_named') {
         // The voiceprint gallery recognised somebody who has been recorded
         // before: apply their stored name the same way a manual rename does.
