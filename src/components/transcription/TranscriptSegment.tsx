@@ -1,11 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { TranscriptSegment as TranscriptSegmentType } from '@/types/session';
 import { formatSegmentTimestamp } from '@/utils/formatTimestamp';
-
-/** Mirrors `SEGMENT_EDIT_EVENT` exported from TranscriptionPanel.tsx. We
- * duplicate the constant here to avoid an import cycle (the panel imports
- * this component). Both names must stay in sync. */
-const SEGMENT_EDIT_EVENT = 'whisper-segment-edit';
+import { SEGMENT_EDIT_EVENT } from '@/utils/uiEvents';
 
 export interface TranscriptSegmentProps {
   segment: TranscriptSegmentType;

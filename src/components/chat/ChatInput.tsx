@@ -18,6 +18,7 @@ import { useQuery } from '@tanstack/react-query';
 import { listIndexes, type IndexInfo } from '@/api/workspace';
 import { useIndexSearchStore } from '@/stores/indexSearchStore';
 import { toError } from '@/utils/toError';
+import { CHAT_INSERT_EVENT } from '@/utils/uiEvents';
 import { PermissionGroup, ThinkGroup, WorkspaceGroup } from './ComposerGroups';
 import {
   BASE_SLASH_COMMANDS,
@@ -226,8 +227,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
   }, [approvePlan]);
 
   // Listen for transcript right-click → "Quote in chat input" so a transcript
-  // selection can be dropped into the composer without auto-sending. The
-  // event name matches CHAT_INSERT_EVENT in TranscriptionPanel.tsx.
+  // selection can be dropped into the composer without auto-sending.
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent<{ text?: string }>).detail;
@@ -244,8 +244,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
         }
       });
     };
-    window.addEventListener('whisper-chat-insert', handler);
-    return () => window.removeEventListener('whisper-chat-insert', handler);
+    window.addEventListener(CHAT_INSERT_EVENT, handler);
+    return () => window.removeEventListener(CHAT_INSERT_EVENT, handler);
   }, []);
 
   // Listen for "Add to Chat" events from context menu

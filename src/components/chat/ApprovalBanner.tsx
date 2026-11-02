@@ -7,6 +7,7 @@ import { DiffPreview } from './previews/DiffPreview';
 import { CommandPreview } from './previews/CommandPreview';
 import { TextPreview } from './previews/TextPreview';
 import { ICON } from './activityIcons';
+import { CHAT_INSERT_EVENT } from '@/utils/uiEvents';
 
 /**
  * Generic approval banner. Renders one of three preview components based on
@@ -65,7 +66,7 @@ export function ApprovalBanner() {
         });
         window.dispatchEvent(new CustomEvent('whisper-workspace-refresh'));
         const note = `> Note: User undid the prior write to \`${path}\`. The file has been restored to its pre-write contents.\n\n`;
-        window.dispatchEvent(new CustomEvent('whisper-chat-insert', { detail: { text: note } }));
+        window.dispatchEvent(new CustomEvent(CHAT_INSERT_EVENT, { detail: { text: note } }));
       } else {
         const reason = (typeof data.error === 'string' && data.error) || `HTTP ${resp.status}`;
         useUIStore.getState().addToast({ type: 'error', message: `Undo failed: ${reason}`, duration: 5000 });
