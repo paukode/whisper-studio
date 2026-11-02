@@ -71,20 +71,17 @@ function refreshVoiceStatus(): void {
 
 /** Hydrate the Memory toggle from its backend feature flag, so the toolbar
  *  shows the real state and what the active mode leaves out of it (Local mode
- *  recalls memories but records none). Re-read after a mode switch. Never
- *  rejects: with the flags API unavailable the current value stays. */
+ *  recalls memories but records none). Re-read after a mode switch. Rejects
+ *  when the flags cannot be read, so the toggle never shows a guessed state
+ *  without saying so. */
 async function loadMemoryFlag(): Promise<void> {
-  try {
-    const flags = await get<Record<string, { enabled?: boolean; local_mode_note?: string | null }>>(
-      '/api/feature-flags',
-    );
-    useSettingsStore.setState({
-      autoMemory: !!flags.auto_memory?.enabled,
-      autoMemoryNote: flags.auto_memory?.local_mode_note || null,
-    });
-  } catch {
-    // Flags API unavailable: keep the current value.
-  }
+  const flags = await get<Record<string, { enabled?: boolean; local_mode_note?: string | null }>>(
+    '/api/feature-flags',
+  );
+  useSettingsStore.setState({
+    autoMemory: !!flags.auto_memory?.enabled,
+    autoMemoryNote: flags.auto_memory?.local_mode_note || null,
+  });
 }
 
 /** The thinking level for on-device models, kept apart from the cloud effort
@@ -509,7 +506,9 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
         const s = useSettingsStore.getState();
         void s.loadModels();
         void s.loadDataRetention();
-        void loadMemoryFlag();
+        loadMemoryFlag().catch((err: unknown) => {
+          useUIStore.getState().addToast({ type: 'error', message: `Could not read the memory setting: ${toError(err).message}` });
+        });
         refreshVoiceStatus();
       })
       .catch(() => {

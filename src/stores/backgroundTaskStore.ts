@@ -11,6 +11,7 @@
  */
 import { create } from 'zustand';
 import type { BackgroundTaskInfo, TaskEventPayload } from '@/types/backgroundTasks';
+import { readErrorBody } from '@/api/client';
 
 /** How long a finished row stays in the list. */
 export const LINGER_MS = 30_000;
@@ -24,6 +25,8 @@ interface BackgroundTaskState {
   upsert: (task: BackgroundTaskInfo) => void;
   applyEvent: (sessionId: string, ev: TaskEventPayload) => void;
   hydrate: () => Promise<void>;
+  /** Ask the server to stop a task. Resolves false when it had already
+   *  finished; rejects with the server's reason when the stop failed. */
   stopTask: (taskId: string) => Promise<boolean>;
   /** Remove a finished row now instead of when its linger ends. */
   dismiss: (taskId: string) => void;
@@ -124,21 +127,17 @@ export const useBackgroundTaskStore = create<BackgroundTaskState>((set, get) => 
     },
 
     stopTask: async (taskId) => {
-      try {
-        const r = await fetch(`/api/background-tasks/${encodeURIComponent(taskId)}/stop`, {
-          method: 'POST',
-        });
-        if (!r.ok) return false;
-        const data = (await r.json()) as { stopped: boolean };
-        if (data.stopped) {
-          // Optimistic: the waiter's task_stopped event confirms shortly.
-          const existing = get().tasks[taskId];
-          if (existing) put({ ...existing, status: 'stopped' });
-        }
-        return data.stopped;
-      } catch {
-        return false;
+      const r = await fetch(`/api/background-tasks/${encodeURIComponent(taskId)}/stop`, {
+        method: 'POST',
+      });
+      if (!r.ok) throw new Error(await readErrorBody(r));
+      const data = (await r.json()) as { stopped: boolean };
+      if (data.stopped) {
+        // Optimistic: the waiter's task_stopped event confirms shortly.
+        const existing = get().tasks[taskId];
+        if (existing) put({ ...existing, status: 'stopped' });
       }
+      return data.stopped;
     },
 
     dismiss: (taskId) => {

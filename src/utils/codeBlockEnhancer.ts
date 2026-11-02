@@ -164,9 +164,12 @@ export function attachCodeBlockHandlers(container: HTMLElement): () => void {
 
     switch (action) {
       case 'copy':
-        void navigator.clipboard.writeText(code);
-        btn.textContent = 'Copied!';
-        setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+        navigator.clipboard.writeText(code).then(
+          () => { btn.textContent = 'Copied!'; },
+          () => { btn.textContent = 'Copy failed'; },
+        ).finally(() => {
+          setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+        });
         break;
       case 'preview':
         showPreviewOverlay(code);
