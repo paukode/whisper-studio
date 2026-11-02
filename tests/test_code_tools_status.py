@@ -326,6 +326,15 @@ def test_proxy_reports_a_language_server_that_cannot_be_spawned(monkeypatch, tmp
         lsp_proxy, "language_server", lambda lang: LanguageServer([missing, "--stdio"], "")
     )
     c = _client(lsp_proxy.router)
-    with c.websocket_connect("/ws/lsp/typescript") as ws:
+    with c.websocket_connect(f"/ws/lsp/typescript?workspace={tmp_path}") as ws:
         message = _show_message(ws.receive_json())
     assert message.startswith("The typescript language server could not start")
+
+
+def test_proxy_refuses_a_workspace_that_is_gone(monkeypatch, tmp_path):
+    monkeypatch.setattr(lsp_proxy, "language_server", lambda lang: LanguageServer(["pylsp"], ""))
+    gone = tmp_path / "gone"
+    c = _client(lsp_proxy.router)
+    with c.websocket_connect(f"/ws/lsp/python?workspace={gone}") as ws:
+        message = _show_message(ws.receive_json())
+    assert message == f"Workspace folder not found: {gone}"
