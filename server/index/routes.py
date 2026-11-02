@@ -59,10 +59,7 @@ def _run_build(ws_path: str) -> None:
 @router.get("/status")
 async def index_status(path: str = ""):
     """Index status for a workspace path (defaults to the connected one)."""
-    if not path:
-        from server.workspace import get_workspace_path
-
-        path = get_workspace_path() or ""
+    path = _connected_or(path)
     if not path:
         return {"indexed": False, "building": False}
     key = _abspath(path)
@@ -240,11 +237,10 @@ async def get_index_settings(request: Request):
     refresh). Per-folder — falls back to the connected workspace if no path."""
     from . import wssettings
 
-    path = (request.query_params.get("path") or "").strip()
+    path = _connected_or((request.query_params.get("path") or "").strip())
     if not path:
-        from server.workspace import get_workspace_path
-
-        path = get_workspace_path() or ""
+        # Never resolve "" to the server's working directory.
+        return {"error": "path is required"}
     return wssettings.get_settings(_abspath(path))
 
 

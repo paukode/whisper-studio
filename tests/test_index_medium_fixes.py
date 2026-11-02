@@ -123,3 +123,19 @@ def test_index_list_skips_other_backend_without_fabricating(monkeypatch):
     assert not os.path.exists(paths.db_path(ws, "qwen3"))
     # The real (cohere) index is untouched.
     assert os.path.exists(paths.db_path(ws, "cohere"))
+
+
+def test_settings_without_a_path_or_workspace_is_an_error(monkeypatch):
+    """GET /settings with no path and no connected workspace reports an error
+    instead of reading settings for the server's working directory."""
+    import server.workspace as ws_mod
+
+    monkeypatch.setattr(ws_mod, "get_workspace_path", lambda: None)
+
+    class _Req:
+        query_params: dict = {}
+
+    called = []
+    monkeypatch.setattr(wssettings, "get_settings", lambda p: called.append(p) or {})
+    assert asyncio.run(routes.get_index_settings(_Req())) == {"error": "path is required"}
+    assert called == []
