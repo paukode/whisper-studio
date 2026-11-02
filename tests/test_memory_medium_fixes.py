@@ -225,7 +225,8 @@ def test_normalize_helper_direct():
     assert MD.normalize_memory_filename("notes") == ("notes.md", "")
     assert MD.normalize_memory_filename("sub/notes") == ("sub/notes.md", "")
     assert MD.normalize_memory_filename("already.md") == ("already.md", "")
-    # Cased extension is left as-is (the entrypoint guard handles MEMORY.MD).
-    assert MD.normalize_memory_filename("keep.MD") == ("keep.MD", "")
+    # Any case of the suffix is written as .md, the only one the scanner lists.
+    assert MD.normalize_memory_filename("Notes.MD") == ("Notes.md", "")
+    assert MD.normalize_memory_filename("MEMORY.MD") == ("MEMORY.md", "")
     fixed, err = MD.normalize_memory_filename(".env")
     assert fixed == "" and err

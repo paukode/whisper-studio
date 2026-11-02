@@ -214,8 +214,9 @@ def normalize_memory_filename(filename: str) -> tuple[str, str]:
     ``scan_memory_files`` only surfaces non-dot files ending in ``.md``; a
     filename that misses either rule creates a memory that can never be
     recalled or listed. So here we:
-      - append ``.md`` when it is missing (case-insensitive, so ``FOO.MD`` and
-        cased ``MEMORY.MD`` variants are left for the entrypoint guard), and
+      - append ``.md`` when it is missing, and write any other case of the
+        suffix as ``.md`` (``Notes.MD`` becomes ``Notes.md``; a cased
+        ``MEMORY.MD`` is left for the case-insensitive entrypoint guard), and
       - reject a basename that starts with ``.`` (a dotfile the scanner skips).
 
     Returns ``(normalized_filename, error)``. On rejection the error is
@@ -225,7 +226,9 @@ def normalize_memory_filename(filename: str) -> tuple[str, str]:
         return "", "filename is required."
     if os.path.basename(filename).startswith("."):
         return "", "memory filenames must not start with '.' (dotfiles are not recallable)."
-    if not filename.lower().endswith(".md"):
+    if filename.lower().endswith(".md"):
+        filename = filename[:-3] + ".md"
+    else:
         filename = f"{filename}.md"
     return filename, ""
 
