@@ -73,8 +73,8 @@ def test_spawn_label_truncates_and_takes_first_line():
 
 def test_spawn_agent_registers_stoppable_team(monkeypatch):
     # While the agent runs, _teams[team_id] must hold the cancellable task so
-    # POST /api/teams/{team_id}/stop works (the card's Stop button was a silent
-    # no-op before). After completion the task handle is removed.
+    # Stop (cancel_task, then stop_team) works. After completion the task
+    # handle is removed.
     import asyncio
 
     from server.agent_tools.teams import _teams

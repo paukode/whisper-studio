@@ -419,9 +419,9 @@ async def execute_spawn_agent(
     # detail-less AgentCard summary. Without a team_id the frontend fold drops
     # every per-agent event, so a bare spawn_agent was only ever
     # clickable-when-done and showed no state.
-    # Registering in _teams (with the run wrapped in a named task) is what makes
-    # the card's Stop button real: POST /api/teams/{team_id}/stop cancels the
-    # task exactly like a team_create fan-out.
+    # Registering in _teams (with the run wrapped in a named task) is what lets
+    # Stop in the task list or agent pane cancel it (cancel_task, then
+    # stop_team) exactly like a team_create fan-out.
     import asyncio
 
     from server.agent_tools.teams import _teams

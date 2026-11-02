@@ -5,7 +5,6 @@ Endpoints:
 - GET  /api/models: the configured chat models and the default
 - /api/local-model/*: load, cancel a load, status, download, unload
 - POST /api/generate-title: one-shot call to title a conversation
-- POST /api/teams/{team_id}/stop: stop a running team or agent run
 - POST /api/subagent/stream: run a /subagent task
 - POST /api/chat/btw: quick side question, no history mutation
 - POST /api/chat: the main streaming chat endpoint
@@ -970,17 +969,6 @@ async def generate_title_endpoint(request: Request):
         log.error("Title generation error: %s", e)
         return JSONResponse({"error": f"Title generation failed: {e}"}, status_code=502)
     return {"title": title}
-
-
-@router.post("/api/teams/{team_id}/stop")
-async def stop_team_endpoint(team_id: str):
-    """Cancel a running team_create fan-out or spawn_agent run (ESC and the
-    session Stop reach here); see server.agent_tools.teams.stop_team."""
-    from server.agent_tools.teams import stop_team
-
-    if not stop_team(team_id):
-        return {"stopped": False, "reason": "no running team with that id"}
-    return {"stopped": True, "team_id": team_id}
 
 
 @router.post("/api/subagent/stream")

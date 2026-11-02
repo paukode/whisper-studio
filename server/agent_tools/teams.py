@@ -1,6 +1,7 @@
-"""Multi-agent teams: create a named team of parallel agents (cancellable via
-POST /api/teams/{team_id}/stop) and disband it. The in-memory ``_teams`` store
-is shared with server/chat/routes.py, which reads it to stop a running team.
+"""Multi-agent teams: create a named team of parallel agents and disband it.
+A running team stops through stop_team: Stop in the task list or agent pane
+(POST /api/background-tasks/{task_id}/stop) reaches it via
+server.tasks.agents.cancel_task, which reads the in-memory ``_teams`` store.
 """
 
 import asyncio
@@ -243,8 +244,8 @@ async def execute_team_create(
         finally:
             _release_agent_slot(session_id)
 
-    # Run the members through a named task so the stop endpoint
-    # (POST /api/teams/{team_id}/stop) can cancel the whole team mid-flight.
+    # Run the members through a named task so stop_team (reached from Stop in
+    # the task list or agent pane) can cancel the whole team mid-flight.
     member_ids = [uuid.uuid4().hex[:10] for _ in agents]
     _teams[team_id]["member_ids"] = member_ids
     gather_task = asyncio.ensure_future(
