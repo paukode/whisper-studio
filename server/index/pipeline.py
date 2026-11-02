@@ -15,7 +15,7 @@ import os
 import re
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from . import (
     contextualize,
@@ -543,7 +543,7 @@ def _build_locked(ws_path: str, ws_root: str, progress) -> dict:
             embed_model = COHERE_EMBED_MODEL_ID if _embed_backend == "cohere" else EMBED_MODEL
             store.set_meta(
                 ws_path,
-                last_indexed_at=datetime.now(timezone.utc).isoformat(),
+                last_indexed_at=datetime.now(UTC).isoformat(),
                 embed_model=embed_model,
                 workspace=ws_root,
                 context_mode=cc_mode,

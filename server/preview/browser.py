@@ -80,7 +80,7 @@ class BrowserSession:
                     playwright.chromium.launch(headless=True),
                     timeout=_LAUNCH_TIMEOUT_S,
                 )
-            except asyncio.TimeoutError as e:
+            except TimeoutError as e:
                 raise RuntimeError(
                     f"Chromium did not launch within {_LAUNCH_TIMEOUT_S}s; the "
                     "Playwright browser install may be incomplete."

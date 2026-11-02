@@ -15,7 +15,7 @@ import json
 import logging
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from server.workflows import journal as jnl
 from server.workflows.runtime import WorkflowRun
@@ -191,7 +191,7 @@ def resolve_workflow_workspace(raw: str | None) -> tuple[str | None, str]:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _conn():

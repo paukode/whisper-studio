@@ -97,7 +97,7 @@ class DevServerProcess:
                 ),
                 timeout=_SPAWN_TIMEOUT_S,
             )
-        except asyncio.TimeoutError as e:
+        except TimeoutError as e:
             if profile_path:
                 try:
                     os.unlink(profile_path)

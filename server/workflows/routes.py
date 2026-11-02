@@ -234,7 +234,7 @@ async def run_events(run_id: str, request: Request):
                     yield f"data: {json.dumps(ev)}\n\n"
                     if _is_run_terminal(ev):
                         break
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     yield ": keepalive\n\n"
         finally:
             event_bus.unsubscribe(f"workflow:{run_id}", queue)

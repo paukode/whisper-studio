@@ -222,7 +222,7 @@ async def _run_grounding(
                 _rewrite_query_for_retrieval(question, history, session_id),
                 timeout=_QUERY_REWRITE_TIMEOUT_S,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             log.warning("Query rewrite (Tier 3) timed out; using heuristic context")
             rewritten = None
         if rewritten:
@@ -1088,7 +1088,7 @@ async def subagent_stream_endpoint(request: Request):
                     ev = await asyncio.wait_for(queue.get(), timeout=0.1)
                     yield _frame({"team_progress": ev})
                     idle = 0
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # The agent runs a NON-streaming Bedrock call per turn, so a
                     # single turn can be silent for 30-90s. Without traffic the
                     # connection can be dropped as idle (which would cancel the
@@ -1815,7 +1815,7 @@ async def chat_endpoint(request: Request):
                     )
                     if docs_block:
                         parts.append(docs_block)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     log.warning("@docs lookup timed out; answering without it")
                 except Exception as e:  # noqa: BLE001 — docs lookup is best-effort
                     log.warning("@docs lookup failed: %s", e)
@@ -1864,7 +1864,7 @@ async def chat_endpoint(request: Request):
                     if grounding:
                         parts.append(grounding)
                         grounding_active = True
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     grounding_note = f"timed out ({_budget:.0f}s budget)"
                     log.warning(
                         "Index grounding timed out (%.0fs); answering without it",

@@ -111,7 +111,7 @@ import time
 import uuid
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 log = logging.getLogger("whisper-studio")
 
@@ -123,7 +123,7 @@ _HEADLESS_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="headl
 
 
 def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _round_catalog(session_id: str, *, attended: bool = False) -> list[dict]:

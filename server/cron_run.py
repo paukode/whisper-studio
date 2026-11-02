@@ -32,7 +32,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace as _dc_replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 log = logging.getLogger("whisper-studio")
 
@@ -115,7 +115,7 @@ async def _execute_cron_prompt(job_id: str) -> None:
         cron_events.open_run(job_id, asyncio.current_task())
 
     run_id = str(uuid.uuid4())[:8]
-    started = datetime.now(timezone.utc)
+    started = datetime.now(UTC)
     session_id = job.get("session_id", "")
 
     try:
@@ -126,7 +126,7 @@ async def _execute_cron_prompt(job_id: str) -> None:
         log.warning("cron: failed to open run lease: %s", exc)
 
     def _elapsed_ms() -> int:
-        return int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
+        return int((datetime.now(UTC) - started).total_seconds() * 1000)
 
     # Captured notify_user messages, folded into whichever exit path fires.
     # Bound before the try so the exception handler can always read it, even

@@ -7,7 +7,7 @@ extracts YAML frontmatter, and builds a manifest for LLM consumption.
 import logging
 import os
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from server.memory.memdir import ENTRYPOINT_NAME, MEMORY_TYPES
 
@@ -137,7 +137,7 @@ def build_manifest(memory_files: list[MemoryFile]) -> str:
     lines = []
     for m in memory_files:
         tag = f"[{m.type}] " if m.type else ""
-        ts = datetime.fromtimestamp(m.mtime, tz=timezone.utc).strftime("%Y-%m-%d")
+        ts = datetime.fromtimestamp(m.mtime, tz=UTC).strftime("%Y-%m-%d")
         desc = f": {m.description}" if m.description else ""
         lines.append(f"- {tag}{m.filename} ({ts}){desc}")
     return "\n".join(lines)

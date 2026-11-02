@@ -333,7 +333,7 @@ class OpenAIResponsesAdapter:
                 ready = calls.complete or (answer_done and not calls.seen)
                 try:
                     kind, payload = await asyncio.wait_for(q.get(), timeout=_POLL_S)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     now = loop.time()
                     if ready and (now - last_event) > _EARLY_RELEASE_GRACE_S:
                         break

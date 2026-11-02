@@ -8,7 +8,7 @@ next-run projection. Kept separate from server/cron_scheduler.py so the runtime
 """
 
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 # ── Timezone ─────────────────────────────────────────────────────────────────
 
@@ -185,7 +185,7 @@ def validate_schedule(raw: dict | None) -> dict:
             raise ValueError(f"could not parse run_at '{run_at_raw}'") from None
         if run_at.tzinfo is None:
             run_at = run_at.replace(tzinfo=_zone(tz))
-        if run_at <= datetime.now(timezone.utc):
+        if run_at <= datetime.now(UTC):
             raise ValueError("run_at is in the past")
         return {"type": "at", "run_at": run_at.isoformat(), "tz": tz}
 
@@ -257,13 +257,13 @@ def _interval_start(seconds: int, last_run_iso: str | None) -> datetime:
     A 10-min job whose last_run was 5 min ago resumes 5 min from now, not now.
     Never-run jobs anchor at now+seconds.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     floor = now + timedelta(seconds=15)
     if last_run_iso:
         try:
             last = _parse_dt(last_run_iso)
             if last.tzinfo is None:
-                last = last.replace(tzinfo=timezone.utc)
+                last = last.replace(tzinfo=UTC)
             return max(floor, last + timedelta(seconds=seconds))
         except Exception:
             pass
@@ -334,10 +334,10 @@ def cron_catch_up_due(sch: dict, last_run_iso: str | None, grace_sec: int) -> bo
     try:
         last = _parse_dt(last_run_iso)
         if last.tzinfo is None:
-            last = last.replace(tzinfo=timezone.utc)
+            last = last.replace(tzinfo=UTC)
     except Exception:
         return False
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     floor = now - timedelta(seconds=max(0, int(grace_sec)))
     trigger = build_trigger(sch, last_run_iso=None)
     missed = _most_recent_fire_before(trigger, now, floor)

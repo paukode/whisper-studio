@@ -8,6 +8,7 @@ stubbed so these stay hermetic.
 import json
 import os
 import tempfile
+from datetime import UTC
 
 import pytest
 
@@ -125,9 +126,9 @@ def test_compute_next_run_future_for_daily():
 def test_interval_start_resume_anchor():
     from datetime import datetime, timedelta, timezone
 
-    last = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+    last = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
     start = CS._interval_start(600, last)  # 10-min interval, ran 5 min ago
-    delta = (start - datetime.now(timezone.utc)).total_seconds()
+    delta = (start - datetime.now(UTC)).total_seconds()
     assert 250 < delta < 350  # ~5 min out, not immediate
 
 
@@ -279,11 +280,11 @@ def test_most_recent_fire_before_returns_last_fire_in_window():
 
     from apscheduler.triggers.cron import CronTrigger
 
-    trig = CronTrigger(hour=9, minute=0, day_of_week="*", timezone=timezone.utc)
-    now = datetime(2026, 7, 15, 9, 30, tzinfo=timezone.utc)
+    trig = CronTrigger(hour=9, minute=0, day_of_week="*", timezone=UTC)
+    now = datetime(2026, 7, 15, 9, 30, tzinfo=UTC)
     # Window opens an hour before now → the 09:00 fire is the most recent one.
     missed = CS._most_recent_fire_before(trig, now, now - timedelta(hours=1))
-    assert missed == datetime(2026, 7, 15, 9, 0, tzinfo=timezone.utc)
+    assert missed == datetime(2026, 7, 15, 9, 0, tzinfo=UTC)
 
 
 def test_most_recent_fire_before_none_when_no_fire_in_window():
@@ -291,10 +292,10 @@ def test_most_recent_fire_before_none_when_no_fire_in_window():
 
     from apscheduler.triggers.cron import CronTrigger
 
-    trig = CronTrigger(hour=9, minute=0, day_of_week="*", timezone=timezone.utc)
-    now = datetime(2026, 7, 15, 9, 30, tzinfo=timezone.utc)
+    trig = CronTrigger(hour=9, minute=0, day_of_week="*", timezone=UTC)
+    now = datetime(2026, 7, 15, 9, 30, tzinfo=UTC)
     # Window opens AFTER the 09:00 fire → nothing to catch up on.
-    floor = datetime(2026, 7, 15, 9, 15, tzinfo=timezone.utc)
+    floor = datetime(2026, 7, 15, 9, 15, tzinfo=UTC)
     assert CS._most_recent_fire_before(trig, now, floor) is None
 
 
@@ -304,7 +305,7 @@ def test_cron_catch_up_due_when_fire_missed_after_last_run():
     # A cron that fires every minute: the most recent fire before now is always
     # <60s ago (inside the 1h grace window), independent of the wall clock.
     sch = {"type": "cron", "hour": "*", "minute": "*", "day_of_week": "*", "tz": "UTC"}
-    stale = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    stale = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
     assert CS.cron_catch_up_due(sch, stale, 3600) is True
 
 
@@ -314,7 +315,7 @@ def test_cron_catch_up_not_due_when_recently_run():
     # A daily cron's most recent fire is strictly in the past; last_run=now is
     # newer than it, so nothing is replayed.
     sch = {"type": "cron", "hour": 9, "minute": 0, "day_of_week": "*", "tz": "UTC"}
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(UTC).isoformat()
     assert CS.cron_catch_up_due(sch, now_iso, 3600) is False
 
 

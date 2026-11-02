@@ -12,7 +12,7 @@ import asyncio
 import json
 import os
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import File, Request, UploadFile
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -216,7 +216,7 @@ async def all_session_events(request: Request):
                     return
                 try:
                     session_id, ev = await asyncio.wait_for(queue.get(), timeout=15.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     yield ": heartbeat\n\n"
                     continue
                 frame = _session_event_frame(ev)
@@ -273,7 +273,7 @@ async def _save_session_body(session_id: str, body: dict) -> None:
     generated_title = 1 if body.get("generatedTitle") else 0
     # The frontend sends `updatedAt` (per the Session type). If absent, fall
     # back to "now" so the row is at least sortable.
-    _now = datetime.now(timezone.utc).isoformat()
+    _now = datetime.now(UTC).isoformat()
     created_at = body.get("createdAt") or _now
     updated_at = body.get("updatedAt") or _now
     segments = json.dumps(body.get("segments", []))
@@ -326,7 +326,7 @@ async def patch_session_title(session_id: str, request: Request):
                 "title": title,
                 "custom": custom_title,
                 "generated": generated_title,
-                "now": datetime.now(timezone.utc).isoformat(),
+                "now": datetime.now(UTC).isoformat(),
                 "id": session_id,
             },
         )
@@ -407,7 +407,7 @@ async def beacon_save_session(session_id: str, request: Request):
 async def branch_session(session_id: str):
     """Fork the current session into a new session with the same history."""
     import uuid
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     with _get_conn() as conn:
         row = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
@@ -421,7 +421,7 @@ async def branch_session(session_id: str):
         branch_num = len(existing) + 1
         new_title = base_title + (" (branch)" if branch_num == 1 else f" (branch {branch_num})")
         new_id = str(uuid.uuid4())
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         conn.execute(
             """
             INSERT INTO sessions (id, title, custom_title, generated_title, created_at, updated_at, segments, chat_history, speaker_names)
@@ -467,7 +467,7 @@ def _session_export_lines(session_id: str, row) -> tuple[str, list[str]]:
                 "type": "export_meta",
                 "session_id": session_id,
                 "title": title,
-                "exported_at": datetime.now(timezone.utc).isoformat(),
+                "exported_at": datetime.now(UTC).isoformat(),
                 "speaker_names": speaker_names,
             }
         )
@@ -549,7 +549,7 @@ async def bulk_export_sessions(request: Request):
     if not used_names:
         return JSONResponse({"error": "no matching sessions"}, status_code=404)
 
-    filename = f"sessions-export-{datetime.now(timezone.utc).strftime('%Y-%m-%d')}.zip"
+    filename = f"sessions-export-{datetime.now(UTC).strftime('%Y-%m-%d')}.zip"
     return Response(
         content=buf.getvalue(),
         media_type="application/zip",
@@ -648,7 +648,7 @@ def _insert_imported_session(
     import uuid
 
     new_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     with _get_conn() as conn:
         conn.execute(
             """

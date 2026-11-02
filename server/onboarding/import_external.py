@@ -27,9 +27,8 @@ from __future__ import annotations
 import json
 import logging
 import os
-from datetime import datetime, timezone
-
 import tomllib
+from datetime import UTC, datetime
 
 from server import folder_skills, skills_import
 from server.mcp import mcp_manager
@@ -127,7 +126,7 @@ def _import_instructions(
     if not content:
         return {"status": "skipped", "reason": f"{filename} is empty"}
 
-    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    stamp = datetime.now(UTC).strftime("%Y-%m-%d")
     note = f"<!-- Migrated from {tool_label} ({filename}) on {stamp} -->\n\n"
     block = note + content
 

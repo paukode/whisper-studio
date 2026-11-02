@@ -606,5 +606,5 @@ class WorkflowRun:
         if self.proc.returncode is None:
             try:
                 await asyncio.wait_for(self.proc.wait(), timeout=3)
-            except (asyncio.TimeoutError, Exception):
+            except (TimeoutError, Exception):
                 self._kill()

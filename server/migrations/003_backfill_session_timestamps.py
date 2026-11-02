@@ -13,14 +13,14 @@ This migration repairs the data:
     least have *some* sortable value.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 VERSION = 3
 DESCRIPTION = "Backfill empty session updated_at/created_at timestamps"
 
 
 def migrate(conn):
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     # If updated_at is empty but created_at is set, copy created_at over.
     conn.execute(
         "UPDATE sessions SET updated_at = created_at "

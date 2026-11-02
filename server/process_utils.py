@@ -148,7 +148,7 @@ async def _settle_returncode(process) -> None:
         return
     try:
         await asyncio.wait_for(wait(), timeout=1)
-    except (asyncio.TimeoutError, OSError):
+    except (TimeoutError, OSError):
         pass
 
 

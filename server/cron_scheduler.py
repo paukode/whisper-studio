@@ -23,7 +23,7 @@ import os
 import tempfile
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter
 
@@ -80,7 +80,7 @@ _in_progress: set[str] = set()
 
 def _utc_now_iso() -> str:
     # Trailing Z for parity with how the frontend renders timestamps.
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _is_past(iso: str | None) -> bool:
@@ -90,8 +90,8 @@ def _is_past(iso: str | None) -> bool:
     try:
         dt = _parse_dt(iso)
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt <= datetime.now(timezone.utc)
+            dt = dt.replace(tzinfo=UTC)
+        return dt <= datetime.now(UTC)
     except Exception:
         return False
 
@@ -464,7 +464,7 @@ def _add_job_to_scheduler(job: dict, *, catch_up: bool = False):
             run_at = _parse_dt(sch["run_at"])
             if run_at.tzinfo is None:
                 run_at = run_at.replace(tzinfo=_zone(sch.get("tz")))
-            if run_at <= datetime.now(timezone.utc):
+            if run_at <= datetime.now(UTC):
                 return
         except Exception:
             return

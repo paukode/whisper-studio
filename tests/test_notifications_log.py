@@ -2,7 +2,7 @@
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 from fastapi import FastAPI
@@ -81,7 +81,7 @@ def test_unread_count_and_mark_read():
 
 def test_gc_drops_old_rows():
     notif.record_notification(message="old", source="chat")
-    old = (datetime.now(timezone.utc) - timedelta(days=45)).isoformat().replace("+00:00", "Z")
+    old = (datetime.now(UTC) - timedelta(days=45)).isoformat().replace("+00:00", "Z")
     with notif._get_conn() as conn:
         conn.execute("UPDATE notifications SET created_at=?", (old,))
     notif.record_notification(message="fresh", source="chat")
@@ -94,7 +94,7 @@ def test_gc_keeps_the_rows_that_remember_a_notice_was_shown():
     for source in notif.ONCE_SOURCES:
         notif.record_notification_once(source=source, title="Old", message="m")
     notif.record_notification(message="old", source="chat")
-    old = (datetime.now(timezone.utc) - timedelta(days=45)).isoformat().replace("+00:00", "Z")
+    old = (datetime.now(UTC) - timedelta(days=45)).isoformat().replace("+00:00", "Z")
     with notif._get_conn() as conn:
         conn.execute("UPDATE notifications SET created_at=?", (old,))
 
@@ -271,7 +271,7 @@ def test_dedupe_merges_identical_within_window():
 def test_dedupe_window_expires():
     notif.record_notification(message="boom", source="app", status="error")
     stale = (
-        (datetime.now(timezone.utc) - timedelta(seconds=notif.DEDUPE_WINDOW_SECONDS + 1))
+        (datetime.now(UTC) - timedelta(seconds=notif.DEDUPE_WINDOW_SECONDS + 1))
         .isoformat()
         .replace("+00:00", "Z")
     )

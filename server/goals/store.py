@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from server.infrastructure.sessions import _get_conn
 
@@ -71,7 +71,7 @@ def set_goal(session_id: str, goal: str, *, set_at: str = "") -> dict:
             # route still reported ok. Insert the placeholder row the same way
             # sessions._append_message_sync does; the next save fills in the
             # title and metadata without touching goal/goal_state.
-            now = set_at or datetime.now(timezone.utc).isoformat()
+            now = set_at or datetime.now(UTC).isoformat()
             try:
                 conn.execute(
                     "INSERT INTO sessions (id, title, custom_title, generated_title, "

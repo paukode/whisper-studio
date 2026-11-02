@@ -14,7 +14,7 @@ import json
 import logging
 import os
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from botocore.config import Config as BotoConfig
 
@@ -90,7 +90,7 @@ def _build_tier_manifest(entries: list[tuple[str, MemoryFile]]) -> str:
     lines = []
     for scope, m in entries:
         tag = f"[{m.type}] " if m.type else ""
-        ts = datetime.fromtimestamp(m.mtime, tz=timezone.utc).strftime("%Y-%m-%d")
+        ts = datetime.fromtimestamp(m.mtime, tz=UTC).strftime("%Y-%m-%d")
         desc = f": {m.description}" if m.description else ""
         lines.append(f"- {tag}{_entry_key(scope, m)} ({ts}){desc}")
     return "\n".join(lines)
@@ -288,9 +288,7 @@ def _build_context(
         # Add freshness note
         try:
             mtime = os.path.getmtime(path)
-            age_days = (
-                datetime.now(tz=timezone.utc) - datetime.fromtimestamp(mtime, tz=timezone.utc)
-            ).days
+            age_days = (datetime.now(tz=UTC) - datetime.fromtimestamp(mtime, tz=UTC)).days
             if age_days == 0:
                 freshness = "today"
             elif age_days == 1:

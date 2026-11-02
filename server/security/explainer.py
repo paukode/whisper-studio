@@ -81,7 +81,7 @@ async def explain_permission(
             timeout=_EXPLAINER_TIMEOUT,
         )
         return result
-    except asyncio.TimeoutError:
+    except TimeoutError:
         log.debug("Permission explainer timed out for %s", tool_name)
         return None
     except Exception as e:

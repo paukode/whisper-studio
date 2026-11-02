@@ -71,7 +71,7 @@ async def do_run_tool_script(payload: dict) -> tuple[bool, str]:
     )
     try:
         outcome = await asyncio.wait_for(run.run(), timeout=_SCRIPT_TIMEOUT_S)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         try:
             await run.cancel()
         except Exception as e:  # noqa: BLE001 - reported with the timeout

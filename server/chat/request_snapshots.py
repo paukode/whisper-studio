@@ -26,7 +26,7 @@ import logging
 import os
 import re
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
@@ -110,7 +110,7 @@ def record_request_snapshot(
         if not sdir:
             return
         snapshot = {
-            "ts": datetime.now(timezone.utc).isoformat(),
+            "ts": datetime.now(UTC).isoformat(),
             "session_id": session_id,
             "round": round_num,
             "is_last_round": is_last_round,
@@ -147,7 +147,7 @@ def record_request_snapshot(
                 }
             raw = json.dumps(snapshot, ensure_ascii=False, default=str)
         os.makedirs(sdir, exist_ok=True)
-        ts_name = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%f")
+        ts_name = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%f")
         path = os.path.join(sdir, f"{ts_name}-r{round_num}.json.gz")
         tmp = path + ".tmp"
         with gzip.open(tmp, "wt", encoding="utf-8") as f:
@@ -176,9 +176,7 @@ async def list_request_snapshots(session_id: str):
                 {
                     "name": name,
                     "bytes": os.path.getsize(p),
-                    "modified": datetime.fromtimestamp(
-                        os.path.getmtime(p), tz=timezone.utc
-                    ).isoformat(),
+                    "modified": datetime.fromtimestamp(os.path.getmtime(p), tz=UTC).isoformat(),
                 }
             )
         except OSError:

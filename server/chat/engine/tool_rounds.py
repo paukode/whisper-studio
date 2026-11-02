@@ -145,7 +145,7 @@ async def run_tool_round(
                     _payload = _route_event(_ev)
                     if _payload is not None:
                         yield f"data: {ndjson_dumps(_payload)}\n\n"
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     pass
             while not _event_queue.empty():
                 _ev = _event_queue.get_nowait()

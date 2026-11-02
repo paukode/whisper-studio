@@ -40,7 +40,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from server.agents.journal import REPORT_CHARS
 from server.infrastructure.async_tasks import spawn
@@ -75,7 +75,7 @@ _late: dict[str, list[dict]] = {}
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def enabled() -> bool:

@@ -270,7 +270,7 @@ async def _caption(future: concurrent.futures.Future, ids: list[str]) -> dict | 
     ended or was stopped) still cancels it."""
     try:
         reply = await asyncio.wait_for(asyncio.wrap_future(future), LABEL_TIMEOUT_S)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         log.debug(
             "Activity label timed out (%.1f s); the deterministic label stays", LABEL_TIMEOUT_S
         )

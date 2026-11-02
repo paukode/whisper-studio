@@ -4,7 +4,7 @@ import logging
 import os
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter
 
@@ -361,7 +361,7 @@ async def append_message(session_id: str, message: dict) -> bool:
 
 
 def _append_message_sync(session_id: str, message: dict) -> bool:
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     with _get_conn() as conn:
         row = conn.execute(
             "SELECT chat_history FROM sessions WHERE id = ?", (session_id,)
@@ -422,7 +422,7 @@ def get_session_meta(session_id: str) -> dict | None:
 def ensure_cron_inbox() -> str:
     """Create (idempotently) the pinned Scheduled Reports inbox session and
     return its id. Cron routes orphaned/archived firings here."""
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     with _get_conn() as conn:
         row = conn.execute("SELECT id FROM sessions WHERE id = ?", (CRON_INBOX_ID,)).fetchone()
         if row is None:

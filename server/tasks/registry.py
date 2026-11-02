@@ -24,7 +24,7 @@ import threading
 import time
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from server.infrastructure.paths import storage_root
 
@@ -44,7 +44,7 @@ _COLUMNS = (
 
 
 def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 @contextmanager
@@ -306,7 +306,7 @@ def _prune_finished_locked(conn) -> None:
     separate concern.
     """
     cutoff = (
-        datetime.fromtimestamp(time.time() - FINISHED_TTL_S, tz=timezone.utc)
+        datetime.fromtimestamp(time.time() - FINISHED_TTL_S, tz=UTC)
         .isoformat()
         .replace("+00:00", "Z")
     )

@@ -25,7 +25,7 @@ import json
 import logging
 import re
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 log = logging.getLogger("whisper-studio")
 
@@ -52,7 +52,7 @@ _OUTLINE_RE = re.compile(
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def record_artifact(

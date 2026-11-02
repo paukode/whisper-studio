@@ -198,7 +198,7 @@ async def lsp_websocket_proxy(
             try:
                 await asyncio.wait_for(process.wait(), timeout=2)
                 await asyncio.wait_for(asyncio.shield(stderr_task), timeout=1)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
 
         for task in pending:
@@ -224,7 +224,7 @@ async def lsp_websocket_proxy(
             try:
                 process.terminate()
                 await asyncio.wait_for(process.wait(), timeout=3)
-            except (asyncio.TimeoutError, ProcessLookupError):
+            except (TimeoutError, ProcessLookupError):
                 try:
                     process.kill()
                 except ProcessLookupError:

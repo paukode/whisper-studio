@@ -19,7 +19,7 @@ import os
 import re
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Request
 from fastapi.responses import Response
@@ -57,7 +57,7 @@ def _slug_source(source: str) -> str:
 
 
 def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 @contextmanager
@@ -127,7 +127,7 @@ def _insert_or_bump(
     """Dedupe-aware write. Returns {"id": int, "deduped": bool}."""
     now = _utc_now_iso()
     cutoff = (
-        (datetime.now(timezone.utc) - timedelta(seconds=DEDUPE_WINDOW_SECONDS))
+        (datetime.now(UTC) - timedelta(seconds=DEDUPE_WINDOW_SECONDS))
         .isoformat()
         .replace("+00:00", "Z")
     )
@@ -326,7 +326,7 @@ def gc_old(days: int = RETENTION_DAYS) -> int:
     """Drop notifications older than the retention window (called on boot),
     except the ONCE_SOURCES rows record_notification_once keeps as its memory."""
     _ensure_table()
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat().replace("+00:00", "Z")
+    cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat().replace("+00:00", "Z")
     keep = ",".join("?" for _ in ONCE_SOURCES)
     with _get_conn() as conn:
         cur = conn.execute(

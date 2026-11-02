@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -23,7 +23,7 @@ async def set_goal(session_id: str, request: Request):
     goal = (body.get("goal") or "").strip()
     if not goal:
         return JSONResponse({"error": "goal is required"}, status_code=400)
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     return {"ok": True, **store.set_goal(session_id, goal, set_at=now)}
 
 

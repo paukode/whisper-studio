@@ -11,6 +11,7 @@ import asyncio
 import io
 import json
 import time
+from datetime import UTC
 from types import SimpleNamespace
 
 import pytest
@@ -412,7 +413,7 @@ def test_cohere_embed_is_priced_and_rerank_is_shown_as_unpriced(monkeypatch):
     assert (rerank["count_source"], rerank["estimated_fields"]) == ("estimated", "input")
     # Embed bills per input token at the Price List rate. Rerank bills per
     # search unit, so its token row has no rate and says so.
-    today = datetime.now(timezone.utc).date()
+    today = datetime.now(UTC).date()
     rows = {r["key"]: r for r in usage.usage_report(today, today, "day", "model")["rows"]}
     embed_rate = tracker.get_model_pricing(COHERE_EMBED_MODEL_ID)["input"]
     assert rows[COHERE_EMBED_MODEL_ID]["cost_usd"] == pytest.approx(42 * embed_rate / 1e6, abs=1e-6)

@@ -19,7 +19,7 @@ import json
 import os
 import re
 import shutil
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import server.skills as _sk
 from server import folder_skills
@@ -128,7 +128,7 @@ def _render_skill_md(name: str, description: str, body: str, triggers: list[str]
         lines.append("triggers: " + ", ".join(triggers))
     lines += [
         "created_by: agent",
-        f"created_at: {datetime.now(timezone.utc).date().isoformat()}",
+        f"created_at: {datetime.now(UTC).date().isoformat()}",
         "---",
         "",
         body.strip(),

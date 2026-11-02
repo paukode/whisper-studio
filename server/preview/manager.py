@@ -378,7 +378,7 @@ async def eval_in_preview(payload: dict) -> tuple[bool, str]:
         return True, _eval_text(result)
     except ValueError as e:
         return False, str(e)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return False, "Eval timed out after 15s (long-running or blocking expression?)."
     except Exception as e:  # noqa: BLE001
         return False, f"Eval failed: {e}"

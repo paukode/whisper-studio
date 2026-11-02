@@ -120,7 +120,7 @@ async def preview_screencast(websocket: WebSocket, name: str):
         while not stop.is_set():
             try:
                 data = await asyncio.wait_for(frames.get(), timeout=1.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue  # re-check stop, keep the socket warm
             await websocket.send_text(data)
     except WebSocketDisconnect:

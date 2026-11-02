@@ -8,7 +8,7 @@ and the index is rebuilt after every mutation.
 
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Request
 
@@ -69,7 +69,7 @@ def _list_tier(scope: str, memory_dir: str) -> dict:
             "description": m.description,
             "type": m.type,
             "scope": scope,
-            "mtime": datetime.fromtimestamp(m.mtime, tz=timezone.utc).isoformat(),
+            "mtime": datetime.fromtimestamp(m.mtime, tz=UTC).isoformat(),
             "size": m.size,
         }
         for m in scan_memory_files(memory_dir)

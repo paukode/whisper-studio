@@ -194,7 +194,7 @@ async def git_events_endpoint():
             while True:
                 try:
                     await asyncio.wait_for(queue.get(), timeout=30.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # Keep-alive comment line. Many proxies drop idle
                     # SSE connections after ~60s.
                     yield ": keep-alive\n\n"

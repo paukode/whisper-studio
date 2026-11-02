@@ -25,7 +25,7 @@ import logging
 import os
 import re
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from server.infrastructure.paths import storage_root
 
@@ -93,7 +93,7 @@ def drop_session(session_id: str) -> None:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _write_atomic(path: str, text: str) -> None:

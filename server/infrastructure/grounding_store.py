@@ -19,7 +19,7 @@ import os
 import sqlite3
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from server.infrastructure.paths import storage_root
 
@@ -73,7 +73,7 @@ def _ensure_table():
 def save_grounding(session_id: str, sources: list[dict]) -> str:
     """Persist one turn's grounding sources; returns the minted grounding id."""
     gid = uuid.uuid4().hex
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     with _get_conn() as conn:
         conn.execute(
             "INSERT INTO grounding (id, session_id, created_at, sources) VALUES (?, ?, ?, ?)",

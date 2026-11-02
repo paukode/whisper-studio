@@ -23,7 +23,7 @@ import csv
 import io
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 
 from server.costs import tracker
 from server.costs.sources import source_label
@@ -53,7 +53,7 @@ _KEY_COLUMN = {"model": "model", "session": "session_id", "source": "source"}
 
 
 def _utc_today() -> date:
-    return datetime.now(timezone.utc).date()
+    return datetime.now(UTC).date()
 
 
 def _bound(d: date) -> str:
@@ -462,7 +462,7 @@ def spend_between(start: datetime, end: datetime) -> float:
 def today_spend_usd() -> float:
     """Spend so far on the current UTC day, the window the daily cap uses."""
     day = _utc_today()
-    start = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+    start = datetime(day.year, day.month, day.day, tzinfo=UTC)
     return spend_between(start, start + timedelta(days=1))
 
 
@@ -532,7 +532,7 @@ def export_document(start: date, end: date) -> dict:
     records = export_records(start, end)
     return {
         "range": {"from": start.isoformat(), "to": end.isoformat(), "timezone": "UTC"},
-        "priced_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "priced_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "total_cost_usd": round(sum(r["cost_usd"] for r in records), 6),
         "total_records": len(records),
         "records": records,
