@@ -72,21 +72,31 @@ def _app_running() -> bool:
 
 
 # ── which folders want background refresh, and at which hours ─────────────────
-def _opted_in_workspaces() -> list[str]:
-    out = []
+def _opted_in_settings() -> tuple[dict[str, dict], dict[str, str]]:
+    """Settings of the folders that opted in, and the folders whose settings
+    could not be read (path to error). One unreadable folder (a corrupt or
+    locked index DB) is left out and logged by name; it never stops the
+    other folders from being registered."""
+    opted: dict[str, dict] = {}
+    unreadable: dict[str, str] = {}
     for ws in store.list_indexed_workspaces():
-        s = wssettings.get_settings(ws)
+        try:
+            s = wssettings.get_settings(ws)
+        except Exception as e:  # noqa: BLE001 - reported per folder below
+            unreadable[ws] = str(e)
+            log.error(
+                "Index agent: the settings of %s could not be read, so it is left out: %s", ws, e
+            )
+            continue
         if s["refresh_when_closed"] and s["schedule"]["enabled"]:
-            out.append(ws)
-    return out
+            opted[ws] = s
+    return opted, unreadable
 
 
-def _wake_intervals() -> list[dict]:
+def _wake_intervals(opted: dict[str, dict]) -> list[dict]:
     """Distinct wake hours across opted-in folders, as launchd calendar entries.
     Wakes daily at each hour; the worker's cadence check gates weekly/every-N."""
-    hours = set()
-    for ws in _opted_in_workspaces():
-        hours.add(int(wssettings.get_settings(ws)["schedule"]["hour"]))
+    hours = {int(s["schedule"]["hour"]) for s in opted.values()}
     return [{"Hour": h, "Minute": 0} for h in sorted(hours)]
 
 
@@ -163,13 +173,16 @@ def sync() -> dict:
     remove it if none did. Called whenever a workspace's settings change.
     Rewrites the plist only when its content differs from what we'd
     write now, so a stale registration (moved app, new interpreter, changed
-    WHISPER_HOME) self-heals without churning launchctl on every call."""
-    intervals = _wake_intervals()
+    WHISPER_HOME) self-heals without churning launchctl on every call.
+    ``unreadable`` names the folders left out because their settings could
+    not be read."""
+    opted, unreadable = _opted_in_settings()
+    intervals = _wake_intervals(opted)
     if not intervals:
-        return uninstall()
+        return {**uninstall(), "unreadable": unreadable}
     if _plist_stale(intervals):
         _write_and_load(intervals)
-    return {"installed": True}
+    return {"installed": True, "unreadable": unreadable}
 
 
 def heal_if_stale() -> None:

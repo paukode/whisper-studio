@@ -7,15 +7,33 @@ import os
 from server.index import agent
 
 
-def test_wake_intervals_union_of_opted_in_hours(monkeypatch):
-    monkeypatch.setattr(agent, "_opted_in_workspaces", lambda: ["/a", "/b", "/c"])
-    settings = {
+def test_wake_intervals_union_of_opted_in_hours():
+    opted = {
         "/a": {"schedule": {"hour": 7}},
         "/b": {"schedule": {"hour": 22}},
         "/c": {"schedule": {"hour": 7}},  # duplicate hour collapses
     }
-    monkeypatch.setattr(agent.wssettings, "get_settings", lambda ws: settings[ws])
-    assert agent._wake_intervals() == [{"Hour": 7, "Minute": 0}, {"Hour": 22, "Minute": 0}]
+    assert agent._wake_intervals(opted) == [{"Hour": 7, "Minute": 0}, {"Hour": 22, "Minute": 0}]
+
+
+def test_one_unreadable_folder_does_not_stop_the_others(monkeypatch):
+    monkeypatch.setattr(agent.store, "list_indexed_workspaces", lambda: ["/a", "/bad", "/b"])
+
+    def get_settings(ws):
+        if ws == "/bad":
+            raise RuntimeError("database disk image is malformed")
+        return {"refresh_when_closed": True, "schedule": {"enabled": True, "hour": 7}}
+
+    monkeypatch.setattr(agent.wssettings, "get_settings", get_settings)
+    written = []
+    monkeypatch.setattr(agent, "_plist_stale", lambda intervals: True)
+    monkeypatch.setattr(agent, "_write_and_load", written.append)
+
+    result = agent.sync()
+
+    assert written == [[{"Hour": 7, "Minute": 0}]]
+    assert result["installed"] is True
+    assert result["unreadable"] == {"/bad": "database disk image is malformed"}
 
 
 def test_plist_dict_runs_worker_via_venv():
