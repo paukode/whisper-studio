@@ -89,8 +89,8 @@ brew install git python@3.12 awscli</code></pre></div>
       <code>venv/</code>, so your system Python and global toolchain stay untouched. On a fresh run it:</p>
     <ul>
       <li>Creates the <code>venv/</code> and installs the Python dependencies from
-        <code class="path">requirements.txt</code>, preferring an extension-capable Homebrew Python so
-        vector search can use sqlite-vec (a numpy fallback covers the rest).</li>
+        <code class="path">requirements.txt</code>, using an extension-capable Homebrew Python, because
+        vector search needs sqlite-vec (setup stops with an error when none is found).</li>
       <li>Installs <b>ffmpeg</b>, <b>ripgrep</b>, <b>git</b>, and the <b>AWS CLI</b> via Homebrew when
         they are missing (ffmpeg decodes audio for Whisper; ripgrep backs the workspace search tools).</li>
       <li>Installs <b>Node 22.16.0</b> into the venv via <code>nodeenv</code> (the version is pinned in

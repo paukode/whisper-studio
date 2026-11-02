@@ -258,7 +258,7 @@ bash setup.sh</code></pre></div>
         not run <code>setup.sh</code> again. The script reports a failure here, because on-device chat
         has no other runtime.</p></li>
       <li><h4>Fetches the always-on speech models</h4><p>About 190 MB: the language-ID model
-        (VoxLingua107) and the two speaker encoders (ReDimNet2, the default, and ECAPA, the fallback).
+        (VoxLingua107) and the two speaker encoders (ReDimNet2, the default, and ECAPA, the one you can select instead).
         Every transcription path needs them and the Mac app ships the same three inside its bundle, so a
         source install matches. The step is idempotent, and a hiccup fetching ReDimNet2 is reported
         without failing the install (it then downloads on first use).</p></li>

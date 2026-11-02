@@ -175,11 +175,8 @@
       <dt><code class="path">vchunks (sqlite-vec)</code></dt>
       <dd>An indexed KNN table, rebuilt from the BLOBs whenever a monotonic write-generation counter
         advances, so it self-heals after any change without threading sync through every write path.
-        Available on the Homebrew-Python venv that <code>setup.sh</code> builds.</dd>
-      <dt><code class="path">numpy fallback</code></dt>
-      <dd>When the interpreter cannot load SQLite extensions (the python.org framework build), search
-        falls back to a cached brute-force numpy matrix. Same ranking, since both compare normalized
-        vectors.</dd>
+        Required: <code>setup.sh</code> stops with an error when no Python that can load SQLite
+        extensions is found, and a sqlite-vec error fails the search visibly.</dd>
       <dt><code class="path">fts_chunks (FTS5)</code></dt>
       <dd>A BM25 keyword index over chunk text and file path, rebuilt on the same write-generation
         signal, so a filename token (like <code>buddy</code> in <code>buddy.json</code>) is matchable
@@ -191,8 +188,7 @@
       multi-index caller can fuse them itself:</p>
     <ul>
       <li><b>Dense matches.</b> The question is embedded (with the instruction prefix) and the top-k
-        cosine neighbours are fetched via <code>store.search</code> (sqlite-vec, or the numpy
-        fallback).</li>
+        cosine neighbours are fetched via <code>store.search</code> (sqlite-vec).</li>
       <li><b>Keyword hits.</b> A BM25/FTS5 leg (behind the <code>rag_hybrid_search</code> flag) catches
         exact terms (filenames, ids, codes) that dense embeddings miss.</li>
       <li><b>Related passages.</b> One GraphRAG <em>hop</em>: <code>store.expand</code> returns chunks

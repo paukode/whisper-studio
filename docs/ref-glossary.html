@@ -173,7 +173,7 @@
         <tr>
           <td>diarization</td>
           <td>Assigning "who spoke when" to a transcript. Whisper Studio embeds each utterance with a
-            speaker encoder (<b>ReDimNet2</b> by default, <b>ECAPA</b> as the fallback), clusters the
+            speaker encoder (<b>ReDimNet2</b> by default, or <b>ECAPA</b> when selected), clusters the
             vectors, and cuts an utterance at a handover when <b>speaker turn splitting</b> finds one.
             Labels hold per session across reconnects so you rename a speaker once, and a
             <b>voiceprint</b> carries that name into later recordings. See
@@ -195,10 +195,9 @@
         </tr>
 <tr>
           <td><code>ECAPA</code></td>
-          <td>ECAPA-VoxCeleb, the speaker encoder Whisper Studio used before ReDimNet2 and now keeps as
-            the automatic fallback: ReDimNet2 arrives over the network on first use, and a blocked or
-            offline first run should degrade to a working encoder rather than to no speaker labels at
-            all. Select it explicitly with <code>speaker_embedder: "ecapa"</code>. A separate ECAPA
+          <td>ECAPA-VoxCeleb, the speaker encoder Whisper Studio used before ReDimNet2. It loads only
+            when you select it with <code>speaker_embedder: "ecapa"</code>; it is not a fallback for
+            ReDimNet2. A separate ECAPA
             model does spoken-<b>language ID</b>; the two share an architecture, not a job.</td>
         </tr>
         <tr>
@@ -549,7 +548,8 @@
             on the short windows this app actually feeds it, because <b>speaker turn splitting</b>
             embeds slices of about 1.25 seconds and ECAPA was trained for about 3. Its weights ship
             inside the Mac app and <code>setup.sh</code> fetches them for a source install; failing
-            that it downloads on first use and falls back to <b>ECAPA</b>. See
+            that it downloads on first use. When it cannot load, speaker labelling stops with a visible
+            error; it does not switch to <b>ECAPA</b>. See
             <a href="arch-transcription.html">Transcription &amp; diarization</a>.</td>
         </tr>
         <tr>
