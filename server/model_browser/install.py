@@ -174,13 +174,10 @@ def is_local_model(key: str) -> bool:
     or a downloaded recommendation). Local models are always fully deletable and
     re-downloadable from Discover, so "Remove from list" deletes them outright;
     Bedrock models use the recoverable ``chat_models_disabled`` hide-list."""
-    try:
-        from server.local.registry import local_models
+    from server.local.registry import local_models
 
-        if key in local_models():
-            return True
-    except Exception:  # pragma: no cover - defensive
-        pass
+    if key in local_models():
+        return True
     meta = config_mod.load_config().get("chat_model_meta") or {}
     return isinstance(meta.get(key), dict) and bool(meta[key].get("is_local"))
 

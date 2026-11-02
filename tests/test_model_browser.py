@@ -922,3 +922,19 @@ def test_registry_key_is_stable_and_prefixed():
     assert key.startswith("local_")
     # Different quant → different key (so two quants of one repo coexist).
     assert key != install.registry_key("unsloth/Qwen3-0.6B-GGUF", "Q8_0")
+
+
+def test_a_config_error_reaches_the_local_registry_and_discover(monkeypatch):
+    """A broken config used to read as an empty local catalog, so a local
+    chat silently went down the cloud path and Discover lost its badges."""
+    from server.infrastructure import config
+    from server.local import registry
+
+    def broken():
+        raise config.ConfigFileError("config.user.json is not valid JSON")
+
+    monkeypatch.setattr(config, "unfiltered_chat_models", broken)
+    with pytest.raises(config.ConfigFileError):
+        registry._config_local_models()
+    with pytest.raises(config.ConfigFileError):
+        install.is_local_model("local_gemma")

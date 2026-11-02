@@ -84,30 +84,24 @@ def _reserved_companion_bytes() -> int:
     so only that one's directory is measured — never both. Imports lazily so
     this stays cheap to call from the read-only /browse endpoints."""
     dirs: list[str] = []
-    try:
-        from server.asr import resolve_name
-        from server.infrastructure.config import load_config
+    from server.asr import resolve_name
+    from server.infrastructure.config import load_config
 
-        backend = resolve_name(load_config().get("transcription_backend"))
-        if backend == "parakeet":
-            from server.asr.parakeet_backend import PARAKEET_MODEL_DIR
+    backend = resolve_name(load_config().get("transcription_backend"))
+    if backend == "parakeet":
+        from server.asr.parakeet_backend import PARAKEET_MODEL_DIR
 
-            dirs.append(PARAKEET_MODEL_DIR)
-        else:
-            from server.asr.whisper_backend import WHISPER_MODEL_DIR
+        dirs.append(PARAKEET_MODEL_DIR)
+    else:
+        from server.asr.whisper_backend import WHISPER_MODEL_DIR
 
-            dirs.append(WHISPER_MODEL_DIR)
-    except Exception as e:  # pragma: no cover - defensive
-        log.debug("Could not resolve the active ASR model dir: %s", e)
-    try:
-        # Whichever speaker encoder is configured, only one of these two
-        # directories exists on disk; the missing one contributes zero.
-        from server.diarization import embedder
+        dirs.append(WHISPER_MODEL_DIR)
+    # Whichever speaker encoder is configured, only one of these two
+    # directories exists on disk; the missing one contributes zero.
+    from server.diarization import embedder
 
-        dirs.append(embedder.ECAPA_MODEL_DIR)
-        dirs.append(embedder.REDIMNET_CACHE_DIR)
-    except Exception as e:  # pragma: no cover - defensive
-        log.debug("Could not resolve speaker model dir: %s", e)
+    dirs.append(embedder.ECAPA_MODEL_DIR)
+    dirs.append(embedder.REDIMNET_CACHE_DIR)
 
     return sum(_dir_size_bytes(d) for d in dirs)
 
@@ -169,21 +163,17 @@ def _norm_fmt(fmt: str | None) -> str:
 def _downloading_keys() -> set[str]:
     """Registry keys whose download is running or queued right now. Lets the
     Recommended section disable its button mid-download instead of only after
-    the weights land. Never raises."""
-    try:
-        from server.models_manager import catalog, manager
+    the weights land."""
+    from server.models_manager import catalog, manager
 
-        keys: set[str] = set()
-        for e in catalog.entries():
-            if e.group != catalog.GROUP_LOCAL_CHAT:
-                continue
-            state, _err = manager.state_of(e)
-            if state in ("downloading", "queued"):
-                keys.add(e.key)
-        return keys
-    except Exception as e:  # pragma: no cover - defensive
-        log.debug("Could not read downloading keys: %s", e)
-        return set()
+    keys: set[str] = set()
+    for e in catalog.entries():
+        if e.group != catalog.GROUP_LOCAL_CHAT:
+            continue
+        state, _err = manager.state_of(e)
+        if state in ("downloading", "queued"):
+            keys.add(e.key)
+    return keys
 
 
 def repo_detail(repo_id: str, fmt: str = "gguf") -> dict:

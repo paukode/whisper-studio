@@ -128,19 +128,14 @@ def _config_local_models() -> dict[str, dict]:
     ``chat_models_disabled`` hide-list: disabling a model only hides it from the
     composer picker — its weights must stay downloadable/deletable here, or a
     disabled model's gigabytes would become unmanageable (and, for user-added
-    models, invisible). Never raises: a broken config must not take the local
-    runtime down.
+    models, invisible). A config that cannot be read raises its error.
     """
-    try:
-        from server.infrastructure.config import unfiltered_chat_models
+    from server.infrastructure.config import unfiltered_chat_models
 
-        # Model ids live in the PARALLEL ``ids`` map, not in meta — reading
-        # them from meta yields None and silently invents "local:<key>", which
-        # then overwrites a built-in's real sentinel and breaks key_for_id().
-        ids, meta = unfiltered_chat_models()
-    except Exception as e:  # pragma: no cover - defensive
-        log.debug("Could not read chat model config for local registry: %s", e)
-        return {}
+    # Model ids live in the PARALLEL ``ids`` map, not in meta: reading them
+    # from meta yields None and silently invents "local:<key>", which then
+    # overwrites a recommended model's real id and breaks key_for_id().
+    ids, meta = unfiltered_chat_models()
 
     out: dict[str, dict] = {}
     for key, m in meta.items():
