@@ -21,6 +21,7 @@ import { WorkspaceContextMenu, type ContextMenuState } from './WorkspaceContextM
 import { GitChangesPanel } from '@/components/git/GitChangesPanel';
 import { disconnectWorkspace } from '@/services/workspaceConnection';
 import { toError } from '@/utils/toError';
+import { get } from '@/api/client';
 
 /** Extensions handled as CSV/TSV table view */
 const CSV_EXTS = new Set(['.csv', '.tsv']);
@@ -122,13 +123,13 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({ onCollapse }) =>
 
   // File search via react-query, keyed on the debounced query. Disabled (and so
   // not run) while the query is empty.
-  const { data: searchData } = useQuery({
+  const { data: searchData, error: searchError } = useQuery({
     queryKey: ['file-search', debouncedQuery],
     queryFn: async (): Promise<Array<{ path: string }>> => {
-      const r = await fetch(`/api/workspace/search-files?q=${encodeURIComponent(debouncedQuery)}&limit=100`);
-      if (!r.ok) return [];
-      const data = await r.json();
-      return data?.results ?? [];
+      const data = await get<{ results: Array<{ path: string }> }>(
+        `/api/workspace/search-files?q=${encodeURIComponent(debouncedQuery)}&limit=100`,
+      );
+      return data.results;
     },
     enabled: debouncedQuery.length > 0,
   });
@@ -511,7 +512,11 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({ onCollapse }) =>
             />
           </div>
           <div className="panel-body ws-file-tree">
-            {searchResults !== null ? (
+            {debouncedQuery && searchError ? (
+              <div className="ws-tree-file" role="alert" style={{ color: 'var(--text-muted)', cursor: 'default' }}>
+                Search failed: {toError(searchError).message}
+              </div>
+            ) : searchResults !== null ? (
               searchResults.length === 0 ? (
                 <div className="ws-tree-file" style={{ color: 'var(--text-muted)', cursor: 'default' }}>No results</div>
               ) : (
