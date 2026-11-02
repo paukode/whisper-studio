@@ -11,7 +11,7 @@ import sqlite3
 import time
 import uuid
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
 from server.infrastructure.paths import storage_root
 
@@ -300,19 +300,3 @@ def execute_task_tool(tool_name: str, tool_input: dict) -> str:
 @router.get("/{session_id}")
 async def get_tasks(session_id: str):
     return {"tasks": get_session_tasks(session_id)}
-
-
-@router.delete("/{session_id}")
-async def api_clear_tasks(session_id: str, confirm: bool = False):
-    """Clear all tasks for a session. Requires explicit ``confirm=true``
-    in the query string — without it, an auto-retry from a stale tab
-    could silently wipe out an active session's task list. No frontend
-    code calls this today; it exists for deliberate, manual clears.
-    """
-    if not confirm:
-        raise HTTPException(
-            status_code=400,
-            detail="confirm=true required to clear session tasks",
-        )
-    clear_session_tasks(session_id)
-    return {"cleared": True}
