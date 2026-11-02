@@ -1032,9 +1032,8 @@ function stop(): void {
 
     // Synchronous save of the session that OWNS this recording, with every
     // final and translation line the server sent for it.
-    try {
-      if (owner) useSessionStore.getState().saveSession(owner.sessionId);
-    } catch { /* best-effort */ }
+    // saveSession reports its own failure.
+    if (owner) useSessionStore.getState().saveSession(owner.sessionId);
     resolveSettled();
   };
 
@@ -1105,8 +1104,11 @@ function revertBackend(backend: string): void {
   activeBackend = backend;
   chunkSamples = chunkSamplesForBackend(backend);
   useSettingsStore.getState().updateConfig({ transcriptionBackend: backend });
-  void put('/api/config', { transcription_backend: backend }).catch(() => {
-    /* best-effort persist; the in-memory revert already corrected the UI */
+  put('/api/config', { transcription_backend: backend }).catch((err: unknown) => {
+    useUIStore.getState().addToast({
+      type: 'error',
+      message: `Could not save the transcription engine; the next start may use the other one: ${err instanceof Error ? err.message : String(err)}`,
+    });
   });
 }
 
