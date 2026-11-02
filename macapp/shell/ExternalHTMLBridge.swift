@@ -16,8 +16,7 @@
 //
 // Bridge contract:
 //   page → shell: window.webkit.messageHandlers.openExternalHtml.postMessage(html)
-//   shell → page marker (documentStart, main frame only):
-//       window.__WHISPER_NATIVE_SHELL = true
+//   The page detects the bridge by that message handler.
 
 import AppKit
 import Foundation
@@ -27,13 +26,8 @@ final class ExternalHTMLBridge: NSObject, WKScriptMessageHandler {
 
     static let messageHandlerName = "openExternalHtml"
 
-    /// Register the availability marker and the message handler. Call before
-    /// creating the WKWebView.
+    /// Register the message handler. Call before creating the WKWebView.
     func install(into configuration: WKWebViewConfiguration) {
-        let marker = "window.__WHISPER_NATIVE_SHELL = true;"
-        let script = WKUserScript(
-            source: marker, injectionTime: .atDocumentStart, forMainFrameOnly: true)
-        configuration.userContentController.addUserScript(script)
         configuration.userContentController.add(self, name: Self.messageHandlerName)
     }
 

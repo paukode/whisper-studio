@@ -21,11 +21,8 @@ import AppKit
 import Foundation
 import NaturalLanguage
 import SwiftUI
+import Translation
 import WebKit
-
-#if canImport(Translation)
-    import Translation
-#endif
 
 func nativeTranslateLog(_ message: String) {
     FileHandle.standardError.write(Data("[native-translate] \(message)\n".utf8))
