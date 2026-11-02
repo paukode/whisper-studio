@@ -1,19 +1,14 @@
 """VAD-bounded utterance buffer.
 
-The browser streams short PCM16 chunks, but Whisper-large-v3 and
-the ECAPA speaker encoder are both trained on much longer windows (30 s
-and ~3 s respectively). Feeding them 256 ms slices is the root cause of
-the "Cheers cheers cheers" / "Ola ola" hallucinations and of the
-diarization over-segmenting (74 IDs from 6 real speakers in 3 hours).
+Audio arrives as short PCM16 mono 16 kHz chunks (the pcm-processor worklet or
+the native capture). The ASR models and the speaker encoder need longer,
+coherent windows, so this module accumulates chunks server-side, levels them
+with an automatic gain (AutoGain), and flushes a complete utterance only when
+``webrtcvad`` reports a natural silence boundary (or a hard 8 s cap). Each
+flushed utterance is a 0.4-8 s window.
 
-This module accumulates chunks server-side and flushes a complete
-utterance only when ``webrtcvad`` reports a natural silence boundary
-(or a hard 8 s cap). Each flushed utterance is a coherent 0.4-8 s
-window — exactly what the downstream models expect.
-
-Latency trade-off: transcripts now appear after a ~400 ms trailing
-silence instead of every 256 ms. Acceptable for meeting transcription;
-the alternative is unusable output.
+``UtteranceBuffer.pending`` exposes the utterance still being collected, so a
+streaming backend can decode a growing window before the boundary arrives.
 """
 
 from __future__ import annotations
@@ -25,7 +20,8 @@ import webrtcvad
 
 log = logging.getLogger("whisper-studio")
 
-# ── Audio format constants (must match browser-side ScriptProcessor) ──
+# ── Audio format constants (must match the pcm-processor worklet and the
+# native capture format: PCM16 mono 16 kHz) ──
 SAMPLE_RATE = 16000
 BYTES_PER_SAMPLE = 2  # PCM16
 
@@ -47,8 +43,8 @@ MIN_UTTERANCE_MS = 400
 # Set to 8 s rather than the full 30 s headroom: a pauseless monologue
 # otherwise shows nothing until the cap fires, so this bounds worst-case
 # latency for exactly the "I talk a lot and it arrives as one lump" case.
-# 8 s is still a coherent window for Whisper and far longer than ECAPA's
-# ~3 s, so neither hallucination nor diarization quality regresses. Most
+# 8 s is still a coherent window for Whisper and far longer than the speaker
+# encoder's ~3 s, so neither hallucination nor diarization quality regresses. Most
 # speech has a 400 ms+ pause well before this, so the cap rarely fires —
 # it's a latency ceiling, not the common path.
 MAX_UTTERANCE_MS = 8000
@@ -170,12 +166,7 @@ class UtteranceBuffer:
             frame = self._agc.process(bytes(self._partial[:FRAME_BYTES]))
             del self._partial[:FRAME_BYTES]
 
-            try:
-                is_speech = self._vad.is_speech(frame, SAMPLE_RATE)
-            except Exception as exc:
-                # Defensive: a malformed frame shouldn't kill the stream.
-                log.debug("VAD frame error: %s", exc)
-                is_speech = False
+            is_speech = self._vad.is_speech(frame, SAMPLE_RATE)
 
             if is_speech:
                 self._utterance.extend(frame)
