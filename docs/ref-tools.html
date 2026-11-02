@@ -441,7 +441,9 @@
         stopped waiting: the program is reading input, output went quiet, the read budget ran out
         (default 10 seconds, maximum 300), or the shell exited. To stop or resume the program, it
         sends Ctrl-C (<code>\x03</code>), Ctrl-D (<code>\x04</code>), or Ctrl-Q (<code>\x11</code>)
-        with no other text. <code>terminal_close</code> ends that
+        with no other text. With <code>target='visible'</code>, it sends only Ctrl-C to your visible
+        terminal. It does this only while the assistant's own visible command runs past its time
+        limit. It never sends a key to a program that you started. A subagent cannot use it. <code>terminal_close</code> ends that
         session and kills its process tree. Both ask for approval on every call, and the first command
         line is validated.</li>
       <li><b>Batched reads</b> - <code>run_tool_script</code> runs a short JavaScript program that calls

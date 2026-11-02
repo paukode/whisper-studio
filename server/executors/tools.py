@@ -195,7 +195,9 @@ TERMINAL_RUN_TOOL = {
         "when commands are otherwise session-approved. mode=visible types the command "
         "into the user's terminal panel so they can watch: it opens the panel, and a "
         "new terminal (in cwd, else the workspace) when none is open or the open one "
-        "is busy. It runs in that terminal's current folder with no write confinement, "
+        "is busy. A visible run that timed out keeps running there, and further visible "
+        "runs are refused until it ends. It runs in that terminal's current folder with no "
+        "write confinement, "
         "so it asks the user to approve in every permission mode except Bypass. "
         "Use it only when the user asks to see it run. Every call is approval-gated "
         "and validated first; dangerous commands and interactive ones that wait for "
@@ -287,7 +289,10 @@ TERMINAL_SEND_TOOL = {
         "just read pending output without typing. Every call is approval-gated and "
         "the first command line is validated. Default read budget 10s, max 300s. "
         "Writes are confined to the workspace, this session's scratch folder and "
-        "temp; a new workspace opens a fresh terminal. Call terminal_close when done."
+        "temp; a new workspace opens a fresh terminal. Call terminal_close when done. "
+        "With target='visible' it sends only Ctrl-C to the user's visible terminal, and "
+        "only to stop your own terminal_run mode='visible' that timed out and still runs "
+        "there."
     ),
     "input_schema": {
         "type": "object",
@@ -307,6 +312,15 @@ TERMINAL_SEND_TOOL = {
                 "description": (
                     "Seconds to wait for the program to settle before returning. "
                     "Default 10, max 300."
+                ),
+            },
+            "target": {
+                "type": "string",
+                "enum": ["interactive", "visible"],
+                "description": (
+                    "interactive (default): this chat's persistent terminal. visible: "
+                    "the user's visible terminal, for Ctrl-C only (\\x03 with no other "
+                    "text) while your own timed-out visible run still runs there."
                 ),
             },
             "cwd": {

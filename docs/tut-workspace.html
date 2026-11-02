@@ -174,7 +174,20 @@ share a helper with @file:src/components/workspace/WorkspacePanel.tsx</code></pr
       30 s, and the assistant can increase it to 300 s.</p>
     <p>The app refuses commands that wait for input, for example <code>vim</code>, <code>less</code>,
       <code>top</code>, and <code>watch</code>. If you ask to see a command, the assistant can type
-      it into your open terminal. A write outside the working folder needs a second run with a short
+      it into your open terminal.</p>
+    <p>These rules apply to a command in your visible terminal:</p>
+    <ul>
+      <li>The app first clears any text that is half typed on the terminal line.</li>
+      <li>A long command (more than about 900 characters) or a command with more than one line goes
+        into a script file in an app folder that only the app can write. The terminal gets one short
+        line that runs that file.</li>
+      <li>If a program runs in the terminal, for example <code>bash script.sh</code> or a pager
+        that a script started, the app does not type into it. The command runs in a new terminal tab.</li>
+      <li>If the assistant's own command runs past its time limit, it continues in the terminal. The
+        app refuses more visible commands until it stops. To stop it, press Ctrl-C in that tab. The
+        assistant can also send Ctrl-C with <code>terminal_send</code>.</li>
+    </ul>
+    <p>A write outside the working folder needs a second run with a short
       reason. That run always asks you, also when you approved other commands in the session.</p>
     <p>For an interactive program, the assistant uses <code>terminal_send</code>. Examples are a
       <code>python3</code> REPL, a database shell, and an installer that asks yes or no. The tool
