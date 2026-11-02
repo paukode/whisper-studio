@@ -113,6 +113,9 @@ class GateContext:
     # inlined mentions that share its message (TurnContext.asked). None reads
     # the whole message.
     asked: str | None = None
+    # A Bypass turn: its Stop hooks and quality gates run with no OS
+    # sandbox (server/security/bypass_sandbox.py).
+    unsandboxed: bool = False
 
 
 @dataclass

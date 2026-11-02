@@ -187,8 +187,13 @@ async def launch_run(request: Request):
             trusted_as = slug
             break
 
+    from server.security import bypass_sandbox
+    from server.security.permissions import get_mode
+
     run_id = manager.start_run(
         script,
+        # A person launched it: in Bypass its agents run with no OS sandbox.
+        unsandboxed=bypass_sandbox.is_bypass(get_mode()),
         args=args,
         session_id=session_id,
         model_key=model_key,

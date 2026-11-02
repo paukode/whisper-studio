@@ -405,6 +405,11 @@ def _spawn_cron_run(job_id: str) -> None:
         # from a copy with the read-only scope off.
         context = contextvars.copy_context()
         context.run(read_only_scope.set, False)
+        # Nor a Bypass one: its commands keep the OS sandbox, whatever turn
+        # created the job (server/security/bypass_sandbox.py).
+        from server.security import bypass_sandbox
+
+        bypass_sandbox.set_off(context)
         # Its commands are its own: a chat Stop in the job's session spares them.
         spawn(
             run_owned(f"cron:{job_id}", _execute_cron_prompt(job_id)),

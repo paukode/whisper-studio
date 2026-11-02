@@ -235,8 +235,15 @@ def start_run(
     name: str = "",
     resume_from: str = "",
     agent_runner=None,
+    unsandboxed: bool | None = None,
 ) -> str:
     """Register + launch a run detached; returns its run_id immediately.
+
+    ``unsandboxed``: the run's agents run their commands with no OS sandbox
+    (server/security/bypass_sandbox.py). None takes it from the launcher: a
+    Bypass turn's tool call launches an unsandboxed run, a confined one a
+    confined run. The run keeps the value it started with, also when it is
+    driven from another thread or loop.
 
     ``workspace_path`` is taken as-is, already resolved by the caller — unlike
     effort, it must NOT be re-derived here: a value shown on an approval card
@@ -316,10 +323,13 @@ def start_run(
         on_event=lambda ev: _publish(run_id, session_id, ev),
     )
     _live[run_id] = run
+    from server.security import bypass_sandbox
     from server.tasks.owner import run_owned
 
+    if unsandboxed is None:
+        unsandboxed = bypass_sandbox.active()
     # The workflow's agents run their own commands: a chat Stop spares them.
-    _schedule(run_owned(f"workflow:{run_id}", _drive(run)), run_id, spawn)
+    _schedule(run_owned(f"workflow:{run_id}", _drive(run, unsandboxed)), run_id, spawn)
     return run_id
 
 
@@ -452,10 +462,13 @@ def _load_trusted_saved(name: str):
     return loaded if loaded and loaded["trusted"] else None
 
 
-async def _drive(run: WorkflowRun) -> None:
+async def _drive(run: WorkflowRun, unsandboxed: bool = False) -> None:
+    from server.security import bypass_sandbox
+
     outcome = {"status": "failed", "error": "runner did not start"}
     try:
-        outcome = await run.run()
+        with bypass_sandbox.entered(unsandboxed):
+            outcome = await run.run()
         outcome = verify_deliverables(outcome, getattr(run, "workspace_path", None))
     except Exception as e:  # noqa: BLE001
         log.error("workflow %s crashed: %s", run.run_id, e, exc_info=True)

@@ -52,8 +52,15 @@ async def approval_execute(req: ExecuteRequest):
     from server.workspace import get_workspace_path
 
     ws_before = get_workspace_path()
+    # A card a person approves while the app is in Bypass runs its command
+    # with no OS sandbox, like every other Bypass command
+    # (server/security/bypass_sandbox.py).
+    from server.security import bypass_sandbox
+    from server.security.permissions import get_mode
+
     try:
-        outcome = await execute_approved_by_human(spec, payload)
+        with bypass_sandbox.entered(bypass_sandbox.is_bypass(get_mode())):
+            outcome = await execute_approved_by_human(spec, payload)
     except Exception as e:  # noqa: BLE001 - executor is user-registered
         log.exception("approval/execute: %s failed", req.action)
         return {"ok": False, "error": f"Executor crashed: {e}"}

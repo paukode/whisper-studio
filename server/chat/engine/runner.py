@@ -858,6 +858,7 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
                     last_round_not_checked,
                     run_gate_with_progress,
                 )
+                from server.security import bypass_sandbox
 
                 # Where no gate reads the reply (agents, scheduled and headless
                 # runs, on-device chat with no goal), the claim guard sends a
@@ -896,6 +897,7 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
                             asked=ctx.asked,
                             tools_enabled=getattr(ctx.adapter, "tools_enabled", True),
                             plan_mode=ctx.plan_mode,
+                            unsandboxed=bypass_sandbox.is_bypass(ctx.mode),
                             attempt=stop_blocks_used,
                             max_consecutive_blocks=_goal_cap,
                         )
