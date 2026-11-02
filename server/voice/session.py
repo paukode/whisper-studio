@@ -17,8 +17,13 @@ Events emitted (dicts; ``audio`` carries raw PCM16 bytes, the rest are JSON-safe
     assistant_step   progress inside ask_assistant (name, status, detail)
     tool_result      the tool's answer (tool_use_id, name, output, status)
     client_action    an app control for the browser (action, value)
+    assistant_answer the written answer of a delegated run (tools.py)
+    assistant_request / assistant_request_resolved
+                     a delegated run paused for the user's decision, and its end
+    team_progress    agent progress inside a delegated run
     usage            cumulative token counts
     renewing/renewed the 8-minute stream was swapped for a fresh one
+    draining         the conversation ended but delegated runs are still finishing
     error            message
     ended            reason
 """

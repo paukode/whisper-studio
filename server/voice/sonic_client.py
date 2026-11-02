@@ -19,8 +19,6 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
-_MIN_PY = (3, 12)
-
 
 class SonicUnavailable(RuntimeError):
     """Voice mode cannot start on this machine/account."""
@@ -44,13 +42,6 @@ def local_mode_refusal() -> str | None:
 
 def sdk_availability() -> tuple[bool, str | None]:
     """(available, reason). Never raises."""
-    import sys
-
-    if sys.version_info < _MIN_PY:
-        return False, (
-            f"Voice mode needs Python {_MIN_PY[0]}.{_MIN_PY[1]}+ for the Bedrock streaming "
-            f"SDK (running {sys.version_info.major}.{sys.version_info.minor})."
-        )
     try:
         import aws_sdk_bedrock_runtime.client  # noqa: F401
     except ImportError:

@@ -14,9 +14,11 @@ into a small neutral vocabulary the session layer consumes:
     user_transcript   what the model heard the user say (final only)
     assistant_text    the model's own words, stage "speculative" (about to be
                       spoken) or "final" (what was actually spoken)
+    assistant_text_end  one assistant text block closed (stage, content_id)
     audio             one base64-decoded PCM16 chunk of assistant speech
     tool_use          the model wants a tool run (id, name, parsed input)
     interrupted       the user barged in; drop any queued playback
+    turn_start        the model began a response
     turn_end          the model finished a response
     usage             cumulative speech/text token counts
     error             an in-band error the stream reported
