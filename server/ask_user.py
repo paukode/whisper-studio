@@ -18,11 +18,16 @@ log = logging.getLogger("whisper-studio")
 ASK_USER_TOOL = {
     "name": "ask_user_question",
     "description": (
-        "Ask the user a question with multiple-choice options to gather information, "
-        "clarify ambiguity, understand preferences, or get a decision. "
-        "The conversation will pause until the user responds. "
-        "Use this whenever you need user input before proceeding — folder names, "
-        "style preferences, approval, feature choices, etc. "
+        "Ask the user a multiple-choice question. The turn pauses until they answer. "
+        "Ask only when the choice changes what the user will see, costs money, or cannot be "
+        "undone, AND no rule, memory, earlier answer or approved plan already settles it. "
+        "Check the user's rules and memory first. "
+        "Never use this to ask permission for a tool call: the approval gate asks the user "
+        "itself when a call needs it, so make the call. "
+        "Never ask whether to continue, commit, or take your own recommendation after the user "
+        "approved a plan or told you to go on. "
+        "When real decisions remain, batch them into one numbered list at the end of a stage, "
+        "and keep working on everything that does not depend on them. "
         "Always include an 'Other (please specify)' option."
     ),
     "input_schema": {
