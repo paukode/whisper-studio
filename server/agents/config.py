@@ -74,6 +74,8 @@ WRITE_TOOLS = frozenset(
         "git_push_pr",
         "git_delete_branch",
         "git_clone",
+        "github",
+        "github_api_write",
         "notify_user",
         "memory_write",
         "memory_delete",

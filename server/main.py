@@ -200,6 +200,7 @@ _EXECUTOR_MODULES = (
     "server.search",  # ws_grep / ws_glob
     "server.index",  # workspace_semantic_search
     "server.git.executor",
+    "server.git.gh_executor",  # github / github_api / github_api_write
     "server.memory.executor",
     "server.rules_tools",  # rules_write (the user's rules under ~/.whisper)
     "server.agent_tools.skill_tools",  # skill_list, for tool scripts (chat uses tool_router.py)

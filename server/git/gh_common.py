@@ -20,6 +20,12 @@ from server.git.gh_classify import FORBIDDEN, classify_github
 # means gh switches the method to POST (a mutation).
 _BODY_FLAGS = frozenset({"-f", "--field", "-F", "--raw-field", "--input"})
 _MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+# gh exits with 4 when the command needs authentication it does not have.
+_GH_AUTH_REQUIRED = 4
+_NOT_SIGNED_IN = (
+    "The GitHub CLI is not signed in. Run `gh auth login` in Terminal "
+    "(or set GH_TOKEN for the app), then try again."
+)
 
 
 def gh_env() -> dict:
@@ -96,4 +102,7 @@ def run_gh(
         return -1, f"gh command timed out after {timeout}s."
     except Exception as e:  # noqa: BLE001 (surface any spawn failure)
         return -1, f"gh command failed to run: {e}"
-    return result.returncode, scrub_secrets((result.stdout + result.stderr).strip())
+    output = scrub_secrets((result.stdout + result.stderr).strip())
+    if result.returncode == _GH_AUTH_REQUIRED:
+        return result.returncode, f"{_NOT_SIGNED_IN}\n\n{output}".strip()
+    return result.returncode, output

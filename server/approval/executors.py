@@ -19,6 +19,7 @@ a Stop pressed while one runs ends the turn and the action reports its outcome.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -545,8 +546,23 @@ def _gh_api_summary(p: dict) -> str:
 
 
 def _gh_api_render(p: dict) -> str:
+    """The card's body: the method and path, then everything the request
+    sends (body, fields, a GraphQL mutation and its variables), so a person
+    sees the whole request before it runs."""
     method = p.get("method") or "POST"
-    return f"gh api --method {method} {p.get('endpoint', '?')}"
+    lines = [f"gh api --method {method} {p.get('endpoint', '?')}"]
+    for label, key in (
+        ("body", "body"),
+        ("fields", "fields"),
+        ("mutation", "graphql_mutation"),
+        ("variables", "graphql_vars"),
+    ):
+        value = p.get(key)
+        if value in (None, "", {}):
+            continue
+        text = value if isinstance(value, str) else json.dumps(value, indent=2, sort_keys=True)
+        lines.append(f"{label}:\n{text}")
+    return "\n".join(lines)
 
 
 async def _do_git_checkout(payload: dict) -> ApprovalOutcome:

@@ -192,6 +192,13 @@
       the thing you approved is the thing that executes. An argv shape the table does not recognise
       fails closed to an approval-gated WRITE, which means a new upstream subcommand degrades to "ask a
       human" rather than slipping through as a read.</p>
+    <p>A mutation follows the <a href="arch-approval.html">permission mode</a> like the git write
+      tools: Bypass runs it with no card, Don't ask refuses it, and the other modes show the card. A
+      <code>github_api_write</code> card shows the method, the path, and the whole request body. The
+      tools use the <code>gh</code> sign-in on this Mac (or <code>GH_TOKEN</code>). When
+      <code>gh</code> is not installed, or is not signed in, the call fails with a message that says
+      to install it or to run <code>gh auth login</code>. The shell <code>gh</code> stays blocked in
+      the command sandbox, which has no GitHub sign-in.</p>
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
       <div class="callout__body"><p><b>Two hard blocks.</b> The <code>auth</code>, <code>config</code>,
