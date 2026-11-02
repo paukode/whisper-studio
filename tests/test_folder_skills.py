@@ -206,3 +206,11 @@ def test_prompt_tools_keep_internal_markers_out_of_the_request():
         "BODY",
     )
     assert out == "USER REQUEST:\nscope: src\n\nSKILL INSTRUCTIONS:\nBODY"
+
+
+def test_a_skill_naming_a_missing_executor_fails_instead_of_running_as_a_prompt(monkeypatch):
+    monkeypatch.setattr(skills, "SKILLS", {"typo": {"executor": "no_such_executor", "body": "B"}})
+    out = skills.execute_tool("typo", {"text": "x"})
+    assert out == (
+        "Error: skill 'typo' names executor 'no_such_executor', which is not registered."
+    )

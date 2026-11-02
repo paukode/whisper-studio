@@ -30,7 +30,7 @@ TOOLS: list[dict] = []
 # server.summarize.mapreduce). Applies only to tools loaded from the skills
 # folder; the summarize_transcript built-in takes no text argument (the server
 # passes the transcript separately, condensed upstream in routes.py).
-_TRANSCRIPT_SKILLS = {"meeting_notes", "catch_up"}
+_TRANSCRIPT_SKILLS = {"meeting_notes"}
 
 
 def load_skills(skills_dir: str = None) -> dict:
@@ -276,9 +276,8 @@ def execute_tool(
         return "[MCP tools must be called via execute_mcp_tool]"
     skill = SKILLS.get(tool_name)
     if skill:
-        # Defensive: transcript-driven skills (meeting_notes,
-        # summarize_transcript, catch_up) expect a chunk of text as
-        # their primary argument — usually called ``notes``,
+        # Defensive: a transcript-driven skill (meeting_notes) expects a
+        # chunk of text as its primary argument, usually called ``notes``,
         # ``text``, or ``transcript``. The user message hint already
         # asks Claude to pass the transcript, but if the model still
         # arrives here with an empty/short value AND a transcript
@@ -313,7 +312,13 @@ def execute_tool(
                 if len(val) > limit:
                     tool_input = {**tool_input, arg_name: maybe_condense_transcript(val)}
         executor_name = skill.get("executor")
-        if executor_name and executor_name in EXECUTORS:
+        if executor_name:
+            if executor_name not in EXECUTORS:
+                # A typo or a removed executor never runs as a prompt skill.
+                return (
+                    f"Error: skill '{tool_name}' names executor '{executor_name}', "
+                    "which is not registered."
+                )
             return EXECUTORS[executor_name](tool_input, transcript, current_attachments)
         return _tool_run_skill(tool_name, tool_input)
     if tool_name in EXECUTORS:
