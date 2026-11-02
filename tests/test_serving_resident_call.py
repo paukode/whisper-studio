@@ -306,3 +306,52 @@ def test_a_timeout_behind_another_turn_says_the_model_was_shared(monkeypatch):
     with pytest.raises(serving.ResidentCallError, match="also answering another chat or agent"):
         _call(timeout=0.2, held_marks=1)
     assert serving.busy_turns() == 2
+
+
+# -- serving.complete: the one-shot that may start the server ----------------
+
+
+def _one_shot(monkeypatch, respond, *, thinks=True, engine="gguf"):
+    from server.local import thinking
+
+    monkeypatch.setattr(serving, "ensure_serving", lambda key: "http://oneshot.test")
+    monkeypatch.setattr(runtime, "LOCAL_MODELS", {"model_a": {"engine": engine}})
+    monkeypatch.setattr(
+        thinking,
+        "caps_for",
+        lambda k: thinking.Caps(True, False) if thinks else thinking.NO_THINKING,
+    )
+    seen: list[dict] = []
+
+    def post(url, json, timeout):
+        seen.append(json)
+        return respond(json)
+
+    monkeypatch.setattr(httpx, "post", post)
+    return seen
+
+
+def test_one_shot_turns_thinking_off_for_a_thinking_model(monkeypatch):
+    """The index and summary calls used to let a thinking model spend their
+    small budget reasoning and come back empty."""
+    seen = _one_shot(monkeypatch, lambda body: _answer("ok"))
+    assert serving.complete("model_a", "sys", "user", 120) == "ok"
+    assert seen[0]["chat_template_kwargs"]["enable_thinking"] is False
+    assert seen[0]["temperature"] == 0
+
+
+def test_one_shot_raises_instead_of_returning_empty(monkeypatch):
+    _one_shot(monkeypatch, lambda body: _answer("", reasoning_content="hmm"))
+    with pytest.raises(serving.ResidentCallError, match="only reasoning"):
+        serving.complete("model_a", "sys", "user", 120)
+    _one_shot(monkeypatch, lambda body: _answer("partial", finish="length"))
+    with pytest.raises(serving.ResidentCallError, match="120-token budget"):
+        serving.complete("model_a", "sys", "user", 120)
+    _one_shot(monkeypatch, lambda body: httpx.Response(500, json={"error": "boom"}))
+    with pytest.raises(serving.ResidentCallError, match="HTTP 500"):
+        serving.complete("model_a", "sys", "user", 120)
+
+
+def test_runtime_complete_refuses_a_cloud_key():
+    with pytest.raises(ValueError, match="not an on-device model"):
+        runtime.complete("sonnet5", "sys", "user")

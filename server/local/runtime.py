@@ -244,16 +244,16 @@ def loaded_key() -> str | None:
 
 
 def complete(key: str, system_prompt: str, user: str, max_tokens: int = 1500) -> str:
-    """One-shot, NON-streaming generation; returns the assistant text ('' on
-    failure). Blocking — starts the model server if needed, so call it off the
-    event loop.
+    """One-shot, NON-streaming generation; returns the assistant text and
+    raises on any failure (see ``serving.complete``). Blocking: starts the
+    model server if needed, so call it off the event loop.
 
-    Kept here as the stable entry point for non-chat callers (workspace-index
-    relations/descriptions/contextualize, the one-shot helper, the on-device
-    session summariser); the work itself happens in the model server.
+    The entry point for non-chat callers (workspace-index relations,
+    descriptions and contextualize, the on-device session summariser); the
+    work itself happens in the model server.
     """
     if not is_local_model(key):
-        return ""
+        raise ValueError(f"{key} is not an on-device model")
     from server.local import serving
 
     return serving.complete(key, system_prompt, user, max_tokens)

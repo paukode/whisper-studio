@@ -558,42 +558,35 @@ async def complete_on_resident(
 
 
 def complete(key: str, system_prompt: str, user: str, max_tokens: int = 1500) -> str:
-    """One-shot, NON-streaming generation; returns the assistant text ('' on
-    failure). Blocking — starts the model server if it isn't already serving
-    ``key``, so call it off the event loop.
+    """One-shot, NON-streaming generation; returns the assistant text.
+    Blocking: starts the model server if it isn't already serving ``key``, so
+    call it off the event loop.
 
     The non-chat entry point (workspace-index extraction, the on-device session
     summariser), engine-agnostic: both servers answer the same non-streaming
-    chat-completions request. Deliberately sends no tools — these callers want
-    prose or JSON back, not a tool call.
+    chat-completions request. Deliberately sends no tools: these callers want
+    prose or JSON back, not a tool call. Built like ``complete_on_resident``:
+    temperature 0 and thinking off for a thinking model, so a small budget is
+    not spent on reasoning. Raises (the server could not start, an HTTP error,
+    ResidentCallError for an answer that ran out of budget or held only
+    reasoning); it never returns an empty string.
     """
     import httpx
 
-    try:
-        url = ensure_serving(key)
-    except Exception as e:
-        log.warning("complete(%s): model server unavailable: %s", key, e)
-        return ""
-    try:
-        r = httpx.post(
-            f"{url}/v1/chat/completions",
-            json={
-                "model": wire_model(key),
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user},
-                ],
-                "max_tokens": max_tokens,
-                "stream": False,
-            },
-            timeout=_ONESHOT_TIMEOUT,
-        )
-        r.raise_for_status()
-        choices = (r.json() or {}).get("choices") or []
-        if not choices:
-            return ""
-        msg = choices[0].get("message") or {}
-        return llama_server._strip_reasoning_markers(msg.get("content") or "")
-    except Exception as e:
-        log.warning("complete(%s) failed: %s", key, e)
-        return ""
+    from server.local import thinking
+
+    url = ensure_serving(key)
+    body: dict = {
+        "model": wire_model(key),
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user},
+        ],
+        "max_tokens": max_tokens,
+        "stream": False,
+        "temperature": 0,
+    }
+    if thinking.caps_for(key).can_think:
+        body.update(thinking.off_fields(mlx=engine_of(key) == "mlx"))
+    r = httpx.post(f"{url}/v1/chat/completions", json=body, timeout=_ONESHOT_TIMEOUT)
+    return _resident_answer(r, max_tokens)
