@@ -5,7 +5,7 @@ Makes a side call to Claude Haiku to assess the risk level of a pending
 permission approval and return a short explanation for the user.
 
 Returns: {"riskLevel": "LOW"|"MEDIUM"|"HIGH", "explanation": str, "reasoning": str, "risk": str}
-Returns None on any error or if disabled in config — always non-blocking.
+Returns None on any error or if disabled in config, always non-blocking.
 """
 
 import asyncio
@@ -15,7 +15,7 @@ import re
 
 log = logging.getLogger("whisper-studio")
 
-_EXPLAINER_TIMEOUT = 3.0  # seconds — hard limit so approval dialog is never delayed
+_EXPLAINER_TIMEOUT = 3.0  # seconds, hard limit so approval dialog is never delayed
 
 _SYSTEM_PROMPT = """\
 You are a security risk assessor for an AI coding assistant called Whisper Studio.

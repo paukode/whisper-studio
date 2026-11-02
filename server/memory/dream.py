@@ -1,4 +1,4 @@
-"""Dream consolidation — cross-session memory distillation.
+"""Dream consolidation: cross-session memory distillation.
 
 Triggered after 24h + 5 turn-ends since last consolidation, per tier:
 each memory dir (global and every project) carries its own

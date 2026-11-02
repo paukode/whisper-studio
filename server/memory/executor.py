@@ -1,4 +1,4 @@
-"""Memory tool executors — implementations for memory_read/write/list/delete.
+"""Memory tool executors: implementations for memory_read/write/list/delete.
 
 Registered via @register_executor so they participate in the standard
 executor metadata system (concurrent_safe, read_only, etc.).
@@ -221,7 +221,7 @@ def execute_memory_write(
     if os.path.basename(abs_path).lower() == ENTRYPOINT_NAME.lower():
         return "Error: Cannot write MEMORY.md directly. It is managed automatically."
 
-    # Secret scanning — always runs
+    # Secret scanning, always runs
     full_content = (
         f"---\nname: {name}\ndescription: {description}\ntype: {mem_type}\n---\n\n{content}"
     )

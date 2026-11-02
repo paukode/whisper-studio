@@ -1,4 +1,4 @@
-"""Memory tool schemas — Bedrock tool definitions for memory operations.
+"""Memory tool schemas: Bedrock tool definitions for memory operations.
 
 These tools allow the LLM to read, write, list, and delete memory files
 across the two-tier store: global (data/global_memory/, cross-workspace,

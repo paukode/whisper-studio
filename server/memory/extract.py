@@ -1,4 +1,4 @@
-"""Memory extraction pipeline — post-query background agent.
+"""Memory extraction pipeline: post-query background agent.
 
 After each chat turn (when stop_reason != tool_use), fires a background
 agent to extract memories from the conversation. The agent is restricted
@@ -188,7 +188,7 @@ async def maybe_extract_memory(
         # LLM turns; quick successive user turns must not stack a second run
         # over the same message slice.
         if session_id in _inflight:
-            log.info("Skipping extraction — previous run still in flight")
+            log.info("Skipping extraction, previous run still in flight")
             return
 
         # Load cursor
@@ -205,7 +205,7 @@ async def maybe_extract_memory(
         if _has_memory_writes_in_messages(messages, cursor):
             _cursors[session_id] = len(messages)
             _save_state(global_dir, session_id, cursor=len(messages))
-            log.info("Skipping extraction — model already wrote memory")
+            log.info("Skipping extraction, model already wrote memory")
             return
 
         # Get new messages since cursor
@@ -412,7 +412,7 @@ async def _run_extraction(
         f"{scope_note} "
         f"Use memory_write to save new memories or update existing ones. "
         f"Use memory_read to check existing files before overwriting. "
-        f"Be selective — only save what would be valuable in future sessions. "
+        f"Be selective: only save what would be valuable in future sessions. "
         f"If the user corrected a repeatable workflow, encode it with skill_manage "
         f"(view the relevant skill first) rather than as a memory."
     )

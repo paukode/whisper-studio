@@ -1,4 +1,4 @@
-"""Memory system prompts — extraction, recall, consolidation, session memory,
+"""Memory system prompts: extraction, recall, consolidation, session memory,
 and the post-turn learning review."""
 
 # What a durable lesson looks like, and what must never be saved. Shared by the

@@ -4,7 +4,7 @@ Two consumers with different shapes:
   - server/sandbox.py needs expanded literal filesystem paths for the
     OS sandbox profile (macOS sandbox-exec), the real boundary.
   - server/security/command_validator.py needs regexes matched against
-    command text — defense-in-depth on paths that read naturally in
+    command text, defense-in-depth on paths that read naturally in
     commands.
 
 The shared core lives in HOME_PATHS / ABSOLUTE_PATHS so the two layers
@@ -21,7 +21,7 @@ import os
 import re
 
 # Home-relative paths denied by BOTH the OS sandbox and the command
-# validator. No leading ~/ — builders add the prefix they need.
+# validator. No leading ~/, builders add the prefix they need.
 HOME_PATHS = [
     ".ssh",  # SSH keys
     ".aws",  # AWS credentials
@@ -112,7 +112,7 @@ def expanded_sandbox_paths() -> list[str]:
 
 
 def is_sensitive_path(path: str) -> bool:
-    """True if `path` sits inside (or equals) any denylisted location — SSH
+    """True if `path` sits inside (or equals) any denylisted location, SSH
     keys, cloud credentials, browser profiles, system secrets, etc.
 
     Reuses the same canonical list the OS sandbox already draws from

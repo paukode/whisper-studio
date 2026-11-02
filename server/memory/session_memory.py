@@ -1,4 +1,4 @@
-"""Session memory — per-session structured summaries.
+"""Session memory: per-session structured summaries.
 
 Maintains a markdown file per session with fixed sections:
 Goals, Decisions, Context, Blockers. Updated incrementally

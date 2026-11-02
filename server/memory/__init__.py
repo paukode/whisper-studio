@@ -1,15 +1,15 @@
-"""Memory system — two-tier persistent memory with extraction and recall.
+"""Memory system: two-tier persistent memory with extraction and recall.
 
 Tiers:
-    global  (data/global_memory/)       — cross-workspace, alive in plain chat
-    project (data/memory/<slug>/)       — scoped to the open workspace
+    global  (data/global_memory/)         cross-workspace, alive in plain chat
+    project (data/memory/<slug>/)         scoped to the open workspace
 
 Public API:
-    init_memory()                — Ensure data directories exist (main.py lifespan)
-    MEMORY_TOOLS                 — Bedrock tool schemas for LLM
-    MEMORY_TOOL_NAMES            — frozenset of tool names
-    ensure_memory_dir(ws_path)   — Project memory dir if feature enabled
-    ensure_global_memory_dir()   — Global memory dir if feature enabled
+    init_memory()                  Ensure data directories exist (main.py lifespan)
+    MEMORY_TOOLS                   Bedrock tool schemas for LLM
+    MEMORY_TOOL_NAMES              frozenset of tool names
+    ensure_memory_dir(ws_path)     Project memory dir if feature enabled
+    ensure_global_memory_dir()     Global memory dir if feature enabled
 """
 
 import logging

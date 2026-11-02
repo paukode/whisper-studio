@@ -1,15 +1,15 @@
-"""Memory directory management — MEMORY.md loading, truncation, path resolution.
+"""Memory directory management: MEMORY.md loading, truncation, path resolution.
 
 Two-tier layout:
-    data/global_memory/            — global tier: cross-workspace facts, alive
+    data/global_memory/              global tier: cross-workspace facts, alive
         MEMORY.md                    even in plain chat with no workspace open
-        *.md                       — topic files with YAML frontmatter
-        .cursor.json               — extraction cursor + throttle state
-    data/memory/<workspace_slug>/  — project tier: scoped to one workspace
-        MEMORY.md                  — index file (max 200 lines, 25 KB)
+        *.md                         topic files with YAML frontmatter
+        .cursor.json                 extraction cursor + throttle state
+    data/memory/<workspace_slug>/    project tier: scoped to one workspace
+        MEMORY.md                    index file (max 200 lines, 25 KB)
         *.md
         .cursor.json
-        .dream_meta.json           — dream consolidation metadata
+        .dream_meta.json             dream consolidation metadata
 
 data/global_memory/ deliberately lives OUTSIDE data/memory/ so it can never
 collide with a workspace slug (slugs sanitize to [a-zA-Z0-9._-], so a marker
@@ -113,7 +113,7 @@ def ensure_memory_dir(ws_path: str | None) -> str | None:
 def ensure_global_memory_dir() -> str | None:
     """Guard: return the global memory dir if auto_memory is enabled.
 
-    Unlike the project tier, this needs no workspace — global memory is alive
+    Unlike the project tier, this needs no workspace, global memory is alive
     in plain chat mode too.
     """
     from server.infrastructure.feature_flags import is_enabled

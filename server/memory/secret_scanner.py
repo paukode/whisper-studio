@@ -1,4 +1,4 @@
-"""Secret scanner — high-confidence regex rules to detect secrets in memory content.
+"""Secret scanner: high-confidence regex rules to detect secrets in memory content.
 
 Derived from gitleaks (MIT license). Only includes patterns with near-zero
 false-positive rates (distinctive prefixes, checksums, known formats).
@@ -145,7 +145,7 @@ def redact_secrets(content: str) -> str:
 def check_and_block(content: str) -> tuple[bool, str, list[dict]]:
     """Check content for secrets. Returns (is_clean, redacted_content, findings).
 
-    Always runs regardless of feature flags — secret scanning is a safety guard.
+    Always runs regardless of feature flags, secret scanning is a safety guard.
     """
     findings = scan_for_secrets(content)
     if not findings:

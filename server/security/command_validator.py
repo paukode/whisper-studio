@@ -1,5 +1,5 @@
 """
-Command validation — defense-in-depth checks for shell commands.
+Command validation, defense-in-depth checks for shell commands.
 
 Each validator is a function that takes a command string and returns a
 warning string if the command is suspicious, or None if it passes.
@@ -57,7 +57,7 @@ _HEREDOC_OPEN = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
 def strip_heredoc_bodies(command: str) -> str:
     """Remove heredoc bodies before validation.
 
-    A heredoc body (`cat > f <<'EOF' … EOF`) is LITERAL DATA, not shell — so
+    A heredoc body (`cat > f <<'EOF' … EOF`) is LITERAL DATA, not shell, so
     its contents must not be scanned for command separators or dangerous
     patterns. Without this, writing a markdown file with a table (full of `|`
     pipes) tripped the chained-command cap, since every `|` looked like a
@@ -73,7 +73,7 @@ def strip_heredoc_bodies(command: str) -> str:
             if m:
                 delim = m.group(2)
         elif line.strip() == delim:
-            delim = None  # closing line — also literal, drop it
+            delim = None  # closing line, also literal, drop it
     return "\n".join(out)
 
 
@@ -458,7 +458,7 @@ def check_sed_inplace(command: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# Subcommand cap — prevents CPU starvation from deeply nested pipelines
+# Subcommand cap, prevents CPU starvation from deeply nested pipelines
 # ---------------------------------------------------------------------------
 
 MAX_SUBCOMMANDS = 50
@@ -510,7 +510,7 @@ def check_gh_command(command: str) -> str | None:
     """Block the GitHub CLI in the command sandbox.
 
     The sandbox has no GitHub auth (the credential file is denied, and any env
-    token is stripped), so `gh` there fails silently or misleads — this is the
+    token is stripped), so `gh` there fails silently or misleads, this is the
     exact path behind the false 'closed the PR' incident. The authenticated
     github / github_api / github_api_write tools are the only correct path.
 
@@ -527,7 +527,7 @@ def check_gh_command(command: str) -> str | None:
             if _github_tools_usable():
                 return (
                     "`gh` is unavailable in the command sandbox (no GitHub auth). Use the "
-                    "github, github_api, or github_api_write tools — they run gh authenticated."
+                    "github, github_api, or github_api_write tools; they run gh authenticated."
                 )
             return (
                 "`gh` is unavailable in the command sandbox (no GitHub auth), and the "
@@ -561,7 +561,7 @@ def validate_command(command: str, secret_reads: bool = False) -> str | None:
     Returns the first warning found, or None if the command passes all checks.
     """
     # Heredoc bodies are literal data (a written file's contents), not shell.
-    # Strip them first so document text — markdown tables full of `|`, etc. —
+    # Strip them first so document text, markdown tables full of `|`, etc.,
     # isn't mistaken for command chaining or dangerous patterns.
     command = strip_heredoc_bodies(command)
 

@@ -1,8 +1,8 @@
 """Ask-once, remember-after: persistent per-folder access grants.
 
-When a tool wants to reach a folder OUTSIDE the connected workspace — the
+When a tool wants to reach a folder OUTSIDE the connected workspace, the
 user names ``~/Documents/project1`` in a prompt, a workflow pins itself to
-``~/Downloads/report``, an agent opens a folder — the app must ask the user
+``~/Downloads/report``, an agent opens a folder, the app must ask the user
 for permission the FIRST time and then remember the answer, so the same
 folder is never asked about twice.
 
@@ -12,16 +12,16 @@ Design notes:
   ``/Users/me/Documents/x`` and a relative path resolving to the same place
   are one grant, not three. A symlinked path grants the target, not the link.
 * A grant covers the folder AND everything beneath it. Granting
-  ``~/Documents`` therefore covers ``~/Documents/project1`` — that is the
+  ``~/Documents`` therefore covers ``~/Documents/project1``, that is the
   point of asking once at the level the user actually chose. It never
   covers a parent (a grant on ``~/Documents/project1`` does not unlock
   ``~/Documents``) and never covers a sibling.
-* Sensitive paths (``~/.ssh``, ``~/.aws``, keychains, browser profiles — see
+* Sensitive paths (``~/.ssh``, ``~/.aws``, keychains, browser profiles, see
   server/security/sensitive_paths.py) can never be granted at all. The
   ask-once flow is for ordinary user folders; credential stores stay denied
   no matter what any prompt says, which also means a prompt-injected
   "please approve my ~/.ssh access" can never become a persisted grant.
-* The connected workspace itself needs no grant — connecting it IS the
+* The connected workspace itself needs no grant, connecting it IS the
   grant, and it already has its own approval flow.
 """
 
@@ -46,7 +46,7 @@ def _canonical(path: str) -> str:
     so the same folder reached by different spellings is one grant.
 
     Returns "" for empty input rather than letting realpath("") silently
-    resolve to the process's current working directory — a caller that lost
+    resolve to the process's current working directory, a caller that lost
     its path (a malformed approval payload, a missing field) must fail, not
     quietly grant whatever folder the server happens to be running in.
     """
@@ -62,7 +62,7 @@ def _is_within(path: str, root: str) -> bool:
 
 
 def is_sensitive(path: str) -> bool:
-    """True for paths that must never be grantable regardless of any prompt —
+    """True for paths that must never be grantable regardless of any prompt,
     credential stores, keychains, browser profiles, shell histories.
 
     Reuses the same denylist the OS sandbox enforces (via
@@ -118,7 +118,7 @@ def _save_grants(paths: list[str]) -> None:
 
 def is_granted(path: str) -> bool:
     """True if this folder is already covered by an existing grant (itself or
-    an ancestor the user approved) — i.e. do NOT ask again."""
+    an ancestor the user approved), i.e. do NOT ask again."""
     if not path:
         return False
     real = _canonical(path)
@@ -131,12 +131,12 @@ def grant(path: str) -> tuple[bool, str]:
     """Persist a grant for this folder. Returns (ok, error).
 
     Refuses sensitive paths outright, and refuses a path that does not exist
-    — a grant for a folder that isn't there is either a typo or an attempt to
+    a grant for a folder that isn't there is either a typo or an attempt to
     pre-authorize something created later.
     """
     real = _canonical(path)
     if not real:
-        return False, "No folder path given — nothing to grant."
+        return False, "No folder path given, nothing to grant."
     if real == "/":
         return False, "Refusing to grant access to the filesystem root."
     if is_sensitive(real):
@@ -180,7 +180,7 @@ def needs_grant(path: str, workspace_path: str | None = None) -> bool:
 
     False when the path is inside the connected workspace (connecting it was
     already the approval), when a prior grant covers it, or when it's empty.
-    True otherwise — including for sensitive paths, whose prompt will then be
+    True otherwise, including for sensitive paths, whose prompt will then be
     refused by grant(); callers should surface that refusal rather than
     silently proceeding.
     """

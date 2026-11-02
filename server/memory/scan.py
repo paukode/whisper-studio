@@ -1,4 +1,4 @@
-"""Memory file scanning — discovers and parses memory topic files.
+"""Memory file scanning: discovers and parses memory topic files.
 
 Walks the memory directory for .md files (excluding MEMORY.md),
 extracts YAML frontmatter, and builds a manifest for LLM consumption.

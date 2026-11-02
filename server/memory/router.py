@@ -1,4 +1,4 @@
-"""Memory REST API — browse, edit, delete, and promote memory files.
+"""Memory REST API: browse, edit, delete, and promote memory files.
 
 Backs the Memory viewer UI. Mounted at /api/memory in main.py.
 Same guards as the LLM tools: path-traversal check on every filename,

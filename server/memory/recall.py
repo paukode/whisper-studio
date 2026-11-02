@@ -1,4 +1,4 @@
-"""Memory recall — selects relevant memories at query time via Haiku side-query.
+"""Memory recall: selects relevant memories at query time via Haiku side-query.
 
 At each user query:
 1. Scan both memory tiers (global always; project when a workspace is open)
@@ -35,7 +35,7 @@ MAX_RECALL_TOKENS = 256
 
 # Cached per-region client for the recall side-query (mirrors
 # server/chat/infra's pattern). A fresh boto3 client per turn meant a new TLS
-# handshake on every message — a visible slice of time-to-first-token. The
+# handshake on every message, a visible slice of time-to-first-token. The
 # recall-specific short timeouts are why this doesn't reuse the chat client.
 _RECALL_CLIENTS: dict[str, object] = {}
 _RECALL_CLIENT_LOCK = threading.Lock()
@@ -56,7 +56,7 @@ def _get_recall_client(region: str):
 
 
 def _reset_recall_client_cache() -> None:
-    """Test hook — drops cached clients so monkeypatched boto3 takes effect
+    """Test hook, drops cached clients so monkeypatched boto3 takes effect
     (tests/conftest.py resets between tests, same as the chat client cache)."""
     with _RECALL_CLIENT_LOCK:
         _RECALL_CLIENTS.clear()
@@ -138,7 +138,7 @@ async def _select_entries(
 
     # On-device (local) turns must stay fully offline: skip the Haiku ranking
     # side-query and return the most recent memories. With a large store this
-    # loses smart ranking, but it never leaves the machine — recall parity for
+    # loses smart ranking, but it never leaves the machine, recall parity for
     # Gemma without breaking isolation. Local mode is the same for every turn,
     # whatever model it runs on: the manifest never goes to Bedrock there.
     from server.infrastructure.cloud_guard import cloud_allowed

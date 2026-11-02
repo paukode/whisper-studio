@@ -5,9 +5,9 @@ Detects unreachable permission rules in a rule list so users can fix
 config mistakes before they cause unexpected behaviour.
 
 Two shadow types:
-  deny_shadowed_by_allow    — a broad allow rule fires before a specific deny rule,
+  deny_shadowed_by_allow      a broad allow rule fires before a specific deny rule,
                               making the deny unreachable.
-  specific_shadowed_by_wildcard — a specific allow/ask rule follows a wildcard rule
+  specific_shadowed_by_wildcard, a specific allow/ask rule follows a wildcard rule
                               for the same tool and action, making the specific rule
                               unreachable.
 """

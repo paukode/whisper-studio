@@ -8,27 +8,27 @@ Rules format:
 
 Actions: "allow" | "ask" | "deny"
 Modes:
-  "default"          — read-only tools auto-allow; write tools ask
-  "auto"             — read-only auto-allow; write tools go through Haiku classifier
-  "plan"             — read-only auto-allow; ws_write_file/ws_create_file/ws_edit_file/
+  "default"            read-only tools auto-allow; write tools ask
+  "auto"               read-only auto-allow; write tools go through Haiku classifier
+  "plan"               read-only auto-allow; ws_write_file/ws_create_file/ws_edit_file/
                         ws_delete_file/ws_run_command/ws_merge_worktree are hard-blocked
                         pre-dispatch (see _PLAN_MODE_BLOCKED in tool_executor.py); memory
                         writes run with no card, a rules_write raises a card; other
                         action tools (terminal_run, git_*, aws_cli, run_python, worktree
                         enter/exit) still go through the normal approval card
-  "acceptEdits"      — ws_write_file/ws_create_file auto-allow; delete+commands ask
-  "bypassPermissions"— everything allowed, no prompts
-  "dontAsk"          — read-only auto-allow; write tools auto-deny silently
+  "acceptEdits"        ws_write_file/ws_create_file auto-allow; delete+commands ask
+  "bypassPermissions": everything allowed, no prompts
+  "dontAsk"            read-only auto-allow; write tools auto-deny silently
 
 category_modes (optional, in permissions.json):
-  {"write": "acceptEdits", "cli": "default", ...} — per-category override of
+  {"write": "acceptEdits", "cli": "default", ...}, per-category override of
   the global mode above, keyed by the ApprovalSpec categories declared in
   server/approval/bootstrap.py (write, delete, cli, worktree, preview,
   github, github-destructive, ...) plus the policy-only "workflow" category
   (new workflow-script launches; resolved by
   server/workflows/launch_policy.py). A category with no entry falls back
   to the global mode. Two exceptions always ask no matter what a category
-  mode (or bypassPermissions, or a blanket session approval) says — see
+  mode (or bypassPermissions, or a blanket session approval) says, see
   resolve_static_decision below: "github-destructive", and any command
   input that deletes outside the connected workspace and the app's own
   folders (server/security/delete_scope.py).
@@ -108,23 +108,23 @@ DEFAULTS = {
 # The "auto" mode classifier (server.auto_mode.classify_tool_call) only ever
 # sees one tool call in isolation and can flip-flop across a long turn. This
 # tracks its verdicts per session, scoped to a single turn, and trips the
-# breaker when denials pile up — forcing the effective mode back to "ask"
+# breaker when denials pile up, forcing the effective mode back to "ask"
 # instead of continuing to consult the classifier.
 #
 # Two independent triggers: a counted cap, and a rolling window, since a
 # classifier can also deny slowly across many calls without ever stringing
 # 3 in a row:
 #   - consecutive: 3 "confirm" verdicts in a row with no intervening
-#     "allow" — auto mode has clearly stopped agreeing with the work.
+#     "allow", auto mode has clearly stopped agreeing with the work.
 #   - windowed: 5 "confirm" verdicts within the last 10 classifier calls
-#     this turn — catches a slower drip of denials that never quite
+#     this turn, catches a slower drip of denials that never quite
 #     strings 3 together.
 AUTO_MODE_CONSECUTIVE_DENIAL_LIMIT = 3
 AUTO_MODE_WINDOW_SIZE = 10
 AUTO_MODE_WINDOW_DENIAL_LIMIT = 5
 
 # session_id -> {"consecutive": int, "window": list[bool], "tripped": bool, "reason": str | None}
-# In-memory, process-wide, keyed by session_id — same shape as
+# In-memory, process-wide, keyed by session_id, same shape as
 # server.chat.engine.pause.paused_sessions. Reset at the start of each new
 # turn (server.chat.engine.runner calls reset_auto_mode_breaker when
 # ctx.is_new_turn); a backend restart drops it, same as any other in-flight
@@ -295,7 +295,7 @@ def approval_floor(
     2026-10-28: in Bypass the terminal opens and the command runs).
     """
     # Destructive GitHub mutations (repo/ref delete, PR merge, archive/rename,
-    # API DELETE) ALWAYS require an explicit human approval — no bypass mode,
+    # API DELETE) ALWAYS require an explicit human approval, no bypass mode,
     # autopilot, trusted-skill, blanket session approval, or category mode
     # override may cover them, given the irreversibility and remote blast
     # radius. Checked before everything, including the category mode lookup
@@ -303,9 +303,9 @@ def approval_floor(
     if category == "github-destructive":
         return "github-destructive"
 
-    # rm (and its close cousins — see delete_sites) reaching outside the
+    # rm (and its close cousins, see delete_sites) reaching outside the
     # connected workspace and the app's own folders: the same absolute floor
-    # as github-destructive, for the same reason — no bypass mode, category
+    # as github-destructive, for the same reason, no bypass mode, category
     # override, trusted-skill flag, blanket "allow all commands" session
     # approval, custom rule, or dontAsk/acceptEdits default may let it run
     # without a real human clicking Approve. A delete that stays inside the
@@ -337,7 +337,7 @@ def approval_floor(
     # Sandbox escalation (sandbox_permissions="danger-full-access"): the same
     # absolute floor as rm. The parameter's entire meaning is "run this ONE
     # command outside the workspace-write OS sandbox, with a human reading the
-    # justification first" — so no bypass mode, category override, trusted-
+    # justification first", so no bypass mode, category override, trusted-
     # skill flag, blanket session approval, custom rule, or dontAsk default
     # may cover it. Without this, "Yes, all cli" would silently convert every
     # later escalated call into an unconfined auto-run.
@@ -357,11 +357,11 @@ def approval_floor(
     # MCP tool calls: a dedicated tier on top of (not instead of) everything
     # below. A server/tool marked `approval_mode: "approve"` in
     # mcp_servers.json (server.mcp.MCPManager.get_tool_approval_tier_for_
-    # tool_name) is a hard floor — like github-destructive, no bypass mode,
+    # tool_name) is a hard floor, like github-destructive, no bypass mode,
     # trusted-skill, or blanket session approval may skip it, because the
     # user explicitly marked that server as one they don't fully trust.
     # Every other tier ("auto", "prompt", "writes") falls straight through to
-    # the standard resolution below unchanged — the per-server config only
+    # the standard resolution below unchanged, the per-server config only
     # ever ADDS a gate (server.mcp.MCPManager.call_tool decides whether to
     # ask at all); it never removes the user's ability to configure the
     # ordinary mode/session/rule pipeline for MCP tools like any other tool.
@@ -572,7 +572,7 @@ def resolve_static_decision(
         return "allow"
 
     # Per-category default overrides the global mode for everything that
-    # follows (including the bypassPermissions check right below) — that's
+    # follows (including the bypassPermissions check right below), that's
     # the point: e.g. "always confirm deletes" can hold even when the global
     # mode is more permissive. No entry for this category (or a
     # "category_modes" of null) leaves `mode` as the caller passed it.
@@ -663,7 +663,7 @@ async def get_permissions():
 
     data = load_permissions()
     # "categories" is computed from the live ApprovalSpec registry, not
-    # persisted — it just tells the frontend which category_modes rows to
+    # persisted, it just tells the frontend which category_modes rows to
     # render (server/approval/bootstrap.py is the source of truth).
     categories = all_categories()
     # "workflow" is a policy-only category: new workflow-script launches
@@ -757,7 +757,7 @@ async def add_rule(request: Request):
         rule["prefix"] = body["prefix"]
     else:
         rule["pattern"] = body.get("pattern", "*")
-    # Purely additive audit-trail metadata — never consulted by evaluate_rules
+    # Purely additive audit-trail metadata, never consulted by evaluate_rules
     # or resolve_static_decision, just persisted and returned so the UI can
     # show why a rule exists.
     justification = body.get("justification")
@@ -772,12 +772,12 @@ async def add_rule(request: Request):
 
 @router.post("/rules/test")
 async def test_rule(request: Request):
-    """Dry-run rule matching for a sample tool/input pair — the rule editor's
+    """Dry-run rule matching for a sample tool/input pair, the rule editor's
     "Test this rule" button. Mirrors server.hooks.routes.test_hook's shape:
     run the same evaluation the live path uses and report the decision.
 
     Matches against the persisted rule set by default. Pass "rules" (a list)
-    to test a draft list in isolation — e.g. the one rule you're about to
+    to test a draft list in isolation, e.g. the one rule you're about to
     save, before you've saved it."""
     body = await request.json()
     tool = body.get("tool", "")
@@ -837,7 +837,7 @@ async def resume_auto_mode_route(request: Request):
     /approve-after-circuit-break): the user asks auto mode to resume
     classifying for the rest of the current turn instead of asking for
     every remaining tool call. Does not touch the persisted permission
-    mode — the breaker is turn-scoped, in-memory state."""
+    mode, the breaker is turn-scoped, in-memory state."""
     body = await request.json()
     session_id = body.get("session_id", "")
     if not session_id:
@@ -853,7 +853,7 @@ async def resume_auto_mode_route(request: Request):
 # ── Folder access grants ───────────────────────────────────────────────────
 # The ask-once-remember-after store (server/security/folder_grants.py). Listed
 # and revocable here so a grant is never a one-way door the user can't see or
-# undo. Granting itself is NOT exposed as a route — it only ever happens
+# undo. Granting itself is NOT exposed as a route, it only ever happens
 # through the approval card, so a page (or a prompt-injected fetch) can't mint
 # itself filesystem reach.
 
