@@ -333,8 +333,10 @@ SPAWN_AGENT_TOOL = {
                 "type": "string",
                 "description": (
                     "Optional model override: a chat_models config key (e.g. "
-                    "'haiku', 'sonnet', or a tool-capable local model). Use a "
-                    "cheaper model for mechanical subtasks. An unknown key, or "
+                    "'haiku', 'sonnet', or a tool-capable local model). Set it "
+                    "only when the user asked for a specific model: by default "
+                    "the agent uses the model the user picked for this chat, "
+                    "which is the right choice. An unknown key, or "
                     "an on-device key whose model cannot call tools, falls "
                     "back to the session's model and the result carries a "
                     "model_warning. Default: the session's selected model."
@@ -345,8 +347,8 @@ SPAWN_AGENT_TOOL = {
                 "description": (
                     "Run in the background instead of blocking this turn: "
                     "returns a task_id immediately, a completion update is "
-                    "injected into a later turn, and you can poll with "
-                    "task_status/task_output. Detached agents run READ-ONLY "
+                    "injected into a later turn (do not poll; task_wait "
+                    "blocks until it finishes). Detached agents run READ-ONLY "
                     "unless isolation='worktree' gives them their own copy "
                     "to write into. Default false."
                 ),
@@ -415,7 +417,8 @@ SPAWN_AGENT_TOOL = {
                         "description": (
                             "Optional default model for this type: a "
                             "chat_models config key (e.g. 'haiku'). Used when "
-                            "the top-level model parameter is absent."
+                            "the top-level model parameter is absent. Set it "
+                            "only when the user asked for that model."
                         ),
                     },
                 },

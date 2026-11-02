@@ -70,3 +70,9 @@ def is_read_only(executor_name: str) -> bool:
     if meta is None:
         return False
     return meta.get("read_only", False)
+
+
+# The run status tools a tool script may call (workflow_status, workflow_list,
+# session_search). Imported last: the module registers through the decorator
+# defined above.
+from server.executors import status_reads as _status_reads  # noqa: E402,F401

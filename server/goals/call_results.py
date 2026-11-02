@@ -182,34 +182,54 @@ def succeeded(name: str, result: str) -> bool:
     return not (name in _COMMAND_TOOLS and _COMMAND_FAILED_RE.search(result))
 
 
-def _finished(name: str, given: dict, result: str) -> tuple[str, bool] | None:
-    """What a task_status or task_output call says about the background
-    task it names: (its id, whether it finished with exit 0), or None while
-    it runs or when the call is about something else."""
+def _wait_items(result: str) -> list[dict]:
+    """The task views a task_wait call returned (server/tasks/wait.py)."""
+    try:
+        data = json.loads(result)
+    except ValueError:
+        return []
+    items = data.get("items") if isinstance(data, dict) else None
+    return [i for i in items if isinstance(i, dict)] if isinstance(items, list) else []
+
+
+def _finished(name: str, given: dict, result: str) -> list[tuple[str, bool]]:
+    """What a task_status, task_output or task_wait call says about the
+    background tasks it names: each finished task's id and whether it
+    finished with exit 0. Empty while they run or when the call is about
+    something else."""
     if name == "task_output":
         head = _TASK_OUTPUT_HEAD_RE.search(result)
         if not head or head.group(3) == "running":
-            return None
+            return []
         code = head.group(4)
-        return head.group(2), head.group(3) == "completed" and (code is None or code == "0")
+        return [(head.group(2), head.group(3) == "completed" and (code is None or code == "0"))]
     if name == "task_status":
         try:
             data = json.loads(result)
         except ValueError:
-            return None
+            return []
         if not isinstance(data, dict) or data.get("status") in (None, "running", "pending"):
-            return None
+            return []
         task = str(data.get("task_id") or given.get("task_id") or "")
         ok = data.get("status") == "completed" and data.get("exit_code") in (0, None)
-        return (task, ok) if task else None
-    return None
+        return [(task, ok)] if task else []
+    if name == "task_wait":
+        out = []
+        for item in _wait_items(result):
+            task = str(item.get("task_id") or "")
+            if not task or not item.get("finished") or item.get("status") == "not_found":
+                continue
+            ok = item.get("status") == "completed" and item.get("exit_code") in (0, None)
+            out.append((task, ok))
+        return out
+    return []
 
 
 def turn_calls(rows: list, cache: dict | None = None) -> list[Call]:
     """Every tool call among ``rows`` with what it returned (a tool_use and
     its tool_result). A call with no result yet did nothing. ``cache``
     keeps each call's arguments as text across calls, by id. A background
-    command that a later task_status or task_output shows finished with exit
+    command that a later task_status, task_output or task_wait shows finished with exit
     0 did what it was asked, and what that later call printed is part of its
     result."""
     results: dict[str, tuple[str, bool]] = {}
@@ -265,19 +285,19 @@ def _settle_background(calls: list[Call]) -> list[Call]:
         return calls
     out = list(calls)
     for later in calls:
-        found = _finished(later.name, later.input, later.result)
-        if found is None or found[0] not in started:
-            continue
-        i = started[found[0]]
-        x = out[i]
-        result = f"{x.result}\n{later.result}"
-        out[i] = replace(
-            x,
-            result=result,
-            ok=found[1],
-            pending=False,
-            acts=tuple(acts_of(x.name, x.input, x.text, result)),
-        )
+        for task, ok in _finished(later.name, later.input, later.result):
+            if task not in started:
+                continue
+            i = started[task]
+            x = out[i]
+            result = f"{x.result}\n{later.result}"
+            out[i] = replace(
+                x,
+                result=result,
+                ok=ok,
+                pending=False,
+                acts=tuple(acts_of(x.name, x.input, x.text, result)),
+            )
     return out
 
 
@@ -307,6 +327,13 @@ def _report_of(x: Call) -> str:
         head = _TASK_OUTPUT_HEAD_RE.search(x.result)
         if head and head.group(1) == "agent":
             return x.result[head.end() :]
+    if x.name == "task_wait":
+        tails = [
+            str(i.get("result_tail") or "")
+            for i in _wait_items(x.result)
+            if i.get("kind") == "agent" and i.get("finished")
+        ]
+        return "\n\n".join(t for t in tails if t)
     return ""
 
 

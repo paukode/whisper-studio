@@ -77,21 +77,33 @@ def drop_session_grants(session_id: str) -> None:
         _session_grants.pop(session_id, None)
 
 
-def launch_decision(budget_tokens: int) -> str:
-    """Resolve "auto" | "ask" | "deny" for a new-script launch."""
-    from server.security.permissions import (
-        MODE_AUTO,
-        MODE_BYPASS,
-        MODE_DONT_ASK,
-        VALID_MODES,
-        load_permissions,
-    )
+def workflow_mode() -> str:
+    """The permission mode that governs workflow launches: the "workflow"
+    category mode when it is set, else the global mode."""
+    from server.security.permissions import VALID_MODES, load_permissions
 
     data = load_permissions()
     mode = data.get("mode") or "default"
     category_mode = (data.get("category_modes") or {}).get("workflow")
     if category_mode in VALID_MODES:
         mode = category_mode
+    return mode
+
+
+def is_bypass() -> bool:
+    """True when workflows run in Bypass: launches start with no card and a
+    run may be pinned to any existing folder, the way Bypass works for every
+    other tool (user decision of 2026-11-02)."""
+    from server.security.permissions import MODE_BYPASS
+
+    return workflow_mode() == MODE_BYPASS
+
+
+def launch_decision(budget_tokens: int) -> str:
+    """Resolve "auto" | "ask" | "deny" for a new-script launch."""
+    from server.security.permissions import MODE_AUTO, MODE_BYPASS, MODE_DONT_ASK
+
+    mode = workflow_mode()
 
     if mode == MODE_BYPASS:
         return "auto"

@@ -32,6 +32,10 @@ WORKFLOW_MAX_AGENTS = 1000
 # can read off any provider's pricing page). Callers that set no budget get
 # this default.
 DEFAULT_WORKFLOW_BUDGET_TOKENS = 600_000
+# The smallest budget a run may ask for. Below it a run with a handful of
+# agents runs out mid-run (one agent can write tens of thousands of output
+# tokens), so workflow_run refuses it up front with a message instead.
+MIN_WORKFLOW_BUDGET_TOKENS = 100_000
 _LINE_LIMIT = 10 * 1024 * 1024
 
 _HARNESS = os.path.join(os.path.dirname(__file__), "harness", "harness.mjs")
@@ -163,6 +167,8 @@ class WorkflowRun:
         self.tokens_out = 0
         self.cost_usd = 0.0
         self.cap_reached = False
+        # Agents a limit stopped before they finished (status "incomplete").
+        self.agents_incomplete = 0
         self._seq = 0
         self._sem = asyncio.Semaphore(WORKFLOW_MAX_CONCURRENCY)
         self._write_lock = asyncio.Lock()
@@ -321,7 +327,11 @@ class WorkflowRun:
         from server.tool_inputs import ToolInputError, schemas_for_tools, validate_tool_input
 
         try:
-            validate_tool_input(name, args, schemas_for_tools(assemble_full_catalog()))
+            # The ultracode catalog: it is the full one plus the workflow
+            # tools, so a script may read workflow_status and workflow_list.
+            validate_tool_input(
+                name, args, schemas_for_tools(assemble_full_catalog(ultracode=True))
+            )
         except ToolInputError as exc:
             return await self._error(mid, rpc.ERR_INTERNAL, str(exc))
 
@@ -351,7 +361,9 @@ class WorkflowRun:
                 rpc.ERR_INTERNAL,
                 f"tool '{name}' is not read-only and cannot be called from a tool "
                 "script. Read-only tools (file reads, greps, searches, git status/"
-                "diff, web fetch/search, aws_boto3, MCP tools marked read-only) run "
+                "diff, web fetch/search, aws_boto3, run status reads such as "
+                "workflow_status, task_status and task_output, MCP tools marked "
+                "read-only) run "
                 "here; anything that writes or needs approval must be called directly "
                 "as a normal tool.",
             )
@@ -487,6 +499,8 @@ class WorkflowRun:
             result = await self._agent_runner(prompt, opts)
 
         self._account(result.get("usage") or {})
+        if result.get("status") == "incomplete":
+            self.agents_incomplete += 1
         self.journal.agent_call(
             {
                 "seq": seq,
@@ -494,6 +508,10 @@ class WorkflowRun:
                 "phase": opts.get("phase", ""),
                 "label": opts.get("label", ""),
                 "status": result.get("status", "completed"),
+                # Why the agent ended ("turn_limit", "deadline", ...): an
+                # incomplete agent is never replayed by a resume, so the
+                # journal says which limit stopped it.
+                "stop_reason": result.get("stop_reason", ""),
                 "text": result.get("text", ""),
                 "output": result.get("output"),
                 "usage": result.get("usage"),
@@ -510,6 +528,7 @@ class WorkflowRun:
                 "type": "agent",
                 "seq": seq,
                 "status": result.get("status", "completed"),
+                "stop_reason": result.get("stop_reason", ""),
                 "label": opts.get("label", ""),
                 "cost_usd": round(self.cost_usd, 4),
                 "model_warning": result.get("model_warning", ""),
@@ -538,6 +557,7 @@ class WorkflowRun:
         self.tokens_in += int(child_outcome.get("tokens_in", 0) or 0)
         self.tokens_out += int(child_outcome.get("tokens_out", 0) or 0)
         self.cost_usd += float(child_outcome.get("cost_usd", 0) or 0)
+        self.agents_incomplete += int(child_outcome.get("agents_incomplete", 0) or 0)
         if child_outcome.get("cap_reached"):
             self.cap_reached = True
 
@@ -573,12 +593,26 @@ class WorkflowRun:
         except Exception as e:  # noqa: BLE001 - a listener failure must not end the run
             log.warning("workflow %s: event listener failed: %s", self.run_id, e)
 
+    def live_counters(self) -> dict:
+        """The ledger as it stands mid-run. The workflow_runs row holds the
+        counters only from the run's end, so workflow_status reads these for
+        a live run (it showed 0 agents and $0 while agents had finished)."""
+        return {
+            "agents_spawned": self.agents_spawned,
+            "agents_incomplete": self.agents_incomplete,
+            "tokens_in": self.tokens_in,
+            "tokens_out": self.tokens_out,
+            "cost_usd": round(self.cost_usd, 6),
+            "cap_reached": self.cap_reached,
+        }
+
     def _result(self, status: str, *, result=None, error: str = "") -> dict:
         return {
             "status": status,
             "result": result,
             "error": error,
             "agents_spawned": self.agents_spawned,
+            "agents_incomplete": self.agents_incomplete,
             "tokens_in": self.tokens_in,
             "tokens_out": self.tokens_out,
             "cost_usd": round(self.cost_usd, 6),

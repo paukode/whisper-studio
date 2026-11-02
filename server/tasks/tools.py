@@ -29,10 +29,10 @@ BACKGROUND_TASK_TOOLS: list[dict] = [
             "Check on background tasks (shell commands, detached agents, or "
             "workflow runs — NOT the todo list). Without task_id: lists this "
             "session's background tasks plus anything running elsewhere. With "
-            "task_id: full status for that task. You will also receive a task "
-            "event in the conversation when a background task finishes, so "
-            "prefer doing other work over polling; when you do poll, back off "
-            "(30s, then 1-2 min between checks)."
+            "task_id: full status for that task. Do not poll: a task event "
+            "reaches the conversation when a background task finishes, so end "
+            "the turn or do other work. To block until tasks finish, call "
+            "task_wait."
         ),
         "input_schema": {
             "type": "object",
@@ -62,6 +62,36 @@ BACKGROUND_TASK_TOOLS: list[dict] = [
                 },
             },
             "required": ["task_id"],
+        },
+    },
+    {
+        "name": "task_wait",
+        "description": (
+            "Wait until background tasks (shell commands, detached agents, or "
+            "workflow runs) finish, then return their status and result. mode "
+            "'all' (default) waits for every task_id, 'any' returns when the "
+            "first one finishes. Returns early with timed_out true after "
+            "timeout_seconds (default 600, at most 1800); call it again to keep "
+            "waiting. Use this instead of sleep or repeated task_status calls. "
+            "Time spent here does not count against an agent's time limit."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "minItems": 1,
+                    "maxItems": 32,
+                    "description": "The background task ids to wait for.",
+                },
+                "mode": {"type": "string", "enum": ["all", "any"]},
+                "timeout_seconds": {
+                    "type": "integer",
+                    "description": "How long to wait at most (default 600, max 1800).",
+                },
+            },
+            "required": ["task_ids"],
         },
     },
     {

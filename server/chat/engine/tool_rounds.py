@@ -24,6 +24,7 @@ runner.py imports this module; nothing here imports the runner.
 """
 
 import asyncio
+import contextvars
 import logging
 from dataclasses import dataclass, field
 
@@ -113,6 +114,20 @@ async def run_tool_round(
 
     _agent_channel = ctx.event_channel or session_id
     _event_queue = _agent_event_bus.subscribe(_agent_channel)
+    # The batch runs in its own context copy: a blocking wait in it reads how
+    # this turn bounds it (server/tasks/wait.py::WaitBounds), and a child
+    # turn a tool starts sets its own.
+    from server.tasks.wait import WaitBounds, wait_bounds
+
+    _batch_context = contextvars.copy_context()
+    _batch_context.run(
+        wait_bounds.set,
+        WaitBounds(
+            inbox_session=session_id if ctx.midturn_inbox else "",
+            deadline=ctx.wait_deadline,
+            scoped=ctx.tool_scope is not None,
+        ),
+    )
     _batch_task = asyncio.create_task(
         execute_tool_batch(
             tool_uses,
@@ -135,7 +150,8 @@ async def run_tool_round(
             event_channel=ctx.event_channel,
             workspace_latch=ctx.ws_latch,
             tool_scope=ctx.tool_scope,
-        )
+        ),
+        context=_batch_context,
     )
     try:
         try:

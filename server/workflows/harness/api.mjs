@@ -9,6 +9,11 @@
 export function makeApi(rpcCall, notify, meta, args) {
   const phases = Array.isArray(meta?.phases) ? meta.phases : [];
 
+  // Resolves to {text, output, usage, status, agent_id, stop_reason,
+  // stopped_early}. status is "completed" (finished), "incomplete" (a round,
+  // time or cost limit stopped the agent; text is partial and stop_reason
+  // names the limit) or "failed". It never rejects for the agent's own
+  // failure, so the script decides what to do with a partial result.
   async function agent(prompt, opts = {}) {
     if (typeof prompt !== "string" || !prompt.trim()) {
       throw new Error("agent(prompt, opts): prompt must be a non-empty string");

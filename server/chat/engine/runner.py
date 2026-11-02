@@ -383,6 +383,7 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
             else None
         )
         deadline_hit = _soft_deadline is not None and time.monotonic() >= _soft_deadline
+        ctx.wait_deadline = _soft_deadline
         is_last_round = round_num == cap - 1 or deadline_hit
 
         from server.chat.loop_hints import FINAL_ROUND_AT, near_cap_reminder

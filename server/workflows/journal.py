@@ -112,6 +112,12 @@ def tail_journal(run_id: str, limit: int = 200) -> list[dict]:
     return entries[-limit:] if len(entries) > limit else entries
 
 
+# Only a finished agent replays on resume. "incomplete" (a limit stopped the
+# agent) and "failed" run again, so a resume finishes the work that was cut
+# short instead of replaying the partial text as a result.
+_REPLAYABLE_STATUSES = ("completed", "cache_hit")
+
+
 def load_resume_cache(run_id: str) -> dict[str, deque]:
     """Build ``call_hash -> deque([result, ...])`` from a prior run's completed
     agent calls. Ordered by ISSUE order (seq), not journal/completion order: two
@@ -122,7 +128,7 @@ def load_resume_cache(run_id: str) -> dict[str, deque]:
     entries = [e for e in read_journal(run_id) if e.get("type") == "agent_call"]
     entries.sort(key=lambda e: e.get("seq", 0))
     for e in entries:
-        if e.get("status") not in ("completed", "cache_hit"):
+        if e.get("status") not in _REPLAYABLE_STATUSES:
             continue
         h = e.get("call_hash")
         if not h:

@@ -116,3 +116,8 @@ class TurnContext:
     # attachments and mentions inlined into the same message: the gate reads
     # it as their ask. Kept across an approval pause; None reads the message.
     asked: str | None = None
+    # The monotonic time this turn must start its last round by (its soft
+    # time limit), set by run_turn at every round start; None: no limit. A
+    # blocking wait that is not child-agent waiting never runs past it
+    # (server/tasks/wait.py::WaitBounds).
+    wait_deadline: float | None = None

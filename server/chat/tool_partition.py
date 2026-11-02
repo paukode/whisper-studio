@@ -52,6 +52,7 @@ CORE_TOOLS: frozenset[str] = frozenset(
         # background tasks (unified registry)
         "task_status",
         "task_output",
+        "task_wait",
         # orchestration (ultracode's directive references these by name)
         "spawn_agent",
         "team_create",
@@ -59,6 +60,7 @@ CORE_TOOLS: frozenset[str] = frozenset(
         # core so they're never deferred behind tool_search when they ARE there.
         "workflow_run",
         "workflow_status",
+        "workflow_wait",
         "workflow_save",
         "workflow_list",
         # CI watch + autofix — likewise ultracode-only in the catalog, core when
