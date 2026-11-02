@@ -54,10 +54,6 @@ def get_global_workspace_tools() -> list[dict]:
                         "type": "boolean",
                         "description": "true only when the user asked to create a new folder",
                     },
-                    "description": {
-                        "type": "string",
-                        "description": "Optional short description of what this folder is for",
-                    },
                 },
                 "required": ["path"],
             },

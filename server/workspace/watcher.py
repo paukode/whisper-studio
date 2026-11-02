@@ -96,10 +96,6 @@ class WorkspaceWatcher:
         self._stop: threading.Event | None = None
         self._lock = threading.Lock()
 
-    @property
-    def root(self) -> str | None:
-        return self._root
-
     def set_workspace(self, root: str | None) -> None:
         """Watch ``root``; None stops. A watch already running on ``root`` stays."""
         real = os.path.realpath(root) if root else None

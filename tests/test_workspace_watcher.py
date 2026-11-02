@@ -120,10 +120,10 @@ def test_pointing_at_the_same_folder_again_keeps_the_running_watch(tmp_path):
         first = watcher._thread
         watcher.set_workspace(str(tmp_path))
         assert watcher._thread is first
-        assert watcher.root == str(tmp_path.resolve())
+        assert watcher._root == str(tmp_path.resolve())
     finally:
         watcher.stop()
-    assert watcher.root is None
+    assert watcher._root is None
 
 
 def test_the_default_publisher_puts_the_event_on_the_app_wide_channel(tmp_path):
