@@ -99,9 +99,6 @@ export interface VoiceState {
   /** Take (and drop) the team reports of one run for its committed message. */
   takeTeamReports: (runId: string) => Record<string, TeamReportData> | undefined;
   adjustDraining: (delta: number) => void;
-  clearSteps: () => void;
-  /** Drop the steps of one delegated run once its answer is on screen. */
-  removeSteps: (runId: string) => void;
   /** Drop everything a run left behind (steps, agent reports, its card). */
   removeRun: (runId: string) => void;
   /** Drop one of Sonic's own steps by tool_use_id. */
@@ -212,9 +209,6 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
     return mine;
   },
   adjustDraining: (delta) => set((s) => ({ draining: Math.max(0, s.draining + delta) })),
-  clearSteps: () => set({ steps: [] }),
-  removeSteps: (runId) =>
-    set((s) => ({ steps: s.steps.filter((st) => !stepBelongsTo(st, runId)) })),
   removeRun: (runId) =>
     set((s) => {
       const teamReports = { ...s.teamReports };
@@ -300,5 +294,3 @@ function keepRunState(s: VoiceState) {
 export const stepBelongsTo = (step: VoiceStep, runId: string): boolean =>
   step.source === 'assistant' && step.runId === runId;
 
-/** True while a voice conversation is open (any state but off). */
-export const isVoiceOn = (status: VoiceStatus): boolean => status !== 'off';

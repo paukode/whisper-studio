@@ -133,7 +133,6 @@ export interface ChatMessage {
    *  regenerate/edit-resend to re-attach the same files. */
   attachmentIds?: string[];
   toolUse?: ToolUseEvent[];
-  approvals?: Approval[];
   skills?: string[];
   traces?: SkillTrace[];
   /** Live + final per-team progress, keyed by team_id. Populated by
@@ -437,16 +436,6 @@ export interface TeamReportData {
   completed_at?: number;
   agents: Record<string, TeamAgentReport>; // keyed by agent name (or agent_id if name missing)
   agentOrder: string[];                    // preserves insertion order
-}
-
-export interface Approval {
-  id: string;
-  type: 'file_write' | 'command' | 'file_delete' | 'file_rename';
-  path?: string;
-  content?: string;
-  originalContent?: string;
-  command?: string;
-  status: 'pending' | 'accepted' | 'denied';
 }
 
 /**
