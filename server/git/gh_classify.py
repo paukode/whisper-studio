@@ -77,11 +77,13 @@ _READ: dict[str, frozenset[str]] = {
     "pr": frozenset({"list", "view", "diff", "checks", "status"}),
     "issue": frozenset({"list", "view", "status"}),
     "repo": frozenset({"list", "view"}),
-    "release": frozenset({"list", "view", "download"}),
-    "run": frozenset({"list", "view", "watch", "download"}),
+    # download and gist clone write files (any -D/--dir, -O/--output), so they
+    # are not reads and fall through to WRITE (an approval card).
+    "release": frozenset({"list", "view"}),
+    "run": frozenset({"list", "view", "watch"}),
     "workflow": frozenset({"list", "view"}),
     "label": frozenset({"list"}),
-    "gist": frozenset({"list", "view", "clone"}),
+    "gist": frozenset({"list", "view"}),
     "project": frozenset({"list", "view", "item-list", "field-list"}),
     "cache": frozenset({"list"}),
 }

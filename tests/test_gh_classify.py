@@ -26,7 +26,6 @@ from server.git.gh_classify import (
         (["pr", "diff", "2"], READ),
         (["issue", "list"], READ),
         (["run", "view", "123"], READ),
-        (["release", "download", "v1"], READ),
         (["search", "issues", "foo"], READ),
         (["status"], READ),
         (["pr"], READ),  # family with no verb → help/list
@@ -47,6 +46,10 @@ def test_reads(args, kind):
         ["run", "rerun", "1"],
         ["workflow", "run", "ci.yml"],
         ["label", "create", "bug"],
+        # These write files anywhere (-D/--dir, -O/--output, a clone folder).
+        ["release", "download", "v1", "-D", "/tmp/x"],
+        ["run", "download", "123"],
+        ["gist", "clone", "abc"],
     ],
 )
 def test_writes(args):
