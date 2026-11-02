@@ -2,16 +2,14 @@
 
 One cheap Haiku pass (``one_shot``) reads the ``--log-failed`` output plus the
 failed job names and returns a findings list: which check failed, its category,
-the key error, suspect files, and a suggested fix. Degrades to an empty list
-(never raises) so a diagnosis miss just means "no autofix proposed", not a crash.
+the key error, suspect files, and a suggested fix. A reply with no usable
+findings gives an empty list; a failed model call raises, and
+``autofix.plan_autofix`` reports it as "CI diagnosis failed".
 """
 
 from __future__ import annotations
 
 import json
-import logging
-
-log = logging.getLogger("whisper-studio")
 
 _MAX_TOKENS = 1400
 
@@ -92,14 +90,10 @@ def _build_user(run: dict, log_text: str, failed_job_names: list[str]) -> str:
     )
 
 
-def _one_shot(system: str, user: str) -> str | None:
-    try:
-        from server.infrastructure.auxiliary import aux_one_shot
+def _one_shot(system: str, user: str) -> str:
+    from server.infrastructure.auxiliary import aux_one_shot
 
-        return aux_one_shot("ci_diagnose", system, user, max_tokens=_MAX_TOKENS)
-    except Exception as e:  # noqa: BLE001
-        log.info("CI diagnose one_shot unavailable: %s", e)
-        return None
+    return aux_one_shot("ci_diagnose", system, user, max_tokens=_MAX_TOKENS)
 
 
 def _coerce_findings(data) -> list[dict]:

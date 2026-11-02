@@ -55,10 +55,40 @@ def test_get_run_includes_failed_jobs(monkeypatch):
     assert [j["name"] for j in failed] == ["Backend"]
 
 
-def test_provider_degrades_on_gh_error(monkeypatch):
-    monkeypatch.setattr(provider, "_run_gh", lambda *a, **k: _cp("", returncode=1, stderr="boom"))
+def test_a_gh_failure_raises_with_its_message(monkeypatch):
+    """gh not logged in used to read as "no runs for this branch"."""
+    stderr = "To get started with GitHub CLI, please run:  gh auth login"
+    monkeypatch.setattr(
+        provider.subprocess,
+        "run",
+        lambda *a, **k: _cp("", returncode=4, stderr=stderr),
+    )
+    with pytest.raises(provider.GhError, match="gh auth login"):
+        provider.list_runs("b", "/repo")
+    with pytest.raises(provider.GhError, match="exit 4"):
+        provider.get_run(1, "/repo")
+    with pytest.raises(provider.GhError):
+        provider.failing_log(1, "/repo")
+
+
+def test_an_empty_run_list_is_no_runs(monkeypatch):
+    monkeypatch.setattr(provider.subprocess, "run", lambda *a, **k: _cp("[]"))
     assert provider.list_runs("b", "/repo") == []
-    assert provider.get_run(1, "/repo") is None
+    assert provider.latest_run("b", "/repo") is None
+
+
+def test_gh_runs_with_the_hardened_environment(monkeypatch):
+    seen = {}
+
+    def fake(argv, **kw):
+        seen.update(kw["env"])
+        return _cp("[]")
+
+    monkeypatch.setenv("GH_DEBUG", "api")
+    monkeypatch.setattr(provider.subprocess, "run", fake)
+    provider.list_runs("b", "/repo")
+    assert "GH_DEBUG" not in seen
+    assert seen["GH_PROMPT_DISABLED"] == "1"
 
 
 def test_failing_log_tail_sliced(monkeypatch):

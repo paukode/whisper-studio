@@ -1,10 +1,11 @@
 """Detached lifecycle for a CI watch.
 
-``start_watch`` registers a ``ci`` task (WS-A registry), schedules the watcher
-coroutine detached on the server loop, and returns the task id immediately.
-Progress ticks publish live on the session channel (``ci_progress``); the
-terminal outcome persists as a ``ci_result`` card and closes the task. Mirrors
-``server.workflows.manager`` for the schedule-from-loop-or-worker-thread dance.
+``start_watch`` registers a ``ci`` task in the task registry, spawns the
+watcher coroutine detached on the running server loop, and returns the task id
+immediately. Progress ticks publish live on the session channel
+(``ci_progress``); the terminal outcome persists as a ``ci_result`` card and
+closes the task. ``resolve_target`` picks the repository and branch every CI
+tool and route asks about.
 """
 
 from __future__ import annotations
@@ -140,6 +141,7 @@ def _result_payload(task_id: str, branch: str, outcome: dict) -> dict:
         "timed_out": bool(outcome.get("timed_out")),
         "cancelled": bool(outcome.get("cancelled")),
         "found": outcome.get("found", True),
+        "error": outcome.get("error"),
     }
 
 
@@ -181,6 +183,31 @@ def _emit_result(session_id: str, task_id: str, branch: str, outcome: dict) -> N
         log.debug("ci result publish failed: %s", e)
 
 
+class CITargetError(ValueError):
+    """There is no repository or branch to ask CI about."""
+
+
+def resolve_target(branch: str) -> tuple[str, str]:
+    """(branch, cwd) for a CI call: the connected workspace's repository and
+    ``branch``, or its current branch when ``branch`` is empty. Raises
+    :class:`CITargetError` when no workspace is connected, the workspace is
+    not a git repository, or HEAD is detached and no branch was named."""
+    from server.git.core import find_git_root, get_branch
+    from server.workspace.state import get_workspace_path
+
+    cwd = get_workspace_path()
+    if not cwd:
+        raise CITargetError("No workspace connected. Connect the repository's folder first.")
+    if not find_git_root(cwd):
+        raise CITargetError(f"The workspace ({cwd}) is not a git repository.")
+    branch = (branch or "").strip()
+    if not branch:
+        branch = get_branch(cwd)
+        if branch == "HEAD":
+            raise CITargetError("HEAD is detached; name the branch to check.")
+    return branch, cwd
+
+
 def status_snapshot(branch: str, cwd: str) -> dict:
     """One-shot: the latest run for a branch + its (failed) jobs, for the REST
     status endpoint and the ci_status tool. Blocking; wrap in to_thread."""
@@ -189,7 +216,7 @@ def status_snapshot(branch: str, cwd: str) -> dict:
     latest = provider.latest_run(branch, cwd)
     if not latest or latest.get("run_id") is None:
         return {"available": True, "branch": branch, "run": None}
-    run = provider.get_run(latest["run_id"], cwd) or latest
+    run = provider.get_run(latest["run_id"], cwd)
     return {
         "available": True,
         "branch": branch,

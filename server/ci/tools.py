@@ -13,7 +13,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 
 from server.ci import autofix, manager, provider
 
@@ -58,27 +57,6 @@ CI_TOOLS: list[dict] = [
 ]
 
 
-def _resolve(tool_input: dict) -> tuple[str, str]:
-    """(branch, cwd) — branch defaults to the workspace's current branch."""
-    cwd = (tool_input.get("cwd") or "").strip()
-    if not cwd:
-        try:
-            from server.workspace.state import get_workspace_path
-
-            cwd = get_workspace_path() or os.getcwd()
-        except Exception:
-            cwd = os.getcwd()
-    branch = (tool_input.get("branch") or "").strip()
-    if not branch:
-        try:
-            from server.git.core import get_branch
-
-            branch = get_branch(cwd) or "HEAD"
-        except Exception:
-            branch = "HEAD"
-    return branch, cwd
-
-
 def _no_gh() -> tuple[str, list]:
     return (
         "The GitHub CLI (`gh`) is not installed or not on PATH, so CI can't be queried. "
@@ -90,7 +68,10 @@ def _no_gh() -> tuple[str, list]:
 async def execute_ci_watch(tool_input, session_id) -> tuple[str, list]:
     if not provider.gh_available():
         return _no_gh()
-    branch, cwd = _resolve(tool_input)
+    try:
+        branch, cwd = manager.resolve_target(tool_input.get("branch") or "")
+    except manager.CITargetError as e:
+        return f"Error: {e}", []
     task_id = manager.start_watch(branch, cwd, session_id)
     return (
         json.dumps({"task_id": task_id, "branch": branch, "status": "watching"}),
@@ -101,8 +82,11 @@ async def execute_ci_watch(tool_input, session_id) -> tuple[str, list]:
 async def execute_ci_status(tool_input, session_id) -> str:
     if not provider.gh_available():
         return _no_gh()[0]
-    branch, cwd = _resolve(tool_input)
-    snap = await asyncio.to_thread(manager.status_snapshot, branch, cwd)
+    try:
+        branch, cwd = manager.resolve_target(tool_input.get("branch") or "")
+        snap = await asyncio.to_thread(manager.status_snapshot, branch, cwd)
+    except (manager.CITargetError, provider.GhError) as e:
+        return f"Error: {e}"
     return json.dumps(snap, indent=2)
 
 
@@ -111,8 +95,11 @@ async def execute_ci_autofix(
 ) -> tuple[str, list]:
     if not provider.gh_available():
         return _no_gh()
-    branch, cwd = _resolve(tool_input)
-    run = await asyncio.to_thread(provider.latest_run, branch, cwd)
+    try:
+        branch, cwd = manager.resolve_target(tool_input.get("branch") or "")
+        run = await asyncio.to_thread(provider.latest_run, branch, cwd)
+    except (manager.CITargetError, provider.GhError) as e:
+        return f"Error: {e}", []
     if not run:
         return f"No CI runs found for branch '{branch}'.", []
     if not provider.is_terminal(run):
@@ -126,8 +113,11 @@ async def execute_ci_autofix(
             [],
         )
 
-    full = await asyncio.to_thread(provider.get_run, run["run_id"], cwd)
-    plan = await asyncio.to_thread(autofix.plan_autofix, full or run, cwd, session_id=session_id)
+    try:
+        full = await asyncio.to_thread(provider.get_run, run["run_id"], cwd)
+        plan = await asyncio.to_thread(autofix.plan_autofix, full, cwd, session_id=session_id)
+    except provider.GhError as e:
+        return f"Error: {e}", []
     if not plan.get("script"):
         return plan.get("summary", "No actionable failure found."), []
 
@@ -147,7 +137,7 @@ async def execute_ci_autofix(
             # default. See server/workflows/tools.py::_preview.
             "effort_label": effort_label or "",
             # Pin to the SAME repo the CI plan was diagnosed against — already
-            # resolved above via _resolve(tool_input), not re-derived from
+            # resolved above via resolve_target, not re-derived from
             # whatever happens to be connected when the user clicks Approve.
             "workspace_path": cwd,
         }

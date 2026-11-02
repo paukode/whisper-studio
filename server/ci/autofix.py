@@ -82,13 +82,20 @@ def plan_autofix(run: dict, cwd: str, *, session_id: str = "") -> dict:
     # refused call read as "no actionable failure".
     refused = aux_refusal("ci_diagnose")
     findings: list[dict] = []
+    failed_diagnosis = ""
     if not refused:
         log_text = provider.failing_log(run_id, cwd) if run_id is not None else ""
-        findings = diagnose.diagnose(run, log_text, failed_job_names=names)
+        try:
+            findings = diagnose.diagnose(run, log_text, failed_job_names=names)
+        except Exception as e:  # noqa: BLE001 (the model call's own error is the answer)
+            log.warning("CI diagnosis failed: %s", e)
+            failed_diagnosis = f"CI diagnosis failed: {e}"
 
     script = build_autofix_script(branch, findings) if findings else None
     if refused:
         summary = refused
+    elif failed_diagnosis:
+        summary = failed_diagnosis
     elif findings:
         summary = f"{len(findings)} finding(s) across {len(names) or 'the'} failed job(s)"
     else:
