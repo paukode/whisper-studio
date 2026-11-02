@@ -71,7 +71,7 @@ def test_an_estimated_round_is_recorded_as_estimated():
     assert row["estimated_fields"] == "input,output"
 
 
-@pytest.mark.parametrize("source", ["", "unattributed", "btw", "made-up"])
+@pytest.mark.parametrize("source", ["", "unattributed", "made-up"])
 def test_record_turn_refuses_an_unlabelled_source(source):
     with pytest.raises(ValueError):
         tracker.record_turn("s", 0, "haiku", 1, 1, source=source)

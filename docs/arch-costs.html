@@ -191,7 +191,6 @@
         <tr><td><code>memory</code></td><td>Memory extraction and consolidation runs, the learning review fork, memory recall.</td></tr>
         <tr><td><code>compaction</code>, <code>title</code>, <code>query_rewrite</code>, <code>classifier</code>, <code>explainer</code>, <code>evaluator</code>, <code>ci_diagnose</code>, <code>activity_label</code>, <code>condensation</code>, <code>ocr</code>, <code>index</code>, <code>buddy</code>, <code>doctor</code></td><td>Side tasks that call Bedrock directly, logged by <code class="path">calls.py</code> in the thread that made the call (so a call its caller timed out on is still logged). <code>index</code> includes the Cohere Embed v4 and Rerank 3.5 calls of the cloud index backends, counted from Bedrock's input token-count header or, without one, as characters / 4 of the body posted.</td></tr>
         <tr><td><code>unattributed</code></td><td>Rows written before sources were recorded.</td></tr>
-        <tr><td><code>btw</code></td><td>Rows of the removed <code>/btw</code> side question. No new call takes this source.</td></tr>
       </tbody>
     </table></div>
 

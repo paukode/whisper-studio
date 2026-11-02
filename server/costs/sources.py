@@ -1,15 +1,15 @@
 """Where a billed model call came from: the ``source`` of a cost-log row.
 
 Every writer names one of these, so the Costs tab can split spend by source
-and nothing lands in the log unlabelled. Two sources only label old rows and
-take no new ones: ``unattributed`` for rows written before sources were
-recorded (migration 021), and ``btw`` for rows of the removed /btw command.
+and nothing lands in the log unlabelled. One source only labels old rows and
+takes no new ones: ``unattributed`` for rows written before sources were
+recorded (migration 021).
 """
 
 from __future__ import annotations
 
 # Sources that only label rows already in the log; no writer may use them.
-HISTORY_ONLY: frozenset[str] = frozenset({"unattributed", "btw"})
+HISTORY_ONLY: frozenset[str] = frozenset({"unattributed"})
 
 SOURCE_LABELS: dict[str, str] = {
     "chat": "Chat",
@@ -23,7 +23,6 @@ SOURCE_LABELS: dict[str, str] = {
     "compaction": "Compaction",
     "title": "Titles",
     "query_rewrite": "Query rewrite",
-    "btw": "Side questions",
     "classifier": "Auto-mode classifier",
     "explainer": "Permission explainer",
     "evaluator": "Goal evaluator",
