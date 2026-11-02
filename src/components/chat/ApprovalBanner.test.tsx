@@ -223,6 +223,27 @@ describe('ApprovalBanner', () => {
     expect(getByText('This action always asks.')).toBeTruthy();
   });
 
+  it('shows each part of the risk explanation as its own paragraph', () => {
+    getChatStore(SID).getState().enqueueApproval({
+      ...approval('tu_explained'),
+      explanation: {
+        riskLevel: 'LOW',
+        explanation: 'Creates a new branch.',
+        reasoning: 'I need to keep the work apart.',
+        risk: 'Low risk, easy to undo.',
+      },
+    });
+
+    const { container } = render(<ApprovalBanner />);
+
+    const paragraphs = Array.from(container.querySelectorAll('.exp-body p')).map((p) => p.textContent);
+    expect(paragraphs).toEqual([
+      'Creates a new branch.',
+      'I need to keep the work apart.',
+      'Low risk, easy to undo.',
+    ]);
+  });
+
   it('an ordinary card still offers the session choice', () => {
     getChatStore(SID).getState().enqueueApproval(approval('tu_plain'));
 

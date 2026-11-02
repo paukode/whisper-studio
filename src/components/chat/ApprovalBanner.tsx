@@ -51,7 +51,7 @@ export function ApprovalBanner() {
 
   const isProcessing = answering.has(currentApproval.sessionId);
   const payload = currentApproval.payload ?? {};
-  const explanationText = extractExplanation(currentApproval.explanation);
+  const explanationParts = extractExplanation(currentApproval.explanation);
   const riskLabel = currentApproval.riskHint ?? null;
 
   // Pick the preview renderer by kind. New preview kinds = one new branch
@@ -115,9 +115,11 @@ export function ApprovalBanner() {
           </div>
         )}
 
-        {explanationText && (
+        {explanationParts.length > 0 && (
           <div className="exp-body" style={{ fontSize: '0.8em', color: 'var(--text-muted)', marginBottom: 8, lineHeight: 1.4 }}>
-            {explanationText}
+            {explanationParts.map((part, i) => (
+              <p key={i} style={{ margin: i === 0 ? 0 : '6px 0 0' }}>{part}</p>
+            ))}
           </div>
         )}
 
@@ -157,20 +159,22 @@ export function ApprovalBanner() {
 }
 
 /**
- * Pull a human-readable string from the explanation field. The security
+ * Pull the human-readable paragraphs from the explanation field. The security
  * plugin emits a structured object {riskLevel, explanation, reasoning, risk}:
- * surface the readable fields rather than dumping the whole dict.
+ * each readable field is its own paragraph, never one run-on line.
  */
-function extractExplanation(raw: PendingApproval['explanation']): string | null {
-  if (raw == null) return null;
-  if (typeof raw === 'string') return raw;
+function extractExplanation(raw: PendingApproval['explanation']): string[] {
+  if (raw == null) return [];
+  if (typeof raw === 'string') {
+    return raw.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+  }
   const obj = raw as Record<string, unknown>;
   const parts: string[] = [];
   for (const key of ['explanation', 'reasoning', 'risk']) {
     const v = obj[key];
     if (typeof v === 'string' && v.trim()) parts.push(v.trim());
   }
-  return parts.length ? parts.join('\n\n') : null;
+  return parts;
 }
 
 function btnStyle(border: string, background: string, color: string, processing: boolean): React.CSSProperties {
