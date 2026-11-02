@@ -82,14 +82,21 @@
         blanket session approval can skip them, and an unattended agent cannot run a delete. A
         delete that stays inside the workspace follows the mode like any other command. The
         <code>rm -rf /</code> hard block in
-        <code class="path">server/security/command_validator.py</code> refuses in every mode.</li>
+        <code class="path">server/security/command_validator.py</code> refuses in every mode. It
+        reads the operand of each delete, so every spelling (flag order, quotes,
+        <code>find -delete</code>, <code>~</code>, a <code>cd</code> before it) of a delete of a
+        protected folder is refused: <code>/</code>, a folder directly below it, and the home folder
+        or a folder above it (<code class="path">server/security/protected_roots.py</code>). The ws_*
+        file tools refuse the same folders in every mode.</li>
       <li><b>Bypass has no workspace boundary.</b> Since 2026-11-02 <code>bypassPermissions</code>
         works like Claude Code's bypass: it shows no card, inside the workspace or outside it. A save
         to a path outside it, the first reach into a folder outside it, a delete outside it, and a
         ws_* file write, edit, or delete at any path run with no card. The subagents and workflow
-        scripts of a Bypass session delete without a card too. A category row of yours that names
-        another mode still decides that category. The scratch folders of other sessions and the
-        kernel pseudo-filesystems stay out of reach. In the other modes a change outside the
+        scripts of a Bypass session delete without a card too, and Undo puts back a Bypass write
+        outside the workspace. A category row of yours that names another mode still decides that
+        category; a row that names Bypass removes no floor under another session mode. The scratch
+        folders of other sessions, the kernel pseudo-filesystems, and the credential stores stay out
+        of reach of the ws_* file tools. In the other modes a change outside the
         workspace asks, unless a session "yes to all" or a rule of yours covers it, or the path is
         under <code class="path">~/.whisper</code>. Reading never asks anywhere, apart from the
         credential stores below.</li>

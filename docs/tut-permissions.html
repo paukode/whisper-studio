@@ -115,7 +115,8 @@
       commands, the card summary starts with "READS THE KEYCHAIN AND CREDENTIAL STORES:". This card
       does not keep your answer for the session. Subagents and scheduled jobs cannot read the stores
       outside Bypass, because no person can answer the card. No mode lets a tool write to a credential
-      store.</p>
+      store. This also applies in Bypass to <code>ws_write_file</code>, <code>ws_edit_file</code>, and
+      <code>ws_delete_file</code> outside the workspace.</p>
 
     <h2 id="category-modes">Per-category modes</h2>
     <p>The global mode applies to all actions. To set a different mode for one <em>type</em> of
@@ -340,9 +341,18 @@
       <div class="card">
         <h3>The app blocks destructive patterns</h3>
         <p>A command validator refuses some destructive commands before they run:
-          <code>rm -rf /</code> on the root folder, <code>mkfs</code>, <code>dd</code> to a device, and
+          a delete of a protected folder, <code>mkfs</code>, <code>dd</code> to a device, and
           redirects into <code>/etc/</code>. It also refuses backticks, and a <code>$(...)</code> that
           runs a command that is not read-only. The validator refuses these commands in all modes.</p>
+        <p>A protected folder is the root folder <code>/</code>, a folder directly below it (for
+          example <code class="path">/System</code>, <code class="path">/Users</code>, or
+          <code class="path">/Applications</code>), and your home folder. The validator reads the
+          target of the delete, not one spelling. It refuses <code>rm -rf /</code>,
+          <code>rm -fr /</code>, <code>rm --recursive --force /</code>, <code>rm -rf "/"</code>,
+          <code>find / -delete</code>, <code>rm -rf ~</code>, and <code>cd / &amp;&amp; rm -rf usr</code>.
+          A folder below a protected folder, for example <code class="path">~/Documents/old</code>,
+          is not protected. The file tool <code>ws_delete_file</code> also refuses a protected folder
+          in all modes.</p>
       </div>
     </div>
     <p>The validator also refuses access to sensitive paths and files, except in a run that can
@@ -369,9 +379,10 @@
       unattended agent cannot run a delete. In the workspace, the mode decides: the other modes
       handle <code>rm -rf dist</code> as a usual command.</p>
     <p>In Bypass, these three types of command run without a card. A subagent or a workflow script
-      of the session also runs a delete without a card. The validator still refuses
-      <code>rm -rf /</code>. A category mode that you set for <code>cli</code> stays in effect: if
-      it is not Bypass, these commands ask again.</p>
+      of the session also runs a delete without a card. The validator still refuses a delete of a
+      protected folder. A category mode that you set for <code>cli</code> can only make Bypass
+      stricter: if it is not Bypass, these commands ask again. A category mode of Bypass does not
+      remove these cards when the session is in a different mode.</p>
     <p>For a relative path in a delete, the app uses the folder of a <code>cd</code> earlier in the
       same command. If the command does not name that folder, the delete always shows a card. Examples
       are <code>cd "$DIR"</code>, <code>cd -</code>, <code>pushd</code>, and <code>popd</code>.</p>
