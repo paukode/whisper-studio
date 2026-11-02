@@ -961,6 +961,14 @@ async def _process_tool_results(
                         "content": content,
                     }
                 )
+            elif state.status == "skipped":
+                # Refused before it ran (hook, plan mode, loop guard, scope):
+                # its own refusal and frames, never "re-issue it", which
+                # would invite the model to retry a refused call.
+                for effect in state.side_effects:
+                    if SIDE_EFFECT_PAUSE not in effect:
+                        sse_events.append(ndjson_dumps(effect))
+                _reply(state, out, tool_results, sse_events)
             elif state.tool_id == paused_id:
                 # The paused call's row is answered by its card; the folder
                 # card's call already has its frame.

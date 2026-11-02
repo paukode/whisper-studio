@@ -355,6 +355,24 @@ def test_the_call_a_folder_card_waits_on_says_it_did_not_run():
     assert by_id["tu_p"].startswith("[Not executed]")
 
 
+def test_a_refused_sibling_after_a_pause_keeps_its_own_refusal():
+    # A sibling refused before it ran (plan mode here) is not "canceled, re-issue
+    # it": the model reads its refusal and the UI gets its plan_blocked frame.
+    prompt = _State("tu_p", "ws_write_file", workspace_prompt('{"path": "a.txt"}'))
+    blocked = _State(
+        "tu_b",
+        "ws_write_file",
+        "[Plan Mode] Tool 'ws_write_file' is blocked while plan mode is active.",
+        side_effects=[{"plan_blocked": {"tool_name": "ws_write_file"}}],
+    )
+    blocked.status = "skipped"
+    results, sse_events, pending, _question = _run([prompt, blocked])
+    assert pending is True
+    by_id = {r["tool_use_id"]: r["content"] for r in results}
+    assert by_id["tu_b"].startswith("[Plan Mode]")
+    assert _frames(sse_events, "plan_blocked") == [{"plan_blocked": {"tool_name": "ws_write_file"}}]
+
+
 def _approval_state(tool_id: str, path: str) -> _State:
     payload = json.dumps({"action": "write", "path": path, "content": "hi", "original": ""})
     return _State(tool_id, "ws_write_file", approval_request(payload))
