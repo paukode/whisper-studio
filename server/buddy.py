@@ -6,7 +6,7 @@ A small creature lives in the chat UI corner. It is:
   - No LLM call on any chat turn; the only model call is the opt-in /fact endpoint.
   - Rendered client-side as an animated SVG from the rolled "bones"; the
     backend only rolls traits, names it deterministically, and persists the
-    hatched/muted state.
+    hatched state.
 """
 
 import asyncio
@@ -14,9 +14,8 @@ import hashlib
 import json
 import logging
 import os
-import time
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter
 
 from server.infrastructure.paths import data_root
 
@@ -221,26 +220,21 @@ def generate_soul_local(bones: dict, user_id: str = None) -> dict:
 
 
 def load_buddy() -> dict | None:
+    """The hatched companion, or None before the first hatch. A buddy.json
+    that cannot be read raises, so it is never re-hatched over."""
     try:
         with open(BUDDY_CONFIG_PATH) as f:
             stored = json.load(f)
-        bones = roll_companion()
-        return {**stored, **bones}
-    except Exception:
+    except FileNotFoundError:
         return None
+    bones = roll_companion()
+    return {**stored, **bones}
 
 
 def save_buddy(soul: dict):
     os.makedirs(DATA_DIR, exist_ok=True)
     with open(BUDDY_CONFIG_PATH, "w") as f:
         json.dump(soul, f, indent=2)
-
-
-def get_companion() -> dict | None:
-    buddy = load_buddy()
-    if not buddy or buddy.get("muted"):
-        return None
-    return buddy
 
 
 def _bones_of(c: dict) -> dict:
@@ -253,7 +247,7 @@ def _bones_of(c: dict) -> dict:
 
 @router.get("")
 async def get_buddy():
-    companion = get_companion()
+    companion = load_buddy()
     if not companion:
         bones = roll_companion()
         return {
@@ -273,15 +267,9 @@ async def get_buddy():
 
 
 @router.post("/hatch")
-async def hatch_buddy(request: Request):
-    # Body is accepted for backward-compat but no longer used (no model call).
-    try:
-        await request.json()
-    except Exception:
-        pass
+async def hatch_buddy():
     bones = roll_companion()
-    soul = generate_soul_local(bones)
-    stored = {**soul, "hatchedAt": int(time.time()), "muted": False}
+    stored = generate_soul_local(bones)
     save_buddy(stored)
     companion = {**bones, **stored}
     return {
