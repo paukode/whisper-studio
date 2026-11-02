@@ -1,7 +1,7 @@
 """Guardrail: the workspace and chat packages keep the names their callers
 import off the package itself.
 
-server.workspace re-exports its public and a few private names. server.chat
+server.workspace re-exports the names other packages read off it. server.chat
 binds only ``router`` and ``executor``; everything else is imported from its
 own submodule. A move or rename that forgets the package would break
 importers at runtime, and this test catches it first.
@@ -14,25 +14,21 @@ WORKSPACE_EXPORTS = [
     "router",
     "get_workspace_path",
     "get_workspace_tools",
+    "get_workspace_write_tools",
     "get_global_workspace_tools",
     "get_worktree_tools",
     "execute_ws_open_folder",
     "is_plan_mode",
     "connect_workspace",
-    "load_workspace_config",
-    "save_workspace_config",
-    "load_recent_workspaces",
-    "save_recent_workspace",
-    # private symbols imported by other modules / tests
+    # private symbols other packages read off server.workspace
+    "_validate_command",
     "_ws_validate_path",
+    "_ws_path_allowed",
     "_atomic_write_text",
-    "_check_writable",
+    "_atomic_write_bytes",
     "_normalize_lf",
-    "_apply_stdin_redirect",
-    "_needs_stdin_redirect",
-    "_truncate_shell_output",
+    "own_scratch_dir",
     "WORKSPACE_BACKUPS",
-    "DATA_DIR",
 ]
 
 CHAT_EXPORTS = [
