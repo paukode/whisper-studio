@@ -66,7 +66,6 @@ async def do_run_tool_script(payload: dict) -> tuple[bool, str]:
         run_id,
         wrapped,
         session_id=(payload.get("session_id") or ""),
-        model_id=(payload.get("model_id") or ""),
         workspace_path=get_workspace_path(),
         agent_runner=_no_agent,
     )

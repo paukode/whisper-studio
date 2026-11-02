@@ -2,6 +2,8 @@ import logging
 import urllib.request
 from html.parser import HTMLParser
 
+from tavily import TavilyClient
+
 from server.executors import register_executor
 from server.infrastructure.config import get as config_get
 
@@ -188,8 +190,6 @@ def exec_web_search(tool_input, transcript, current_attachments):
     # Tier 1: Tavily, if a key is configured (fast, one-shot results).
     if api_key:
         try:
-            from tavily import TavilyClient
-
             client = TavilyClient(api_key=api_key)
             log.info("Tavily search: %s", query)
             results = client.search(query, max_results=5)
@@ -198,9 +198,6 @@ def exec_web_search(tool_input, transcript, current_attachments):
             for r in results.get("results", []):
                 parts.append(f"Title: {r['title']}\nURL: {r['url']}\n{r['content']}")
             return "\n\n".join(parts) if parts else "No results found."
-        except ImportError:
-            log.error("tavily-python not installed")
-            return "Web search unavailable: tavily-python package not installed."
         except Exception as e:
             log.error("Tavily search error: %s", e, exc_info=True)
             return f"Search error: {e}"
