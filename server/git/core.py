@@ -29,6 +29,7 @@ def _run_git(
     cwd: str,
     timeout: int = 15,
     check: bool = False,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess:
     """Run a git command and return the CompletedProcess result.
 
@@ -41,8 +42,11 @@ def _run_git(
         cwd: Working directory for the command
         timeout: Timeout in seconds (default 15)
         check: If True, raise CalledProcessError on non-zero exit
+        env: Extra environment variables (for example GIT_INDEX_FILE)
     """
+    extra = env or {}
     env = os.environ.copy()
+    env.update(extra)
     env["GIT_TERMINAL_PROMPT"] = "0"
     env["GIT_ASKPASS"] = ""
     return subprocess.run(
