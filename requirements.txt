@@ -58,7 +58,7 @@ truststore==0.10.5
 # bedrock-mantle endpoint. The openai SDK targets
 # https://bedrock-mantle.{region}.api.aws/openai/v1 with a short-lived bearer
 # token minted from AWS credentials by aws-bedrock-token-generator.
-openai==2.44.0
+openai==3.42.1
 aws-bedrock-token-generator==1.1.0
 torch==2.11.0
 torchaudio==2.11.0

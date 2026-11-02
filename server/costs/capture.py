@@ -233,12 +233,11 @@ def _anthropic_content_chars(payload) -> int:
 
 
 def _cache_write_count(usage, details) -> int:
-    """Mantle's prompt-cache write count. The OpenAI SDK declares no such
-    field, but mantle adds ``cache_write_tokens`` to the usage (a live probe
-    saw it on GPT-5.6 and GPT-6 with no explicit cache key, and Cost Explorer
-    bills those tokens as 30-minute cache writes). It is read next to
-    cached_tokens in input_tokens_details, or on the usage itself; the SDK
-    keeps undeclared keys as attributes."""
+    """Mantle's prompt-cache write count, ``cache_write_tokens`` (a live
+    probe saw it on GPT-5.6 and GPT-6 with no explicit cache key, and Cost
+    Explorer bills those tokens as 30-minute cache writes). The SDK declares
+    it next to cached_tokens in input_tokens_details; it is also read on the
+    usage itself, where the SDK keeps undeclared keys as attributes."""
     for holder in (details, usage):
         value = _int(getattr(holder, "cache_write_tokens", None))
         if value is not None:

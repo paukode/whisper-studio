@@ -415,13 +415,14 @@ def test_a_failed_gpt_response_with_usage_is_reported():
 
 
 def _mantle_usage(**extra):
-    """A Responses usage as the SDK parses it, with mantle's undeclared
-    cache-write count wherever ``extra`` puts it."""
+    """A Responses usage as the SDK parses it (construct, no validation:
+    the client does not validate responses), with mantle's cache-write
+    count wherever ``extra`` puts it."""
     from openai.types.responses import ResponseUsage
 
     details = {"cached_tokens": 46_000, **extra.pop("details", {})}
-    return ResponseUsage.model_validate(
-        {
+    return ResponseUsage.construct(
+        **{
             "input_tokens": 51_300,
             "output_tokens": 410,
             "total_tokens": 51_710,
