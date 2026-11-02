@@ -2,6 +2,7 @@ import React, { useCallback, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { get, put } from '@/api/client';
 import { fmtCount, fmtMoney } from './usageView';
+import { toError } from '@/utils/toError';
 
 interface BudgetConfig {
   max_session_cost_usd?: number;
@@ -47,8 +48,8 @@ export const BudgetSection: React.FC<BudgetSectionProps> = ({ today }) => {
 
   // Seed the fields from the live config so an existing cap is visible and a
   // save does not clobber an unshown value. The keys are the backend's own
-  // (server/infrastructure/config.py DEFAULTS). If the fetch fails the fields
-  // stay blank.
+  // (server/infrastructure/config.py DEFAULTS). Until they are seeded there
+  // is nothing to save: a save of blank fields would wipe the stored caps.
   const configQuery = useQuery({
     queryKey: ['config'],
     queryFn: () => get<BudgetConfig>('/api/config'),
@@ -206,6 +207,7 @@ export const BudgetSection: React.FC<BudgetSectionProps> = ({ today }) => {
           className="btn btn-primary btn-sm"
           id="budgetSaveBtn"
           type="button"
+          disabled={seededFrom === undefined}
           onClick={() => void handleSaveBudget()}
         >
           Save Budget
@@ -213,6 +215,11 @@ export const BudgetSection: React.FC<BudgetSectionProps> = ({ today }) => {
         <span className="settings-hint" id="budgetSaveHint">
           {budgetHint}
         </span>
+        {configQuery.isError && (
+          <span className="settings-hint" role="alert">
+            Could not load the budget settings: {toError(configQuery.error).message}
+          </span>
+        )}
       </div>
     </div>
   );
