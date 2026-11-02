@@ -414,7 +414,6 @@ def check_claims(
     *,
     plan_mode: bool = False,
     session_has_artifact: bool = False,
-    max_attempts: int = MAX_CLAIM_NUDGES,
     started_at: float | None = None,
     calls: list | None = None,
     receipts: list | None = None,
@@ -446,8 +445,7 @@ def check_claims(
     that writes outside the workspace named as its target is checked
     (``targeted_paths``), and an artifact-card claim always is. A look around
     with terminal_run makes no planned file a claim."""
-    used = claim_nudges_used(messages)
-    if used >= max_attempts or not claim_nudge_allowed(messages):
+    if not claim_nudge_allowed(messages):
         return None
     replies = reply_texts(messages)
     if not replies:

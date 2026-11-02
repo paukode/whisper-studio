@@ -217,16 +217,6 @@ def test_evaluator_failure_is_not_checked_with_the_reason(monkeypatch):
     assert v.is_not_checked and "no Claude cloud model id available" in v.feedback
 
 
-def test_looks_verified():
-    from server.goals.evaluator import looks_verified
-
-    assert looks_verified([{"role": "assistant", "content": "ran gate\nVERIFY PASS"}])
-    assert not looks_verified([{"role": "assistant", "content": "VERIFY FAIL: tests red"}])
-
-
-# ── gate ─────────────────────────────────────────────────────────────────────
-
-
 def _ctx(sid, **kw):
     from server.goals import GateContext
 

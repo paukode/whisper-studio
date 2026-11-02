@@ -295,15 +295,13 @@ def verify_nudges_used(messages: list) -> int:
 def verify_on_stop_feedback(
     messages: list,
     workspace: str | None,
-    *,
-    max_attempts: int = MAX_VERIFY_NUDGES,
 ) -> str | None:
     """Gate feedback when code was edited this turn without a fresh passing
     verification, or None when there is nothing to ask for."""
     ev = turn_evidence(messages)
     if not ev.edited_paths or ev.fresh_pass:
         return None
-    if verify_nudges_used(messages) >= max_attempts:
+    if verify_nudges_used(messages) >= MAX_VERIFY_NUDGES:
         return None
     shown = ", ".join(ev.edited_paths[:8]) + (
         f" and {len(ev.edited_paths) - 8} more" if len(ev.edited_paths) > 8 else ""

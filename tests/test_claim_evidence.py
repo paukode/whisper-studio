@@ -13,8 +13,9 @@ import time
 import pytest
 
 from server.goals import claims as c
+from server.goals.call_results import succeeded
 from server.goals.claims import Claim
-from server.goals.evidence import Evidence, check, not_done, succeeded, turn_calls
+from server.goals.evidence import Evidence, check, not_done, turn_calls
 
 
 def _turn(*calls: tuple[str, dict, str], prompt: str = "go") -> list:
@@ -136,7 +137,7 @@ def test_a_relative_path_reads_against_the_workspace(tmp_path):
     assert check(Claim(c.FILE, "server/app.py"), ev).ok
     # With no workspace there is nothing to read a bare relative path against.
     unread = check(Claim(c.FILE, "server/app.py"), Evidence.of(_turn()))
-    assert unread.ok and not unread.checked
+    assert unread.ok and unread.receipt is None
 
 
 # ── acts ─────────────────────────────────────────────────────────────────
@@ -213,7 +214,7 @@ def test_an_earlier_act_holds_only_where_an_earlier_reply_verified_it():
     assert not check(earlier, Evidence.of(_turn())).ok
     receipts = [{"kind": "push", "target": "main", "label": "Pushed", "detail": "to main"}]
     verdict = check(earlier, Evidence.of(_turn(), receipts=receipts))
-    assert verdict.ok and not verdict.checked and verdict.receipt is None
+    assert verdict.ok and verdict.receipt is None
     other = Claim(c.PUSH, "fix-y", earlier=True)
     assert not check(other, Evidence.of(_turn(), receipts=receipts)).ok
 

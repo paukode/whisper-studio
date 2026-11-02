@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from collections.abc import Callable
 
 from server.goals import Verdict, not_checked
@@ -210,9 +209,3 @@ def evaluate(
         )
     return verdict
 
-
-def looks_verified(messages: list) -> bool:
-    """True if the transcript tail contains a passing verify_change token, a
-    deterministic signal the gate can trust over the evaluator's prose."""
-    tail = render_tail(messages)
-    return bool(re.search(r"\bVERIFY PASS\b", tail))

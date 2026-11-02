@@ -126,7 +126,9 @@ class GateDecision:
     frame: dict | None = None
     # True when a goal existed and the evaluator judged it achieved this turn.
     goal_achieved: bool = False
-    source: str = ""  # "stop_hook" | "evaluator" | "cap" | ""
+    # Which check decided: "stop_hook" | "deliverable" | "requested_file" |
+    # "verify" | "gate" | "evaluator" | "cap" | "".
+    source: str = ""
 
 
 __all__ = [

@@ -173,8 +173,6 @@ def get_gates(session_id: str) -> list[dict]:
     for g in gates:
         if isinstance(g, dict) and str(g.get("command") or "").strip():
             out.append({"command": str(g["command"]), "failures": int(g.get("failures") or 0)})
-        elif isinstance(g, str) and g.strip():
-            out.append({"command": g.strip(), "failures": 0})
     return out
 
 

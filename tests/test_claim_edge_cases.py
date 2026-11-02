@@ -16,9 +16,10 @@ import pytest
 from server.chat.claim_guard import ClaimGuard
 from server.chat.engine.events import RoundResult, TextDelta, ToolCallStart
 from server.goals import claims as c
+from server.goals.call_results import succeeded
 from server.goals.claims import Claim, read_claims
 from server.goals.deliverables import check_claims
-from server.goals.evidence import Evidence, check, succeeded
+from server.goals.evidence import Evidence, check
 
 
 def _turn(*calls, prompt="go", before=()):

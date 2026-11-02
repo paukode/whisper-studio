@@ -290,7 +290,6 @@ def requested_file_feedback(
     workspace: str | None,
     *,
     plan_mode: bool = False,
-    max_attempts: int = MAX_REQUEST_NUDGES,
     asked: str | None = None,
     running: Callable[[str], bool] | None = None,
 ) -> str | None:
@@ -303,7 +302,7 @@ def requested_file_feedback(
 
     Silent in plan mode: the workspace writes are refused there by design,
     so the turn is supposed to end with a plan and no file."""
-    if plan_mode or request_nudges_used(messages) >= max_attempts:
+    if plan_mode or request_nudges_used(messages) >= MAX_REQUEST_NUDGES:
         return None
     owed: list[str] = []
     for clause, since in file_requests(messages, asked):
