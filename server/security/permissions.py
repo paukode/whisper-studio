@@ -27,20 +27,24 @@ category_modes (optional, in permissions.json):
   github, github-destructive, ...) plus the policy-only "workflow" category
   (new workflow-script launches; resolved by
   server/workflows/launch_policy.py). A category with no entry falls back
-  to the global mode. Two exceptions always ask no matter what a category
-  mode (or bypassPermissions, or a blanket session approval) says, see
-  resolve_static_decision below: "github-destructive", and any command
-  input that deletes outside the connected workspace and the app's own
-  folders (server/security/delete_scope.py).
+  to the global mode. "github-destructive" always asks no matter what a
+  category mode (or bypassPermissions, or a blanket session approval) says,
+  see resolve_static_decision below. A command input that deletes outside
+  the connected workspace and the app's own folders
+  (server/security/delete_scope.py) asks in every mode but bypassPermissions.
 
-The permission contract behind the order below: inside the connected
-workspace, bypassPermissions does anything with no card; reading never asks
-anywhere on the machine; a change outside the workspace asks even in bypass
-(a save to a path outside it, reach into a folder outside it, a command that
-deletes outside it, a command asking to write outside the sandbox); a
-destructive remote action always asks; the app's own folder (~/.whisper) is
-written without asking in every mode but plan, and a delete there follows the
-mode, silent in bypass only. The app's own grant and config files in it
+The permission contract behind the order below (the user's decision of
+2026-11-02): bypassPermissions works like Claude Code's bypass and shows no
+card anywhere on the machine, with three exceptions that keep asking: a
+destructive remote GitHub action, a tool of an MCP server marked
+``approval_mode: "approve"``, and an explicit category row of the user's in
+permissions.json that names another mode. The rm -rf / hard block
+(server/security/command_validator.py) refuses in every mode. In every other
+mode a change outside the workspace asks (a save to a path outside it, reach
+into a folder outside it, a command that deletes outside it, a command asking
+to write outside the sandbox); reading never asks anywhere on the machine;
+the app's own folder (~/.whisper) is written without asking in every mode but
+plan, and a delete there follows the mode, silent in bypass only. The app's own grant and config files in it
 (server.infrastructure.paths.app_config_paths / app_config_dirs) are the
 exception: a write, save or delete of one follows the permission mode instead
 of the no-card allow, per the user's table (bypassPermissions allows, dontAsk
@@ -87,12 +91,10 @@ MODE_DONT_ASK = "dontAsk"
 
 VALID_MODES = {MODE_DEFAULT, MODE_AUTO, MODE_PLAN, MODE_ACCEPT_EDITS, MODE_BYPASS, MODE_DONT_ASK}
 
-# Approval categories whose action lands outside the connected workspace: a
-# file saved to a path the user named (server/approval/bootstrap.py's
-# save_to_path) and reach into a folder they have not granted (folder_access).
-# bypassPermissions does not cover them (see resolve_static_decision); a write
-# under the app's own folder is exempt first (targets_app_storage).
-OUTSIDE_WORKSPACE_CATEGORIES = frozenset({"save", "folder-access"})
+# Floors that bypassPermissions lifts (the user's decision of 2026-11-02:
+# Bypass works like Claude Code's bypass). Every other floor keeps asking in
+# every mode: github-destructive and mcp-approve.
+BYPASS_LIFTED_FLOORS = frozenset({"rm", "sandbox-escalation", "visible-terminal"})
 
 DEFAULTS = {
     "mode": "default",
@@ -283,7 +285,7 @@ def approval_floor(
 ) -> str | None:
     """The hard floor this call hits, or None.
 
-    A floor always asks a human: no permission mode, category override,
+    A floor that applies always asks a human: no category override,
     trusted-skill flag, session approval ("Yes, all" / "Block"), custom rule
     or default decides it. Returns which floor ("github-destructive", "rm",
     "sandbox-escalation", "visible-terminal", "mcp-approve"). Any floor marks
@@ -292,10 +294,59 @@ def approval_floor(
     stricter in dontAsk: resolve_static_decision denies a github-destructive
     call there, since that mode never shows a card.
 
-    ``mode`` is the session's permission mode. One floor depends on it: the
-    visible terminal asks in every mode but bypassPermissions (the user's rule
-    2026-10-28: in Bypass the terminal opens and the command runs).
+    ``mode`` is the session's permission mode. In bypassPermissions the
+    floors in BYPASS_LIFTED_FLOORS do not apply (the user's decision of
+    2026-11-02: Bypass works like Claude Code's bypass, so a delete outside
+    the workspace, a sandbox escalation and a visible terminal run show no
+    card). A category row of the user's in permissions.json (category_modes)
+    can only tighten this: a row naming another mode keeps the floors under a
+    Bypass session, and a row naming bypassPermissions lifts nothing under any
+    other mode, since the ws_* executors read the session's mode too.
+    github-destructive and mcp-approve keep asking in every mode. ``mode``
+    None (a caller that only asks whether any floor could apply) lifts
+    nothing.
     """
+    floor = _floor(tool_name, tool_input, category)
+    if floor in BYPASS_LIFTED_FLOORS and _bypass_lifts(category, mode):
+        return None
+    return floor
+
+
+def _bypass_lifts(category: str, mode: str | None) -> bool:
+    """Whether Bypass lifts the floors for ``category``: the session's mode is
+    bypassPermissions and no category row of the user's names another mode."""
+    if mode != MODE_BYPASS:
+        return False
+    row = (load_permissions().get("category_modes") or {}).get(category)
+    return row not in VALID_MODES or row == MODE_BYPASS
+
+
+def bypass_now() -> bool:
+    """Whether the app's permission mode is bypassPermissions right now.
+
+    The executors of an unattended run (a subagent, a workflow script) read
+    this: those runs carry no mode of their own, and they belong to the
+    session the user set the mode for."""
+    return get_mode() == MODE_BYPASS
+
+
+def bypass_call(call_input: dict | None) -> bool:
+    """Whether a dispatched tool call runs in bypassPermissions.
+
+    An attended call carries server/tool_executor.py's stamp of the turn's
+    mode (secret_reads.SECRET_READS_KEY). An unattended one (``__agent__``: a
+    subagent, a workflow script) carries no mode of its own, so the app's
+    mode decides (bypass_now)."""
+    call_input = call_input or {}
+    if call_input.get("__agent__"):
+        return bypass_now()
+    from server.security.secret_reads import stamped
+
+    return stamped(call_input)
+
+
+def _floor(tool_name: str, tool_input: dict, category: str) -> str | None:
+    """The hard floor this call hits before the mode is applied, or None."""
     # Destructive GitHub mutations (repo/ref delete, PR merge, archive/rename,
     # API DELETE) ALWAYS require an explicit human approval, no bypass mode,
     # autopilot, trusted-skill, blanket session approval, or category mode
@@ -306,13 +357,14 @@ def approval_floor(
         return "github-destructive"
 
     # rm (and its close cousins, see delete_sites) reaching outside the
-    # connected workspace and the app's own folders: the same absolute floor
-    # as github-destructive, for the same reason, no bypass mode, category
-    # override, trusted-skill flag, blanket "allow all commands" session
-    # approval, custom rule, or dontAsk/acceptEdits default may let it run
-    # without a real human clicking Approve. A delete that stays inside the
-    # workspace is an ordinary command and follows the mode (the user's rule:
-    # inside the workspace, bypass means bypass); the roots and the working
+    # connected workspace and the app's own folders: outside bypassPermissions
+    # no category override, trusted-skill flag, blanket "allow all commands"
+    # session approval, custom rule, or dontAsk/acceptEdits default may let it
+    # run without a real human clicking Approve. In bypassPermissions it runs
+    # (approval_floor lifts it); the rm -rf / hard block in
+    # server/security/command_validator.py still refuses there. A delete that
+    # stays inside the workspace is an ordinary command and follows the mode;
+    # the roots and the working
     # directory come from the call (_delete_roots), and an operand the
     # command line cannot resolve counts as outside. Checked against whatever
     # shell command the tool input actually carries, so it applies uniformly
@@ -337,30 +389,23 @@ def approval_floor(
             return "rm"
 
     # Sandbox escalation (sandbox_permissions="danger-full-access"): the same
-    # absolute floor as rm. The parameter's entire meaning is "run this ONE
-    # command outside the workspace-write OS sandbox, with a human reading the
-    # justification first", so no bypass mode, category override, trusted-
-    # skill flag, blanket session approval, custom rule, or dontAsk default
-    # may cover it. Without this, "Yes, all cli" would silently convert every
-    # later escalated call into an unconfined auto-run. In bypassPermissions
-    # commands run with no sandbox at all (the user's rule 2026-11-02,
-    # server/security/bypass_sandbox.py), so there is nothing to escalate out
-    # of: the value is accepted and ignored, with no card. A read-only scope
-    # there keeps the sandbox, and the executors refuse the escalation.
-    if (
-        str(tool_input.get("sandbox_permissions") or "").strip() == "danger-full-access"
-        and mode != MODE_BYPASS
-    ):
+    # floor as rm. The parameter's entire meaning is "run this ONE command
+    # outside the workspace-write OS sandbox, with a human reading the
+    # justification first", so outside bypassPermissions no category
+    # override, trusted-skill flag, blanket session approval, custom rule, or
+    # dontAsk default may cover it. Without this, "Yes, all cli" would
+    # silently convert every later escalated call into an unconfined
+    # auto-run. In bypassPermissions it runs (approval_floor lifts it).
+    if str(tool_input.get("sandbox_permissions") or "").strip() == "danger-full-access":
         return "sandbox-escalation"
 
     # A terminal_run typed into the user's visible terminal. That shell runs
     # with no OS write confinement, so outside bypassPermissions only a person
     # reading the command keeps a write outside the workspace from happening:
     # a "Yes, all cli", a rule or the Auto classifier never runs it with no
-    # card. In bypassPermissions it runs (the user's rule 2026-10-28), and the
-    # rm floor above still asks for any delete there, since the shell's
-    # working directory is unknown.
-    if _visible_terminal(tool_name, tool_input) and mode != MODE_BYPASS:
+    # card. In bypassPermissions it runs (the user's rule 2026-10-28; see
+    # approval_floor).
+    if _visible_terminal(tool_name, tool_input):
         return "visible-terminal"
 
     # MCP tool calls: a dedicated tier on top of (not instead of) everything
@@ -547,14 +592,14 @@ def resolve_static_decision(
     Returns "allow" | "ask" | "deny", or None when mode is "auto" and nothing
     else resolved it (the caller then falls back to the classifier).
 
-    Evaluation order: hard floors (github-destructive, a delete outside the
-    workspace, sandbox escalation, a visible terminal run outside bypass, MCP
-    server marked approve; see approval_floor; github-destructive is denied
-    instead when the mode is dontAsk) → app storage (a write under ~/.whisper is
-    allowed in every mode, a delete there only in bypassPermissions; see
-    targets_app_storage) → category mode override → bypassPermissions
-    (absolute inside the workspace; a save to a path outside it and reach into
-    a folder outside it keep asking, see OUTSIDE_WORKSPACE_CATEGORIES) →
+    Evaluation order: hard floors (github-destructive, MCP server marked
+    approve, and outside bypass a delete outside the workspace, sandbox
+    escalation and a visible terminal run; see approval_floor;
+    github-destructive is denied instead when the mode is dontAsk) → app
+    storage (a write under ~/.whisper is allowed in every mode, a delete there
+    only in bypassPermissions; see targets_app_storage) → category mode
+    override → bypassPermissions (allows everything left, anywhere on the
+    machine) →
     trusted skill script → session approvals ("yes/no for all this session")
     → explicit custom rules → a preview_start naming an approved launch.json
     config (allow) → dontAsk → acceptEdits (write category only) → auto
@@ -599,14 +644,12 @@ def resolve_static_decision(
     if category_mode in VALID_MODES:
         mode = category_mode
 
-    # Bypass is absolute inside the workspace. An action that lands outside it
-    # (a save to a path the user named, reach into a folder they have not
-    # granted) still asks, unless that category's own row says bypass: the
-    # user's rule is that nothing changes outside the workspace without an
-    # approval, and a remembered session answer or a rule of theirs is one.
-    if mode == MODE_BYPASS and (
-        category not in OUTSIDE_WORKSPACE_CATEGORIES or category_mode == MODE_BYPASS
-    ):
+    # Bypass allows everything the floors above left, inside the workspace
+    # and outside it (a save to a path the user named, reach into a folder
+    # they have not granted): the user's decision of 2026-11-02. A category
+    # row of the user's that names another mode replaced ``mode`` above, so
+    # that row still decides.
+    if mode == MODE_BYPASS:
         return "allow"
     if auto_allow_trusted:
         return "allow"

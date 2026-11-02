@@ -85,11 +85,12 @@ _DANGEROUS_PATTERNS = [
     re.compile(r";\s*rm\s"),  # rm after semicolon
     re.compile(r">\s*/etc/"),  # redirect to system dirs
     re.compile(r"/proc/.*/environ"),  # proc environ access
-    # rm -rf of the filesystem root itself. Any other absolute path is the rm
-    # floor's to judge (server.security.delete_scope): inside the workspace or
-    # the app's folders the mode decides, anywhere else a person approves. A
-    # block on every absolute path refused the session's own scratch cleanup
-    # and pushed the model to spell the path as $VAR, which always asks.
+    # rm -rf of the filesystem root itself, the literal spelling. Every other
+    # spelling (flag order, quotes, find -delete, ~) is caught by operand in
+    # check_root_deletes below. Any other absolute path is the rm floor's to
+    # judge (server.security.delete_scope). A block on every absolute path
+    # refused the session's own scratch cleanup and pushed the model to spell
+    # the path as $VAR.
     re.compile(r"\brm\s+-rf\s+/+\*?(?:\s|$)"),
     re.compile(r"mkfs\b"),  # format filesystem
     re.compile(r"dd\s+.*of=/dev/"),  # dd to device
@@ -552,6 +553,28 @@ _VALIDATORS: list[callable] = [
 ]
 
 
+def check_root_deletes(command: str) -> str | None:
+    """The hard block on deleting the filesystem root, by operand: any
+    deleting statement (server.security.delete_sites: rm in any flag order or
+    quoting, rmdir, find -delete, a -c script, ...) whose operand resolves to
+    a protected root (server.security.protected_roots: /, a folder directly
+    under it, the home folder or one above it) is refused in every permission
+    mode, Bypass included. An operand the command line cannot resolve is the
+    rm floor's to judge, not this block's."""
+    from server.security.delete_scope import _working_dirs, resolve_operand
+    from server.security.delete_sites import delete_sites
+    from server.security.protected_roots import is_protected_root
+
+    for site in delete_sites(command):
+        dirs = _working_dirs(None, site.chdirs)
+        for operand in site.operands or ():
+            for here in dirs:
+                target = resolve_operand(operand, here)
+                if target is not None and is_protected_root(target):
+                    return f"Blocked: deletes a protected folder ({operand})"
+    return None
+
+
 def validate_command(command: str, secret_reads: bool = False) -> str | None:
     """Validate a command by splitting into subcommands and running all validators.
 
@@ -574,6 +597,10 @@ def validate_command(command: str, secret_reads: bool = False) -> str | None:
     command, warning = _vet_substitutions(command, secret_reads)
     if warning:
         return warning
+
+    root_warning = check_root_deletes(command)
+    if root_warning:
+        return root_warning
 
     subcommands = split_subcommands(command)
     for sub in subcommands:
