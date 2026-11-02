@@ -18,7 +18,7 @@ from server.git.core import (
 )
 from server.git.diff import fetch_single_file_git_diff
 from server.git.filesystem import is_safe_ref_name, path_inside
-from server.git.security import contains_secret_files
+from server.git.security import format_refusal, scan_diff
 from server.workspace import get_workspace_path
 
 # --- Helpers ---
@@ -410,8 +410,62 @@ def _exec_git_clone(tool_input, transcript, current_attachments):
     return approval_request(payload)
 
 
+# Read-only diff flags: no pager, no color, no external diff or textconv, and
+# zero context so only the lines a commit adds are scanned.
+_STAGED_DIFF = [
+    "-c",
+    "core.quotePath=false",
+    "diff",
+    "--cached",
+    "-U0",
+    "--no-color",
+    "--no-ext-diff",
+    "--no-textconv",
+    "--src-prefix=a/",
+    "--dst-prefix=b/",
+]
+
+
+def _staged_secrets(cwd: str, add_args: list[str] | None) -> tuple[list, str]:
+    """Scan what the commit would hold for real secrets.
+
+    With ``add_args`` the files are staged into a COPY of the index first, so
+    a refusal leaves the user's index exactly as it was. Returns (findings,
+    error); a file name alone never makes a finding.
+    """
+    import shutil
+    import tempfile
+
+    if add_args is None:
+        stdout, stderr, rc = _git(_STAGED_DIFF, cwd, timeout=60)
+        if rc != 0:
+            return [], f"could not read the staged changes: {stderr.strip()}"
+        return scan_diff(stdout), ""
+
+    stdout, stderr, rc = _git(["rev-parse", "--git-path", "index"], cwd)
+    if rc != 0:
+        return [], f"could not find the git index: {stderr.strip()}"
+    index = os.path.join(cwd, stdout.strip())
+    with tempfile.TemporaryDirectory(prefix="ws-git-scan-") as tmp:
+        scratch = os.path.join(tmp, "index")
+        if os.path.exists(index):
+            shutil.copy2(index, scratch)
+        env = {"GIT_INDEX_FILE": scratch}
+        result = _run_git(["add", *add_args], cwd=cwd, timeout=60, env=env)
+        if result.returncode != 0:
+            return [], f"staging failed: {result.stderr.strip()}"
+        result = _run_git(_STAGED_DIFF, cwd=cwd, timeout=60, env=env)
+        if result.returncode != 0:
+            return [], f"could not read the staged changes: {result.stderr.strip()}"
+        return scan_diff(result.stdout), ""
+
+
 def do_git_add_commit(payload: dict) -> tuple[bool, str]:
-    """Execute a previously approved git_add_commit. Returns (ok, output_or_error)."""
+    """Execute a previously approved git_add_commit. Returns (ok, output_or_error).
+
+    The commit is refused only when its staged changes contain a real secret
+    (server/git/security.py). File names never block it.
+    """
     cwd, err = _get_git_cwd()
     if err:
         return False, err
@@ -423,35 +477,24 @@ def do_git_add_commit(payload: dict) -> tuple[bool, str]:
         return False, "commit message is required"
 
     if files:
-        secrets = contains_secret_files(files)
-        if secrets:
-            return False, f"refusing to commit potential secret files: {', '.join(secrets)}"
-        stdout, stderr, rc = _git(["add", *files], cwd)
-        if rc != 0:
-            return False, f"staging failed: {stderr.strip()}"
+        add_args: list[str] | None = ["--", *files]
     elif stage_all:
-        # ``git add -A`` stages untracked files too, so every path it would
-        # stage is checked: staged, modified and untracked (not ignored).
-        all_files: list[str] = []
-        for args in (
-            ["diff", "--cached", "--name-only"],
-            ["diff", "--name-only"],
-            ["ls-files", "--others", "--exclude-standard"],
-        ):
-            stdout, stderr, rc = _git(args, cwd)
-            if rc != 0:
-                return False, f"could not list the changes to stage: {stderr.strip()}"
-            all_files.extend(f for f in stdout.split("\n") if f.strip())
-        secrets = contains_secret_files(all_files)
-        if secrets:
-            return False, f"refusing to stage potential secret files: {', '.join(secrets)}"
-        stdout, stderr, rc = _git(["add", "-A"], cwd)
-        if rc != 0:
-            return False, f"staging failed: {stderr.strip()}"
+        add_args = ["-A"]
     else:
         stdout, stderr, rc = _git(["diff", "--cached", "--quiet"], cwd)
         if rc == 0:
             return False, "no files specified and nothing staged"
+        add_args = None
+
+    findings, err = _staged_secrets(cwd, add_args)
+    if err:
+        return False, err
+    if findings:
+        return False, format_refusal(findings)
+    if add_args is not None:
+        stdout, stderr, rc = _git(["add", *add_args], cwd, timeout=60)
+        if rc != 0:
+            return False, f"staging failed: {stderr.strip()}"
 
     stdout, stderr, rc = _git(["commit", "-m", message], cwd)
     if rc != 0:
