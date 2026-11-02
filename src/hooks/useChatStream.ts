@@ -156,9 +156,6 @@ function toastQueuedIntoReplacedTurn(): void {
 // up it queued each copy into the running turn.
 const midTurnInFlight = new Set<string>();
 
-// The controller registry and the instant kill switch live in
-// ./chatStream/streamControl (a leaf module shared with sseStream).
-export { abortSessionStream, killSessionStream };
 
 /**
  * Send one chat turn and stream its answer into the owning session (the one
@@ -432,12 +429,9 @@ export async function sendChatTurn(question: string, opts?: SendOptions): Promis
     // readSSEStream) so that the artifact card renders BELOW the
     // explanation text in the same message, instead of above the text in
     // an earlier message that also re-displayed the same tool chips.
-    // If the round had no text response but did emit an artifact, we
-    // still synthesize a message so the artifact renders.
-    let finalContent = fullResponse;
-    if (!finalContent && (result.pendingArtifact || result.pendingVisuals.length > 0 || result.pendingPlan)) {
-      finalContent = '';
-    }
+    // A round with no text but an artifact, visual or plan still commits a
+    // message (with empty content) so the card renders.
+    const finalContent = fullResponse;
     // Move the turn-local team reports onto the message being committed —
     // this is what makes the agent rows permanent (and persisted, since
     // chat_history serializes messages verbatim). Returns undefined if an

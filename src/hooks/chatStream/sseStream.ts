@@ -337,10 +337,6 @@ export async function readSSEStream(
             // saved now." in a single message. Tool-only segments are left
             // to accumulate (no text = nothing to separate).
             if (fullResponse) flushSegment();
-            // Remove empty thinking element if no thinking content
-            if (!thinkingText) {
-              store().appendThinkingToken(''); // signal no thinking
-            }
             skillsUsed.push(parsed.skill);
             // The provider's tool_use id pairs the call's later frames with
             // this trace; '' when the provider could not tag the frame, in
@@ -743,26 +739,12 @@ export async function readSSEStream(
           // off a narrowed view. Surface a persistent error toast — the plain
           // "[Budget exceeded] …" text frame alone is easy to miss. Do NOT
           // break: the stream still needs to drain the trailing text/[DONE].
-          const budget = parsed as SSEEventData & {
-            budget_warning?: string;
-            budget_kind?: string;
-            budget_limit?: number;
-            budget_current?: number;
-          };
+          // The backend message spells out the kind, limit and current spend.
+          const budget = parsed as SSEEventData & { budget_warning?: string };
           if (budget.budget_warning) {
-            const kind = budget.budget_kind ?? 'cost';
-            const limit = budget.budget_limit;
-            const current = budget.budget_current;
-            // The backend message already spells out kind/limit/current; keep a
-            // composed fallback that also carries all three so the toast is
-            // meaningful even if the message string is ever empty.
-            const fallback =
-              typeof current === 'number' && typeof limit === 'number'
-                ? `${kind} cost $${current.toFixed(4)} reached the $${limit.toFixed(2)} limit.`
-                : `${kind} budget limit reached.`;
             useUIStore.getState().addToast({
               type: 'error',
-              message: budget.budget_warning || fallback,
+              message: budget.budget_warning,
               // Persistent (0 = no auto-dismiss): the run stopped, so the user
               // must see it and act (new session / raise the limit).
               duration: 0,
