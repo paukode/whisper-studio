@@ -1,12 +1,11 @@
 """``run_headless_turn`` — a Python-callable, non-streaming primitive over the
 shared agentic turn engine (server.chat.engine.runner.run_turn).
 
-This is the internal equivalent of what a future ``codex exec``-style CLI or
-SDK would wrap: BACKEND code (a future terminal-panel helper, an internal
-script) drives one turn to completion with no human attending it and no HTTP
-client involved. There is deliberately no network route here — this module is
-imported and awaited directly, the same way server/agents/runtime.py's
-run_agent() is called in-process today.
+Backend code drives one turn to completion with no HTTP client involved:
+voice delegation (server/voice/tools.py, an attended run) and the
+agent-report wake (server/agents/wake.py). There is no network route here;
+this module is imported and awaited directly, the same way
+server/agents/runtime.py's run_agent() is called in-process.
 
 It mirrors server/agents/runtime.py's ``_run_agent_loop`` almost exactly: the
 same ``unattended=True`` + fresh ``turn_scope_id`` + ``tool_catalog`` closure
@@ -25,8 +24,8 @@ Two differences from ``_run_agent_loop``, both deliberate:
     headless run has no use for.
   - On-device (``local:...``) models are refused outright rather than wired
     up: the structured-output distillation (``distill_run_output``) goes
-    through the OLD ``server.agents.providers.get_adapter``, which has no
-    local branch: the exact reason ``_resolve_agent_model`` already excludes
+    through ``server.agents.providers.get_adapter``, which has no local
+    branch: the exact reason ``_resolve_agent_model`` already excludes
     local candidates from its own fallback chain. Full local support
     additionally needs the llama-server cold-start dance (see
     server/local/route.py) and capability probing
@@ -240,8 +239,8 @@ async def run_headless_turn(
             f"exec:{scope_id}" instead of f"exec:{session_id}". Lets several
             runs share one ``session_id`` (tool dispatch, agent registry,
             costs and tool activations all stay keyed by session_id) while
-            each pauses and resumes independently. None keeps the historical
-            f"exec:{session_id}" key, so existing callers are unaffected.
+            each pauses and resumes independently. None keys it as
+            f"exec:{session_id}".
         cost_source: The ``source`` recorded on this run's cost rows
             (server.costs.sources): voice delegation passes "voice", the
             agent-report wake "wake".
