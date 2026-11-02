@@ -432,7 +432,7 @@ def _delete_weights(key: str) -> tuple[bool, bool]:
 
     Returns ``(stopped_llama_server, weights_deleted)``. Missing files are not
     an error — a model with a config entry but nothing on disk just deletes
-    nothing. Shared by uninstall (user entry) and remove-from-list (either)."""
+    nothing. Used by remove-from-list."""
     from server.models_manager import manager
     from server.models_manager.catalog import get_entry
 
@@ -452,18 +452,6 @@ def _delete_weights(key: str) -> tuple[bool, bool]:
     # Any other Conflict (answering in a chat, a folder shared with another
     # entry, a download that would not cancel) refuses the whole removal,
     # config entry included, so no weights are left without an entry.
-
-
-def uninstall_model(key: str) -> dict:
-    """Stop/cancel any activity, delete files, and remove the user-config entry.
-
-    Only browser-installed (user-layer) keys are removable here; a built-in or
-    shipped model is not touched."""
-    if not install.is_browser_entry(key):
-        raise InstallError(f"{key} is not a browser-installed model.")
-    stopped, _ = _delete_weights(key)
-    removed = install.remove_entry(key)
-    return {"key": key, "removed": removed, "stopped_llama_server": stopped}
 
 
 def remove_from_list(key: str) -> dict:

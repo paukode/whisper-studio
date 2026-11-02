@@ -162,13 +162,6 @@ def write_entry(key: str, entry: dict) -> None:
     log.info("Model browser installed %s (%s) into the user config.", key, entry.get("repo_id"))
 
 
-def is_browser_entry(key: str) -> bool:
-    """Whether ``key`` is a local model the user layer defines (i.e. removable by
-    the browser). Recommended models not yet installed are not user-layer entries."""
-    cm = config_mod._load_user_config().get("chat_models")
-    return isinstance(cm, dict) and key in cm
-
-
 def is_local_model(key: str) -> bool:
     """Whether ``key`` is an on-device model in the effective catalog (installed
     or a downloaded recommendation). Local models are always fully deletable and

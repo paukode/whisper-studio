@@ -2,19 +2,15 @@
 
 Mounted under the same ``/api/models`` prefix as the download manager but on a
 distinct ``/browse`` sub-path, so the static browse routes never collide with
-the manager's ``/{key}`` routes. Search/detail are read-only; install/uninstall
-mutate the user config and the download queue.
+the manager's ``/{key}`` routes. Search/detail are read-only; install and
+remove-from-list mutate the user config and the download queue.
 """
 
 from __future__ import annotations
 
-import logging
-
 from fastapi import APIRouter, HTTPException, Request
 
 from server.model_browser import search, service
-
-log = logging.getLogger("whisper-studio")
 
 router = APIRouter(prefix="/api/models/browse", tags=["model-browser"])
 
@@ -116,8 +112,7 @@ async def browse_remove_entry(key: str):
 
     A local model is deleted outright (weights + config) and can be re-downloaded
     from Discover; a Bedrock model is hidden via the recoverable
-    ``chat_models_disabled`` list. The distinct ``/entry`` suffix keeps it clear
-    of the ``/{key}`` uninstall."""
+    ``chat_models_disabled`` list."""
     import asyncio
 
     from server.models_manager.manager import Conflict
@@ -127,19 +122,3 @@ async def browse_remove_entry(key: str):
     except Conflict as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
     return {**result, "message": "Model removed from the list."}
-
-
-@router.delete("/{key}")
-async def browse_uninstall(key: str):
-    """Uninstall a browser-installed model: stop it, delete files, drop config."""
-    import asyncio
-
-    from server.models_manager.manager import Conflict
-
-    try:
-        result = await asyncio.to_thread(service.uninstall_model, key)
-    except service.InstallError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
-    except Conflict as e:
-        raise HTTPException(status_code=409, detail=str(e)) from e
-    return {**result, "message": "Model uninstalled."}

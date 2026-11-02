@@ -9,10 +9,7 @@ sessions already use.
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
-
-log = logging.getLogger("whisper-studio")
 
 # Mirrors terminal.py's _OUTPUT_BUFFER_CAP — bounded ring buffer so a chatty
 # dev server can't grow memory unbounded.

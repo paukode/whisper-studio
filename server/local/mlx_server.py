@@ -323,14 +323,3 @@ def reap_orphans() -> int:
         except (ProcessLookupError, PermissionError) as e:
             log.debug("Could not reap mlx_lm server pid %d: %s", pid, e)
     return killed
-
-
-def status() -> dict:
-    """Snapshot for /api diagnostics."""
-    return {
-        "installed": is_available(),
-        "running": is_running(),
-        "model": resident_key(),
-        "base_url": base_url(),
-        "n_ctx": _state.get("n_ctx"),
-    }

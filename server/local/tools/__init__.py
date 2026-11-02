@@ -25,10 +25,6 @@ instead of calling Bedrock.
 
 from __future__ import annotations
 
-import logging
-
-log = logging.getLogger("whisper-studio")
-
 
 def _to_openai_fn(anthropic_tool: dict) -> dict:
     """An Anthropic tool ({name, description, input_schema}) → an OpenAI

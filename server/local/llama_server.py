@@ -495,17 +495,3 @@ def reap_orphans() -> int:
         except (ProcessLookupError, PermissionError) as e:
             log.debug("Could not reap llama-server pid %d: %s", pid, e)
     return killed
-
-
-def status() -> dict:
-    """Snapshot for /api diagnostics."""
-    exe = binary_path()
-    return {
-        "installed": bool(exe),
-        "binary": exe,
-        "min_build": MIN_BUILD,
-        "running": is_running(),
-        "model": resident_key(),
-        "base_url": base_url(),
-        "n_ctx": _state.get("n_ctx"),
-    }

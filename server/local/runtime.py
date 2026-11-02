@@ -141,11 +141,6 @@ def mlx_dir(key: str) -> str:
     return os.path.join(MODELS_DIR, m["dir"])
 
 
-def model_path(key: str) -> str:
-    """The path the engine loads: the GGUF file, or the MLX snapshot dir."""
-    return mlx_dir(key) if is_mlx_model(key) else gguf_path(key)
-
-
 def is_downloaded(key: str) -> bool:
     if not is_local_model(key):
         return False
@@ -206,20 +201,6 @@ def _ensure_mlx_downloaded(key: str) -> str:
         f.write("")
     log.info("Local model %s download complete.", key)
     return local_dir
-
-
-def is_loaded(key: str | None = None) -> bool:
-    """Whether a local model (or ``key`` specifically) is currently resident.
-
-    Residency is a property of the model server, not this process — the weights
-    were never in here.
-    """
-    from server.local import serving
-
-    resident = serving.resident_key()
-    if resident is None:
-        return False
-    return True if key is None else resident == key
 
 
 def loaded_key() -> str | None:

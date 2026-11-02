@@ -548,24 +548,6 @@ def test_install_honours_explicit_n_ctx(isolated_home, monkeypatch):
     assert "supports_thinking" not in result
 
 
-def test_uninstall_removes_user_entry(isolated_home, monkeypatch):
-    _stub_hf_and_queue(monkeypatch)
-    result = service.install_model("unsloth/Qwen3-0.6B-GGUF", "Qwen3-0.6B-Q4_K_M.gguf")
-    key = result["key"]
-
-    # Stub the manager so uninstall doesn't touch disk / llama-server.
-    monkeypatch.setattr("server.models_manager.catalog.get_entry", lambda k: None)
-    out = service.uninstall_model(key)
-    assert out["removed"] is True
-    data = json.loads((isolated_home / "config.user.json").read_text())
-    assert key not in data.get("chat_models", {})
-
-
-def test_uninstall_refuses_non_browser_key(isolated_home, monkeypatch):
-    with pytest.raises(service.InstallError):
-        service.uninstall_model("local_gemma")  # a built-in, not a user entry
-
-
 # ── small models installed before the agentic gate: reported, never rewritten ──
 _SMALL_WITH_TOOLS = {
     "id": "local:small",
@@ -806,8 +788,6 @@ def test_remove_from_list_refuses_a_model_answering_in_a_chat(isolated_home, mon
 
     with pytest.raises(manager.ModelBusy):
         service.remove_from_list(key)
-    with pytest.raises(manager.ModelBusy):
-        service.uninstall_model(key)
     data = json.loads((isolated_home / "config.user.json").read_text())
     assert key in data.get("chat_models", {}), "the entry was dropped while the model answered"
 
@@ -838,8 +818,7 @@ def test_remove_from_list_keeps_the_entry_when_the_folder_is_shared(isolated_hom
     assert service.remove_from_list(key)["removed_entry"] is True
 
 
-@pytest.mark.parametrize("path", ["/api/models/browse/k1/entry", "/api/models/browse/k1"])
-def test_remove_and_uninstall_answer_409_with_the_reason(monkeypatch, path):
+def test_remove_answers_409_with_the_reason(monkeypatch):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
@@ -850,10 +829,9 @@ def test_remove_and_uninstall_answer_409_with_the_reason(monkeypatch, path):
         raise manager.ModelBusy("This model is answering in a chat right now.")
 
     monkeypatch.setattr(service, "remove_from_list", busy)
-    monkeypatch.setattr(service, "uninstall_model", busy)
     app = FastAPI()
     app.include_router(router)
-    r = TestClient(app).delete(path)
+    r = TestClient(app).delete("/api/models/browse/k1/entry")
     assert r.status_code == 409
     assert "answering" in r.json()["detail"]
 
