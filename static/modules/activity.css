@@ -346,6 +346,8 @@ button.activity-pill:hover { border-color: var(--accent); }
     font-variant-numeric: tabular-nums;
 }
 .thinking-waited::before { content: '\00B7'; margin-right: 8px; opacity: 0.7; }
+/* On the meta line under streamed text: the line sets the size and gap. */
+.thinking-waited--meta { margin-left: 0; font-size: inherit; }
 .thinking-body {
     margin: 4px 0 8px;
     padding: 8px 12px;

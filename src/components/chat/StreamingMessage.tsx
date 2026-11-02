@@ -60,7 +60,9 @@ export const StreamingMessage: React.FC<StreamingMessageProps> = ({ content, isS
 
   // Live timer
   const [elapsed, setElapsed] = useState(0);
-  const [waited, setWaited] = useState('');
+  const [tickedWait, setWaited] = useState('');
+  // No clock: a wait summary from the last stream must not linger.
+  const waited = thinkingStartTime ? tickedWait : '';
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -88,7 +90,7 @@ export const StreamingMessage: React.FC<StreamingMessageProps> = ({ content, isS
   const displayElapsed = content ? thinkingElapsedMs : elapsed;
 
   // Token meta line shown after thinking completes
-  const showMeta = content && (thinkingElapsedMs > 0 || inputTokens > 0);
+  const showMeta = content && (thinkingElapsedMs > 0 || inputTokens > 0 || waited);
 
   const deliveries = priorDeliveries && priorDeliveries.length > 0
     ? mergeDeliveries(priorDeliveries, liveDeliveries)
@@ -202,6 +204,9 @@ export const StreamingMessage: React.FC<StreamingMessageProps> = ({ content, isS
           gap: 8,
         }}>
           {thinkingElapsedMs > 0 && <span>{formatMs(thinkingElapsedMs)}</span>}
+          {/* The waits stay once text arrives: the tick froze them when the
+           *  timer stopped, next to the thinking time they explain. */}
+          {waited && <span className="thinking-waited thinking-waited--meta">{waited}</span>}
           {inputTokens > 0 && (
             <>
               <span>{'\u00B7'}</span>
