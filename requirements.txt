@@ -7,17 +7,16 @@ websockets==16.0
 boto3==1.43.25
 # Voice mode (Nova 2 Sonic) speaks Bedrock's bidirectional stream, which boto3
 # cannot; this Smithy-based SDK (Developer Preview) can, over the awscrt HTTP/2
-# transport (the default aiohttp one has no duplex streaming). Needs Python 3.12+, so
-# on the 3.10/3.11 floor voice mode simply reports itself unavailable.
-aws-sdk-bedrock-runtime[awscrt]==0.11.0; python_version >= "3.12"
+# transport (the default aiohttp one has no duplex streaming). Needs Python 3.12+,
+# the app's floor.
+aws-sdk-bedrock-runtime[awscrt]==0.11.0
 numpy==2.4.6
 python-multipart==0.0.32
 Pillow==12.2.0
 markitdown[all]==0.1.6
 # Attachment extraction: scanned-PDF rasterization (BSD/Apache) + native macOS OCR (MIT).
-# ocrmac pulls in pyobjc (macOS-only); marker keeps the Linux CI runner installable.
 pypdfium2==5.9.0
-ocrmac==1.0.1; sys_platform == 'darwin'
+ocrmac==1.0.1
 # Document-creation tools (create_pdf): pure Python, no system libraries needed.
 # python-pptx and openpyxl (create_pptx/create_xlsx) are already pulled in
 # transitively by markitdown[all], so only reportlab needs adding here.
@@ -65,10 +64,8 @@ tzdata==2025.2
 mlx-whisper==0.4.3
 mlx==0.32.4
 parakeet-mlx==0.5.2
-# MLX-format chat models (server/local/mlx_server.py). Darwin-only marker: the
-# Linux test CI strips Apple-only ML packages by exact-name grep and would not
-# catch "mlx-lm", so the marker keeps ubuntu runners installable.
-mlx-lm==0.32.2; sys_platform == 'darwin'
+# MLX-format chat models (server/local/mlx_server.py).
+mlx-lm==0.32.2
 speechbrain==1.1.0
 huggingface_hub==1.18.0
 
