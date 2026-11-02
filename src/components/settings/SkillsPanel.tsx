@@ -15,7 +15,7 @@ const badgeStyle: React.CSSProperties = {
   fontSize: '11px',
   padding: '1px 6px',
   borderRadius: 'var(--radius-lg)',
-  background: 'var(--surface-0)',
+  background: 'var(--bg-primary)',
   opacity: 0.8,
   verticalAlign: 'middle',
 };
@@ -284,7 +284,7 @@ export const SkillsPanel: React.FC = () => {
                     className="btn btn-sm"
                     title="Trusted skills run their own bundled scripts without an approval prompt"
                     onClick={() => (skill.trusted ? void handleTrust(skill.name) : setTrustConfirm(skill.name))}
-                    style={skill.trusted ? { color: 'var(--text-accent)', fontWeight: 500 } : undefined}
+                    style={skill.trusted ? { color: 'var(--accent)', fontWeight: 500 } : undefined}
                   >
                     {skill.trusted ? 'Trusted ✓' : 'Trust'}
                   </button>

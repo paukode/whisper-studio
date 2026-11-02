@@ -296,7 +296,7 @@ export const LiveBrowserPanel: React.FC<{
           style={{ flex: 1, minWidth: 0, font: 'inherit', fontSize: 13, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg-primary)', color: 'var(--text-primary)' }}
         />
         {running && (
-          <button type="button" style={{ ...txtBtn, ...(mode === 'watch' ? { background: 'var(--bg-accent)', color: 'var(--text-accent)' } : {}) }} onClick={() => setMode(mode === 'interact' ? 'watch' : 'interact')} title={mode === 'interact' ? 'Watch the assistant drive (read-only)' : 'Interact with the site'}>
+          <button type="button" style={{ ...txtBtn, ...(mode === 'watch' ? { background: 'var(--accent-dim)', color: 'var(--accent)' } : {}) }} onClick={() => setMode(mode === 'interact' ? 'watch' : 'interact')} title={mode === 'interact' ? 'Watch the assistant drive (read-only)' : 'Interact with the site'}>
             {mode === 'interact' ? 'Watch' : 'Interact'}
           </button>
         )}

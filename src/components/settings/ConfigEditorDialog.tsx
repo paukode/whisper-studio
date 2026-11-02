@@ -123,7 +123,7 @@ export const ConfigEditorDialog: React.FC<{ onClose: () => void }> = ({ onClose 
       onClick={() => setTab(id)}
       className="btn btn-sm"
       style={{
-        background: tab === id ? 'var(--surface-2)' : 'transparent',
+        background: tab === id ? 'var(--bg-elevated)' : 'transparent',
         borderBottom: tab === id ? '2px solid var(--accent)' : '2px solid transparent',
         borderRadius: 0,
       }}
@@ -171,7 +171,7 @@ export const ConfigEditorDialog: React.FC<{ onClose: () => void }> = ({ onClose 
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          background: 'var(--surface-1)',
+          background: 'var(--bg-surface)',
           color: 'var(--text-primary)',
           borderRadius: 'var(--radius-lg)',
           width: 'min(680px, 94vw)',

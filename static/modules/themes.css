@@ -348,25 +348,7 @@
     --danger: var(--accent-record);
     --error: var(--accent-record);
 
-    /* Legacy aliases. These names are used across style.css but were
-       never defined anywhere, so every usage silently fell back to
-       inherited/initial values. Aliased here (instead of rewriting the
-       call sites) per the additive-only CSS contract — the same
-       stylesheet serves the templates/index.html fallback. */
-    --bg: var(--bg-primary);
-    --fg: var(--text-primary);
-    --text: var(--text-primary);
-    --muted: var(--text-muted);
-    --surface-0: var(--bg-primary);
-    --surface-1: var(--bg-surface);
-    --surface-2: var(--bg-elevated);
-    --bg-tertiary: var(--bg-secondary);
-    --bg-accent: var(--accent-dim);
-    --bg-success: var(--accent-dim);
-    --text-accent: var(--accent);
-    --text-success: var(--success);
-    --text-warning: var(--warning);
-    --radius: var(--radius-md);
+    /* Accent gradient and the font stacks. */
     --accent-gradient: linear-gradient(51deg, var(--accent) 45%, var(--accent-2));
     --font-sans: 'Manrope', -apple-system, BlinkMacSystemFont, sans-serif;
     --font-mono: 'DM Mono', ui-monospace, SFMono-Regular, Menlo, monospace;

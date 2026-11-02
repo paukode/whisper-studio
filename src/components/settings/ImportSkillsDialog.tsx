@@ -198,7 +198,7 @@ export const ImportSkillsDialog: React.FC<{
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          background: 'var(--surface-1)',
+          background: 'var(--bg-surface)',
           color: 'var(--text-primary)',
           borderRadius: 'var(--radius-lg)',
           width: 'min(680px, 92vw)',
@@ -299,7 +299,7 @@ export const ImportSkillsDialog: React.FC<{
         )}
 
         {error && <div style={{ color: 'var(--accent-record)' }}>{error}</div>}
-        {summary && <div style={{ color: 'var(--text-success)' }}>{summary}</div>}
+        {summary && <div style={{ color: 'var(--success)' }}>{summary}</div>}
 
         {skills.length > 0 && (
           <>

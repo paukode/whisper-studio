@@ -85,7 +85,7 @@ export const SkillFileTree: React.FC<{ skillName: string }> = ({ skillName }) =>
                   padding: '8px',
                   maxHeight: '280px',
                   overflow: 'auto',
-                  background: 'var(--surface-0)',
+                  background: 'var(--bg-primary)',
                   borderRadius: '6px',
                   fontSize: '13px',
                   whiteSpace: 'pre-wrap',

@@ -231,7 +231,7 @@ const ScheduleForm: React.FC<ScheduleFormProps> = ({ initial, systemTz, saving, 
 
       <div>
         <label className="cron-lbl">Schedule</label>
-        <div style={{ display: 'inline-flex', gap: 4, background: 'var(--bg-tertiary)', padding: 3, borderRadius: 'var(--radius-lg)' }}>
+        <div style={{ display: 'inline-flex', gap: 4, background: 'var(--bg-secondary)', padding: 3, borderRadius: 'var(--radius-lg)' }}>
           {SEG_TYPES.map((seg) => (
             <button key={seg.id} type="button"
               onClick={() => patch({ type: seg.id })}

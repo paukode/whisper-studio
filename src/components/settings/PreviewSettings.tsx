@@ -132,7 +132,7 @@ export const PreviewSettings: React.FC = () => {
                     fontSize: '12px',
                     maxHeight: '120px',
                     overflow: 'auto',
-                    background: 'var(--surface-2)',
+                    background: 'var(--bg-elevated)',
                     padding: '8px',
                     borderRadius: '6px',
                   }}
@@ -150,9 +150,9 @@ export const PreviewSettings: React.FC = () => {
                 style={{
                   fontSize: '13px',
                   padding: '4px 10px',
-                  borderRadius: 'var(--radius)',
-                  background: 'var(--bg-success)',
-                  color: 'var(--text-success)',
+                  borderRadius: 'var(--radius-md)',
+                  background: 'var(--accent-dim)',
+                  color: 'var(--success)',
                 }}
               >
                 Enabled

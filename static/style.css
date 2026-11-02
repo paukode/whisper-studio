@@ -149,7 +149,7 @@ body {
     width: calc(100% - 28px);
     font-size: var(--fs-body); font-weight: 500;
     padding: 1px 4px; border: 1px solid var(--accent);
-    border-radius: 3px; background: var(--bg); color: var(--text-primary);
+    border-radius: 3px; background: var(--bg-primary); color: var(--text-primary);
     outline: none;
 }
 .session-item-meta {
@@ -1228,13 +1228,13 @@ input.segment-speaker {
 }
 .preview-modal {
     width: 90vw; height: 85vh; max-width: 1200px;
-    background: var(--surface-1); border-radius: var(--radius-lg);
+    background: var(--bg-surface); border-radius: var(--radius-lg);
     overflow: hidden; display: flex; flex-direction: column;
     box-shadow: var(--shadow-lg);
 }
 .preview-header {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 10px 16px; background: var(--surface-2);
+    padding: 10px 16px; background: var(--bg-elevated);
     font-size: var(--fs-body); font-weight: 600; color: var(--text-primary);
     border-bottom: 1px solid var(--border);
 }
@@ -3273,7 +3273,7 @@ input.segment-speaker {
 .risk-low  { background: var(--accent-dim); color: var(--accent); }
 .risk-medium { background: var(--warning-dim); color: var(--warning); }
 .risk-high { background: var(--accent-record-dim); color: var(--accent-record); }
-.exp-body { color: var(--text); margin-bottom: 3px; line-height: 1.4; }
+.exp-body { color: var(--text-primary); margin-bottom: 3px; line-height: 1.4; }
 
 /* Shadowed rule warnings */
 
@@ -4011,7 +4011,7 @@ input.segment-speaker {
     padding: 6px 10px;
     font-size: var(--fs-caption);
     font-weight: 600;
-    color: var(--fg);
+    color: var(--text-primary);
     cursor: pointer;
     user-select: none;
     flex-shrink: 0;
@@ -4049,7 +4049,7 @@ input.segment-speaker {
     font-family: var(--font-mono);
     font-size: var(--fs-small);
     cursor: pointer;
-    color: var(--fg);
+    color: var(--text-primary);
 }
 .ws-git-change-item:hover {
     background: var(--bg-hover);
@@ -4084,12 +4084,12 @@ button.ws-git-status-badge:hover {
     white-space: nowrap;
 }
 .ws-git-change-dir {
-    color: var(--muted);
+    color: var(--text-muted);
     margin-left: 2px;
 }
 .ws-git-change-stats {
     font-size: var(--fs-caption);
-    color: var(--muted);
+    color: var(--text-muted);
     flex-shrink: 0;
     white-space: nowrap;
 }
@@ -4098,7 +4098,7 @@ button.ws-git-status-badge:hover {
 .ws-git-change-undo {
     background: none;
     border: none;
-    color: var(--muted);
+    color: var(--text-muted);
     cursor: pointer;
     padding: 2px 4px;
     font-size: var(--fs-small);
@@ -4112,7 +4112,7 @@ button.ws-git-status-badge:hover {
 }
 .ws-git-change-undo:hover {
     background: var(--bg-hover);
-    color: var(--fg);
+    color: var(--text-primary);
 }
 
 /* ─── Diff viewer ──────────────────────────────────────────────────────
@@ -4251,7 +4251,7 @@ button.ws-git-status-badge:hover {
 }
 .git-diff-retry {
     background: var(--bg-inset);
-    color: var(--text);
+    color: var(--text-primary);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm, 4px);
     padding: 3px 10px;
