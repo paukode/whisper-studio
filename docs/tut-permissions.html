@@ -74,7 +74,11 @@
     <h3 id="mode-and-questions">How the mode changes the questions the assistant asks</h3>
     <p>The assistant knows the current mode. In Bypass, it acts and then tells you what it did. It
       does not ask before it runs a command, edits a file, or makes a commit. It does not ask you to
-      reply "go" between the steps of a plan that you approved.</p>
+      reply "go" between the steps of a plan that you approved. In Bypass, file changes do not
+      stop the turn, so the assistant can make many changes in one step. In the other modes, it
+      makes one file change at a time and waits for your decision.</p>
+    <p>When you switch from Bypass to Plan, the assistant keeps the Bypass rules for the time
+      after the plan. Plan still blocks all changes until you approve the plan.</p>
     <p>In all modes, the assistant asks a question only when the answer changes a result that you
       see, costs money, or cannot be undone. It first reads your rules and its memory. An
       instruction about how to work, for example "commit after each stage", stays in force for

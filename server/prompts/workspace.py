@@ -19,7 +19,46 @@ CODE_OUTPUT_RULE_WORKSPACE = (
 )
 
 
-def workspace_prompt(ws_path: str, session_id: str = "default") -> str:
+# The resume markers a paused write comes back with. Shared by both branches of
+# the WRITE APPROVAL paragraph, so a card that does appear in Bypass is read the
+# same way as in every other mode.
+_RESUME_MARKERS = (
+    "  \u2022 '[User approved]' plus the real filesystem result: continue to the next change.\n"
+    "  \u2022 '[User denied]': that change did not run. Do not propose the same call again; take "
+    "the next safe path and continue, and ask only when no such path exists.\n"
+    "  \u2022 '[User approved but write failed] \u2026': the disk write failed, so try a different "
+    "approach (smaller ws_edit_file edits, a different path, or ask). Repeating the identical "
+    "call will fail identically.\n"
+)
+
+# Every mode except Bypass: each write pauses the turn for a card.
+_WRITE_APPROVAL_GUARDED = (
+    "\n\nWRITE APPROVAL: Each write, create, edit, and delete pauses the turn. The user sees "
+    "your proposed change and decides, then the turn resumes with one of:\n"
+    + _RESUME_MARKERS
+    + "Because of that pause, propose only ONE write-type call per turn. Reads and searches have "
+    "no such limit and are worth batching. Session pre-approval only removes the human click, "
+    "so keep the same one-change-per-turn pacing either way."
+)
+
+# Bypass: writes run at once, so the one-change-per-turn pacing does not apply.
+# It must not contradict the permission-mode line on the MODE layer.
+_WRITE_APPROVAL_BYPASS = (
+    "\n\nWRITE APPROVAL: In Bypass, writes, creates, edits, and deletes run at once and the "
+    "turn does not pause, so batch independent changes freely. If a card does appear (a "
+    "destructive GitHub action or an MCP server marked approve), the turn resumes with one of:\n"
+    + _RESUME_MARKERS.rstrip("\n")
+)
+
+# The permissions.json value for Bypass (server.security.permissions.MODE_BYPASS).
+_BYPASS = "bypassPermissions"
+
+
+def _write_approval(permission_mode: str) -> str:
+    return _WRITE_APPROVAL_BYPASS if permission_mode == _BYPASS else _WRITE_APPROVAL_GUARDED
+
+
+def workspace_prompt(ws_path: str, session_id: str = "default", permission_mode: str = "") -> str:
     """Product context plus the write-approval contract.
 
     Deliberately short. What the ws_* tools do, when to read a whole file, and
@@ -27,7 +66,9 @@ def workspace_prompt(ws_path: str, session_id: str = "default") -> str:
     descriptions, which load with the tools instead of on every turn. What
     survives here is the part no tool description can express on its own: the
     turn is PAUSED mid-flight by the harness, and the model has to recognise the
-    resume markers and the one-write-per-turn pacing that follows from them.
+    resume markers and, outside Bypass, the one-write-per-turn pacing that
+    follows from them. Bypass gets its own WRITE APPROVAL paragraph so the
+    cached block never tells a Bypass session that every write pauses.
     """
     from server.workspace.paths import get_scratch_dir
 
@@ -35,18 +76,8 @@ def workspace_prompt(ws_path: str, session_id: str = "default") -> str:
     return (
         f"\n\nCODE WORKSPACE: A code workspace is connected at '{ws_path}'. "
         "Edit it with the ws_* tools rather than asking the user where to save."
-        "\n\nWRITE APPROVAL: Each write, create, edit, and delete pauses the turn. The user sees "
-        "your proposed change and decides, then the turn resumes with one of:\n"
-        "  • '[User approved]' plus the real filesystem result: continue to the next change.\n"
-        "  • '[User denied]': that change did not run. Do not propose the same call again; take "
-        "the next safe path and continue, and ask only when no such path exists.\n"
-        "  • '[User approved but write failed] …': the disk write failed, so try a different "
-        "approach (smaller ws_edit_file edits, a different path, or ask). Repeating the identical "
-        "call will fail identically.\n"
-        "Because of that pause, propose only ONE write-type call per turn. Reads and searches have "
-        "no such limit and are worth batching. Session pre-approval only removes the human click, "
-        "so keep the same one-change-per-turn pacing either way."
-        f"\n\nSCRATCH FILES: '{scratch_dir}' is this session's own scratch folder. Use it, not "
+        + _write_approval(permission_mode)
+        + f"\n\nSCRATCH FILES: '{scratch_dir}' is this session's own scratch folder. Use it, not "
         "the connected workspace root, for anything intermediate or throwaway: temp scripts, "
         "probe files, format-conversion intermediates, and the virtualenvs and tools you install "
         "for a probe or a check. The ws_* file tools reach it by its absolute path, and sandboxed "

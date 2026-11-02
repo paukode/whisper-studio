@@ -16,12 +16,15 @@ PLAN_MODE = (
 # branch is emitted per request, chosen on the mode in permissions.json. Both
 # branches sit on the cached MODE layer: the mode changes only when the user
 # picks another one, and a flip between two non-Bypass modes keeps the bytes.
+# Plan reads as the mode the session came from (server/prompts/__init__.py
+# _static_permission_mode), so a Bypass, Plan, Bypass flip keeps them too.
 BYPASS_MODE = (
     "\n\nPERMISSION MODE: Bypass. The user chose to let you act without check-ins: run commands, "
     "edit, create and delete files, and commit, inside and outside the workspace. No approval "
     "card appears for these, so do not ask before you act; act and report what you did. Only "
     "remote destructive GitHub actions (delete a repository or branch, merge a pull request, an "
-    "API DELETE) and MCP servers the user marked approve still ask. rm -rf / is always refused."
+    "API DELETE) and MCP servers the user marked approve still ask. rm -rf / is always refused. "
+    "If a card appears anyway, wait for its result; do not ask the same thing in chat."
 )
 
 # Outside Bypass the delete check reads each rm operand as written. A shell

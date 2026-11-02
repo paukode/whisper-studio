@@ -111,10 +111,12 @@ def _build_code_output_rule(ws_path: str | None = None, **_) -> str:
     return CODE_OUTPUT_RULE_WORKSPACE if ws_path else CODE_OUTPUT_RULE_GENERIC
 
 
-def _build_workspace_section(ws_path: str | None = None, session_id: str = "default", **_) -> str:
+def _build_workspace_section(
+    ws_path: str | None = None, session_id: str = "default", permission_mode: str = "", **_
+) -> str:
     if not ws_path:
         return ""
-    return workspace_prompt(ws_path, session_id)
+    return workspace_prompt(ws_path, session_id, permission_mode)
 
 
 def _build_no_workspace_section(ws_path: str | None = None, **_) -> str:
@@ -140,6 +142,27 @@ def _build_no_workspace_section(ws_path: str | None = None, **_) -> str:
 # The permissions.json value for Bypass (server.security.permissions.MODE_BYPASS).
 # Spelled out here so the prompt package does not import the security module.
 _BYPASS = "bypassPermissions"
+_PLAN = "plan"
+
+# The last mode other than Plan that each session's prompt was built with. Plan
+# is a mode of its own in permissions.json, but the plan-mode text rides the
+# DYNAMIC layer so a toggle keeps the cached block. Reading Plan as "the mode
+# you came from" for the static sections keeps that promise for Bypass too: a
+# Bypass, Plan, Bypass flip leaves the static bytes alone.
+_BASE_MODE: dict[str, str] = {}
+_BASE_MODE_CAP = 512
+
+
+def _static_permission_mode(session_id: str, permission_mode: str) -> str:
+    """The mode the cached sections are built for (Plan reads as its base)."""
+    if permission_mode != _PLAN:
+        if permission_mode:
+            _BASE_MODE.pop(session_id, None)
+            _BASE_MODE[session_id] = permission_mode
+            while len(_BASE_MODE) > _BASE_MODE_CAP:
+                _BASE_MODE.pop(next(iter(_BASE_MODE)))
+        return permission_mode
+    return _BASE_MODE.get(session_id, permission_mode)
 
 
 def _build_permission_mode_section(permission_mode: str = "", **_) -> str:
@@ -531,7 +554,7 @@ def _resolve_sections(
         "ws_path": ws_path,
         "session_id": session_id,
         "deferred_tool_index": deferred_tool_index,
-        "permission_mode": permission_mode,
+        "permission_mode": _static_permission_mode(session_id, permission_mode),
     }
 
     static_prepend: list[str] = []
