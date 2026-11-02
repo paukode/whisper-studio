@@ -6,6 +6,8 @@ the diarization label mapping (embeddings mocked so it is fast and stable), and
 the small helpers.
 """
 
+import types
+
 import numpy as np
 import pytest
 from fastapi import FastAPI
@@ -206,6 +208,7 @@ def test_a_failed_frame_is_noted_and_the_rest_kept(monkeypatch):
         outdir = cmd[-1].rsplit("/", 1)[0]
         for i in (1, 2):
             Image.new("RGB", (8, 8)).save(f"{outdir}/f{i:03d}.png")
+        return types.SimpleNamespace(returncode=0, stderr="")
 
     calls = iter([RuntimeError("vision busy"), "slide title"])
 
@@ -223,3 +226,38 @@ def test_a_failed_frame_is_noted_and_the_rest_kept(monkeypatch):
     assert "[frame at 00:00: OCR failed: vision busy]" in notes
     assert "[00:10] slide title" in notes
     assert len(frames) == 2
+
+
+def test_a_failed_ffmpeg_pass_is_noted_and_written_frames_kept(monkeypatch):
+    from PIL import Image
+
+    import server.extract.ocr as ocr
+
+    def fake_ffmpeg(cmd, **kw):
+        outdir = cmd[-1].rsplit("/", 1)[0]
+        Image.new("RGB", (8, 8)).save(f"{outdir}/f001.png")
+        return types.SimpleNamespace(returncode=1, stderr="frame=1\nclip.mp4: Invalid data\n")
+
+    monkeypatch.setattr(media, "_video_duration", lambda path: 20.0)
+    monkeypatch.setattr(media, "_required_binary", lambda name, env: name)
+    monkeypatch.setattr(media.subprocess, "run", fake_ffmpeg)
+    monkeypatch.setattr(ocr, "_ocr_with_apple_vision", lambda imgs: "")
+    notes, frames = media._sample_video_frames("clip.mp4")
+    assert notes == "[Frame extraction failed: ffmpeg exited with 1: clip.mp4: Invalid data]"
+    assert len(frames) == 1
+
+
+def test_a_failed_frame_pass_keeps_the_video_transcript(monkeypatch):
+    monkeypatch.setattr(media, "_transcribe_with_speakers", lambda path: "[00:00] hello")
+
+    def no_ffmpeg(path):
+        raise RuntimeError("ffmpeg is required for video and was not found")
+
+    monkeypatch.setattr(media, "_sample_video_frames", no_ffmpeg)
+    text, frames = media.extract_media(b"FAKEVIDEO", ".mp4", "clip.mp4")
+    assert text == (
+        "# Transcript of clip.mp4\n\n[00:00] hello\n\n"
+        "# On-screen text from sampled frames\n\n"
+        "[On-screen text unavailable: ffmpeg is required for video and was not found]"
+    )
+    assert frames == []

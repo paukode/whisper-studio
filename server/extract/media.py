@@ -86,7 +86,13 @@ def extract_media(content: bytes, ext: str, filename: str) -> tuple[str, list[di
         ]
         frames: list[dict] = []
         if ext in VIDEO_EXTENSIONS:
-            notes, frames = _sample_video_frames(tmp_path)
+            # A failed frame pass (no ffmpeg or ffprobe, the OCR module) never
+            # costs the transcript that was already decoded: it is noted.
+            try:
+                notes, frames = _sample_video_frames(tmp_path)
+            except Exception as e:
+                log.warning("frame sampling failed for %s: %s", filename, e)
+                notes, frames = f"[On-screen text unavailable: {e}]", []
             if notes:
                 sections.append("# On-screen text from sampled frames\n\n" + notes)
         return "\n\n".join(sections), frames
@@ -289,15 +295,25 @@ def _sample_video_frames(path: str) -> tuple[str, list[dict]]:
             str(_MAX_FRAMES),
             os.path.join(tmpdir, "f%03d.png"),
         ]
-        subprocess.run(cmd, capture_output=True, check=False)
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
         notes: list[str] = []
         frames: list[dict] = []
+        if result.returncode != 0:
+            # Frames written before the failure are still read below.
+            lines = [ln for ln in (result.stderr or "").splitlines() if ln.strip()]
+            reason = lines[-1].strip()[:300] if lines else "no error output"
+            log.warning("ffmpeg frame extraction exited with %s: %s", result.returncode, reason)
+            notes.append(
+                f"[Frame extraction failed: ffmpeg exited with {result.returncode}: {reason}]"
+            )
         for i, fp in enumerate(sorted(glob.glob(os.path.join(tmpdir, "f*.png")))):
             ts = i * interval
             try:
                 img = Image.open(fp)
                 img.load()
-            except Exception:
+            except Exception as e:
+                log.warning("frame read failed at %s: %s", _fmt_ts(ts), e)
+                notes.append(f"[frame at {_fmt_ts(ts)}: image read failed: {e}]")
                 continue
             # One frame's failure is noted in the text; it never costs the
             # transcript or the other frames.
