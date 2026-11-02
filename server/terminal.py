@@ -509,7 +509,7 @@ def classify_wait_reason(session: "_PtySession", *, settled: bool) -> str:
     """Why did an interactive send stop waiting?
 
     session_exit  — the shell process is gone.
-    inferred_idle — output went quiet: control returned to the shell prompt,
+    inferred_idle: output went quiet: control returned to the shell prompt,
                     or a child is waiting (macOS cannot prove it is a stdin
                     read).
     timeout       — output never settled within the budget.
