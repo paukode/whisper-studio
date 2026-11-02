@@ -29,7 +29,6 @@ import asyncio
 import contextlib
 import json
 import logging
-import re
 import time
 from array import array
 from collections.abc import Awaitable, Callable
@@ -49,7 +48,6 @@ OpenFn = Callable[[str, str], Awaitable[Any]]
 
 # Bedrock closes a bidirectional stream after 8 minutes. Renew comfortably
 # before that, at a quiet moment, so the user never notices.
-STREAM_HARD_LIMIT_S = 480
 RENEW_AFTER_S = 390
 RENEW_DEADLINE_S = 460
 TRANSCRIPT_LIMIT = 60
@@ -133,7 +131,6 @@ class _Live:
     last_input_at: float = 0.0
     pump: asyncio.Task | None = None
     closing: bool = False
-    tool_ids: set[str] = field(default_factory=set)
     # Model events received on this stream. Zero when it dies means Bedrock
     # never answered: the failure is reported as a start failure, not retried.
     events: int = 0
@@ -149,7 +146,6 @@ class _Utterance:
     id: str
     started_at: float
     last_event_at: float
-    spec_cids: set[str] = field(default_factory=set)
     spec_parts: list[str] = field(default_factory=list)
     final_parts: list[str] = field(default_factory=list)
     first_audio_at: float | None = None
@@ -196,7 +192,6 @@ class VoiceSession:
             if r.get("role") in ("user", "assistant") and str(r.get("content") or "").strip()
         ][-TRANSCRIPT_LIMIT:]
         self.done = asyncio.Event()
-        self.end_reason: str | None = None
         self._live: _Live | None = None
         self._send_lock = asyncio.Lock()
         self._renew_task: asyncio.Task | None = None
@@ -217,11 +212,9 @@ class VoiceSession:
         self._state = "listening"
         self._stopping = False
         self._reopens = 0
-        self._spec_buf: dict[str, list[str]] = {}
         self._final_buf: dict[str, list[str]] = {}
-        # The utterance in progress (see _Utterance) and what was last committed.
+        # The utterance in progress (see _Utterance) and when the last one committed.
         self._utt: _Utterance | None = None
-        self._last_committed = ""
         self._last_commit_at = float("-inf")
 
     # ── lifecycle ────────────────────────────────────────────────────────
@@ -248,7 +241,6 @@ class VoiceSession:
                 self._cancel_runs()
             return
         self._stopping = True
-        self.end_reason = reason
         await self._end_utterance("stop")
         # stop() may run inside the renew loop (a failed renewal) or a tool
         # task (end_conversation): never cancel the task we are running in, or
@@ -632,7 +624,6 @@ class VoiceSession:
         # Whatever the old stream was in the middle of is over: commit the
         # utterance, drop half-open blocks, stop showing "speaking".
         await self._end_utterance("renewal")
-        self._spec_buf.clear()
         self._final_buf.clear()
         try:
             await self._open(first=False)
@@ -733,8 +724,6 @@ class VoiceSession:
                 # block never ends the utterance; only completion boundaries,
                 # user speech, an interruption or the quiet timer do.
                 utt = self._utterance()
-                utt.spec_cids.add(cid)
-                self._spec_buf.setdefault(cid, []).append(ev["text"])
                 utt.spec_parts.append(ev["text"])
                 self._touch(utt)
                 await self.emit(
@@ -761,8 +750,6 @@ class VoiceSession:
                     utt = self._utterance()
                     utt.final_parts.append(text)
                     self._touch(utt)
-            else:
-                self._spec_buf.pop(cid, None)
         elif kind == "audio":
             utt = self._utterance()
             if utt.first_audio_at is None:
@@ -781,7 +768,6 @@ class VoiceSession:
                 self._arm_timer(utt)
             await self._set_speaking(False)
         elif kind == "tool_use":
-            live.tool_ids.add(ev["tool_use_id"])
             await self.emit(
                 {
                     "type": "tool_call",
@@ -870,7 +856,6 @@ class VoiceSession:
         if not clean:
             return
         self._remember("assistant", clean)
-        self._last_committed = _normalized(clean)
         self._last_commit_at = self._clock()
         await self.emit(
             {"type": "assistant_text", "text": clean, "final": True, "utterance_id": utterance_id}
@@ -952,10 +937,6 @@ class VoiceSession:
 _SIGNAL_PEAK = 300
 
 
-def _normalized(text: str) -> str:
-    return " ".join(re.sub(r"[^a-z0-9 ]", " ", text.lower()).split())
-
-
 def _has_signal(pcm16: bytes) -> bool:
     """True when the frame carries audible signal (not digital silence and not
     a quiet room's noise floor). Sampled every few samples: speech has plenty."""
@@ -987,4 +968,4 @@ def _for_sonic(text: str) -> str:
     return text[: SPOKEN_RESULT_CHARS - 1] + "… (truncated; the full answer is shown on screen)"
 
 
-__all__ = ["VoiceConfig", "VoiceSession", "build_system_prompt", "SonicUnavailable"]
+__all__ = ["VoiceConfig", "VoiceSession", "build_system_prompt"]

@@ -201,7 +201,6 @@ class ToolContext:
     pending_queue: list[dict[str, Any]] = field(default_factory=list)
     deliver_late: Callable[[str], Awaitable[None]] | None = None
     register_task: Callable[[asyncio.Task], None] | None = None
-    extra: dict[str, Any] = field(default_factory=dict)
 
 
 AGENT_TOOLS = frozenset({"spawn_agent", "team_create", "list_agents"})
