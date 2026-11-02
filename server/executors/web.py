@@ -133,14 +133,9 @@ def _is_safe_public_url(url: str) -> tuple[bool, str]:
             addr = ipaddress.ip_address(info[4][0])
         except ValueError:
             return False, "host resolved to an invalid address"
-        if (
-            addr.is_private
-            or addr.is_loopback
-            or addr.is_link_local
-            or addr.is_reserved
-            or addr.is_multicast
-            or addr.is_unspecified
-        ):
+        # Allow-list, not a deny-list: anything not globally routable
+        # (shared 100.64/10 space, IPv4-mapped loopback, ...) is refused.
+        if not addr.is_global or addr.is_multicast:
             return False, "refusing to fetch a private or internal address"
     return True, ""
 

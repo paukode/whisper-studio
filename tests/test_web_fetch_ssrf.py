@@ -20,6 +20,9 @@ def test_blocks_internal_addresses():
         "http://192.168.1.1/",
         "http://10.0.0.5/admin",
         "http://[::1]/",
+        "http://100.64.0.1/",  # shared address space (carrier NAT, Tailscale)
+        "http://[::ffff:127.0.0.1]/",  # IPv4-mapped loopback
+        "http://224.0.0.1/",
     ]:
         ok, _ = _is_safe_public_url(url)
         assert not ok, f"{url} should be blocked"
