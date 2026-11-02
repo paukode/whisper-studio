@@ -1,6 +1,6 @@
 """Qwen3-Embedding-0.6B runner — text → 1024-d L2-normalized vectors.
 
-Runs on transformers + torch (MPS on Apple Silicon, CPU fallback), the same
+Runs on transformers + torch on the Apple silicon GPU (MPS), the same
 runtime GLiNER uses, so no extra ML stack is pulled in. Loading is lazy and the
 weights can be freed with ``unload()`` — the same load-on-demand / free-on-idle
 pattern the ASR backends use, so an index run doesn't hold ~1 GB resident
@@ -66,7 +66,9 @@ def _load():
     from transformers import AutoModel, AutoTokenizer
 
     ensure_embed_model()
-    _device = "mps" if torch.backends.mps.is_available() else "cpu"
+    if not torch.backends.mps.is_available():
+        raise RuntimeError("The on-device embedding model needs the Apple silicon GPU (MPS)")
+    _device = "mps"
     log.info("Loading embedding model on %s ...", _device)
     _tokenizer = AutoTokenizer.from_pretrained(EMBED_MODEL_DIR, padding_side="left")
     _model = AutoModel.from_pretrained(EMBED_MODEL_DIR, dtype=torch.float32)

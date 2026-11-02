@@ -121,7 +121,9 @@ def _load():
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     ensure_rerank_model()
-    _device = "mps" if torch.backends.mps.is_available() else "cpu"
+    if not torch.backends.mps.is_available():
+        raise RuntimeError("The on-device reranker needs the Apple silicon GPU (MPS)")
+    _device = "mps"
     log.info("Loading reranker model on %s ...", _device)
     # Left padding so the final-token logits line up at index -1 for every row.
     _tokenizer = AutoTokenizer.from_pretrained(RERANK_MODEL_DIR, padding_side="left")
