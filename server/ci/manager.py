@@ -39,7 +39,9 @@ def start_watch(branch: str, cwd: str, session_id: str = "") -> str:
     if row and session_id:
         _emit_task_event(session_id, "task_started", row)
     try:
-        _schedule(_drive_watch(task_id, branch, cwd, session_id, cancel), f"ci-watch-{task_id}")
+        from server.infrastructure.async_tasks import spawn
+
+        spawn(_drive_watch(task_id, branch, cwd, session_id, cancel), name=f"ci-watch-{task_id}")
     except Exception as e:  # noqa: BLE001 — never leak the cancel/registry row on a schedule failure
         log.error("ci watch %s failed to schedule: %s", task_id, e)
         _cancels.pop(task_id, None)
@@ -231,32 +233,3 @@ def status_snapshot(branch: str, cwd: str) -> dict:
             "failed_jobs": [j.get("name") for j in provider.failed_jobs(run)],
         },
     }
-
-
-# ── scheduling (mirror of workflows.manager._schedule) ───────────────────────
-def _schedule(coro, name: str) -> None:
-    from server.infrastructure.async_tasks import spawn
-
-    try:
-        asyncio.get_running_loop()
-        spawn(coro, name=name)
-        return
-    except RuntimeError:
-        pass
-    loop = _server_loop()
-    if loop is None:
-        try:
-            asyncio.run(coro)
-        except Exception as e:  # noqa: BLE001
-            log.error("ci watch %s inline run failed: %s", name, e)
-        return
-    asyncio.run_coroutine_threadsafe(coro, loop)
-
-
-def _server_loop():
-    try:
-        from server.tasks import events
-
-        return events._server_loop
-    except Exception:
-        return None
