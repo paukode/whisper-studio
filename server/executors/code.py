@@ -12,6 +12,7 @@ import boto3
 from server.approval.markers import approval_request
 from server.executors import register_executor
 from server.sandbox import run_sandboxed
+from server.security import bypass_sandbox
 from server.security.command_validator import validate_command
 from server.security.secret_reads import requested
 
@@ -156,6 +157,10 @@ def _python_write_mode(payload: dict) -> tuple[str, str]:
         return "readonly", ""
     if perms != "danger-full-access":
         return "", f"invalid sandbox_permissions {perms!r}"
+    if bypass_sandbox.active():
+        # A Bypass turn runs with no sandbox: the escalation means nothing
+        # there, so it is accepted and ignored.
+        return "workspace", ""
     if payload.get("__agent__"):
         return "", (
             "danger-full-access is not permitted from an unattended subagent. "
@@ -232,7 +237,11 @@ def do_run_python(payload: dict) -> tuple[bool, str]:
     # print loop can't flood the model's context with unbounded output.
     if len(output) > 100_000:
         output = output[:100_000] + "\n... (truncated)"
-    if result.returncode not in (0, None) and write_mode in ("workspace", "readonly"):
+    if (
+        result.returncode not in (0, None)
+        and write_mode in ("workspace", "readonly")
+        and not bypass_sandbox.active()
+    ):
         from server.sandbox import classify_sandbox_denial
 
         hint = classify_sandbox_denial(output, write_mode)
@@ -359,7 +368,7 @@ def do_aws_cli(payload: dict) -> tuple[bool, str]:
         return True, output or "(command completed successfully, no output)"
     from server.sandbox import classify_sandbox_denial
 
-    hint = classify_sandbox_denial(output, "workspace")
+    hint = None if bypass_sandbox.active() else classify_sandbox_denial(output, "workspace")
     if hint:
         output = f"{output}\n{hint}"
     return (

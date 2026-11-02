@@ -32,6 +32,7 @@ import re
 
 from server.approval.markers import approval_request
 from server.executors import register_executor
+from server.security import bypass_sandbox
 from server.security.secret_reads import requested
 
 log = logging.getLogger("whisper-studio")
@@ -120,6 +121,11 @@ def _resolve_sandbox_permissions(payload: dict) -> tuple[str, str, str]:
     if perms not in _WRITE_MODE_FOR_PERMS:
         allowed = ", ".join(sorted(_WRITE_MODE_FOR_PERMS))
         return "", "", f"invalid sandbox_permissions {perms!r} — must be one of: {allowed}"
+    if perms == "danger-full-access" and bypass_sandbox.active():
+        # A Bypass turn runs with no sandbox, so there is nothing to escalate
+        # out of: accept the value and ignore it, with no justification or
+        # agent check.
+        return "workspace-write", justification, ""
     if perms == "danger-full-access":
         if payload.get("__agent__"):
             return (
@@ -435,7 +441,11 @@ async def do_terminal_run(payload: dict) -> tuple[bool, str]:
     # hint naming the effective mode and the escalation path, so the model can
     # tell "the sandbox said no" from "the command itself is broken".
     denial_hint = ""
-    if write_mode in ("workspace", "readonly") and result.get("exit_code") not in (0, None):
+    if (
+        write_mode in ("workspace", "readonly")
+        and result.get("exit_code") not in (0, None)
+        and not bypass_sandbox.active()
+    ):
         from server.sandbox import classify_sandbox_denial
 
         hint = classify_sandbox_denial(output, write_mode)

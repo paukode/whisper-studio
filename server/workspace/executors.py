@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from server import file_state
 from server.approval.markers import approval_request
 from server.executors import register_executor
+from server.security import bypass_sandbox
 from server.security import secret_reads as secret_reads_policy
 
 from .commands import (
@@ -860,9 +861,10 @@ def run_workspace_command(
         # Said for every failure, so neither the model nor the claim check
         # (server/goals/evidence.py) reads a failed command as done.
         output += f"\n(exit code {result.returncode})"
-    if write_mode != "open" and result.returncode not in (0, None):
+    if write_mode != "open" and result.returncode not in (0, None) and not bypass_sandbox.active():
         # A confined run that failed on a write the OS refused: say which
         # sandbox it was and how to ask for more, the way terminal_run does.
+        # A Bypass run had no sandbox, so no OS refusal to explain.
         from server.sandbox import classify_sandbox_denial
 
         hint = classify_sandbox_denial(output, write_mode)

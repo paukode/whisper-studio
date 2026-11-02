@@ -281,6 +281,7 @@ def _create_pty_session(
     # and the hidden shell never starts.
     # A confined one may also write the chat session's own scratch folder,
     # where its npm, pip and uv caches live.
+    # In a Bypass turn the wrap returns the shell as is, with no profile.
     profile_path = None
     if hidden:
         from server.sandbox import build_pty_sandbox_wrap
@@ -609,14 +610,22 @@ def get_or_open_interactive(
     as terminal_run's sandbox mode), with the session's own ``scratch_dir``
     writable. A PTY opened for another write root (the workspace changed
     since) is closed and a fresh one opened, so it never keeps writing into a
-    folder that is no longer the workspace."""
+    folder that is no longer the workspace. In a Bypass turn the shell runs
+    with no sandbox (server/security/bypass_sandbox.py)."""
     with _interactive_lock:
         pty_id = _interactive_ptys.get(chat_session_id)
         if pty_id:
             with _sessions_lock:
                 existing = _sessions.get(pty_id)
             if existing is not None and existing.alive:
-                if existing.write_root == write_root:
+                # A Bypass turn's shell has no sandbox profile; any other
+                # hidden shell has one. A shell opened in the other kind of
+                # turn is replaced, so a Bypass shell never serves a
+                # confined turn and a confined one never serves Bypass.
+                from server.security import bypass_sandbox
+
+                same_kind = (existing.profile_path is None) == bypass_sandbox.active()
+                if existing.write_root == write_root and same_kind:
                     return existing
                 with _sessions_lock:
                     _sessions.pop(pty_id, None)
