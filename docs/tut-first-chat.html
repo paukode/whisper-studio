@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Your first chat - Whisper Studio Docs</title>
-  <meta name="description" content="Send a message and watch it stream, steer a turn that is already running, switch models and reasoning depth from the toolbar or by slash command, and learn the / commands built into the chat composer.">
+  <meta name="description" content="Send a message and read the streamed answer, add text to a turn that runs, change the model and the thinking level, and use the slash commands of the chat composer.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -15,219 +15,238 @@
 <body>
   <main class="doc" data-page="tut-first-chat">
     <h1>Your first chat</h1>
-    <p class="subtitle">The composer is the heart of Whisper Studio. In a few minutes you will send a
-      message, watch the answer stream in, switch models and reasoning depth, and learn the slash
-      commands that live behind the <code>/</code> key.</p>
+    <p class="subtitle">The composer is the main control of Whisper Studio. This tutorial shows how
+      to send a message and read the answer. It also shows how to change the model and use the
+      slash commands.</p>
 
-    <p>Everything below happens in the chat input at the bottom of the window. A single turn travels
-      from the composer to <code>POST /api/chat</code>, out to whichever model you have selected -
-      Claude or GPT on Amazon Bedrock, or an on-device model in local mode - and back as a
-      stream you watch fill in live. The conversation is saved as you go, so you can leave and pick it
-      back up from the sidebar.</p>
+    <p>You do all the steps in the chat input at the bottom of the window. The composer sends each
+      turn to <code>POST /api/chat</code>. The server sends the turn to the model that you selected.
+      This model is Claude or GPT on Amazon Bedrock, or an on-device model. The model returns the answer
+      as a stream. The app saves the conversation after each change, and the sidebar shows it.</p>
 
     <figure class="diagram-figure wide">
       <div id="first-chat-diagram" class="diagram"></div>
-      <figcaption>One turn, then a follow-up. The loop back into <em>POST /api/chat</em> is the model
-        re-reading the whole conversation each time you ask again.</figcaption>
+      <figcaption>One turn, then a follow-up. For each new question, the app sends the full
+        conversation to <em>POST /api/chat</em> again.</figcaption>
     </figure>
 
     <figure class="shot">
-      <img src="assets/img/model-picker.png" alt="The model picker listing cloud and on-device models together">
-      <figcaption><strong>The model picker.</strong> Cloud and on-device models share one list; a <b>Local</b> badge marks models that run on your machine, a <b>Mythos</b> badge marks models that need the data-retention consent screen, and the checkmark is the active one. Scrolled here to show the boundary between the two kinds.</figcaption>
+      <img src="assets/img/model-picker.png" alt="The model picker in Hybrid mode, with cloud and on-device models in one list">
+      <figcaption><strong>The model picker in Hybrid mode.</strong> Only Hybrid mode shows cloud
+        and on-device models in one list. The other modes show one type of model. A <b>Local</b> badge identifies an on-device model. A <b>Mythos</b> badge
+        identifies a model that shows the data-retention consent screen. The checkmark identifies the
+        active model.</figcaption>
     </figure>
 
     <h2 id="send-your-first-message">Send your first message</h2>
-    <p>You do not need a workspace, an attachment, or any setup beyond a working AWS connection (see
-      <a href="first-run.html">First run &amp; verify</a>). Just type and press <kbd>Enter</kbd>.</p>
+    <p>You do not need a workspace or an attachment. You need one chat model that your model mode
+      can run. A new install starts in Local mode. In Local mode, the app runs chat only on an
+      on-device model, and a new install has no on-device model.</p>
+    <p>Before you send the first message, do one of these steps:</p>
+    <ul>
+      <li>Install an on-device model in <b>Settings &rarr; Chat and models &rarr; Models &rarr;
+        Discover</b>.</li>
+      <li>Set <b>Settings &rarr; Model mode</b> to Hybrid or Cloud. Then make sure that the AWS
+        connection operates (see <a href="first-run.html">First run &amp; verify</a>).</li>
+    </ul>
     <ol class="steps">
       <li>
         <h4>Type in the composer</h4>
-        <p>Click the input box (it reads <em>Fix a bug, build a feature, ask anything...</em>) and
-          write a question. The box grows as you type and scrolls once it gets tall.</p>
+        <p>Click the input box. The box shows the text <em>"Fix a bug, build a feature, ask
+          anything..."</em>. Type a question. The box becomes taller for long text.</p>
       </li>
       <li>
         <h4>Press Enter to send</h4>
-        <p><kbd>Enter</kbd> sends the message. <kbd>Shift</kbd>+<kbd>Enter</kbd> inserts a newline so
-          you can write multiple paragraphs before sending. <kbd>Cmd</kbd>+<kbd>Enter</kbd> always
-          sends, even while an autocomplete popup is open. You can also click the paper-plane
-          <b>Send</b> button.</p>
+        <p>Press <kbd>Enter</kbd> to send the message. To add a new line, press
+          <kbd>Shift</kbd>+<kbd>Enter</kbd>. <kbd>Cmd</kbd>+<kbd>Enter</kbd> sends the message also
+          when an autocomplete menu is open. You can also click the paper-plane <b>Send</b>
+          button.</p>
       </li>
       <li>
-        <h4>Watch the answer stream</h4>
-        <p>The reply arrives token by token rather than all at once. While it streams, the Send button
-          becomes a square <b>Stop</b> button. Click it (or press <kbd>Esc</kbd>) to end the turn
-          early.</p>
+        <h4>Read the answer stream</h4>
+        <p>The answer comes in small parts. During the stream, the Send button changes to a square
+          <b>Stop</b> button. To stop the turn, click <b>Stop</b> or press <kbd>Esc</kbd>.</p>
       </li>
       <li>
-        <h4>Ask a follow-up</h4>
-        <p>Type again and send. Whisper Studio re-sends the earlier messages as context, so the model
-          remembers what you already discussed. The conversation is saved automatically and appears in
-          the left sidebar, where you can rename it, search it, or return to it later.</p>
+        <h4>Ask a follow-up question</h4>
+        <p>Type a new message and send it. The app sends the earlier messages to the model as
+          context. The app saves the conversation, and the left sidebar shows it. In the sidebar, you
+          can rename, find, or open the conversation again.</p>
       </li>
     </ol>
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
-      <div class="callout__body"><p>Prefer talking? The composer has two ways. The <b>microphone</b>
-        dictates into the input box, and you can send hands-free by ending with a spoken phrase like
-        <em>"send now"</em> or <em>"okay send"</em>. The <b>waveform</b> button beside it starts a real
-        spoken conversation instead. See <a href="tut-voice.html">Voice &amp; meetings</a> for
-        dictation and recording, and <a href="tut-voice-mode.html">Voice conversations</a> for
-        talking.</p></div>
+      <div class="callout__body"><p>The composer has two voice controls. The <b>microphone</b>
+        writes your speech into the input box. To send the text, say a phrase such as
+        <em>"send now"</em> or <em>"okay send"</em> at the end. The <b>waveform</b> button starts a
+        spoken conversation. For dictation and recordings, see <a href="tut-voice.html">Voice &amp;
+        meetings</a>. For spoken conversations, see <a href="tut-voice-mode.html">Voice
+        conversations</a>.</p></div>
     </div>
 
-    <h2 id="mid-turn">You can keep typing while it works</h2>
-    <p>You do not have to wait for an answer before you add something. If you send a message while a
-      turn streams, the app adds it <b>to that turn</b>. The app does not block the message or start a
-      second conversation. A short notice tells you that the app added it: <em>"Added to the running
-      turn. The assistant reads it right away while it is still thinking, else after its current step,
-      and answers it below your message."</em> Use it to correct the work ("actually, use the staging
-      config"), to add a limit, or to answer a question from the assistant.</p>
-    <p>The app shows your message below the answer, with a dashed border and the label "Queued". When
-      the server adds the message to the model input, the app moves the message to that point in the
-      conversation. If the model did not start its answer, the server stops that step and starts it
-      again with your message. The app removes the reasoning text of the stopped step, and you get one
-      answer. If the model started its answer, that answer completes. The app then shows the answer to
-      your message in a new bubble below your message.</p>
-    <p>It is deliberately all-or-nothing. If the turn finished in the moment between your pressing
-      Enter and the message arriving, nothing is sent and your text stays in the composer, with a
-      notice saying so, so you can send it again as a fresh message. You never get a silently lost
-      message or a surprise second answer.</p>
+    <h2 id="mid-turn">Add a message to a turn that runs</h2>
+    <p>You can send a message before the answer is complete. During a turn, the input box shows
+      <em>"Add to the running turn..."</em>. The app adds your message to the turn that runs. The app
+      does not start a second conversation. A notice shows: <em>"Added to the running turn. The
+      assistant reads it right away while it is still thinking, else after its current step, and
+      answers it below your message."</em> Use this function to correct the work, to add a limit, or
+      to answer a question from the assistant.</p>
+    <p>The app shows your message below the answer, with a dashed border and the label "Queued".
+      When the server adds the message to the model input, the app moves the message to that
+      position in the conversation. If the model did not start its answer, the server stops that step.
+      Then the server starts the step again with your message, and you get one answer. If the model
+      started its answer, that answer completes. Then the app shows the answer to your message in a
+      new bubble below your message.</p>
+    <p>If the turn ends before the server gets your message, the server does not add it. A notice
+      that starts with <em>"Not delivered"</em> tells you this. Send the text again as a new
+      message.</p>
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
-      <div class="callout__body"><p>Attachments are for starting a turn, not steering one: a file you
-        attach while an answer is streaming is not carried into the running turn. Send the file with a
-        fresh message once the turn ends.</p></div>
+      <div class="callout__body"><p>The app does not add an attachment to a turn that runs. Send
+        the file with a new message after the turn ends.</p></div>
     </div>
 
-    <h2 id="stopping">Stopping a turn keeps what you saw</h2>
-    <p>Click <b>Stop</b> (or press <kbd>Esc</kbd>) and the turn ends immediately, but nothing on
-      screen is thrown away. The partial answer is committed to the transcript with a
-      <em>(Stopped)</em> marker, every tool step shown so far is kept (a step still running is frozen
-      as stopped rather than spinning forever), and any live agent row is closed in place. The turn is
-      still in your history, so you can read what it had done and pick up from there.</p>
-    <p>Stop also reaches past the visible answer: it stops every subagent this session started and the
-      background shell tasks it spawned. Other sessions keep streaming; only the one you are looking at
-      is stopped. If a turn had produced nothing at all yet, nothing is appended.</p>
+    <h2 id="stopping">Stop a turn</h2>
+    <p>When you click <b>Stop</b> or press <kbd>Esc</kbd>, the turn stops immediately. The app keeps
+      the text that you saw. The partial answer stays in the conversation with a
+      <em>(Stopped)</em> marker. The app keeps each tool step that it showed, and marks an incomplete
+      step as stopped. The turn stays in your history.</p>
+    <p>Stop also stops the shell commands that this turn started, and the <code>/subagent</code>
+      runs of this session. Turns in other sessions continue. If the turn did not make text or tool
+      steps, the app adds nothing to the conversation.</p>
 
-    <h2 id="switch-models">Switch models mid-conversation</h2>
-    <p>The model that answers is shown in the chip on the left of the toolbar under the composer. Click
-      it to pick a different one at any time. The conversation continues with the new model on your
-      next message, keeping all its history.</p>
-    <p>The models that ship in the catalog:</p>
+    <h2 id="switch-models">Change the model during a conversation</h2>
+    <p>The <b>How it thinks</b> control below the composer shows the model, the thinking level, and
+      the answer length. Click it to open its panel. The panel has these rows:</p>
     <div class="table-wrap"><table>
-      <thead><tr><th>Family</th><th>Models</th><th>Reach for them when</th></tr></thead>
+      <thead><tr><th>Row</th><th>What it sets</th></tr></thead>
       <tbody>
-        <tr><td>Claude</td><td>Haiku 4.5, Sonnet 5.5, Opus 5.5</td><td>Haiku is fastest and cheapest for quick questions; Opus goes deepest on hard, multi-step work; Sonnet sits in between.</td></tr>
-        <tr><td>Fable</td><td>Fable 5.1</td><td>Same depth as Opus, behind a one-time data-retention consent screen.</td></tr>
-        <tr><td>GPT (on Amazon Bedrock)</td><td>GPT-6 Astra, GPT-6 Luna, GPT-6.1 Sol</td><td>A second opinion, or when you prefer their style. Routed through the OpenAI-on-Bedrock path. GPT-6 Luna is the shipped default.</td></tr>
-        <tr><td>On-device</td><td>whatever you installed</td><td>Offline work and zero cost per turn. A fresh install ships none; add them from <b>Settings &rarr; Models &rarr; Discover</b>.</td></tr>
+        <tr><td><b>Model</b></td><td>The model that answers. The next message uses the new model with the full history.</td></tr>
+        <tr><td><b>Thinking</b></td><td>The thinking level of the model. A model without levels shows "This model has no thinking levels".</td></tr>
+        <tr><td><b>Answers</b></td><td>The answer length: Brief, Normal, or Detailed. This row is not available for an on-device model.</td></tr>
+        <tr><td><b>Context</b></td><td>The context window of an on-device model. Only an on-device model shows this row.</td></tr>
       </tbody>
     </table></div>
-    <p>Your own list can differ: you can hide shipped models or add your own, so the chip shows what
-      your configuration exposes. If you would rather keep your hands on the keyboard, type a slash
-      command instead:</p>
+    <p>The catalog contains these models:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Family</th><th>Models</th><th>Use</th></tr></thead>
+      <tbody>
+        <tr><td>Claude</td><td>Haiku 4.5, Sonnet 5.5, Opus 5.5</td><td>Haiku is the fastest model and has the lowest cost. Opus is the best model for difficult work with many steps. Sonnet is between the two.</td></tr>
+        <tr><td>Fable</td><td>Fable 5.1</td><td>The same depth as Opus. The app shows the data-retention consent screen each time that you select it.</td></tr>
+        <tr><td>GPT (on Amazon Bedrock)</td><td>GPT-6 Astra, GPT-6 Luna, GPT-6.1 Sol</td><td>A second opinion, or a different style of answer. In Cloud mode and Hybrid mode, GPT-6 Luna is the default model.</td></tr>
+        <tr><td>On-device</td><td>The models that you installed</td><td>Work without a network and with no cost for each turn. A new install has no on-device model. Install one in <b>Settings &rarr; Chat and models &rarr; Models &rarr; Discover</b>.</td></tr>
+      </tbody>
+    </table></div>
+    <p>Your model mode controls which models the picker shows. You can also hide models in your
+      configuration. To change the model from the keyboard, type a slash command:</p>
     <div class="code-block"><pre><code>/model haiku
 /model sonnet5.5
 /model opus5.5</code></pre></div>
-    <p>Type <code>/model</code> and a space to autocomplete against whatever is available: the picker
-      shows the version label (for example <em>Sonnet 5.5</em>) while inserting the short key
-      (<code>sonnet5.5</code>). See <a href="tut-model-modes.html">Model modes</a> for cloud, hybrid, and
-      on-device options, and <a href="arch-backends.html">Model backends &amp; modes</a> for how each
-      one is routed.</p>
+    <p>Type <code>/model</code> and a space to see the available models. The menu shows the version
+      label, for example <em>Sonnet 5.5</em>. The menu inserts the short key, for example
+      <code>sonnet5.5</code>. For cloud, hybrid, and on-device options, see
+      <a href="tut-model-modes.html">Model modes</a>. For the route of each model, see
+      <a href="arch-backends.html">Model backends &amp; modes</a>.</p>
 
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
-      <div class="callout__body"><p>Models badged <b>Mythos</b> in the picker (Fable 5.1)
-        require a one-time data-retention consent screen the first time you switch to them. Read it and
-        confirm to continue, or cancel to stay on your current model.</p></div>
+      <div class="callout__body"><p>Each time that you select a model with the <b>Mythos</b> badge
+        (Fable 5.1), the app shows the data-retention consent screen. Confirm to continue, or cancel to
+        keep your current model. When you select a different model again, the app asks if it must
+        disable data retention.</p></div>
     </div>
 
-    <h2 id="reasoning-depth">Set the reasoning depth</h2>
-    <p>Alongside the model there is an <b>Effort</b> chip that sets how much the model thinks before
-      it answers. Lower effort is quicker and cheaper; higher effort spends more time reasoning on
-      harder problems. Set it from the chip, or by command:</p>
+    <h2 id="reasoning-depth">Set the thinking level</h2>
+    <p>The <b>Thinking</b> row sets how much the model reasons before it answers. A low level gives
+      a fast answer at a low cost. A high level gives more time to difficult problems. Set the level
+      in the panel, or type a command:</p>
     <div class="code-block"><pre><code>/effort low
 /effort medium
 /effort high
 /effort max</code></pre></div>
-    <p>The full ladder is <code>none</code>, <code>low</code>, <code>medium</code>, <code>high</code>,
-      <code>extra</code>, <code>max</code>, <code>ultracode</code>, and the default is
-      <code>high</code>. Which rungs you actually get is per-model: the deepest models (Opus 5.5,
-      Sonnet 5.5, Fable 5.1) offer all of them, the GPT models skip <code>extra</code> but still
-      reach <code>ultracode</code>, and
-      Haiku and on-device models have no effort tiers at all, so the Effort and Response-length chips
-      are hidden while one of those is selected. Ask for a level the current model does not offer and
-      Whisper Studio clamps to the nearest lower one and tells you what it settled on. The composer
-      also accepts <code>/effort xhigh</code> as an alias for <em>Extra</em>. Type <code>/effort</code>
-      with no argument to see exactly which levels this model supports.</p>
-    <p><code>ultracode</code> is not just more thinking: it is a session mode that turns on workflow
-      orchestration on top of the model's deepest reasoning setting. See
+    <p>Each model has its own set of levels. The default level is <code>max</code>. This table
+      shows the levels of each model:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Models</th><th>Levels</th></tr></thead>
+      <tbody>
+        <tr><td>Opus 5.5, Sonnet 5.5, Fable 5.1</td><td>Low, Medium, High, Extra, Max, Ultracode</td></tr>
+        <tr><td>GPT-6 Astra, GPT-6 Luna, GPT-6.1 Sol</td><td>Low, Medium, High, Max, Ultracode</td></tr>
+        <tr><td>Haiku 4.5</td><td>No levels</td></tr>
+        <tr><td>On-device model that can think</td><td>Off, Low, Medium, High, Max (see <a href="tut-model-modes.html#thinking">Thinking levels</a>)</td></tr>
+      </tbody>
+    </table></div>
+    <p>On an on-device model, <code>/effort</code> sets the Thinking level, and
+      <code>/effort off</code> stops the thinking. If you ask for a level that the model does not
+      have, the app sets the nearest lower level. Then the app shows the level that it set. The
+      composer also accepts <code>/effort xhigh</code> as an alias for <em>Extra</em>. To see the
+      levels of the current model, type <code>/effort</code> with no argument.</p>
+    <p><code>ultracode</code> is more than a thinking level. It is a session mode. It uses the
+      highest level of the model and also enables workflow orchestration. See
       <a href="arch-ultracode.html">Ultracode workflows</a>.</p>
     <h2 id="slash-commands">Slash commands</h2>
-    <p>Type <code>/</code> at the start of the composer to open the command list. Keep typing to
-      filter, use <kbd>&uarr;</kbd>/<kbd>&darr;</kbd> to move, and press <kbd>Enter</kbd> or
-      <kbd>Tab</kbd> to accept. Slash commands run even while a previous answer is still streaming.
-      Here are the ones you will reach for first:</p>
+    <p>Type <code>/</code> at the start of the composer to open the command list. Type more letters
+      to filter the list. Use <kbd>&uarr;</kbd> and <kbd>&darr;</kbd> to move in the list. Press
+      <kbd>Enter</kbd> or <kbd>Tab</kbd> to select a command. Slash commands also operate during a
+      stream. This table shows the frequent commands:</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Command</th><th>What it does</th></tr></thead>
       <tbody>
-        <tr><td><code>/model &lt;key&gt;</code></td><td>Switch the chat model for the rest of the session (for example <code>/model haiku</code>).</td></tr>
-        <tr><td><code>/effort &lt;level&gt;</code></td><td>Set reasoning depth. Levels are per-model; an unavailable level clamps to the nearest lower one.</td></tr>
-        <tr><td><code>/plan</code></td><td>Toggle plan mode, a read-only mode where the model proposes a plan before it edits or runs anything. See <a href="tut-permissions.html">Permissions &amp; approvals</a>.</td></tr>
-        <tr><td><code>/verbosity &lt;level&gt;</code></td><td>Set the response length: <code>brief</code>, <code>normal</code>, or <code>detailed</code>. Mirrors the response-length control under the composer.</td></tr>
-        <tr><td><code>/btw &lt;question&gt;</code></td><td>Ask a side-channel question. The answer pops up on its own and does not enter the main transcript, so a quick aside never derails the conversation.</td></tr>
-        <tr><td><code>/goal &lt;text&gt;</code></td><td>Set a goal <em>and start working on it</em>. The goal text is sent as your next message, so you do not send it twice; if a turn is already running it is folded into that turn instead. The assistant keeps going until a completion gate judges the goal met. <code>/goal clear</code> ends it, and <code>/goal gate add &lt;command&gt;</code> names a shell command that must exit 0 first. See <a href="tut-goals.html">Goals &amp; autopilot</a>.</td></tr>
-        <tr><td><code>/subagent &lt;task&gt;</code></td><td>Spawn a one-shot subagent that works in the background with the full tool loop, streaming its progress into a card while you keep chatting. See <a href="tut-subagents.html">Sub-agents &amp; teams</a>.</td></tr>
-        <tr><td><code>/export</code></td><td>Download the whole conversation as a text file.</td></tr>
-        <tr><td><code>/clear</code></td><td>Wipe the visible chat. The saved session keeps its history; this only clears what is on screen.</td></tr>
-        <tr><td><code>/rename &lt;title&gt;</code></td><td>Give the current session a custom title in the sidebar.</td></tr>
-        <tr><td><code>/doctor</code></td><td>Run diagnostics and show the results (handy if chat is not responding). <code>/doctor context</code> rightsizes the system prompt instead.</td></tr>
-        <tr><td><code>/help</code></td><td>Open a dialog listing every command, grouped by category.</td></tr>
+        <tr><td><code>/model &lt;key&gt;</code></td><td>Changes the chat model for the session, for example <code>/model haiku</code>.</td></tr>
+        <tr><td><code>/effort &lt;level&gt;</code></td><td>Sets the thinking level. Each model has its own levels. A level that the model does not have changes to the nearest lower level.</td></tr>
+        <tr><td><code>/plan</code></td><td>Turns plan mode on or off. In plan mode, the model only reads and gives a plan before it changes or runs something. See <a href="tut-permissions.html">Permissions &amp; approvals</a>.</td></tr>
+        <tr><td><code>/verbosity &lt;level&gt;</code></td><td>Sets the answer length: <code>brief</code>, <code>normal</code>, or <code>detailed</code>. It sets the same value as the <b>Answers</b> row.</td></tr>
+        <tr><td><code>/goal &lt;text&gt;</code></td><td>Sets a goal and sends the goal text as your next message. If a turn runs, the app adds the text to that turn. The assistant continues until a completion gate accepts the goal. <code>/goal clear</code> ends the goal. <code>/goal gate add &lt;command&gt;</code> adds a shell command that must return exit code 0. See <a href="tut-goals.html">Goals &amp; autopilot</a>.</td></tr>
+        <tr><td><code>/subagent &lt;task&gt;</code></td><td>Starts a subagent for one task. The subagent operates in the background with all the tools, and a card shows its progress. See <a href="tut-subagents.html">Sub-agents &amp; teams</a>.</td></tr>
+        <tr><td><code>/export</code></td><td>Downloads the conversation as a text file.</td></tr>
+        <tr><td><code>/clear</code></td><td>Removes all the messages of this session from the screen and from the saved session. The session stays in the sidebar.</td></tr>
+        <tr><td><code>/rename &lt;title&gt;</code></td><td>Gives the current session a new title in the sidebar.</td></tr>
+        <tr><td><code>/doctor</code></td><td>Runs the diagnostic checks and shows the results. Use it when chat does not answer. <code>/doctor context</code> makes the system prompt smaller.</td></tr>
+        <tr><td><code>/help</code></td><td>Opens a dialog with all the commands in categories.</td></tr>
       </tbody>
     </table></div>
-    <p>There are more (<code>/workflow</code> and <code>/ci</code> for
-      <a href="arch-ultracode.html">workflows and CI</a>, plus <code>/memory</code>, <code>/theme</code>,
+    <p>The app has more commands: <code>/workflow</code> and <code>/ci</code> for
+      <a href="arch-ultracode.html">workflows and CI</a>, <code>/memory</code>, <code>/theme</code>,
       <code>/notify</code>, <code>/settings</code>, <code>/skills:</code>, <code>/workspace</code>, and
-      the <code>/file:</code> and <code>/mcp:</code> submenus). The full catalogue lives in
-      <a href="ref-slash-commands.html">Slash commands reference</a>, and <code>/help</code> shows the
-      live list from inside the app.</p>
+      the <code>/file:</code> and <code>/mcp:</code> menus. For the full list, see
+      <a href="ref-slash-commands.html">Slash commands reference</a>. In the app, <code>/help</code>
+      shows the current list.</p>
 
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
-      <div class="callout__body"><p><code>/clear</code> empties the on-screen conversation and cannot be
-        undone from the composer, but it does not delete the saved session. To keep a copy of a long
-        chat before clearing it, run <code>/export</code> first.</p></div>
+      <div class="callout__body"><p>Before you use <code>/clear</code>, run <code>/export</code> to
+        keep a copy. <code>/clear</code> also removes the messages from the saved session, and the
+        composer cannot restore them.</p></div>
     </div>
 
     <h2 id="attachments-and-mentions">Attachments and @ mentions</h2>
-    <p>You can bring context into a chat several ways. Drop files onto the composer (or use the
-      paperclip) to attach documents and images; Whisper Studio extracts their text and passes images
-      to the model as vision input. Then the <code>@</code> key opens a menu of context sources:</p>
+    <p>To attach documents and images, drop the files on the composer or click the paperclip. The
+      app extracts the text of each document. The app sends each image to the model as vision input.
+      The <code>@</code> key opens a menu of context sources:</p>
     <div class="table-wrap"><table>
-      <thead><tr><th>Mention</th><th>What it pulls in</th></tr></thead>
+      <thead><tr><th>Mention</th><th>What it adds</th></tr></thead>
       <tbody>
-        <tr><td><code>@file:</code></td><td>A specific file from the connected workspace. Also available as the <code>/file:</code> submenu.</td></tr>
-        <tr><td><code>@skills:</code></td><td>Runs a named skill for this message. A bare <code>@&lt;name&gt;</code> works too.</td></tr>
-        <tr><td><code>@mcp:</code></td><td>Browses the tools your connected MCP servers expose.</td></tr>
-        <tr><td><code>@index</code></td><td>Searches your indexed folders for this message and grounds the answer in the hits.</td></tr>
-        <tr><td><code>@docs</code></td><td>Answers strictly from this documentation, citing the pages it used.</td></tr>
+        <tr><td><code>@file:</code></td><td>One file from the connected workspace. The <code>/file:</code> menu does the same.</td></tr>
+        <tr><td><code>@skills:</code></td><td>Runs a named skill for this message. <code>@&lt;name&gt;</code> also operates.</td></tr>
+        <tr><td><code>@mcp:</code></td><td>Shows the tools of your connected MCP servers.</td></tr>
+        <tr><td><code>@index</code></td><td>Finds text in your indexed folders for this message. The answer uses the results.</td></tr>
+        <tr><td><code>@docs</code></td><td>Answers only from this documentation, and gives the pages that it used.</td></tr>
+        <tr><td><code>@&lt;session title&gt;</code></td><td>Adds the recent conversation of a different session to this message as context.</td></tr>
       </tbody>
     </table></div>
     <div class="cols-2">
-      <a class="card card--link" href="tut-documents.html"><h3>Working with documents</h3><p>Attach a contract, deck, or PDF and ask about it in plain language.</p></a>
-      <a class="card card--link" href="tut-workspace.html"><h3>The workspace IDE</h3><p>Connect a repo, then reference files with <code>@file:</code> and let Claude read and edit.</p></a>
+      <a class="card card--link" href="tut-documents.html"><h3>Working with documents</h3><p>Attach a contract, a deck, or a PDF and ask questions about it.</p></a>
+      <a class="card card--link" href="tut-workspace.html"><h3>The workspace IDE</h3><p>Connect a repository. Then refer to files with <code>@file:</code>, and let the assistant read and edit them.</p></a>
     </div>
 
     <h2 id="what-next">What next</h2>
-    <p>You now have the core loop: type, send, stream, steer mid-turn, stop when you have seen enough,
-      follow up, and adjust the "How it thinks" group (model, thinking, answers). From here, pick the workflow that fits what you
-      are doing.</p>
+    <p>You know the main procedure: type, send, read the stream, add text during a turn, stop, ask
+      again, and set the "How it thinks" control. Select the next tutorial for your work.</p>
     <div class="card-grid">
-      <a class="card card--link" href="tut-goals.html"><h3>Give it a goal</h3><p>Set a goal and let it run to completion instead of nudging "keep going", and know when a plain prompt is better.</p><span class="card__meta">Goals &amp; autopilot →</span></a>
-      <a class="card card--link" href="tut-voice-mode.html"><h3>Talk instead of type</h3><p>Hold a spoken conversation while the assistant uses the same tools as typed chat.</p><span class="card__meta">Voice conversations →</span></a>
-      <a class="card card--link" href="tut-sessions.html"><h3>Find an old conversation</h3><p>Search every past session by content, not just by title, and jump to the exact message.</p><span class="card__meta">Sessions &amp; history →</span></a>
-      <a class="card card--link" href="tut-permissions.html"><h3>Control what it can do</h3><p>Understand the Permissions capsule in the composer and the approval cards before you let it act.</p><span class="card__meta">Permissions &amp; approvals →</span></a>
+      <a class="card card--link" href="tut-goals.html"><h3>Give it a goal</h3><p>Set a goal, and let the assistant continue until the goal is complete. Learn when a plain prompt is better.</p><span class="card__meta">Goals &amp; autopilot →</span></a>
+      <a class="card card--link" href="tut-voice-mode.html"><h3>Talk instead of type</h3><p>Speak with the assistant. It uses the same tools as typed chat.</p><span class="card__meta">Voice conversations →</span></a>
+      <a class="card card--link" href="tut-sessions.html"><h3>Find an old conversation</h3><p>Find past sessions by title or by message content. The list shows the matched text.</p><span class="card__meta">Sessions: export &amp; fork →</span></a>
+      <a class="card card--link" href="tut-permissions.html"><h3>Control what it can do</h3><p>Learn the Permissions control in the composer and the approval cards before the assistant acts.</p><span class="card__meta">Permissions &amp; approvals →</span></a>
     </div>
 
     <div class="callout callout--tip">
@@ -235,7 +254,7 @@
       <div class="callout__body"><p><b>Related:</b> <a href="tut-voice-mode.html">Voice conversations</a>,
         <a href="tut-voice.html">Voice &amp; meetings</a>,
         <a href="tut-documents.html">Working with documents</a>,
-        <a href="tut-permissions.html">Permissions &amp; approvals</a>, and the architecture deep-dive
+        <a href="tut-permissions.html">Permissions &amp; approvals</a>, and the architecture page
         <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a>.</p></div>
     </div>
   </main>

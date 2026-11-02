@@ -9,7 +9,7 @@ teams) and are dispatched by server/tool_router.py.
 
 CONFIG_GET_TOOL = {
     "name": "config_get",
-    "description": "Read one or more Whisper Studio config values (e.g. model, region, brief_mode). Call with no keys to list all.",
+    "description": "Read one or more Whisper Studio config values (e.g. default_chat_model, bedrock_region, permission_mode). Call with no keys to list all.",
     "input_schema": {
         "type": "object",
         "properties": {
@@ -28,7 +28,7 @@ CONFIG_SET_TOOL = {
     "description": (
         "Write Whisper Studio config values. Any key in the server DEFAULTS is "
         'accepted; unknown keys are ignored and returned under "ignored". Common '
-        "keys: bedrock_region, default_chat_model, brief_mode, "
+        "keys: bedrock_region, default_chat_model, "
         "permission_mode, plus config-only settings with no UI: auto_mode_allow, "
         "auto_mode_soft_deny, auto_mode_environment, permission_explainer_enabled, "
         "cron_timezone."
@@ -296,7 +296,7 @@ SPAWN_AGENT_TOOL = {
         "Spawn an independent agent to handle a subtask with full tool access. "
         "The agent runs a complete tool loop and returns results. Agent types:\n"
         "- general: Full tool access, good for implementation tasks\n"
-        "- explore: Read-only, uses fast model — best for code search and analysis\n"
+        "- explore: Read-only, for code search and analysis\n"
         "- plan: Read-only — produces structured implementation plans\n"
         "- verify: Runs tests and checks, returns PASS/FAIL/PARTIAL verdict\n"
         "- coordinator: Orchestrates other agents, no direct file access\n"
@@ -580,9 +580,8 @@ TEAM_CREATE_TOOL = {
                     "required": ["name", "task"],
                 },
             },
-            "session_id": {"type": "string", "description": "Current session ID"},
         },
-        "required": ["team_name", "agents", "session_id"],
+        "required": ["team_name", "agents"],
     },
 }
 

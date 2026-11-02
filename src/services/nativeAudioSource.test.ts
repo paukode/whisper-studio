@@ -29,7 +29,7 @@ function encodeInt16(samples: number[]): string {
 let posted: unknown[] = [];
 
 function installFakeBridge(available = true): void {
-  window.__WHISPER_NATIVE_AUDIO = { platform: 'macos', available };
+  window.__WHISPER_NATIVE_AUDIO = { available };
   window.webkit = {
     messageHandlers: {
       nativeAudio: {
@@ -163,8 +163,8 @@ describe('startNativeCapture / stopNativeCapture', () => {
     expect(frames[0][1]).toBeCloseTo(-0.5, 5);
   });
 
-  it('passes the shell rms through to onAudio, and omits it when absent', async () => {
-    const levels: (number | undefined)[] = [];
+  it('passes the shell rms through to onAudio, and reads a missing rms as 0', async () => {
+    const levels: number[] = [];
     const promise = startNativeCapture(-1, {
       onAudio: (_samples, rms) => levels.push(rms),
       onError: vi.fn(),
@@ -172,8 +172,8 @@ describe('startNativeCapture / stopNativeCapture', () => {
     native().onStarted();
     await promise;
     native().onAudio(encodeInt16([16384]), 1, 0.25);
-    native().onAudio(encodeInt16([16384]), 1); // old shell: no rms argument
-    expect(levels).toEqual([0.25, undefined]);
+    native().onAudio(encodeInt16([16384]), 1); // no rms argument: level 0
+    expect(levels).toEqual([0.25, 0]);
   });
 
   it('routes onWarning to the handler without ending the capture', async () => {

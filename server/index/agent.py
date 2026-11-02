@@ -46,26 +46,35 @@ def _agent_log_path() -> str:
 
 # ── app-running detection (PID file written by the server lifespan) ──────────
 def mark_app_running() -> None:
-    try:
-        os.makedirs(_STORAGE, exist_ok=True)
-        with open(_PID_PATH, "w") as f:
-            f.write(str(os.getpid()))
-    except Exception:  # noqa: BLE001
-        pass
+    """Write the PID file atomically, so the worker never reads it half written."""
+    os.makedirs(_STORAGE, exist_ok=True)
+    tmp = f"{_PID_PATH}.{os.getpid()}.tmp"
+    with open(tmp, "w") as f:
+        f.write(str(os.getpid()))
+    os.replace(tmp, _PID_PATH)
 
 
 def mark_app_stopped() -> None:
     try:
         os.remove(_PID_PATH)
-    except Exception:  # noqa: BLE001
+    except FileNotFoundError:
         pass
 
 
 def _app_running() -> bool:
     try:
         with open(_PID_PATH) as f:
-            pid = int(f.read().strip())
-    except Exception:  # noqa: BLE001
+            raw = f.read().strip()
+    except FileNotFoundError:
+        return False
+    try:
+        pid = int(raw)
+    except ValueError:
+        log.error(
+            "Index agent: the app PID file %s is unreadable (%r); treating the app as not running.",
+            _PID_PATH,
+            raw[:40],
+        )
         return False
     try:
         os.kill(pid, 0)
@@ -75,27 +84,31 @@ def _app_running() -> bool:
 
 
 # ── which folders want background refresh, and at which hours ─────────────────
-def _opted_in_workspaces() -> list[str]:
-    out = []
+def _opted_in_settings() -> tuple[dict[str, dict], dict[str, str]]:
+    """Settings of the folders that opted in, and the folders whose settings
+    could not be read (path to error). One unreadable folder (a corrupt or
+    locked index DB) is left out and logged by name; it never stops the
+    other folders from being registered."""
+    opted: dict[str, dict] = {}
+    unreadable: dict[str, str] = {}
     for ws in store.list_indexed_workspaces():
         try:
             s = wssettings.get_settings(ws)
-        except Exception:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001 - reported per folder below
+            unreadable[ws] = str(e)
+            log.error(
+                "Index agent: the settings of %s could not be read, so it is left out: %s", ws, e
+            )
             continue
         if s["refresh_when_closed"] and s["schedule"]["enabled"]:
-            out.append(ws)
-    return out
+            opted[ws] = s
+    return opted, unreadable
 
 
-def _wake_intervals() -> list[dict]:
+def _wake_intervals(opted: dict[str, dict]) -> list[dict]:
     """Distinct wake hours across opted-in folders, as launchd calendar entries.
     Wakes daily at each hour; the worker's cadence check gates weekly/every-N."""
-    hours = set()
-    for ws in _opted_in_workspaces():
-        try:
-            hours.add(int(wssettings.get_settings(ws)["schedule"]["hour"]))
-        except Exception:  # noqa: BLE001
-            pass
+    hours = {int(s["schedule"]["hour"]) for s in opted.values()}
     return [{"Hour": h, "Minute": 0} for h in sorted(hours)]
 
 
@@ -161,33 +174,34 @@ def uninstall() -> dict:
         _launchctl("unload", _PLIST_PATH)
         try:
             os.remove(_PLIST_PATH)
-        except Exception:  # noqa: BLE001
+        except FileNotFoundError:
             pass
         log.info("Index refresh agent removed")
-    return {"installed": False, "supported": sys.platform == "darwin"}
+    return {"installed": False}
 
 
 def sync() -> dict:
     """Install/refresh the agent if any folder opted in (wake at their hours), or
-    remove it if none did. Called whenever a workspace's settings change. macOS
-    only. Rewrites the plist only when its content differs from what we'd
+    remove it if none did. Called whenever a workspace's settings change.
+    Rewrites the plist only when its content differs from what we'd
     write now, so a stale registration (moved app, new interpreter, changed
-    WHISPER_HOME) self-heals without churning launchctl on every call."""
-    if sys.platform != "darwin":
-        return {"installed": False, "supported": False}
-    intervals = _wake_intervals()
+    WHISPER_HOME) self-heals without churning launchctl on every call.
+    ``unreadable`` names the folders left out because their settings could
+    not be read."""
+    opted, unreadable = _opted_in_settings()
+    intervals = _wake_intervals(opted)
     if not intervals:
-        return uninstall()
+        return {**uninstall(), "unreadable": unreadable}
     if _plist_stale(intervals):
         _write_and_load(intervals)
-    return {"installed": True, "supported": True}
+    return {"installed": True, "unreadable": unreadable}
 
 
 def heal_if_stale() -> None:
     """Startup self-heal: if an agent is registered but its plist no longer
     matches what we'd write (the app moved, was updated, or the app home
     changed), re-register it. No-op when nothing is installed. Best-effort."""
-    if sys.platform != "darwin" or not is_installed():
+    if not is_installed():
         return
     try:
         sync()
@@ -201,10 +215,6 @@ def regenerate() -> None:
         sync()
     except Exception as e:  # noqa: BLE001
         log.warning("Index agent sync failed: %s", e)
-
-
-def status() -> dict:
-    return {"installed": is_installed(), "supported": sys.platform == "darwin"}
 
 
 # ── the worker (run by launchd) ──────────────────────────────────────────────
@@ -250,7 +260,7 @@ def run() -> int:
             # Only touch folders with an index under the ACTIVE embed backend; a
             # store.get_meta() read below opens (and would fabricate) that backend's
             # db, so skip folders indexed only under the other embedder.
-            if not store.has_index(ws):
+            if not paths.is_indexed(ws):
                 continue
             s = wssettings.get_settings(ws)
             if not (s["refresh_when_closed"] and s["schedule"]["enabled"]):
@@ -271,17 +281,12 @@ def run() -> int:
 
 
 if __name__ == "__main__":
-    import argparse
+    # launchd starts this worker on its own, not through server/main.py, so it
+    # makes the same platform check first: refuse (fail closed) on anything but
+    # macOS on Apple silicon, before any action or the heavy index imports run.
+    from server.infrastructure.platform_guard import require_macos_arm64
+
+    require_macos_arm64()
 
     logging.basicConfig(level=logging.INFO)
-    parser = argparse.ArgumentParser(prog="server.index.agent")
-    parser.add_argument("action", choices=["sync", "uninstall", "status", "run"])
-    action = parser.parse_args().action
-    if action == "sync":
-        print(sync())
-    elif action == "uninstall":
-        print(uninstall())
-    elif action == "status":
-        print(status())
-    else:
-        sys.exit(run())
+    sys.exit(run())

@@ -5,7 +5,7 @@ import { useUIStore } from '@/stores/uiStore';
 /**
  * useChatInputMic — push-to-talk style microphone capture for the chat input.
  *
- * Independent of the meeting transcription pipeline (Header.tsx /
+ * Independent of the meeting transcription pipeline (recordingController /
  * useRecordingStore). Opens its own WebSocket to /ws, captures mic audio via
  * the existing pcm-processor AudioWorklet, streams PCM16 chunks, and invokes
  * `onTranscript` for every transcript message the server emits.
@@ -14,14 +14,11 @@ import { useUIStore } from '@/stores/uiStore';
  * AudioContext, fully torn down on stop().
  */
 export interface UseChatInputMicOptions {
-  /** Called with each transcript fragment as it arrives from the server. */
   /** Called for each transcript update. `isFinal` is false for the live,
    *  word-by-word interim draft (replaces the prior draft) and true for a
    *  settled sentence (commit it). Mirrors the meeting recorder's
    *  interim/transcript split so dictation reveals word-by-word. */
   onTranscript: (text: string, isFinal: boolean) => void;
-  /** Called when an unrecoverable error occurs (e.g. mic permission denied). */
-  onError?: (err: Error) => void;
   /** Optional session id — when set, server keeps speaker profiles in
    *  the per-session bucket so reconnects don't lose voice memory. */
   sessionId?: string | null;
@@ -45,7 +42,7 @@ const CHUNK_SECONDS = 0.5;
 const CHUNK_SAMPLES = Math.round(CHUNK_SECONDS * SAMPLE_RATE);
 
 export function useChatInputMic(opts: UseChatInputMicOptions): UseChatInputMicResult {
-  const { onTranscript, onError, sessionId } = opts;
+  const { onTranscript, sessionId } = opts;
 
   const [isRecording, setIsRecording] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
@@ -245,8 +242,8 @@ export function useChatInputMic(opts: UseChatInputMicOptions): UseChatInputMicRe
       if (cancelled()) { teardown(); return; }
 
       // BASE_URL resolves correctly in both dev (Vite serves /public
-      // at '/') and prod ('/static/dist/'). See Header.tsx for the
-      // same fix and the SPA-fallback bug it works around.
+      // at '/') and prod ('/static/dist/'). services/recordingController.ts
+      // loads the worklet the same way.
       await ctx.audioWorklet.addModule(`${import.meta.env.BASE_URL}pcm-processor.js`);
 
       // Cancelled while loading the worklet module — release the mic + socket.
@@ -275,12 +272,11 @@ export function useChatInputMic(opts: UseChatInputMicOptions): UseChatInputMicRe
       if (cancelled()) { teardown(); return; }
       const e = err instanceof Error ? err : new Error(String(err));
       setError(e.message);
-      onError?.(e);
       teardown();
       setIsConnecting(false);
       setIsRecording(false);
     }
-  }, [isRecording, isConnecting, flushPcm, teardown, onError, sessionId]);
+  }, [isRecording, isConnecting, flushPcm, teardown, sessionId]);
 
   const toggle = useCallback(() => {
     if (isRecording || isConnecting) stop();

@@ -9,8 +9,8 @@ import os
 
 from server.infrastructure.paths import models_root
 
-# Local model directories — weights cached under the app-home models/ dir like
-# whisper/parakeet, downloaded at setup. Sentinels are the real weight/config
+# Local model directories: weights download into models_root() on first use or
+# from Settings > Models, like whisper/parakeet. Sentinels are the real weight/config
 # files (verified against the repo layout) so the "already present" check can't
 # drift.
 MODELS_DIR = models_root()
@@ -69,15 +69,15 @@ COHERE_EMBED_DIM = int(
 EMBED_DIMS = {"qwen3": EMBED_DIM, "cohere": COHERE_EMBED_DIM}
 
 
-def dim_for_backend(backend: str | None) -> int:
-    """Embedding vector width for an embed backend (defaults to the Qwen3 dim)."""
-    return EMBED_DIMS.get(backend or "qwen3", EMBED_DIM)
+def dim_for_backend(backend: str) -> int:
+    """Embedding vector width for an embed backend."""
+    return EMBED_DIMS[backend]
 
 
 # ── GLiNER (zero-shot NER → knowledge-graph nodes) ───────────────────────────
 # gliner_large-v2.5 (gliner-community, Apache-2.0). ~2x the params of a -medium
 # build, so per-chunk CPU latency rises; override to a *-medium-v2.5 build via
-# the env var if latency-bound. On first index it downloads into ./models.
+# the env var if latency-bound. It downloads into models_root() on first use.
 GLINER_MODEL = os.environ.get("WHISPER_INDEX_GLINER_MODEL", "gliner-community/gliner_large-v2.5")
 # GLiNER2 model id (fastino), used when a workspace selects ner_model="gliner2".
 # large-v1 is the English-strongest tier; -base-v1 (205M) is faster, -multi-v1 is
@@ -131,7 +131,6 @@ _CODE_LABELS = [
     "location",
 ]
 ENTITY_PROFILES = {"business": _BUSINESS_LABELS, "code": _CODE_LABELS}
-DEFAULT_ENTITY_PROFILE = os.environ.get("WHISPER_INDEX_ENTITY_PROFILE", "business")
 
 # Source-code file extensions -> the "code" entity profile. Every other file
 # (docs, notes, transcripts, markdown) uses "business". Picked automatically per
@@ -182,15 +181,10 @@ def profile_for_ext(ext: str) -> str:
     return "code" if (ext or "").lower() in CODE_EXTENSIONS else "business"
 
 
-def labels_for_profile(profile: str | None) -> list[str]:
-    """Entity label set for an entity profile (defaults to business)."""
-    return ENTITY_PROFILES.get(profile or DEFAULT_ENTITY_PROFILE, _BUSINESS_LABELS)
+def labels_for_profile(profile: str) -> list[str]:
+    """Entity label set for an entity profile."""
+    return ENTITY_PROFILES[profile]
 
-
-# ``ENTITY_LABELS`` stays as the union of both profiles so any label a past index
-# stored still round-trips through the label-canonicalization map, and code that
-# imports it keeps working. New extraction uses the per-workspace profile.
-ENTITY_LABELS = _CODE_LABELS + [lbl for lbl in _BUSINESS_LABELS if lbl not in _CODE_LABELS]
 
 # GLiNER is *called* at a permissive floor so recall stays high (especially on
 # Polish text, where span confidences run lower); junk is removed downstream by
@@ -260,9 +254,6 @@ GROUND_REL_FLOOR = float(os.environ.get("WHISPER_INDEX_GROUND_REL_FLOOR", 0.55))
 GROUND_ON_TOPIC_FLOORS = {"qwen3": 0.40, "cohere": 0.28}
 
 # ── FTS5 keyword index ───────────────────────────────────────────────────────
-# Bumped when the fts_chunks tokenizer changes so the derived table is dropped
-# and rebuilt (v2 folds diacritics: ą/ę/ó/ś/ż match their ASCII forms in PL text).
-FTS_SCHEMA_VER = 2
 # Polish stopwords, merged with the English set in the store's keyword leg so a
 # chunk sharing only "i"/"w"/"jest" with a Polish query isn't a keyword hit.
 PL_STOPWORDS = frozenset(
@@ -317,9 +308,9 @@ PL_STOPWORDS = frozenset(
 
 # ── Typed relationships (optional, OFF by default) ───────────────────────────
 # When enabled, each changed file's text + its GLiNER entities are sent to an
-# LLM to extract typed entity↔entity relations (works_at, cites, depends_on, …).
-# Adds one LLM call per changed file at index time (Bedrock Haiku on the cloud
-# build). GLiNER co-occurrence edges remain the default graph either way.
+# LLM to extract typed entity-to-entity relations (works_at, depends_on, ...).
+# Adds one LLM call per changed file at index time (Haiku or an on-device model,
+# per the folder's engine). Shared-entity file edges remain the default graph.
 # The on/off switch is per-workspace, in the "typed_relations" section of
 # wssettings.get_settings(ws) ({"enabled", "engine"}). It is persisted in the
 # index meta table and updated via PUT /api/workspace/index/settings. Only the

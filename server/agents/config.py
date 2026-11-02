@@ -74,6 +74,8 @@ WRITE_TOOLS = frozenset(
         "git_push_pr",
         "git_delete_branch",
         "git_clone",
+        "github",
+        "github_api_write",
         "notify_user",
         "memory_write",
         "memory_delete",
@@ -193,10 +195,7 @@ class AgentConfig:
             server/agents/custom_config.py). Every built-in AGENT_TYPES entry
             leaves this None. NOT consulted by model resolution: the model is
             always the session-selected one (run_agent's model_id_override or
-            the config default) so a whole agent tree stays on one model (see
-            _handle_spawn_agent); wiring a per-type override is a possible
-            follow-up, deliberately left inert here to avoid guessing whether
-            it should be a chat_models catalog key or a raw provider id.
+            the config default) so a whole agent tree stays on one model.
         internal: True for a preset the app runs for itself (the memory
             agents), never a type the user or the model spawns. It keeps its
             own small round cap instead of the Settings round limit: a
@@ -322,28 +321,31 @@ AGENT_TYPES: dict[str, AgentConfig] = {
 def _resolve_base_config(agent_type: str) -> AgentConfig:
     """Resolve the preset for a type name, before its limits are filled in.
 
-    Checks, in order: an ephemeral type registered this process (Part 2 —
-    server/agents/custom_config.py:register_ephemeral_type), a persistent
-    custom type file under .whisper/agents/ (Part 1), then the built-in
-    AGENT_TYPES table. Falls back to "general" only when NONE of those know
-    the name — the historical behavior for an unrecognized agent_type string.
+    Checks, in order: an ephemeral type registered this process
+    (server/agents/custom_config.py:register_ephemeral_type), a persistent
+    custom type file under .whisper/agents/, then the built-in AGENT_TYPES
+    table. A name none of them knows raises UnknownAgentType: the run fails
+    instead of starting as another type with other tools.
 
     Lazily imports custom_config (rather than importing it at module level)
     to avoid a circular import: custom_config.py imports AgentConfig and
     _is_write_tool from this module at its own top level.
     """
-    try:
-        from server.agents.custom_config import get_ephemeral_type, load_custom_agent_types
+    from server.agents.custom_config import get_ephemeral_type, load_custom_agent_types
 
-        ephemeral = get_ephemeral_type(agent_type)
-        if ephemeral is not None:
-            return ephemeral
-        custom = load_custom_agent_types()
-        if agent_type in custom:
-            return custom[agent_type]
-    except Exception as e:  # never let a malformed custom file break agent spawning
-        log.warning("custom agent type lookup failed for %r: %s", agent_type, e)
-    return AGENT_TYPES.get(agent_type, AGENT_TYPES["general"])
+    ephemeral = get_ephemeral_type(agent_type)
+    if ephemeral is not None:
+        return ephemeral
+    custom = load_custom_agent_types()
+    if agent_type in custom:
+        return custom[agent_type]
+    if agent_type in AGENT_TYPES:
+        return AGENT_TYPES[agent_type]
+    raise UnknownAgentType(f"unknown agent type {agent_type!r}")
+
+
+class UnknownAgentType(ValueError):
+    """No ephemeral, custom or built-in agent type has this name."""
 
 
 def get_agent_config(agent_type: str) -> AgentConfig:

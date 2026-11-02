@@ -1,12 +1,11 @@
-"""``run_headless_turn`` — a Python-callable, non-streaming primitive over the
+"""``run_headless_turn``, a Python-callable, non-streaming primitive over the
 shared agentic turn engine (server.chat.engine.runner.run_turn).
 
-This is the internal equivalent of what a future ``codex exec``-style CLI or
-SDK would wrap: BACKEND code (a future terminal-panel helper, an internal
-script) drives one turn to completion with no human attending it and no HTTP
-client involved. There is deliberately no network route here — this module is
-imported and awaited directly, the same way server/agents/runtime.py's
-run_agent() is called in-process today.
+Backend code drives one turn to completion with no HTTP client involved:
+voice delegation (server/voice/tools.py, an attended run) and the
+agent-report wake (server/agents/wake.py). There is no network route here;
+this module is imported and awaited directly, the same way
+server/agents/runtime.py's run_agent() is called in-process.
 
 It mirrors server/agents/runtime.py's ``_run_agent_loop`` almost exactly: the
 same ``unattended=True`` + fresh ``turn_scope_id`` + ``tool_catalog`` closure
@@ -19,14 +18,14 @@ Two differences from ``_run_agent_loop``, both deliberate:
 
   - The tool catalog is the same core+activated pool interactive chat gets
     via progressive tool disclosure (``assemble_partitioned_pool``, built
-    ONCE here rather than reassembled per round) — no ``filter_tools_for_agent``
+    ONCE here rather than reassembled per round), no ``filter_tools_for_agent``
     narrowing and no ``get_agent_runtime_tools`` (spawn_agent/send_message/
     complete_coordination): those are agent-hierarchy concepts a standalone
     headless run has no use for.
   - On-device (``local:...``) models are refused outright rather than wired
     up: the structured-output distillation (``distill_run_output``) goes
-    through the OLD ``server.agents.providers.get_adapter``, which has no
-    local branch: the exact reason ``_resolve_agent_model`` already excludes
+    through ``server.agents.providers.get_adapter``, which has no local
+    branch: the exact reason ``_resolve_agent_model`` already excludes
     local candidates from its own fallback chain. Full local support
     additionally needs the llama-server cold-start dance (see
     server/local/route.py) and capability probing
@@ -36,18 +35,18 @@ Two differences from ``_run_agent_loop``, both deliberate:
 Event vocabulary
 -----------------
 ``run_headless_turn`` is an async generator yielding a small, STABLE dict
-vocabulary — this function's OWN contract, deliberately distinct from
+vocabulary, this function's OWN contract, deliberately distinct from
 runner.py's pinned internal SSE frames (see that module's docstring on
 golden-fixture pinning; those frames can reshape independently of this one):
 
     {"type": "text", "text": str}
         One flushed chunk of assistant text for a completed round (buffered
-        per round, exactly like _run_agent_loop's own "text" progress event —
+        per round, exactly like _run_agent_loop's own "text" progress event,
         not one per streamed delta). A ``notify_user`` tool call is folded in
         here too (its message text), mirroring how _run_agent_loop's
         ``_finalize`` merges notify_user into the agent's returned output.
     {"type": "tool_call", "name": str, "input": dict}
-        A tool the model invoked, with its full (model-visible) input —
+        A tool the model invoked, with its full (model-visible) input,
         unlike _run_agent_loop's progress events this is not preview-
         truncated, since the consumer here is code, not a UI card.
     {"type": "tool_result", "name": str, "output": str, "status": "ok" | "error"}
@@ -67,7 +66,7 @@ golden-fixture pinning; those frames can reshape independently of this one):
         Cumulative usage totals as of the latest completed round, with the
         cost the engine priced round by round (each at its own tier). Emitted
         once per round, and once more at the end if ``output_schema`` added
-        an extra structured-output call — the LAST usage event is always the
+        an extra structured-output call, the LAST usage event is always the
         authoritative running total.
     {"type": "error", "message": str}
         A terminal round-level error surfaced by the engine, or a pre-flight
@@ -99,7 +98,7 @@ golden-fixture pinning; those frames can reshape independently of this one):
         "paused" means an attended run is waiting on the human (see above).
 
 A raised exception from inside the turn itself (as opposed to a frame-level
-"error") propagates to the caller rather than being swallowed — this mirrors
+"error") propagates to the caller rather than being swallowed, this mirrors
 _run_agent_loop's own body (no broad try/except there either; that lives one
 level up, in run_agent's orchestration shell, which this primitive has no
 equivalent of).
@@ -112,11 +111,11 @@ import time
 import uuid
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 log = logging.getLogger("whisper-studio")
 
-# Dedicated small pool for headless Bedrock calls — mirrors
+# Dedicated small pool for headless Bedrock calls, mirrors
 # server.agents.runtime._agent_executor (its own dedicated pool), so a
 # headless run's blocking provider calls never head-of-line-block the chat
 # route's or the agent runtime's own executors.
@@ -124,26 +123,26 @@ _HEADLESS_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="headl
 
 
 def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
-def _round_catalog(session_id: str, ws_connected: bool, *, attended: bool = False) -> list[dict]:
+def _round_catalog(session_id: str, *, attended: bool = False) -> list[dict]:
     """This round's advertised tools: the core pool plus everything tool_search
     has activated for ``session_id`` so far, deduplicated by name. An attended
     run (voice: a person is there, just not at the chat) keeps the chat's core
     set, memory tools included; an unattended one leaves them deferred."""
     from server.chat.tool_pool import assemble_partitioned_pool
 
-    advertised, _deferred, _core = assemble_partitioned_pool(
-        plan_mode=False, ws_connected=ws_connected, session_id=session_id, chat=attended
-    )
+    advertised, _deferred, _core = assemble_partitioned_pool(session_id=session_id, chat=attended)
     seen: set[str] = set()
     tools: list[dict] = []
     for t in advertised:
         if t["name"] not in seen:
             seen.add(t["name"])
             tools.append(t)
-    return tools
+    from server.tool_inputs import ToolCatalog
+
+    return ToolCatalog(tools, available=[*advertised, *_deferred])
 
 
 def _resume_messages(paused: dict, answers: list[dict]) -> list:
@@ -192,19 +191,19 @@ async def run_headless_turn(
         prompt: The user-turn text handed to the model.
         workspace_path: Workspace to run against for this call only (via the
             same context-local override worktree-isolated agents already use,
-            server.workspace.state.set_workspace_override) — never mutates
+            server.workspace.state.set_workspace_override), never mutates
             the process-wide connected workspace. None means "whatever
             workspace is currently connected, if any" (same as an agent run).
         model_key: A ``chat_models`` config key. None resolves the user's
             default chat model via the exact fallback chain
             server.agents.runtime._resolve_agent_model already implements
             (skips on-device candidates). An on-device model, explicit or
-            resolved, is refused — see the module docstring.
+            resolved, is refused, see the module docstring.
         output_schema: When given, one extra one-shot structured-output call
             runs after the turn via server.agents.runtime_support.distill_run_output
             (with its own single schema-repair retry).
         ephemeral: When True, this run's session id is never written to
-            sessions.db — no row is created, no message is appended. When
+            sessions.db, no row is created, no message is appended. When
             False (default), the prompt and the final answer are appended via
             server.infrastructure.sessions.append_message, the same
             out-of-band write path background tasks already use to persist
@@ -240,8 +239,8 @@ async def run_headless_turn(
             f"exec:{scope_id}" instead of f"exec:{session_id}". Lets several
             runs share one ``session_id`` (tool dispatch, agent registry,
             costs and tool activations all stay keyed by session_id) while
-            each pauses and resumes independently. None keeps the historical
-            f"exec:{session_id}" key, so existing callers are unaffected.
+            each pauses and resumes independently. None keys it as
+            f"exec:{session_id}".
         cost_source: The ``source`` recorded on this run's cost rows
             (server.costs.sources): voice delegation passes "voice", the
             agent-report wake "wake".
@@ -329,7 +328,7 @@ async def run_headless_turn(
         # Same cwd-tracker scoping a worktree-isolated agent gets (see
         # server.agents.runtime.run_agent): without this, a shell tool call
         # made under this override stores its cwd under a key keyed to
-        # `workspace_path`, and nothing below ever clears it — a guaranteed
+        # `workspace_path`, and nothing below ever clears it, a guaranteed
         # per-call leak, not just a race, since this override has no worktree
         # teardown to piggyback cleanup on.
         from server.cwd_tracker import register_override
@@ -377,10 +376,9 @@ async def run_headless_turn(
         # EVERY round ─────────────────────────────────────────────────────────
         # Progressive tool disclosure: re-derive this session's activations
         # from visible history first (self-healing across restarts, exactly
-        # like server/chat/routes.py), then the same call agents/runtime.py
-        # makes (assemble_partitioned_pool(plan_mode=False, ws_connected=...,
-        # session_id=...)) but WITHOUT filter_tools_for_agent or
-        # get_agent_runtime_tools — see the module docstring. The catalog is
+        # like server/chat/routes.py), then assemble_partitioned_pool for this
+        # session, but WITHOUT filter_tools_for_agent or
+        # get_agent_runtime_tools (see the module docstring). The catalog is
         # rebuilt per round (like _assemble_round_tools in the chat engine):
         # a tool_search activation in round N must be advertised in round N+1,
         # otherwise the model keeps searching for a tool it can never call.
@@ -388,12 +386,12 @@ async def run_headless_turn(
         # appended to the system prompt below.
         activate_from_history(session_id, messages)
         _advertised0, deferred, _core_count = assemble_partitioned_pool(
-            plan_mode=False, ws_connected=bool(ws_path), session_id=session_id, chat=attended
+            session_id=session_id, chat=attended
         )
         deferred_tool_index = build_deferred_index(deferred)
 
         def _tool_catalog() -> tuple[list[dict], int | None]:
-            return _round_catalog(session_id, bool(ws_path), attended=attended), None
+            return _round_catalog(session_id, attended=attended), None
 
         system = (
             "You are completing a single headless task with no human attending this "
@@ -411,7 +409,7 @@ async def run_headless_turn(
         if deferred_tool_index:
             system += "\n\n" + deferred_tool_index
 
-        # ── Provider adapter — same chat_model_meta.provider check
+        # ── Provider adapter, same chat_model_meta.provider check
         # server/chat/routes.py and agents/runtime.py both use. ─────────────
         loop = asyncio.get_event_loop()
         _provider = _get_chat_model_meta().get(resolved_model_key, {}).get("provider", "anthropic")
@@ -466,7 +464,6 @@ async def run_headless_turn(
                 max_rounds=rounds,
                 deadline_seconds=deadline,
                 completion_gate=False,
-                salvage_round=True,
             ),
             loop=loop,
             executor=_HEADLESS_EXECUTOR,
@@ -493,9 +490,10 @@ async def run_headless_turn(
         # ── Drain run_turn: an async generator yielding SSE-format ndjson
         # strings ("data: {...}\n\n" / "data: [DONE]\n\n" / ": hb\n\n"
         # heartbeat comments). THIS PARSING IS COUPLED TO runner.py's PINNED
-        # SSE FRAME VOCABULARY, exactly like _run_agent_loop's own drain —
+        # SSE FRAME VOCABULARY, exactly like _run_agent_loop's own drain,
         # see that function's comment before touching this one. ────────────
         rounds_used = 0
+        compaction_failed = False
         all_text_parts: list[str] = []
         round_text_parts: list[str] = []
         final_usage = {
@@ -546,6 +544,7 @@ async def run_headless_turn(
                     elif "text" in frame and isinstance(frame.get("text"), str):
                         round_text_parts.append(frame["text"])
                     elif "error" in frame:
+                        compaction_failed |= frame.get("error_code") == "COMPACTION_FAILED"
                         yield {"type": "error", "message": frame["error"]}
                     elif "skill_input" in frame:
                         tool_name = frame["skill_input"]
@@ -607,6 +606,12 @@ async def run_headless_turn(
             flushed = _flush_round_text()  # catch trailing text with no following usage frame
             if flushed:
                 yield {"type": "text", "text": flushed}
+
+        # The engine already drained its terminal cleanup. Preserve any text
+        # flushed above, but never distill or store a false successful answer.
+        if compaction_failed:
+            yield {"type": "done", "status": "failed", "session_id": session_id}
+            return
 
         from server.chat.engine.runner import SOFT_LIMIT_FRACTION
 

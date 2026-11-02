@@ -1,11 +1,8 @@
 """Single owner for on-disk app-data locations.
 
-Modules were each deriving a DATA_DIR from their own ``__file__`` (three
-``dirname()`` calls up to the repo root), which silently moves with whatever
-checkout/worktree the server happens to run from — data written by a worktree
-instance evaporates with the worktree. New code should resolve app data
-through :func:`data_root` instead; existing per-module DATA_DIRs migrate here
-over time.
+Every module resolves app data through :func:`data_root` (never from its own
+``__file__``, which would move with whatever checkout or worktree the server
+runs from).
 
 Two roots, split by who edits what:
 
@@ -22,15 +19,9 @@ Two roots, split by who edits what:
   it is the repo root, so dev layout is unchanged. ``WHISPER_USER_DIR``
   overrides it for tests and relocation.
 
-On the first packaged boot, :func:`relocate_legacy_home` (called before the
-server modules import) MOVES existing Application Support copies into
-~/.whisper by same-volume rename, sweeps data stores that predate the data/
-consolidation, and leaves nothing behind; migration 017 rewrites the absolute
-paths recorded in sessions.db in the same boot.
-
 data_root() resolution order:
   1. ``WHISPER_DATA_DIR`` environment variable
-  2. ``data_dir`` key in config.json
+  2. ``data_dir`` key in config.user.json
   3. ``<user_root>/data`` (== ``<repo>/data`` in a dev checkout)
 """
 
@@ -97,7 +88,7 @@ def logs_root() -> str:
 
 
 def config_dir() -> str:
-    """Directory holding config.json / pricing.json — user-editable files, so
+    """Directory holding config.user.json / pricing.json, user-editable files, so
     they live with the rest of the user data."""
     return user_root()
 
@@ -109,16 +100,10 @@ def data_root() -> str:
     env = os.environ.get("WHISPER_DATA_DIR", "").strip()
     if env:
         return os.path.abspath(os.path.expanduser(env))
-    try:
-        # Lazy import: config pulls fastapi; keep paths importable at early boot.
-        from server.infrastructure import config as _config
+    # Lazy import: config pulls fastapi; keep paths importable at early boot.
+    from server.infrastructure import config as _config
 
-        configured = str(_config.get("data_dir", "") or "").strip()
-    except Exception as e:  # noqa: BLE001 — config may be mid-import at boot
-        # Swallowing silently once hid a circular-import bug for weeks (a
-        # configured data_dir was ignored); keep booting, but say so.
-        log.warning("data_root: config unavailable (%s); using default data dir", e)
-        configured = ""
+    configured = str(_config.get("data_dir", "") or "").strip()
     if configured:
         return os.path.abspath(os.path.expanduser(configured))
     return os.path.join(user_root(), "data")
@@ -168,9 +153,11 @@ APP_CONFIG_FILES = (
     "launch_trust.json",
 )
 
-# The user config layer (config.user.json, with the legacy config.json): the
-# ``data_dir`` key moves the whole data root and ``permission_mode`` sets the
-# default mode, so it carries the same power. It lives in the user root.
+# The user config layer (config.user.json): the ``data_dir`` key moves the whole
+# data root and ``permission_mode`` sets the default mode, so it carries the same
+# power. The old config.json is no longer read, but it is still the user's own
+# file (it can hold API keys), so it stays protected too. Both live in the user
+# root.
 _USER_ROOT_CONFIG_FILES = (
     "config.user.json",
     "config.json",
@@ -196,162 +183,26 @@ def app_config_dirs() -> list[str]:
 
 
 def _seed_file(src: str, dst: str) -> None:
-    """Copy ``src`` to ``dst`` unless ``dst`` already exists. Best-effort: a
-    missing template or an unwritable target logs instead of crashing boot."""
-    if os.path.exists(dst) or not os.path.exists(src):
+    """Copy ``src`` to ``dst`` unless ``dst`` already exists. A missing
+    shipped template or an unwritable target raises: the install is broken."""
+    if os.path.exists(dst):
         return
-    try:
-        os.makedirs(os.path.dirname(dst), exist_ok=True)
-        shutil.copyfile(src, dst)
-        log.info("Seeded %s from %s", dst, src)
-    except OSError as e:
-        log.warning("Could not seed %s from %s: %s", dst, src, e)
-
-
-def _relocate(old: str, new: str) -> None:
-    """One-shot move of a user-data file or directory out of Application
-    Support into ~/.whisper. Same-volume rename (instant, atomic, any size —
-    never a multi-gigabyte copy during boot, which would outlive the app
-    shell's health deadline). No symlink is left behind: the cut-over is
-    complete, and the paths recorded in sessions.db are rewritten by a
-    normal schema migration on the same boot (017_rewrite_data_paths)."""
-    if os.path.islink(old) or not os.path.exists(old):
-        return
-    if os.path.exists(new):
-        # Never merge or clobber. Park the stale copy under the new data root
-        # so Application Support still ends up clean and nothing is destroyed.
-        park = os.path.join(data_root(), "legacy_app_support", os.path.basename(old))
-        try:
-            os.makedirs(os.path.dirname(park), exist_ok=True)
-            if not os.path.exists(park):
-                os.rename(old, park)
-                log.info("Parked stale %s -> %s (newer copy already at %s)", old, park, new)
-        except OSError as e:
-            log.warning("Could not park %s: %s", old, e)
-        return
-    try:
-        os.makedirs(os.path.dirname(new), exist_ok=True)
-        os.rename(old, new)
-        log.info("Relocated %s -> %s", old, new)
-    except OSError as e:
-        log.warning("Could not relocate %s -> %s: %s", old, new, e)
-
-
-# Data stores that historically lived at the TOP level of the app home (before
-# they were consolidated under data/); swept into data_root() so Application
-# Support ends up holding storage/ and logs/ only.
-_LEGACY_TOP_LEVEL_DATA = (
-    "memory",
-    "global_memory",
-    "session_memory",
-    "scratch",
-    "attachments",
-    "plans",
-    "result_cache",
-    "background_output",
-    "search_output",
-    "shell_output",
-    "model-downloads",
-    "workflows",
-    "workspace_config.json",
-    "recent_workspaces.json",
-    "save_locations.json",
-    "cron_jobs.json",
-    "hooks.json",
-    "hooks_trust.json",
-    "permissions.json",
-    "folder_grants.json",
-    "plugins_config.json",
-    "skills_config.json",
-    "buddy.json",
-    "mcp_servers.json",
-)
-
-# User-editable config files that used to live at the app home.
-_CONFIG_FILES = (
-    "config.user.json",
-    "config.json",
-    "config.json.pre-split",
-    "pricing.json",
-)
-
-
-def relocate_legacy_home() -> None:
-    """Move everything except storage/ and logs/ out of the app home.
-
-    Runs before the server modules import (server/main.py calls it first
-    thing), so every path constant frozen at import time already sees the
-    moved files. Idempotent and cheap: after the first run every check is a
-    handful of stat calls. No-op in a dev checkout, where app home and user
-    root are the same directory."""
-    if not os.environ.get("WHISPER_HOME", "").strip():
-        return
-    home = app_home()
-    user = user_root()
-    if os.path.realpath(home) == os.path.realpath(user):
-        return
-    for sub, target in (
-        ("models", models_root()),
-        ("skills", skills_root()),
-        ("plugins", plugins_root()),
-    ):
-        _relocate(os.path.join(home, sub), target)
-        _drop_compat_symlink(os.path.join(home, sub))
-    if data_root() == os.path.join(user, "data"):
-        _relocate(os.path.join(home, "data"), data_root())
-        _drop_compat_symlink(os.path.join(home, "data"))
-        for name in _LEGACY_TOP_LEVEL_DATA:
-            _relocate(os.path.join(home, name), os.path.join(data_root(), name))
-    for name in _CONFIG_FILES:
-        _relocate(os.path.join(home, name), os.path.join(user, name))
-    # Custom agents: <home>/.whisper/agents was always an awkward nesting;
-    # they live at <user>/agents now.
-    _relocate(os.path.join(home, ".whisper", "agents"), os.path.join(user, "agents"))
-    try:
-        legacy_wrap = os.path.join(home, ".whisper")
-        if os.path.isdir(legacy_wrap) and not os.listdir(legacy_wrap):
-            os.rmdir(legacy_wrap)
-    except OSError:
-        pass
-    # Python bytecode cache: pure machine noise, regenerated on demand. The
-    # shell now points PYTHONPYCACHEPREFIX at ~/Library/Caches; drop a stale
-    # cache the old location is no longer used for.
-    pycache = os.path.join(home, "pycache")
-    if os.path.isdir(pycache) and not os.environ.get("PYTHONPYCACHEPREFIX", "").startswith(pycache):
-        try:
-            shutil.rmtree(pycache)
-            log.info("Removed stale bytecode cache %s", pycache)
-        except OSError as e:
-            log.warning("Could not remove %s: %s", pycache, e)
-
-
-def _drop_compat_symlink(path: str) -> None:
-    """Remove a compatibility symlink left by the first version of this
-    migration (which linked old -> new); the recorded-path rewrite in
-    migration 017 makes them unnecessary, and the goal is a clean folder."""
-    if os.path.islink(path):
-        try:
-            os.unlink(path)
-            log.info("Removed compatibility symlink %s", path)
-        except OSError as e:
-            log.warning("Could not remove symlink %s: %s", path, e)
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    shutil.copyfile(src, dst)
+    log.info("Seeded %s from %s", dst, src)
 
 
 def bootstrap_home() -> None:
     """First-run setup for a packaged install: create the WHISPER_HOME and
-    ~/.whisper trees, move any pre-split user data out of Application Support,
-    and seed the user-editable files from the read-only code dir. No-op when
-    WHISPER_HOME is unset (dev checkout: everything already lives at the repo
-    root). Idempotent — existing files and directories are never overwritten —
-    and safe: any single failure logs and moves on rather than blocking boot."""
+    ~/.whisper trees and seed the user-editable files from the read-only code
+    dir. No-op when WHISPER_HOME is unset (dev checkout: everything already
+    lives at the repo root). Idempotent (existing files and directories are
+    never overwritten). Any failure raises and stops the boot: a home that
+    cannot be created or seeded cannot run, and the Mac app then shows its
+    startup alert with the log."""
     if not os.environ.get("WHISPER_HOME", "").strip():
         return
     home = app_home()
-    # Move first, then create: a fresh empty dir at the new location would
-    # defeat the move-only-when-destination-missing rule forever. (main.py
-    # already ran this before importing the server; kept here for callers
-    # that bootstrap without going through main — it is idempotent.)
-    relocate_legacy_home()
     for d in (
         home,
         user_root(),
@@ -361,23 +212,17 @@ def bootstrap_home() -> None:
         logs_root(),
         data_root(),
     ):
-        try:
-            os.makedirs(d, exist_ok=True)
-        except OSError as e:
-            log.warning("Could not create %s: %s", d, e)
+        os.makedirs(d, exist_ok=True)
     # The user's config is a two-layer split: the SYSTEM catalog + defaults ship
     # in the read-only config.example.json (repo_root()), and only the user's
-    # deltas live in config.user.json. migrate_user_config() creates an empty
-    # config.user.json on a fresh install and, on an upgrade, splits any legacy
-    # monolithic config.json into config.user.json (backing it up first). We do
-    # NOT seed config.json from the example any more — that copy is exactly what
-    # shadowed shipped model/pricing updates after first run.
-    try:
-        from server.infrastructure.config import migrate_user_config
+    # deltas live in config.user.json. seed_user_config() writes the first-run
+    # defaults into a new config.user.json on a fresh install (a home with only
+    # an old config.json counts as fresh). It never copies the example (a full
+    # copy shadowed shipped model updates) and never reads or changes an old
+    # config.json. After that, nothing at startup writes config.user.json.
+    from server.infrastructure.config import seed_user_config
 
-        migrate_user_config()
-    except Exception as e:  # never block boot on the config split
-        log.warning("Config migration/seed skipped: %s", e)
+    seed_user_config()
     # pricing.json is NOT seeded: it holds only the user's own per-key rate
     # overrides over the shipped pricing.example.json, and a full copy of the
     # template froze every rate at install time. The shipped global rules file
@@ -391,20 +236,13 @@ def bootstrap_home() -> None:
     # edits, deletions must not be resurrected on the next boot).
     skills_src = os.path.join(repo_root(), "skills")
     if not os.path.isdir(skills_root()):
-        try:
-            if os.path.isdir(skills_src):
-                shutil.copytree(skills_src, skills_root())
-                log.info("Seeded skills into %s", skills_root())
-            else:
-                os.makedirs(skills_root(), exist_ok=True)
-        except OSError as e:
-            log.warning("Could not seed skills into %s: %s", skills_root(), e)
+        shutil.copytree(skills_src, skills_root())
+        log.info("Seeded skills into %s", skills_root())
     # Plugins are seeded per-file, every boot: user edits survive (existing
     # files are never overwritten), but a deleted file is restored — the
     # PROTECTED security_checks plugin is part of the safety contract and
     # must not be lost when the code dir is a read-only bundle.
     plugins_src = os.path.join(repo_root(), "plugins")
-    if os.path.isdir(plugins_src):
-        for entry in os.listdir(plugins_src):
-            if entry.endswith((".py", ".md")):
-                _seed_file(os.path.join(plugins_src, entry), os.path.join(plugins_root(), entry))
+    for entry in os.listdir(plugins_src):
+        if entry.endswith((".py", ".md")):
+            _seed_file(os.path.join(plugins_src, entry), os.path.join(plugins_root(), entry))

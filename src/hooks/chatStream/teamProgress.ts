@@ -24,6 +24,16 @@ function _agentKey(ev: TeamProgressEvent): string | null {
   return (ev.agent_name ?? ev.agent_id) || null;
 }
 
+/** The settled status a team_results agent reports (completed, failed or
+ *  error, stopped, turn_limit); null for anything else. */
+function _resultStatus(status: string | undefined): TeamAgentReport['status'] | null {
+  if (status === 'completed') return 'completed';
+  if (status === 'failed' || status === 'error') return 'failed';
+  if (status === 'stopped') return 'stopped';
+  if (status === 'turn_limit') return 'turn_limit';
+  return null;
+}
+
 function _phaseToStatus(phase: TeamProgressEvent['phase']): TeamAgentReport['status'] {
   if (phase === 'completed') return 'completed';
   if (phase === 'turn_limit') return 'turn_limit';
@@ -82,20 +92,16 @@ export function foldTeamResultsInto(
           agent_type: a.agent_type ?? existing.agent_type,
           turns_used: a.turns_used ?? existing.turns_used,
           stop_reason: a.stop_reason ?? existing.stop_reason,
-          status:
-            a.status === 'completed' ? 'completed'
-            : a.status === 'failed' || a.status === 'error' ? 'failed'
-            : existing.status,
+          status: _resultStatus(a.status) ?? existing.status,
         }
       : {
           name: a.name ?? a.agent_id ?? key,
           task: a.task ?? '',
           agent_type: a.agent_type ?? 'general',
           role: a.agent_type === 'coordinator' ? 'orchestrator' : 'team',
-          status:
-            a.status === 'completed' ? 'completed'
-            : a.status === 'failed' || a.status === 'error' ? 'failed'
-            : 'completed',
+          // The final results only list agents that ended, so an unknown
+          // status of an agent with no live row reads as completed.
+          status: _resultStatus(a.status) ?? 'completed',
           agent_id: a.agent_id,
           turns_used: a.turns_used,
           stop_reason: a.stop_reason,
@@ -243,8 +249,8 @@ export function spawnLabel(task: string, maxLen = 60): string {
 }
 
 /** All team reports produced by an agent-tool group, in tool order. Matches
- *  team_create AND inline spawn_agent (each inline spawn is a one-member team
- *  since PR #223): prefer the exact team_id from the tool's result JSON, fall
+ *  team_create AND inline spawn_agent (each inline spawn is a one-member
+ *  team): prefer the exact team_id from the tool's result JSON, fall
  *  back to a name match (team_name for team_create; the spawn label derived
  *  from the task for spawn_agent) while the tool is still running. Shared by
  *  ChatMessage (committed) and StreamingMessage (live). */

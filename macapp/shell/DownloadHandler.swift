@@ -1,14 +1,15 @@
-// Whisper Studio — WKDownload handling for the native shell.
+// Whisper Studio: WKDownload handling for the native shell.
 //
 // WKWebView implements NO default download behavior: an anchor with a
 // `download` attribute or a non-renderable response just *navigates*, which
 // used to replace the SPA with raw exported markdown. main.swift routes such
 // navigations here via the `.download` navigation policy; this delegate
-// saves the payload into ~/Downloads (never overwriting — name collisions
+// saves the payload into ~/Downloads (never overwriting, name collisions
 // get " (2)", " (3)", … suffixes) and reports the outcome back to the page
 // through the `window.__whisperShellToast` hook registered by the frontend
-// (src/services/shellToastBridge.ts). If the hook is missing (older cached
-// page), the report degrades to a stderr log — never an alert, never a crash.
+// (src/services/shellToastBridge.ts). If the hook is missing (the page has
+// not registered it yet, or a non-app page is loaded), the report degrades
+// to a stderr log, never an alert, never a crash.
 //
 // The first file written into ~/Downloads triggers the standard macOS
 // "wants to access your Downloads folder" consent prompt; for a
@@ -78,7 +79,7 @@ func dedupedDestination(
 
 /// Encode a Swift string as a double-quoted JavaScript string literal,
 /// escaping quotes, backslashes, control characters, and the JS line
-/// terminators U+2028/U+2029 — safe to splice into evaluateJavaScript.
+/// terminators U+2028/U+2029, safe to splice into evaluateJavaScript.
 func jsStringLiteral(_ s: String) -> String {
     var out = "\""
     for scalar in s.unicodeScalars {
@@ -167,7 +168,8 @@ final class DownloadHandler: NSObject, WKDownloadDelegate {
     // MARK: Page feedback
 
     /// Call the page's `window.__whisperShellToast(message, {type})` hook.
-    /// Missing hook (older page) or JS failure degrades to a stderr log.
+    /// A missing hook (not registered yet, or a non-app page) or a JS
+    /// failure degrades to a stderr log.
     private func notifyPage(message: String, type: String) {
         let log = { FileHandle.standardError.write(Data("[download] \(message)\n".utf8)) }
         DispatchQueue.main.async { [weak self] in
@@ -247,7 +249,7 @@ struct SmokeDownloadDedupe {
             fileExists: { $0.lastPathComponent != "x (4).txt" })
         check(everything.lastPathComponent == "x (4).txt", "injected fileExists drives the walk")
 
-        // JS string literal escaping — quotes, backslashes, newlines, and
+        // JS string literal escaping, quotes, backslashes, newlines, and
         // JS line terminators must all be neutralized.
         check(
             jsStringLiteral("Saved to Downloads: a.md") == "\"Saved to Downloads: a.md\"",

@@ -1,54 +1,27 @@
 """
 Unattended run loop for scheduled cron jobs.
 
-Ports cron onto the exact shared agentic turn engine interactive chat,
-subagents, and headless runs all use (server.chat.engine.runner.run_turn) —
+A run is an asyncio coroutine (scheduled as a tracked task by
+server.cron_scheduler._spawn_cron_run) over the shared turn engine that chat,
+subagents and headless runs use (server.chat.engine.runner.run_turn). It
 mirrors server/agents/runtime.py's ``_run_agent_loop`` and
-server/exec/headless.py's ``run_headless_turn`` almost exactly. Read those
-first if you're touching this one.
+server/exec/headless.py's ``run_headless_turn``; read those first.
 
-What changed from the old hand-rolled ``boto3.invoke_model`` loop:
-
-  - Runs as a native ``asyncio`` coroutine (scheduled as a tracked task by
-    server.cron_scheduler._spawn_cron_run) instead of a ``threading.Thread``
-    target. Tool execution, hooks (PreToolUse/PostToolUse/PostToolUseFailure),
-    approval handling, and cost accounting all flow through the SAME shared
-    pipeline chat/agents use (server.chat.engine.runner.run_turn ->
-    server.tool_executor.execute_tool_batch/process_tool_results) instead of
-    a cron-specific re-implementation — so ``_cron_pre_hook``'s thread-bridge
-    is gone; ``run_hooks`` is awaited natively, same as every other caller.
-  - ``TurnContext.unattended=True`` (mirroring agents/headless) resolves
-    pause-inducing tools without a human: a ``[WS_APPROVAL]`` request now
-    executes inline automatically (like a subagent), rather than the old
-    behavior of failing the run with "[stopped] a tool requested user
-    input...". This is a genuine, deliberate behavior change from unifying
-    onto the shared engine's unattended contract — see the migration's
-    final report for the full reasoning.
-  - Stop is now ``asyncio.Task.cancel()`` (see server/cron_events.py) instead
-    of a 1-second poll around each tool's bridged future.
-  - Anthropic OR OpenAI-on-Bedrock both work (whichever the resolved model's
-    ``chat_model_meta.provider`` says) via the same adapter-selection agents/
-    headless already do — on-device (``local:*``) models are refused, same
-    reasoning and message as run_headless_turn: cold-start
-    (llama_server.ensure_serving) + capability probing is a separate piece
-    of work this migration doesn't do.
-  - The old per-tool 180-second watchdog is gone (chat/agents never had one
-    either — the shared tool-execution path has no per-call deadline). The
-    whole run, verify continuations included, gets the round limit and the
-    time limit from Settings (server/infrastructure/run_limits.py).
-  - Cost recording per round and the near-cap wind-down reminder are now
-    handled generically by run_turn itself; the old manual duplicates of
-    both are gone.
-
-What did NOT change: ``_assemble_cron_tools`` (still drops
-``ask_user_question`` — an unattended run can never answer it),
-``_merge_notifications``, the per-job model override rule (still
-Anthropic-only; broadening that is a separate decision, not part of this
-migration), the WS-E verify-and-continue
-call shape (server.goals.cron_verify.verify, same MAX_CONTINUATIONS=2
-semantics, judged on every natural finish including the last allowed round),
-and how results land in cron_runs / the cron-inbox session / the
-cron_progress SSE frames.
+  - Tools, hooks, approvals and cost accounting go through the shared
+    pipeline (run_turn -> server.tool_executor.execute_tool_batch /
+    process_tool_results).
+  - ``TurnContext.unattended=True``: a ``[WS_APPROVAL]`` request resolves
+    under the unattended contract instead of waiting for a human, and
+    ``_assemble_cron_tools`` drops ask_user_question.
+  - Stop is ``asyncio.Task.cancel()`` (see server/cron_events.py).
+  - Anthropic and OpenAI-on-Bedrock models both run; on-device (``local:*``)
+    models are refused, the same as run_headless_turn.
+  - The whole run, verify continuations included, gets the round limit and
+    the time limit from Settings (server/infrastructure/run_limits.py).
+  - After a natural finish the run is verified against its prompt
+    (server.goals.cron_verify.verify, at most MAX_CONTINUATIONS
+    continuations), then its result lands in cron_runs, the owning session
+    or the cron inbox, and the cron_progress SSE frames.
 """
 
 import asyncio
@@ -59,7 +32,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace as _dc_replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 log = logging.getLogger("whisper-studio")
 
@@ -79,11 +52,15 @@ def _assemble_cron_tools(pool: list[dict]) -> list[dict]:
 
     ask_user_question is dropped: it pauses for a human reply that never comes
     in an unattended run and would hang the job forever. Everything else passes
-    through unchanged — aws_boto3 is a native tool now, always present in the
-    assembled pool with its canonical schema, so the old always-inject shadow
-    definition (from when it was a disableable skill) is gone.
+    through unchanged.
     """
-    return [t for t in pool if t["name"] != "ask_user_question"]
+    from server.tool_inputs import ToolCatalog
+
+    available = pool.available if isinstance(pool, ToolCatalog) else pool
+    return ToolCatalog(
+        [t for t in pool if t["name"] != "ask_user_question"],
+        available=[t for t in available if t["name"] != "ask_user_question"],
+    )
 
 
 def _merge_notifications(notifications: list[str], tail: str) -> str:
@@ -111,11 +88,11 @@ async def _execute_cron_prompt(job_id: str) -> None:
     Re-reads the job from disk to get the latest session_id/prompt. Runs as
     an asyncio task (see server.cron_scheduler._spawn_cron_run) — cancelling
     this task (server.cron_events.request_stop) is how a user-requested stop
-    now works, replacing the old thread's 1-second poll.
+    works.
     """
     # cron_scheduler owns load_cron_jobs, _push_result, the in-progress state,
     # and _server_loop. Import it lazily (a module-top import would be a cycle:
-    # cron_scheduler re-exports this module's functions).
+    # cron_scheduler imports this module).
     from server import cron_scheduler as _cs
 
     jobs = _cs.load_cron_jobs()
@@ -138,7 +115,7 @@ async def _execute_cron_prompt(job_id: str) -> None:
         cron_events.open_run(job_id, asyncio.current_task())
 
     run_id = str(uuid.uuid4())[:8]
-    started = datetime.now(timezone.utc)
+    started = datetime.now(UTC)
     session_id = job.get("session_id", "")
 
     try:
@@ -149,7 +126,7 @@ async def _execute_cron_prompt(job_id: str) -> None:
         log.warning("cron: failed to open run lease: %s", exc)
 
     def _elapsed_ms() -> int:
-        return int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
+        return int((datetime.now(UTC) - started).total_seconds() * 1000)
 
     # Captured notify_user messages, folded into whichever exit path fires.
     # Bound before the try so the exception handler can always read it, even
@@ -175,9 +152,7 @@ async def _execute_cron_prompt(job_id: str) -> None:
         chat_models = config.get("chat_models", {})
         # Per-job model override: an explicit `model` key on the job wins when
         # it resolves to an Anthropic Bedrock id; otherwise the haiku-first
-        # fallback. Unchanged from before this migration — broadening this to
-        # OpenAI-on-Bedrock is a separate decision, not part of it (see the
-        # module docstring and the migration report).
+        # default chain.
         model_key = ""
         model_id = ""
         job_model = (job.get("model") or "").strip()
@@ -200,16 +175,15 @@ async def _execute_cron_prompt(job_id: str) -> None:
                 if not chat_models:
                     raise RuntimeError(
                         "no chat models configured: chat_models is empty "
-                        "(check config.json / config.example.json)"
+                        "(check config.user.json / config.example.json)"
                     )
                 model_key, model_id = next(iter(chat_models.items()))
 
         if is_local_model_id(model_id):
             # On-device models need their own cold-start (llama_server.
             # ensure_serving) and capability probing (supports_tools, the
-            # thinking levels) — a materially separate piece of work this
-            # migration doesn't do. Matches run_headless_turn's identical
-            # refusal (server/exec/headless.py) for the identical reason.
+            # thinking levels), which scheduled runs do not wire. Matches
+            # run_headless_turn's refusal (server/exec/headless.py).
             # _validate_job_model already keeps an explicit override from
             # reaching here (a local id never contains "anthropic"); this is
             # the defensive backstop for the haiku/sonnet/any-configured
@@ -255,22 +229,12 @@ async def _execute_cron_prompt(job_id: str) -> None:
 
         ws_latch = latch_workspace(get_workspace_path)
         _advertised, deferred, _core_count = assemble_partitioned_pool(
-            plan_mode=False,
-            ws_connected=bool(ws_latch.path),
-            suppress_workspace_search=False,
-            session_id=session_id,
-            chat=False,
+            session_id=session_id, chat=False
         )
         deferred_tool_index = build_deferred_index(deferred)
 
         def _tool_catalog() -> tuple[list[dict], int | None]:
-            pool, _deferred, _core = assemble_partitioned_pool(
-                plan_mode=False,
-                ws_connected=bool(ws_latch.path),
-                suppress_workspace_search=False,
-                session_id=session_id,
-                chat=False,
-            )
+            pool, _deferred, _core = assemble_partitioned_pool(session_id=session_id, chat=False)
             return _assemble_cron_tools(pool), None
 
         from server.prompts.rules import append_rules
@@ -328,7 +292,7 @@ async def _execute_cron_prompt(job_id: str) -> None:
                 session_id=session_id,
             )
         else:
-            from server.chat.caching import cache_ttl_for
+            from server.chat.caching import CACHE_TTL
             from server.chat.engine.anthropic import AnthropicAdapter
 
             adapter = AnthropicAdapter(
@@ -337,12 +301,10 @@ async def _execute_cron_prompt(job_id: str) -> None:
                 system_prompt=system,
                 # The whole system prompt is the "static" cacheable block —
                 # cron has no per-turn dynamic RAG portion the way chat does.
-                # Matches the old loop's own cached_tools_and_system(...,
-                # system, "", ttl) split exactly.
                 system_static=system,
                 system_dynamic="",
                 caching_on=_caching_on,
-                cache_ttl=cache_ttl_for(model_id),
+                cache_ttl=CACHE_TTL,
                 effort_label=_effort_label,
                 loop=loop,
                 executor=_CRON_EXECUTOR,
@@ -365,10 +327,8 @@ async def _execute_cron_prompt(job_id: str) -> None:
                 # Cron keeps its OWN verify-and-continue below, called as an
                 # explicit step after each run_turn call — never the engine's
                 # automatic completion_gate (Stop hooks + goal evaluator).
-                # Exactly like agents: an unattended run must never gain NEW
-                # Stop-hook exposure as a side effect of this migration.
+                # Exactly like agents: an unattended run never runs Stop hooks.
                 completion_gate=False,
-                salvage_round=True,
             ),
             loop=loop,
             executor=_CRON_EXECUTOR,
@@ -386,7 +346,7 @@ async def _execute_cron_prompt(job_id: str) -> None:
             ws_latch=ws_latch,
         )
 
-        # ── Drain run_turn, possibly more than once (WS-E verify-and-continue
+        # ── Drain run_turn, possibly more than once (verify-and-continue
         # calls it again over the accumulated messages when the prompt isn't
         # satisfied yet) ── THIS PARSING IS COUPLED TO runner.py's PINNED SSE
         # FRAME VOCABULARY, exactly like _run_agent_loop's/run_headless_turn's
@@ -487,16 +447,14 @@ async def _execute_cron_prompt(job_id: str) -> None:
             _flush_round_text()
 
             if had_error is not None:
-                # A terminal round-level error — skip verify entirely (mirrors
-                # the old loop's behavior: an exception went straight to
-                # failure, never through the verifier) and fall through to
-                # the failure exit below.
+                # A terminal round-level error: skip verify entirely and fall
+                # through to the failure exit below.
                 break
 
             if not _ff_enabled("cron_verify"):
                 break
 
-            # WS-E: verify the run actually satisfied its prompt before
+            # Verify the run actually satisfied its prompt before
             # reporting success — on EVERY natural finish (a run finishing on
             # its last allowed round is verified too; only the continuation
             # is round-gated). Synchronous and safe to block a worker thread
@@ -586,8 +544,7 @@ async def _execute_cron_prompt(job_id: str) -> None:
 
     except asyncio.CancelledError:
         # User-requested stop (server.cron_events.request_stop cancels this
-        # task). Report cleanly, same shape as the old thread's cooperative
-        # exit, then re-raise so the task ends genuinely cancelled (mirrors
+        # task). Report cleanly, then re-raise so the task ends genuinely cancelled (mirrors
         # server.agents.runtime.run_agent's own CancelledError handling).
         cron_events.emit_progress(
             session_id,
@@ -605,15 +562,12 @@ async def _execute_cron_prompt(job_id: str) -> None:
         raise
     except Exception as e:
         log.error("Cron execution failed for '%s': %s", job.get("name"), e)
-        try:
-            cron_events.emit_progress(
-                session_id,
-                run_id=run_id,
-                job_name=job.get("name", ""),
-                phase="failed",
-            )
-        except Exception:
-            pass
+        cron_events.emit_progress(
+            session_id,
+            run_id=run_id,
+            job_name=job.get("name", ""),
+            phase="failed",
+        )
         _cs._push_result(
             job,
             _merge_notifications(notifications, f"[FAILED] {e}"),

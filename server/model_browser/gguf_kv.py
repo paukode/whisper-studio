@@ -55,8 +55,8 @@ _MAX_KV = 100_000
 _MAX_STRING = 16 << 20
 
 # llama-server defaults the app does not override (server/local/llama_server.py
-# passes --ctx-size and --parallel 1 only): f16 K and V, a 512-token
-# micro-batch, and cache sizes padded to 256 cells.
+# passes no --cache-type-k/v, --swa-full or --ubatch-size): f16 K and V, a
+# 512-token micro-batch, and cache sizes padded to 256 cells.
 _KV_ELEMENT_BYTES = 2
 _N_UBATCH = 512
 _CELL_PAD = 256

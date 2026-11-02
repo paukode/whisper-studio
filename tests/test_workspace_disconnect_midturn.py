@@ -295,12 +295,15 @@ async def _run_batch(tool_uses: list[dict], latch):
     from concurrent.futures import ThreadPoolExecutor
 
     from server.approval.bootstrap import register_defaults
+    from server.chat.tool_pool import assemble_full_catalog
+    from server.tool_inputs import schemas_for_tools
 
     register_defaults()
     pool = ThreadPoolExecutor(max_workers=2)
     try:
         states = await te.execute_tool_batch(
             tool_uses,
+            tool_schemas=schemas_for_tools(assemble_full_catalog()),
             is_concurrent_safe=lambda n: False,
             loop=asyncio.get_running_loop(),
             executor=pool,
@@ -448,9 +451,9 @@ def test_the_tool_catalog_is_identical_across_connect_and_disconnect(ws_a):
     from server.chat.tool_pool import assemble_full_catalog
 
     connect_workspace(str(ws_a))
-    connected = json.dumps(assemble_full_catalog(ws_connected=True), sort_keys=True)
+    connected = json.dumps(assemble_full_catalog(), sort_keys=True)
     state.disconnect_workspace()
-    disconnected = json.dumps(assemble_full_catalog(ws_connected=False), sort_keys=True)
+    disconnected = json.dumps(assemble_full_catalog(), sort_keys=True)
     assert connected == disconnected
 
 
@@ -551,7 +554,6 @@ def test_the_folder_picker_does_not_block_other_requests(monkeypatch):
         return _Dialog()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
-    monkeypatch.setattr("platform.system", lambda: "Darwin")
 
     async def go():
         async with _client() as client:

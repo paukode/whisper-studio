@@ -4,6 +4,7 @@ import { useSettingsStore } from '@/stores/settingsStore';
 import { indexEngines } from '@/api/workspace';
 import type { IndexEngineOption } from '@/api/workspace';
 import type { IndexCapability, ModelMode } from '@/types/settings';
+import { toError } from '@/utils/toError';
 
 interface Capability {
   key: IndexCapability;
@@ -12,12 +13,6 @@ interface Capability {
   cloudDefault: string;
   options: [string, string][];
 }
-
-/** Fallback while /api/workspace/index/engines loads (or if it fails). */
-const FALLBACK_ENGINES: IndexEngineOption[] = [
-  { key: 'haiku', label: 'Claude Haiku', local: false, downloaded: true },
-  { key: 'local_gemma', label: 'Gemma 4 12B (Local)', local: true, downloaded: false },
-];
 
 const llmOption = (o: IndexEngineOption): [string, string] => [
   o.key,
@@ -90,7 +85,8 @@ export const ModelModePanel: React.FC = () => {
     queryFn: indexEngines,
     staleTime: 60_000,
   });
-  const capabilities = buildCapabilities(enginesQuery.data?.engines ?? FALLBACK_ENGINES);
+  // The pickers offer only what the server's catalog lists, so they wait for it.
+  const capabilities = enginesQuery.data ? buildCapabilities(enginesQuery.data.engines) : null;
 
   // Changes persist immediately and the composer's model picker follows the
   // mode live (setModelMode re-reads /api/models once the mode is saved). The
@@ -156,7 +152,15 @@ export const ModelModePanel: React.FC = () => {
       </select>
       <p className="settings-hint">{MODE_BLURB[mode]}</p>
 
-      {mode === 'hybrid' && (
+      {mode === 'hybrid' && enginesQuery.isError && (
+        <p className="settings-hint" role="alert">
+          Could not load the model list: {toError(enginesQuery.error).message}
+        </p>
+      )}
+      {mode === 'hybrid' && !capabilities && !enginesQuery.isError && (
+        <p className="settings-hint">Loading the model list…</p>
+      )}
+      {mode === 'hybrid' && capabilities && (
         <div className="settings-list" style={{ marginTop: 8 }}>
           {capabilities.map((cap) => (
             <div key={cap.key} className="settings-form" style={{ marginBottom: 10 }}>

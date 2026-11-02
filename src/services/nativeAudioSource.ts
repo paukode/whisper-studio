@@ -9,15 +9,13 @@
  *
  * Bridge contract (pinned; the shell mirrors it):
  *  - shell → page marker, injected at documentStart (main frame only):
- *      window.__WHISPER_NATIVE_AUDIO = { platform: "macos", available: bool }
+ *      window.__WHISPER_NATIVE_AUDIO = { available: bool }
  *    Absence of the object means "not running in the shell".
  *  - page → shell: window.webkit.messageHandlers.nativeAudio.postMessage
  *      {cmd:"list"} | {cmd:"start", pid:-1|N, bundleID?} | {cmd:"stop"}
  *  - shell → page callbacks on window.__whisperNativeAudio:
- *      onSources(json), onStarted(), onAudio(base64, sampleCount, rms?),
+ *      onSources(json), onStarted(), onAudio(base64, sampleCount, rms),
  *      onWarning(message), onError(message), onStopped()
- *    rms and onWarning are newer than the rest — both sides treat them as
- *    optional so old shell + new page (and vice versa) keep working.
  */
 
 export interface NativeAudioSourceInfo {
@@ -25,14 +23,15 @@ export interface NativeAudioSourceInfo {
   pid: number;
   name: string;
   bundleID?: string;
-  /** ALL audio pids of the app (helpers included). Newer shells only. */
+  /** ALL audio pids of the app (helpers included). App rows only; the
+   *  System audio row has none. */
   pids?: number[];
 }
 
 export interface NativeCaptureHandlers {
   /** Decoded 16 kHz mono Float32 samples in [-1, 1]. `rms` is the shell's
-   *  root-mean-square level for the chunk in [0, 1] (older shells omit it). */
-  onAudio: (samples: Float32Array, rms?: number) => void;
+   *  root-mean-square level for the chunk in [0, 1]. */
+  onAudio: (samples: Float32Array, rms: number) => void;
   /** Capture failed mid-stream (the shell has already stopped cleanly). */
   onError: (message: string) => void;
   /** Capture is running but silent (no callbacks / all-zero samples for
@@ -42,7 +41,6 @@ export interface NativeCaptureHandlers {
 }
 
 interface NativeBridgeMarker {
-  platform: string;
   available: boolean;
 }
 
@@ -131,7 +129,7 @@ function ensureCallbacksInstalled(): void {
       const handlers = activeHandlers;
       if (!handlers) return;
       try {
-        const level = typeof rms === 'number' && Number.isFinite(rms) ? rms : undefined;
+        const level = typeof rms === 'number' && Number.isFinite(rms) ? rms : 0;
         handlers.onAudio(decodeNativeAudioChunk(base64, sampleCount), level);
       } catch (err) {
         console.error('[native-audio] failed to decode chunk:', err);

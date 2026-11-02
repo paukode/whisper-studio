@@ -34,7 +34,7 @@ export function formatCount(n: number): string {
 }
 
 /** "12 KB" style size for a tool call whose arguments are still arriving. */
-export function formatKb(chars: number): string {
+function formatKb(chars: number): string {
   const kb = chars / 1024;
   return `${kb < 10 ? kb.toFixed(1) : Math.round(kb)} KB`;
 }
@@ -69,7 +69,7 @@ export function parseTestSummary(result?: string): { passed: number; failed: num
 }
 
 /** Both diff numbers of a call, or null when either is unknown. */
-export function callDiff(tool: ToolUseEvent): { added: number; removed: number } | null {
+function callDiff(tool: ToolUseEvent): { added: number; removed: number } | null {
   const added = num(tool.meta?.added);
   const removed = num(tool.meta?.removed);
   return added !== null && removed !== null ? { added, removed } : null;

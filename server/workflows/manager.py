@@ -15,7 +15,7 @@ import json
 import logging
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from server.workflows import journal as jnl
 from server.workflows.runtime import WorkflowRun
@@ -38,14 +38,10 @@ _TASK_TERMINAL = {
 
 
 def _register_task(run_id: str, name: str, session_id: str, model_key: str) -> str:
-    """Mirror a launched run into the unified background-task registry.
-
-    The registry has allowed ``kind="workflow"`` since it was written and
-    completion_inject already reports finished workflow tasks back to the model
-    on the next turn — but nothing ever created such a row, so both were dead
-    code and a detached run notified nobody: no row in the header's task list,
-    no next-turn report. Best-effort by design; a registry hiccup must never
-    stop the run itself.
+    """Mirror a launched run into the unified background-task registry, so it
+    shows in the header's task list and completion_inject reports it back to
+    the model on the next turn. A registry hiccup must never stop the run
+    itself.
     """
     try:
         from server.tasks import registry
@@ -151,21 +147,15 @@ def resolve_workflow_effort(effort_label: str | None, model_key: str) -> str | N
     kept a manually approved run reasoning shallower than an auto-approved one.
     ``None`` out means the model has no effort support (Haiku).
     """
-    try:
-        from server.chat.infra import effort_for_model
+    from server.chat.infra import effort_for_model
 
-        return effort_for_model(model_key, effort_label)
-    except Exception:  # noqa: BLE001 — config unavailable; infer from the key
-        from server.infrastructure.effort import resolve_effort
-
-        return resolve_effort({}, model_key, effort_label)
+    return effort_for_model(model_key, effort_label)
 
 
 def resolve_workflow_workspace(raw: str | None) -> tuple[str | None, str]:
     """Resolve the workspace a run is pinned to. Returns (path, error) — path
     is ``None`` with error set on a bad explicit path, or ``None`` with no
-    error when nothing is connected and none was given (the fully-legacy,
-    unpinned case — nothing to pin to).
+    error when nothing is connected and none was given (nothing to pin to).
 
     An explicit path (the model resolved one from the user's own words, e.g.
     "check ~/Downloads/project1") must already exist: silently creating it, or
@@ -201,7 +191,7 @@ def resolve_workflow_workspace(raw: str | None) -> tuple[str | None, str]:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _conn():
@@ -411,9 +401,7 @@ def _make_nested_runner(session_id, model_key, model_id, effort_label, workspace
             }
         # Depth-1 child inherits the parent's REMAINING budget so nested spend
         # can't exceed the parent's cap; its usage is merged back into the parent.
-        child_budget = None
-        if parent.budget_tokens is not None:
-            child_budget = max(0, parent.budget_tokens - parent.tokens_out)
+        child_budget = max(0, parent.budget_tokens - parent.tokens_out)
         child_id = uuid.uuid4().hex[:12]
         # Give the nested run its own row so it is queryable and its journal dir
         # isn't an orphan; namespace the name under the parent.

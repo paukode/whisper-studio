@@ -115,7 +115,7 @@ def is_official_author(author: str | None) -> bool:
     return bool(author) and author.lower() in _OFFICIAL
 
 
-# Curated GGUF publishers browsed by default (design §8). "Search all of HF" is
+# Curated GGUF publishers browsed by default. "Search all of HF" is
 # an explicit opt-in (``all=1``) to keep quality/safety high.
 TRUSTED_AUTHORS: tuple[str, ...] = (
     "unsloth",
@@ -139,7 +139,7 @@ TRUSTED_AUTHORS: tuple[str, ...] = (
 #     pool dominates a prompt that is mostly schemas.
 # So a model under the threshold is installed as chat-only: no pool, no tool
 # instructions, a much smaller prompt, and answers instead of JSON. It is a
-# DEFAULT, not a lock — `supports_tools` is editable in the config afterwards.
+# DEFAULT, not a lock, `supports_tools` is editable in the config afterwards.
 AGENTIC_MIN_PARAMS_B = 7.0
 
 # "1.5B", "8B", "30B-A3B" → the leading number. Anchored with \b so a quant token
@@ -148,13 +148,13 @@ AGENTIC_MIN_PARAMS_B = 7.0
 _PARAM_SIZE_RE = re.compile(r"(\d+(?:\.\d+)?)\s*[bB]\b")
 
 # ── Memory-fit gate ──────────────────────────────────────────────────────────
-# Nothing here is sized for any particular machine — the caller (service.py)
+# Nothing here is sized for any particular machine, the caller (service.py)
 # measures the RUNNING machine's physical memory and companion-model footprint
 # at call time and passes those in. These two constants are machine-independent
 # rules of thumb applied to whatever RAM the machine actually reports:
 #   * Apple's Metal (and most GPU/unified-memory backends) will not let one
 #     process claim all of physical RAM before the OS starts reclaiming pages
-#     out from under it — recommendedMaxWorkingSetSize on Apple Silicon sits
+#     out from under it, recommendedMaxWorkingSetSize on Apple Silicon sits
 #     around 3/4 of total unified memory. 0.75 approximates that ceiling on any
 #     machine, not just the one this was observed on.
 #   * A resident context needs more than the raw weights: the KV cache at the
@@ -208,7 +208,7 @@ def fit_verdict(
     Returns ``'ok'``, ``'tight'``, or ``'too_big'``; ``None`` when either size
     is unknown or non-positive, so the caller can omit the field rather than
     render a guess. ``total_mem_bytes`` and ``reserved_bytes`` describe the
-    CALLER's machine — this function hardcodes no machine's numbers, only the
+    CALLER's machine, this function hardcodes no machine's numbers, only the
     fractions above. ``kv_cache_bytes`` is as for needed_bytes.
     """
     needed = needed_bytes(size_bytes, kv_cache_bytes)
@@ -238,7 +238,7 @@ def arch_supported(arch: str | None) -> bool:
 MLX_TRUSTED_AUTHORS: tuple[str, ...] = ("mlx-community", "lmstudio-community")
 
 # MLX repo names end in a quant tag ("-4bit", "-8bit", "-bf16",
-# "-4bit-DWQ", ...). One repo IS one quant — there is no per-file picker.
+# "-4bit-DWQ", ...). One repo IS one quant, there is no per-file picker.
 _MLX_QUANT_RE = re.compile(
     r"(?:^|[-_.])(?P<quant>\d+(?:\.\d+)?bit(?:-DWQ|-AWQ)?|bf16|fp16|f16|fp32)(?=$|[-_.])",
     re.IGNORECASE,
@@ -307,8 +307,18 @@ def shard_info(filename: str) -> tuple[str, int, int] | None:
     return m.group("base"), int(m.group("idx")), int(m.group("total"))
 
 
+def shard_filenames(filename: str) -> list[str]:
+    """Every filename of the sharded GGUF ``filename`` belongs to (its first
+    shard names the group), or just ``[filename]`` when it is not sharded."""
+    info = shard_info(filename)
+    if info is None:
+        return [filename]
+    base, _idx, total = info
+    return [f"{base}-{i:05d}-of-{total:05d}.gguf" for i in range(1, total + 1)]
+
+
 def is_mmproj(filename: str) -> bool:
-    """A vision projector (mmproj) file — not a chat model on its own, hidden."""
+    """A vision projector (mmproj) file, not a chat model on its own, hidden."""
     return "mmproj" in filename.lower()
 
 
@@ -318,7 +328,7 @@ def param_count_b(repo_id: str, filename: str = "") -> float | None:
 
     First match wins, so an MoE "30B-A3B" reads as its 30B total rather than its
     3B active count, and a family version ("Qwen2.5-Coder-1.5B") can't be
-    mistaken for a size — "2.5" is not followed by a B.
+    mistaken for a size, "2.5" is not followed by a B.
     """
     for text in (repo_id, filename):
         if not text:
@@ -364,10 +374,10 @@ class QuantOption:
 def group_gguf_files(files: list[tuple[str, int]]) -> list[QuantOption]:
     """Fold a repo's ``[(filename, size_bytes)]`` into per-quant options.
 
-    Rules (design §4/§5):
+    Rules:
       * only ``*.gguf`` files;
       * ``*mmproj*`` projector files are dropped (vision, not chat);
-      * shards (``-00001-of-000NN.gguf``) collapse to ONE option — sizes summed,
+      * shards (``-00001-of-000NN.gguf``) collapse to ONE option, sizes summed,
         the first shard kept as the load target;
       * files with no recognizable quant token are skipped (base/unknown dumps).
     One option per (quant); if two files share a quant the larger wins, which
@@ -430,7 +440,7 @@ def group_gguf_files(files: list[tuple[str, int]]) -> list[QuantOption]:
     return options
 
 
-# Preference ladder for the pre-selected "recommended" quant (design §5):
+# Preference ladder for the pre-selected "recommended" quant:
 # Q4_K_M, then Unsloth's UD-Q4_K_XL, then nearby 4/5-bit K-quants.
 _RECOMMENDED_ORDER = (
     "Q4_K_M",

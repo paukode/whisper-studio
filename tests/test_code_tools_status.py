@@ -90,7 +90,7 @@ def test_status_shows_the_workspaces_eslint_without_running_it(tmp_path, monkeyp
 
     def fake_run(argv, *, cwd=None, timeout=10.0):
         calls.append(argv)
-        return ToolRun(0, "v22.16.0\n", "")
+        return ToolRun(0, "v26.13.0\n", "")
 
     monkeypatch.setattr(status, "node_path", lambda: "/app/bin/node")
     monkeypatch.setattr(status, "run_tool", fake_run)
@@ -106,7 +106,21 @@ def test_status_shows_the_workspaces_eslint_without_running_it(tmp_path, monkeyp
     # Opening the page executes nothing from the workspace: only the app's
     # node is asked for its version.
     assert calls == [["/app/bin/node", "--version"]]
-    assert "Node 22.16.0" in row.note
+    assert "Node 26.13.0" in row.note
+
+
+def test_an_eslint_whose_node_does_not_run_is_not_working(tmp_path, monkeypatch):
+    """A node that cannot start used to show ESLint as OK with no Node note,
+    while lsp_diagnostics answered 'ESLint could not run'."""
+    _fake_eslint(tmp_path)
+    (tmp_path / "eslint.config.js").write_text("export default [];\n")
+    monkeypatch.setattr(status, "node_path", lambda: "/app/bin/node")
+    monkeypatch.setattr(
+        status, "run_tool", lambda argv, **kw: ToolRun(1, "", "Bad CPU type in executable")
+    )
+    row = status._eslint(str(tmp_path))
+    assert row.ok is False
+    assert row.reason.startswith("ESLint 10.2.1 is installed but Node.js does not run:")
 
 
 def _fake_eslint(project, version="10.2.1") -> None:
@@ -312,6 +326,15 @@ def test_proxy_reports_a_language_server_that_cannot_be_spawned(monkeypatch, tmp
         lsp_proxy, "language_server", lambda lang: LanguageServer([missing, "--stdio"], "")
     )
     c = _client(lsp_proxy.router)
-    with c.websocket_connect("/ws/lsp/typescript") as ws:
+    with c.websocket_connect(f"/ws/lsp/typescript?workspace={tmp_path}") as ws:
         message = _show_message(ws.receive_json())
     assert message.startswith("The typescript language server could not start")
+
+
+def test_proxy_refuses_a_workspace_that_is_gone(monkeypatch, tmp_path):
+    monkeypatch.setattr(lsp_proxy, "language_server", lambda lang: LanguageServer(["pylsp"], ""))
+    gone = tmp_path / "gone"
+    c = _client(lsp_proxy.router)
+    with c.websocket_connect(f"/ws/lsp/python?workspace={gone}") as ws:
+        message = _show_message(ws.receive_json())
+    assert message == f"Workspace folder not found: {gone}"

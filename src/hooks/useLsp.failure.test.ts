@@ -150,6 +150,24 @@ describe('language server failure reasons', () => {
     expect(result.current.failure).toBe('The python language server stopped (exit status 3).');
   });
 
+  it('says why when the server answers initialize with an error', async () => {
+    const params = lspParams();
+    const { result } = renderHook(() => useLsp(params));
+    await act(async () => {});
+    const socket = FakeSocket.instances[FakeSocket.instances.length - 1];
+    await act(async () => {
+      socket.readyState = FakeSocket.OPEN;
+      socket.onopen?.();
+      const initialize = JSON.parse(socket.sent[0]) as { id: number };
+      socket.onmessage?.({
+        data: JSON.stringify({ jsonrpc: '2.0', id: initialize.id, error: { code: -32603, message: 'tsserver crashed' } }),
+      });
+    });
+    expect(result.current.status).toBe('error');
+    expect(result.current.failure).toContain('The language server did not start');
+    expect(result.current.failure).toContain('tsserver crashed');
+  });
+
   it('reads a plain close as off, with no failure', async () => {
     const params = lspParams('python');
     const { result } = renderHook(() => useLsp(params));

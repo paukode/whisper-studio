@@ -25,18 +25,6 @@ export async function listDir(path: string): Promise<FileTreeEntry[]> {
   return Array.isArray(data?.entries) ? data.entries : [];
 }
 
-/** Read a text file's content as a raw string. Bypasses the shared client on
- *  purpose: the client sniffs the content-type and would `response.json()`-parse
- *  a `.json` file into an object, breaking the `Promise<string>` contract. Reading
- *  the body with `response.text()` guarantees a string regardless of content-type. */
-export async function readFile(path: string): Promise<string> {
-  const response = await fetch(`/api/workspace/file?path=${encodeURIComponent(path)}&raw=true`);
-  if (!response.ok) {
-    throw new Error(`Failed to read file: ${response.status} ${response.statusText}`);
-  }
-  return response.text();
-}
-
 /** Query file metadata without fetching content. Binary files return {binary:true, type}. */
 export function queryFile(path: string): Promise<TextFileInfo | BinaryFileInfo> {
   return get<TextFileInfo | BinaryFileInfo>(`/api/workspace/file?path=${encodeURIComponent(path)}`);
@@ -75,12 +63,34 @@ export interface EditRecord {
   created: boolean;
   at: string;
   stored: boolean;
+  /** The app still keeps the undo copy of this write: it was applied and
+   *  not undone, and the app has not restarted or changed workspace since. */
+  undoable?: boolean;
 }
 
 /** The stored edit of one tool call. Rejects with the server's detail (an
  *  ApiError with status 404) when nothing is kept for that id. */
 export function getEdit(toolUseId: string): Promise<EditRecord> {
   return get<EditRecord>(`/api/workspace/edits/${encodeURIComponent(toolUseId)}`);
+}
+
+export interface UndoResult {
+  path: string;
+  restored: true;
+  /** The write had created the file, so undo removed it. */
+  removed: boolean;
+}
+
+/** Undo the one write of this tool call. The server refuses (409) when the
+ *  file changed after that write, and changes nothing then. */
+export function undoEdit(toolUseId: string): Promise<UndoResult> {
+  return post<UndoResult>('/api/workspace/undo', { tool_use_id: toolUseId });
+}
+
+/** Open a file in its macOS default app (Word or Pages for a .docx), as
+ *  a Finder double-click would. A workspace-relative or absolute path. */
+export function openInDefaultApp(path: string): Promise<void> {
+  return post<void>('/api/workspace/open-with', { path });
 }
 
 export function writeFile(path: string, content: string): Promise<void> {
@@ -113,7 +123,7 @@ export interface IndexStatus {
 
 /** An engine value for the index's LLM passes: 'haiku' (cloud), any on-device
  *  model key from the config ('local_gemma', 'local_qwen35_9b', ...), the
- *  legacy 'local' alias for local_gemma, or the pass-specific sentinels
+ *  'local' alias (follow the installed on-device model), or the pass-specific sentinels
  *  'none' / 'gliner2'. The catalog comes from GET /api/workspace/index/engines. */
 export type IndexEngine = string;
 
@@ -309,14 +319,6 @@ export function getIndexSettings(path: string): Promise<IndexSettings> {
  *  syncs the background helper. Returns the full updated settings. */
 export function updateIndexSettings(path: string, patch: IndexSettingsPatch): Promise<IndexSettings> {
   return put<IndexSettings>('/api/workspace/index/settings', { path, ...patch });
-}
-
-/** Whether the background refresh helper is installed + whether the platform
- *  supports it (macOS). The per-folder on/off lives in each folder's settings. */
-export interface IndexAgentStatus { installed: boolean; supported: boolean; }
-
-export function getIndexAgent(): Promise<IndexAgentStatus> {
-  return get<IndexAgentStatus>('/api/workspace/index/agent');
 }
 
 /** Remove one folder from the recent list (no-op server-side if it's indexed). */

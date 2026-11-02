@@ -1,1 +1,1 @@
-"""Security sub-package — permissions, command validation, explainer, shadowed rules."""
+"""Security sub-package: permissions, command validation, explainer, shadowed rules."""

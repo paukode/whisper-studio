@@ -1,4 +1,4 @@
-"""Per-workspace index settings: schedule, typed relations, background refresh.
+"""Per-workspace index settings: schedule, LLM passes, NER model, background refresh.
 
 Each indexed workspace stores its own settings in its index ``meta`` table, so
 they travel with the index and are independent per folder. Values are validated
@@ -9,9 +9,14 @@ Shape::
     {
       "schedule": {"enabled": bool, "hour": 0-23, "frequency": "daily|every_n_days|weekly",
                    "interval_days": 1-30, "weekday": "mon".."sun"},
-      "typed_relations": {"enabled": bool, "engine": "none|haiku|local|gliner2"},
+      "typed_relations": {"enabled": bool, "engine": "none|haiku|local|<model key>|gliner2"},
+      "entity_descriptions": {"enabled": bool, "engine": "none|haiku|local|<model key>"},
+      "chunk_context": {"mode": "off|filename|llm", "engine": "haiku|local|<model key>"},
+      "ner_model": "gliner|gliner2",
       "refresh_when_closed": bool,
     }
+
+Engine values are resolved by server/index/engines.py.
 """
 
 from __future__ import annotations
@@ -60,7 +65,7 @@ _DEFAULTS = {
     # Contextual chunk headers prepended before embedding (improves retrieval for
     # filename/section-relevant queries). "off" = embed content only; "filename" =
     # prepend the file path (free, offline); "llm" = an LLM writes a situating
-    # line per chunk (engine: haiku=cloud, local=on-device Gemma).
+    # line per chunk (engine: haiku, local or an on-device model key).
     "chunk_context": {"mode": "filename", "engine": "local"},
     # Which on-device NER model runs for ENTITIES only (relations are chosen
     # separately via typed_relations.engine): "gliner" (default, gliner_large-v2.5,
@@ -134,7 +139,7 @@ def _pending_all() -> dict:
     try:
         with open(_PENDING_PATH) as f:
             return json.load(f)
-    except Exception:
+    except FileNotFoundError:
         return {}
 
 
@@ -163,21 +168,15 @@ def get_settings(ws_path: str) -> dict:
     would otherwise create an empty index DB (store._connect always creates it).
     For an indexed folder, read the meta; on first read seed it from any pending
     pre-index config, else defaults."""
-    if not os.path.exists(store.db_path(ws_path)):
+    if not paths.is_indexed(ws_path):
         pend = _pending_get(ws_path)
         return _validated(pend) if pend is not None else copy.deepcopy(_DEFAULTS)
-    try:
-        meta = store.get_meta(ws_path)
-    except Exception:
-        return copy.deepcopy(_DEFAULTS)
+    meta = store.get_meta(ws_path)
     raw = meta.get("settings")
     if raw is None:
         pend = _pending_get(ws_path)
         seeded = _validated(pend if pend is not None else _DEFAULTS)
-        try:
-            store.set_meta(ws_path, settings=seeded)
-        except Exception:
-            pass
+        store.set_meta(ws_path, settings=seeded)
         _pending_clear(ws_path)  # promote pre-index config into the index, then forget it
         return seeded
     return _validated(raw)
@@ -234,7 +233,7 @@ def update_settings(ws_path: str, patch: dict) -> dict:
     if "refresh_when_closed" in patch:
         cur["refresh_when_closed"] = bool(patch["refresh_when_closed"])
     validated = _validated(cur)
-    if os.path.exists(store.db_path(ws_path)):
+    if paths.is_indexed(ws_path):
         store.set_meta(ws_path, settings=validated)
     else:
         _pending_set(ws_path, validated)

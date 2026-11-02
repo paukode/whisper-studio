@@ -1,7 +1,7 @@
 """Secret file detection for git operations.
 
-Used by the git executor to warn before staging or committing files that
-look like credentials.
+Used by the git executor to refuse staging or committing files that look
+like credentials.
 """
 
 import fnmatch

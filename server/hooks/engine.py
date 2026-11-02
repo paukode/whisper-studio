@@ -2,18 +2,19 @@
 
 One ``run_hooks(event, payload)`` per event, covering every model path because
 it is called from the shared tool executor and the shared end-of-turn gates.
-Order per event: in-process hooks (plugins, WS-E's orchestrator gate) first,
+Order per event: in-process hooks (plugins) first,
 then user shell hooks, then trusted project shell hooks. First deny wins;
 input rewrites and context chain in declaration order.
 
 Shell contract:
-- stdin: one JSON payload (schema.build_stdin_payload). Legacy WHISPER_* env
-  vars are also set for existing hooks.
+- stdin: one JSON payload (schema.build_stdin_payload). No hook-specific env
+  vars are set: a hook reads its context from stdin. A command that uses one
+  of the old WHISPER_* variables is not run and counts as a hook failure.
 - exit 0 = pass; stdout, if JSON, may carry {decision, reason, updatedInput,
   additionalContext}; non-JSON stdout on Post/SessionStart becomes context.
 - exit 2 = block; stderr is the model-visible reason.
 - other exit / timeout / spawn error = infra error, resolved per-hook by
-  on_error ("ignore" default, "block" fail-closed).
+  on_error ("ignore" default: logged and skipped; "block": fail-closed).
 Executed via server/sandbox.run_sandboxed (deny-list, process-group kill).
 """
 
@@ -23,13 +24,17 @@ import asyncio
 import json
 import logging
 
-from server.hooks.config_loader import merged_for_event
+from server.hooks.config_loader import (
+    OLD_VARS_NOTICE_TITLE,
+    hook_label,
+    merged_for_event,
+    old_hook_vars,
+    old_vars_message,
+)
 from server.hooks.schema import HookDef, HookOutcome, build_stdin_payload, matches
 from server.infrastructure.paths import data_root
 
 log = logging.getLogger("whisper-studio")
-
-MAX_STOP_BLOCKS_PER_TURN = 3
 
 
 def _apply_control(control: dict, outcome: HookOutcome, *, allow_rewrite: bool) -> bool:
@@ -57,18 +62,6 @@ def _run_shell_hook(
 ) -> tuple[int, str, str]:
     from server.sandbox import run_sandboxed
 
-    # Legacy convenience vars (the full payload is also on stdin). Passed via the
-    # subprocess environment, NOT a command prefix — a `VAR=val <command>` prefix
-    # would turn any command starting with a shell compound construct
-    # (if/for/while/case/{}/()) into a /bin/sh syntax error whose exit code (2)
-    # is exactly the engine's DENY code, silently blocking every matched call.
-    env_extra = {
-        "WHISPER_EVENT": payload.get("event", ""),
-        "WHISPER_TOOL": payload.get("tool_name", "") or "",
-        "WHISPER_INPUT": json.dumps(payload.get("tool_input", {}))[:500],
-        "WHISPER_OUTPUT": str(payload.get("tool_output", ""))[:500],
-        "WHISPER_SESSION": payload.get("session_id", ""),
-    }
     # A hook runs automatically on every matched tool call with no card, so it
     # must not write the app's own data or config, or anything outside the
     # connected workspace (the user's permission contract: no silent change
@@ -80,7 +73,6 @@ def _run_shell_hook(
         cwd=cwd,
         timeout=hook.timeout,
         input_data=json.dumps(payload),
-        env_extra=env_extra,
         write_mode="workspace",
         write_root=write_root,
     )
@@ -96,14 +88,16 @@ async def run_hooks(
     allow_rewrite: bool = True,
 ) -> HookOutcome:
     """Evaluate all hooks for an event. See module docstring for the contract."""
-    from server.infrastructure.plugin_hooks import run_inprocess
+    from server.infrastructure.plugin_hooks import InProcessHookError, run_inprocess
 
     outcome = HookOutcome()
     ws = workspace or _current_workspace()
     cwd = ws or data_root()
 
-    # Phase 1: in-process hooks (plugins, orchestrator gate).
+    # Phase 1: in-process hooks (plugins).
     for control in await run_inprocess(event, payload):
+        if isinstance(control, InProcessHookError):
+            continue  # run_inprocess logged it
         if _apply_control(control, outcome, allow_rewrite=allow_rewrite):
             return outcome
 
@@ -113,6 +107,21 @@ async def run_hooks(
     loop = asyncio.get_event_loop()
     for hook in merged_for_event(event, ws):
         if not matches(hook.matcher, tool_name):
+            continue
+        old_vars = old_hook_vars(hook.command)
+        if old_vars:
+            # Hooks no longer get the WHISPER_* variables, so this command cannot
+            # do what it was written to do: a hook failure, resolved by on_error
+            # like any other.
+            from server.notifications import old_format_notice
+
+            msg = old_vars_message(hook_label(hook), old_vars)
+            old_format_notice(title=OLD_VARS_NOTICE_TITLE, message=msg)
+            if hook.on_error == "block":
+                outcome.decision = "deny"
+                outcome.reason = f"Hook '{hook.id}' was not run and is fail-closed. {msg}"
+                return outcome
+            log.warning("Hook %s was not run (on_error=ignore): %s", hook.id, msg)
             continue
         hook_payload = payload
         if allow_rewrite and outcome.updated_input is not None:
@@ -126,7 +135,7 @@ async def run_hooks(
                 outcome.decision = "deny"
                 outcome.reason = f"Hook '{hook.id}' failed ({e}) and is fail-closed."
                 return outcome
-            outcome.errors.append(f"hook {hook.id}: {e}")
+            log.warning("Hook %s could not run and was skipped (on_error=ignore): %s", hook.id, e)
             continue
 
         if code == 2:
@@ -138,7 +147,12 @@ async def run_hooks(
                 outcome.decision = "deny"
                 outcome.reason = (stderr or f"Hook exited {code}").strip()
                 return outcome
-            outcome.errors.append(f"hook {hook.id}: exit {code}: {stderr.strip()[:200]}")
+            log.warning(
+                "Hook %s exited %s and was skipped (on_error=ignore): %s",
+                hook.id,
+                code,
+                stderr.strip()[:200],
+            )
             continue
 
         # exit 0: parse stdout for structured control, else treat as context.
@@ -162,12 +176,9 @@ def _try_json(text: str) -> dict | None:
 
 
 def _current_workspace() -> str | None:
-    try:
-        from server.workspace import get_workspace_path
+    from server.workspace import get_workspace_path
 
-        return get_workspace_path()
-    except Exception:
-        return None
+    return get_workspace_path()
 
 
 async def check_stop_hooks(
@@ -177,9 +188,9 @@ async def check_stop_hooks(
     stop_hook_active: bool = False,
     model_id: str = "",
 ) -> HookOutcome:
-    """The WS-E-critical gate: run Stop hooks at end of turn. A deny means the
-    turn must not finish — the caller injects the reason and continues the
-    loop (bounded by MAX_STOP_BLOCKS_PER_TURN and the model's round cap)."""
+    """Run Stop hooks at end of turn. A deny means the turn must not finish:
+    the caller injects the reason and continues the loop (bounded by the
+    completion gate's goal_max_consecutive_blocks and the round cap)."""
     payload = build_stdin_payload(
         "Stop",
         session_id=session_id,

@@ -49,8 +49,10 @@ def test_prune_alone_resolves_pressure_without_a_summary(log_root, monkeypatch):
     def no_summary(*a, **k):
         raise AssertionError("summary path must not run when pruning resolves pressure")
 
-    monkeypatch.setattr(compaction, "_compact_messages_simple", no_summary)
+    monkeypatch.setattr("server.infrastructure.oneshot.one_shot", no_summary)
     msgs = _messages(result_chars=10_000)
+    # A clean user boundary before the recent tail is required.
+    msgs.insert(16, {"role": "user", "content": "continue"})
     assert compaction.estimate_message_size(msgs) > 60_000
 
     out = asyncio.run(
@@ -68,14 +70,14 @@ def test_overflow_trigger_never_stops_at_the_prune_rung(log_root, monkeypatch):
     monkeypatch.setattr(compaction, "thresholds_for", lambda *_a, **_k: (10_000_000, 12_000_000))
     msgs = _messages()
 
-    out = asyncio.run(
-        compaction.compact_messages_with_claude(
-            msgs, "model-id", session_id="s1", model_key="k", trigger="context-overflow"
+    with pytest.raises(compaction.CompactionError):
+        asyncio.run(
+            compaction.compact_messages_with_claude(
+                msgs, "model-id", session_id="s1", model_key="k", trigger="context-overflow"
+            )
         )
-    )
     records = _read_log(log_root)
-    assert records[-1]["outcome"] != "pruned-only"
-    assert out  # some strategy still produced a history
+    assert records[-1]["outcome"] == "error"
 
 
 def test_bracket_closes_with_error_outcome_when_a_strategy_raises(log_root, monkeypatch):

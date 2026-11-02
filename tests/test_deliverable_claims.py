@@ -44,7 +44,7 @@ def test_turn_messages_start_after_the_last_real_user_prompt():
     assert len(turn) == 5 and turn[0]["role"] == "assistant"
 
 
-def test_artifact_created_detects_anthropic_and_responses_shapes():
+def test_artifact_created_detects_a_create_artifact_call():
     anth = [
         {"role": "user", "content": "make it"},
         {
@@ -52,12 +52,8 @@ def test_artifact_created_detects_anthropic_and_responses_shapes():
             "content": [{"type": "tool_use", "name": "create_artifact", "input": {}}],
         },
     ]
-    resp = [
-        {"role": "user", "content": "make it"},
-        {"role": "assistant", "content": [{"type": "function_call", "name": "create_artifact"}]},
-    ]
     none = [{"role": "user", "content": "make it"}, {"role": "assistant", "content": "done"}]
-    assert d.artifact_created(anth) and d.artifact_created(resp)
+    assert d.artifact_created(anth)
     assert not d.artifact_created(none)
 
 
@@ -172,18 +168,15 @@ def claim_gate(monkeypatch):
 _CARD_REPLY = "The deploy stage in the artifact card above is green."
 
 
-def test_the_gate_passes_a_claim_about_a_card_an_earlier_turn_made(claim_gate):
+def test_the_gate_passes_a_claim_about_a_card_an_earlier_turn_made(claim_gate, monkeypatch):
     from server import artifacts
 
+    monkeypatch.setattr(artifacts, "_versions", {})
     sid = "earlier-card-in-memory"
-    artifacts.forget_session(sid)
-    try:
-        assert claim_gate(sid, _CARD_REPLY).block is True
-        # What the earlier turn's create_artifact call recorded (tool_router).
-        artifacts.record_artifact(sid, title="Pipeline", html="<p>pipeline</p>")
-        assert claim_gate(sid, _CARD_REPLY).block is False
-    finally:
-        artifacts.forget_session(sid)
+    assert claim_gate(sid, _CARD_REPLY).block is True
+    # What the earlier turn's create_artifact call recorded (tool_router).
+    artifacts.record_artifact(sid, title="Pipeline", html="<p>pipeline</p>")
+    assert claim_gate(sid, _CARD_REPLY).block is False
 
 
 def test_the_card_is_still_known_after_a_restart(claim_gate):
@@ -193,7 +186,7 @@ def test_the_card_is_still_known_after_a_restart(claim_gate):
     from server.infrastructure import sessions
 
     sid = "earlier-card-after-restart"
-    artifacts.forget_session(sid)
+    artifacts._versions.pop(sid, None)
     sessions._ensure_db()
     sessions._append_message_sync(sid, {"role": "user", "content": "draw the pipeline"})
     sessions._append_message_sync(
@@ -211,7 +204,7 @@ def test_a_claim_about_a_card_the_session_never_had_is_held(claim_gate):
     from server import artifacts
 
     sid = "never-had-a-card"
-    artifacts.forget_session(sid)
+    artifacts._versions.pop(sid, None)
     held = claim_gate(sid, _CARD_REPLY)
     assert held.block is True and held.source == "deliverable"
     assert "create_artifact" in held.feedback
@@ -222,7 +215,7 @@ def test_a_lookup_that_fails_holds_the_claim(claim_gate, monkeypatch):
     from server import artifacts
 
     sid = "card-lookup-fails"
-    artifacts.forget_session(sid)
+    artifacts._versions.pop(sid, None)
     artifacts.record_artifact(sid, title="Pipeline", html="<p>pipeline</p>")
     try:
         assert claim_gate(sid, _CARD_REPLY).block is False
@@ -233,7 +226,7 @@ def test_a_lookup_that_fails_holds_the_claim(claim_gate, monkeypatch):
         monkeypatch.setattr(artifacts, "list_artifacts", broken)
         assert claim_gate(sid, _CARD_REPLY).block is True
     finally:
-        artifacts.forget_session(sid)
+        artifacts._versions.pop(sid, None)
 
 
 # ── rows the engine writes into a running turn ─────────────────────────────

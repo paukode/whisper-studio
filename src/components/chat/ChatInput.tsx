@@ -4,8 +4,8 @@ import { useSessionStore } from '@/stores/sessionStore';
 import { useMcpStore } from '@/stores/mcpStore';
 import { chatModelBlockReason, useSettingsStore } from '@/stores/settingsStore';
 import { useUIStore } from '@/stores/uiStore';
+import { ICON } from '@/components/chat/activityIcons';
 import { useChatStream } from '@/hooks/useChatStream';
-import { updatePermissions } from '@/api/settings';
 import { useChatAutocomplete } from '@/hooks/useChatAutocomplete';
 import { useSlashCommands } from '@/hooks/useSlashCommands';
 import { useComposerDragDrop } from '@/hooks/useComposerDragDrop';
@@ -13,12 +13,13 @@ import { useComposerChatEvents } from '@/hooks/useComposerChatEvents';
 import { useDictationInput } from '@/hooks/useDictationInput';
 import { useComposerAttachments } from '@/hooks/useComposerAttachments';
 import { requestModelChange } from './dataRetentionConsent';
-import { post, put } from '@/api/client';
+import { post } from '@/api/client';
 import { useRecentWorkspaces } from '@/hooks/useRecentWorkspaces';
 import { useQuery } from '@tanstack/react-query';
 import { listIndexes, type IndexInfo } from '@/api/workspace';
 import { useIndexSearchStore } from '@/stores/indexSearchStore';
 import { toError } from '@/utils/toError';
+import { CHAT_INSERT_EVENT } from '@/utils/uiEvents';
 import { PermissionGroup, ThinkGroup, WorkspaceGroup } from './ComposerGroups';
 import {
   BASE_SLASH_COMMANDS,
@@ -30,7 +31,7 @@ import {
 import { MoreMenu, type MoreSection } from './MoreMenu';
 import { useVoiceStore } from '@/stores/voiceStore';
 import { voiceController } from '@/services/voiceController';
-import { settleWorkspaceOps } from '@/services/workspaceConnection';
+import { reportConnectWarnings, settleWorkspaceOps } from '@/services/workspaceConnection';
 import { VoiceBar } from './VoiceBar';
 
 export interface ChatInputProps {
@@ -39,7 +40,7 @@ export interface ChatInputProps {
 
 /**
  * Chat input form with slash-command and @-mention autocomplete
- * matching the vanilla skill-autocomplete CSS classes.
+ * (skill-autocomplete CSS classes).
  */
 export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
   const [text, setText] = useState('');
@@ -101,9 +102,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
     handlePaste,
   } = useComposerDragDrop(uploadFilesAsChips);
   useComposerChatEvents(chatStream);
-  // Long-lived SSE for out-of-band session notifications (cron firings
-  // in particular). Stays connected for the lifetime of the chat view
-  // so background events appear inline without a page refresh.
 
   /* ── Workspace dropdown helpers ── */
   const recentPaths = useRecentWorkspaces(workOpen).slice(0, 5);
@@ -117,7 +115,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
       // root / macOS extended ACLs, so we never refuse based on it).
       // A disconnect clicked just before must reach the server first.
       await settleWorkspaceOps();
-      const data = await post<{ path?: string; writable?: boolean }>(
+      const data = await post<{ path: string; writable?: boolean; warnings?: string[] }>(
         '/api/workspace/connect',
         { path: wsPath },
       );
@@ -125,11 +123,12 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
       // and relative segments collapsed), not the raw input — everything
       // downstream compares against the server's own notion of the
       // workspace root, and an unexpanded "~/..." never matches it.
-      const connectedPath = data?.path || wsPath;
+      const connectedPath = data.path;
       useUIStore.getState().setWsConnected(true, connectedPath);
+      reportConnectWarnings(data.warnings);
       setWorkOpen(false);
       const name = connectedPath.split('/').pop();
-      if (data?.writable === false) {
+      if (data.writable === false) {
         useUIStore.getState().addToast({
           type: 'info',
           message: `Connected to ${name}. Folder may be read-only. Writes will be confirmed on first attempt.`,
@@ -190,9 +189,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
     try {
       let id = planId;
       if (!id) {
-        const list = await fetch(`/api/plans?session=${encodeURIComponent(sessionId ?? '')}`)
-          .then((r) => (r.ok ? r.json() : { plans: [] }))
-          .catch(() => ({ plans: [] }));
+        const resp = await fetch(`/api/plans?session=${encodeURIComponent(sessionId ?? '')}`);
+        if (!resp.ok) throw new Error(`Could not list the plans (HTTP ${resp.status})`);
+        const list = await resp.json();
         id = list.plans?.[0]?.id as string | undefined;
       }
       if (!id) {
@@ -205,16 +204,16 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
         return;
       }
       const s = useSettingsStore.getState();
-      if (s.planMode || s.config.permissionMode === 'plan') {
-        await updatePermissions({ mode: 'auto' }).catch(() => {});
-        useSettingsStore.setState((st) => ({ planMode: false, config: { ...st.config, permissionMode: 'auto' } }));
-      }
+      if (s.config.permissionMode === 'plan') await s.setPermissionMode('auto');
       await chatStream.send(
         `The plan below is approved. Implement it now, step by step, and verify each step as you go.\n\n---\n\n${md}`,
         { displayText: 'Approved — implement the plan.' },
       );
-    } catch {
-      useUIStore.getState().addToast({ type: 'error', message: 'Could not start the plan implementation.' });
+    } catch (err) {
+      useUIStore.getState().addToast({
+        type: 'error',
+        message: `Could not start the plan implementation: ${toError(err).message}`,
+      });
     }
   }, [chatStream, sessionId]);
 
@@ -229,8 +228,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
   }, [approvePlan]);
 
   // Listen for transcript right-click → "Quote in chat input" so a transcript
-  // selection can be dropped into the composer without auto-sending. The
-  // event name matches CHAT_INSERT_EVENT in TranscriptionPanel.tsx.
+  // selection can be dropped into the composer without auto-sending.
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent<{ text?: string }>).detail;
@@ -247,8 +245,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
         }
       });
     };
-    window.addEventListener('whisper-chat-insert', handler);
-    return () => window.removeEventListener('whisper-chat-insert', handler);
+    window.addEventListener(CHAT_INSERT_EVENT, handler);
+    return () => window.removeEventListener(CHAT_INSERT_EVENT, handler);
   }, []);
 
   // Listen for "Add to Chat" events from context menu
@@ -278,7 +276,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
     [allSessions, sessionId],
   );
 
-  // Index search picker (point D): which indexed workspaces this session
+  // Index search picker: which indexed workspaces this session
   // searches. Default = all indexed when no workspace is connected; empty (off)
   // when one is. Sent as selected_search_indexes per turn.
   const { data: indexListData } = useQuery({
@@ -314,13 +312,13 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
   const selectedModel = useSettingsStore((s) => s.selectedModel);
 
   // Hydrate the slash-command list with the live model keys so /model
-  // autocompletes against whatever's defined in config.json.
+  // autocompletes against whatever's defined in the config.
   const SLASH_COMMANDS: SlashCommand[] = useMemo(
     () =>
       BASE_SLASH_COMMANDS.map((c) =>
         c.cmd === 'model '
-          // Show the version label ("Sonnet 4.6") in the picker but insert the
-          // model key ("sonnet") the /model handler validates against — so the
+          // Show the version label ("Sonnet 5.5") in the picker but insert the
+          // model key ("sonnet5.5") the /model handler validates against, so the
           // autocomplete matches the model box under the composer.
           ? { ...c, options: models.map((m) => ({ label: m.name, value: m.key })) }
           : c,
@@ -329,9 +327,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
   );
   const setEffortLevel = useSettingsStore((s) => s.setEffortLevel);
   const setVerbosity = useSettingsStore((s) => s.setVerbosity);
-  const planMode = useSettingsStore((s) => s.planMode);
-  const setPlanMode = useSettingsStore((s) => s.setPlanMode);
-  const updateConfig = useSettingsStore((s) => s.updateConfig);
+  const setPermissionMode = useSettingsStore((s) => s.setPermissionMode);
   // Live permission mode for the Mode dropdown's current-state badge.
   // Falls back to 'default' to match the backend's initial value.
   const permissionMode = useSettingsStore((s) => s.config.permissionMode ?? 'default');
@@ -353,33 +349,26 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
     openWorkspaceConnect();
   }, [openWorkspaceConnect]);
 
-  const handlePlanToggle = useCallback(async () => {
-    const newPlan = !planMode;
-    setPlanMode(newPlan);
-    const targetMode = newPlan ? 'plan' : 'auto';
-    updateConfig({ permissionMode: targetMode });
+  /** Switch the permission mode. The server write goes first; a refused or
+   *  failed write keeps the old mode on screen and says why. */
+  const switchMode = useCallback(async (target: string) => {
     try {
-      await put('/api/permissions/mode', { mode: targetMode });
+      await setPermissionMode(target);
     } catch (err) {
-      console.warn('Failed to set permission mode:', err);
+      addToast({ type: 'error', message: `Could not switch the permission mode: ${toError(err).message}` });
     }
-  }, [planMode, setPlanMode, updateConfig]);
+  }, [setPermissionMode, addToast]);
 
-  /** Switch the permission mode from the permissions panel. Same write
-   *  path as the Settings panel — store, config, then PUT /api/permissions/mode
-   *  so the backend session_approvals view stays in sync. The Plan-mode flag
-   *  is mirrored so any code that still reads `planMode` keeps working. */
+  const handlePlanToggle = useCallback(async () => {
+    await switchMode(permissionMode === 'plan' ? 'auto' : 'plan');
+  }, [permissionMode, switchMode]);
+
+  /** Switch the permission mode from the permissions panel. */
   const handleSelectMode = useCallback(async (target: string) => {
     setPermOpen(false);
     if (target === permissionMode) return;
-    setPlanMode(target === 'plan');
-    updateConfig({ permissionMode: target });
-    try {
-      await put('/api/permissions/mode', { mode: target });
-    } catch (err) {
-      console.warn('Failed to set permission mode:', err);
-    }
-  }, [permissionMode, setPlanMode, updateConfig]);
+    await switchMode(target);
+  }, [permissionMode, switchMode]);
 
   // Autocomplete state machine (slash + @ mention). Destructured into the
   // same local names the component used before the extraction so the
@@ -405,7 +394,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
     onAttachWorkspaceFile: attachWorkspaceFileAsChip,
   });
 
-  // Slash-command dispatcher (/effort, /model, /doctor, /help, /btw, …).
+  // Slash-command dispatcher (/effort, /model, /doctor, /help, …).
   const { handleSlashCommand } = useSlashCommands({
     models,
     setVerbosity,
@@ -607,9 +596,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      // Cmd/Ctrl+Enter always sends, even while the autocomplete popup is up —
-      // an explicit "send now" that never gets captured as an item selection.
-      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+      // Cmd+Enter always sends, even while the autocomplete popup is up: an
+      // explicit "send now" that never gets captured as an item selection.
+      if (e.key === 'Enter' && e.metaKey) {
         e.preventDefault();
         void handleSubmit(e as unknown as React.FormEvent);
         return;
@@ -716,9 +705,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
       <div className="composer-box">
         {/* Attachment preview. Chips grow with the filename but cap their
          * inner label at a sane width — beyond that the name is ellipsized
-         * and the full text is revealed on hover via `title`. Removes the
-         * old rigid `max-width: 200px` overflow that pushed the × button
-         * outside the chip on long names. */}
+         * and the full text is revealed on hover via `title`, so the ×
+         * button stays inside the chip on long names. */}
         <div className="attachment-preview" id="attachmentPreview" style={attachments.length > 0 ? { display: 'flex' } : undefined}>
           {attachments.map((att, idx) => {
             const uploading = att.id.startsWith('_uploading_');
@@ -759,7 +747,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
             onPaste={handlePaste}
           />
 
-          {/* Autocomplete popup — uses vanilla skill-autocomplete CSS classes */}
+          {/* Autocomplete popup (skill-autocomplete CSS classes) */}
           {acVisible && acItems.length > 0 && acRect && (
             <div
               ref={acRef}
@@ -784,7 +772,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
                   onMouseDown={(e) => { e.preventDefault(); selectAcItem(item); }}
                   onMouseEnter={() => setAcIndex(i)}
                 >
-                  <div className="skill-ac-icon">{item.icon}</div>
+                  <div className="skill-ac-icon">{ICON[item.icon]}</div>
                   <div className="skill-ac-text">
                     <span className="skill-ac-name">{item.name}</span>
                     <span className="skill-ac-desc">{item.desc}</span>
@@ -975,7 +963,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="10" x2="4" y2="14"/><line x1="8" y1="7" x2="8" y2="17"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="16" y1="8" x2="16" y2="16"/><line x1="20" y1="11" x2="20" y2="13"/></svg>
               </button>
-              {/* Item 5: Stop button during streaming (or while voice work is still
+              {/* Stop button during streaming (or while voice work is still
                *  finishing after a hang-up), send button otherwise. One button, one
                *  meaning. A message still goes into the running turn, by Enter; the
                *  placeholder above says so. */}

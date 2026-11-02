@@ -10,12 +10,9 @@ Four pieces, each usable on its own:
 
 from server.diarization import embedder, turns, voiceprints  # noqa: F401
 from server.diarization.speakers import (  # noqa: F401
-    MIN_EMBED_SAMPLES,
-    SpeakerSession,
     drop_session,
     embed,
     executor,
     get_session,
-    is_filler,
     preload,
 )

@@ -76,7 +76,7 @@ def _meta_preview_fill(tool_input, transcript, current_attachments):
     return _UNREACHABLE
 
 
-@register_executor("preview_eval", read_only=False, concurrent_safe=False, destructive=True)
+@register_executor("preview_eval", read_only=False, concurrent_safe=False)
 def _meta_preview_eval(tool_input, transcript, current_attachments):
     return _UNREACHABLE
 

@@ -34,7 +34,7 @@ export const ConfirmDialog: React.FC<{
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          background: 'var(--surface-1)',
+          background: 'var(--bg-surface)',
           color: 'var(--text-primary)',
           borderRadius: 'var(--radius-lg)',
           width: 'min(460px, 92vw)',

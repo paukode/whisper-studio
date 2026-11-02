@@ -23,8 +23,12 @@ from server.approval.markers import approval_request, preview_image
 from server.approval.router import router as approval_router
 from server.approval.spec import ApprovalOutcome, ApprovalSpec
 from server.chat.budget import TOOL_RESULT_BUDGET_BYTES, make_budget_tool_result
-from server.tool_meta import META_KEYS, read_file_lines, result_meta
+from server.tool_meta import read_file_lines, result_meta
 from tests.test_ask_user_pause_resume import _run, _State
+
+# The frame's meta keys, in the order the Zod schema (src/types/schemas/
+# chat.schema.ts) declares them.
+META_KEYS = ("duration_ms", "output_chars", "truncated", "lines", "bytes", "added", "removed")
 
 NUMBERED = "    1\timport os\n    2\t\n    3\tprint(os.sep)"
 
@@ -152,7 +156,6 @@ def test_output_chars_and_truncated_describe_what_the_model_received(monkeypatch
     from server.infrastructure import result_cache
 
     monkeypatch.setattr(result_cache, "write", lambda name, output: "cached.txt")
-    monkeypatch.setattr(result_cache, "relative_path", lambda name: f"result_cache/{name}")
     big = "y" * (TOOL_RESULT_BUDGET_BYTES + 100)
     small = "fine"
     events: list[dict] = []
@@ -185,6 +188,17 @@ def _batch(monkeypatch, route, tool_uses, **kw):
     async def _go():
         return await te.execute_tool_batch(
             tool_uses,
+            # Stub schemas: timing routes accept no args, the skipped write a path.
+            tool_schemas={
+                "ws_grep": {"type": "object", "additionalProperties": False},
+                "boom": {"type": "object", "additionalProperties": False},
+                "ws_write_file": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"],
+                    "additionalProperties": False,
+                },
+            },
             is_concurrent_safe=lambda n: False,
             loop=asyncio.get_running_loop(),
             executor=executor,

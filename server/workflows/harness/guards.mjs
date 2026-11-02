@@ -5,7 +5,7 @@
 // module additionally neuters the ECMAScript builtins that would let a script
 // depend on wall-clock or randomness, so a resume re-hashes identically:
 //   - Math.random()            -> throws
-//   - Date.now(), new Date()   -> throw (Date WITH explicit args still works —
+//   - Date.now(), new Date()   -> throw (Date WITH explicit args still works,
 //                                 parsing a fixed timestamp is deterministic)
 //   - setTimeout/setInterval   -> throw (not present anyway; explicit for a
 //                                 clear error instead of "not defined")
@@ -16,7 +16,7 @@
 export const GUARD_SRC = `
 (() => {
   const die = (what) => { throw new Error(
-    "DeterminismError: " + what + " is not allowed in a workflow — derive from " +
+    "DeterminismError: " + what + " is not allowed in a workflow, derive from " +
     "agent() results, not wall-clock time or randomness."); };
 
   Math.random = () => die("Math.random()");

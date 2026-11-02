@@ -78,8 +78,9 @@ def _prepare_image(content: bytes, media_type: str) -> tuple[bytes, str]:
     try:
         img = Image.open(io.BytesIO(content))
         img.load()
-    except Exception:
-        return content, media_type  # not decodable here; ship raw (best effort)
+    except Exception as e:  # noqa: BLE001 - any decode failure is the same refusal
+        # Shipped raw, it would fail later as a model error mid-turn.
+        raise ValueError(f"Could not read image: {e}") from e
 
     longest = max(img.size)
     oversized = longest > IMAGE_MAX_DIM
@@ -163,6 +164,14 @@ async def _store(aid: str, record: dict) -> None:
     await asyncio.to_thread(attachment_store.save_attachment, aid, record)
 
 
+def _upload_error(message: str, status_code: int) -> Response:
+    return Response(
+        content=json.dumps({"error": message}),
+        status_code=status_code,
+        media_type="application/json",
+    )
+
+
 @router.post("/api/upload")
 async def upload_endpoint(files: list[UploadFile] = File(...)):
     results = []
@@ -187,7 +196,10 @@ async def upload_endpoint(files: list[UploadFile] = File(...)):
         if ctype in ALLOWED_IMAGE_TYPES:
             # Cap the long edge at ~1568px and re-encode at high quality only
             # when needed (see _prepare_image) so text stays OCR-able.
-            img_data, media_type = await asyncio.to_thread(_prepare_image, content, ctype)
+            try:
+                img_data, media_type = await asyncio.to_thread(_prepare_image, content, ctype)
+            except ValueError:
+                return _upload_error(f"Could not read image: {filename}", 400)
             # OCR the image so text-only chat models (the local Gemma build)
             # get readable text; vision models still receive the image block.
             ocr_text = await asyncio.to_thread(ocr_image_bytes, img_data)
@@ -228,9 +240,12 @@ async def upload_endpoint(files: list[UploadFile] = File(...)):
             # Only Markdown/prose formats get a heading outline; code and data
             # dumps (where "#" is a comment or literal) skip it.
             record = _make_document_record(filename, text, outline=ext in OUTLINE_EXTENSIONS)
-            record["source_path"] = await asyncio.to_thread(
-                attachment_store.save_source_file, aid, filename, content
-            )
+            try:
+                record["source_path"] = await asyncio.to_thread(
+                    attachment_store.save_source_file, aid, filename, content
+                )
+            except OSError as e:
+                return _upload_error(f"Could not keep {filename}: {e}", 500)
             await _store(aid, record)
             results.append({"id": aid, "filename": filename, "type": ext.lstrip(".")})
         else:
@@ -250,9 +265,12 @@ async def upload_endpoint(files: list[UploadFile] = File(...)):
             # Plaintext fallback: never outline (a leading "#" here is not a
             # Markdown heading).
             record = _make_document_record(filename, text or "[Empty file]", outline=False)
-            record["source_path"] = await asyncio.to_thread(
-                attachment_store.save_source_file, aid, filename, content
-            )
+            try:
+                record["source_path"] = await asyncio.to_thread(
+                    attachment_store.save_source_file, aid, filename, content
+                )
+            except OSError as e:
+                return _upload_error(f"Could not keep {filename}: {e}", 500)
             await _store(aid, record)
             results.append({"id": aid, "filename": filename, "type": ext.lstrip(".") or "text"})
 

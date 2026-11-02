@@ -1,7 +1,7 @@
 """Goal + goal_state persistence on the sessions row.
 
-A goal is 1:1 with a session, so it lives on two additive columns (migration
-009 in sessions._MIGRATED_SESSION_COLUMNS) rather than a new table. goal_state
+A goal is 1:1 with a session, so it lives on two additive columns (added by
+sessions._ensure_db through _MIGRATED_SESSION_COLUMNS) rather than a new table. goal_state
 is a small JSON blob holding the live counters and last verdict:
 
     {"active": bool, "consecutive_blocks": int, "total_evals": int,
@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from server.infrastructure.sessions import _get_conn
 
@@ -29,13 +29,15 @@ _EMPTY_STATE = {
 def _load_state(session_id: str) -> dict:
     with _get_conn() as conn:
         row = conn.execute("SELECT goal_state FROM sessions WHERE id = ?", (session_id,)).fetchone()
-    if not row or not row["goal_state"]:
+    return _parse_state(row["goal_state"] if row else None)
+
+
+def _parse_state(raw: str | None) -> dict:
+    """A goal_state column value as a state dict. Only this module writes the
+    column (json.dumps of a dict), so a value that does not parse raises."""
+    if not raw:
         return dict(_EMPTY_STATE)
-    try:
-        data = json.loads(row["goal_state"])
-    except (ValueError, TypeError):
-        return dict(_EMPTY_STATE)
-    return {**_EMPTY_STATE, **(data if isinstance(data, dict) else {})}
+    return {**_EMPTY_STATE, **json.loads(raw)}
 
 
 def get_goal(session_id: str) -> dict:
@@ -46,13 +48,7 @@ def get_goal(session_id: str) -> dict:
         ).fetchone()
     if not row:
         return {"goal": "", "state": dict(_EMPTY_STATE)}
-    state = dict(_EMPTY_STATE)
-    if row["goal_state"]:
-        try:
-            state = {**_EMPTY_STATE, **json.loads(row["goal_state"])}
-        except (ValueError, TypeError):
-            pass
-    return {"goal": row["goal"] or "", "state": state}
+    return {"goal": row["goal"] or "", "state": _parse_state(row["goal_state"])}
 
 
 def set_goal(session_id: str, goal: str, *, set_at: str = "") -> dict:
@@ -75,7 +71,7 @@ def set_goal(session_id: str, goal: str, *, set_at: str = "") -> dict:
             # route still reported ok. Insert the placeholder row the same way
             # sessions._append_message_sync does; the next save fills in the
             # title and metadata without touching goal/goal_state.
-            now = set_at or datetime.now(timezone.utc).isoformat()
+            now = set_at or datetime.now(UTC).isoformat()
             try:
                 conn.execute(
                     "INSERT INTO sessions (id, title, custom_title, generated_title, "
@@ -173,8 +169,6 @@ def get_gates(session_id: str) -> list[dict]:
     for g in gates:
         if isinstance(g, dict) and str(g.get("command") or "").strip():
             out.append({"command": str(g["command"]), "failures": int(g.get("failures") or 0)})
-        elif isinstance(g, str) and g.strip():
-            out.append({"command": g.strip(), "failures": 0})
     return out
 
 

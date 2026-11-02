@@ -1,4 +1,4 @@
-"""On-device model metadata and prompts — fully isolated from Bedrock/Claude.
+"""On-device model metadata and prompts.
 
 The weights themselves live in a llama-server subprocess (see
 server/local/llama_server.py); this module owns everything *around* that: the
@@ -7,10 +7,9 @@ request, capability flags, and the local system prompt. Only one model is
 resident at a time, matching the memory-constrained on-device build (e.g.
 M3/18GB).
 
-There is deliberately no in-process engine any more. llama-server is the single
-on-device backend, so a model added to config.json is served through upstream's
-own template and tool-call parsers rather than marker code maintained here — and
-when it is unavailable, local turns fail loudly instead of silently degrading.
+The engines (llama-server for GGUF, mlx_lm's server for MLX) serve a model
+added to config.user.json through their own templates and tool-call parsers,
+and when one is unavailable, local turns fail loudly.
 """
 
 from __future__ import annotations
@@ -31,13 +30,14 @@ MODELS_DIR = models_root()
 # Supported on-device models. Keys are prefixed ``local_`` by convention so they
 # read as on-device at a glance; detection itself is registry membership (below),
 # not the prefix, so a config-added model does not have to follow it.
-# The registry is config-driven — see server/local/registry.py. This module-level
+# The registry is config-driven, see server/local/registry.py. This module-level
 # name is kept as a LIVE VIEW for the many callsites that read it like a dict
 # (``key in LOCAL_MODELS``, ``LOCAL_MODELS[key]["ctx"]``, iteration): it resolves
-# the merged built-in + config registry on every access, so a model added to
-# config.json is picked up without a restart and without touching this file.
+# the effective registry (config entries over recommendations) on every access, so a model added to
+# config.user.json is picked up without a restart and without touching this file.
 class _LocalModelsView(Mapping):
-    """Read-only Mapping over the effective registry (built-ins + config)."""
+    """Read-only Mapping over the effective registry (config entries over
+    recommendations)."""
 
     def _resolved(self) -> dict[str, dict]:
         from server.local.registry import local_models
@@ -59,7 +59,7 @@ class _LocalModelsView(Mapping):
 
 LOCAL_MODELS: Mapping[str, dict] = _LocalModelsView()
 
-# The context window (n_ctx) most recently REQUESTED by an explicit load — i.e.
+# The context window (n_ctx) most recently REQUESTED by an explicit load, i.e.
 # the size the user picked in the chat-input context-window slider, which loads
 # the model via /api/local-model/load?n_ctx=... . A chat turn only asks that the
 # model be resident (n_ctx=None); without remembering the choice here, None
@@ -93,7 +93,7 @@ def is_local_model(key: str | None) -> bool:
 
 # All on-device model *ids* (the resolved sentinel, not the key) start with this
 # prefix. It is the single discriminator shared cloud-path code uses to stay
-# offline for local turns — centralised here so a sentinel change can't silently
+# offline for local turns, centralised here so a sentinel change can't silently
 # re-enable Bedrock calls in callers like memory recall.
 _LOCAL_ID_PREFIX = "local:"
 
@@ -130,7 +130,7 @@ def is_mlx_model(key: str | None) -> bool:
 
 # Written into an MLX model's snapshot dir once the download is COMPLETE.
 # A snapshot is a directory of many files with no natural "last file", and
-# config.json lands long before the safetensors — so presence of any repo file
+# config.json lands long before the safetensors, so presence of any repo file
 # cannot be the installed-sentinel the way the GGUF file itself is. The models
 # manager uses the same marker (catalog sentinel_rel).
 MLX_COMPLETE_MARKER = ".download_complete"
@@ -141,11 +141,6 @@ def mlx_dir(key: str) -> str:
     return os.path.join(MODELS_DIR, m["dir"])
 
 
-def model_path(key: str) -> str:
-    """The path the engine loads: the GGUF file, or the MLX snapshot dir."""
-    return mlx_dir(key) if is_mlx_model(key) else gguf_path(key)
-
-
 def is_downloaded(key: str) -> bool:
     if not is_local_model(key):
         return False
@@ -154,27 +149,11 @@ def is_downloaded(key: str) -> bool:
     return os.path.exists(gguf_path(key))
 
 
-def _shard_filenames(filename: str) -> list[str]:
-    """Every filename in a sharded GGUF group, or just ``[filename]``.
-
-    llama-server is handed the FIRST shard (``...-00001-of-000NN.gguf``) and
-    finds the rest by naming convention, so all NN shards must be on disk. A
-    non-sharded filename returns unchanged.
-    """
-    import re
-
-    m = re.match(r"^(?P<base>.+?)-(?P<idx>\d{5})-of-(?P<total>\d{5})\.gguf$", filename, re.I)
-    if not m:
-        return [filename]
-    base, total = m.group("base"), int(m.group("total"))
-    return [f"{base}-{i:05d}-of-{total:05d}.gguf" for i in range(1, total + 1)]
-
-
 def ensure_downloaded(key: str) -> str:
     """Fetch the weights into models/ if absent, returning the load path.
 
     GGUF: the file (first shard for a sharded model; every shard is fetched,
-    since llama-server needs them all present). MLX: the snapshot directory —
+    since llama-server needs them all present). MLX: the snapshot directory,
     the whole repo is fetched and a completion marker written last, so a
     half-downloaded snapshot never reads as installed.
     """
@@ -183,13 +162,17 @@ def ensure_downloaded(key: str) -> str:
     path = gguf_path(key)
     if os.path.exists(path):
         # Positive confirmation so "did it download or just load?" is obvious.
-        log.info("Local model %s already present at %s — loading from disk.", key, path)
+        log.info("Local model %s already present at %s, loading from disk.", key, path)
         return path
     from huggingface_hub import hf_hub_download
 
     m = LOCAL_MODELS[key]
     local_dir = os.path.join(MODELS_DIR, m["dir"])
-    filenames = _shard_filenames(m["filename"])
+    from server.model_browser.compat import shard_filenames
+
+    # llama-server is handed the FIRST shard and finds the rest by naming
+    # convention, so every shard must be on disk.
+    filenames = shard_filenames(m["filename"])
     log.info(
         "Downloading local model %s (%d file(s), first=%s) into %s ...",
         key,
@@ -207,7 +190,7 @@ def _ensure_mlx_downloaded(key: str) -> str:
     local_dir = mlx_dir(key)
     marker = os.path.join(local_dir, MLX_COMPLETE_MARKER)
     if os.path.exists(marker):
-        log.info("Local model %s already present at %s — loading from disk.", key, local_dir)
+        log.info("Local model %s already present at %s, loading from disk.", key, local_dir)
         return local_dir
     from huggingface_hub import snapshot_download
 
@@ -220,20 +203,6 @@ def _ensure_mlx_downloaded(key: str) -> str:
     return local_dir
 
 
-def is_loaded(key: str | None = None) -> bool:
-    """Whether a local model (or ``key`` specifically) is currently resident.
-
-    Residency is a property of the model server, not this process — the weights
-    were never in here.
-    """
-    from server.local import serving
-
-    resident = serving.resident_key()
-    if resident is None:
-        return False
-    return True if key is None else resident == key
-
-
 def loaded_key() -> str | None:
     """The key of the currently resident local model, or None.
     Lets callers follow the active model (e.g. the one-shot map step) instead of
@@ -243,20 +212,28 @@ def loaded_key() -> str | None:
     return serving.resident_key()
 
 
-def complete(key: str, system_prompt: str, user: str, max_tokens: int = 1500) -> str:
-    """One-shot, NON-streaming generation; returns the assistant text ('' on
-    failure). Blocking — starts the model server if needed, so call it off the
-    event loop.
+def complete(
+    key: str,
+    system_prompt: str,
+    user: str,
+    max_tokens: int = 1500,
+    *,
+    allow_truncated: bool = False,
+) -> str:
+    """One-shot, NON-streaming generation; returns the assistant text and
+    raises on any failure (see ``serving.complete``, which also explains
+    ``allow_truncated``). Blocking: starts the
+    model server if needed, so call it off the event loop.
 
-    Kept here as the stable entry point for non-chat callers (workspace-index
-    relations/descriptions/contextualize, the one-shot helper, the on-device
-    session summariser); the work itself happens in the model server.
+    The entry point for non-chat callers (workspace-index relations,
+    descriptions and contextualize, the on-device session summariser); the
+    work itself happens in the model server.
     """
     if not is_local_model(key):
-        return ""
+        raise ValueError(f"{key} is not an on-device model")
     from server.local import serving
 
-    return serving.complete(key, system_prompt, user, max_tokens)
+    return serving.complete(key, system_prompt, user, max_tokens, allow_truncated=allow_truncated)
 
 
 _LOCAL_SYSTEM_BASE = (
@@ -265,7 +242,7 @@ _LOCAL_SYSTEM_BASE = (
     "workspace filesystem, or the internet, so do not claim to use them."
 )
 
-# When tools are enabled we must NOT tell the model it has no tools/internet —
+# When tools are enabled we must NOT tell the model it has no tools/internet,
 # that makes it refuse instead of calling the declared tools. This prompt does
 # the opposite: it tells the model it has a full toolset (declared separately in
 # the chat template) and to use it. The exact tool list is rendered by the
@@ -337,14 +314,14 @@ def build_local_system_prompt(
     """A lean system prompt for local turns.
 
     The cloud system prompt carries ~2-2.5k tokens of tool/workspace/skill
-    guidance the local runtime can't act on — feeding it to a small on-device
+    guidance the local runtime can't act on, feeding it to a small on-device
     model just slows prefill (a longer warm-up) and eats the n_ctx budget. Keep
     a short identity plus any genuinely useful project/memory context. When
     ``tools`` is set, use the tools-positive identity instead of the no-tools one.
 
     When a workspace is connected AND tools are on, append a short marker so the
     model knows to reach the codebase with ws_* tools. Without tools there are no
-    ws_* tools to call, so the marker is skipped — the honest no-tools identity
+    ws_* tools to call, so the marker is skipped, the honest no-tools identity
     stands.
     """
     from server.prompts.rules import append_rules

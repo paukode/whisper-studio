@@ -1,4 +1,4 @@
-"""OpenAI-on-Bedrock provider (GPT-5.5 / GPT-5.4).
+"""OpenAI-on-Bedrock provider (GPT-6.x).
 
 These models are served ONLY through the OpenAI Responses API on the
 ``bedrock-mantle`` endpoint (not bedrock-runtime / Converse / InvokeModel), so

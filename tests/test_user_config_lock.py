@@ -24,7 +24,7 @@ from server.model_browser import install
 def user_file(tmp_path, monkeypatch):
     path = tmp_path / "config.user.json"
     path.write_text(json.dumps({"model_mode": "local", "feature_flags": {"auto_memory": True}}))
-    monkeypatch.setattr(cfg, "_active_user_config_path", lambda: str(path))
+    monkeypatch.setattr(cfg, "_user_config_path", lambda: str(path))
     cfg._invalidate_cache()
     yield path
     cfg._invalidate_cache()

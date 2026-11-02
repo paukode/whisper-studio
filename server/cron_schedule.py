@@ -8,7 +8,7 @@ next-run projection. Kept separate from server/cron_scheduler.py so the runtime
 """
 
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 # ── Timezone ─────────────────────────────────────────────────────────────────
 
@@ -16,46 +16,39 @@ from datetime import datetime, timedelta, timezone
 def _system_tz_name() -> str:
     """The host's IANA timezone name (e.g. 'America/New_York').
 
-    Resolves from $TZ, then the /etc/localtime symlink (macOS + Linux), then
-    falls back to UTC. No third-party dependency.
+    Resolves from $TZ, then the /etc/localtime symlink (macOS). Raises when
+    neither names a zone. No third-party dependency.
     """
     tz = (os.environ.get("TZ") or "").strip()
     if tz:
         return tz
-    try:
-        target = os.path.realpath("/etc/localtime")
-        marker = "zoneinfo/"
-        if marker in target:
-            return target.split(marker, 1)[1]
-    except Exception:
-        pass
-    return "UTC"
+    target = os.path.realpath("/etc/localtime")
+    marker = "zoneinfo/"
+    if marker in target:
+        return target.split(marker, 1)[1]
+    raise RuntimeError(f"cannot read the system timezone: /etc/localtime points at {target}")
 
 
 def _default_tz_name() -> str:
     """Config override (cron_timezone) if set, else the host system zone."""
-    try:
-        from server.infrastructure.config import load_config
+    from server.infrastructure.config import load_config
 
-        cfg = (load_config().get("cron_timezone") or "").strip()
-        if cfg:
-            return cfg
-    except Exception:
-        pass
+    cfg = (load_config().get("cron_timezone") or "").strip()
+    if cfg:
+        return cfg
     return _system_tz_name()
 
 
 def _zone(name: str | None):
-    """A ZoneInfo for name (or the default zone), UTC on failure."""
+    """A ZoneInfo for name (or the default zone). An unknown zone raises
+    ValueError, never a silent switch to another zone."""
     from zoneinfo import ZoneInfo
 
+    zone = name or _default_tz_name()
     try:
-        return ZoneInfo(name or _default_tz_name())
-    except Exception:
-        try:
-            return ZoneInfo(_system_tz_name())
-        except Exception:
-            return timezone.utc
+        return ZoneInfo(zone)
+    except (KeyError, ValueError) as e:  # ZoneInfoNotFoundError is a KeyError
+        raise ValueError(f"unknown timezone '{zone}'") from e
 
 
 def _parse_dt(s: str) -> datetime:
@@ -136,17 +129,22 @@ def _norm_day_of_week(value) -> str:
     return dow
 
 
-def validate_schedule(raw: dict | None, *, legacy_interval_minutes=None) -> dict:
+def reject_interval_minutes(body: dict | None) -> None:
+    """Raise ValueError when a request sends interval_minutes, the old shorthand
+    that is no longer accepted, so the caller learns to send ``schedule``."""
+    if isinstance(body, dict) and "interval_minutes" in body:
+        raise ValueError(
+            "interval_minutes is no longer accepted: send schedule instead, "
+            'for example {"type": "interval", "every_minutes": 30}'
+        )
+
+
+def validate_schedule(raw: dict | None) -> dict:
     """Return a normalized schedule dict or raise ValueError.
 
-    Fills tz from the default (host) zone when the caller omits it. Accepts a
-    bare legacy ``interval_minutes`` (from the old tool/API shape) as a fallback
-    so nothing in flight breaks.
+    Fills tz from the default (host) zone when the caller omits it.
     """
     if not isinstance(raw, dict):
-        if legacy_interval_minutes is not None:
-            secs = max(10, int(float(legacy_interval_minutes) * 60))
-            return {"type": "interval", "seconds": secs}
         raise ValueError("schedule is required")
 
     stype = raw.get("type", "interval")
@@ -156,8 +154,6 @@ def validate_schedule(raw: dict | None, *, legacy_interval_minutes=None) -> dict
             secs = int(float(raw["every_minutes"]) * 60)
         elif raw.get("seconds") is not None:
             secs = int(float(raw["seconds"]))
-        elif legacy_interval_minutes is not None:
-            secs = int(float(legacy_interval_minutes) * 60)
         else:
             raise ValueError("interval schedule needs every_minutes or seconds")
         return {"type": "interval", "seconds": max(10, secs)}
@@ -189,7 +185,7 @@ def validate_schedule(raw: dict | None, *, legacy_interval_minutes=None) -> dict
             raise ValueError(f"could not parse run_at '{run_at_raw}'") from None
         if run_at.tzinfo is None:
             run_at = run_at.replace(tzinfo=_zone(tz))
-        if run_at <= datetime.now(timezone.utc):
+        if run_at <= datetime.now(UTC):
             raise ValueError("run_at is in the past")
         return {"type": "at", "run_at": run_at.isoformat(), "tz": tz}
 
@@ -261,13 +257,13 @@ def _interval_start(seconds: int, last_run_iso: str | None) -> datetime:
     A 10-min job whose last_run was 5 min ago resumes 5 min from now, not now.
     Never-run jobs anchor at now+seconds.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     floor = now + timedelta(seconds=15)
     if last_run_iso:
         try:
             last = _parse_dt(last_run_iso)
             if last.tzinfo is None:
-                last = last.replace(tzinfo=timezone.utc)
+                last = last.replace(tzinfo=UTC)
             return max(floor, last + timedelta(seconds=seconds))
         except Exception:
             pass
@@ -275,8 +271,7 @@ def _interval_start(seconds: int, last_run_iso: str | None) -> datetime:
 
 
 def build_trigger(sch: dict, *, last_run_iso: str | None):
-    """Construct the APScheduler trigger for a schedule. Imported lazily so the
-    module still loads (cron disabled) when APScheduler is absent."""
+    """Construct the APScheduler trigger for a schedule."""
     from apscheduler.triggers.cron import CronTrigger
     from apscheduler.triggers.date import DateTrigger
     from apscheduler.triggers.interval import IntervalTrigger
@@ -339,10 +334,10 @@ def cron_catch_up_due(sch: dict, last_run_iso: str | None, grace_sec: int) -> bo
     try:
         last = _parse_dt(last_run_iso)
         if last.tzinfo is None:
-            last = last.replace(tzinfo=timezone.utc)
+            last = last.replace(tzinfo=UTC)
     except Exception:
         return False
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     floor = now - timedelta(seconds=max(0, int(grace_sec)))
     trigger = build_trigger(sch, last_run_iso=None)
     missed = _most_recent_fire_before(trigger, now, floor)

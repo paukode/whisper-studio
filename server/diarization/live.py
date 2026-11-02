@@ -1,14 +1,10 @@
 """Speaker labels for a live recording, decided after each sentence is sent.
 
-The transcription socket used to label a sentence before sending it: embed
-it, try to cut it at a speaker handover, then send. On a busy or swapping
-Mac that took seconds per sentence (the speaker model loading on the first
-sentence, about 2 s for every handover check), and while it ran the socket
-read no audio at all, so the whole transcript fell behind live speech.
-
-Now the socket sends each final at once under a provisional label (the
-speaker of the last labelled sentence) and hands it to this labeller, one
-per connection, which works through the sentences in order on its own task:
+Labelling a sentence (embed it, check it for a speaker handover) can take
+seconds on a busy Mac, so it never blocks the socket's audio reads. The
+socket sends each final at once under a provisional label (the speaker of
+the last labelled sentence) and hands it to this labeller, one per
+connection, which works through the sentences in order on its own task:
 
 - one speaker: assign the label; if it differs from the provisional one,
   send ``speaker_update`` for that chunk (the client already applies these);
@@ -16,6 +12,11 @@ per connection, which works through the sentences in order on its own task:
   the sentence's chunk with one chunk per speaker turn (the first keeps the
   original chunk id, the rest take new ids from the socket's counter);
 - then the periodic re-cluster and any newly recognised names, as before.
+
+A labelling failure (the speaker model cannot load, an embed error) keeps
+the provisional label and sends ``speaker_error`` with the message, once per
+distinct error per connection. Each new connection clears a remembered
+speaker model load failure, so a new recording tries the load again.
 
 ``drain`` lets `stop` wait for every label before the client saves.
 """
@@ -68,6 +69,11 @@ class LiveLabeller:
         self._on_labelled = on_labelled
         self._queue: asyncio.Queue[Pending] = asyncio.Queue()
         self._worker: asyncio.Task | None = None
+        # The last labelling error sent to the client, so a failure that
+        # repeats on every sentence shows once, not once per sentence.
+        self._reported_error: str | None = None
+        # A new recording tries a failed speaker model load again.
+        diarization.embedder.forget_load_error()
 
     def provisional_label(self) -> str:
         """The label a sentence is sent under before it is labelled."""
@@ -97,6 +103,11 @@ class LiveLabeller:
                 raise
             except Exception as e:
                 log.warning("Speaker labelling failed for chunk %s: %s", pending.chunk_id, e)
+                # The sentence keeps its provisional label; the client is
+                # told why labels stopped changing.
+                if str(e) != self._reported_error:
+                    self._reported_error = str(e)
+                    await self._send({"type": "speaker_error", "message": str(e)})
             finally:
                 self._queue.task_done()
 
@@ -164,8 +175,8 @@ class LiveLabeller:
                 diarization.executor, diarization.embed, audio
             )
         if embedding is None:
-            # Too short or a failed embed: speaker continuity is the best
-            # guess and never pollutes the cluster space.
+            # Too short to embed: speaker continuity is the best guess and
+            # never pollutes the cluster space.
             return self._speakers.fallback_label()
         duration = len(audio) / SAMPLE_RATE if audio is not None else None
         return self._speakers.assign(chunk_id, embedding, duration, text)

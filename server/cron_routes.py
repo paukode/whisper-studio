@@ -14,7 +14,7 @@ by-value import would freeze a stale reference.
 
 import json
 
-from fastapi import Request
+from fastapi import HTTPException, Request
 from fastapi.responses import Response
 
 from server import cron_scheduler as _cs
@@ -24,16 +24,19 @@ from server import cron_scheduler as _cs
 from server.cron_schedule import (
     _default_tz_name,
     compute_next_run,
+    reject_interval_minutes,
     schedule_label,
 )
 from server.cron_schedule import (
     validate_schedule as _validate_schedule,
 )
 from server.cron_scheduler import (
+    OLD_JOB_ERROR,
     _add_job_to_scheduler,
     _apply_job_update,
     _at_job_already_fired,
     _delete_jobs,
+    _has_schedule,
     _job_public,
     _mutate_jobs,
     _next_run_iso,
@@ -48,8 +51,12 @@ from server.cron_scheduler import (
 
 @router.get("")
 async def get_cron_jobs():
+    try:
+        jobs = load_cron_jobs()
+    except _cs.CronJobsUnreadable as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
     return {
-        "jobs": [_job_public(j) for j in load_cron_jobs()],
+        "jobs": [_job_public(j) for j in jobs],
         "scheduler_active": _cs._scheduler is not None
         and getattr(_cs._scheduler, "running", False),
         "system_timezone": _default_tz_name(),
@@ -69,9 +76,8 @@ async def preview_schedule(request: Request):
     """Validate a schedule and return its label + next run, no persistence."""
     body = await request.json()
     try:
-        sch = _validate_schedule(
-            body.get("schedule"), legacy_interval_minutes=body.get("interval_minutes")
-        )
+        reject_interval_minutes(body)
+        sch = _validate_schedule(body.get("schedule"))
     except ValueError as e:
         return {"error": str(e)}
     return {"label": schedule_label(sch), "next_run": compute_next_run(sch), "schedule": sch}
@@ -84,12 +90,9 @@ async def create_cron_job(request: Request):
     # in the Scheduled Reports inbox rather than rejecting the create.
     session_id = body.get("session_id") or ""
     if not session_id:
-        try:
-            from server.infrastructure.sessions import ensure_cron_inbox
+        from server.infrastructure.sessions import ensure_cron_inbox
 
-            session_id = ensure_cron_inbox()
-        except Exception:
-            pass
+        session_id = ensure_cron_inbox()
     # The person in Settings IS the approval here, so the create applies inline
     # (gate=False); only the model's cron_create tool goes through the gate.
     result = json.loads(execute_cron_tool("cron_create", body, session_id=session_id, gate=False))
@@ -133,18 +136,25 @@ async def update_cron_job(job_id: str, request: Request):
                 status_code=400,
                 media_type="application/json",
             )
-    if body.get("schedule") is not None or body.get("interval_minutes") is not None:
+    if body.get("schedule") is not None or "interval_minutes" in body:
         try:
-            patch["schedule"] = _validate_schedule(
-                body.get("schedule"),
-                legacy_interval_minutes=body.get("interval_minutes"),
-            )
+            reject_interval_minutes(body)
+            patch["schedule"] = _validate_schedule(body.get("schedule"))
         except ValueError as e:
             return Response(
                 content=json.dumps({"error": str(e)}),
                 status_code=400,
                 media_type="application/json",
             )
+    # An old-format job never runs: a change that does not give it a schedule is
+    # refused, so it cannot look switched on while it never fires.
+    stored = next((j for j in load_cron_jobs() if j.get("id") == job_id), None)
+    if stored is not None and not _has_schedule(stored) and "schedule" not in patch:
+        return Response(
+            content=json.dumps({"error": OLD_JOB_ERROR, "job_id": job_id}),
+            status_code=409,
+            media_type="application/json",
+        )
     # Re-homing an orphaned job to a new session clears the orphaned flag.
     if isinstance(body.get("session_id"), str) and body["session_id"].strip():
         patch["session_id"] = body["session_id"].strip()
@@ -170,11 +180,10 @@ async def run_cron_job(job_id: str):
 
 @router.post("/{job_id}/stop")
 async def stop_cron_job(job_id: str):
-    """Cooperatively stop an in-flight run of this job.
+    """Stop an in-flight run of this job by cancelling its task.
 
-    404 when the job doesn't exist, 409 when it isn't running. The run loop
-    observes the flag at round boundaries and between tools (in-flight tool
-    waits poll in 1s slices), then exits with status 'stopped'.
+    404 when the job doesn't exist, 409 when it isn't running. The run ends
+    at its next await point with status 'stopped'.
     """
     # Live registry FIRST: a job deleted while its run is in flight must
     # still be stoppable (the file no longer lists it, the run doesn't care).
@@ -200,6 +209,15 @@ async def stop_cron_job(job_id: str):
 
 @router.patch("/{job_id}/toggle")
 async def toggle_cron_job(job_id: str):
+    # An old-format job never runs: refuse before any write, so the file stays
+    # as it is.
+    stored = next((j for j in load_cron_jobs() if j.get("id") == job_id), None)
+    if stored is not None and not _has_schedule(stored):
+        return Response(
+            content=json.dumps({"error": OLD_JOB_ERROR, "job_id": job_id}),
+            status_code=409,
+            media_type="application/json",
+        )
     refused = {"flag": False}
 
     def _toggle(jobs):

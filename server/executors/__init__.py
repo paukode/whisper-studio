@@ -4,10 +4,9 @@
 EXECUTORS: dict[str, callable] = {}
 
 # Safety metadata per executor — keyed by executor name.
-# Each entry: {"read_only": bool, "concurrent_safe": bool, "destructive": bool,
-#              "emits_prompt": bool}
+# Each entry: {"read_only": bool, "concurrent_safe": bool, "emits_prompt": bool}
 # Defaults are fail-closed: read_only=False, concurrent_safe=False,
-# destructive=False, emits_prompt=False.
+# emits_prompt=False.
 EXECUTOR_META: dict[str, dict] = {}
 
 
@@ -16,7 +15,6 @@ def register_executor(
     *,
     read_only: bool = False,
     concurrent_safe: bool = False,
-    destructive: bool = False,
     emits_prompt: bool = False,
 ):
     """Decorator to register a tool executor function with safety metadata.
@@ -25,7 +23,6 @@ def register_executor(
         name: Executor name used for dispatch.
         read_only: True if the executor only reads data (no side effects).
         concurrent_safe: True if safe to run in parallel with other tools.
-        destructive: True if the executor can cause irreversible changes.
         emits_prompt: True if the result is a model PROMPT (instructions plus
             the user's input, e.g. a style hint or question wrapped around a
             transcript/document) rather than computed data. Such results must
@@ -41,7 +38,6 @@ def register_executor(
         EXECUTOR_META[name] = {
             "read_only": read_only,
             "concurrent_safe": concurrent_safe,
-            "destructive": destructive,
             "emits_prompt": emits_prompt,
         }
         return fn

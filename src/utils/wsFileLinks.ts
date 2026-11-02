@@ -9,8 +9,8 @@ import { useDockStore } from '@/stores/dockStore';
  * navigating away or opening a browser tab:
  *  - Index / semantic-search "source" links use the `#wsfile=<url-encoded path>`
  *    fragment scheme (chosen because the fragment survives HTML sanitization).
- *    A plain click opens the file in the dock; a modifier-click (Cmd/Ctrl/Alt)
- *    reveals it in Finder/Explorer.
+ *    A plain click opens the file in the dock; a modifier-click (Cmd/Alt)
+ *    reveals it in Finder.
  *  - `http://localhost:*` / `127.0.0.1` / `[::1]` links (a dev server the
  *    assistant mentioned) open in the Live preview pane, mirroring Claude Code.
  * Returns a cleanup function.
@@ -165,14 +165,7 @@ export function chatLinkHint(href: string): string | null {
   if (LOCALHOST_RE.test(href)) return 'Opens in the Live preview pane';
   if (href.startsWith(DOCS_PREFIX)) return 'Opens this documentation page in the side panel';
   if (!href.startsWith(PREFIX)) return null;
-  // navigator.platform is deprecated; prefer userAgentData where available.
-  const platform = ((navigator as { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.platform ?? '').toLowerCase();
-  const isMac = platform.includes('mac');
-  // Non-mac says "file manager": Windows reveals in Explorer, but Linux only
-  // opens the containing folder, so don't promise a specific app there.
-  const revealHint = isMac
-    ? 'Cmd-click to reveal in Finder.'
-    : 'Ctrl-click to reveal in your file manager.';
+  const revealHint = 'Cmd-click to reveal in Finder.';
   return href.includes('&open=os')
     ? `Click to open in your default app. ${revealHint}`
     : `Click to open in the side panel. ${revealHint}`;
@@ -187,7 +180,7 @@ export function attachWsFileHandlers(container: HTMLElement): () => void {
     // Route localhost/dev-server links into the Live preview pane. A
     // modifier-click still falls through to the browser's default (open in a
     // real tab) as an escape hatch.
-    if (LOCALHOST_RE.test(href) && !(e.metaKey || e.ctrlKey || e.altKey)) {
+    if (LOCALHOST_RE.test(href) && !(e.metaKey || e.altKey)) {
       e.preventDefault();
       useDockStore.getState().previewUrl(href);
       return;
@@ -208,7 +201,7 @@ export function attachWsFileHandlers(container: HTMLElement): () => void {
     const name = target.path.split('/').pop() || target.path;
 
     // Escape hatch: modifier-click reveals the file in the OS file browser.
-    if (e.metaKey || e.ctrlKey || e.altKey) {
+    if (e.metaKey || e.altKey) {
       void post('/api/workspace/reveal', { path: target.path }).catch(() => {
         useUIStore.getState().addToast({
           type: 'error',

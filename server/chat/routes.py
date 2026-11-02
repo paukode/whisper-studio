@@ -1,17 +1,19 @@
 """FastAPI HTTP handlers for the chat package.
 
-Four endpoints:
-- GET  /api/models           — list configured chat models + the default
-- POST /api/generate-title   — one-shot Bedrock call to title a conversation
-- POST /api/chat/btw         — quick side question, no history mutation
-- POST /api/chat             — the main streaming chat endpoint
+Endpoints:
+- POST /api/chat/sessions/{id}/reset: drop a session's in-memory turn state
+- GET  /api/models: the configured chat models and the default
+- /api/local-model/*: load, cancel a load, status, download, unload
+- POST /api/generate-title: one-shot call to title a conversation
+- POST /api/subagent/stream: run a /subagent task
+- POST /api/chat: the main streaming chat endpoint
 
-The big one (``/api/chat``) is turn ASSEMBLY only: request parsing, model
-resolution, transcript condensation, grounding, attachment re-injection,
-system prompt building, and the local/OpenAI dispatch split. The agentic
-loop itself — rounds, compaction, tool execution, pauses — lives in
-``server/chat/engine`` (one loop shared by every provider) and is handed
-the assembled TurnContext at the end of this endpoint.
+``/api/chat`` is turn ASSEMBLY only: request parsing, model resolution,
+transcript condensation, grounding, attachment re-injection, system prompt
+building, and the local/cloud dispatch split. The agentic loop itself
+(rounds, compaction, tool execution, pauses) lives in ``server/chat/engine``
+(one loop shared by every provider) and is handed the assembled TurnContext
+at the end of this endpoint.
 """
 
 import asyncio
@@ -69,7 +71,11 @@ from .infra import (  # noqa: E402
     _get_default_model,
     _turn_catalog,
 )
-from .local_refusals import btw_refusal, subagent_refusal  # noqa: E402
+from .local_refusals import (  # noqa: E402
+    sse_error,
+    subagent_refusal,
+    unknown_model_message,
+)
 
 log = logging.getLogger("whisper-studio")
 
@@ -214,7 +220,7 @@ async def _run_grounding(
                 _rewrite_query_for_retrieval(question, history, session_id),
                 timeout=_QUERY_REWRITE_TIMEOUT_S,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             log.warning("Query rewrite (Tier 3) timed out; using heuristic context")
             rewritten = None
         if rewritten:
@@ -231,7 +237,6 @@ async def _run_grounding(
             selected_indexes,
             primary_query,
             extra_queries=extra_queries or None,
-            return_meta=True,
             forced=forced,
         ),
     )
@@ -239,12 +244,10 @@ async def _run_grounding(
 
 # Paused-session store: when a turn stops on a ws_approval pause, the engine
 # stashes the in-memory `messages` list plus the pre-computed placeholder
-# tool_results keyed by session_id (see server/chat/engine/pause.py — one
+# tool_results keyed by session_id (see server/chat/engine/pause.py: one
 # store shared by every provider path). The continuation turn pops this state,
 # substitutes the approved tool_use_id's real result, and resumes the loop.
-# Aliased here because the reset endpoint and several tests reach it as
-# ``routes._paused_sessions``.
-from server.chat.engine.pause import paused_sessions as _paused_sessions  # noqa: E402
+from server.chat.engine.pause import paused_sessions  # noqa: E402
 
 
 def _resume_messages(messages: list, answers: list[dict], paused: dict | None) -> list:
@@ -260,8 +263,8 @@ def _resume_messages(messages: list, answers: list[dict], paused: dict | None) -
     the assistant message carrying the tool_use is gone with it, so a
     tool_result block here would be an orphan — sanitize_tool_pairs strips it
     and the model would answer a turn with neither the tool call nor its
-    outcome in context, which reads as a confident non-answer rather than the
-    loud error the old comment promised. Replay the outcome as plain text
+    outcome in context, which reads as a confident non-answer rather than an
+    error. Replay the outcome as plain text
     instead: well-formed for every provider, and the client-rebuilt `history`
     in ``messages`` gives it the conversation it belongs to.
     """
@@ -344,7 +347,7 @@ async def reset_chat_session(session_id: str):
     from server.chat.engine import midturn_inbox
 
     cleared_stream = stream_slot.drop(session_id)
-    cleared_paused = _paused_sessions.pop(session_id, None) is not None
+    cleared_paused = paused_sessions.pop(session_id, None) is not None
     # Text queued for the wedged turn must not surface in the next one.
     midturn_inbox.clear(session_id)
     log.info(
@@ -466,7 +469,7 @@ async def models_endpoint():
                 "effort_levels": levels,
                 "default_effort": default_effort_for(m, k),
                 "supports_ultracode": "ultracode" in levels,
-                # OpenAI-on-Bedrock (GPT-5.x) exposes a verbosity control
+                # OpenAI-on-Bedrock (GPT) exposes a verbosity control
                 # (text.verbosity); the UI shows a picker for these models only.
                 "supports_verbosity": m.get("provider") == "openai_bedrock",
                 "default_verbosity": m.get("verbosity", "medium"),
@@ -522,9 +525,9 @@ async def local_model_load(model: str, n_ctx: int | None = None):
     if not local_llm.is_local_model(model):
         return JSONResponse({"error": "not a local model"}, status_code=400)
 
-    # Clamp defensively — never trust a client-supplied context size. The upper
-    # bound is Gemma's native maximum (256K); the UI warns above 16K because the
-    # KV cache grows fast and large windows OOM smaller machines.
+    # Clamp defensively: never trust a client-supplied context size. The upper
+    # bound is 256K tokens; the UI warns above 16K because the KV cache grows
+    # fast and large windows OOM smaller machines.
     if n_ctx is not None:
         n_ctx = max(2048, min(int(n_ctx), 262144))
 
@@ -949,26 +952,21 @@ async def generate_title_endpoint(request: Request):
             source="title",
             session_id=title_session,
         )
-        text = result.get("content", [{}])[0].get("text", "New Conversation")
+        blocks = result.get("content") or [{}]
+        text = str(blocks[0].get("text") or "").strip()
+        if not text:
+            raise RuntimeError("the model returned no title")
         return _clean_title(text)
 
     try:
         title = await loop.run_in_executor(executor, _call)
-        return {"title": title}
     except Exception as e:
+        # A failed title is an error the client sees, never a fake title. The
+        # client logs it, keeps its current title and does not ask again for
+        # that session in this window (src/hooks/chatStream/autoTitle.ts).
         log.error("Title generation error: %s", e)
-        return {"title": "New Conversation"}
-
-
-@router.post("/api/teams/{team_id}/stop")
-async def stop_team_endpoint(team_id: str):
-    """Cancel a running team_create fan-out or spawn_agent run (ESC and the
-    session Stop reach here); see server.agent_tools.teams.stop_team."""
-    from server.agent_tools.teams import stop_team
-
-    if not stop_team(team_id):
-        return {"stopped": False, "reason": "no running team with that id"}
-    return {"stopped": True, "team_id": team_id}
+        return JSONResponse({"error": f"Title generation failed: {e}"}, status_code=502)
+    return {"title": title}
 
 
 @router.post("/api/subagent/stream")
@@ -993,7 +991,7 @@ async def subagent_stream_endpoint(request: Request):
 
     body = await request.json()
     task = (body.get("task") or "").strip()
-    model_key = body.get("model", _get_default_model())
+    model_key = body.get("model") or _get_default_model()
     session_id = body.get("session_id") or "subagent"
 
     if not task:
@@ -1007,11 +1005,9 @@ async def subagent_stream_endpoint(request: Request):
     if (refused := subagent_refusal(model_key)) is not None:
         return refused
     chat_models = _get_chat_models()
-    model_id = (
-        chat_models.get(model_key)
-        or chat_models.get("sonnet5.5")
-        or next(iter(chat_models.values()))
-    )
+    if model_key not in chat_models:
+        return sse_error(unknown_model_message(model_key))
+    model_id = chat_models[model_key]
 
     # The frontend supplies a stable team_id up front so its Stop button can
     # abort this exact stream; fall back to a generated id for direct callers.
@@ -1090,7 +1086,7 @@ async def subagent_stream_endpoint(request: Request):
                     ev = await asyncio.wait_for(queue.get(), timeout=0.1)
                     yield _frame({"team_progress": ev})
                     idle = 0
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # The agent runs a NON-streaming Bedrock call per turn, so a
                     # single turn can be silent for 30-90s. Without traffic the
                     # connection can be dropped as idle (which would cancel the
@@ -1166,136 +1162,6 @@ async def subagent_stream_endpoint(request: Request):
     return StreamingResponse(_stream(), media_type="text/event-stream")
 
 
-@router.post("/api/chat/btw")
-async def btw_endpoint(request: Request):
-    """
-    /btw side question — ask Claude a quick question without modifying the main
-    chat history. Streams the response as SSE. The last few messages are sent as
-    lightweight context so the answer is still relevant, but nothing is persisted.
-    Nothing is persisted to session history.
-    """
-    body = await request.json()
-    question = body.get("question", "").strip()
-    if not question:
-        from fastapi.responses import Response
-
-        return Response(
-            content=json.dumps({"error": "question required"}),
-            status_code=400,
-            media_type="application/json",
-        )
-
-    if (refused := btw_refusal()) is not None:
-        return refused
-
-    # Use up to the last 4 messages as lightweight context (read-only)
-    recent_history = body.get("recent_history", [])[-4:]
-    model_key = body.get("model", _get_default_model())
-    chat_models = _get_chat_models()
-    model_id = (
-        chat_models.get(model_key)
-        or chat_models.get("sonnet5.5")
-        or next(iter(chat_models.values()))
-    )
-
-    from server.prompts.rules import append_rules
-
-    system = append_rules(
-        "You are a helpful assistant. Answer the user's side question concisely. "
-        "This is a quick aside - the user hasn't left the main conversation. "
-        "Be direct and brief (1-3 sentences unless more depth is needed)."
-    )
-
-    messages = []
-    for m in recent_history:
-        messages.append({"role": m["role"], "content": m.get("content", "")})
-    messages.append({"role": "user", "content": question})
-
-    btw_body = json.dumps(
-        {
-            "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": 2048,
-            "system": system,
-            "messages": messages,
-        }
-    )
-    btw_session = str(body.get("session_id") or "")
-
-    async def _btw_stream():
-        from server.chat.engine.anthropic import tighten_read_timeout
-        from server.costs.calls import ClaudeStreamRecorder
-
-        bedrock = _get_bedrock_client()
-        loop = asyncio.get_event_loop()
-        # The side question is billed like any call: logged once, whether the
-        # stream completes, fails or the client goes away.
-        cost = ClaudeStreamRecorder(
-            model_id=model_id, body=btw_body, source="btw", session_id=btw_session
-        )
-
-        def _stream():
-            return bedrock.invoke_model_with_response_stream(
-                modelId=model_id,
-                contentType="application/json",
-                accept="application/json",
-                body=btw_body,
-            )
-
-        # Invoke on the shared executor so the (blocking) request setup never
-        # parks the event loop.
-        try:
-            response = await loop.run_in_executor(executor, _stream)
-        except Exception as e:
-            yield f"data: {ndjson_dumps({'error': str(e)})}\n\n"
-            yield "data: [DONE]\n\n"
-            return
-
-        # botocore's EventStream iteration does BLOCKING socket reads. Run it on
-        # a worker thread and hand decoded chunks to the event loop through a
-        # queue so the async generator never blocks the loop (mirrors the main
-        # chat streaming path). A None sentinel signals end-of-stream; an
-        # Exception instance forwards a reader-thread failure.
-        q = asyncio.Queue()
-
-        def _read_stream(response=response, q=q):
-            try:
-                stream = response.get("body")
-                for n, event in enumerate(stream):
-                    if n == 0:
-                        tighten_read_timeout(stream)
-                    chunk = event.get("chunk")
-                    if not chunk:
-                        continue
-                    data = json.loads(chunk["bytes"].decode())
-                    loop.call_soon_threadsafe(q.put_nowait, data)
-                loop.call_soon_threadsafe(q.put_nowait, None)
-            except Exception as e:
-                loop.call_soon_threadsafe(q.put_nowait, e)
-
-        loop.run_in_executor(executor, _read_stream)
-
-        try:
-            while True:
-                data = await q.get()
-                if data is None:
-                    break
-                if isinstance(data, Exception):
-                    yield f"data: {ndjson_dumps({'error': str(data)})}\n\n"
-                    break
-                cost.observe(data)
-                event_type = data.get("type", "")
-                if event_type == "content_block_delta":
-                    text = data.get("delta", {}).get("text", "")
-                    cost.received(text)
-                    if text:
-                        yield f"data: {ndjson_dumps({'text': text})}\n\n"
-        finally:
-            cost.finish()
-        yield "data: [DONE]\n\n"
-
-    return StreamingResponse(_btw_stream(), media_type="text/event-stream")
-
-
 @router.post("/api/chat")
 async def chat_endpoint(request: Request):
     body = await request.json()
@@ -1303,12 +1169,13 @@ async def chat_endpoint(request: Request):
     transcript = body.get("transcript", "")
     chat_history = body.get("history", [])
     attachment_ids = body.get("attachment_ids", [])
-    model_key = body.get("model", _get_default_model())
+    # Resolved against the turn's catalog in _build_turn.
+    model_key = body.get("model")
     force_skill = body.get("force_skill")
     session_id = body.get("session_id", "default")
-    # Feature 16: brief mode
+    # Brief mode
     brief_mode = body.get("brief_mode", False)
-    # Feature 20: denial tracking per session (passed from frontend)
+    # Denial tracking per session (passed from frontend)
     session_denials = body.get("session_denials", {})
     # Session-scoped tool approvals (categories pre-approved by user)
     session_approvals = body.get("session_approvals", {})
@@ -1333,19 +1200,13 @@ async def chat_endpoint(request: Request):
     # any `await` past parsing the body, and before ANY of the turn's own
     # setup work (transcript condensation, attachment/PDF analysis, index
     # grounding, hooks) runs. That setup can easily take seconds on a
-    # heavier turn, and it used to be where this slot got claimed (deep
-    # inside _build_turn, well after this point) — so a message sent during
-    # that window found the slot still looking free and started its OWN
-    # independent turn instead of joining the one already running, racing it
-    # and interleaving unpredictably. Claiming immediately closes that
-    # window: the busy/queued decision below is made before either turn's
-    # setup has had a chance to run at all.
+    # heavier turn; a message sent during it must find the slot held and join
+    # the running turn instead of starting its own: the busy/queued decision
+    # below is made before either turn's setup has had a chance to run.
     #
     # A NEW turn (not an approval continuation) finding the session ALREADY
     # busy is exactly "the user sent another message while the model is
-    # working" — deliver it INTO the running turn instead of the old
-    # behavior (HTTP 409 SESSION_BUSY; the composer either blocked sending
-    # or the text was silently dropped). run_turn's per-round loop
+    # working": deliver it INTO the running turn. run_turn's per-round loop
     # (server/chat/engine/runner.py) drains server.chat.engine.midturn_inbox
     # once per round and folds the text into the live message list the same
     # way it already injects wind-down reminders, so the SAME turn keeps
@@ -1358,11 +1219,9 @@ async def chat_endpoint(request: Request):
     # passes through and which pops the slot only if it still holds THIS
     # turn's token.
     #
-    # Every turn claims the slot, continuations included. An approval resume
-    # used to skip the claim, so from the first approval card onward the
-    # session looked idle to the server: a message typed while the resumed
-    # turn kept working started a second, independent turn from the composer's
-    # minimal body (no history, default approvals) instead of being queued.
+    # Every turn claims the slot, continuations included, so a message typed
+    # while a resumed turn keeps working is queued into it instead of
+    # starting a second, independent turn from the composer's minimal body.
     #
     # ``midturn`` marks the composer's steer-the-running-turn request. When
     # nothing is running any more it is refused with a JSON 409 rather than
@@ -1522,10 +1381,7 @@ async def chat_endpoint(request: Request):
         model_id = ""
         _refusal, _refusal_code = None, ""
         if model_key and model_key not in chat_models:
-            _refusal = (
-                f"{model_key} is not an available chat model (it may have been removed). "
-                "Pick one from the model menu."
-            )
+            _refusal = unknown_model_message(model_key)
             _refusal_code = "UNKNOWN_MODEL"
         elif model_key:
             # Apply model fallback chain if enabled
@@ -1661,8 +1517,8 @@ async def chat_endpoint(request: Request):
 
         # Prompt caching (cloud/Bedrock only): when enabled, build the system prompt
         # as a (static, dynamic) split so the static prefix can be cached alongside
-        # the tool definitions; otherwise a plain joined string. The local Gemma path
-        # builds its own string body in server/local/route.py and is unaffected.
+        # the tool definitions; otherwise a plain joined string. The on-device
+        # path builds its own string body in server/local/route.py.
         from server.chat.caching import resolve_system_prompt
 
         _caching_on = _is_ff_enabled("prompt_caching")
@@ -1671,9 +1527,6 @@ async def chat_endpoint(request: Request):
         # visible history (self-healing across restarts/pauses), activate a
         # requested skill so an @skills: request can call its tool even when it
         # is deferred, then compute the deferred index for the static system block.
-        # The suppress flag isn't known yet (grounding resolves later); the index
-        # may list a few tools a strict-RAG round hides — harmless, tool_search
-        # activation still intersects with the post-filter catalog per round.
         from server.chat.tool_activation import activate, activate_from_history
         from server.chat.tool_index import build_deferred_index
         from server.chat.tool_pool import assemble_partitioned_pool
@@ -1683,10 +1536,7 @@ async def chat_endpoint(request: Request):
         if force_skill:
             activate(session_id, [force_skill])
         _advertised0, _deferred0, _core_count0 = assemble_partitioned_pool(
-            plan_mode=plan_mode,
-            ws_connected=bool(ws_path),
-            session_id=session_id,
-            ultracode=ultracode_active,
+            session_id=session_id, ultracode=ultracode_active
         )
         _deferred_index = build_deferred_index(_deferred0)
 
@@ -1788,9 +1638,8 @@ async def chat_endpoint(request: Request):
             )
 
         # Grounding state for this turn. Set in the fresh-turn branch below; stays
-        # None/False on approval-resume turns (grounding isn't recomputed there).
+        # None on approval-resume turns (grounding isn't recomputed there).
         grounding_meta: dict | None = None
-        grounding_active = False
 
         if approved_tool_result:
             # Continuation turn. `approved_tool_result` accepts two shapes:
@@ -1803,7 +1652,7 @@ async def chat_endpoint(request: Request):
             else:
                 answers = [approved_tool_result]
 
-            paused = _paused_sessions.pop(session_id, None)
+            paused = paused_sessions.pop(session_id, None)
             asked = (paused or {}).get("asked")
             if not paused:
                 log.warning(
@@ -1835,11 +1684,11 @@ async def chat_endpoint(request: Request):
                     )
                     if docs_block:
                         parts.append(docs_block)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     log.warning("@docs lookup timed out; answering without it")
                 except Exception as e:  # noqa: BLE001 — docs lookup is best-effort
                     log.warning("@docs lookup failed: %s", e)
-            # Index-first grounding (point I): the router at the top of turn
+            # Index-first grounding: the router at the top of turn
             # setup decided whether this turn retrieves and kicked the search
             # off in parallel with everything above. Collect it here with
             # whatever remains of its budget and inject the passages as cited
@@ -1883,8 +1732,7 @@ async def chat_endpoint(request: Request):
                                 log.warning("Failed to persist grounding sources: %s", e)
                     if grounding:
                         parts.append(grounding)
-                        grounding_active = True
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     grounding_note = f"timed out ({_budget:.0f}s budget)"
                     log.warning(
                         "Index grounding timed out (%.0fs); answering without it",
@@ -1954,13 +1802,6 @@ async def chat_endpoint(request: Request):
         # never reach it. System prompt + messages are already built above. The
         # local bridge returns a StreamingResponse for local turns (fresh or an
         # approval resume), or None to let the cloud path proceed.
-        # Strict-RAG (point #1): once this turn is grounded in injected passages,
-        # withhold the workspace file/search tools so the model answers from them
-        # instead of re-crawling files. Gated by the `strict_rag` flag (default on).
-        from server.infrastructure.feature_flags import is_enabled as _ff_enabled
-
-        suppress_ws_search = grounding_active and _ff_enabled("strict_rag")
-
         from server.local.route import local_chat_response
 
         _local_resp = local_chat_response(
@@ -1982,7 +1823,6 @@ async def chat_endpoint(request: Request):
             session_approvals=session_approvals,
             session_denials=session_denials,
             session_config=session_config,
-            suppress_ws_search=suppress_ws_search,
             heartbeat=_heartbeat,
             is_disconnected=request.is_disconnected,
         )
@@ -1996,10 +1836,9 @@ async def chat_endpoint(request: Request):
             )
             return _prepend_grounding_event(_local_resp, grounding_meta)
 
-        # OpenAI models (GPT-5.x) run on the SAME engine path as Claude below —
-        # the provider split happens at adapter selection. Compaction is safe for
-        # them now: its summarizer routes through one_shot with the session's own
-        # model instead of hard-calling Bedrock Anthropic.
+        # OpenAI models run on the SAME engine path as Claude below: the
+        # provider split happens at adapter selection, and the compaction
+        # summarizer routes through one_shot with the session's own model.
 
         # Tool access (analyze_document) covers EVERY attachment bound to this
         # session, not just this turn's ids — the durable store is the source of
@@ -2015,7 +1854,9 @@ async def chat_endpoint(request: Request):
 
         # Pre-flight proactive compaction (provider-aware summarizer), against
         # the ACTIVE model's own input budget (95% trigger). It makes an LLM
-        # summarization call, so tell the UI what the wait is.
+        # summarization call, so tell the UI what the wait is. CompactionError
+        # must escape to staged_stream's TURN_SETUP_FAILED frame and slot/inbox
+        # cleanup. Never send a provider request or substitute history on failure.
         if estimate_message_size(messages) > thresholds_for(model_key)[0]:
             _status("Compacting conversation history...")
             messages = await compact_messages_with_claude(
@@ -2030,15 +1871,6 @@ async def chat_endpoint(request: Request):
         # whole request non-retryably otherwise, wedging the session. Runs on every
         # turn (fresh + approval-resume), after compaction, on the exact list sent.
         messages = sanitize_tool_pairs(messages)
-
-        # Same-session double-stream guard: `is_new_turn`/`stream_token` were
-        # already decided and (for a genuine new turn) the slot already
-        # claimed at the very top of chat_endpoint, before this turn's own
-        # setup (condensation/grounding/hooks, all of it above) ran — not
-        # here, so a message arriving DURING that setup sees the slot
-        # already held and gets queued into it instead of racing it with a
-        # second independent turn. Both names are read from that outer
-        # scope (no `nonlocal`: neither is reassigned in here).
 
         # Fire SessionStart + UserPromptSubmit hooks. Any additionalContext they
         # return (or a project's SessionStart hook loading conventions) is injected
@@ -2126,7 +1958,6 @@ async def chat_endpoint(request: Request):
             mode=mode,
             ws_path=ws_path,
             ws_latch=ws_latch,
-            suppress_ws_search=suppress_ws_search,
             effort_label=effort_label,
             transcript=transcript,
             current_attachments=current_attachments,
@@ -2211,8 +2042,8 @@ async def chat_endpoint(request: Request):
                     yield chunk
                 finished = True
             else:
-                # Non-stream refusal (e.g. SESSION_BUSY): forward as an SSE
-                # error frame — the client is already reading this stream, so
+                # Non-stream refusal (e.g. UNKNOWN_MODEL): forward as an SSE
+                # error frame: the client is already reading this stream, so
                 # an HTTP status could never reach it.
                 payload = json.loads(bytes(resp.body).decode("utf-8"))
                 frame = {"error": payload.get("error", "Request failed")}

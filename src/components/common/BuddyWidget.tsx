@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { get, post, put } from '@/api/client';
-import { dialogConfirm } from '@/stores/uiStore';
+import { dialogConfirm, useUIStore } from '@/stores/uiStore';
+import { ApiError } from '@/types/api';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { pickFact } from '@/components/common/buddyFacts';
 
@@ -220,7 +221,19 @@ export const BuddyWidget: React.FC = () => {
           data = await post<BuddyResponse>('/api/buddy/hatch', {});
         }
         if (mountedRef.current) setBuddy({ ...data, hatched: true });
-      } catch { /* buddy API unavailable, stay dormant */ }
+      } catch (err) {
+        // The companion stays dormant. A server that answered with an error
+        // (for example an unreadable buddy.json) says why; an unreachable
+        // backend is already reported elsewhere.
+        if (err instanceof ApiError && err.status !== 0) {
+          console.warn('Failed to load the companion:', err);
+          useUIStore.getState().addToast({
+            type: 'error',
+            message: `Companion not shown: ${err.message}`,
+            source: 'buddy',
+          });
+        }
+      }
     })();
   }, [companionEnabled]);
 

@@ -14,6 +14,8 @@ const api = vi.hoisted(() => ({
 vi.mock('@/api/client', () => api);
 
 import { ConfigEditorDialog, ConfigJsonLink } from './ConfigEditorDialog';
+import { useRef } from 'react';
+import { useDismiss } from '@/hooks/useDismiss';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useUIStore } from '@/stores/uiStore';
 
@@ -155,6 +157,27 @@ describe('ConfigEditorDialog', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it('Escape closes only the editor, not the Settings modal under it', async () => {
+    const closeSettings = vi.fn();
+    function SettingsHost() {
+      const ref = useRef<HTMLDivElement>(null);
+      useDismiss(ref, closeSettings, { outsideClick: false });
+      return <div ref={ref} />;
+    }
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const onClose = vi.fn();
+    render(
+      <QueryClientProvider client={qc}>
+        <SettingsHost />
+        <ConfigEditorDialog onClose={onClose} />
+      </QueryClientProvider>,
+    );
+    const box = await screen.findByRole('textbox', { name: 'Your config contents' });
+    fireEvent.keyDown(box, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(closeSettings).not.toHaveBeenCalled();
+  });
+
   it('closing (Cancel) does not bubble to the hosting Settings modal', async () => {
     const onClose = vi.fn();
     const parentClick = vi.fn();
@@ -248,7 +271,7 @@ describe('ConfigJsonLink', () => {
       </QueryClientProvider>,
     );
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'config.json' }));
+    fireEvent.click(screen.getByRole('button', { name: 'config.user.json' }));
     expect(await screen.findByRole('dialog', { name: 'Edit your config' })).toBeInTheDocument();
     // The dialog portals to document.body — never nested inside the <p>.
     expect(screen.getByRole('dialog').closest('p')).toBeNull();

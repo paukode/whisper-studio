@@ -7,7 +7,7 @@ Owns everything GPT/mantle-specific:
     fidelity (assistant ``tool_use`` blocks become ``function_call`` items and
     tool_result user messages become ``function_call_output`` items, so the
     call linkage survives round-tripping through the engine's canonical
-    format — the old path degraded history tool calls to plain text)
+    format)
   - the two mantle stream adaptations, verified live: EARLY RELEASE (mantle
     can hold the stream open for seconds after the output before
     ``completed``; the round moves on once a ``final_answer`` message or every
@@ -15,8 +15,8 @@ Owns everything GPT/mantle-specific:
     follow) and HEARTBEAT keepalives during idle gaps
   - prompt-too-long detection: mantle rejections like ``prompt tokens (281096)
     exceed customer model maximum (278528)`` raise ``PromptTooLongError`` so
-    the engine's reactive rescue + salvage round apply to GPT turns exactly as
-    they do to Claude
+    the engine's bounded, fail-closed compaction applies to GPT turns exactly
+    as it does to Claude
   - effort/verbosity mapping and the tool exclusions (EXCLUDED_TOOLS)
 
 Cache note: the Responses API has no explicit checkpoints; a stable
@@ -55,12 +55,21 @@ _HEARTBEAT_S = 5.0
 _EARLY_RELEASE_GRACE_S = 1.0
 
 
-def _is_prompt_too_long(message: str) -> bool:
+def _is_prompt_too_long(message: str, error=None) -> bool:
+    """Recognize structured provider codes as well as documented limit messages."""
+    code = error.get("code") if isinstance(error, dict) else getattr(error, "code", None)
+    body = error if isinstance(error, dict) else getattr(error, "body", None)
+    if isinstance(body, dict):
+        detail = body.get("error", body)
+        if isinstance(detail, dict):
+            code = detail.get("code") or code
     low = (message or "").lower()
     return (
-        windows.parse_prompt_cap(message) is not None
+        code == "context_length_exceeded"
+        or windows.parse_prompt_cap(message) is not None
         or "too long" in low
         or ("prompt tokens" in low and "exceed" in low)
+        or ("context length" in low and "exceed" in low)
         or "context_length_exceeded" in low
     )
 
@@ -226,15 +235,15 @@ class OpenAIResponsesAdapter:
         inflight = getattr(self, "_inflight", None)
         if inflight is None:
             return None
+        received = inflight["received"] + sum(len(a) for a in inflight["args"].values())
         if inflight["usage"] is not None:
-            return Usage(**responses_counts(inflight["usage"], 0, 0))
+            return Usage(**responses_counts(inflight["usage"], inflight["request_chars"], received))
         if not inflight["acknowledged"]:
             return None
-        received = inflight["received"] + sum(len(a) for a in inflight["args"].values())
         return Usage(**estimated_counts(inflight["request_chars"], received))
 
     async def stream_round(self, messages, tools, core_count, round_num, is_last_round):
-        from server.costs.capture import estimated_counts, json_chars, responses_counts
+        from server.costs.capture import json_chars, responses_counts
 
         oai = self.oai
         input_items = self.to_input_items(messages)
@@ -275,7 +284,7 @@ class OpenAIResponsesAdapter:
             stream = await client.responses.create(**request)
         except Exception as e:  # noqa: BLE001 — classify, then surface or rescue
             msg = str(e)
-            if _is_prompt_too_long(msg):
+            if _is_prompt_too_long(msg, e):
                 raise PromptTooLongError(msg) from e
             log.warning("OpenAI responses.create failed (%s): %s", self.model_key, e)
             # The SDK already retried the request once. A connection that
@@ -302,19 +311,15 @@ class OpenAIResponsesAdapter:
 
         prod = asyncio.ensure_future(produce())
 
-        fcalls: dict[str, dict] = {}
-        n_items = 0
-        n_done = 0
-        # GPT marks the text it writes before tool calls "commentary" and the
-        # reply that ends the response "final_answer" (mantle, GPT-5.5 to 6).
-        # Only a final answer is the end: after a preamble the stream goes
-        # silent (1.2 to 2.1 s live) and then sends the calls, so releasing on
-        # it ended the turn on "I'm checking the files now" with the calls
-        # never seen. Text with no phase waits for completed.
+        from .response_calls import ResponseCalls
+
+        calls = ResponseCalls()
+        # Only final_answer text can release early, never a commentary preamble
+        # or text that accompanies a known unfinished function call.
         msg_phase = None
         answer_done = False
-        completed_usage = None
-        completed = False
+        response_finished = False
+        incomplete_reason = None
         thinking_open = False
         accepted = False
         text_blocks: list[str] = []
@@ -325,12 +330,11 @@ class OpenAIResponsesAdapter:
 
         try:
             while True:
-                ready = answer_done or (n_items > 0 and n_done >= n_items)
+                ready = calls.complete or (answer_done and not calls.seen)
                 try:
                     kind, payload = await asyncio.wait_for(q.get(), timeout=_POLL_S)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     now = loop.time()
-                    # Final answer or calls done -> skip mantle's completed-tail.
                     if ready and (now - last_event) > _EARLY_RELEASE_GRACE_S:
                         break
                     if (now - last_hb) >= _HEARTBEAT_S:
@@ -342,12 +346,13 @@ class OpenAIResponsesAdapter:
                     break
                 if kind == "exc":
                     msg = str(payload)
-                    if _is_prompt_too_long(msg):
+                    if _is_prompt_too_long(msg, payload):
                         raise PromptTooLongError(msg) from payload
                     log.warning("OpenAI stream broke mid-round (%s): %r", self.model_key, payload)
                     yield RoundError(
-                        message=_friendly_error(payload, self.model_key, self.region),
-                        retryable=_is_transient(msg, payload),
+                        message=calls.error
+                        or _friendly_error(payload, self.model_key, self.region),
+                        retryable=not calls.error and _is_transient(msg, payload),
                     )
                     return
 
@@ -355,11 +360,7 @@ class OpenAIResponsesAdapter:
                 inflight["acknowledged"] = True
                 et = getattr(ev, "type", "") or ""
                 if et in ("response.created", "response.in_progress"):
-                    # The model has the request and is reasoning. Mantle
-                    # streams no reasoning summaries, so at a high effort the
-                    # next event can be tens of seconds away: open the
-                    # thinking phase now, or the UI keeps saying it is still
-                    # waiting for the model while the model is working.
+                    # Mantle can reason silently before it sends any summary.
                     if not accepted and not thinking_open and self.effort != "none":
                         thinking_open = True
                         yield ThinkingStart()
@@ -401,27 +402,20 @@ class OpenAIResponsesAdapter:
                     yield TextDelta(text=d)
                 elif et == "response.output_item.added":
                     item = getattr(ev, "item", None)
-                    item_type = getattr(item, "type", "") if item is not None else ""
+                    item_type = getattr(item, "type", "")
                     if item_type == "message":
                         msg_phase = getattr(item, "phase", None)
                     elif item_type == "function_call":
-                        n_items += 1
-                        fc = {
-                            "call_id": getattr(item, "call_id", "") or "",
-                            "name": getattr(item, "name", "") or "",
-                            "args": "",
-                        }
-                        fcalls[getattr(item, "id", "") or ""] = fc
+                        fc = calls.start(item)
                         last_event = loop.time()
-                        yield ToolCallStart(name=fc["name"], id=fc["call_id"])
+                        if fc is not None:
+                            yield ToolCallStart(name=fc["name"], id=fc["call_id"])
                 elif et == "response.function_call_arguments.delta":
-                    fc = fcalls.get(getattr(ev, "item_id", "") or "")
+                    fc = calls.delta(getattr(ev, "item_id", None), getattr(ev, "delta", None))
+                    last_event = loop.time()
                     if fc is not None:
-                        fc["args"] += getattr(ev, "delta", "") or ""
                         inflight["args"][id(fc)] = fc["args"]
-                        last_event = loop.time()
-                        # A large tool argument (a whole HTML app) streams for
-                        # minutes with nothing else to show: report its size.
+                        # Large tool arguments retain streamed size progress.
                         _n = len(fc["args"])
                         if _n >= fc.get("next_progress", TOOL_ARGS_PROGRESS_STEP):
                             fc["next_progress"] = (
@@ -429,47 +423,41 @@ class OpenAIResponsesAdapter:
                             ) * TOOL_ARGS_PROGRESS_STEP
                             yield ToolCallProgress(name=fc["name"], chars=_n, id=fc["call_id"])
                 elif et == "response.function_call_arguments.done":
-                    fc = fcalls.get(getattr(ev, "item_id", "") or "")
+                    fc = calls.finish(getattr(ev, "item_id", None), getattr(ev, "arguments", None))
+                    inflight["args"] = {id(c): c["args"] for c in calls.calls.values()}
                     if fc is not None:
-                        da = getattr(ev, "arguments", None)
-                        if da:
-                            fc["args"] = da
-                            inflight["args"][id(fc)] = da
-                        try:
-                            parsed = json.loads(fc["args"]) if fc["args"].strip() else {}
-                        except Exception:
-                            parsed = {}
-                        fc["parsed"] = parsed
-                        yield ToolCall(id=fc["call_id"], name=fc["name"], input=parsed)
-                    n_done += 1
+                        yield ToolCall(id=fc["call_id"], name=fc["name"], input=fc["parsed"])
+                    last_event = loop.time()
+                elif et == "response.output_item.done":
+                    calls.check_item(getattr(ev, "item", None))
                     last_event = loop.time()
                 elif et in ("response.completed", "response.incomplete"):
-                    # Both end the response and carry what it billed: an
-                    # incomplete one (the output cap, a content filter) too,
-                    # reasoning tokens included, which characters / 4 of the
-                    # visible text would never count.
-                    completed = True
-                    completed_usage = getattr(getattr(ev, "response", None), "usage", None)
+                    response_finished = True
+                    resp = getattr(ev, "response", None)
+                    # Retain reported counts even if arguments force a rejection.
+                    inflight["usage"] = getattr(resp, "usage", None)
+                    terminal_output = getattr(resp, "output", None)
+                    if terminal_output is not None:
+                        calls.check_snapshot(terminal_output)
                     if et == "response.incomplete":
-                        yield Incomplete()
+                        incomplete_reason = (
+                            getattr(getattr(resp, "incomplete_details", None), "reason", None)
+                            or "unknown reason"
+                        )
                     break
                 elif et in ("response.failed", "error"):
                     resp = getattr(ev, "response", None)
-                    # A failed response that still reports usage was billed.
                     inflight["usage"] = getattr(resp, "usage", None)
                     err = (
                         getattr(resp, "error", None) or getattr(ev, "message", "") or "stream error"
                     )
                     msg = str(getattr(err, "message", err))
-                    if _is_prompt_too_long(msg):
+                    if _is_prompt_too_long(msg, err):
                         raise PromptTooLongError(msg)
-                    log.warning(
-                        "OpenAI stream failed mid-round (%s, event=%s): %s",
-                        self.model_key,
-                        et,
-                        msg,
+                    log.warning("OpenAI stream failed (%s, event=%s): %s", self.model_key, et, msg)
+                    yield RoundError(
+                        message=calls.error or msg, retryable=not calls.error and _is_transient(msg)
                     )
-                    yield RoundError(message=msg, retryable=_is_transient(msg))
                     return
 
             if thinking_open:
@@ -478,58 +466,93 @@ class OpenAIResponsesAdapter:
             prod.cancel()
             try:
                 await stream.close()
-            except Exception:  # noqa: BLE001 — abandoning the tail
+            except Exception:  # noqa: BLE001 - abandoning the tail
                 pass
+
+        failure = calls.failure(response_finished=response_finished)
+        if incomplete_reason:
+            reason = (
+                "output token limit reached"
+                if incomplete_reason == "max_output_tokens"
+                else str(incomplete_reason)
+            )
+            if calls.seen or incomplete_reason != "max_output_tokens":
+                failure = f"Response incomplete ({reason})."
+            else:
+                yield Incomplete()
+        if failure:
+            yield RoundError(message=f"{failure} No tools from this round were run.")
+            return
 
         if cur_text:
             text_blocks.append(cur_text)
         if refusal_text:
             text_blocks.append(refusal_text)
-
         content: list[dict] = [{"type": "text", "text": t} for t in text_blocks if t]
-        valid = [f for f in fcalls.values() if f.get("name")]
-        for f in valid:
+        for fc in calls.calls.values():
             content.append(
-                {
-                    "type": "tool_use",
-                    "id": f["call_id"],
-                    "name": f["name"],
-                    "input": f.get("parsed", {}),
-                }
+                {"type": "tool_use", "id": fc["call_id"], "name": fc["name"], "input": fc["parsed"]}
             )
 
         received = inflight["received"] + sum(len(a) for a in inflight["args"].values())
-        if completed:
-            usage_counts = responses_counts(completed_usage, inflight["request_chars"], received)
-        else:
-            # Early release: the completed event with the usage never came,
-            # so both counts are characters / 4 of the payloads themselves.
-            usage_counts = estimated_counts(inflight["request_chars"], received)
-        # The round completed: its cost travels on the RoundResult, so the
-        # engine must not also record it as an unfinished attempt.
+        usage_counts = responses_counts(inflight["usage"], inflight["request_chars"], received)
+        # Only successful rounds transfer their usage to RoundResult. A rejected
+        # round stays in flight for the runner's once-only error accounting.
         self._inflight = None
         yield RoundResult(
-            stop_reason="tool_use" if valid else "end_turn",
+            stop_reason="tool_use" if calls.calls else "end_turn",
             content=content,
             usage=Usage(**usage_counts),
         )
 
 
 def _friendly_error(e: Exception, model_key: str = "", region: str = "") -> str:
-    """Actionable text for the common GPT-on-Bedrock failure classes.
-    ``model_key`` and ``region`` are the model and the region the call went
-    to, so a 404 can say where the model does run and what to set."""
-    # Transport exceptions can stringify to nothing (httpx.ReadTimeout('')),
-    # which left the user with "request failed: " and no clue why.
+    """Actionable errors, without confusing output/context tokens with credentials."""
+    import re
+
     msg = str(e) or f"{type(e).__name__} (the model stopped responding mid-stream)"
     low = msg.lower()
-    if any(s in low for s in ("auth", "401", "403", "denied", "credential", "token")):
+    status = getattr(e, "status_code", None)
+    if status is None:
+        # SDK errors without a structured status still identify HTTP codes
+        # explicitly. Arbitrary numbers in a token count are not status codes.
+        found = re.search(r"(?:error code|status(?: code)?|http)\s*[:=]?\s*(\d{3})\b", low)
+        status = int(found[1]) if found else None
+    kind = type(e).__name__.lower()
+    credential_markers = (
+        "accessdenied",
+        "access denied",
+        "not authorized",
+        "unauthorized",
+        "authentication failed",
+        "invalid api key",
+        "invalid_api_key",
+        "invalid bearer token",
+        "expired token",
+        "expiredtoken",
+        "invalid security token",
+        "security token included in the request is invalid",
+        "unable to locate credentials",
+        "invalid credentials",
+        "expired credentials",
+    )
+    if (
+        status in (401, 403)
+        or kind
+        in (
+            "authenticationerror",
+            "permissiondeniederror",
+            "nocredentialserror",
+            "partialcredentialserror",
+        )
+        or any(s in low for s in credential_markers)
+    ):
         return (
             "GPT auth/access failed. Enable OpenAI model access in the "
             "Bedrock console for this region, confirm your AWS credentials are "
             f"valid, and that the model runs in the configured region. ({msg[:200]})"
         )
-    if any(s in low for s in ("not found", "404", "does not exist", "no such model")):
+    if status == 404 or any(s in low for s in ("not found", "does not exist", "no such model")):
         from server.openai_bedrock.runtime import not_found_advice
 
         return f"{not_found_advice(model_key, region)} ({msg[:200]})"

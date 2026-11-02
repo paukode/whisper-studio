@@ -24,7 +24,7 @@ def test_backends_expose_contract():
         mod = asr.get_backend(name)
         assert hasattr(mod, "executor"), name
         assert callable(mod.create_session), name
-        assert callable(mod.preload), name
+    assert callable(asr.get_backend("parakeet").preload)
 
 
 class _StubBuffer:
@@ -170,7 +170,6 @@ def _warm_calls(monkeypatch, backend_name, installed=lambda entry: True):
 
     calls: list[str] = []
     monkeypatch.setattr(pk, "preload", lambda: calls.append("parakeet"))
-    monkeypatch.setattr(wh, "preload", lambda: calls.append("whisper"))
     monkeypatch.setattr(wh, "_ensure_model", lambda: calls.append("whisper-download"))
     try:
         import server.diarization as diar
@@ -185,7 +184,7 @@ def _warm_calls(monkeypatch, backend_name, installed=lambda entry: True):
     from server.models_manager import catalog as _catalog
 
     monkeypatch.setattr(_catalog, "is_installed", installed)
-    conf = {"transcription_backend": backend_name, "local_mode": False}
+    conf = {"transcription_backend": backend_name}
     monkeypatch.setattr(cfg, "get", lambda k, default=None: conf.get(k, default))
     main._warm_transcription_models()
     return calls
@@ -245,7 +244,7 @@ def test_decode_rescue_is_still_hallucination_filtered(monkeypatch):
     assert text == ""
 
 
-# ── translate-to-English companion pass ──────────────────────────────────────
+# ── Canary translation filter ────────────────────────────────────────────────
 
 
 def test_translate_utterance_keeps_short_phrases_and_drops_loops(monkeypatch):
@@ -313,9 +312,12 @@ def test_resolve_translator_matrix():
     assert r("apple", True, "pl", "de") == "apple"
     assert r("apple", False, "pl", "en") is None
     assert r("apple", True, None, "pl") == "apple"
-    # legacy stored modes map to canary
-    assert r("auto", False, "pl", "en") == "canary"
-    assert r("model", False, "en", "pl") == "canary"
+    # Any other mode (the retired "auto"/"model" included) gets no line and
+    # never falls back to a translator, with or without the Apple bridge.
+    for mode in ("auto", "model", "bogus", ""):
+        assert r(mode, False, "pl", "en") is None, mode
+        assert r(mode, True, "pl", "en") is None, mode
+        assert r(mode, False, None, "en") is None, mode
 
 
 def test_lid_pick_language_constrained():
@@ -404,14 +406,6 @@ def test_parakeet_tokens_merge_into_words():
     words = parakeet_backend._words_from_result(result)
     assert [w["text"] for w in words] == ["quarterly", "numbers"]
     assert words[0]["start"] == 0.0 and words[0]["end"] == 0.5
-
-
-def test_parakeet_words_tolerate_a_result_without_tokens():
-    from types import SimpleNamespace
-
-    from server.asr import parakeet_backend
-
-    assert parakeet_backend._words_from_result(SimpleNamespace()) == []
 
 
 def test_whisper_words_record_whether_a_space_preceded_them():

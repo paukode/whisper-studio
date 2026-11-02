@@ -7,8 +7,9 @@ the chat UI can render a "view full output" affordance, instead of the
 data silently disappearing.
 
 The closure pattern (``make_budget_tool_result``) lets callers collect
-truncation events into a per-request list — the chat endpoint flushes
-those as SSE frames; pass ``None`` for a non-emitting budgeter.
+truncation events into a per-request list (the engine's tool phase,
+server/chat/engine/tool_rounds.py, flushes those as SSE frames); pass
+``None`` for a non-emitting budgeter.
 """
 
 import logging
@@ -17,7 +18,7 @@ from server.infrastructure import result_cache
 
 log = logging.getLogger("whisper-studio")
 
-# Feature 3: Tool result budget — if a tool result exceeds this size,
+# Tool result budget: if a tool result exceeds this size,
 # persist the full output and send a head+tail slice plus a reference.
 TOOL_RESULT_BUDGET_BYTES = 50_000
 
@@ -63,14 +64,13 @@ def make_budget_tool_result(events: list[dict] | None):
                             "full_size": full_size,
                             "kept_bytes": len(kept.encode("utf-8")),
                             "cache_filename": fname,
-                            "cache_path": result_cache.relative_path(fname),
                         }
                     }
                 )
             return (
                 f"{kept}\n\n"
-                f"[Output truncated to head+tail — full result ({len(tool_output):,} chars) "
-                f"saved to {result_cache.relative_path(fname)}]\n"
+                f"[Output truncated to head+tail: full result ({len(tool_output):,} chars) "
+                f"saved to the result cache as '{fname}']\n"
                 f"To read the omitted middle, call read_cached_result with filename "
                 f"'{fname}' and offset/limit."
             )
@@ -84,7 +84,6 @@ def make_budget_tool_result(events: list[dict] | None):
                             "full_size": full_size,
                             "kept_bytes": len(kept.encode("utf-8")),
                             "cache_filename": None,
-                            "cache_path": None,
                         }
                     }
                 )

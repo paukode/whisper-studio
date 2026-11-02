@@ -1,8 +1,8 @@
 """Dispatch for the 14 preview tools.
 
 Read-only tools call straight into server/preview/manager.py and return
-plain text. Approval-gated tools return a [WS_APPROVAL] sentinel — the same
-idiom terminal_run uses — which server/tool_executor.py picks up and routes
+plain text. Approval-gated tools return a [WS_APPROVAL] sentinel, the same
+idiom terminal_run uses, which server/tool_executor.py picks up and routes
 through the ApprovalSpec registered in server/approval/bootstrap.py.
 
 The calling chat's session id rides in the approval payload as

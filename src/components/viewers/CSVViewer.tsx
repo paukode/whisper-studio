@@ -39,8 +39,8 @@ function parseCSVLine(line: string, sep: string): string[] {
 }
 
 /**
- * CSV/TSV table viewer matching the original ws-spreadsheet-viewer.
- * Parses content into a table with row numbers. Has "Edit Raw" toggle.
+ * CSV/TSV table viewer (ws-spreadsheet-viewer). Parses content into a table
+ * with row numbers; offers "Edit Raw" when the caller can switch to the editor.
  */
 export const CSVViewer: React.FC<CSVViewerProps> = ({ filePath, content, onEditRaw }) => {
   const fileName = filePath.split('/').pop() ?? filePath;
@@ -59,9 +59,11 @@ export const CSVViewer: React.FC<CSVViewerProps> = ({ filePath, content, onEditR
     <div className="ws-spreadsheet-viewer" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div className="ws-csv-info" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 8px', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
         <span style={{ fontSize: '0.85em', color: 'var(--text-muted)' }}>{rows.length} rows</span>
-        <button className="btn btn-sm" onClick={() => onEditRaw?.()} type="button" style={{ marginLeft: 'auto' }}>
-          Edit Raw
-        </button>
+        {onEditRaw && (
+          <button className="btn btn-sm" onClick={onEditRaw} type="button" style={{ marginLeft: 'auto' }}>
+            Edit Raw
+          </button>
+        )}
       </div>
       <div className="ws-spreadsheet-table-wrap" style={{ flex: 1, overflow: 'auto' }}>
         <table className="ws-spreadsheet-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85em' }}>

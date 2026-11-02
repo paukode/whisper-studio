@@ -16,7 +16,7 @@ import os
 import re
 from dataclasses import dataclass, field
 
-from server.goals.deliverables import turn_messages
+from server.goals.deliverables import call_input, turn_messages
 
 MAX_VERIFY_NUDGES = 2
 VERIFY_MARKER = "[verify]"
@@ -162,20 +162,10 @@ def result_failed(text: str) -> bool:
 
 
 def _result_text(block: dict) -> str:
-    raw = block.get("content", block.get("output", ""))
+    raw = block.get("content", "")
     if isinstance(raw, list):
         raw = " ".join(str(x.get("text", "")) if isinstance(x, dict) else str(x) for x in raw)
     return str(raw or "")
-
-
-def _tool_input(block: dict) -> dict:
-    inp = block.get("input") or block.get("arguments") or {}
-    if isinstance(inp, str):
-        try:
-            inp = json.loads(inp)
-        except (TypeError, ValueError):
-            inp = {}
-    return inp if isinstance(inp, dict) else {}
 
 
 def turn_evidence(messages: list) -> Evidence:
@@ -200,10 +190,10 @@ def turn_evidence(messages: list) -> Evidence:
             if not isinstance(b, dict):
                 continue
             btype = b.get("type")
-            if btype in ("tool_use", "function_call"):
+            if btype == "tool_use":
                 name = str(b.get("name") or "")
-                tid = str(b.get("id") or b.get("call_id") or "")
-                inp = _tool_input(b)
+                tid = str(b.get("id") or "")
+                inp = call_input(b)
                 if name in _EDIT_TOOLS:
                     path = str(inp.get("path") or "")
                     if path and is_code_path(path) and not _in_scratch(path):
@@ -217,8 +207,8 @@ def turn_evidence(messages: list) -> Evidence:
                         pending[tid] = (kind, cmd, pos)
                 elif name == "verify_change":
                     pending[tid] = ("verify_change", "", pos)
-            elif btype in ("tool_result", "function_call_output"):
-                tid = str(b.get("tool_use_id") or b.get("call_id") or "")
+            elif btype == "tool_result":
+                tid = str(b.get("tool_use_id") or "")
                 entry = pending.pop(tid, None)
                 if not entry:
                     continue
@@ -305,15 +295,13 @@ def verify_nudges_used(messages: list) -> int:
 def verify_on_stop_feedback(
     messages: list,
     workspace: str | None,
-    *,
-    max_attempts: int = MAX_VERIFY_NUDGES,
 ) -> str | None:
     """Gate feedback when code was edited this turn without a fresh passing
     verification, or None when there is nothing to ask for."""
     ev = turn_evidence(messages)
     if not ev.edited_paths or ev.fresh_pass:
         return None
-    if verify_nudges_used(messages) >= max_attempts:
+    if verify_nudges_used(messages) >= MAX_VERIFY_NUDGES:
         return None
     shown = ", ".join(ev.edited_paths[:8]) + (
         f" and {len(ev.edited_paths) - 8} more" if len(ev.edited_paths) > 8 else ""

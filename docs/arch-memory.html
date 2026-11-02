@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Memory system - Whisper Studio Docs</title>
-  <meta name="description" content="How Whisper Studio remembers: per-session structured memory, workspace memory files, WHISPER.md project context, and how all three enter the system prompt.">
+  <meta name="description" content="How Whisper Studio remembers: per-session structured memory, global and project memory files, WHISPER.md and rules, and how all three enter the system prompt.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -39,7 +39,7 @@
     <figure class="diagram-figure wide">
       <div id="memory-diagram" class="diagram"></div>
       <figcaption>The three stores and how they enter the prompt. Session memory is written by a
-        background summarizer after thresholds are crossed; workspace memory and
+        background summarizer after thresholds are crossed; global and project memory and
         <code>WHISPER.md</code> are read on every turn. The <em>next turn</em> edge closes the loop.</figcaption>
     </figure>
 
@@ -64,7 +64,8 @@
       left off?</p>
 
     <h3 id="session-cadence">When it updates</h3>
-    <p>After each turn, <code>maybe_update_session_memory()</code> runs in the background. It tracks,
+    <p>Session memory is gated by the <code>session_memory</code> feature flag (on by default).
+      After each turn, <code>maybe_update_session_memory()</code> runs in the background. It tracks,
       per session, the character count at the last update and the message index it last processed,
       then decides whether an update is due:</p>
     <ul>
@@ -116,7 +117,7 @@
       <thead><tr><th>Tier</th><th>Location</th><th>Alive when</th><th>Holds</th></tr></thead>
       <tbody>
         <tr><td><b>Global</b></td><td><code class="path">data/global_memory/</code></td><td>Always, including plain chat with no workspace open</td><td>User preferences, role, cross-project feedback</td></tr>
-        <tr><td><b>Project</b></td><td><code class="path">data/memory/&lt;workspace-slug&gt;/</code></td><td>A workspace is open (slug = sanitized basename plus a short hash of the workspace's realpath, so two folders both named <code>app</code> never collide; legacy basename-only dirs are migrated)</td><td>Goals, deadlines, repo-specific references</td></tr>
+        <tr><td><b>Project</b></td><td><code class="path">data/memory/&lt;workspace-slug&gt;/</code></td><td>A workspace is open (slug = sanitized basename plus a short hash of the workspace's realpath, so two folders both named <code>app</code> never collide)</td><td>Goals, deadlines, repo-specific references</td></tr>
       </tbody>
     </table></div>
     <p>The global directory deliberately sits outside <code class="path">data/memory/</code> so it can
@@ -135,7 +136,7 @@
     <ol class="steps">
       <li><h4>Scan both tiers</h4><p>List the topic files across global and project. If there are none, nothing is injected.</p></li>
       <li><h4>Few files? Take them all</h4><p>At or below <code>MAX_SELECTIONS</code> (5) files, every file is returned and no model call is made.</p></li>
-      <li><h4>Local turn? Stay offline</h4><p>For on-device models, the ranking side-query is skipped and the most recent files (up to 5) are returned. This trades smart ranking for isolation.</p></li>
+      <li><h4>Local turn? Stay offline</h4><p>For on-device models, and for every model in Local mode, the ranking side-query is skipped and the most recent files (up to 5) are returned. This trades smart ranking for isolation.</p></li>
       <li><h4>Otherwise, rank with a side-query</h4><p>A cheap model receives a manifest of file names, types, and descriptions plus the user query, and returns up to 5 filenames as JSON. If it fails, recall degrades to the most recent files.</p></li>
     </ol>
     <p>The side-query is deliberately tiny: <code>MAX_RECALL_TOKENS</code> is 256 and it runs with a
@@ -148,15 +149,16 @@
       on-device key is refused there and falls back to Haiku.</p>
     <p>The selector's reply is parsed leniently. It is asked for bare JSON, but a model that wraps the
       object in a <code>```json</code> fence is still accepted: <code>_bare_json()</code> strips the
-      fence before parsing. Without that, one stray fence made every recall fail and every turn ran
-      with no memory at all.</p>
+      fence before parsing.</p>
 
     <h3 id="workspace-extraction">The post-turn learning review: writing new memories</h3>
     <p>After a turn (when the model is not asking for more tools), <code>maybe_extract_memory()</code>
       fires in the background. It runs with or without a workspace: with one the reviewer sees both
       tiers and routes each write by <code>scope</code>; without one, everything lands in global
-      memory. It is guarded five ways:</p>
+      memory. It is guarded six ways:</p>
     <ul>
+      <li><b>Local mode.</b> Local mode recalls saved memories but records no new ones, because the
+        review runs on a cloud model. The Memory row in the More menu then shows <b>Recall only</b>.</li>
       <li><b>Feature flag.</b> <code>auto_memory</code> must be enabled. <code>ensure_global_memory_dir()</code>
         returns nothing when it is off, so the whole pipeline (and recall) short-circuits.</li>
       <li><b>Throttle.</b> The review runs only every <code>DEFAULT_EXTRACT_INTERVAL</code> (3) turns.
@@ -199,8 +201,8 @@
       must be on (it is by default), the provider must be forkable (Anthropic or OpenAI), and
       <code>auxiliary_models.learning_review</code> must be unset, <code>"main"</code>, or the turn's
       own model. Naming a <em>different</em> model there is read as "run the cheaper review on that
-      model", which the fork cannot do, so it falls back to the excerpt path.</p>
-    <p>That fallback is the original <code>memory_extractor</code> agent: an excerpt of the new
+      model", which the fork cannot do, so it takes the excerpt path.</p>
+    <p>The excerpt path is the <code>memory_extractor</code> agent: an excerpt of the new
       messages (last 20, truncated) plus a per-tier manifest of existing memories, told to save what
       would be valuable in future sessions, at <code>depth=1</code> so it cannot recurse.</p>
 
@@ -253,26 +255,30 @@
       <code class="path">~/.whisper/rules/global/*.md</code>, is loaded by
       <code class="path">server/prompts/rules.py</code> into the <code>user_rules</code> section of
       the cached static prefix, and appended to the on-device and scheduled-run prompts through
-      <code>append_rules()</code>. Both loaders cache on the (path, mtime) set they read, so an edit
-      applies on the next request. The <code>rules_write</code> tool
+      <code>append_rules()</code>. The global loader caches on the (path, mtime) set it read, and
+      the project loader reads its files on every request, so in both cases an edit applies on the
+      next request. The <code>rules_write</code> tool
       (<code class="path">server/rules_tools.py</code>) appends or rewrites these files when the user
-      says "remember this"; the <code>rules_capture</code> prompt section carries the routing
-      (project by default, global on "always" or with no workspace, facts to the matching
-      <code>WHISPER.md</code>).</p>
+      says "remember this". The routing is in the <code>rules_write</code> tool description
+      (project rules by default, global rules on "always" or with no workspace, facts to the matching
+      <code>WHISPER.md</code>); the <code>rules_capture</code> prompt section only tells the model to
+      use <code>rules_write</code> for a rule and to name the file it wrote.</p>
     <p><code>AGENTS.md</code>, the instructions filename other coding tools maintain, is honored live
       from the workspace root as a read-only supplement rather than imported once and left to go
       stale. It is loaded alongside the project <code>WHISPER.md</code> under an explicit precedence
       note ("where this conflicts with <code>WHISPER.md</code> above, <code>WHISPER.md</code> wins")
       and skipped entirely when its text already appears verbatim inside the project file, which is
       the post-import state, so the same text is never billed twice.</p>
-    <p>Unlike the other two stores, it is fully under your control. The in-app Project Memory dialog is
-      backed by a small CRUD API:</p>
+    <p>Unlike the other two stores, it is fully under your control. The in-app
+      <b>Project instructions (WHISPER.md)</b> dialog, opened from the More menu row
+      <b>Project memory</b>, is backed by a small CRUD API. Each call acts on the connected project's
+      <code>WHISPER.md</code> in <code class="path">~/.whisper/rules/&lt;project-slug&gt;/</code>:</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Endpoint</th><th>Action</th></tr></thead>
       <tbody>
-        <tr><td><code>GET /api/whisper-md</code></td><td>Read the current file (returns content plus whether it exists).</td></tr>
-        <tr><td><code>PUT /api/whisper-md</code></td><td>Save new content to the workspace root.</td></tr>
-        <tr><td><code>DELETE /api/whisper-md</code></td><td>Remove the file.</td></tr>
+        <tr><td><code>GET /api/whisper-md</code></td><td>Read the current file (returns content, whether it exists, and its path).</td></tr>
+        <tr><td><code>PUT /api/whisper-md</code></td><td>Save new content. Returns 400 when no workspace is connected.</td></tr>
+        <tr><td><code>DELETE /api/whisper-md</code></td><td>Remove the file. Returns 400 when no workspace is connected.</td></tr>
       </tbody>
     </table></div>
     <p>Because it is read every turn and never summarized, keep it tight. It is a good home for stable
@@ -282,7 +288,7 @@
     <p>All three stores are resolved in the chat endpoint
       (<code class="path">server/chat/routes.py</code>) and handed to the prompt builder in
       <code class="path">server/prompts/__init__.py</code>, which owns section ordering. Session memory
-      is placed before workspace memory (it carries a higher-priority slot). The project instructions
+      is placed before persistent memory (it carries a higher-priority slot). The project instructions
       are their own section on the cached WORKSPACE layer, since they only change when a file is edited;
       when prompt caching is on, the memory sections sit after the cacheable static prefix so they do
       not invalidate the cache. See
@@ -328,8 +334,9 @@
         <tr><td><code>POST /api/memory/promote</code></td><td>Move a file from the project tier up to global, so every project can use it.</td></tr>
       </tbody>
     </table></div>
-    <p>The review and consolidation finish after the chat stream closes, so their results surface over
-      the session's long-lived event channel rather than inline in the turn. The payload carries
+    <p>The post-turn review finishes after the chat stream closes, so its result surfaces as a
+      <code>memory_event</code> over the session's long-lived event channel rather than inline in the
+      turn. Consolidation runs with no toast. The payload carries
       <code>writes</code>, <code>deletes</code> and <code>skills</code> counts, which the client turns
       into a toast: "Memory updated: 2 memories saved, 1 removed", or "Skills updated: 1 skill
       updated" when only a skill changed. Recall gets its own variant, "Recalled N memories", when a
@@ -338,7 +345,8 @@
 
     <h2 id="consolidation">Consolidation (dream)</h2>
     <p>Over time a tier can drift: duplicates pile up, facts go stale, the index grows past its cap.
-      A consolidation pass in <code class="path">server/memory/dream.py</code> periodically distills
+      Consolidation is gated by the <code>dream_consolidation</code> feature flag (on by default) and
+      is off in Local mode, because it runs on a cloud model. A consolidation pass in <code class="path">server/memory/dream.py</code> periodically distills
       each tier independently. The post-turn hook <code>record_and_maybe_dream()</code> bumps a
       per-tier counter after every turn and runs the pass when a tier is due: at least
       <code>MIN_HOURS_SINCE_LAST</code> (24 hours) and <code>MIN_SESSIONS_SINCE_LAST</code> (5 recorded
@@ -347,7 +355,7 @@
     <p>When it runs, a single agent works through four phases: <b>Orient</b> (list files, read the
       index), <b>Gather</b> (find stale, contradicted, or overlapping entries), <b>Consolidate</b>
       (merge related files, update facts, delete superseded entries), and <b>Prune</b> (delete topic
-      files that no longer earn their place). The agent never rewrites <code>MEMORY.md</code> itself -
+      files that no longer earn their place). The agent never rewrites <code>MEMORY.md</code> itself:
       the index regenerates deterministically after every write or delete, capped at 200 lines. Think
       of it as the persistent-memory counterpart to how a single session's memory is periodically
       resummarized.</p>
@@ -362,6 +370,10 @@
       <dt><code class="path">server/memory/dream.py</code></dt><dd>Cross-session consolidation: trigger thresholds, locking, and the four-phase agent.</dd>
       <dt><code class="path">server/memory/prompts.py</code></dt><dd>Prompts for recall, extraction, consolidation, session summarization, and the learning review, plus the shared <code>LESSON_RULES</code> and <code>DO_NOT_CAPTURE</code> writing rules.</dd>
       <dt><code class="path">server/memory/tools.py</code></dt><dd>The four memory tool schemas the model can call directly.</dd>
+      <dt><code class="path">server/memory/executor.py</code></dt><dd>The memory tool executors: the path-traversal guard, the <code>MEMORY.md</code> write and delete block, and the secret scan.</dd>
+      <dt><code class="path">server/memory/router.py</code></dt><dd>The <code>/api/memory</code> router behind the Memory Viewer.</dd>
+      <dt><code class="path">server/memory/scan.py</code></dt><dd>Finds the topic files of a tier and parses their frontmatter into the manifest.</dd>
+      <dt><code class="path">server/memory/secret_scanner.py</code></dt><dd>Blocks a memory write that contains a credential.</dd>
       <dt><code class="path">server/whisper_md.py</code></dt><dd>Loads the connected project's <code>WHISPER.md</code> and rule files from <code class="path">~/.whisper/rules/&lt;slug&gt;/</code>, plus the repo's <code>AGENTS.md</code> supplement. (The CRUD router is declared in <code class="path">server/skills.py</code>; its handlers live in <code class="path">server/skills_routes.py</code>.)</dd>
       <dt><code class="path">server/prompts/rules.py</code>, <code class="path">server/rules_tools.py</code></dt><dd>The global layer (profile and global rules) and the <code>rules_write</code> tool.</dd>
     </div>

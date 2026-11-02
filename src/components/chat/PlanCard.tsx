@@ -47,4 +47,3 @@ export const PlanCard: React.FC<{ plan: { id: string; title: string; summary: st
   );
 };
 
-export default PlanCard;

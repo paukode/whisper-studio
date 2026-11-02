@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 import server.websocket as ws_mod
 from server import diarization
@@ -92,7 +93,9 @@ def harness(monkeypatch):
     app.include_router(ws_mod.router)
     # One portal for every connection, so they share an event loop as they
     # do under uvicorn.
-    with TestClient(app, base_url="http://localhost") as client:
+    with TestClient(
+        app, base_url="http://localhost", headers={"origin": "http://127.0.0.1:41430"}
+    ) as client:
         yield client, backend, conf
     ws_mod._chunk_counters.clear()
     ws_mod._carryover.clear()
@@ -349,3 +352,32 @@ def test_a_take_nobody_resumes_is_forgotten(monkeypatch):
     assert "ws-test-gone" not in ws_mod._carryover
     ws_mod._end_take("ws-test-other", other)
     assert ws_mod._carryover == {}
+
+
+# ── handshake origin ─────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("origin", [None, "", "https://evil.example"])
+def test_a_handshake_without_a_trusted_origin_is_refused(harness, origin):
+    """Pages always send an Origin, so a missing one is refused like a
+    foreign one: no native client may open the audio socket."""
+    client, _, _ = harness
+    client.headers.pop("origin")
+    headers = {} if origin is None else {"origin": origin}
+
+    with pytest.raises(WebSocketDisconnect) as refused:
+        with client.websocket_connect("/ws?dictation=1", headers=headers) as ws:
+            ws.receive_json()
+    assert refused.value.code == 1008
+
+
+def test_a_handshake_from_the_app_page_is_accepted(harness):
+    client, backend, _ = harness
+
+    backend.script = [[_final("dzień dobry")]]
+    with client.websocket_connect(
+        "/ws?dictation=1", headers={"origin": "http://127.0.0.1:41430"}
+    ) as ws:
+        ws.send_bytes(_PCM)
+        frames = _frames_until_ended(ws)
+    assert frames[0]["text"] == "dzień dobry"

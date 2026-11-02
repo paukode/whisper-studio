@@ -41,10 +41,12 @@
       click, fill, eval, resize). Another chat can list and inspect it (screenshots, snapshots, logs), but
       its attempt to stop it or to start a session under the same name is refused with an error naming
       the owning chat, so it picks a different name for a preview of its own. Starting a name the same
-      chat is already running is an error too: reuse that session, or stop it first to restart it.</p>
+      chat is already running is an error too: reuse that session, or stop it first to restart it. A
+      session whose dev server has exited is not a clash: starting the same name again replaces it, as
+      a restart.</p>
     <dl class="spec">
       <dt><code class="path">PreviewSession</code></dt><dd>One named unit: a <code>DevServerProcess | None</code>, a <code>BrowserSession</code>, plus <code>port</code>, <code>url</code>, <code>created_at</code>, and <code>owner</code> (the starting chat's session id, empty when none was known). A session can be browser-only (no subprocess) if you point it at an already-running server.</dd>
-      <dt><code class="path">start_session(name, command, cwd, port, url, env, owner)</code></dt><dd>Under an async lock: refuse a duplicate name (with <code>PreviewNotOwned</code> when another chat owns it), spawn the dev server if a command was given, register the session under its owner, and return it. Spawning is separate from loading a page.</dd>
+      <dt><code class="path">start_session(name, command, cwd, port, url, env, owner)</code></dt><dd>Under an async lock: refuse a duplicate name (with <code>PreviewNotOwned</code> when another chat owns it), replace a session whose dev server has exited, spawn the dev server if a command was given, register the session under its owner, and return it. Spawning is separate from loading a page.</dd>
       <dt><code class="path">stop_session(name, caller)</code></dt><dd>Under the same lock, refuse a <code>caller</code> chat that is not the owner (<code>PreviewNotOwned</code>); an empty caller, the Settings kill switch, may stop any preview. Then pop the session and tear it down: kill the process group first, then close the browser. The teardown runs as its own task awaited under a shield, so a caller cancelled mid-stop cannot leave a server running that nothing can reach any more. Returns whether anything was actually stopped.</dd>
       <dt><code class="path">list_sessions()</code></dt><dd>A status snapshot per session: id, url, port, <code>process_alive</code>, <code>browser_started</code>, <code>created_at</code>, and <code>owner</code>.</dd>
     </dl>
@@ -78,7 +80,7 @@
       (<code class="path">server/preview/launch_trust.py</code>). The file alone earns nothing, since
       it can come from a cloned repo or an edit a permissive mode applied with no card; only a
       person's answer to a card records trust. An ad-hoc command follows the permission mode like
-      any other command. A deny rule and a session "No for all" on the <code>preview</code> category
+      any other command. A deny rule and a session "Block preview" on the <code>preview</code> category
       (outside Bypass) and the floor for a delete outside the workspace (checked against the
       resolved command, inside <code>sh -c</code> too) still apply to a named start. See
       <a href="tut-permissions.html#preview-named-configs">Previews from launch.json</a>.</p>
@@ -249,7 +251,7 @@
         <tr><td><code>DELETE /api/preview/sessions/{name}?session_id=</code></td><td>Stop a session; 404 if there is no such session. With <code>session_id</code> (the Live pane) only that chat's own preview is stopped, and another chat's is refused with 409 naming the owner. Without it (the Settings kill switch) any preview is stopped; Settings asks for confirmation first when the preview belongs to another chat.</td></tr>
         <tr><td><code>WS /ws/preview/{name}/screencast</code></td><td>The view-only live screencast described above.</td></tr>
         <tr><td><code>GET /api/preview/status</code></td><td>Install-flow status for the same panel: whether Playwright is importable, Chromium is present, an install is running, and the <code>preview_tools</code> flag is on (<code class="path">server/preview/install_routes.py</code>).</td></tr>
-        <tr><td><code>POST /api/preview/install</code></td><td>Kick off the Playwright + Chromium install on a background thread; the panel polls <code>status</code> until it completes and the <code>preview_tools</code> flag flips on. A packaged .app never pip-installs: its browsers are bundled (<code>PLAYWRIGHT_BROWSERS_PATH</code>), so Enable just flips the flag.</td></tr>
+        <tr><td><code>POST /api/preview/install</code></td><td>In a source install, download the Chromium builds (<code>playwright install chromium</code>) on a background thread; Playwright itself is pinned in <code class="path">requirements.txt</code> and installed by <code>setup.sh</code>. The panel polls <code>status</code> until it completes and the <code>preview_tools</code> flag flips on. The Mac app downloads nothing: its browsers are bundled (<code>PLAYWRIGHT_BROWSERS_PATH</code>), so Enable just flips the flag, and a missing bundled browser is reported as a broken install.</td></tr>
         <tr><td><code>POST /api/preview/disable</code></td><td>Turn the <code>preview_tools</code> feature flag back off.</td></tr>
       </tbody>
     </table></div>

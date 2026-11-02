@@ -9,7 +9,7 @@ import itertools
 
 import pytest
 
-from server.chat.caching import cache_ttl_for, cached_tools_and_system
+from server.chat.caching import cached_tools_and_system
 from server.costs.tracker import estimate_cost
 from server.infrastructure.feature_flags import get_flag
 from server.prompts import PromptLayer, build_system_prompt, build_system_prompt_split, get_registry
@@ -61,23 +61,10 @@ def test_static_holds_identity_and_dynamic_holds_memory():
 
 def test_no_dynamic_layer_section_uses_prepend():
     """Byte-equality of the split relies on no dynamic-layer (>=40) section
-    using prepend (the legacy builder front-loads all prepend sections)."""
+    using prepend (the split raises on one)."""
     for section in get_registry().get_sections():
         if int(section.layer) >= int(PromptLayer.DYNAMIC):
             assert not section.prepend, f"dynamic section {section.name!r} uses prepend"
-
-
-# ── TTL per model ─────────────────────────────────────────────────────────────
-
-
-def test_cache_ttl_per_model():
-    assert cache_ttl_for("global.anthropic.claude-opus-4-6-v1") == "5m"
-    assert cache_ttl_for("global.anthropic.claude-sonnet-4-6") == "5m"
-    assert cache_ttl_for("global.anthropic.claude-opus-4-7") == "1h"
-    assert cache_ttl_for("global.anthropic.claude-opus-4-8") == "1h"
-    assert cache_ttl_for("global.anthropic.claude-haiku-4-5-20251001-v1:0") == "1h"
-    assert cache_ttl_for("global.anthropic.claude-fable-5") == "1h"
-    assert cache_ttl_for("") == "1h"  # unknown -> default to the cheaper-to-keep 1h
 
 
 # ── cache_control shaping ─────────────────────────────────────────────────────

@@ -1,8 +1,10 @@
-import { forwardRef, useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { CHAT_INSERT_EVENT, SEGMENT_EDIT_EVENT } from '@/utils/uiEvents';
 import { createPortal } from 'react-dom';
 import { getActiveTranscriptionStore, useActiveTranscriptionStore } from '@/stores/sessionRuntimes';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useUIStore } from '@/stores/uiStore';
+import { toError } from '@/utils/toError';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useChatStream } from '@/hooks/useChatStream';
 import { put } from '@/api/client';
@@ -80,10 +82,9 @@ export const TRANSLATOR_UNAVAILABLE_NOTICE =
 export const TRANSLATOR_UNAVAILABLE_BADGE = 'Apple translation unavailable here';
 
 /** Target languages for translation lines: the union of what Canary and
- *  Apple's on-device translator support (Whisper always targets English and
- *  needs no picker). Flags mark which translator can produce each target so
+ *  Apple's on-device translator support. Flags mark which translator can produce each target so
  *  the pickers can annotate/limit; Apple's set was probed on-device. */
-export const TRANSLATE_TARGETS = [
+const TRANSLATE_TARGETS = [
   { code: 'en', name: 'English', canary: true, apple: true },
   { code: 'ar', name: 'Arabic', canary: false, apple: true },
   { code: 'bg', name: 'Bulgarian', canary: true, apple: false },
@@ -128,14 +129,10 @@ export const targetsFor = (mode: string) => {
   return TRANSLATE_TARGETS;
 };
 // NOTE: this panel only renders/edits transcript segments. Recording is owned
-// entirely by the top-right Record button in Header.tsx, which captures mic +
-// system audio directly. There is deliberately no second "Record" affordance
+// by services/recordingController.ts, started from the Record button in the
+// header. There is deliberately no second "Record" affordance
 // here.
 
-/** Custom event names used to talk to ChatInput / TranscriptSegment without
- * an extra global store. ChatInput listens for `whisper-chat-insert` and
- * inserts the text into its composer (without auto-sending). TranscriptSegment
- * listens for `whisper-segment-edit` to enter edit mode programmatically. */
 /** Whether a scroll container is close enough to its bottom to keep
  *  auto-following new transcript text. The slack absorbs sub-pixel scroll
  *  positions and the height of a partially revealed last line. */
@@ -145,8 +142,6 @@ export const isNearBottom = (el: {
   clientHeight: number;
 }): boolean => el.scrollHeight - el.scrollTop - el.clientHeight < 48;
 
-export const CHAT_INSERT_EVENT = 'whisper-chat-insert';
-export const SEGMENT_EDIT_EVENT = 'whisper-segment-edit';
 
 interface MenuItem {
   action: string;
@@ -303,12 +298,8 @@ function TranscriptContextMenu({ state, onClose }: { state: ContextMenuState; on
   );
 }
 
-export interface TranscriptionPanelProps {
-  hidden?: boolean;
-}
-
 /**
- * Transcript panel matching the vanilla HTML structure exactly.
+ * Transcript panel.
  *
  * Structure:
  *   div.panel#transcriptPanel
@@ -319,8 +310,7 @@ export interface TranscriptionPanelProps {
  *       div.transcript-empty#transcriptEmpty (empty state)
  *       div.transcript-segments#transcriptSegments
  */
-export const TranscriptionPanel = forwardRef<HTMLDivElement, TranscriptionPanelProps>(
-  ({ hidden }, ref) => {
+export const TranscriptionPanel: React.FC = () => {
   const segments = useActiveTranscriptionStore((s) => s.segments);
   const interimText = useActiveTranscriptionStore((s) => s.interimText);
   const speakerNames = useActiveTranscriptionStore((s) => s.speakerNames);
@@ -336,7 +326,7 @@ export const TranscriptionPanel = forwardRef<HTMLDivElement, TranscriptionPanelP
   const translateMode = useSettingsStore((s) => s.config.translateMode);
   const translateTarget = useSettingsStore((s) => s.config.translateTarget);
 
-  // Audio capture and the transcription socket are owned by Header.tsx — wiring
+  // Audio capture and the transcription socket are owned by recordingController: wiring
   // a second pipeline here would spawn a duplicate WebSocket and a confusing
   // second Record button.
 
@@ -434,8 +424,16 @@ export const TranscriptionPanel = forwardRef<HTMLDivElement, TranscriptionPanelP
       // The rename doubles as voiceprint enrollment: the server stores this
       // cluster's centroid under the name, so the same person is recognised
       // by name in later recordings instead of restarting at "Speaker N".
-      // Best-effort — the label is already applied locally either way.
-      if (currentSessionId) enrollSpeaker(currentSessionId, originalKey, newName);
+      // The label is already applied locally either way; a failed enrollment
+      // is reported, since later recordings will not know the name.
+      if (currentSessionId) {
+        enrollSpeaker(currentSessionId, originalKey, newName).catch((err: unknown) => {
+          useUIStore.getState().addToast({
+            type: 'warning',
+            message: `Could not remember ${newName}'s voice for later recordings: ${toError(err).message}`,
+          });
+        });
+      }
     },
     [renameSpeaker, currentSessionId],
   );
@@ -452,8 +450,10 @@ export const TranscriptionPanel = forwardRef<HTMLDivElement, TranscriptionPanelP
     const text = segments
       .map((s) => {
         const line = `[${getSpeakerDisplayName(s.speaker)}] ${s.text}`;
-        const en = (s.translations ?? []).map((t) => t.text).join(' ');
-        return en ? `${line}\n    [EN] ${en}` : line;
+        // Label each translation with its own target language.
+        const translated = (s.translations ?? []).map((t) => t.text).join(' ');
+        const lang = (s.translations?.[0]?.target ?? 'en').toUpperCase();
+        return translated ? `${line}\n    [${lang}] ${translated}` : line;
       })
       .join('\n');
     downloadFile(text, `transcript-${currentSessionId ?? 'export'}.txt`, 'text/plain');
@@ -471,7 +471,12 @@ export const TranscriptionPanel = forwardRef<HTMLDivElement, TranscriptionPanelP
     //    controller relays this to the open WebSocket; it's a no-op when
     //    not recording.
     useSettingsStore.getState().updateConfig({ transcriptionBackend: option.backend });
-    void put('/api/config', { transcription_backend: option.backend });
+    put('/api/config', { transcription_backend: option.backend }).catch((err: unknown) => {
+      useUIStore.getState().addToast({
+        type: 'error',
+        message: `Could not save the transcription engine (it applies until the app restarts): ${toError(err).message}`,
+      });
+    });
     window.dispatchEvent(
       new CustomEvent(SET_MODEL_EVENT, { detail: { backend: option.backend } }),
     );
@@ -481,12 +486,17 @@ export const TranscriptionPanel = forwardRef<HTMLDivElement, TranscriptionPanelP
   // config, persist, relay to a live recording socket.
   const handleTranslateChange = useCallback((mode: string, target: string) => {
     useSettingsStore.getState().updateConfig({ translateMode: mode, translateTarget: target });
-    void put('/api/config', { translate_mode: mode, translate_target: target });
+    put('/api/config', { translate_mode: mode, translate_target: target }).catch((err: unknown) => {
+      useUIStore.getState().addToast({
+        type: 'error',
+        message: `Could not save the translation setting (it applies until the app restarts): ${toError(err).message}`,
+      });
+    });
     window.dispatchEvent(new CustomEvent(SET_TRANSLATE_EVENT, { detail: { mode, target } }));
   }, []);
 
-  // Diarization participant-count hint. 0 = auto. Header.tsx keeps the
-  // latest value and sends it on the recording WebSocket (on change while
+  // Diarization participant-count hint. 0 = auto. recordingController keeps
+  // the latest value and sends it on the recording WebSocket (on change while
   // recording, and at connect for hints set beforehand).
   const [speakerCount, setSpeakerCount] = useState(0);
   const handleSpeakerCountChange = useCallback((count: number) => {
@@ -506,7 +516,7 @@ export const TranscriptionPanel = forwardRef<HTMLDivElement, TranscriptionPanelP
   const liveSpeakerName = getSpeakerDisplayName(liveSpeakerKey);
 
   return (
-    <div ref={ref} className={`panel${hidden ? ' hidden' : ''}`} id="transcriptPanel">
+    <div className="panel" id="transcriptPanel">
       <div className="panel-header">
         <h2>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -711,6 +721,4 @@ export const TranscriptionPanel = forwardRef<HTMLDivElement, TranscriptionPanelP
       {ctxMenu && <TranscriptContextMenu state={ctxMenu} onClose={() => setCtxMenu(null)} />}
     </div>
   );
-});
-
-TranscriptionPanel.displayName = 'TranscriptionPanel';
+};

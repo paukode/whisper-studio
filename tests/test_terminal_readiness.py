@@ -2,24 +2,15 @@
 input (with a typed wait reason), and terminal_send drives a persistent
 interactive PTY whose state survives across calls.
 
-These use a real PTY (this platform has one). stdin_read is only positively
-detectable on Linux (/proc/<pid>/wchan); on macOS the classifier honestly
-reports inferred_idle, so the assertions below check the reasons that hold on
-every platform: session_exit, fast idle return, and state persistence.
+These use a real PTY. The assertions check session_exit, fast idle return,
+and state persistence.
 """
 
 import asyncio
-import platform
 import time
-
-import pytest
 
 from server import terminal as t
 from server.executors.terminal_run import do_terminal_close, do_terminal_send
-
-pytestmark = pytest.mark.skipif(
-    platform.system() not in ("Darwin", "Linux"), reason="needs a POSIX PTY"
-)
 
 
 def test_send_returns_fast_when_a_repl_goes_idle():
@@ -33,7 +24,7 @@ def test_send_returns_fast_when_a_repl_goes_idle():
             # The REPL settles well inside the budget — the whole point is that
             # we return on readiness, not on the timeout.
             assert elapsed < 10
-            assert r["wait_reason"] in ("stdin_read", "inferred_idle")
+            assert r["wait_reason"] == "inferred_idle"
             assert r["session_alive"]
         finally:
             s.kill()
@@ -66,55 +57,19 @@ def test_session_exit_is_detected():
     asyncio.run(go())
 
 
-def test_stdin_read_when_provable(monkeypatch):
-    """When the OS positively reports a tty read, the reason is stdin_read (not
-    the weaker inferred_idle). Forced here so it holds on every platform."""
-    monkeypatch.setattr(t, "_blocked_on_tty_read", lambda _pgrp: True)
-
-    async def go():
-        s = t._create_pty_session("/tmp", hidden=True)
-        try:
-            await asyncio.sleep(0.3)
-            r = await t.send_and_wait(s, "python3 -q\n", timeout=15)
-            assert r["wait_reason"] == "stdin_read"
-        finally:
-            s.kill()
-
-    asyncio.run(go())
-
-
-def test_control_at_shell_prompt_is_idle_not_stdin_read(monkeypatch):
-    """Even if the tty-read probe would say yes, control being back at the shell
-    prompt (fg pgrp == shell pgrp) reports inferred_idle: the shell IS reading
-    stdin, but 'ready for the next command' is the more useful fact."""
-    monkeypatch.setattr(t, "_blocked_on_tty_read", lambda _pgrp: True)
-
-    async def go():
-        s = t._create_pty_session("/tmp", hidden=True)
-        try:
-            await asyncio.sleep(0.3)
-            r = await t.send_and_wait(s, "echo hi\n", timeout=15)
-            assert "hi" in r["output"]
-            assert r["wait_reason"] == "inferred_idle"
-        finally:
-            s.kill()
-
-    asyncio.run(go())
-
-
 def test_interactive_tool_persists_state_across_calls():
     async def go():
         sid = "chat-persist-1"
         try:
-            await do_terminal_send({"__session_id__": sid, "input": "python3 -q", "timeout": 15})
-            await do_terminal_send({"__session_id__": sid, "input": "x = 21*2", "timeout": 15})
+            await do_terminal_send({"session_id": sid, "input": "python3 -q", "timeout": 15})
+            await do_terminal_send({"session_id": sid, "input": "x = 21*2", "timeout": 15})
             ok, out = await do_terminal_send(
-                {"__session_id__": sid, "input": "print(x)", "timeout": 15}
+                {"session_id": sid, "input": "print(x)", "timeout": 15}
             )
             assert ok and "42" in out
             assert out.startswith("wait_reason:")
         finally:
-            await do_terminal_close({"__session_id__": sid})
+            await do_terminal_close({"session_id": sid})
 
     asyncio.run(go())
 
@@ -124,11 +79,11 @@ def test_interactive_tool_validates_first_command_line():
         sid = "chat-validate-1"
         try:
             ok, msg = await do_terminal_send(
-                {"__session_id__": sid, "input": "cat ~/.ssh/id_rsa", "timeout": 3}
+                {"session_id": sid, "input": "cat ~/.ssh/id_rsa", "timeout": 3}
             )
             assert ok is False and msg
         finally:
-            await do_terminal_close({"__session_id__": sid})
+            await do_terminal_close({"session_id": sid})
 
     asyncio.run(go())
 
@@ -136,9 +91,9 @@ def test_interactive_tool_validates_first_command_line():
 def test_close_is_idempotent():
     async def go():
         sid = "chat-close-1"
-        await do_terminal_send({"__session_id__": sid, "input": "echo hi", "timeout": 10})
-        ok1, _ = await do_terminal_close({"__session_id__": sid})
-        ok2, msg2 = await do_terminal_close({"__session_id__": sid})
+        await do_terminal_send({"session_id": sid, "input": "echo hi", "timeout": 10})
+        ok1, _ = await do_terminal_close({"session_id": sid})
+        ok2, msg2 = await do_terminal_close({"session_id": sid})
         assert ok1 is True
         assert ok2 is True and "No interactive terminal" in msg2
 
@@ -149,10 +104,10 @@ def test_empty_input_reads_pending_output_without_error():
     async def go():
         sid = "chat-empty-1"
         try:
-            await do_terminal_send({"__session_id__": sid, "input": "echo marker", "timeout": 10})
-            ok, out = await do_terminal_send({"__session_id__": sid, "input": "", "timeout": 3})
+            await do_terminal_send({"session_id": sid, "input": "echo marker", "timeout": 10})
+            ok, out = await do_terminal_send({"session_id": sid, "input": "", "timeout": 3})
             assert ok is True
         finally:
-            await do_terminal_close({"__session_id__": sid})
+            await do_terminal_close({"session_id": sid})
 
     asyncio.run(go())

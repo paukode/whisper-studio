@@ -14,13 +14,13 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from server.hooks import config_loader as cfg
-from server.hooks.engine import dry_run
+from server.hooks.engine import _current_workspace, dry_run
 from server.hooks.schema import (
     DEFAULT_TIMEOUT,
     HOOK_EVENTS,
     HookDef,
     build_stdin_payload,
-    canonical_event,
+    matcher_error,
 )
 
 router = APIRouter(prefix="/api/hooks", tags=["hooks"])
@@ -43,20 +43,11 @@ def _hook_row(h: HookDef) -> dict:
     }
 
 
-def _workspace() -> str | None:
-    try:
-        from server.workspace import get_workspace_path
-
-        return get_workspace_path()
-    except Exception:
-        return None
-
-
 @router.get("")
 async def get_hooks():
     """User hooks (by event) plus the project-hook trust status."""
     by_event = cfg.load_user_hooks()
-    ws = _workspace()
+    ws = _current_workspace()
     project_status = cfg.project_trust_status(ws)
     project_hooks = cfg.normalize_config(cfg._project_hooks_raw(ws), source="project")
     return {
@@ -72,19 +63,26 @@ async def get_hooks():
 
 
 def _hook_from_body(body: dict, *, hook_id: str = "") -> HookDef | JSONResponse:
-    event = canonical_event((body.get("event") or "").strip())
+    event = (body.get("event") or "").strip()
     if event not in HOOK_EVENTS:
         return _err(f"event must be one of: {list(HOOK_EVENTS)}")
     command = (body.get("command") or "").strip()
     if not command:
         return _err("command is required")
+    on_error = body.get("on_error", "ignore")
+    if on_error not in ("ignore", "block"):
+        return _err('on_error must be "ignore" or "block"')
+    matcher = body.get("matcher", body.get("tool", "*")) or "*"
+    bad_matcher = matcher_error(matcher)
+    if bad_matcher:
+        return _err(bad_matcher)
     return HookDef(
         event=event,
         command=command,
-        matcher=body.get("matcher", body.get("tool", "*")) or "*",
+        matcher=matcher,
         timeout=int(body.get("timeout", DEFAULT_TIMEOUT) or DEFAULT_TIMEOUT),
         enabled=bool(body.get("enabled", True)),
-        on_error=body.get("on_error", "ignore"),
+        on_error=on_error,
         id=hook_id,
         source="user",
     )
@@ -96,22 +94,27 @@ async def add_hook(request: Request):
     hook = _hook_from_body(body)
     if isinstance(hook, JSONResponse):
         return hook
-    stored = cfg.upsert_user_hook(hook)
+    try:
+        stored = cfg.upsert_user_hook(hook)
+    except cfg.HooksFileNotSaved as e:
+        return _err(str(e), 409)
     return {"added": True, "hook": _hook_row(stored)}
 
 
 @router.put("/{hook_id}")
 async def update_hook(hook_id: str, request: Request):
     body = await request.json()
-    # An id that doesn't exist yet is an upsert, but reject if the client is
-    # clearly editing a hook that was already deleted elsewhere.
+    # Reject an id that no longer exists (deleted elsewhere).
     existing_ids = {h.id for defs in cfg.load_user_hooks().values() for h in defs}
     if hook_id not in existing_ids:
         return _err("Not found", 404)
     hook = _hook_from_body(body, hook_id=hook_id)
     if isinstance(hook, JSONResponse):
         return hook
-    stored = cfg.upsert_user_hook(hook)
+    try:
+        stored = cfg.upsert_user_hook(hook)
+    except cfg.HooksFileNotSaved as e:
+        return _err(str(e), 409)
     return {"updated": True, "hook": _hook_row(stored)}
 
 
@@ -129,15 +132,30 @@ async def test_hook(request: Request):
     command = (body.get("command") or "").strip()
     if not command:
         return _err("command is required")
-    event = canonical_event(body.get("event", "PreToolUse"))
+    event = body.get("event", "PreToolUse")
+    if event not in HOOK_EVENTS:
+        return _err(f"event must be one of: {list(HOOK_EVENTS)}")
     payload = build_stdin_payload(
         event,
         session_id="test-session",
-        workspace=_workspace() or "",
+        workspace=_current_workspace() or "",
         tool_name=body.get("tool_name", "ws_write_file"),
         tool_input=body.get("tool_input", {"path": "/example.txt"}),
         tool_output=body.get("tool_output"),
     )
+    # A command that uses an old WHISPER_* variable would not run as a hook,
+    # so the Test does not run it either.
+    old_vars = cfg.old_hook_vars(command)
+    if old_vars:
+        msg = cfg.old_vars_message("This hook", old_vars)
+        return {
+            "exit_code": -1,
+            "stdout": "",
+            "stderr": msg,
+            "decision": "error",
+            "reason": msg,
+            "payload": payload,
+        }
     # dry_run spawns a sandboxed subprocess (blocking, up to the timeout).
     # Offload it so it never stalls the shared event loop.
     result = await asyncio.to_thread(
@@ -163,7 +181,7 @@ async def test_hook(request: Request):
 @router.post("/project/approve")
 async def approve_project(request: Request):
     """Trust the current workspace's project hooks (mirrors trusted skills)."""
-    ws = _workspace()
+    ws = _current_workspace()
     if not ws:
         return _err("No workspace connected")
     if not cfg.approve_project_hooks(ws):
@@ -174,7 +192,7 @@ async def approve_project(request: Request):
 @router.post("/project/revoke")
 async def revoke_project(request: Request):
     """Drop trust for the current workspace's project hooks (they go inert)."""
-    ws = _workspace()
+    ws = _current_workspace()
     if not ws:
         return _err("No workspace connected")
     if not cfg.revoke_project_hooks(ws):

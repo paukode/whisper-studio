@@ -195,7 +195,7 @@
     border-radius: 3px; background: var(--series-color); vertical-align: -1px;
 }
 /* Slots 3 and 4 swap speakers 4 and 5 so that segments stacked next to each
-   other never share a hue family (the taw themes' speakers 1 and 4 do). */
+   other never share a hue family. */
 .usage-series-0 { --series-color: var(--speaker-1); }
 .usage-series-1 { --series-color: var(--speaker-2); }
 .usage-series-2 { --series-color: var(--speaker-3); }

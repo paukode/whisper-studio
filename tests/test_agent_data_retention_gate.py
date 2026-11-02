@@ -8,7 +8,15 @@ ValidationException.
 
 import asyncio
 
+import pytest
+
 from server.infrastructure import data_retention as dr
+
+
+@pytest.fixture(autouse=True)
+def _fresh_mode_cache(monkeypatch):
+    monkeypatch.setitem(dr._mode_cache, "mode", None)
+    monkeypatch.setitem(dr._mode_cache, "ts", 0.0)
 
 
 def _cfg(models):
@@ -38,7 +46,6 @@ def test_model_requires_data_retention_normalized_shape(monkeypatch):
 
 
 def test_block_reason_when_mode_none(monkeypatch):
-    dr._reset_mode_cache()
     monkeypatch.setattr(
         "server.infrastructure.data_retention.load_config",
         lambda: _cfg({"fable": {"id": "fab-id", "requires_data_retention": True}}),
@@ -49,7 +56,6 @@ def test_block_reason_when_mode_none(monkeypatch):
 
 
 def test_no_block_when_sharing_on(monkeypatch):
-    dr._reset_mode_cache()
     monkeypatch.setattr(
         "server.infrastructure.data_retention.load_config",
         lambda: _cfg({"fable": {"id": "fab-id", "requires_data_retention": True}}),
@@ -59,7 +65,6 @@ def test_no_block_when_sharing_on(monkeypatch):
 
 
 def test_no_block_for_non_retention_model(monkeypatch):
-    dr._reset_mode_cache()
     monkeypatch.setattr(
         "server.infrastructure.data_retention.load_config",
         lambda: _cfg({"opus": {"id": "opus-id"}}),
@@ -73,7 +78,6 @@ def test_no_block_for_non_retention_model(monkeypatch):
 
 
 def test_fail_open_when_mode_unknown(monkeypatch):
-    dr._reset_mode_cache()
     monkeypatch.setattr(
         "server.infrastructure.data_retention.load_config",
         lambda: _cfg({"fable": {"id": "fab-id", "requires_data_retention": True}}),
@@ -88,7 +92,6 @@ def test_fail_open_when_mode_unknown(monkeypatch):
 
 
 def test_mode_cache_avoids_repeated_calls(monkeypatch):
-    dr._reset_mode_cache()
     calls = {"n": 0}
 
     def _counting():
@@ -104,7 +107,6 @@ def test_mode_cache_avoids_repeated_calls(monkeypatch):
 def test_failures_are_negative_cached(monkeypatch):
     # A failing control-plane must not be re-queried per agent in a fan-out:
     # the failure is cached (shorter TTL) and served as None until it expires.
-    dr._reset_mode_cache()
     calls = {"n": 0}
 
     def _boom():
@@ -120,7 +122,6 @@ def test_failures_are_negative_cached(monkeypatch):
 def test_set_enabled_refreshes_cache(monkeypatch):
     # After the user consents, the gate must see the new mode immediately —
     # not the stale cached one for up to the TTL.
-    dr._reset_mode_cache()
     monkeypatch.setattr(dr, "get_mode", lambda: "none")
     assert dr.get_mode_cached() == "none"
 

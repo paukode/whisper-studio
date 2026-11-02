@@ -3,9 +3,8 @@ model id, shared by every agent spawn surface: a workflow script's
 ``agent(..., {model})`` opt (server/workflows/agent_adapter.py) and the
 spawn_agent tool's ``model`` parameter (server/agent_tools/spawn.py).
 
-Returns ``(model_id, effective_key, warning)``. Two override failure modes are
-reported instead of swallowed (they used to fail silently on the workflow
-path, mispricing the ledger — see tests/test_model_resolution.py):
+Returns ``(model_id, effective_key, warning)``. These override failure modes
+are reported instead of swallowed (see tests/test_model_resolution.py):
 
 * An UNKNOWN key falls back to the caller's default model, and the empty
   effective_key tells the ledger to price under the default's own key rather
@@ -31,13 +30,10 @@ def resolve_model_override(
 ) -> tuple[str | None, str, str]:
     if not key:
         return (default_model_id or None), "", ""
-    try:
-        from server.infrastructure.config import load_config
+    from server.infrastructure.config import load_config
 
-        cfg = load_config()
-        models = cfg.get("chat_models", {}) or {}
-    except Exception:
-        return (default_model_id or None), "", ""
+    cfg = load_config()
+    models = cfg.get("chat_models", {}) or {}
 
     resolved = models.get(key)
     alias_note = ""

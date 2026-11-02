@@ -159,7 +159,7 @@ const RESULT_PREVIEW_CHARS = 2000;
  *  stats become the row's meta (the inline path gets the same numbers from
  *  its skill_result frame). The text is the one the inline path gives the
  *  model (server/tool_approvals.py inline_result_text). */
-export function patchApprovedRow(
+function patchApprovedRow(
   chat: StoreApi<ChatState>,
   sessionId: string,
   approval: PendingApproval,

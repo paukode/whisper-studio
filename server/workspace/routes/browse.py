@@ -20,7 +20,19 @@ async def ws_browse(path: str = ""):
     # The scan runs on a worker thread: a big folder, or one on a slow or
     # network volume, held the event loop (every session's stream and a
     # Disconnect click with it) for as long as the listing took.
-    return await asyncio.to_thread(_browse, path)
+    try:
+        return await asyncio.to_thread(_browse, path)
+    except PermissionError as e:
+        return _permission_denied(e)
+
+
+def _permission_denied(e: PermissionError) -> Response:
+    """403 with the OS reason: a folder the app may not read is not empty."""
+    return Response(
+        content=json.dumps({"error": f"Cannot read {e.filename}: {e.strerror}"}),
+        status_code=403,
+        media_type="application/json",
+    )
 
 
 def _browse(path: str) -> dict:
@@ -33,27 +45,24 @@ def _browse(path: str) -> dict:
     target = os.path.realpath(target)
     entries = []
     # Files in the folder, so the picker can show what's inside the directory
-    # you're about to connect (read-only — you connect to the folder, not a
+    # you're about to connect (read-only, you connect to the folder, not a
     # single file). Capped so a huge directory can't bloat the response; the
     # full count is returned separately so the UI can say "showing N of M".
     files: list[dict] = []
     FILE_CAP = 250
-    try:
-        for name in sorted(os.listdir(target)):
-            if name.startswith("."):
-                continue
-            full = os.path.join(target, name)
-            # Rich shape with mtime so the UI can offer sort-by-modified.
-            try:
-                mtime = os.path.getmtime(full)
-            except OSError:
-                mtime = 0.0
-            if os.path.isdir(full):
-                entries.append({"name": name, "mtime": mtime})
-            elif os.path.isfile(full):
-                files.append({"name": name, "mtime": mtime})
-    except PermissionError:
-        pass
+    for name in sorted(os.listdir(target)):
+        if name.startswith("."):
+            continue
+        full = os.path.join(target, name)
+        # Rich shape with mtime so the UI can offer sort-by-modified.
+        try:
+            mtime = os.path.getmtime(full)
+        except OSError:
+            mtime = 0.0
+        if os.path.isdir(full):
+            entries.append({"name": name, "mtime": mtime})
+        elif os.path.isfile(full):
+            files.append({"name": name, "mtime": mtime})
     # When a folder has more files than the cap, keep the most-recently-modified
     # ones: capping the alphabetical scan order would make the UI's "newest
     # first" sort lie (the genuinely-newest could sit in the unsent tail). The
@@ -71,6 +80,31 @@ def _browse(path: str) -> dict:
     }
 
 
+def _mkdir_roots(ws: str | None) -> list[str]:
+    """The folders a new folder may go in: ~/Documents, ~/Downloads, and the
+    connected workspace. Real paths, so a symlink cannot stand in for one."""
+    roots = [os.path.expanduser("~/Documents"), os.path.expanduser("~/Downloads")]
+    if ws:
+        roots.append(ws)
+    return [os.path.realpath(r) for r in roots]
+
+
+def _inside(path: str, root: str) -> bool:
+    return os.path.commonpath([path, root]) == root
+
+
+def _mkdir_refused(ws: str | None) -> Response:
+    if ws:
+        places = f"~/Documents, ~/Downloads, or the connected workspace ({ws})"
+    else:
+        places = "~/Documents or ~/Downloads (no workspace is connected)"
+    return Response(
+        content=json.dumps({"error": f"New folders can only be made inside {places}."}),
+        status_code=403,
+        media_type="application/json",
+    )
+
+
 @router.post("/mkdir")
 async def ws_mkdir(request: Request):
     body = await request.json()
@@ -81,9 +115,13 @@ async def ws_mkdir(request: Request):
             status_code=400,
             media_type="application/json",
         )
-    # Support both absolute paths (for workspace creation) and relative paths (for in-workspace dirs)
+    # An absolute path (or ~) names the folder outright; a relative path is
+    # inside the connected workspace.
     ws = get_workspace_path()
-    if ws and not os.path.isabs(path):
+    path = os.path.expanduser(path)
+    if not os.path.isabs(path):
+        if not ws:
+            return _mkdir_refused(ws)
         full = os.path.join(ws, path)
         if not _ws_validate_path(full, ws):
             return Response(
@@ -92,16 +130,21 @@ async def ws_mkdir(request: Request):
                 media_type="application/json",
             )
     else:
-        full = os.path.expanduser(path)
-    if os.path.exists(full):
+        full = path
+    # realpath resolves symlinks and ".." from left to right, so a link or a
+    # ".." cannot carry the new folder out of an allowed place.
+    real = os.path.realpath(full)
+    if not any(_inside(real, root) for root in _mkdir_roots(ws)):
+        return _mkdir_refused(ws)
+    if os.path.lexists(full) or os.path.exists(real):
         return Response(
             content=json.dumps({"error": "Already exists"}),
             status_code=409,
             media_type="application/json",
         )
     try:
-        os.makedirs(full)
-        return {"path": os.path.realpath(full), "created": True}
+        os.makedirs(real)
+        return {"path": real, "created": True}
     except Exception as e:
         return Response(
             content=json.dumps({"error": str(e)}), status_code=500, media_type="application/json"
@@ -126,7 +169,10 @@ async def ws_list_dir_endpoint(path: str = ""):
                 status_code=404,
                 media_type="application/json",
             )
-    entries = await asyncio.to_thread(_ws_list_dir, ws, path)
+    try:
+        entries = await asyncio.to_thread(_ws_list_dir, ws, path)
+    except PermissionError as e:
+        return _permission_denied(e)
     return {"entries": entries}
 
 
@@ -166,32 +212,37 @@ async def _run_folder_dialog() -> tuple[int, str]:
         stderr=asyncio.subprocess.PIPE,
     )
     try:
-        out, _err = await asyncio.wait_for(proc.communicate(), _PICK_FOLDER_TIMEOUT_S)
+        out, err = await asyncio.wait_for(proc.communicate(), _PICK_FOLDER_TIMEOUT_S)
     except (TimeoutError, asyncio.CancelledError):
         proc.kill()
         await proc.wait()
         raise
-    return proc.returncode or 0, out.decode(errors="replace")
+    return proc.returncode or 0, out.decode(errors="replace"), err.decode(errors="replace")
+
+
+# osascript reports the dialog's Cancel button as error -128 ("User canceled").
+_USER_CANCELED = "(-128)"
 
 
 @router.get("/pick-folder")
 async def ws_pick_folder():
-    """Open native OS folder picker dialog and return the selected path."""
-    import platform
+    """Open native OS folder picker dialog and return the selected path.
 
-    system = platform.system()
-    if system == "Darwin":
-        try:
-            returncode, stdout = await _run_folder_dialog()
-        except TimeoutError:
-            return {"path": None, "cancelled": True}
-        if returncode == 0:
-            path = stdout.strip().rstrip("/")
-            if path:
-                return {"path": path}
+    Cancel (or no choice within two minutes, when the dialog closes itself)
+    returns ``cancelled``. Any other osascript failure is an error with its
+    message, never a quiet cancel."""
+    try:
+        returncode, stdout, stderr = await _run_folder_dialog()
+    except TimeoutError:
         return {"path": None, "cancelled": True}
+    path = stdout.strip().rstrip("/")
+    if returncode == 0 and path:
+        return {"path": path}
+    if returncode != 0 and _USER_CANCELED in stderr:
+        return {"path": None, "cancelled": True}
+    detail = stderr.strip() or f"osascript exited with code {returncode} and no folder"
     return Response(
-        content=json.dumps({"error": "Native folder picker not available on this platform"}),
-        status_code=501,
+        content=json.dumps({"error": f"The folder dialog failed: {detail}"}),
+        status_code=500,
         media_type="application/json",
     )

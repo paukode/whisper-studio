@@ -126,7 +126,7 @@
     <p>Registered <code>read_only=False, concurrent_safe=False</code>, these do not run their git
       command directly. Instead they return a <code>[WS_APPROVAL]</code> payload, which surfaces an
       approval card in the UI. Only after you confirm (or the session is pre-approved for CLI actions)
-      does <code class="path">server/approval/bootstrap.py</code> call the matching
+      does <code class="path">server/approval/executors.py</code> call the matching
       <code>do_*</code> helper that runs the real command. Each helper returns a uniform
       <code>(ok, output)</code> tuple.</p>
     <div class="table-wrap"><table>
@@ -192,6 +192,17 @@
       the thing you approved is the thing that executes. An argv shape the table does not recognise
       fails closed to an approval-gated WRITE, which means a new upstream subcommand degrades to "ask a
       human" rather than slipping through as a read.</p>
+    <p>A WRITE mutation follows the <a href="arch-approval.html">permission mode</a>: Bypass runs
+      it with no card, Don't ask refuses it, an unattended run (a subagent or a scheduled task)
+      refuses it, and the other modes show the card. A DANGER mutation
+      (<code>github-destructive</code>: a pull request merge, a close, a delete, an API DELETE)
+      always shows a card, Bypass included. Don't ask denies it, because that mode never shows a
+      card. An unattended run refuses it too. A
+      <code>github_api_write</code> card shows the method, the path, and the whole request body. The
+      tools use the <code>gh</code> sign-in on this Mac (or <code>GH_TOKEN</code>). When
+      <code>gh</code> is not installed, or is not signed in, the call fails with a message that says
+      to install it or to run <code>gh auth login</code>. The shell <code>gh</code> stays blocked in
+      the command sandbox, which has no GitHub sign-in.</p>
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
       <div class="callout__body"><p><b>Two hard blocks.</b> The <code>auth</code>, <code>config</code>,
@@ -246,7 +257,7 @@
       the worktree and clears the session's worktree record (it does not touch shell cwd, since entering
       never set one); it refuses to remove a worktree with uncommitted changes unless explicitly forced,
       so exiting can never silently discard work. Both actions are approval-gated under their own
-      <code>worktree</code> category, so you can trust the flow once ("Yes for all worktree operations")
+      <code>worktree</code> category, so you can trust the flow once ("Yes, all worktree")
       without widening any other write permission.</p>
 
     <h3 id="task-worktrees">Task-branch worktrees: the ws_* trio</h3>
@@ -258,10 +269,19 @@
       <tbody>
         <tr><td><code>ws_create_worktree</code></td><td>Creates a worktree under <code class="path">&lt;repo&gt;/.worktrees/&lt;name&gt;</code> on branch <code>whisper/&lt;name&gt;</code> (name auto-generated if omitted, validated with the same slug guard).</td></tr>
         <tr><td><code>ws_diff_worktree</code></td><td>Shows the diff between the worktree branch and the branch it forked from.</td></tr>
-        <tr><td><code>ws_merge_worktree</code></td><td>Merges the task branch back into the current branch, behind approval.</td></tr>
+        <tr><td><code>ws_merge_worktree</code></td><td>Merges the task branch back into the current branch (<code>git merge --no-ff</code>).</td></tr>
       </tbody>
     </table></div>
-    <p>The trio only appears in the tool pool when the connected workspace is a git repository.</p>
+    <p><code>ws_create_worktree</code> runs with no approval card in every permission mode.
+      <code>ws_merge_worktree</code> follows the permission mode: Bypass merges with no card, Don't
+      ask refuses, plan mode refuses before it runs, and the other modes show a card with the
+      argv-built <code>git merge --no-ff</code> command, the worktree branch, and the target branch.
+      Unlike <code>git_merge</code>, it also refuses an unattended run (a subagent or a scheduled
+      task). A Yes after
+      the current branch changed merges nothing. The
+      three tools are always in the catalog. Without a connected workspace they answer "No workspace
+      connected", and in a folder that is not a git repository <code>ws_create_worktree</code> answers
+      "Workspace is not a git repository".</p>
 
     <h3 id="agent-harvest">Agent harvest</h3>
     <p>Worktree-isolated <a href="arch-agents.html">subagents</a> get an automatic <b>harvest-back</b>
@@ -287,8 +307,7 @@
       (<code class="path">server/git/router.py</code>). It emits one <code>git-changed</code> event
       immediately with the current branch and head SHA, then one on every subsequent change,
       coalescing bursts and sending a keep-alive comment every 30 seconds so proxies do not drop the
-      idle stream. This replaced a 15-second frontend interval, so the Git panel refetches only when
-      state actually moved. If HEAD changed, the watcher re-resolves which branch ref to watch, so
+      idle stream. The Git panel refetches only when state actually moved. If HEAD changed, the watcher re-resolves which branch ref to watch, so
       switching branches keeps working.</p>
     <p>The same cache backs the hot read helpers <code>get_cached_branch()</code> and
       <code>get_cached_head()</code>. Because the watcher invalidates on the exact files those
@@ -296,8 +315,11 @@
 
     <h2 id="git-rest">Git REST endpoints</h2>
     <p>The frontend reads git state directly through <code class="path">server/git/router.py</code>
-      (prefix <code>/api/git</code>). These are read and UI-support routes; writes are not exposed as
-      REST here, they go through the approval-gated tools above.</p>
+      (prefix <code>/api/git</code>). Most are read and UI-support routes. Your own Git panel actions
+      are REST writes: <code>POST /api/git/restore</code> (discard a file's changes or delete an
+      untracked file), <code>POST /api/git/worktrees</code> (add a worktree), and
+      <code>POST /api/git/worktrees/remove</code>. The assistant's git writes go through the tools
+      above instead.</p>
     <dl class="spec">
       <dt><code class="path">GET /api/git/status</code></dt><dd>Branch, clean flag, and a per-file status list for indicators.</dd>
       <dt><code class="path">GET /api/git/changes</code></dt><dd>Combined status + diff in one round trip, behind a 1-second TTL LRU cache that absorbs the assistant's tool-loop and the panel's auto-poll.</dd>

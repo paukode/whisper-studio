@@ -12,8 +12,9 @@ export interface RecentWorkspaceItemProps {
   status: IndexStatus | undefined;
   stopping: boolean;
   settings: IndexSettings | undefined;
+  /** Why the folder's settings could not be read, if they could not. */
+  settingsError?: string;
   menuOpen: boolean;
-  agentSupported: boolean;
   onSelect: () => void;
   onRemoveRecent: (e: React.MouseEvent) => void;
   onToggleMenu: (e: React.MouseEvent) => void;
@@ -30,8 +31,8 @@ export const RecentWorkspaceItem: React.FC<RecentWorkspaceItemProps> = ({
   status: st,
   stopping,
   settings: s,
+  settingsError,
   menuOpen,
-  agentSupported,
   onSelect,
   onRemoveRecent,
   onToggleMenu,
@@ -121,7 +122,8 @@ export const RecentWorkspaceItem: React.FC<RecentWorkspaceItemProps> = ({
               {indexed ? 'Reindex now' : 'Index this folder'}
             </button>
           )}
-          {!s && <div className="ws-menu-loading">Loading settings…</div>}
+          {!s && settingsError && <div className="ws-menu-loading" role="alert">Could not read the settings: {settingsError}</div>}
+          {!s && !settingsError && <div className="ws-menu-loading">Loading settings…</div>}
           {s && (
             <>
               {!indexed && !building && (
@@ -129,7 +131,6 @@ export const RecentWorkspaceItem: React.FC<RecentWorkspaceItemProps> = ({
               )}
               <IndexSettingsPanel
                 settings={s}
-                agentSupported={agentSupported}
                 onChange={onChange}
                 onEngineChange={onEngineChange}
                 onDescriptionsEngineChange={onDescriptionsEngineChange}

@@ -181,9 +181,5 @@ def test_permission_explainer_sends_nothing_without_a_cloud_model(set_mode, boto
     from server.security import explainer
 
     set_mode("local")
-    out = asyncio.run(
-        explainer.explain_permission(
-            "ws_write_file", {}, [], cfg_mod.load_config(), "global.anthropic.claude-opus-5"
-        )
-    )
+    out = asyncio.run(explainer.explain_permission("ws_write_file", {}, [], cfg_mod.load_config()))
     assert out is None and boto_clients == []

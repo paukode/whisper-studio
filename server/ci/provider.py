@@ -1,10 +1,11 @@
 """Read-only ``gh`` CLI wrapper for GitHub Actions state.
 
-Every call here is a query — never a mutation — so watching or diagnosing CI
+Every call here is a query, never a mutation, so watching or diagnosing CI
 can't change the repo. Subprocess hygiene mirrors ``server/git/core._run_git``:
-stdin closed, no interactive prompt, bounded timeout. A missing/failed ``gh``
-degrades to an empty result the caller can branch on, never an exception that
-crashes a poll loop.
+stdin closed, no interactive prompt, bounded timeout, and the hardened gh
+environment from ``server.git.gh_common.gh_env``. A gh failure (not logged
+in, network, timeout, unknown repo) raises :class:`GhError` with gh's own
+message; "no runs" means gh answered with an empty list.
 """
 
 from __future__ import annotations
@@ -22,17 +23,23 @@ TERMINAL_STATUSES = {"completed"}
 FAILING_CONCLUSIONS = {"failure", "timed_out", "startup_failure", "action_required"}
 
 
+class GhError(RuntimeError):
+    """A gh query failed; the message carries gh's stderr."""
+
+
 def gh_available() -> bool:
     return shutil.which("gh") is not None
 
 
 def _run_gh(args: list[str], cwd: str, timeout: int = 30) -> subprocess.CompletedProcess:
-    """Run one ``gh`` subcommand. Never raises for the caller — a non-zero exit
-    is returned as-is so callers read returncode/stderr and degrade."""
+    """Run one ``gh`` subcommand and return it when it exits 0. Raises
+    :class:`GhError` with gh's message on a non-zero exit, a timeout or a
+    spawn failure."""
+    from server.git.gh_common import gh_env
+
     exe = shutil.which("gh") or "gh"
-    env = _gh_env()
     try:
-        return subprocess.run(
+        proc = subprocess.run(
             [exe, *args],
             capture_output=True,
             text=True,
@@ -40,33 +47,21 @@ def _run_gh(args: list[str], cwd: str, timeout: int = 30) -> subprocess.Complete
             timeout=timeout,
             check=False,
             stdin=subprocess.DEVNULL,
-            env=env,
+            env=gh_env(),
         )
     except (subprocess.TimeoutExpired, OSError) as e:
-        log.warning("ci.provider: gh %s failed: %s", args[:2], e)
-        return subprocess.CompletedProcess(args, returncode=124, stdout="", stderr=str(e))
-
-
-def _gh_env() -> dict:
-    import os
-
-    env = os.environ.copy()
-    env["GH_PROMPT_DISABLED"] = "1"
-    env["GH_NO_UPDATE_NOTIFIER"] = "1"
-    env["GIT_TERMINAL_PROMPT"] = "0"
-    env["CLICOLOR"] = "0"
-    env.pop("GH_PAGER", None)
-    env["PAGER"] = "cat"
-    return env
+        raise GhError(f"gh {' '.join(args[:2])} failed: {e}") from e
+    if proc.returncode != 0:
+        reason = scrub_secrets((proc.stderr or proc.stdout or "").strip())
+        raise GhError(f"gh {' '.join(args[:2])} failed (exit {proc.returncode}): {reason}")
+    return proc
 
 
 def _json(proc: subprocess.CompletedProcess):
-    if proc.returncode != 0 or not proc.stdout.strip():
-        return None
     try:
         return json.loads(proc.stdout)
-    except (ValueError, TypeError):
-        return None
+    except (ValueError, TypeError) as e:
+        raise GhError(f"gh returned output that is not JSON: {proc.stdout[:200]!r}") from e
 
 
 _RUN_FIELDS = "databaseId,status,conclusion,workflowName,headBranch,headSha,url,createdAt,event"
@@ -89,7 +84,7 @@ def list_runs(branch: str, cwd: str, *, limit: int = 10) -> list[dict]:
     )
     rows = _json(proc)
     if not isinstance(rows, list):
-        return []
+        raise GhError(f"gh run list returned {type(rows).__name__}, not a list")
     return [_norm_run(r) for r in rows]
 
 
@@ -98,14 +93,14 @@ def latest_run(branch: str, cwd: str) -> dict | None:
     return runs[0] if runs else None
 
 
-def get_run(run_id: int | str, cwd: str) -> dict | None:
+def get_run(run_id: int | str, cwd: str) -> dict:
     proc = _run_gh(
         ["run", "view", str(run_id), "--json", _RUN_FIELDS + ",jobs"],
         cwd,
     )
     data = _json(proc)
     if not isinstance(data, dict):
-        return None
+        raise GhError(f"gh run view returned {type(data).__name__}, not an object")
     run = _norm_run(data)
     run["jobs"] = [_norm_job(j) for j in data.get("jobs", []) or []]
     return run
@@ -128,7 +123,7 @@ def failing_log(run_id: int | str, cwd: str, *, max_bytes: int = 24_000) -> str:
     return text
 
 
-# Conservative, prefix-anchored patterns — deliberately NOT broad entropy
+# Conservative, prefix-anchored patterns, deliberately NOT broad entropy
 # matching (which would redact real error text). Each replaces the secret value
 # with a marker while keeping surrounding log context intact.
 _SECRET_PATTERNS = [

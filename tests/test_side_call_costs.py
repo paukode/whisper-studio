@@ -3,20 +3,21 @@
 The turn engine records chat, agent, workflow, cron, voice and headless
 rounds. Titles, compaction summaries, the auto-mode classifier, the
 permission explainer, memory recall, query rewriting, the goal evaluator,
-index passes, OCR, condensation, the /btw side question and structured-output
-distillation call Bedrock themselves; each is billed, so each is logged.
+index passes, OCR, condensation and structured-output distillation call Bedrock themselves; each is billed, so each is logged.
 """
 
 import asyncio
 import io
 import json
 import time
+from datetime import UTC
 from types import SimpleNamespace
 
 import pytest
 
 from server.chat.infra import _get_chat_models
 from server.costs import calls, capture, tracker
+from tests.cost_rows import session_cost_rows
 
 
 class _Body(io.BytesIO):
@@ -36,12 +37,16 @@ class _FakeBedrock:
         self.calls += 1
         if self.delay:
             time.sleep(self.delay)
-        payload = {"content": [{"type": "text", "text": self.text}], "usage": self.usage}
+        payload = {
+            "content": [{"type": "text", "text": self.text}],
+            "usage": self.usage,
+            "stop_reason": "end_turn",
+        }
         return {"body": _Body(json.dumps(payload).encode())}
 
 
 def _only_row(session_id):
-    rows = tracker.get_session_costs(session_id)
+    rows = session_cost_rows(session_id)
     assert len(rows) == 1, rows
     return rows[0]
 
@@ -106,7 +111,7 @@ def test_a_gpt_one_shot_is_logged_from_its_responses_usage(monkeypatch):
     usage = SimpleNamespace(
         input_tokens=900, output_tokens=30, input_tokens_details=SimpleNamespace(cached_tokens=800)
     )
-    response = SimpleNamespace(output_text="summary", usage=usage)
+    response = SimpleNamespace(output_text="summary", usage=usage, status="completed")
     client = SimpleNamespace(responses=SimpleNamespace(create=lambda **kw: response))
     monkeypatch.setattr("server.openai_bedrock.runtime.build_sync_client", lambda region: client)
     monkeypatch.setattr("server.openai_bedrock.runtime.region_for", lambda key: "us-east-1")
@@ -150,11 +155,11 @@ def test_an_explainer_call_the_timeout_abandoned_is_still_logged(monkeypatch):
     config = {"chat_models": {"haiku": haiku_id}, "permission_explainer_enabled": True}
     monkeypatch.setattr("server.infrastructure.cloud_guard.cloud_allowed", lambda *a, **k: True)
     got = asyncio.run(
-        explainer.explain_permission("Bash", {"cmd": "ls"}, [], config, "m", session_id="s-exp")
+        explainer.explain_permission("Bash", {"cmd": "ls"}, [], config, session_id="s-exp")
     )
     assert got is None  # timed out for the caller
     deadline = time.monotonic() + 5
-    while not tracker.get_session_costs("s-exp") and time.monotonic() < deadline:
+    while not session_cost_rows("s-exp") and time.monotonic() < deadline:
         time.sleep(0.05)
     assert _only_row("s-exp")["source"] == "explainer"
 
@@ -175,36 +180,6 @@ def test_an_unknown_source_is_refused_before_the_call(cloud):
     with pytest.raises(ValueError):
         calls.invoke_claude(cloud, model_id="m", body="{}", source="mystery")
     assert cloud.calls == 0
-
-
-def _btw_events():
-    return [
-        {"type": "message_start", "message": {"usage": {"input_tokens": 40, "output_tokens": 1}}},
-        {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "An answer."}},
-        {"type": "message_delta", "usage": {"output_tokens": 7}},
-        {"type": "message_stop"},
-    ]
-
-
-def test_a_side_question_stream_is_logged_once_complete_or_abandoned():
-    haiku_id = _get_chat_models()["haiku"]
-    done = calls.ClaudeStreamRecorder(model_id=haiku_id, body="{}", source="btw", session_id="b1")
-    for ev in _btw_events():
-        done.observe(ev)
-        done.received(ev.get("delta", {}).get("text", ""))
-    done.finish()
-    done.finish()  # idempotent
-    row = _only_row("b1")
-    assert (row["input_tokens"], row["output_tokens"], row["source"]) == (40, 7, "btw")
-
-    cut = calls.ClaudeStreamRecorder(model_id=haiku_id, body="{}", source="btw", session_id="b2")
-    for ev in _btw_events()[:2]:
-        cut.observe(ev)
-        cut.received(ev.get("delta", {}).get("text", ""))
-    cut.finish()
-    row = _only_row("b2")
-    assert row["input_tokens"] == 40 and row["estimated_fields"] == "output"
-    assert row["output_tokens"] == capture.estimate_tokens(len("An answer."))
 
 
 def test_the_title_endpoint_logs_the_call_against_the_session(cloud):
@@ -282,7 +257,7 @@ def test_structured_output_distillation_is_logged_per_attempt_under_the_runs_sou
     schema = {"type": "object", "properties": {"ok": {"type": "boolean"}}}
     out, total = _distill(adapter, "s-distill", schema)
     assert out == {"ok": True}
-    first, second = tracker.get_session_costs("s-distill")
+    first, second = session_cost_rows("s-distill")
     assert (first["source"], first["model"], first["input_tokens"]) == ("workflow", "opus5.0", 530)
     assert first["count_source"] == "reported" and first["count_detail"]
     posted = adapter._bedrock.bodies[1]
@@ -395,7 +370,7 @@ def test_cohere_embed_is_priced_and_rerank_is_shown_as_unpriced(monkeypatch):
     monkeypatch.setattr(embedder_cohere, "_bedrock", lambda: fake)
     embedder_cohere.embed_documents(["alpha", "beta"])
     assert reranker._rerank_cohere("q", ["alpha", "beta"]) == [0.0, 0.9]
-    embed, rerank = tracker.get_session_costs("")
+    embed, rerank = session_cost_rows("")
     assert (embed["model"], embed["source"], embed["input_tokens"]) == (
         COHERE_EMBED_MODEL_ID,
         "index",
@@ -407,7 +382,7 @@ def test_cohere_embed_is_priced_and_rerank_is_shown_as_unpriced(monkeypatch):
     assert (rerank["count_source"], rerank["estimated_fields"]) == ("estimated", "input")
     # Embed bills per input token at the Price List rate. Rerank bills per
     # search unit, so its token row has no rate and says so.
-    today = datetime.now(timezone.utc).date()
+    today = datetime.now(UTC).date()
     rows = {r["key"]: r for r in usage.usage_report(today, today, "day", "model")["rows"]}
     embed_rate = tracker.get_model_pricing(COHERE_EMBED_MODEL_ID)["input"]
     assert rows[COHERE_EMBED_MODEL_ID]["cost_usd"] == pytest.approx(42 * embed_rate / 1e6, abs=1e-6)

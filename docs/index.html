@@ -29,8 +29,8 @@
             needed</p>
             <p>Grab the DMG from <a href="https://github.com/paukode/whisper-studio/releases">the
               Releases page</a>, drag <b>Whisper Studio</b> into <b>Applications</b>, and open it. The
-              build is not notarized, so the first launch needs one extra click in System Settings
-              (or one <code>xattr</code> command). Apple Silicon, macOS 14 or later. Prefer to build
+              release is signed and notarized, so it opens like any other Mac app. Apple Silicon,
+              macOS 14 or later. Prefer to build
               from source instead? See <a href="installation.html">Installation</a>.</p></div>
         </div>
 
@@ -62,9 +62,9 @@
     </figure>
 
     <h2 id="quick-guideline">Quick guideline</h2>
-    <p>If you already have Python 3.12 or newer, Homebrew, Git, and the AWS CLI configured, you are
-      four steps from a running app. The setup script provisions everything else in an isolated
-      <code>venv/</code>.</p>
+    <p>If you already have Homebrew and the Xcode Command Line Tools, you are four steps from a
+      running app. The setup script provisions everything else (Python 3.13, Node, the AWS CLI,
+      ffmpeg, llama.cpp) inside the checkout.</p>
     <ol class="steps">
       <li>
         <h4>Clone the repository</h4>
@@ -78,25 +78,27 @@ cd whisper-studio</code></pre></div>
       </li>
       <li>
         <h4>Open the URL it prints</h4>
-        <p>Something like <code>http://127.0.0.1:8000</code>; the script opens it for you. Click the
-          gear icon and set your <b>Bedrock Region</b> under Keys and permissions.</p>
+        <p>Usually <code>http://127.0.0.1:41430</code>; the script opens it for you. A fresh install
+          starts in Local mode. For Claude or GPT, click the gear icon, switch <b>Model mode</b> to
+          Hybrid or Cloud, and set your <b>Bedrock Region</b> under Keys and permissions. To stay
+          on-device, install a model from Settings &rarr; Models &rarr; Discover instead.</p>
       </li>
       <li>
         <h4>Pick a model and say hello</h4>
         <p>Choose a model from the chip in the composer toolbar, then type <code>hello</code> in chat.
-          If the answer streams back, you are done. Transcription needs no setup - the speech engine
+          If the answer streams back, you are done. Transcription needs no setup: the speech engine
           downloads on your first recording.</p>
       </li>
     </ol>
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
       <div class="callout__body"><p>New here? The <a href="installation.html">Installation</a> guide assumes zero prior
-        tooling and walks through Homebrew, Python, and AWS from scratch.</p></div>
+        tooling and walks through Homebrew, the Xcode Command Line Tools, and AWS from scratch.</p></div>
     </div>
 
     <h2 id="see-it-work">See it work</h2>
     <p>The whole system is one process serving one origin. <b>Click any box below</b> to trace where
-      its data flows - the downstream path lights up. Every architecture page in these docs has a
+      its data flows: the downstream path lights up. Every architecture page in these docs has a
       diagram like this.</p>
     <figure class="diagram-figure">
       <div id="home-diagram" class="diagram"></div>
@@ -149,8 +151,9 @@ cd whisper-studio</code></pre></div>
         <p>Every delegated agent is journaled to disk from its first round, so its findings survive a
           restart or a stopped turn. Near a turn, time, or cost limit an agent gets one last round to
           file a structured report; if it is cut off anyway, a salvage report is assembled from its
-          journal. Team cards show each agent's budget and a live pill (working, finishing up, hit
-          limit, salvaged), with an Extend button for 20 more rounds. Reports that land with nobody
+          journal. The Agent panel in the dock shows each run's budget and status (running,
+          finishing up, done, stopped at a limit, failed), with <b>Extend +20</b> for 20 more
+          rounds. Reports that land with nobody
           reading wake the session, and the assistant answers from them.
           <a href="arch-agent-recorder.html">How it works &rarr;</a></p>
       </div>
@@ -183,7 +186,7 @@ cd whisper-studio</code></pre></div>
         <div class="card__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="6" height="6" rx="1"/><rect x="15" y="15" width="6" height="6" rx="1"/><path d="M9 6h6a3 3 0 0 1 3 3v6"/></svg></div>
         <h3>Ultracode workflows</h3>
         <p>Model-authored deterministic JS orchestration, run detached in a Node-22 <code>vm</code>
-          harness over JSON-RPC into Python - on Claude and GPT-on-Bedrock - with 16-way concurrency,
+          harness over JSON-RPC into Python (on Claude and GPT on Bedrock) with 16-way concurrency,
           output-token budgets, a resumable journal, and upfront phase-preview approval.
           <a href="arch-ultracode.html">How it works &rarr;</a></p>
       </div>
@@ -222,7 +225,7 @@ cd whisper-studio</code></pre></div>
       <a class="card card--link" href="tut-voice.html"><h3>The meeting notetaker</h3><p>Records a call, gets a live diarized transcript, then a summary.</p><span class="card__meta">Tutorial: Voice &amp; meetings →</span></a>
       <a class="card card--link" href="tut-voice-mode.html"><h3>The talker</h3><p>Would rather say it out loud than type it, and have the work happen while they talk.</p><span class="card__meta">Tutorial: Voice conversations →</span></a>
       <a class="card card--link" href="tut-research.html"><h3>The researcher</h3><p>Needs current information with citations, not training-time memory.</p><span class="card__meta">Tutorial: Web research →</span></a>
-      <a class="card card--link" href="tut-workspace.html"><h3>The developer</h3><p>Connects a repo and lets Claude read, edit, run, and commit - gated by mode.</p><span class="card__meta">Tutorial: Workspace IDE →</span></a>
+      <a class="card card--link" href="tut-workspace.html"><h3>The developer</h3><p>Connects a repo and lets Claude read, edit, run, and commit, gated by mode.</p><span class="card__meta">Tutorial: Workspace IDE →</span></a>
       <a class="card card--link" href="tut-cron.html"><h3>The automator</h3><p>Schedules recurring checks whose results land back in the conversation.</p><span class="card__meta">Tutorial: Scheduled tasks →</span></a>
       <a class="card card--link" href="arch-ultracode.html"><h3>The orchestrator</h3><p>Hands off a multi-step job to a detached, budgeted ultracode workflow and approves the plan upfront.</p><span class="card__meta">Architecture: Ultracode workflows →</span></a>
     </div>
@@ -248,7 +251,7 @@ cd whisper-studio</code></pre></div>
         <h3>Architecture</h3>
         <p>Start with the <a href="arch-overview.html">system overview</a>, then the
           <a href="arch-chat-pipeline.html">chat pipeline</a>, the
-          <a href="arch-agent-recorder.html">agent flight recorder</a>, and every other subsystem -
+          <a href="arch-agent-recorder.html">agent flight recorder</a>, and every other subsystem,
           each with its own interactive diagram.</p>
       </div>
       <div class="card">

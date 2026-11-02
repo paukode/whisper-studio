@@ -54,7 +54,7 @@ export function resolvePath(path: string, wsPath: string): { shown: string; abso
 
 /** The diff stats of an edit or a group: +added -removed. A button that
  *  opens the diff when it belongs to one call, a plain chip on a group. */
-export const DiffPill: React.FC<{ added: number; removed: number; onOpen?: () => void }> = ({ added, removed, onOpen }) => {
+const DiffPill: React.FC<{ added: number; removed: number; onOpen?: () => void }> = ({ added, removed, onOpen }) => {
   const body = (
     <>
       <span className="add">+{formatCount(added)}</span>
@@ -324,9 +324,9 @@ export const ActivityRow: React.FC<ActivityRowProps> = ({ tools, writtenLabel, m
     if (defaultOpen) setOpen(true);
   }
 
-  // Stable per-call keys. Index-prefixed on purpose: a row from an older
-  // transcript carries the tool name as its toolId, so two same-named calls
-  // would share a key and one click would toggle both.
+  // Stable per-call keys. Index-prefixed on purpose: a synthetic card carries
+  // the tool name as its toolId, so two same-named cards would share a key
+  // and one click would toggle both.
   const keys = useMemo(() => tools.map((t, i) => `${i}-${t.toolId || t.toolName}`), [tools]);
   // Inside an open group, a failed call and a screenshot show their output
   // unless the user hid it.

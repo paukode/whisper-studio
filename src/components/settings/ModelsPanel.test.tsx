@@ -144,6 +144,22 @@ describe('ModelsPanel', () => {
     expect(screen.getAllByRole('button', { name: 'Cancel' })).toHaveLength(2);
   });
 
+  it('keeps the local chat section and its config file link with no local rows', async () => {
+    api.get.mockImplementation((url: string) => {
+      if (url === '/api/models/catalog')
+        return Promise.resolve({
+          models: CATALOG.models.filter((m) => m.group !== 'local-chat'),
+        });
+      if (url === '/api/config/models-disabled') return Promise.resolve({ disabled: [], models: [] });
+      return Promise.resolve({ models: {} });
+    });
+    renderPanel();
+
+    expect(await screen.findByText('Transcription')).toBeInTheDocument();
+    expect(screen.getByText('Local chat')).toBeInTheDocument();
+    expect(screen.getByText(/Add more in Discover, or edit/)).toBeInTheDocument();
+  });
+
   it('cancels a queued row through the normal cancel endpoint', async () => {
     renderPanel();
     await screen.findByText('Queued (2nd)');
@@ -212,7 +228,9 @@ describe('ModelsPanel', () => {
               },
             ],
           })
-        : Promise.resolve({ models: {} }),
+        : url === '/api/config/models-disabled'
+          ? Promise.resolve({ disabled: [], models: [] })
+          : Promise.resolve({ models: {} }),
     );
     renderPanel();
     await screen.findByText('Qwen3.6 27B (Local)');
@@ -360,9 +378,9 @@ describe('ModelsPanel', () => {
     );
   });
 
-  it('shows a local-chat model even if it appears in the Bedrock hide-list', async () => {
-    // Local models are deleted, never tombstoned, so the chat_models_disabled
-    // list must NOT hide a local-chat row (that list is Bedrock-only now).
+  it('shows a local-chat model even if it is hidden from the picker', async () => {
+    // chat_models_disabled hides a model from the composer picker only; the
+    // Models list still shows its row.
     api.get.mockImplementation((url: string) =>
       url === '/api/models/catalog'
         ? Promise.resolve({
@@ -412,6 +430,7 @@ describe('ModelsPanel', () => {
       api.get.mockImplementation((url: string) => {
         if (url === '/api/models/catalog') return Promise.resolve({ models: [row] });
         if (url === '/api/models/status' && status) return Promise.resolve(status());
+        if (url === '/api/config/models-disabled') return Promise.resolve({ disabled: [], models: [] });
         return Promise.resolve({ models: {} });
       });
 

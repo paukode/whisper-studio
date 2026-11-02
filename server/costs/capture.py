@@ -140,8 +140,10 @@ class ClaudeStreamUsage:
             self.started = True
             self._take(data.get("message", {}).get("usage") or {})
         elif kind == "message_delta":
-            self._delta_seen = True
-            self._take(data.get("usage") or {})
+            usage = data.get("usage") or {}
+            if _int(usage.get("output_tokens")) is not None:
+                self._delta_seen = True
+            self._take(usage)
         elif kind == "message_stop":
             metrics = data.get("amazon-bedrock-invocationMetrics")
             if isinstance(metrics, dict):
@@ -180,17 +182,6 @@ class ClaudeStreamUsage:
         merged = _merge(self._reported(), self._bedrock, label=label)
         if merged is None:
             return estimated_counts(request_chars, received_chars)
-        return self._with_output(merged, received_chars)
-
-    def partial(self, received_chars: int, *, label: str) -> dict | None:
-        """Counts for a round that ended before message_stop (a mid-stream
-        error, a Stop): the prompt counts message_start reported, the output
-        as characters / 4 of what arrived unless its count already came.
-        None before message_start: nothing shows the prompt was ever
-        processed."""
-        if not self.started:
-            return None
-        merged = _merge(self._reported(), self._bedrock, label=label) or counts()
         return self._with_output(merged, received_chars)
 
 
@@ -242,12 +233,11 @@ def _anthropic_content_chars(payload) -> int:
 
 
 def _cache_write_count(usage, details) -> int:
-    """Mantle's prompt-cache write count. The OpenAI SDK declares no such
-    field, but mantle adds ``cache_write_tokens`` to the usage (a live probe
-    saw it on GPT-5.6 and GPT-6 with no explicit cache key, and Cost Explorer
-    bills those tokens as 30-minute cache writes). It is read next to
-    cached_tokens in input_tokens_details, or on the usage itself; the SDK
-    keeps undeclared keys as attributes."""
+    """Mantle's prompt-cache write count, ``cache_write_tokens`` (a live
+    probe saw it on GPT-5.6 and GPT-6 with no explicit cache key, and Cost
+    Explorer bills those tokens as 30-minute cache writes). The SDK declares
+    it next to cached_tokens in input_tokens_details; it is also read on the
+    usage itself, where the SDK keeps undeclared keys as attributes."""
     for holder in (details, usage):
         value = _int(getattr(holder, "cache_write_tokens", None))
         if value is not None:

@@ -20,7 +20,7 @@
 <body>
 <div id="c"></div>
 <script>
-/* Chart host — runs inside a `sandbox="allow-scripts"` iframe, so it has an
+/* Chart host, runs inside a `sandbox="allow-scripts"` iframe, so it has an
  * opaque origin and cannot reach the app's DOM, storage, or backend API.
  * A Vega-Lite spec is model-authored and therefore attacker-influenceable
  * (prompt injection through an attachment or a fetched page), which is why
@@ -33,7 +33,8 @@
  *                                          user resized the chart) instead of
  *                                          sizing the frame to the chart
  *        {type:'export', format, id}       'svg' | 'png'
- *   out  {type:'height', height}           after every render
+ *   out  {type:'ready'}                    once, when the host has loaded
+ *        {type:'height', height}           after every render
  *        {type:'error',  message}          spec failed to compile or run
  *        {type:'exported', id, format, data}
  */
@@ -51,8 +52,8 @@ function reportHeight() {
 }
 
 /* House theme. Every colour arrives from the parent's live CSS variables, so
- * charts follow the app's active theme (all eight of them) including dark
- * mode, with no palette duplicated on this side. */
+ * charts follow the app's active palette in light and dark mode, with no
+ * palette duplicated on this side. */
 function houseConfig(t) {
   const font =
     '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
@@ -79,7 +80,7 @@ function houseConfig(t) {
       gridOpacity: 1,
       gridWidth: 1,
     },
-    // Category axes get no grid — one gridline set is enough.
+    // Category axes get no grid, one gridline set is enough.
     axisX: { labelAngle: 0 },
     axisBand: { grid: false },
     axisPoint: { grid: false },
@@ -198,7 +199,7 @@ window.addEventListener('message', (e) => {
 
 // Re-render on a size change so the chart stays fitted when the chat pane is
 // resized, or (filling) when the user drags the chart taller or shorter.
-// Debounced — a drag fires dozens of these.
+// Debounced, a drag fires dozens of these.
 let resizeTimer = null;
 new ResizeObserver(() => {
   if (!lastSpec) return;

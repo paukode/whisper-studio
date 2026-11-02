@@ -11,6 +11,7 @@ Future, and resolve it from `resolve_elicitation` — the same hub POST
 """
 
 import asyncio
+from types import SimpleNamespace
 
 import mcp
 import mcp.client.stdio
@@ -27,15 +28,14 @@ from server.mcp import MCPManager
 register_defaults()
 
 
-class _FakeElicitParams:
-    def __init__(self, message="Need your API key", mode="form", requestedSchema=None, url=None):
-        self.message = message
-        self.mode = mode
-        self.requestedSchema = requestedSchema or {
-            "type": "object",
-            "properties": {"key": {"type": "string"}},
-        }
-        self.url = url
+def _elicit_params(message="Need your API key"):
+    """A form elicitation as the MCP SDK hands it to the callback."""
+    from mcp import types
+
+    return types.ElicitRequestFormParams(
+        message=message,
+        requested_schema={"type": "object", "properties": {"key": {"type": "string"}}},
+    )
 
 
 # --- Wiring: _serve() really does install a working callback --------------
@@ -45,13 +45,13 @@ class _FakeTool:
     def __init__(self, name):
         self.name = name
         self.description = "desc"
-        self.inputSchema = {"type": "object"}
+        self.input_schema = {"type": "object"}
 
 
 class _FakeToolsResult:
     def __init__(self):
         self.tools = [_FakeTool("ping")]
-        self.nextCursor = None
+        self.next_cursor = None
 
 
 class _FakeSession:
@@ -65,7 +65,8 @@ class _FakeSession:
         return False
 
     async def initialize(self):
-        pass
+        # A server that does not advertise the resources capability.
+        return SimpleNamespace(capabilities=SimpleNamespace(resources=None))
 
     async def list_tools(self, params=None):
         return _FakeToolsResult()
@@ -105,7 +106,7 @@ def test_serve_wires_a_working_elicitation_callback_into_client_session(monkeypa
         callback = record["elicitation_callback"]
         assert callback is not None
 
-        task = asyncio.create_task(callback(None, _FakeElicitParams()))
+        task = asyncio.create_task(callback(None, _elicit_params()))
         await asyncio.sleep(0)
         pending = mgr.get_pending_elicitations()
         assert len(pending) == 1
@@ -126,7 +127,7 @@ def test_human_answer_flows_back_through_pending_registry():
     callback = mgr._build_elicitation_callback("srv")
 
     async def scenario():
-        task = asyncio.create_task(callback(None, _FakeElicitParams(message="Enter your API key")))
+        task = asyncio.create_task(callback(None, _elicit_params(message="Enter your API key")))
         await asyncio.sleep(0)  # let the callback register itself
 
         pending = mgr.get_pending_elicitations()
@@ -134,6 +135,7 @@ def test_human_answer_flows_back_through_pending_registry():
         assert pending[0]["server"] == "srv"
         assert pending[0]["message"] == "Enter your API key"
         assert pending[0]["mode"] == "form"
+        assert pending[0]["requested_schema"]["properties"] == {"key": {"type": "string"}}
         eid = pending[0]["elicitation_id"]
 
         ok = mgr.resolve_elicitation(eid, "accept", {"key": "abc123"})
@@ -153,7 +155,7 @@ def test_decline_answer_carries_no_content():
     callback = mgr._build_elicitation_callback("srv")
 
     async def scenario():
-        task = asyncio.create_task(callback(None, _FakeElicitParams()))
+        task = asyncio.create_task(callback(None, _elicit_params()))
         await asyncio.sleep(0)
         eid = mgr.get_pending_elicitations()[0]["elicitation_id"]
         mgr.resolve_elicitation(eid, "decline")
@@ -174,7 +176,7 @@ def test_resolve_elicitation_is_idempotent_second_call_is_a_noop():
     callback = mgr._build_elicitation_callback("srv")
 
     async def scenario():
-        task = asyncio.create_task(callback(None, _FakeElicitParams()))
+        task = asyncio.create_task(callback(None, _elicit_params()))
         await asyncio.sleep(0)
         eid = mgr.get_pending_elicitations()[0]["elicitation_id"]
         assert mgr.resolve_elicitation(eid, "accept", {"key": "first"}) is True
@@ -196,7 +198,7 @@ def test_timeout_returns_decline_and_cleans_up(monkeypatch):
     callback = mgr._build_elicitation_callback("srv")
 
     async def scenario():
-        result = await callback(None, _FakeElicitParams())
+        result = await callback(None, _elicit_params())
         assert result.action == "decline"
         assert mgr.get_pending_elicitations() == []
 
@@ -216,7 +218,7 @@ def test_agent_context_auto_declines_with_no_pending_record():
     callback = mgr._build_elicitation_callback("srv")
 
     async def scenario():
-        result = await callback(None, _FakeElicitParams())
+        result = await callback(None, _elicit_params())
         assert result.action == "decline"
         # Nothing was ever registered for a human to see or answer.
         assert mgr.get_pending_elicitations() == []
@@ -232,7 +234,7 @@ def test_attended_chat_context_is_not_auto_declined():
     callback = mgr._build_elicitation_callback("srv")
 
     async def scenario():
-        task = asyncio.create_task(callback(None, _FakeElicitParams()))
+        task = asyncio.create_task(callback(None, _elicit_params()))
         await asyncio.sleep(0)
         pending = mgr.get_pending_elicitations()
         assert len(pending) == 1
@@ -258,7 +260,7 @@ def test_mcp_elicit_respond_executor_resolves_the_pending_elicitation(monkeypatc
     callback = mgr._build_elicitation_callback("srv")
 
     async def scenario():
-        task = asyncio.create_task(callback(None, _FakeElicitParams()))
+        task = asyncio.create_task(callback(None, _elicit_params()))
         await asyncio.sleep(0)
         eid = mgr.get_pending_elicitations()[0]["elicitation_id"]
 

@@ -253,9 +253,8 @@ def test_create_docx_renders_the_supported_markup(tmp_path, monkeypatch):
     ],
 )
 def test_create_docx_honors_cell_background_colors(cell_html, expected, tmp_path, monkeypatch):
-    """The regression that exposed the whole gap: the previous textutil
-    converter dropped cell shading silently, so a user asking for a colored
-    table got an uncolored one with no error."""
+    """A user asking for a colored table gets the cell shading, not an
+    uncolored table with no error."""
     monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: str(tmp_path))
     out = _exec_create_docx(
         {"path": "c.docx", "html_content": f"<table><tr>{cell_html}</tr></table>"}, "", {}
@@ -474,3 +473,30 @@ def test_save_and_create_outcomes_carry_the_revision_hint(tmp_path, monkeypatch)
     outcome = _run(_do_create_document(payload))
     assert outcome.ok, outcome.error
     assert REVISION_HINT in outcome.output
+
+
+def test_create_docx_keeps_blocks_inside_a_table_cell(tmp_path, monkeypatch):
+    """A list, pre or quote inside a cell stays in that cell, one line each;
+    nothing leaks into the document body as empty paragraphs."""
+    from docx import Document
+
+    monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: str(tmp_path))
+    html = (
+        "<p>Before</p><table><tr><td><ul><li>One</li><li>Two</li></ul>"
+        "<pre>a = 1\nb = 2</pre><blockquote>Quoted</blockquote></td></tr></table>"
+        "<p>After</p>"
+    )
+    out = _exec_create_docx({"path": "cells.docx", "html_content": html}, "", {})
+    doc = Document(io.BytesIO(_decoded_bytes(_parse_approval(out))))
+
+    # The one empty paragraph is the spacer every table gets after it.
+    assert [p.text for p in doc.paragraphs] == ["Before", "", "After"]
+    cell = doc.tables[0].rows[0].cells[0]
+    assert len(cell.paragraphs) == 1
+    assert cell.paragraphs[0].text.split("\n") == [
+        "\N{BULLET} One",
+        "\N{BULLET} Two",
+        "a = 1",
+        "b = 2",
+        "Quoted",
+    ]

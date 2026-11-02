@@ -30,6 +30,7 @@ import { ensureRetentionEnabled } from '@/components/chat/dataRetentionConsent';
 import { _sseEventLog, committedToolUse, readSSEStream } from './chatStream/sseStream';
 import { labelCommit } from './chatStream/activityLabels';
 import { emptyResponseFallback } from './chatStream/emptyResponse';
+import { autoTitleFailed, requestAutoTitle } from './chatStream/autoTitle';
 import { pausedTurnSettings, turnModelSettings } from './chatStream/turnSettings';
 import { buildHistoryPayload } from './chatStream/history';
 import { APPROVED_ACTION_STATUS } from './chatStream/approvalLeg';
@@ -155,9 +156,6 @@ function toastQueuedIntoReplacedTurn(): void {
 // up it queued each copy into the running turn.
 const midTurnInFlight = new Set<string>();
 
-// The controller registry and the instant kill switch live in
-// ./chatStream/streamControl (a leaf module shared with sseStream).
-export { abortSessionStream, killSessionStream };
 
 /**
  * Send one chat turn and stream its answer into the owning session (the one
@@ -284,10 +282,8 @@ export async function sendChatTurn(question: string, opts?: SendOptions): Promis
     ...settingsForTurn,
     force_skill: opts?.forceSkill ?? null,
     session_id: activeSessionId,
-    // Local thinking and tools have no per-turn client flags any more: the
-    // backend keys both on the model registry's capability flags, so capable
-    // on-device models always think and always get the full tool pool.
-    // The CTX slider value DOES ride on every turn: it is the source of
+    // Local thinking and tools have no per-turn client flags: the backend
+    // keys both on the model registry's capability flags. The CTX slider value DOES ride on every turn: it is the source of
     // truth for the llama-server context size, so a lazy server start after
     // a backend restart can never run at a stale size (the chip and the
     // server always agree). Ignored by cloud models.
@@ -295,7 +291,7 @@ export async function sendChatTurn(question: string, opts?: SendOptions): Promis
     session_denials: store().sessionDenials,
     session_approvals: store().sessionApprovals,
     approved_tool_result: opts?.approvedToolResult ?? null,
-    // Indexes the user selected for this session (point D). Send the stored
+    // Indexes the user selected for this session. Send the stored
     // selection verbatim; when there's no entry yet (a brand-new session whose
     // id was just minted here, so ChatInput's seeding effect hasn't run), send
     // `undefined` — JSON.stringify drops the key, and the backend treats an
@@ -377,8 +373,8 @@ export async function sendChatTurn(question: string, opts?: SendOptions): Promis
     if (wasKillFinalized(controller)) return;
     fullResponse = result.fullResponse;
 
-    // Empty-bubble fallback (matching original chat-stream.js). Shared with
-    // the approval-resume leg — see ./chatStream/emptyResponse.
+    // Empty-answer message: see ./chatStream/emptyResponse (shared with the
+    // approval-resume leg).
     // Skip when a user_question was emitted — the question card IS the response
     // — and when a mid-turn card already flushed this turn's text into the
     // transcript, where "no text response from the model" would be a lie
@@ -431,12 +427,9 @@ export async function sendChatTurn(question: string, opts?: SendOptions): Promis
     // readSSEStream) so that the artifact card renders BELOW the
     // explanation text in the same message, instead of above the text in
     // an earlier message that also re-displayed the same tool chips.
-    // If the round had no text response but did emit an artifact, we
-    // still synthesize a message so the artifact renders.
-    let finalContent = fullResponse;
-    if (!finalContent && (result.pendingArtifact || result.pendingVisuals.length > 0 || result.pendingPlan)) {
-      finalContent = '';
-    }
+    // A round with no text but an artifact, visual or plan still commits a
+    // message (with empty content) so the card renders.
+    const finalContent = fullResponse;
     // Move the turn-local team reports onto the message being committed —
     // this is what makes the agent rows permanent (and persisted, since
     // chat_history serializes messages verbatim). Returns undefined if an
@@ -474,7 +467,10 @@ export async function sendChatTurn(question: string, opts?: SendOptions): Promis
     const msgs = store().messages;
     if (msgs.length >= 2 && activeSessionId && !isContinuation) {
       const liveSession = sessionStore().liveSessions[activeSessionId];
-      if (liveSession && !liveSession.customTitle && !liveSession.generatedTitle) {
+      if (
+        liveSession && !liveSession.customTitle && !liveSession.generatedTitle
+        && !autoTitleFailed(activeSessionId)
+      ) {
         // Role-labelled so the model titles from the user's request, not the
         // assistant's prose (mirrors how Claude names a conversation).
         const convoText = msgs
@@ -482,22 +478,8 @@ export async function sendChatTurn(question: string, opts?: SendOptions): Promis
           .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
           .join('\n')
           .slice(0, 2000);
-        void fetch('/api/generate-title', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          // session_id attributes the title call's cost to this session.
-          body: JSON.stringify({ text: convoText, session_id: activeSessionId }),
-        })
-          .then(r => {
-            // A 500 from the title endpoint still has a body
-            // (often `{error: "..."}`), and parsing it as
-            // `{title: string}` would assign undefined/garbage to
-            // the session title. Bail early on non-2xx.
-            if (!r.ok) throw new Error(`title HTTP ${r.status}`);
-            return r.json() as Promise<{ title: string }>;
-          })
-          .then(d => { if (d.title) sessionStore().updateSessionTitle(activeSessionId, d.title, false); })
-          .catch(() => { /* ignore — title is non-essential */ });
+        void requestAutoTitle(activeSessionId, convoText, title =>
+          sessionStore().updateSessionTitle(activeSessionId, title, false));
       }
     }
 
@@ -570,10 +552,8 @@ export function useChatStream(): UseChatStreamReturn {
   const sendMidTurn = useCallback(async (question: string): Promise<boolean> => {
     const activeSessionId = useSessionStore.getState().currentSessionId;
     if (!activeSessionId) {
-      // The one path that used to return false without saying anything: from
-      // the composer that looks exactly like a dead Enter key, which is how
-      // this was reported. Every outcome of a send attempt now tells the user
-      // what happened.
+      // Every outcome of a send attempt tells the user what happened; a
+      // silent false would look like a dead Enter key.
       useUIStore.getState().addToast({
         type: 'error',
         message: 'Not delivered: this window has no active session to add the message to.',

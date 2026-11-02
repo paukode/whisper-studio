@@ -288,3 +288,16 @@ def test_approved_write_outside_both_roots_is_refused(roots, tmp_path):
     outcome = asyncio.run(_do_write({"path": str(other), "content": "x"}))
     assert not outcome.ok
     assert not other.exists()
+
+
+def test_a_dangling_symlink_is_listed_not_fatal(roots):
+    """One broken link used to turn the whole listing into an Errno 2 error."""
+    ws, _scratch = roots
+    with open(os.path.join(ws, "a.txt"), "w") as f:
+        f.write("abc")
+    os.symlink("/nonexistent/target", os.path.join(ws, "broken"))
+
+    listed = _call(executors._exec_ws_list_dir, {"path": "."})
+
+    assert "a.txt  (3 bytes)" in listed
+    assert "broken  (broken link to /nonexistent/target)" in listed

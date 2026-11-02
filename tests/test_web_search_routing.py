@@ -1,9 +1,6 @@
 """web_search provider routing: Tavily if a key is set, else the AgentCore
 browser if enabled, else a setup message. No network calls."""
 
-import sys
-import types
-
 import server.executors.web as web
 
 
@@ -37,9 +34,7 @@ def test_tavily_key_takes_precedence(monkeypatch):
         def search(self, q, max_results=5):
             return {"results": [{"title": "T", "url": "https://u", "content": "c"}]}
 
-    fake = types.ModuleType("tavily")
-    fake.TavilyClient = FakeClient
-    monkeypatch.setitem(sys.modules, "tavily", fake)
+    monkeypatch.setattr(web, "TavilyClient", FakeClient)
     r = web.exec_web_search({"query": "x"}, None, None)
     assert "Title: T" in r and "https://u" in r
 

@@ -25,7 +25,6 @@ import { MarkdownPreview } from '@/components/viewers/MarkdownPreview';
  */
 type SourceFile =
   | { kind: 'markdown' | 'text'; content: string; name?: string; path?: string }
-  | { kind: 'image'; name?: string; path?: string }
   | { kind: 'unsupported'; message: string; name?: string; path?: string };
 
 /** How to render the fetched text content. */
@@ -43,7 +42,7 @@ const EXTRACTION_EXTS = new Set(['doc', 'xls', 'pptx', 'ppt', 'html', 'htm', 'ep
 // huge cited workbook would freeze the tab. Checked via a HEAD probe below.
 const XLSX_MAX_BYTES = 30 * 1024 * 1024;
 
-const REVEAL_HINT = 'Preview isn’t available for this file type here. Cmd/Ctrl-click the source link to reveal it in Finder.';
+const REVEAL_HINT = 'Preview isn’t available for this file type here. Cmd-click the source link to reveal it in Finder.';
 
 function extOf(path: string): string {
   const base = path.split('/').pop() ?? path;
@@ -74,7 +73,7 @@ const GuardedSpreadsheet: React.FC<{ path: string; rawUrl: string }> = ({ path, 
 
   if (state === 'checking') return <div style={MUTED}>Loading…</div>;
   if (state === 'too-big') {
-    return <div style={MUTED}>This spreadsheet is too large to preview here. Cmd/Ctrl-click the source link to reveal it in Finder.</div>;
+    return <div style={MUTED}>This spreadsheet is too large to preview here. Cmd-click the source link to reveal it in Finder.</div>;
   }
   return <SpreadsheetViewer filePath={path} rawUrl={rawUrl} />;
 };
@@ -108,14 +107,6 @@ const TextContent: React.FC<{ path: string; mode: TextMode; reveal?: LineTarget 
   if (error) return <div style={MUTED}>{error}</div>;
   if (data == null) return <div style={MUTED}>Loading…</div>;
   if (data.kind === 'unsupported') return <div style={MUTED}>{data.message}</div>;
-  if (data.kind === 'image') {
-    // Defensive: extension routing should catch images before this branch.
-    return (
-      <div style={{ padding: 12 }}>
-        <img src={sourceFileRawUrl(path)} alt={data.name ?? ''} style={{ maxWidth: '100%', height: 'auto', display: 'block' }} />
-      </div>
-    );
-  }
   if (mode === 'csv') return <CSVViewer filePath={path} content={data.content} />;
   if (mode === 'notebook') return <NotebookViewer filePath={path} content={data.content} />;
   if (mode === 'markdown') return <MarkdownPreview filePath={path} content={data.content} />;
@@ -214,4 +205,3 @@ export const FilePanel: React.FC<{
   );
 };
 
-export default FilePanel;

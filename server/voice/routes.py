@@ -1,7 +1,6 @@
 """HTTP + WebSocket surface for voice mode.
 
   GET  /api/voice/status    is voice mode usable here, and with which model/voice
-  PUT  /api/voice/settings  change voice_id / endpointing (persisted in config)
   WS   /ws/voice?session_id=...
 
 The socket protocol, browser -> server:
@@ -28,7 +27,7 @@ import json
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request, WebSocket
+from fastapi import APIRouter, WebSocket
 from starlette.websockets import WebSocketDisconnect
 
 from server.voice import protocol
@@ -69,12 +68,11 @@ def voice_settings() -> dict[str, Any]:
 
 
 def _credentials_present() -> bool:
-    try:
-        import botocore.session
+    """Whether botocore resolves AWS credentials. A broken profile raises (for
+    example ProfileNotFound), and the caller reports that error."""
+    import botocore.session
 
-        return botocore.session.get_session().get_credentials() is not None
-    except Exception:  # noqa: BLE001
-        return False
+    return botocore.session.get_session().get_credentials() is not None
 
 
 @router.get("/api/voice/status")
@@ -89,13 +87,17 @@ async def voice_status() -> dict[str, Any]:
         available, reason = sdk_availability()
     if available and not settings.get("enabled", True):
         available, reason = False, "Voice mode is disabled in config (voice.enabled)."
-    if available and not await asyncio.get_running_loop().run_in_executor(
-        None, _credentials_present
-    ):
-        available, reason = (
-            False,
-            ("No AWS credentials found. Voice mode uses the same credentials as chat."),
-        )
+    if available:
+        try:
+            present = await asyncio.get_running_loop().run_in_executor(None, _credentials_present)
+        except Exception as e:  # noqa: BLE001 - reported to the user as the reason
+            available, reason = False, f"AWS credentials could not be read: {e}"
+        else:
+            if not present:
+                available, reason = (
+                    False,
+                    "No AWS credentials found. Voice mode uses the same credentials as chat.",
+                )
     return {
         "available": available,
         "reason": reason,
@@ -105,38 +107,6 @@ async def voice_status() -> dict[str, Any]:
         "endpointing": settings["endpointing"],
         "voices": list(protocol.VOICES),
     }
-
-
-@router.put("/api/voice/settings")
-async def update_voice_settings(request: Request) -> dict[str, Any]:
-    from server.infrastructure.config import USER_CONFIG_LOCK, _load_user_config, save_config
-
-    try:
-        body = await request.json()
-    except ValueError:
-        raise HTTPException(400, "body must be JSON") from None
-    if not isinstance(body, dict):
-        raise HTTPException(400, "body must be an object")
-    update: dict[str, Any] = {}
-    if "voice_id" in body:
-        if body["voice_id"] not in protocol.VOICE_IDS:
-            raise HTTPException(400, f"unknown voice_id {body['voice_id']!r}")
-        update["voice_id"] = body["voice_id"]
-    if "endpointing" in body:
-        level = str(body["endpointing"]).upper()
-        if level not in protocol.ENDPOINTING_LEVELS:
-            raise HTTPException(400, "endpointing must be LOW, MEDIUM or HIGH")
-        update["endpointing"] = level
-    if "enabled" in body:
-        update["enabled"] = bool(body["enabled"])
-    if not update:
-        raise HTTPException(400, "nothing to update")
-    with USER_CONFIG_LOCK:  # one read-modify-write, no writer in between
-        raw = _load_user_config()
-        block = raw.get("voice") if isinstance(raw.get("voice"), dict) else {}
-        raw["voice"] = {**block, **update}
-        save_config(raw)
-    return {"updated": True, **voice_settings()}
 
 
 def _workspace_name() -> str | None:

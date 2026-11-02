@@ -113,32 +113,6 @@ def test_config_defaults_expose_model_mode():
     assert DEFAULTS["backends"] == {}
 
 
-def test_model_mode_inferred_from_local_mode_when_unset(monkeypatch):
-    # A pre-existing on-device config (local_mode on, no model_mode) follows
-    # local_mode so its on-device models aren't hidden by the cloud default.
-    from server.infrastructure import config as cfg
-
-    monkeypatch.setattr(cfg, "_load_user_config", lambda: {"local_mode": True})
-    cfg._invalidate_cache()
-    try:
-        assert cfg.load_config().get("model_mode") == "local"
-    finally:
-        cfg._invalidate_cache()
-
-
-def test_explicit_model_mode_wins_over_local_mode(monkeypatch):
-    from server.infrastructure import config as cfg
-
-    monkeypatch.setattr(
-        cfg, "_load_user_config", lambda: {"local_mode": True, "model_mode": "cloud"}
-    )
-    cfg._invalidate_cache()
-    try:
-        assert cfg.load_config().get("model_mode") == "cloud"
-    finally:
-        cfg._invalidate_cache()
-
-
 def test_fresh_config_defaults_to_cloud(monkeypatch):
     from server.infrastructure import config as cfg
 
@@ -213,27 +187,27 @@ def test_chat_models_disabled_hides_a_system_model(monkeypatch):
         cfg._invalidate_cache()
 
 
-def test_default_catalog_is_sourced_from_the_template_not_a_code_copy():
-    # Single source of truth: the code keeps no separate catalog; DEFAULTS loads
-    # it from config.example.json, so the two can't drift (which is what caused
-    # the us.* vs global.* mismatch).
+def test_default_catalog_is_the_template_not_a_code_copy():
+    # Single source of truth: the code keeps no catalog of its own; the
+    # catalog comes from config.example.json, so the two can't drift (which
+    # is what caused the us.* vs global.* mismatch).
     import json
 
     from server.infrastructure.config import DEFAULTS, EXAMPLE_CONFIG_PATH
 
     with open(EXAMPLE_CONFIG_PATH) as f:
         template = json.load(f).get("chat_models")
-    assert DEFAULTS["chat_models"] == template
+    assert DEFAULTS["chat_models"] == {}
+    assert template
     # Opus ids resolve to the global inference profile (the way it works).
-    for key, entry in DEFAULTS["chat_models"].items():
+    for key, entry in template.items():
         if key.startswith("opus"):
             assert entry["id"].startswith("global."), (key, entry["id"])
 
 
 def test_code_fallback_default_is_the_shipped_default_and_a_cloud_model():
-    # One meaning for "the default model": the code fallback (used when the
-    # template is unreadable or names an unknown key) is the key the template
-    # ships, and it is a real cloud catalog entry, so Hybrid and Cloud open on
+    # One meaning for "the default model": the code default is the key the
+    # template ships, and it is a real cloud catalog entry, so Hybrid and Cloud open on
     # the same model whichever layer supplied it.
     import json
 
@@ -248,15 +222,15 @@ def test_code_fallback_default_is_the_shipped_default_and_a_cloud_model():
     assert not str(entry["id"]).startswith("local:")
 
 
-def test_defaults_catalog_used_only_when_config_omits_chat_models(monkeypatch):
-    # The hardcoded catalog is a fallback: a config with no chat_models still
-    # gets a working model list so the picker is never empty.
+def test_a_user_layer_without_chat_models_gets_the_shipped_catalog(monkeypatch):
+    # The catalog comes from the SYSTEM layer: a user config with no
+    # chat_models still gets the shipped model list.
     from server.infrastructure import config as cfg
 
     monkeypatch.setattr(cfg, "_load_user_config", lambda: {"bedrock_region": "us-east-1"})
     cfg._invalidate_cache()
     try:
         ids = cfg.load_config()["chat_models"]
-        assert "opus5.5" in ids and "haiku" in ids  # DEFAULTS catalog
+        assert "opus5.5" in ids and "haiku" in ids  # SYSTEM catalog
     finally:
         cfg._invalidate_cache()

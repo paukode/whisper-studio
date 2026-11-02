@@ -5,6 +5,7 @@ import {
   EMPTY_ATTACHMENTS,
 } from '@/stores/composerAttachmentsStore';
 import { DRAFT_SESSION } from '@/stores/sessionRuntimes';
+import { readErrorBody } from '@/api/client';
 
 /**
  * Owns the chat composer's attachment chips and every way a file gets onto
@@ -30,7 +31,7 @@ export interface UseComposerAttachmentsResult {
   attachmentsRef: React.MutableRefObject<ComposerAttachment[]>;
   uploadFilesAsChips: (files: File[]) => Promise<void>;
   attachWorkspaceFileAsChip: (path: string) => Promise<void>;
-  uploadWorkspaceFile: (path: string) => Promise<ComposerAttachment | null>;
+  uploadWorkspaceFile: (path: string) => Promise<ComposerAttachment>;
   removeAttachment: (idx: number) => void;
   /** Resolve once no chip is mid-upload (or after a safety timeout). */
   waitForUploads: () => Promise<boolean>;
@@ -97,8 +98,7 @@ export function useComposerAttachments(sessionId: string | null): UseComposerAtt
       if (!response.ok) {
         // Surface the backend's reason (e.g. "Unsupported file type",
         // "exceeds 50MB limit") rather than a blanket failure message.
-        const detail = (await response.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(detail?.error || 'Upload failed');
+        throw new Error(await readErrorBody(response));
       }
       const data = (await response.json()) as { attachments: ComposerAttachment[] };
       const items = data.attachments ?? [];
@@ -129,7 +129,7 @@ export function useComposerAttachments(sessionId: string | null): UseComposerAtt
   const fetchWorkspaceFile = useCallback(async (path: string): Promise<File> => {
     const url = `/api/workspace/file?path=${encodeURIComponent(path)}&raw=true`;
     const resp = await fetch(url);
-    if (!resp.ok) throw new Error(`File not found: ${path}`);
+    if (!resp.ok) throw new Error(`Could not read ${path}: ${await readErrorBody(resp)}`);
     const blob = await resp.blob();
     const name = path.split('/').pop() || path;
     return new File([blob], name, { type: blob.type || 'application/octet-stream' });
@@ -150,22 +150,20 @@ export function useComposerAttachments(sessionId: string | null): UseComposerAtt
     }
   }, [fetchWorkspaceFile, uploadFilesAsChips]);
 
-  // Fetch + upload a workspace file WITHOUT a composer chip; returns the
-  // attachment record (or null on failure). Used by the non-blocking
-  // "/file:path question" auto-send path.
+  // Fetch + upload a workspace file WITHOUT a composer chip and return the
+  // attachment record. Rejects with the reason (the server's, e.g. a size
+  // limit). Used by the non-blocking "/file:path question" auto-send path.
   const uploadWorkspaceFile = useCallback(
-    async (path: string): Promise<ComposerAttachment | null> => {
-      try {
-        const file = await fetchWorkspaceFile(path);
-        const formData = new FormData();
-        formData.append('files', file);
-        const response = await fetch('/api/upload', { method: 'POST', body: formData });
-        if (!response.ok) throw new Error('Upload failed');
-        const data = (await response.json()) as { attachments: ComposerAttachment[] };
-        return data.attachments?.[0] ?? null;
-      } catch {
-        return null;
-      }
+    async (path: string): Promise<ComposerAttachment> => {
+      const file = await fetchWorkspaceFile(path);
+      const formData = new FormData();
+      formData.append('files', file);
+      const response = await fetch('/api/upload', { method: 'POST', body: formData });
+      if (!response.ok) throw new Error(await readErrorBody(response));
+      const data = (await response.json()) as { attachments: ComposerAttachment[] };
+      const att = data.attachments[0];
+      if (!att) throw new Error('The upload returned no attachment.');
+      return att;
     },
     [fetchWorkspaceFile],
   );

@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Branches and worktrees: parallel sessions on one repo - Whisper Studio Docs</title>
-  <meta name="description" content="How task worktrees, session worktrees, and worktree-isolated sub-agents let several sessions work on the same repo at once without colliding, and how finished work gets merged or harvested back.">
+  <title>Branches and worktrees: parallel work on one repo - Whisper Studio Docs</title>
+  <meta name="description" content="Git worktrees give a task branch, a subagent, or a terminal worktree its own checkout. Learn the three types, why they do not collide, and how harvest brings a finished agent's work back.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -14,230 +14,204 @@
 </head>
 <body>
   <main class="doc" data-page="tut-worktrees">
-    <h1>Branches and worktrees: parallel sessions on one repo</h1>
-    <p class="subtitle">Several sessions, several sub-agents, one repository. Git worktrees give each
-      of them its own checkout on its own branch, so nobody's half-finished edit is visible to anyone
-      else until it is deliberately merged or harvested back.</p>
+    <h1>Branches and worktrees: parallel work on one repo</h1>
+    <p class="subtitle">Git worktrees give a task branch or a subagent its own checkout on its own
+      branch. Your working tree does not show their edits until you merge the branch or the app
+      harvests the work.</p>
 
-    <p>A single git repository normally has one working directory: check out a different branch and
-      every open file changes under you. That is fine for one person working serially, but it breaks
-      down the moment two things want to touch files in the same repo at the same time, a second chat
-      session, a background sub-agent, or a task you want isolated until you have reviewed it. Whisper
-      Studio solves this with <b>git worktrees</b>: the same shared commit history, several independent
-      checkouts. This tutorial covers the three places worktrees show up, why they cannot step on each
-      other, and what happens to the work when a worktree-backed task finishes.</p>
+    <p>A git repository usually has one working folder. When you check out a different branch, all
+      the open files change. This is a problem when two tasks change files in the same repository at
+      the same time. Examples are a background subagent, or a change that you want to examine before it
+      goes into your tree. Whisper Studio uses <b>git worktrees</b> for this: one shared commit
+      history and many separate checkouts.</p>
+    <p>All chat sessions use the one connected workspace folder. Only task branches, subagents, and
+      the worktrees that you make in the terminal get their own checkout. This tutorial shows the three
+      types of worktree, why they do not collide, and what occurs to the work at the end.</p>
 
     <figure class="diagram-figure wide">
       <div id="worktrees-diagram" class="diagram"></div>
-      <figcaption>One repository, several sessions, one worktree each. <b>Click a box</b> to trace how
-        a session enters its own worktree, commits, and eventually merges back.</figcaption>
+      <figcaption>One repository with three types of worktree. <b>Click a box</b> to see how each
+        worktree gets its changes back into your checkout.</figcaption>
     </figure>
 
-    <h2 id="three-kinds">Three places you will meet a worktree</h2>
-    <p>They share the same git mechanism underneath but solve different problems. Skim this table, then
-      read the section for whichever one you actually need.</p>
+    <h2 id="three-kinds">Three types of worktree</h2>
+    <p>The three types use the same git function, but they have different purposes. Read the table,
+      then read the section for the type that you need.</p>
     <div class="table-wrap"><table>
-      <thead><tr><th></th><th>Task branches</th><th>Session worktrees</th><th>Sub-agent isolation</th></tr></thead>
+      <thead><tr><th></th><th>Task branches</th><th>Subagent isolation</th><th>Terminal worktrees</th></tr></thead>
       <tbody>
-        <tr><td>Tools</td><td><code>ws_create_worktree</code>, <code>ws_diff_worktree</code>, <code>ws_merge_worktree</code></td><td><code>enter_worktree</code> / <code>exit_worktree</code> (approval actions, not tools)</td><td><code>spawn_agent</code> with <code>isolation: 'worktree'</code></td></tr>
-        <tr><td>Location</td><td><code class="path">&lt;repo&gt;/.worktrees/&lt;name&gt;</code></td><td><code class="path">&lt;repo&gt;/.whisper/worktrees/&lt;slug&gt;</code></td><td><code class="path">&lt;repo&gt;/.whisper/worktrees/agent-&lt;id&gt;</code></td></tr>
-        <tr><td>Branch</td><td><code>whisper/&lt;name&gt;</code></td><td><code>worktree-&lt;slug&gt;</code></td><td><code>worktree-agent-&lt;id&gt;</code></td></tr>
-        <tr><td>Who drives it</td><td>The assistant, mid-conversation, to keep a multi-file change out of your working tree until it is merged</td><td>The same mechanism, keyed to a whole chat session</td><td>The agent runtime, automatically, for every <code>isolation: 'worktree'</code> agent</td></tr>
-        <tr><td>Getting the work back</td><td><code>ws_merge_worktree</code>, an explicit <code>--no-ff</code> merge commit</td><td>Commit on the branch, then merge it yourself; exiting only removes the checkout</td><td>Automatic <b>harvest</b> on a clean finish</td></tr>
+        <tr><td>Control</td><td><code>ws_create_worktree</code>, <code>ws_diff_worktree</code>, <code>ws_merge_worktree</code></td><td><code>spawn_agent</code> with <code>isolation: 'worktree'</code></td><td>The <b>Worktrees</b> menu of the terminal panel</td></tr>
+        <tr><td>Location</td><td><code class="path">&lt;repo&gt;/.worktrees/&lt;name&gt;</code></td><td><code class="path">&lt;repo&gt;/.whisper/worktrees/agent-&lt;id&gt;</code></td><td><code class="path">../&lt;repo&gt;-&lt;branch&gt;</code>, next to the main checkout</td></tr>
+        <tr><td>Branch</td><td><code>whisper/&lt;name&gt;</code></td><td><code>worktree-agent-&lt;id&gt;</code></td><td>A branch that you name, new or existing</td></tr>
+        <tr><td>Who makes it</td><td>The assistant, during a conversation, to keep a change with many files out of your working tree until the merge</td><td>The agent runtime, automatically, for each agent with <code>isolation: 'worktree'</code></td><td>You</td></tr>
+        <tr><td>How the work comes back</td><td><code>ws_merge_worktree</code>, a <code>--no-ff</code> merge commit</td><td>An automatic <b>harvest</b> after a clean finish</td><td>You merge the branch with git</td></tr>
       </tbody>
     </table></div>
 
     <h2 id="task-branches">Task branches: isolate a change, then merge it</h2>
-    <p>These are ordinary tools the assistant calls mid-conversation when a change touches enough files
-      that you would rather review it as a unit than watch your working tree mutate file by file. Each
-      takes a single <code>name</code>.</p>
+    <p>The assistant calls these tools during a conversation when a change has many files. Then you
+      can examine the change as one unit. Each tool takes one <code>name</code>.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Tool</th><th>What it does</th></tr></thead>
       <tbody>
-        <tr><td><code>ws_create_worktree</code></td><td>Creates a worktree at <code class="path">.worktrees/&lt;name&gt;</code> on a new branch <code>whisper/&lt;name&gt;</code>, branched from <code>HEAD</code>. Auto-generates a name if you do not give one, and validates the name before it becomes a path or a branch.</td></tr>
-        <tr><td><code>ws_diff_worktree</code></td><td>Runs <code>git diff HEAD...&lt;branch&gt;</code> in your main checkout, so it shows what has been <em>committed</em> on the worktree branch since the branch point. Work the assistant has written but not committed inside the worktree does not appear, and the tool answers <code>(no changes in worktree)</code>.</td></tr>
-        <tr><td><code>ws_merge_worktree</code></td><td>Merges the worktree branch back into your current branch with <code>--no-ff</code>, leaving a real merge commit. On a conflict it reports the failure and leaves git in its conflicted state for you to resolve; it does not abort for you, and it does not remove the worktree afterwards.</td></tr>
+        <tr><td><code>ws_create_worktree</code></td><td>Makes a worktree at <code class="path">.worktrees/&lt;name&gt;</code> on a new branch <code>whisper/&lt;name&gt;</code> from <code>HEAD</code>. If you do not give a name, the tool makes one. The tool validates the name before it uses it as a path or a branch. The connected workspace can also be a linked worktree.</td></tr>
+        <tr><td><code>ws_diff_worktree</code></td><td>Runs <code>git diff HEAD...&lt;branch&gt;</code> in your main checkout. It shows the <em>committed</em> changes on the worktree branch since the branch point. It does not show changes that are not committed. Then the tool returns <code>(no changes in worktree)</code>.</td></tr>
+        <tr><td><code>ws_merge_worktree</code></td><td>Merges the worktree branch into your current branch with <code>--no-ff</code>, and makes a merge commit. If there is a conflict, the tool reports the failure and leaves git in the conflict state. It does not abort the merge and does not remove the worktree.</td></tr>
       </tbody>
     </table></div>
-    <p>Nothing about your open files changes while the worktree work happens; the assistant reads and
-      writes inside <code class="path">.worktrees/&lt;name&gt;</code>, and only <code>ws_merge_worktree</code>
-      touches the branch you are actually looking at.</p>
+    <p>Your open files do not change during the worktree work. The assistant reads and writes in
+      <code class="path">.worktrees/&lt;name&gt;</code>. Only <code>ws_merge_worktree</code> changes
+      your current branch.</p>
 
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg></span>
-      <div class="callout__body"><p>Two things to know before relying on these. <b>The merge does not raise an
-        approval card</b>: <a href="tut-permissions.html">plan mode</a> blocks it outright, but outside plan
-        mode it runs like any other tool call, so ask for the diff and read it before asking for the merge.
-        And <b>the three tools share an in-memory registry of worktrees they created</b>. Switching or
-        disconnecting the workspace, or restarting the server, clears it: the directory and branch stay on
-        disk, but <code>ws_diff_worktree</code> and <code>ws_merge_worktree</code> answer
-        <code>Worktree '&lt;name&gt;' not found</code> from then on, and you finish the job with plain git.
-        For work you want to survive a restart, prefer a sub-agent's worktree isolation below.</p></div>
+      <div class="callout__body"><p>Read the diff before you ask for the merge. The merge obeys
+        the <a href="tut-permissions.html">permission mode</a>. Bypass merges and does not show a card.
+        The <b>Don't ask</b> mode stops the merge. Plan mode blocks the merge.</p>
+        <p>A subagent or a scheduled task cannot merge. In the other modes, an approval card shows the worktree branch and the branch that
+        gets the merge. If the current branch changes before you approve, the tool does not
+        merge.</p></div>
+    </div>
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p>The three tools keep a list of their worktrees in memory. A
+        workspace change, a disconnect, or a server restart clears the list. The folder and the branch
+        stay on the disk. But <code>ws_diff_worktree</code> and <code>ws_merge_worktree</code> then
+        return <code>Worktree '&lt;name&gt;' not found</code>, and you must complete the work with git.
+        For work that must survive a restart, use the worktree isolation of a subagent.</p></div>
     </div>
 
-    <h2 id="session-worktrees">Session worktrees: enter_worktree and exit_worktree</h2>
-    <p>Separate from task branches is a lower-level mechanism for pinning an entire session, not just
-      one change, onto its own worktree: <code>enter_worktree</code> and <code>exit_worktree</code>.
-      These are registered as <b>approval actions</b> (approval category <code>worktree</code>), not as
-      tool schemas offered to the model, so nothing in a normal turn instructs Claude to call them
-      directly. The mechanism they run on, <code class="path">server/git/worktree_session.py</code>, is
-      the same one the runtime uses automatically for worktree-isolated sub-agents below, so read this
-      section as "how a worktree gets attached to a session" and the next one as its most common,
-      fully-automatic use.</p>
-    <ul>
-      <li><b>Entering</b> creates (or resumes) <code class="path">&lt;repo&gt;/.whisper/worktrees/&lt;slug&gt;</code>
-        on branch <code>worktree-&lt;slug&gt;</code>, branched from the repo's current <code>HEAD</code>
-        at that moment, and records which worktree the session is pinned to - this is bookkeeping for the
-        UI chip and the <code>GET /api/git/worktree-session</code> endpoint, not a cwd redirect. File
-        tools (<code>ws_read_file</code>/<code>ws_write_file</code>/etc.) never follow it: they always
-        resolve against the one globally-connected workspace. For shell commands to actually run inside
-        the worktree, the session has to <code>cd</code> into it itself - that then affects only later
-        shell calls (tracked per session by <code class="path">server/cwd_tracker.py</code>), not file
-        tools. If the worktree path already exists, it is reused rather than recreated, so re-entering
-        the same slug picks up where it left off instead of erroring.</li>
-      <li><b>Exiting</b> runs <code>git worktree remove</code> on that path and clears the session's
-        worktree record (it does not touch shell cwd, since entering never set one). It refuses to
-        remove a worktree with uncommitted changes unless forced, so exiting does not silently discard
-        work. It does <b>not</b> merge and does <b>not</b> delete the branch: commits on
-        <code>worktree-&lt;slug&gt;</code> survive the removal, and merging them is an ordinary git
-        merge you do yourself.</li>
-    </ul>
-    <p>Both actions sit behind their own <code>worktree</code> approval category, distinct from ordinary
-      file writes, so you can trust the flow once ("Yes for all worktree operations") without widening
-      any other write permission. The frontend can read a session's current pin at any time through
-      <code>GET /api/git/worktree-session</code>, which is how the workspace terminal shows the small
-      "in worktree" chip next to the branch name.</p>
-
-    <h3 id="no-collide">Why two sessions can never collide</h3>
-    <p>Three separate guarantees stack up to make this safe:</p>
-    <div class="cols-2">
-      <div class="card">
-        <h3>One shared object store, many checkouts</h3>
-        <p>A git worktree is a second working directory (its own files, its own index, its own
-          <code>HEAD</code>) that still reads and writes the <em>same</em> <code class="path">.git</code>
-          object database as the main checkout. Nothing is duplicated or forked; a commit made in one
-          worktree is immediately part of the one shared history.</p>
-      </div>
-      <div class="card">
-        <h3>Git itself blocks the sharp edge</h3>
-        <p>Git refuses to let the same branch be checked out in two worktrees at once. Because every
-          session's slug maps to its own branch name, two sessions can never end up pointed at the same
-          branch, the one scenario that would actually let them stomp on each other's edits.</p>
-      </div>
-      <div class="card">
-        <h3>Slugs are validated before they touch a path</h3>
-        <p>A slug becomes both a directory name and a branch name, so it is validated first: letters,
-          digits, dots, underscores, and dashes only, no leading dash or slash, no <code>..</code>
-          segments, capped length. That rules out path traversal and branch-name injection from a
-          crafted name, the same guard <code>ws_create_worktree</code> uses.</p>
-      </div>
-      <div class="card">
-        <h3>State is tracked per session id</h3>
-        <p>Which session owns which worktree is recorded in memory keyed by session id (namespaced
-          <code>agent:&lt;id&gt;</code> for sub-agents so an agent's entry can never collide with a
-          user session of the same name). A session can only ever exit the worktree it entered.</p>
-      </div>
-    </div>
-
-    <h3 id="persists">Persistence across restarts</h3>
-    <p>The session-to-worktree mapping is written to
-      <code class="path">~/.whisper_cache/worktree-sessions.json</code> every time it changes, and read
-      back in on startup. Restart the server while a session is mid-worktree and the mapping survives:
-      the worktree directory, its branch, and which session owns it are all exactly as you left them.
-      This mirrors the resume behavior of Claude Code's own worktree sessions, on purpose.</p>
-
-    <h2 id="sub-agents">Worktree-isolated sub-agents</h2>
-    <p>This is where the session-worktree mechanism actually runs today, fully wired end to end. A
-      <a href="tut-subagents.html">sub-agent</a> spawned with <code>isolation: 'worktree'</code> gets
-      its own worktree automatically, keyed to <code>agent:&lt;agent_id&gt;</code>:</p>
+    <h2 id="sub-agents">Subagents with worktree isolation</h2>
+    <p>A <a href="tut-subagents.html">subagent</a> with <code>isolation: 'worktree'</code> gets its
+      own worktree automatically:</p>
     <ol class="steps">
-      <li><h4>The runtime enters a worktree for it</h4><p>Before the agent's first turn, the runtime
-        calls the same <code>enter_worktree</code> machinery with a slug of
-        <code>agent-&lt;agent_id&gt;</code>, giving it
-        <code class="path">.whisper/worktrees/agent-&lt;agent_id&gt;</code> on branch
-        <code>worktree-agent-&lt;agent_id&gt;</code>. Because a full checkout can take real time on a
-        big repo, this happens on a dedicated worker so it does not block the event loop.</p></li>
-      <li><h4>It gets write access</h4><p>Isolation is precisely what unlocks writing: a detached
-        <code>spawn_agent</code> is read-only by default specifically because it has no isolation, and
-        <code>isolation: 'worktree'</code> is the safe way to let it write anyway, since anything it
-        touches lands in its own worktree, not yours. If isolation was asked for but could not be
-        created (the workspace is not a git repo, or git errored), the agent is <b>degraded to
-        read-only</b> for that run rather than being let loose on your shared checkout.</p></li>
-      <li><h4>The agent works normally</h4><p>Unlike a session pin, an agent's worktree really is its
-        resolution root: its workspace tools and its shell commands both run there, and it gets its own
-        working-directory scope so one agent's <code>cd</code> cannot relocate a sibling's commands. From
-        the agent's point of view it is just an ordinary checkout.</p></li>
-      <li><h4>On a clean finish, the work is harvested</h4><p>See the next section. A genuinely
-        completed agent's changes are folded back into your working tree automatically. A turn-limited,
-        timed-out, failed, or manually stopped agent keeps its worktree instead, so partial work is
-        never silently discarded or silently applied.</p></li>
+      <li><h4>The runtime makes a worktree for the agent</h4><p>Before the first turn of the agent,
+        the runtime makes <code class="path">.whisper/worktrees/agent-&lt;agent_id&gt;</code> on branch
+        <code>worktree-agent-&lt;agent_id&gt;</code>. A full checkout can take some seconds on a large
+        repository. Thus a separate worker does this step, and the event loop does not stop.</p></li>
+      <li><h4>The agent gets write access</h4><p>A detached <code>spawn_agent</code> is read-only by
+        default, because it has no isolation. With <code>isolation: 'worktree'</code>, the agent can
+        write, because all its changes go into its own worktree. If the app cannot make the worktree,
+        the agent runs <b>read-only</b> for that run. Examples are a workspace that is not a git
+        repository, or a git error.</p></li>
+      <li><h4>The agent operates normally</h4><p>The worktree is the root of the agent. Its workspace
+        tools and its shell commands run there. Each agent has its own working folder, so a
+        <code>cd</code> of one agent does not move the commands of a different agent.</p></li>
+      <li><h4>After a clean finish, the app harvests the work</h4><p>See the next section. The app
+        applies the changes of a completed agent to your working tree. If the agent stopped at a turn
+        limit, timed out, failed, or was stopped, the app keeps its worktree. Thus the app does not
+        discard or apply partial work without your knowledge.</p></li>
     </ol>
 
-    <h2 id="harvest">Harvest: bringing the work back</h2>
-    <p>A worktree-isolated agent may leave its work committed, uncommitted, or a mix, it has git tools
-      and may or may not use them. Rather than requiring a clean commit history to merge, <b>harvest</b>
-      (<code class="path">server/git/worktree_harvest.py</code>) computes the agent's full file-level
-      delta since the worktree's branch point and applies it directly to your working tree as
-      <b>uncommitted</b> changes, the same way a normal edit would land. Nothing is committed or
-      force-resolved on your behalf; the result just shows up in <code>git status</code> for you to
-      review, diff, and commit yourself.</p>
+    <h3 id="no-collide">Why worktrees do not collide</h3>
     <div class="cols-2">
       <div class="card">
-        <h3>Non-conflicting files land</h3>
-        <p>Because harvest compares each file individually against the base commit, a file the agent
-          touched that you did not lands cleanly even if other files in the same run collide. One
-          conflicting file does not block the rest of the change.</p>
+        <h3>One object store, many checkouts</h3>
+        <p>A git worktree is a second working folder with its own files, index, and
+          <code>HEAD</code>. It uses the <em>same</em> <code class="path">.git</code> object database as
+          the main checkout. A commit in one worktree is immediately part of the shared history.</p>
       </div>
       <div class="card">
-        <h3>Real conflicts are left in the worktree</h3>
-        <p>A file only counts as a conflict when <em>your</em> tree changed it away from the base
-          <em>and</em> differently from the agent. Those files are left exactly where the agent left
-          them; the worktree is kept (not removed) and the result note tells you which files and
-          where to find them.</p>
+        <h3>Git blocks a shared branch</h3>
+        <p>Git does not let two worktrees check out the same branch. Each agent gets its own branch
+          name. Thus two agents cannot change the files of the same branch.</p>
+      </div>
+      <div class="card">
+        <h3>The app validates each name</h3>
+        <p>A name becomes a folder name and a branch name. Thus the app validates it first. It
+          accepts only letters, digits, dots, underscores, and dashes. A name must not start with a
+          dash or a slash, must not contain <code>..</code>, and has a maximum length. This stops path
+          traversal and branch-name injection.</p>
+      </div>
+      <div class="card">
+        <h3>The app records the owner</h3>
+        <p>The app records which agent owns which worktree, with the key
+          <code>agent:&lt;id&gt;</code>. The app writes this record to
+          <code class="path">~/.whisper_cache/worktree-sessions.json</code> after each change and reads
+          it at startup. Thus the record survives a server restart.</p>
       </div>
     </div>
-    <p>The result is one of five statuses: <code>clean</code> (nothing to bring back), <code>applied</code>
-      (everything landed), <code>partial</code> (some files landed, some conflicted, worktree kept for the
-      rest), <code>kept</code> (not applied - the agent did not finish, or every file conflicted; worktree
-      kept), or <code>error</code>. The worktree and its branch are removed on <code>clean</code> and
-      <code>applied</code>, and kept on the other three. So a stopped agent that never changed a file still
-      tidies up after itself; it is <em>changed files</em> that are preserved, not the directory as such.
-      The note also reminds you that newly created files land untracked, so <code>git add</code> them before
-      committing: <code>git commit -a</code> alone would skip them. Materialization is serialized
-      process-wide, so if two agents finish at the same moment they apply to your tree one at a time rather
-      than racing each other.</p>
-    <p>Removing a worktree uses <code>git worktree remove --force</code>, which also discards anything
-      gitignored the agent produced inside it. Build output and installed dependencies are deliberately not
-      brought back; only tracked-file changes are.</p>
+
+    <h2 id="harvest">Harvest: get the work back</h2>
+    <p>A worktree agent can leave its work committed, not committed, or a mix of the two.
+      <b>Harvest</b> (<code class="path">server/git/worktree_harvest.py</code>) does not need a clean
+      commit history. It calculates the full change of each file since the branch point of the
+      worktree. Then it applies the change to your working tree as <b>uncommitted</b> changes.</p>
+    <p>The app does not commit or resolve anything. The result shows in <code>git status</code>. You examine
+      it, see the diff, and commit it yourself.</p>
+    <div class="cols-2">
+      <div class="card">
+        <h3>Files without a conflict go into your tree</h3>
+        <p>Harvest compares each file separately with the base commit. A file that only the agent
+          changed goes into your tree. This is also true when other files of the run have a
+          conflict.
+          One conflict does not block the rest of the change.</p>
+      </div>
+      <div class="card">
+        <h3>Conflicts stay in the worktree</h3>
+        <p>A file is a conflict only when <em>your</em> tree changed it from the base <em>and</em> the
+          agent changed it differently. These files stay in the worktree. The app keeps the worktree,
+          and the result note gives the files and their location.</p>
+      </div>
+    </div>
+    <p>The result has one of five statuses:</p>
+    <ul>
+      <li><code>clean</code>: there is nothing to bring back.</li>
+      <li><code>applied</code>: all the files are in your tree.</li>
+      <li><code>partial</code>: some files are in your tree, and some have a conflict. The app keeps the worktree.</li>
+      <li><code>kept</code>: the app applied nothing. The agent did not complete, or all files have a conflict. The app keeps the worktree.</li>
+      <li><code>error</code>: the harvest failed.</li>
+    </ul>
+    <p>The app removes the worktree and its branch after <code>clean</code> and <code>applied</code>,
+      and keeps them after the other three. Thus the app keeps <em>changed files</em>, not the empty
+      folder. New files arrive untracked. Run <code>git add</code> on them before the commit, because
+      <code>git commit -a</code> does not include them. The app applies one harvest at a time. If two
+      agents complete at the same time, they apply their changes in sequence.</p>
+    <p>The app removes a worktree with <code>git worktree remove --force</code>. This also deletes
+      the gitignored files of the agent in the worktree. The app does not bring back build output and
+      installed dependencies. It brings back only changes to tracked files.</p>
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
-      <div class="callout__body"><p>If you want to double-check a worktree-isolated agent's work before
-        it touches your tree at all, run it without <code>isolation: 'worktree'</code> when possible
-        (read-only agents such as <code>explore</code> or <code>plan</code> do not need it), or review
-        the harvested, still-uncommitted diff before you commit it. Harvest never commits for you, so
-        that review step is always available.</p></div>
+      <div class="callout__body"><p>A read-only agent, for example <code>explore</code> or
+        <code>plan</code>, does not need <code>isolation: 'worktree'</code>. For an agent that writes,
+        examine the uncommitted diff after the harvest. Harvest does not commit, so you can always
+        examine the change before the commit.</p></div>
     </div>
+
+    <h2 id="terminal-worktrees">Terminal worktrees</h2>
+    <p>You can also make a worktree yourself in the terminal panel. The branch menu of the terminal
+      has a <b>Worktrees</b> section.</p>
+    <ol class="steps">
+      <li><h4>Open the Worktrees menu</h4><p>In the header of the open terminal panel, click the branch button ("Branches and worktrees"). The
+        <b>Worktrees</b> section lists the worktrees of the repository.</p></li>
+      <li><h4>Add a worktree</h4><p>Click <b>+ Add worktree</b> and type a branch name. To make a new
+        branch, select <b>New branch</b>. Click <b>Create</b>. The app makes the worktree at
+        <code class="path">../&lt;repo&gt;-&lt;branch&gt;</code>, next to the main checkout.</p></li>
+      <li><h4>Remove a worktree</h4><p>Click the <b>×</b> on the row of the worktree. The app does
+        not remove the worktree of the active workspace.</p></li>
+    </ol>
+    <p>The app does not merge a terminal worktree. Merge its branch with git.</p>
 
     <h2 id="key-files">Where it all lives</h2>
     <div class="spec">
-      <dt><code class="path">server/git/worktree_session.py</code></dt><dd>Slug validation, the session-to-worktree mapping, <code>enter_worktree</code> / <code>exit_worktree</code>, and the persisted JSON store.</dd>
-      <dt><code class="path">server/cwd_tracker.py</code></dt><dd>Tracks the current working directory per session, and per agent: the agent runtime is what registers a worktree as an override here, which is why an agent's tools resolve inside its worktree while a session pin stays pure bookkeeping.</dd>
-      <dt><code class="path">GET /api/git/worktree-session</code></dt><dd>Read-only lookup of a session's current worktree pin, used by the workspace terminal's status chip.</dd>
-      <dt><code class="path">server/git/worktree_harvest.py</code></dt><dd>Materializes a finished worktree-isolated agent's delta back into the originating working tree.</dd>
       <dt><code class="path">server/workspace/executors.py</code></dt><dd><code>ws_create_worktree</code>, <code>ws_diff_worktree</code>, and <code>ws_merge_worktree</code>: the task-branch tools.</dd>
+      <dt><code class="path">server/git/worktree_session.py</code></dt><dd>Name validation, the record of agent worktrees, and its JSON file.</dd>
+      <dt><code class="path">server/agents/runtime.py</code></dt><dd>Makes the worktree of an isolated agent, or runs the agent read-only if it cannot.</dd>
+      <dt><code class="path">server/cwd_tracker.py</code></dt><dd>Keeps the working folder of each session and each agent. The agent runtime registers the worktree of an agent here, so the tools of the agent run in its worktree.</dd>
+      <dt><code class="path">server/git/worktree_harvest.py</code></dt><dd>Applies the changes of a completed agent to the working tree where the agent started.</dd>
+      <dt><code class="path">server/git/router.py</code></dt><dd>The routes of the terminal Worktrees menu: list, add, and remove.</dd>
       <dt><code class="path">&lt;repo&gt;/.worktrees/&lt;name&gt;</code></dt><dd>Task-branch worktrees on branch <code>whisper/&lt;name&gt;</code>.</dd>
-      <dt><code class="path">&lt;repo&gt;/.whisper/worktrees/&lt;slug&gt;</code></dt><dd>Session and sub-agent worktrees on branch <code>worktree-&lt;slug&gt;</code>.</dd>
-      <dt><code class="path">~/.whisper_cache/worktree-sessions.json</code></dt><dd>The persisted session-to-worktree mapping, survives a server restart.</dd>
+      <dt><code class="path">&lt;repo&gt;/.whisper/worktrees/agent-&lt;id&gt;</code></dt><dd>Subagent worktrees on branch <code>worktree-agent-&lt;id&gt;</code>.</dd>
+      <dt><code class="path">~/.whisper_cache/worktree-sessions.json</code></dt><dd>The record of agent worktrees. It survives a server restart.</dd>
     </div>
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
       <div class="callout__body"><p><b>Related:</b> <a href="tut-subagents.html">Sub-agents &amp; teams</a>
-        for spawning a worktree-isolated agent, <a href="tut-workspace.html">The workspace IDE</a> for the
-        Git panel and the terminal's branch menu (whose <b>Worktrees</b> section lists them, with
-        <b>+ Add worktree</b> to create one and a <b>×</b> on each row to remove it), and
-        <a href="ref-tools.html">Agent tools</a> for the full tool catalogue.</p></div>
+        to start an isolated agent. <a href="tut-workspace.html">The workspace IDE</a> for the Git
+        panel and the terminal. <a href="ref-tools.html">Agent tools</a> for the full list of
+        tools.</p></div>
     </div>
   </main>
 

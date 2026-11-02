@@ -9,6 +9,8 @@ identical) is the regression gate that matters most.
 
 import os
 
+import pytest
+
 import server.sandbox as sandbox
 from server.security import egress_policy
 
@@ -44,11 +46,6 @@ def test_permissive_injects_no_proxy_env_vars(monkeypatch):
 def test_permissive_macos_profile_has_no_network_rules(monkeypatch):
     monkeypatch.setattr(egress_policy, "get_active_policy", _permissive_policy)
     assert sandbox._macos_network_restriction_rules() == []
-
-
-def test_permissive_bwrap_args_are_empty(monkeypatch):
-    monkeypatch.setattr(egress_policy, "get_active_policy", _permissive_policy)
-    assert sandbox._bwrap_network_restriction_args() == []
 
 
 def test_default_permissive_matches_pre_egress_policy_behavior(monkeypatch):
@@ -122,29 +119,6 @@ def test_macos_profile_network_rules_come_after_the_deny_paths_block(monkeypatch
     assert profile.index("allow default") < profile.index('remote ip "*:443"')
 
 
-def test_bwrap_args_include_unshare_net_when_restrictive(monkeypatch):
-    monkeypatch.setattr(
-        egress_policy,
-        "get_active_policy",
-        lambda: {"tier": "restrictive", "custom_allowed_domains": [], "methods_only_safe": False},
-    )
-    assert sandbox._bwrap_network_restriction_args() == ["--unshare-net"]
-
-
-def test_run_sandboxed_no_sandbox_fallback_still_gets_proxy_env(monkeypatch, tmp_path):
-    """Even the "no OS sandbox available" fallback path in run_sandboxed goes
-    through _merged_env, so it should still see proxy vars under a
-    non-permissive policy — sanity-checking the "no new plumbing needed at
-    the call site" wiring end to end for that branch."""
-    monkeypatch.setattr(sandbox, "_is_sandbox_exec_available", lambda: False)
-    monkeypatch.setattr(sandbox, "_is_bwrap_available", lambda: False)
-    monkeypatch.setattr(egress_policy, "get_active_policy", lambda: _curated_policy())
-    monkeypatch.setattr(egress_policy, "ensure_proxy_running", lambda: ("127.0.0.1", 54321))
-
-    result = sandbox.run_sandboxed("echo $HTTPS_PROXY", cwd=str(tmp_path), timeout=10)
-    assert result.stdout.strip() == "http://127.0.0.1:54321"
-
-
 def test_popen_sandboxed_child_gets_the_same_env_as_run_sandboxed(monkeypatch, tmp_path):
     """Approved and read-only ws_run_command runs, their 30 s handoff and every
     background task start through popen_sandboxed. Its child must see the
@@ -195,22 +169,23 @@ def test_run_sandboxed_default_permissive_end_to_end(tmp_path):
 # ── proxy singleton lifecycle ────────────────────────────────────────────────
 
 
-def test_ensure_proxy_running_is_idempotent():
-    egress_policy._reset_proxy_for_tests()
-    try:
-        addr1 = egress_policy.ensure_proxy_running()
-        addr2 = egress_policy.ensure_proxy_running()
-        assert addr1 == addr2
-    finally:
-        egress_policy._reset_proxy_for_tests()
+@pytest.fixture()
+def fresh_proxy(monkeypatch):
+    """A fresh proxy singleton for the test, closed afterwards."""
+    monkeypatch.setattr(egress_policy, "_proxy_instance", None)
+    yield
+    if egress_policy._proxy_instance is not None:
+        egress_policy._proxy_instance._sock.close()
 
 
-def test_proxy_binds_to_loopback_ephemeral_port():
-    egress_policy._reset_proxy_for_tests()
-    try:
-        host, port = egress_policy.ensure_proxy_running()
-        assert host == "127.0.0.1"
-        assert port not in (80, 443)
-        assert port > 0
-    finally:
-        egress_policy._reset_proxy_for_tests()
+def test_ensure_proxy_running_is_idempotent(fresh_proxy):
+    addr1 = egress_policy.ensure_proxy_running()
+    addr2 = egress_policy.ensure_proxy_running()
+    assert addr1 == addr2
+
+
+def test_proxy_binds_to_loopback_ephemeral_port(fresh_proxy):
+    host, port = egress_policy.ensure_proxy_running()
+    assert host == "127.0.0.1"
+    assert port not in (80, 443)
+    assert port > 0

@@ -83,19 +83,11 @@ def test_the_default_bound_applies_without_an_override(isolated_mcp, monkeypatch
     assert "did not answer" in asyncio.run(go())
 
 
-def test_a_call_running_when_its_server_stops_ends_at_once(isolated_mcp, monkeypatch):
+def test_a_call_running_when_its_server_stops_ends_at_once(isolated_mcp):
     """Restart, an edit that restarts the server, or removing it closes the
     connection with the call still pending, and the SDK never answers it:
-    the call ends when the server stops, not at the timeout, and no cancel
-    goes to a connection that is gone."""
+    the call ends when the server stops, not at the timeout."""
     mgr, session = _manager({"command": "x", "call_timeout_seconds": 60})
-    cancels = []
-
-    async def _record_cancel(*args, **kwargs):
-        cancels.append(args)
-        return True
-
-    monkeypatch.setattr(mcp_module, "_send_cancelled", _record_cancel)
 
     async def go():
         mgr._sessions["srv"]["stop_event"] = asyncio.Event()
@@ -109,7 +101,6 @@ def test_a_call_running_when_its_server_stops_ends_at_once(isolated_mcp, monkeyp
     assert out.startswith("[MCP Error]")
     assert "was stopped or restarted while slow_query was running" in out
     assert "a retry can repeat its effects" in out
-    assert cancels == []
     assert not mgr._active_calls.get("srv")
 
 
@@ -138,7 +129,7 @@ def test_an_abandoned_call_is_cancelled_on_the_server(isolated_mcp):
 
         async def _server_that_never_answers():
             async for msg in server_inbox:
-                seen.append(msg.message.root.model_dump(by_alias=True, exclude_none=True))
+                seen.append(msg.message.model_dump(by_alias=True, exclude_none=True))
                 if len(seen) == 2:
                     return
 
@@ -162,14 +153,48 @@ def test_an_abandoned_call_is_cancelled_on_the_server(isolated_mcp):
     assert "a retry can repeat its effects" in out
 
 
-def test_a_server_that_cannot_be_told_to_stop_is_named_as_still_running(isolated_mcp):
-    mgr, _ = _manager({"command": "x", "call_timeout_seconds": 0.05})
+class _GatedSession:
+    """A session whose calls finish when the test releases them."""
+
+    def __init__(self):
+        self.gates: dict[str, asyncio.Event] = {}
+
+    async def call_tool(self, name, arguments=None):
+        gate = self.gates[(arguments or {})["who"]]
+        await gate.wait()
+        result = MagicMock()
+        result.content = []
+        result.is_error = False
+        return result
+
+
+def test_overlapping_calls_each_remove_their_own_entry(isolated_mcp):
+    """The older call finishing first must not drop the newer call's context:
+    an unattended agent call still in flight keeps its agent attribution."""
+    mgr, _ = _manager({"command": "x", "call_timeout_seconds": 5})
+    session = _GatedSession()
+    mgr._sessions["srv"]["session"] = session
 
     async def go():
-        return await asyncio.wait_for(
-            mgr.execute_approved_tool_call("mcp__srv__slow_query", {}), timeout=5
+        session.gates = {"chat": asyncio.Event(), "agent": asyncio.Event()}
+        chat = asyncio.create_task(
+            mgr.execute_approved_tool_call(
+                "mcp__srv__slow_query", {"who": "chat", "__session_id__": "chat-1"}
+            )
         )
+        await asyncio.sleep(0.01)
+        agent = asyncio.create_task(
+            mgr.execute_approved_tool_call(
+                "mcp__srv__slow_query",
+                {"who": "agent", "__session_id__": "agent-run", "__agent__": True},
+            )
+        )
+        await asyncio.sleep(0.01)
+        session.gates["chat"].set()
+        await chat
+        assert mgr._active_calls["srv"] == [{"session_id": "agent-run", "agent": True}]
+        session.gates["agent"].set()
+        await agent
+        assert "srv" not in mgr._active_calls
 
-    out = asyncio.run(go())
-    assert "may still be running it" in out
-    assert "a retry can repeat its effects" in out
+    asyncio.run(asyncio.wait_for(go(), timeout=5))

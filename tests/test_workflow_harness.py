@@ -15,7 +15,7 @@ import subprocess
 
 import pytest
 
-NODE = shutil.which("node") or "/usr/local/bin/node"
+NODE = shutil.which("node") or ""
 HARNESS = os.path.join(
     os.path.dirname(os.path.dirname(__file__)),
     "server",
@@ -31,7 +31,11 @@ pytestmark = pytest.mark.skipif(
 
 def _drive(source, *, mode="run", args=None, agent_responder=None, timeout=15):
     """Run the harness for one script; return (events, final) where final is the
-    done/fatal message. agent_responder(params, seq) -> result dict."""
+    done/fatal message. agent_responder(params, seq) -> result dict. ``args``
+    is the params.args object the runtime sends (default: no value and a
+    600000-token budget)."""
+    if args is None:
+        args = {"value": None, "__budget_total__": 600000}
     proc = subprocess.Popen(
         [NODE, HARNESS],
         stdin=subprocess.PIPE,
@@ -67,7 +71,11 @@ def _drive(source, *, mode="run", args=None, agent_responder=None, timeout=15):
                     seq += 1
                 elif msg["method"] == "budget_spent":
                     result = {"spent": 0}
-                proc.stdin.write(json.dumps({"id": msg["id"], "result": result}) + "\n")
+                if isinstance(result, dict) and "rpc_error" in result:
+                    reply = {"id": msg["id"], "error": result["rpc_error"]}
+                else:
+                    reply = {"id": msg["id"], "result": result}
+                proc.stdin.write(json.dumps(reply) + "\n")
                 proc.stdin.flush()
             elif "method" in msg:
                 events.append(msg)
@@ -175,7 +183,7 @@ def test_no_fs_or_process_globals():
     assert final["params"]["result"] == "undefined,undefined,undefined"
 
 
-def test_parallel_thunk_error_becomes_null():
+def test_parallel_thunk_error_becomes_null_and_is_logged():
     src = (
         "export const meta = { name: 'x', description: 'y', phases: [] }\n"
         "const r = await parallel([() => agent('ok'), () => { throw new Error('boom') }])\n"
@@ -188,3 +196,55 @@ def test_parallel_thunk_error_becomes_null():
     events, final = _drive(src, agent_responder=responder)
     assert final["method"] == "done"
     assert final["params"]["result"] == ["OK", None]
+    logs = [e["params"]["message"] for e in events if e["method"] == "log"]
+    assert "[error] parallel item 1: boom" in logs
+
+
+def test_pipeline_stage_error_becomes_null_and_is_logged():
+    src = (
+        "export const meta = { name: 'x', description: 'y', phases: [] }\n"
+        "const r = await pipeline([1, 2], (item) => {\n"
+        "  if (item === 2) throw new Error('bad item')\n"
+        "  return item * 10\n"
+        "})\n"
+        "return r\n"
+    )
+    events, final = _drive(src)
+    assert final["method"] == "done"
+    assert final["params"]["result"] == [10, None]
+    logs = [e["params"]["message"] for e in events if e["method"] == "log"]
+    assert "[error] pipeline item 1: bad item" in logs
+
+
+@pytest.mark.parametrize("helper", ["parallel", "pipeline"])
+@pytest.mark.parametrize("error_type", ["BudgetExceededError", "AgentCapError", "CancelledError"])
+def test_run_errors_reach_the_script(helper, error_type):
+    call = (
+        "parallel([() => agent('a'), () => agent('b')])"
+        if helper == "parallel"
+        else "pipeline(['a', 'b'], (item) => agent(item))"
+    )
+    src = (
+        "export const meta = { name: 'x', description: 'y', phases: [] }\n"
+        f"try {{ await {call} }} catch (e) {{ return 'caught ' + e.type }}\n"
+        "return 'not caught'\n"
+    )
+
+    def responder(params, seq):
+        if seq == 1:
+            return {"rpc_error": {"type": error_type, "message": "cap reached"}}
+        return {"text": "OK", "status": "completed"}
+
+    events, final = _drive(src, agent_responder=responder)
+    assert final["method"] == "done", final
+    assert final["params"]["result"] == f"caught {error_type}"
+
+
+def test_args_global_is_the_value_passed_to_workflow_run():
+    src = (
+        "export const meta = { name: 'a', description: 'args', phases: [] }\n"
+        "return { topic: args.topic, frozen: Object.isFrozen(args), total: budget.total }\n"
+    )
+    events, final = _drive(src, args={"value": {"topic": "cats"}, "__budget_total__": 1})
+    assert final["method"] == "done", final
+    assert final["params"]["result"] == {"topic": "cats", "frozen": True, "total": 1}

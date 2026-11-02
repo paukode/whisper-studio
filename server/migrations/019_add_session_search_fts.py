@@ -17,5 +17,5 @@ DESCRIPTION = "Add FTS5 mirror of session messages for session_search"
 def migrate(conn: sqlite3.Connection) -> None:
     from server.infrastructure.session_search import ensure_fts, rebuild_all
 
-    if ensure_fts(conn):
-        rebuild_all(conn)
+    ensure_fts(conn)
+    rebuild_all(conn)

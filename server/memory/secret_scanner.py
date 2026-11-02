@@ -1,13 +1,10 @@
-"""Secret scanner — high-confidence regex rules to detect secrets in memory content.
+"""Secret scanner: high-confidence regex rules to detect secrets in memory content.
 
 Derived from gitleaks (MIT license). Only includes patterns with near-zero
 false-positive rates (distinctive prefixes, checksums, known formats).
 """
 
-import logging
 import re
-
-log = logging.getLogger("whisper-studio")
 
 # (rule_id, human_label, regex_pattern)
 _RULE_DEFS: list[tuple[str, str, str]] = [
@@ -27,13 +24,12 @@ _RULE_DEFS: list[tuple[str, str, str]] = [
     # AI APIs
     ("anthropic-api-key", "Anthropic API Key", r"\b(sk\-ant\-[a-zA-Z0-9_\-]{80,})\b"),
     ("openai-api-key", "OpenAI API Key", r"\b(sk\-[a-zA-Z0-9]{20}T3BlbkFJ[a-zA-Z0-9]{20})\b"),
-    # Modern OpenAI keys: project / service-account / admin prefixes (kept
-    # alongside the legacy rule above so both fire on their respective shapes).
+    # Modern OpenAI keys: project / service-account / admin prefixes. The
+    # rule above covers the older shape.
     (
         "openai-api-key-modern",
         "OpenAI API Key",
-        r"\b(sk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{40,}T3BlbkFJ[A-Za-z0-9_-]{20,}"
-        r"|sk-[a-zA-Z0-9]{20}T3BlbkFJ[a-zA-Z0-9]{20})\b",
+        r"\b(sk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{40,}T3BlbkFJ[A-Za-z0-9_-]{20,})\b",
     ),
     ("huggingface-token", "HuggingFace Token", r"\b(hf_[a-zA-Z]{34})\b"),
     # Version control
@@ -96,21 +92,11 @@ _RULE_DEFS: list[tuple[str, str, str]] = [
     ("generic-api-key-bearer", "Bearer Token", r"(?i)(?:bearer\s+)([a-zA-Z0-9_\-]{40,})"),
 ]
 
-# Lazy-compiled patterns
-_compiled_rules: list[tuple[str, str, re.Pattern]] | None = None
-
-
-def _get_rules() -> list[tuple[str, str, re.Pattern]]:
-    """Compile regex patterns on first use."""
-    global _compiled_rules
-    if _compiled_rules is None:
-        _compiled_rules = []
-        for rule_id, label, pattern in _RULE_DEFS:
-            try:
-                _compiled_rules.append((rule_id, label, re.compile(pattern)))
-            except re.error as e:
-                log.warning("Failed to compile secret rule %s: %s", rule_id, e)
-    return _compiled_rules
+# Compiled once at import: every pattern is a literal above, so one that does
+# not compile is a code bug and fails the import.
+_RULES: list[tuple[str, str, re.Pattern]] = [
+    (rule_id, label, re.compile(pattern)) for rule_id, label, pattern in _RULE_DEFS
+]
 
 
 def scan_for_secrets(content: str) -> list[dict]:
@@ -118,12 +104,11 @@ def scan_for_secrets(content: str) -> list[dict]:
 
     Deduplicates by rule_id (one match per fired rule).
     """
-    rules = _get_rules()
     findings = []
     seen_rules: set[str] = set()
 
     for line_num, line in enumerate(content.split("\n"), 1):
-        for rule_id, label, pattern in rules:
+        for rule_id, label, pattern in _RULES:
             if rule_id in seen_rules:
                 continue
             if pattern.search(line):
@@ -133,21 +118,10 @@ def scan_for_secrets(content: str) -> list[dict]:
     return findings
 
 
-def redact_secrets(content: str) -> str:
-    """Replace detected secrets with [REDACTED] markers."""
-    rules = _get_rules()
-    result = content
-    for rule_id, _label, pattern in rules:
-        result = pattern.sub(f"[REDACTED:{rule_id}]", result)
-    return result
+def check_and_block(content: str) -> tuple[bool, list[dict]]:
+    """Check content for secrets. Returns (is_clean, findings).
 
-
-def check_and_block(content: str) -> tuple[bool, str, list[dict]]:
-    """Check content for secrets. Returns (is_clean, redacted_content, findings).
-
-    Always runs regardless of feature flags — secret scanning is a safety guard.
+    Always runs regardless of feature flags, secret scanning is a safety guard.
     """
     findings = scan_for_secrets(content)
-    if not findings:
-        return True, content, []
-    return False, redact_secrets(content), findings
+    return not findings, findings

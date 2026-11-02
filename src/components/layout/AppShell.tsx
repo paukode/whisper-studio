@@ -33,28 +33,15 @@ import { BuddyWidget } from '@/components/common/BuddyWidget';
 import { MemoryEditorModal } from '@/components/settings/MemoryEditorModal';
 import { MemoryViewerModal } from '@/components/settings/MemoryViewerModal';
 import { ErrorBoundary } from '@/components/common/ErrorBoundary';
-import { BtwPopup } from '@/components/chat/BtwPopup';
 import { EditDiffViewer } from '@/components/chat/EditDiffViewer';
 import { DialogHost } from '@/components/common/Dialog';
 import { ModelModeNotice } from '@/components/common/ModelModeNotice';
 import { CommandPalette } from '@/components/common/CommandPalette';
 
 /**
- * AppShell — top-level layout matching the vanilla templates/index.html structure.
- *
- * Outputs:
- *   div.app
- *     aside.sidebar.collapsed
- *     div.workspace
- *       header.header
- *       div.panels
- *         div.ws-expand-tab#wsExpandTab        (visible when workspace collapsed)
- *         div.panel.workspace-panel#workspacePanel
- *         div.resize-handle.ws-resize-handle#wsResizeHandle
- *         div.panels-right-col
- *           div#transcriptPanel
- *           div.resize-handle#resizeHandle
- *           div#chatPanelWrap
+ * AppShell: the top-level layout. The sidebar, then the workspace column
+ * (header, the workspace panel and the right column of transcript and chat,
+ * split by the Splitter).
  */
 
 // Workspace status recovery backoff: 1s, 2s, 4s, 8s, 15s, 15s — enough to
@@ -81,9 +68,6 @@ const AppShell: React.FC = () => {
   // Memory editor modal state
   const memoryEditorOpen = useUIStore((s) => s.memoryEditorOpen);
   const memoryViewerOpen = useUIStore((s) => s.memoryViewerOpen);
-
-  // /btw popup state
-  const btwPopup = useUIStore((s) => s.btwPopup);
 
   // ── Layout split fractions (single source of truth, persisted) ──
   // No refs, no DOM mutation, no drag math here. The Splitter components
@@ -150,11 +134,9 @@ const AppShell: React.FC = () => {
   // Reconcile the connected workspace on load, after a backend blip, and
   // whenever the window regains focus.
   //
-  // This used to be a single fetch whose failure was swallowed, so any
-  // moment the backend was unreachable (a restart, a sleep/wake, the app
-  // relaunching) left the workspace panel gone from the UI with no way
-  // back except reconnecting by hand — even though the server still had
-  // the workspace connected the whole time. Retry until the server gives
+  // A backend that is briefly unreachable (a restart, a sleep/wake, the app
+  // relaunching) must not drop the workspace panel while the server still
+  // holds the workspace. Retry until the server gives
   // an authoritative answer, and re-ask whenever the window regains
   // focus, which covers outages longer than the backoff window.
   //
@@ -212,8 +194,7 @@ const AppShell: React.FC = () => {
   // saves and the beforeunload beacon per live session.
   useSessionPersistence();
 
-  // Global keyboard shortcuts. Using `mod+` so the same binding works on
-  // macOS (Cmd) and Linux/Windows (Ctrl).
+  // Global keyboard shortcuts. mod = Cmd.
   useKeyboardShortcut('mod+,', () => {
     useUIStore.getState().openSettings();
   });
@@ -292,7 +273,7 @@ const AppShell: React.FC = () => {
           style={{ flex: '1 1 0%', minHeight: 220 }}
         >
           <ChatPanel />
-          <TranscriptionPanel hidden={false} />
+          <TranscriptionPanel />
         </Splitter>
       ) : (
         <div style={{ display: 'flex', flex: '1 1 0%', minHeight: 220, minWidth: 0, overflow: 'hidden' }}>
@@ -317,12 +298,9 @@ const AppShell: React.FC = () => {
   // the dock — extracted so it can be the left pane of the chat|dock Splitter.
   //
   // renderRightColumn() is always called in the exact same slot (children[1])
-  // of an always-mounted Splitter. Previously this branched between "Splitter
-  // wrapping both panes" and "renderRightColumn() called directly", which put
-  // its output at two different tree positions — React can't reconcile that
-  // across a type change, so toggling the workspace panel (connect/disconnect,
-  // collapse/expand) unmounted and remounted everything inside it, including
-  // ChatPanel/ChatInput, silently wiping the composer's in-progress draft.
+  // of an always-mounted Splitter, so toggling the workspace panel
+  // (connect/disconnect, collapse/expand) never remounts ChatPanel/ChatInput
+  // and the composer keeps its draft.
   // hideFirstPane collapses the workspace pane visually/interactively without
   // removing it from the tree in a way that shifts renderRightColumn()'s slot.
   const showWorkspacePane = wsConnected && !workspacePanelCollapsed;
@@ -458,16 +436,6 @@ const AppShell: React.FC = () => {
           Live preview
         </button>
       )}
-
-      {/* /btw popup */}
-      {btwPopup && (
-        <BtwPopup
-          question={btwPopup.question}
-          answer={btwPopup.answer}
-          onClose={() => useUIStore.getState().setBtwPopup(null)}
-        />
-      )}
-
     </div>
   );
 };

@@ -1,25 +1,24 @@
 """Model-server protocol helpers for on-device turns (llama-server and mlx_lm).
 
 The agentic loop itself lives in the unified turn engine
-(server/chat/engine/runner.py + engine/local.py — the LocalAdapter); this
+(server/chat/engine/runner.py + engine/local.py, the LocalAdapter); this
 module keeps the wire specifics the adapter builds on: the
 ``/v1/chat/completions`` SSE parser, the tool-call accumulator, argument
 coercion, tool-result message rendering, and the local post-turn memory hooks.
 Both engines speak the same OpenAI-compatible SSE, so one parser serves both
-(the only dialect difference — the reasoning delta field name — is folded in
+(the only dialect difference, the reasoning delta field name, is folded in
 below).
 
-Speaking llama-server's OpenAI-compatible endpoint means upstream llama.cpp
-does the jobs a hand-rolled in-process path had to solve per model family:
+Speaking the engines' OpenAI-compatible endpoint means they do the per-family
+work:
 
   * ``tool_calls`` arrive already parsed into OpenAI shape (name + JSON
-    arguments), for every family upstream supports — so a new GGUF in config gets
+    arguments), for every family upstream supports, so a new GGUF in config gets
     tool calling with no marker constants here.
   * reasoning arrives on ``reasoning_content``, so the thinking channel needs no
     marker splitter and can never leak raw markers into the answer.
   * real token counts arrive on ``usage`` (with ``stream_options.include_usage``),
-    so the counter and context meter report measured tokens rather than the
-    chars/4 guess a hand-rolled path had to make.
+    so the counter and context meter report measured tokens.
 
 Because of that, this module contains NO model-specific tokens. There is no
 fallback runtime: if llama-server cannot serve the model, the turn errors.
@@ -46,8 +45,8 @@ def _spawn_session_update(model_key: str, messages: list[dict], session_id: str)
     The cadence + feature-flag gate lives in ``maybe_update_session_memory``;
     this just kicks it off (on the model's executor thread, via the local
     summariser) so session memory auto-builds fully offline. It runs one turn
-    behind — the just-generated answer is captured on the next turn via the
-    persisted history — which avoids threading the answer text out of the
+    behind, the just-generated answer is captured on the next turn via the
+    persisted history, which avoids threading the answer text out of the
     stream and keeps the model thread free while the response is still flushing.
     """
     if not messages:
@@ -70,8 +69,8 @@ def _spawn_session_update(model_key: str, messages: list[dict], session_id: str)
             ),
             name="local-session-memory-update",
         )
-    except Exception as e:  # never let memory bookkeeping disrupt a turn
-        log.debug("Could not spawn local session update: %s", e)
+    except Exception as e:  # noqa: BLE001 (the turn already finished; say why memory is off)
+        log.warning("Could not start the local session memory update: %s", e)
 
 
 def _spawn_extraction(
@@ -109,14 +108,14 @@ def _spawn_extraction(
             ),
             name="local-auto-memory-extract",
         )
-    except Exception as e:  # never let memory bookkeeping disrupt a turn
-        log.debug("Could not spawn local memory extraction: %s", e)
+    except Exception as e:  # noqa: BLE001 (the turn already finished; say why memory is off)
+        log.warning("Could not start the local memory extraction: %s", e)
 
 
-def _spawn_dream(model_key: str, ws_path: str | None) -> None:
+def _spawn_dream(ws_path: str | None) -> None:
     """Fire-and-forget dream consolidation after a local turn.
 
-    Mirrors the cloud paths (chat/routes.py and openai_bedrock/stream.py):
+    Mirrors the cloud path (server/chat/engine/runner.py _fire_memory_hooks):
     record the session against each memory tier and consolidate any tier that
     is due. The consolidator agent runs on a cloud model, so the
     dream_consolidation flag is off in Local mode with a visible reason
@@ -131,16 +130,11 @@ def _spawn_dream(model_key: str, ws_path: str | None) -> None:
         if not is_enabled("dream_consolidation"):
             return
         from server.infrastructure.async_tasks import spawn
-        from server.local.runtime import local_model_meta
         from server.memory.dream import record_and_maybe_dream
 
-        model_id = local_model_meta(model_key).get("id", "")
-        spawn(
-            record_and_maybe_dream(ws_path, model_id=model_id),
-            name="local-dream-consolidation",
-        )
-    except Exception as e:  # never let memory bookkeeping disrupt a turn
-        log.debug("Could not spawn local dream consolidation: %s", e)
+        spawn(record_and_maybe_dream(ws_path), name="local-dream-consolidation")
+    except Exception as e:  # noqa: BLE001 (the turn already finished; say why memory is off)
+        log.warning("Could not start the local dream consolidation: %s", e)
 
 
 def _spawn_memory_hooks(
@@ -152,15 +146,15 @@ def _spawn_memory_hooks(
     offline)."""
     _spawn_session_update(model_key, messages, session_id)
     _spawn_extraction(model_key, messages, session_id, ws_path)
-    _spawn_dream(model_key, ws_path)
+    _spawn_dream(ws_path)
 
 
 def _tool_results_to_messages(tool_results: list[dict], names_by_id: dict[str, str]) -> list[dict]:
     """Executed results → native OpenAI ``tool`` messages.
 
-    The in-process path had to fold results into a plain user turn; here the
-    template consumes them as real tool responses, which is a much stronger
-    signal that this text is a tool result rather than the user talking.
+    The template consumes them as real tool responses, a much stronger signal
+    than a plain user turn that this text is a tool result rather than the
+    user talking.
     """
     msgs = []
     for r in tool_results:
@@ -176,138 +170,77 @@ def _tool_results_to_messages(tool_results: list[dict], names_by_id: dict[str, s
     return msgs
 
 
-def _schema_props(schemas: list[dict]) -> dict[str, dict]:
-    """``{tool_name: {param: json_schema}}`` from the declared OpenAI functions."""
-    out: dict[str, dict] = {}
-    for s in schemas or []:
-        fn = s.get("function") or {}
-        name = fn.get("name")
-        if not name:
-            continue
-        props = ((fn.get("parameters") or {}).get("properties")) or {}
-        if isinstance(props, dict):
-            out[name] = props
-    return out
-
-
-def _coerce_arg(value, spec: dict):
-    """Best-effort coercion of one argument to its declared JSON-schema type.
-
-    Local models emit sloppier arguments than a hosted API does — a ``string``
-    parameter can arrive as a list or a number. Bedrock validates against the
-    schema before we ever see the call; llama-server hands through whatever the
-    model produced, so an un-coerced list reaches an executor that calls
-    ``.strip()`` on it and the tool call is wasted on an AttributeError.
-    Only obvious mismatches are converted; anything already correct, or too
-    ambiguous to convert, is passed through untouched for the executor to reject.
-    """
-    want = spec.get("type") if isinstance(spec, dict) else None
-    if want == "string" and not isinstance(value, str):
-        if isinstance(value, list):
-            # "path": [] means "no argument" — it must become "" so the executor's
-            # own `or "."` default applies. Left as a list it reaches .strip() and
-            # the call dies on AttributeError (observed on a Gemma fine-tune).
-            if not value:
-                return ""
-            # A single-element list is the common "path": ["a.py"] slip. Longer
-            # lists are genuinely ambiguous, so join on comma only for scalars.
-            flat = [v for v in value if isinstance(v, (str, int, float, bool))]
-            if len(flat) == 1:
-                return str(flat[0])
-            if len(flat) == len(value):
-                return ",".join(str(v) for v in flat)
-            return value
-        if isinstance(value, (int, float, bool)):
-            return str(value)
-        if value is None:
-            return ""
-        return value
-    if want in ("integer", "number") and isinstance(value, str):
-        try:
-            return int(value) if want == "integer" else float(value)
-        except ValueError:
-            return value
-    if want == "boolean" and isinstance(value, str):
-        low = value.strip().lower()
-        if low in ("true", "false"):
-            return low == "true"
-    if want == "array" and isinstance(value, (str, int, float, bool)):
-        return [value]
-    return value
-
-
-def _coerce_call_args(name: str, args: dict, props_by_tool: dict[str, dict]) -> dict:
-    """Coerce a parsed call's arguments toward the tool's declared types."""
-    props = props_by_tool.get(name)
-    if not props or not isinstance(args, dict):
-        return args
-    fixed = {}
-    for key, value in args.items():
-        spec = props.get(key)
-        new = _coerce_arg(value, spec) if isinstance(spec, dict) else value
-        if new is not value and type(new) is not type(value):
-            log.info(
-                "Coerced %s.%s from %s to %s (local models emit loose types).",
-                name,
-                key,
-                type(value).__name__,
-                type(new).__name__,
-            )
-        fixed[key] = new
-    return fixed
-
-
 class _CallAccumulator:
-    """Reassembles streamed ``tool_calls`` deltas into complete calls.
-
-    Arguments arrive as JSON string fragments across many deltas, and the index
-    field is what ties fragments to their call when several stream in parallel.
-    """
+    """Reassemble indexed calls, retaining errors until usage has arrived."""
 
     def __init__(self) -> None:
         self._by_index: dict[int, dict] = {}
+        self.error: str | None = None
+        self.seen = False
+
+    @property
+    def names(self) -> list[str]:
+        return [c["name"] for c in self._by_index.values()] or (
+            ["unknown tool"] if self.seen else []
+        )
+
+    @property
+    def argument_chars(self) -> int:
+        return sum(len(c["args"]) for c in self._by_index.values())
 
     def feed(self, deltas: list[dict]) -> None:
-        for d in deltas or []:
-            if not isinstance(d, dict):
+        self.seen = True
+        if not isinstance(deltas, list):
+            self.error = "Tool call deltas must be a list."
+            return
+        for d in deltas:
+            if not isinstance(d, dict) or type(d.get("index")) is not int or d["index"] < 0:
+                self.error = "Tool call has a missing or invalid index."
                 continue
-            idx = d.get("index", 0) or 0
-            slot = self._by_index.setdefault(idx, {"id": None, "name": None, "args": ""})
-            if d.get("id"):
-                slot["id"] = d["id"]
-            fn = d.get("function") or {}
-            if fn.get("name"):
-                slot["name"] = fn["name"]
-            if fn.get("arguments"):
-                slot["args"] += fn["arguments"]
+            idx = d["index"]
+            fn = d.get("function")
+            if not isinstance(fn, dict):
+                self.error = "Tool call is missing its function."
+                continue
+            slot = self._by_index.get(idx)
+            if slot is None:
+                name = fn.get("name")
+                if not isinstance(name, str) or not name.strip():
+                    self.error = "Orphan tool arguments: no named call was started."
+                    continue
+                slot = {"id": None, "name": name, "args": ""}
+                self._by_index[idx] = slot
+            if "id" in d and d["id"] is not None:
+                if not isinstance(d["id"], str) or not d["id"].strip():
+                    self.error = "Tool call has an invalid id."
+                elif slot["id"] not in (None, d["id"]):
+                    self.error = "Conflicting tool call ids."
+                else:
+                    slot["id"] = d["id"]
+            if "name" in fn and fn["name"] not in (None, slot["name"]):
+                self.error = "Conflicting tool call names."
+            if "arguments" in fn:
+                if not isinstance(fn["arguments"], str):
+                    self.error = "Tool arguments must be a JSON string."
+                else:
+                    slot["args"] += fn["arguments"]
 
     def finish(self) -> list[dict]:
-        """``[{id, name, input}]`` in stream order, skipping nameless slots."""
-        calls = []
-        for idx in sorted(self._by_index):
-            slot = self._by_index[idx]
-            if not slot["name"]:
-                continue
-            raw = (slot["args"] or "").strip()
-            try:
-                args = json.loads(raw) if raw else {}
-            except json.JSONDecodeError:
-                log.warning(
-                    "llama-server tool %r had unparseable arguments %r — passing {}.",
-                    slot["name"],
-                    raw[:200],
-                )
-                args = {}
-            calls.append(
-                {
-                    # A server that sends no id gets a unique one: ids key
-                    # the stored edits (server/workspace/edits.py), so a
-                    # per-round index would repeat across turns.
-                    "id": slot["id"] or f"call_{uuid.uuid4().hex[:24]}",
-                    "name": slot["name"],
-                    "input": args if isinstance(args, dict) else {},
-                }
-            )
+        """Return complete objects only, refusing the whole invalid round."""
+        from server.tool_inputs import ToolInputError, parse_tool_arguments, validate_call_ids
+
+        if self.error:
+            raise ToolInputError(self.error)
+        calls = [
+            {
+                # Some local servers omit ids; keep the unique-id fallback.
+                "id": slot["id"] or f"call_{uuid.uuid4().hex[:24]}",
+                "name": slot["name"],
+                "input": parse_tool_arguments(slot["args"], slot["name"]),
+            }
+            for _, slot in sorted(self._by_index.items())
+        ]
+        validate_call_ids(calls)
         return calls
 
 
@@ -327,10 +260,9 @@ async def _stream_round(base_url: str, payload: dict):
         async with client.stream(
             "POST",
             f"{base_url}/v1/chat/completions",
-            # include_usage is what makes llama-server append a final chunk
-            # carrying prompt/completion token counts. WITHOUT it the stream ends
-            # with only a `timings` object, and output falls back to the chars/4
-            # estimate (see the fallback documented at the top of this module).
+            # include_usage is what makes the server append a final chunk
+            # carrying prompt/completion token counts; without it the stream
+            # ends with only a `timings` object and no counts.
             json={**payload, "stream": True, "stream_options": {"include_usage": True}},
         ) as resp:
             if resp.status_code != 200:
@@ -345,8 +277,12 @@ async def _stream_round(base_url: str, payload: dict):
                     break
                 try:
                     obj = json.loads(data)
-                except json.JSONDecodeError:
-                    continue
+                except json.JSONDecodeError as e:
+                    # A dropped line can hold text or a tool-call delta, so the
+                    # round fails instead of going on with a hole in it.
+                    raise RuntimeError(
+                        f"model server sent a stream line that is not JSON: {data[:200]!r}"
+                    ) from e
                 if obj.get("error"):
                     raise RuntimeError(f"model server error: {str(obj['error'])[:400]}")
                 # The usage chunk arrives last and carries an EMPTY choices list,
@@ -370,11 +306,34 @@ async def _stream_round(base_url: str, payload: dict):
     if not completed and finish_reason is None:
         # Both engines end a successful stream with a finish_reason chunk and
         # then [DONE]. mlx_lm's HTTP/1.0 body is close-delimited, so a
-        # mid-generation death (e.g. Metal OOM) reads as a CLEAN EOF here —
+        # mid-generation death (e.g. Metal OOM) reads as a CLEAN EOF here,
         # without this guard a truncated answer would commit as a complete
         # round. (llama-server streams chunked HTTP/1.1, where an abrupt close
         # already raises inside aiter_lines.)
         raise RuntimeError(
             "model server closed the stream mid-generation (no finish_reason/[DONE])"
         )
-    yield ("done", {"calls": acc.finish(), "finish_reason": finish_reason, "usage": usage})
+    from server.tool_inputs import ToolInputError
+
+    calls = []
+    error = None
+    if acc.seen and finish_reason != "tool_calls":
+        error = f"Tool argument round did not finish normally ({finish_reason or 'missing finish reason'})."
+    if error is None:
+        try:
+            calls = acc.finish()
+        except ToolInputError as exc:
+            error = str(exc)
+    if error is None and finish_reason == "tool_calls" and not calls:
+        error = "The model reported tool calls without a complete call payload."
+    yield (
+        "done",
+        {
+            "calls": calls,
+            "finish_reason": finish_reason,
+            "usage": usage,
+            "argument_error": error,
+            "call_names": acc.names,
+            "argument_chars": acc.argument_chars,
+        },
+    )

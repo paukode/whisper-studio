@@ -1,13 +1,6 @@
-"""Unit tests for server/chat/compaction.py pure helpers extracted during
-the chat package split: estimate_message_size, microcompact_messages, and
-_compact_messages_simple. The async compact_messages_with_claude path is not
-covered here (it requires a live Bedrock client); these cover the
-deterministic local-only logic the chat loop relies on for sizing and
-microcompaction.
-"""
+"""Pure compaction helpers: sizing, pruning and tool-pair boundaries."""
 
 from server.chat.compaction import (
-    _compact_messages_simple,
     _is_clean_user_start,
     _safe_recent_split,
     ensure_valid_start,
@@ -62,19 +55,6 @@ def test_safe_recent_split_never_starts_on_tool_result():
     assert _is_clean_user_start(msgs[split]) or split == 0
 
 
-def test_compact_simple_never_starts_on_tool_result():
-    # Build an over-long tool-heavy history and confirm the simple fallback
-    # never returns a list whose head is an orphaned tool_result.
-    msgs = []
-    for i in range(10):
-        msgs.append({"role": "user", "content": "q" * 3000})
-        msgs.append(_tool_use_msg(f"t{i}"))
-        msgs.append(_tool_result_msg(f"t{i}"))
-    out = _compact_messages_simple(msgs, "model")
-    assert out, "should not be empty"
-    assert _is_clean_user_start(out[0])
-
-
 def test_estimate_size_string_content():
     # len("hello") + 20 per-message overhead.
     assert estimate_message_size([{"role": "user", "content": "hello"}]) == 25
@@ -125,22 +105,6 @@ def test_microcompact_leaves_assistant_messages_intact():
     out = microcompact_messages(msgs, keep_recent=6)
     # The assistant message (non-user) is never rewritten by microcompact.
     assert out[0] == msgs[0]
-
-
-def test_compact_simple_noop_under_four():
-    msgs = [{"role": "user", "content": "a"}, {"role": "assistant", "content": "b"}]
-    assert _compact_messages_simple(msgs, "model-x") == msgs
-
-
-def test_compact_simple_truncates_old_long_string():
-    old = {"role": "user", "content": "Q" * 5000}
-    recent = [{"role": "user", "content": f"r{i}"} for i in range(8)]
-    out = _compact_messages_simple([old] + recent, "model-x")
-    assert len(out) == 9
-    # Oldest long content was trimmed; recents preserved.
-    assert out[0]["content"].endswith("... (trimmed)")
-    assert len(out[0]["content"]) < 5000
-    assert out[-8:] == recent
 
 
 def test_sanitize_passes_well_formed_history_unchanged():

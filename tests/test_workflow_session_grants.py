@@ -18,7 +18,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-NODE = shutil.which("node") or "/usr/local/bin/node"
+NODE = shutil.which("node") or ""
 HARNESS_OK = os.path.exists(NODE) and os.path.exists(
     os.path.join(
         os.path.dirname(os.path.dirname(__file__)), "server", "workflows", "harness", "harness.mjs"
@@ -93,12 +93,19 @@ def test_grant_is_per_session_and_droppable():
 
 
 def test_session_delete_drops_grants(tmp_path):
-    from server.infrastructure import sessions
+    # The fixture repoints DB_PATH after import, so the schema _ensure_db built
+    # at import time lives elsewhere: build it (and the tables the delete
+    # cascades into) at the patched path first.
+    import sqlite3
+
+    from server import attachment_store
+    from server.infrastructure import grounding_store, sessions
     from server.workflows.launch_policy import grant_session, is_session_granted
 
-    # The fixture repoints DB_PATH after import, so the schema _ensure_db built
-    # at import time lives elsewhere — build it at the patched path first.
     sessions._ensure_db()
+    with sqlite3.connect(sessions.DB_PATH) as conn:
+        conn.executescript(attachment_store._TABLE_DDL)
+        conn.executescript(grounding_store._TABLE_DDL)
     grant_session("doomed", "h1")
     sessions._delete_session_sync("doomed")
     assert not is_session_granted("doomed", "h1")

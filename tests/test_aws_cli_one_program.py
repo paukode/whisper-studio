@@ -16,7 +16,6 @@ readonly, also when the workspace contains ~/.aws.
 
 import json
 import os
-import platform
 import shlex
 import shutil
 import subprocess
@@ -28,11 +27,6 @@ from server import sandbox
 from server.executors import code
 
 HOME = os.path.expanduser("~")
-
-needs_sandbox_exec = pytest.mark.skipif(
-    platform.system() != "Darwin" or shutil.which("sandbox-exec") is None,
-    reason="needs macOS sandbox-exec",
-)
 
 
 # ── one program: the argv ─────────────────────────────────────────────────
@@ -174,24 +168,6 @@ def test_open_mode_keeps_aws_read_only_and_readonly_mode_writes_no_cache(tmp_pat
     assert cache not in readonly
 
 
-def test_bwrap_binds_aws_read_only_inside_the_tree_and_its_cache_read_write(tmp_path):
-    home = tmp_path / "home"
-    cache = home / ".aws" / "cli" / "cache"
-    cache.mkdir(parents=True)
-    aws = str(home / ".aws")
-    argv = sandbox._bwrap_argv(
-        "ls", str(home), [aws], "workspace", write_paths=[str(cache)], write_root=str(home)
-    )
-    head = argv[: argv.index("--chdir")]
-    pairs = [(head[i], head[i + 1]) for i in range(len(head) - 1)]
-    tree = pairs.index(("--bind", str(home)))
-    ro = pairs.index(("--ro-bind", aws))
-    rw = pairs.index(("--bind", str(cache)))
-    assert tree < ro < rw
-    readonly = sandbox._bwrap_argv("ls", str(home), [aws], "readonly", write_paths=[str(cache)])
-    assert str(cache) not in readonly
-
-
 def test_the_cli_cache_is_created_only_when_aws_exists(tmp_path, monkeypatch):
     aws = tmp_path / ".aws"
     monkeypatch.setattr(code, "_AWS_DIR", str(aws))
@@ -226,7 +202,6 @@ def test_both_aws_tools_run_with_aws_read_only_and_the_caches_writable(monkeypat
 # ── the kernel agrees ─────────────────────────────────────────────────────
 
 
-@needs_sandbox_exec
 def test_sh_runs_only_aws_and_expands_nothing(monkeypatch, tmp_path):
     """A stand-in aws prints its arguments: they arrive as written, and the
     shell neither expands $HOME nor globs *."""
@@ -242,7 +217,6 @@ def test_sh_runs_only_aws_and_expands_nothing(monkeypatch, tmp_path):
     assert output.splitlines() == ["s3", "ls", "$HOME", "*", "a b", "c;d"]
 
 
-@needs_sandbox_exec
 def test_a_confined_run_reads_aws_and_writes_only_its_cache():
     """Under the home folder, as the workspace, so the tree allow covers the
     fake ~/.aws: the credential rules still win."""

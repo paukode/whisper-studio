@@ -78,3 +78,29 @@ def test_unreadable_file_is_skipped_not_fatal(tmp_path, monkeypatch):
 
     monkeypatch.setattr("builtins.open", boom)
     assert get_whisper_md_context(ws) == ""
+
+
+def test_an_unreadable_whisper_md_is_an_error_not_empty_content(tmp_path, monkeypatch):
+    """A read failure must not answer 200 with empty content: the editor would
+    show a blank file and its Save would overwrite the real instructions."""
+    import asyncio
+    import builtins
+    import json as _json
+
+    from server import skills_routes
+
+    ws = str(tmp_path)
+    path = project_profile_path(ws)
+    _write(path, "keep me")
+    monkeypatch.setattr("server.workspace.get_workspace_path", lambda: ws)
+    real_open = builtins.open
+
+    def refuse(p, *a, **kw):
+        if p == path:
+            raise PermissionError(13, "Permission denied")
+        return real_open(p, *a, **kw)
+
+    monkeypatch.setattr(builtins, "open", refuse)
+    resp = asyncio.run(skills_routes.get_whisper_md())
+    assert resp.status_code == 500
+    assert "Permission denied" in _json.loads(resp.body)["error"]

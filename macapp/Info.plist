@@ -28,10 +28,6 @@
 	<string>public.app-category.productivity</string>
 	<key>LSMultipleInstancesProhibited</key>
 	<true/>
-	<key>LSArchitecturePriority</key>
-	<array>
-		<string>arm64</string>
-	</array>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSAudioCaptureUsageDescription</key>

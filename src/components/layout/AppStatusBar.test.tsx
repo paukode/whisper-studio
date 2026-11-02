@@ -16,10 +16,11 @@ const h = vi.hoisted(() => ({
     ahead: number;
     behind: number;
   },
+  gitError: null as null | string,
 }));
 
 vi.mock('@/hooks/useGitStatusBar', () => ({
-  useGitStatusBar: () => h.git,
+  useGitStatusBar: () => ({ status: h.git, error: h.gitError }),
 }));
 
 import { AppStatusBar } from './AppStatusBar';
@@ -46,6 +47,7 @@ function primeActiveSession() {
 describe('AppStatusBar', () => {
   beforeEach(() => {
     h.git = null;
+    h.gitError = null;
     useSettingsStore.setState({
       selectedModel: 'opus4.8',
       models: [{ key: 'opus4.8', name: 'Claude Opus 4.8' }],
@@ -101,5 +103,14 @@ describe('AppStatusBar', () => {
     primeActiveSession();
     const { container } = render(<AppStatusBar />, { wrapper });
     expect(container.querySelector('.asb-git')).toBeNull();
+  });
+
+  it('shows a failed git status with git\'s message, not a hidden segment', () => {
+    h.gitError = 'git status failed: fatal: index file corrupt';
+    primeActiveSession();
+    const { container, getByText } = render(<AppStatusBar />, { wrapper });
+    expect(getByText('git status failed')).toBeTruthy();
+    const seg = container.querySelector('.asb-git-error');
+    expect(seg?.getAttribute('title')).toBe('git status failed: fatal: index file corrupt');
   });
 });

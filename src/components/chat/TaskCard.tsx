@@ -6,7 +6,7 @@ import { useDockStore } from '@/stores/dockStore';
 
 /**
  * TaskCard — a compact, clickable "Tasks N/M" row in the conversation that
- * opens the standalone Tasks drawer (the full plan lives there).
+ * opens the Tasks panel (the full plan lives there).
  *
  * Rendering is driven by the conversation, not by each message in isolation:
  * `computeTaskCheckpoints` walks the message list and emits a row only when the

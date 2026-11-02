@@ -53,26 +53,13 @@ def _seed_local_registry(monkeypatch):
 # ── registry ─────────────────────────────────────────────────────────────────
 
 
-def test_registry_is_empty_when_nothing_installed_or_downloaded(monkeypatch):
-    """The app ships no local models: a fresh catalog with no config entries and
-    nothing on disk is empty until the user downloads a recommendation."""
+def test_registry_is_empty_without_config_entries(monkeypatch):
+    """The app ships no local models, and a recommended model's weights on
+    disk with no config entry (left by a release before 2026-08-06) do not
+    bring it back: only chat_models entries count."""
     monkeypatch.setattr(R, "_config_local_models", lambda: {})
-    monkeypatch.setattr(R, "_recommended_downloaded_on_disk", lambda entry: False)
+    monkeypatch.setattr(R, "_recommended_downloaded_on_disk", lambda entry: True)
     assert R.local_models() == {}
-
-
-def test_registry_surfaces_a_downloaded_recommendation(monkeypatch):
-    """A recommended model appears once its weights are on disk, even with no
-    config entry (e.g. downloaded by a prior release) — so it is never orphaned."""
-    monkeypatch.setattr(R, "_config_local_models", lambda: {})
-    monkeypatch.setattr(
-        R,
-        "_recommended_downloaded_on_disk",
-        lambda entry: entry.get("id") == "local:gemma-4-12b-it-qat-q4_0",
-    )
-    models = R.local_models()
-    assert set(models) == {"local_gemma"}
-    assert models["local_gemma"]["id"] == "local:gemma-4-12b-it-qat-q4_0"
 
 
 def test_registry_adds_a_config_only_model(monkeypatch):
@@ -121,14 +108,9 @@ def test_registry_drops_half_declared_model(monkeypatch):
     assert "local_broken" not in R.local_models()
 
 
-def test_config_overrides_downloaded_recommendation_field(monkeypatch):
-    """A config entry can retune one field of a downloaded recommendation without
-    restating its repo — the recommended definition fills the untouched fields."""
-    monkeypatch.setattr(
-        R,
-        "_recommended_downloaded_on_disk",
-        lambda entry: entry.get("id") == "local:gemma-4-12b-it-qat-q4_0",
-    )
+def test_config_overrides_one_field_of_a_recommendation(monkeypatch):
+    """A config entry can retune one field of a recommended model without
+    restating its repo: the recommended definition fills the untouched fields."""
     monkeypatch.setattr(R, "_config_local_models", lambda: {"local_gemma": {"ctx": 65536}})
     entry = R.local_models()["local_gemma"]
     assert entry["ctx"] == 65536
@@ -158,14 +140,14 @@ def test_runtime_view_is_live(monkeypatch):
 
 
 def test_registry_reads_id_from_chat_models_not_meta(monkeypatch):
-    """Regression: ids live in the parallel chat_models map. Reading them from
-    chat_model_meta yields None and invents "local:<key>", which then overwrites
-    a built-in's real sentinel and breaks key_for_id()."""
-    cfg = {
-        "chat_models": {"local_gemma": "local:gemma-4-12b-it-qat-q4_0"},
-        "chat_model_meta": {"local_gemma": {"is_local": True, "label": "G"}},
-    }
-    monkeypatch.setattr("server.infrastructure.config.load_config", lambda *a, **k: cfg)
+    """Regression: ids live in the parallel ``ids`` map of
+    unfiltered_chat_models. Reading them from the meta map yields None and
+    invents "local:<key>", which then overwrites a recommended model's real
+    id and breaks key_for_id()."""
+    monkeypatch.undo()  # the autouse fixture stubs _config_local_models itself
+    ids = {"local_gemma": "local:gemma-4-12b-it-qat-q4_0"}
+    meta = {"local_gemma": {"is_local": True, "label": "G"}}
+    monkeypatch.setattr("server.infrastructure.config.unfiltered_chat_models", lambda: (ids, meta))
     assert R._config_local_models()["local_gemma"]["id"] == "local:gemma-4-12b-it-qat-q4_0"
 
 
@@ -187,11 +169,12 @@ def test_ensure_available_explains_missing_binary(monkeypatch):
     assert "setup.sh" in str(e.value)
 
 
-def test_ensure_available_accepts_unknown_build(monkeypatch):
-    """An unparseable version must not block startup."""
+def test_ensure_available_refuses_an_unknown_build(monkeypatch):
+    """An unreadable build used to count as "probably fine"."""
     monkeypatch.setattr(LS, "binary_path", lambda: "/usr/bin/llama-server")
     monkeypatch.setattr(LS, "installed_build", lambda: None)
-    assert LS.ensure_available() == "/usr/bin/llama-server"
+    with pytest.raises(LS.LlamaServerUnavailable, match="Could not read the build"):
+        LS.ensure_available()
 
 
 # ── one pinned build for the Mac app and setup.sh ────────────────────────────
@@ -279,7 +262,7 @@ def test_the_gate_reads_the_build_never_a_semantic_version(tmp_path, monkeypatch
     exe = _stand_in_llama_server(tmp_path, output)
     monkeypatch.setenv("WHISPER_LLAMA_SERVER_PATH", exe)
     assert LS.installed_build() == build
-    if build is None or build >= LS.MIN_BUILD:
+    if build is not None and build >= LS.MIN_BUILD:
         assert LS.ensure_available() == exe
     else:
         with pytest.raises(LS.LlamaServerUnavailable):
@@ -327,93 +310,92 @@ def test_call_accumulator_keeps_parallel_calls_separate():
     assert [c["input"]["path"] for c in calls] == ["x", "y"]
 
 
-def test_call_accumulator_survives_bad_json():
+@pytest.mark.parametrize("raw", ["{not json", "", "[]", "null", '{"x":1,"x":2}', '{"x":NaN}'])
+def test_call_accumulator_rejects_invalid_arguments(raw):
+    from server.tool_inputs import ToolInputError
+
     acc = SS._CallAccumulator()
-    acc.feed([{"index": 0, "id": "a", "function": {"name": "t", "arguments": "{not json"}}])
-    assert acc.finish() == [{"id": "a", "name": "t", "input": {}}]
+    acc.feed([{"index": 0, "id": "a", "function": {"name": "t", "arguments": raw}}])
+    with pytest.raises(ToolInputError):
+        acc.finish()
 
 
 def test_call_accumulator_gives_a_call_with_no_id_a_unique_one():
-    """Ids key the stored edits (server/workspace/edits.py), so the fallback
-    for a server that sends none must not repeat across turns the way a
-    per-round index would."""
+    """Generated ids stay unique across turns; explicit empty objects are valid."""
     ids = []
     for _ in range(2):
         acc = SS._CallAccumulator()
         acc.feed([{"index": 0, "function": {"name": "t", "arguments": "{}"}}])
         (call,) = acc.finish()
+        assert call["input"] == {}
         ids.append(call["id"])
     assert ids[0] != ids[1]
     assert all(i.startswith("call_") for i in ids)
 
 
-# ── SSE normalization ────────────────────────────────────────────────────────
+# Strict parsing preserves values; schema validation belongs to execution.
+_STUB_SCHEMAS = {
+    "t": {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string"},
+            "limit": {"type": "integer"},
+            "deep": {"type": "boolean"},
+            "globs": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["path", "limit", "deep", "globs"],
+        "additionalProperties": False,
+    }
+}
+_VALID_ARGS = {"path": "server", "limit": 20, "deep": True, "globs": ["*.py"]}
 
 
-def test_coerces_loose_argument_types_against_the_schema():
-    """Regression: the Coder emitted "path": ["dir"] for a string parameter and
-    _exec_ws_list_dir died on .strip(). Bedrock validates against the schema
-    first; llama-server hands through whatever the model produced."""
-    schemas = [
-        {
-            "function": {
-                "name": "ws_list_directory",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "path": {"type": "string"},
-                        "limit": {"type": "integer"},
-                        "deep": {"type": "boolean"},
-                        "globs": {"type": "array"},
-                    },
-                },
-            }
-        }
-    ]
-    props = SS._schema_props(schemas)
-    got = SS._coerce_call_args(
-        "ws_list_directory",
-        {"path": ["server"], "limit": "20", "deep": "true", "globs": "*.py"},
-        props,
-    )
-    assert got == {"path": "server", "limit": 20, "deep": True, "globs": ["*.py"]}
+def _accumulated_input(args):
+    acc = SS._CallAccumulator()
+    acc.feed([{"index": 0, "id": "a", "function": {"name": "t", "arguments": json.dumps(args)}}])
+    return acc.finish()[0]["input"]
 
 
-def test_empty_and_null_string_args_become_empty_string():
-    """Regression: the Coder emitted "path": [] for a string parameter, which
-    reached _exec_ws_list_dir's .strip() and killed the call. It must become ""
-    so the executor's own default applies."""
-    schemas = [
-        {
-            "function": {
-                "name": "ws_list_directory",
-                "parameters": {"type": "object", "properties": {"path": {"type": "string"}}},
-            }
-        }
-    ]
-    props = SS._schema_props(schemas)
-    assert SS._coerce_call_args("ws_list_directory", {"path": []}, props) == {"path": ""}
-    assert SS._coerce_call_args("ws_list_directory", {"path": None}, props) == {"path": ""}
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"path": ["server"]},
+        {"path": []},
+        {"path": None},
+        {"path": {"a": 1}},
+        {"limit": "20"},
+        {"deep": "true"},
+        {"globs": "*.py"},
+    ],
+)
+def test_parser_preserves_schema_invalid_values_for_boundary_rejection(changes):
+    from server.tool_inputs import ToolInputError, validate_tool_input
+
+    args = {**_VALID_ARGS, **changes}
+    parsed = _accumulated_input(args)
+    assert parsed == args
+    with pytest.raises(ToolInputError, match="type constraint"):
+        validate_tool_input("t", parsed, _STUB_SCHEMAS)
+    assert parsed == args
 
 
-def test_coercion_leaves_correct_and_ambiguous_values_alone():
-    schemas = [
-        {
-            "function": {
-                "name": "t",
-                "parameters": {"type": "object", "properties": {"path": {"type": "string"}}},
-            }
-        }
-    ]
-    props = SS._schema_props(schemas)
-    # Already correct.
-    assert SS._coerce_call_args("t", {"path": "a.py"}, props) == {"path": "a.py"}
-    # Nested object into a string is ambiguous — pass through so the executor
-    # can reject it with a clear validation error instead of us inventing a value.
-    nested = {"path": {"a": 1}}
-    assert SS._coerce_call_args("t", nested, props) == nested
-    # Unknown tool / unknown param: untouched.
-    assert SS._coerce_call_args("other", {"path": ["x"]}, props) == {"path": ["x"]}
+@pytest.mark.parametrize("path", ["a.py", ""])
+def test_parser_and_validation_preserve_correct_values(path):
+    from server.tool_inputs import validate_tool_input
+
+    args = {**_VALID_ARGS, "path": path}
+    parsed = _accumulated_input(args)
+    validate_tool_input("t", parsed, _STUB_SCHEMAS)
+    assert parsed == args
+
+
+def test_validation_refuses_unknown_tools_and_undeclared_arguments():
+    from server.tool_inputs import ToolInputError, validate_tool_input
+
+    with pytest.raises(ToolInputError, match="Unknown tool"):
+        validate_tool_input("other", _accumulated_input(_VALID_ARGS), _STUB_SCHEMAS)
+    with pytest.raises(ToolInputError, match="additionalProperties"):
+        validate_tool_input("t", _accumulated_input({**_VALID_ARGS, "extra": "x"}), _STUB_SCHEMAS)
 
 
 def _fake_httpx(monkeypatch, lines: list[str], captured: dict) -> None:

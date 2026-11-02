@@ -1,14 +1,10 @@
-"""Guardrail: the workspace and chat packages must keep re-exporting the
-public (and a few private-but-imported) names their callers rely on.
+"""Guardrail: the workspace and chat packages keep the names their callers
+import off the package itself.
 
-When server/workspace.py and server/chat.py were split into packages, their
-behaviour-preserving contract was "every symbol external code imports off
-`server.workspace` / `server.chat` still resolves." A future edit that moves
-or renames a symbol but forgets to update the package __init__ re-export
-would break importers at runtime — this test catches that at CI time.
-
-The lists below mirror the actual import sites across the codebase (chat,
-skills, lsp, git, memory, search, agents, approval/bootstrap, main, tests).
+server.workspace re-exports the names other packages read off it. server.chat
+binds only ``router`` and ``executor``; everything else is imported from its
+own submodule. A move or rename that forgets the package would break
+importers at runtime, and this test catches it first.
 """
 
 import importlib
@@ -18,45 +14,25 @@ WORKSPACE_EXPORTS = [
     "router",
     "get_workspace_path",
     "get_workspace_tools",
+    "get_workspace_write_tools",
     "get_global_workspace_tools",
     "get_worktree_tools",
     "execute_ws_open_folder",
     "is_plan_mode",
     "connect_workspace",
-    "load_workspace_config",
-    "save_workspace_config",
-    "load_recent_workspaces",
-    "save_recent_workspace",
-    # private symbols imported by other modules / tests
+    # private symbols other packages read off server.workspace
+    "_validate_command",
     "_ws_validate_path",
+    "_ws_path_allowed",
     "_atomic_write_text",
-    "_check_writable",
+    "_atomic_write_bytes",
     "_normalize_lf",
-    "_apply_stdin_redirect",
-    "_needs_stdin_redirect",
-    "_truncate_shell_output",
-    "WORKSPACE_BACKUPS",
-    "DATA_DIR",
+    "own_scratch_dir",
 ]
 
 CHAT_EXPORTS = [
     "router",
     "executor",
-    "_get_bedrock_client",
-    "_reset_bedrock_client_cache",
-    "_get_chat_models",
-    "_get_chat_model_meta",
-    "_get_default_model",
-    "estimate_message_size",
-    "COMPACT_TRIGGER_CHARS",
-    "MAX_CONTEXT_CHARS",
-    "microcompact_messages",
-    "compact_messages_with_claude",
-    "_compact_messages_simple",
-    "TOOL_RESULT_BUDGET_BYTES",
-    "make_budget_tool_result",
-    "assemble_tool_pool",
-    "_is_tool_concurrent_safe",
 ]
 
 

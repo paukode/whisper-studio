@@ -50,7 +50,7 @@ def test_spawn_agent_detach_returns_task_id_immediately(monkeypatch):
 def test_spawn_agent_detach_cap(monkeypatch):
     from server import agent_tools
 
-    for i in range(agent_tools.DETACHED_PER_SESSION_CAP):
+    for i in range(agent_tools.spawn.DETACHED_PER_SESSION_CAP):
         registry.create_task("agent", session_id="sess-cap", title=f"a{i}")
     out = json.loads(
         asyncio.run(
@@ -117,7 +117,9 @@ def test_run_detached_takes_the_settings_limits(monkeypatch, tmp_path):
 
     async def _fake_run_agent(task, **kwargs):
         captured["config"] = kwargs.get("config")
-        return SimpleNamespace(output="done", status="completed")
+        return SimpleNamespace(
+            output="done", status="completed", stop_reason="completed", turns_used=1
+        )
 
     monkeypatch.setattr("server.agents.runtime.run_agent", _fake_run_agent)
     tid = registry.create_task("agent", session_id="s-lim", title="t")
@@ -145,7 +147,9 @@ def test_run_detached_drains_final_events_into_output_file(monkeypatch, tmp_path
             ch, {"phase": "tool_call", "tool_name": "ws_grep", "tool_input_preview": "q"}
         )
         event_bus.publish(ch, {"phase": "completed", "turns_used": 3})
-        return SimpleNamespace(output="done", status="completed")
+        return SimpleNamespace(
+            output="done", status="completed", stop_reason="completed", turns_used=1
+        )
 
     monkeypatch.setattr("server.agents.runtime.run_agent", _fake_run_agent)
     tid = registry.create_task("agent", session_id="s-drain", title="t")

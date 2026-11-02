@@ -1,7 +1,6 @@
 """Per-project instructions, kept under ``~/.whisper/rules/<project-slug>/``.
 
-The workspace itself carries no instructions file for this app any more. A
-project's ``WHISPER.md`` (its overview and conventions) and its ``rules.md``
+A project's ``WHISPER.md`` (its overview and conventions) and its ``rules.md``
 (rules that apply only there) live next to each other in the user's own
 folder, so nothing is committed into the repo and the assistant can edit them
 without an approval (every write under ``~/.whisper`` is silent). The folder

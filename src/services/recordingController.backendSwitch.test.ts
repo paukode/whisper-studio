@@ -88,7 +88,7 @@ beforeEach(() => {
   (ensureRecordingModels as ReturnType<typeof vi.fn>).mockResolvedValue('ready');
 
   // Fake shell bridge: auto-confirm start / stop.
-  window.__WHISPER_NATIVE_AUDIO = { platform: 'macos', available: true };
+  window.__WHISPER_NATIVE_AUDIO = { available: true };
   window.webkit = {
     messageHandlers: {
       nativeAudio: {

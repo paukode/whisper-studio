@@ -22,6 +22,17 @@ function makeStore(initial: ChatMessage[]) {
 }
 
 describe('foldTeamResultsInto', () => {
+  it('keeps a stopped or turn-limited agent as such, live row or not', () => {
+    const fresh = foldTeamResultsInto(undefined, {
+      team_id: 't9',
+      agents: [{ name: 'a', status: 'stopped' }, { name: 'b', status: 'turn_limit' }],
+    });
+    expect(fresh.t9.agents.a.status).toBe('stopped');
+    expect(fresh.t9.agents.b.status).toBe('turn_limit');
+    const again = foldTeamResultsInto(fresh, { team_id: 't9', agents: [{ name: 'a', status: 'stopped' }] });
+    expect(again.t9.agents.a.status).toBe('stopped');
+  });
+
   it('builds a completed team report from a fresh payload', () => {
     const out = foldTeamResultsInto(undefined, {
       team_id: 't1',

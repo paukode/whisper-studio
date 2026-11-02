@@ -5,7 +5,7 @@ export interface BreadcrumbProps {
 }
 
 /**
- * Breadcrumb path display matching the original #wsEditorBreadcrumb.
+ * Breadcrumb path display (#wsEditorBreadcrumb).
  * Splits path by "/" and highlights the last segment.
  */
 export const Breadcrumb: React.FC<BreadcrumbProps> = ({ path }) => {

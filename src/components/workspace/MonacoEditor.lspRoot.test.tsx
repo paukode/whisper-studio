@@ -5,7 +5,6 @@ const lsp = vi.hoisted(() => ({
   useLsp: vi.fn(() => ({ status: 'off', active: false, failure: null })),
 }));
 vi.mock('@/hooks/useLsp', () => lsp);
-vi.mock('@/hooks/useMonaco', () => ({ useMonaco: () => ({ setEditorTheme: () => {} }) }));
 vi.mock('@/providers/ThemeProvider', () => ({ useTheme: () => ({ resolvedTheme: 'dark' }) }));
 vi.mock('@monaco-editor/react', () => ({ default: () => null }));
 

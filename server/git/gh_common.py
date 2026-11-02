@@ -1,10 +1,10 @@
 """Shared authenticated `gh` runner for the GitHub tools.
 
 `run_gh` is the ONE place a GitHub CLI command executes in the server process
-(the authenticated path — file/keychain gh auth, NOT the ws_run_command sandbox,
+(the authenticated path, file/keychain gh auth, NOT the ws_run_command sandbox,
 which has no GitHub auth). It hardens the environment, forces non-interactive
 mode, scrubs secrets from all output, and refuses to run a mutation unless the
-caller passes `approved=True` — a backstop so no dispatch path can mutate GitHub
+caller passes `approved=True`, a backstop so no dispatch path can mutate GitHub
 outside an approval executor.
 """
 
@@ -20,11 +20,17 @@ from server.git.gh_classify import FORBIDDEN, classify_github
 # means gh switches the method to POST (a mutation).
 _BODY_FLAGS = frozenset({"-f", "--field", "-F", "--raw-field", "--input"})
 _MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+# gh exits with 4 when the command needs authentication it does not have.
+_GH_AUTH_REQUIRED = 4
+_NOT_SIGNED_IN = (
+    "The GitHub CLI is not signed in. Run `gh auth login` in Terminal "
+    "(or set GH_TOKEN for the app), then try again."
+)
 
 
 def gh_env() -> dict:
     """os.environ hardened for a non-interactive, no-pager, no-color gh run.
-    Auth stays file/keychain-based — no token is injected here."""
+    Auth stays file/keychain-based, no token is injected here."""
     env = os.environ.copy()
     env["GH_PROMPT_DISABLED"] = "1"
     env["GH_NO_UPDATE_NOTIFIER"] = "1"
@@ -65,16 +71,16 @@ def run_gh(
 
     Returns (returncode, scrubbed_combined_output). returncode is -1 when gh is
     missing or the subprocess could not start. Raises RuntimeError if asked to
-    run a mutation without approved=True (a programming error — mutations must
+    run a mutation without approved=True (a programming error, mutations must
     come from the approval executor)."""
-    # FORBIDDEN governance actions never run — not even with approved=True.
+    # FORBIDDEN governance actions never run, not even with approved=True.
     if args and args[0] != "api" and classify_github(args).kind == FORBIDDEN:
         raise RuntimeError(
             "run_gh refused a forbidden GitHub governance action (repo delete/transfer/visibility)."
         )
     if _looks_like_mutation(args) and not approved:
         raise RuntimeError(
-            "run_gh refused a GitHub mutation without approval — mutations must "
+            "run_gh refused a GitHub mutation without approval, mutations must "
             "route through the approval executor path."
         )
     try:
@@ -94,6 +100,9 @@ def run_gh(
         )
     except subprocess.TimeoutExpired:
         return -1, f"gh command timed out after {timeout}s."
-    except Exception as e:  # noqa: BLE001 — surface any spawn failure
+    except Exception as e:  # noqa: BLE001 (surface any spawn failure)
         return -1, f"gh command failed to run: {e}"
-    return result.returncode, scrub_secrets((result.stdout + result.stderr).strip())
+    output = scrub_secrets((result.stdout + result.stderr).strip())
+    if result.returncode == _GH_AUTH_REQUIRED:
+        return result.returncode, f"{_NOT_SIGNED_IN}\n\n{output}".strip()
+    return result.returncode, output

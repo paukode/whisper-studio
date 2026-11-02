@@ -129,9 +129,9 @@ def test_bedrock_client_uses_adaptive_retries(monkeypatch):
 
     # Patched where the cache helper builds clients (server/infrastructure/aws_clients.py).
     monkeypatch.setattr(boto3.session.Session, "client", _fake_client)
-    infra._reset_bedrock_client_cache()
+    infra._BEDROCK_CLIENTS.clear()
     infra._get_bedrock_client()
-    infra._reset_bedrock_client_cache()
+    infra._BEDROCK_CLIENTS.clear()
 
     cfg = captured["config"]
     assert cfg.retries["mode"] == "adaptive"

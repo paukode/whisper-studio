@@ -74,17 +74,17 @@ def _isolate_user_root(tmp_path_factory, monkeypatch):
 def _isolate_user_config(tmp_path_factory, monkeypatch):
     """Give every test its own config user layer.
 
-    config.USER_CONFIG_PATH and CONFIG_PATH are computed at import, during
+    config.USER_CONFIG_PATH and LEGACY_CONFIG_PATH are computed at import, during
     collection, before _isolate_user_root pins WHISPER_USER_DIR, so in a dev
     checkout they name the developer's live config.user.json and config.json
     at the repo root. A test that saves the user layer (a Settings write, the
-    retired-key sweep, a model install) would rewrite that file. A test that
+    first-run seed, a model install) would rewrite that file. A test that
     patches the same names itself still wins."""
     import server.infrastructure.config as config
 
     user = tmp_path_factory.mktemp("user-config")
     monkeypatch.setattr(config, "USER_CONFIG_PATH", str(user / "config.user.json"))
-    monkeypatch.setattr(config, "CONFIG_PATH", str(user / "config.json"))
+    monkeypatch.setattr(config, "LEGACY_CONFIG_PATH", str(user / "config.json"))
     config._invalidate_cache()
     yield
     config._invalidate_cache()
@@ -135,8 +135,6 @@ def _isolate_app_databases(tmp_path_factory, monkeypatch, _db_template):
 _WS_STATE_MODULES = (
     "server.workspace.paths",
     "server.workspace.state",
-    "server.workspace.routes.recent",
-    "server.workspace",
 )
 
 _WS_STATE_FILES = {
@@ -174,6 +172,22 @@ def _isolate_workspace_state(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_worktree_sessions(tmp_path_factory, monkeypatch):
+    """Keep the agent worktree registry off the real ~/.whisper_cache.
+
+    server/git/worktree_session.py rewrites its persist file on every
+    set_session, and the harvest tests enter and leave agent worktrees, so the
+    suite used to append hundreds of tmp-path rows to the user's real file.
+    """
+    from server.git import worktree_session
+
+    cache = tmp_path_factory.mktemp("worktree-sessions")
+    monkeypatch.setattr(worktree_session, "_PERSIST_DIR", str(cache))
+    monkeypatch.setattr(worktree_session, "_PERSIST_FILE", str(cache / "worktree-sessions.json"))
+    monkeypatch.setattr(worktree_session, "_SESSIONS", {})
+
+
+@pytest.fixture(autouse=True)
 def _drop_cached_bedrock_clients():
     """server.chat.infra caches one boto3 bedrock-runtime client per region for
     the whole process. A test whose code path reaches _get_bedrock_client()
@@ -187,13 +201,16 @@ def _drop_cached_bedrock_clients():
     yield
     infra = sys.modules.get("server.chat.infra")
     if infra is not None:
-        infra._reset_bedrock_client_cache()
+        with infra._BEDROCK_CLIENT_LOCK:
+            infra._BEDROCK_CLIENTS.clear()
     recall = sys.modules.get("server.memory.recall")
     if recall is not None:
-        recall._reset_recall_client_cache()
+        with recall._RECALL_CLIENT_LOCK:
+            recall._RECALL_CLIENTS.clear()
     labels = sys.modules.get("server.chat.engine.activity_labels")
     if labels is not None:
-        labels._reset_caption_client_cache()
+        with labels._CLIENT_LOCK:
+            labels._CLIENTS.clear()
 
 
 @pytest.fixture(autouse=True)

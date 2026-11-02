@@ -368,6 +368,28 @@ def test_load_permissions_legacy_file_has_no_category_modes_key(tmp_path, monkey
     assert data["category_modes"] == {}
 
 
+def test_a_corrupt_permissions_file_raises_and_is_not_overwritten(tmp_path, monkeypatch):
+    """A corrupt file must not read as the defaults (no rules, permissive
+    network tier), and nothing may save the defaults over it."""
+    from server.security.permissions import PermissionsFileError, load_permissions
+
+    path = tmp_path / "permissions.json"
+    path.write_text('{"mode": "default", "rules": [{"tool": "*", "action": "deny"},]}')
+    monkeypatch.setattr("server.security.permissions.PERMISSIONS_PATH", str(path))
+    with pytest.raises(PermissionsFileError):
+        load_permissions()
+    assert "deny" in path.read_text()
+
+
+def test_a_missing_permissions_file_reads_as_the_defaults(tmp_path, monkeypatch):
+    from server.security.permissions import DEFAULTS, load_permissions
+
+    monkeypatch.setattr(
+        "server.security.permissions.PERMISSIONS_PATH", str(tmp_path / "permissions.json")
+    )
+    assert load_permissions() == DEFAULTS
+
+
 # ── HTTP routes: justification + dry-run test endpoint ──────────────────────
 
 

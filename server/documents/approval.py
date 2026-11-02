@@ -45,7 +45,7 @@ def _resolve_destination(payload: dict) -> tuple[str, str]:
         if not ws:
             return "", "No workspace connected"
         full = os.path.join(ws, path)
-        if not workspace._ws_path_allowed(full, ws):
+        if not workspace._ws_path_allowed(full, ws, payload.get("session_id")):
             return "", "Invalid path"
         return full, ""
 
@@ -121,7 +121,15 @@ def register_office_script_approval() -> None:
             summary=_summary,
             executor=_do_office_script,
             risk_hint="medium",
-            payload_fields=["path", "dest_kind", "format", "code", "source_path", "summary"],
+            payload_fields=[
+                "path",
+                "dest_kind",
+                "format",
+                "code",
+                "source_path",
+                "summary",
+                "session_id",
+            ],
             render_command=lambda p: p.get("code") or "",
             # A workspace destination is re-resolved at click time, so a Yes
             # after that workspace went away is refused (see ApprovalSpec).

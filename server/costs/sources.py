@@ -1,11 +1,15 @@
 """Where a billed model call came from: the ``source`` of a cost-log row.
 
 Every writer names one of these, so the Costs tab can split spend by source
-and nothing lands in the log unlabelled. ``unattributed`` exists only for
-rows written before sources were recorded (migration 021).
+and nothing lands in the log unlabelled. One source only labels old rows and
+takes no new ones: ``unattributed`` for rows written before sources were
+recorded (migration 021).
 """
 
 from __future__ import annotations
+
+# Sources that only label rows already in the log; no writer may use them.
+HISTORY_ONLY: frozenset[str] = frozenset({"unattributed"})
 
 SOURCE_LABELS: dict[str, str] = {
     "chat": "Chat",
@@ -19,7 +23,6 @@ SOURCE_LABELS: dict[str, str] = {
     "compaction": "Compaction",
     "title": "Titles",
     "query_rewrite": "Query rewrite",
-    "btw": "Side questions",
     "classifier": "Auto-mode classifier",
     "explainer": "Permission explainer",
     "evaluator": "Goal evaluator",
@@ -41,6 +44,6 @@ def source_label(source: str) -> str:
 def require_source(source: str) -> str:
     """The source, validated: an unknown or empty one is a programming error
     that would leave spend unlabelled, so it raises instead of guessing."""
-    if source not in SOURCE_LABELS or source == "unattributed":
+    if source not in SOURCE_LABELS or source in HISTORY_ONLY:
         raise ValueError(f"unknown cost source {source!r}")
     return source

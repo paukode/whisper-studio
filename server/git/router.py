@@ -1,9 +1,9 @@
 """
-Git API router — REST endpoints for frontend direct git access.
+Git API router, REST endpoints for frontend direct git access.
 
 All endpoints require a connected workspace with .git.
 Read-only endpoints have no approval check.
-Sync git functions are called directly — FastAPI runs them in threadpool.
+Sync git functions are called directly, FastAPI runs them in threadpool.
 """
 
 import asyncio
@@ -25,6 +25,7 @@ from server.git.core import (
 )
 from server.git.diff import fetch_git_diff
 from server.git.file_diff import build_file_diff
+from server.git.filesystem import path_inside
 from server.workspace import get_workspace_path
 
 router = APIRouter(prefix="/api/git", tags=["git"])
@@ -46,14 +47,11 @@ _CHANGES_CACHE_MAX = 32
 _CHANGES_TTL_SECONDS = 1.0
 
 
-def invalidate_changes_cache(workspace_path: str | None = None) -> None:
+def invalidate_changes_cache() -> None:
     """Drop cached `/api/git/changes` results. Called after any tool that
     can mutate the workspace (writes, deletes, commits) so the next fetch
     sees the new state immediately."""
-    if workspace_path is None:
-        _CHANGES_CACHE.clear()
-    else:
-        _CHANGES_CACHE.pop(os.path.normpath(workspace_path), None)
+    _CHANGES_CACHE.clear()
 
 
 class RestoreRequest(BaseModel):
@@ -76,11 +74,48 @@ def _require_git_workspace() -> str:
     return ws
 
 
+def _status_or_500(ws: str):
+    """`git status` for the workspace; a failure (corrupt index, "dubious
+    ownership") is an HTTP 500 with git's message, never an empty clean list."""
+    result = _run_git(STATUS_PORCELAIN_ARGS, cwd=ws)
+    if result.returncode != 0:
+        raise HTTPException(status_code=500, detail=f"git status failed: {result.stderr.strip()}")
+    return result
+
+
+def _ahead_behind(ws: str) -> tuple[int, int]:
+    """(behind, ahead) vs the branch's upstream for the bar.
+
+    `rev-parse --verify -q @{upstream}` exits 1 with no output when there is
+    nothing to compare with: no upstream set, a detached HEAD, or an upstream
+    branch that was deleted and pruned. That reads as 0/0 without matching
+    git's (localized) error text. Any other rev-parse exit, or a rev-list
+    failure once the upstream resolved, is an HTTP 500 with git's message.
+    """
+    upstream = _run_git(
+        ["--no-optional-locks", "rev-parse", "--verify", "-q", "@{upstream}"], cwd=ws
+    )
+    if upstream.returncode == 1:
+        return 0, 0
+    if upstream.returncode != 0:
+        raise HTTPException(
+            status_code=500, detail=f"git rev-parse failed: {upstream.stderr.strip()}"
+        )
+    sync = _run_git(
+        ["--no-optional-locks", "rev-list", "--left-right", "--count", "@{upstream}...HEAD"],
+        cwd=ws,
+    )
+    if sync.returncode != 0:
+        raise HTTPException(status_code=500, detail=f"git rev-list failed: {sync.stderr.strip()}")
+    behind, ahead = (int(n) for n in sync.stdout.split())
+    return behind, ahead
+
+
 @router.get("/status")
 def git_status_endpoint():
     """Quick status for UI indicators, includes per-file status."""
     ws = _require_git_workspace()
-    result = _run_git(STATUS_PORCELAIN_ARGS, cwd=ws)
+    result = _status_or_500(ws)
     files = []
     changed = 0
     untracked = 0
@@ -99,19 +134,7 @@ def git_status_endpoint():
                 files.append({"path": filename, "status": "R"})
             else:
                 files.append({"path": filename, "status": "M"})
-    # Sync state vs the branch's upstream: "+ahead -behind". No upstream (or
-    # any git error) reports zeros rather than failing the whole status.
-    ahead = behind = 0
-    try:
-        sync = _run_git(
-            ["--no-optional-locks", "rev-list", "--left-right", "--count", "@{upstream}...HEAD"],
-            cwd=ws,
-        )
-        parts = sync.stdout.strip().split()
-        if len(parts) == 2:
-            behind, ahead = int(parts[0]), int(parts[1])
-    except Exception:
-        pass
+    behind, ahead = _ahead_behind(ws)
     return {
         "branch": get_branch(ws),
         "clean": changed == 0 and untracked == 0,
@@ -125,11 +148,10 @@ def git_status_endpoint():
 
 @router.get("/events")
 async def git_events_endpoint():
-    """Server-Sent Events stream — fires when the git file watcher detects
+    """Server-Sent Events stream, fires when the git file watcher detects
     a change to .git/HEAD, .git/config, or the current branch ref.
 
-    Replaces the frontend's 15s `setInterval` poll. Each `git-changed`
-    event carries the current branch and head SHA so the panel can
+    Each `git-changed` event carries the current branch and head SHA so the panel can
     refetch only when state actually changed.
     """
     from server.git.core import get_cached_branch, get_cached_head
@@ -172,7 +194,7 @@ async def git_events_endpoint():
             while True:
                 try:
                     await asyncio.wait_for(queue.get(), timeout=30.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # Keep-alive comment line. Many proxies drop idle
                     # SSE connections after ~60s.
                     yield ": keep-alive\n\n"
@@ -217,19 +239,19 @@ def git_changes_endpoint():
 
     Returns status and per-file diff stats in one call. The cache absorbs the
     assistant's tool loop running `git status` / `git diff` repeatedly between
-    rounds — cuts subprocess count by ~70% under load."""
+    rounds, cuts subprocess count by ~70% under load."""
     ws = _require_git_workspace()
     key = os.path.normpath(ws)
     now = time.monotonic()
     cached = _CHANGES_CACHE.get(key)
     if cached and now - cached[0] < _CHANGES_TTL_SECONDS:
-        # Refresh LRU position — touching a hot entry keeps it from
+        # Refresh LRU position, touching a hot entry keeps it from
         # being evicted by a sweep through cold worktrees.
         _CHANGES_CACHE.move_to_end(key)
         return cached[1]
 
     # status
-    result = _run_git(STATUS_PORCELAIN_ARGS, cwd=ws)
+    result = _status_or_500(ws)
     files = []
     for code, filename in parse_porcelain_status(result.stdout):
         if code == "??":
@@ -310,22 +332,21 @@ def git_file_diff_endpoint(path: str):
 def git_restore_endpoint(req: RestoreRequest):
     """Undo changes to a single file."""
     ws = _require_git_workspace()
-    full_path = os.path.normpath(os.path.join(ws, req.path))
-    if not full_path.startswith(os.path.normpath(ws)):
+    full_path = path_inside(ws, req.path, follow_leaf=False)
+    if full_path is None:
         raise HTTPException(status_code=400, detail="Invalid path.")
-    # Check if untracked
-    check = _run_git(["ls-files", "--error-unmatch", req.path], cwd=ws)
-    if check.returncode != 0:
-        # Untracked path — could be a file or a directory (e.g. a newly
-        # added folder). ``os.remove`` raises IsADirectoryError on dirs
-        # and the UI would think restore succeeded while the path
-        # remained on disk. Use rmtree for directories.
+    check = _run_git(["ls-files", "--error-unmatch", "--", req.path], cwd=ws)
+    if check.returncode not in (0, 1):
+        raise HTTPException(status_code=400, detail=check.stderr.strip())
+    if check.returncode == 1:
+        # Untracked path: a file or a directory (a newly added folder).
+        # ``os.remove`` raises IsADirectoryError on a directory, so use rmtree.
         if os.path.isdir(full_path) and not os.path.islink(full_path):
-            shutil.rmtree(full_path, ignore_errors=True)
+            shutil.rmtree(full_path)
         elif os.path.exists(full_path) or os.path.islink(full_path):
             os.remove(full_path)
         return {"success": True}
-    # Tracked file — restore from HEAD
+    # Tracked file, restore from HEAD
     result = _run_git(["checkout", "HEAD", "--", req.path], cwd=ws)
     if result.returncode != 0:
         raise HTTPException(status_code=400, detail=result.stderr.strip())
@@ -338,7 +359,9 @@ def git_worktrees_endpoint():
     ws = _require_git_workspace()
     result = _run_git(["worktree", "list", "--porcelain"], cwd=ws, timeout=10)
     if result.returncode != 0:
-        return {"worktrees": [], "current": ws}
+        raise HTTPException(
+            status_code=500, detail=f"git worktree list failed: {result.stderr.strip()}"
+        )
 
     worktrees: list[dict] = []
     current: dict = {}

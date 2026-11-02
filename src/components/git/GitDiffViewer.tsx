@@ -8,6 +8,7 @@ import {
   rowsFromTexts,
   type DiffRow,
 } from '@/utils/diffRows';
+import { DiffTooLargeError } from '@/utils/computeLineDiff';
 import { DiffDialog, type DiffBody } from './DiffDialog';
 import { useDiffQuery } from './useDiffQuery';
 
@@ -45,22 +46,23 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({ path, onClose }) =
 };
 
 /** The rows of a `full` or `hunks` payload; null for the other modes and
- *  for texts too large to align. */
-function rowsFor(data: GitFileDiff): DiffRow[] | null {
+ *  for texts too large to align. Any other failure is returned as an Error,
+ *  never dressed up as "too large". */
+function rowsFor(data: GitFileDiff): DiffRow[] | Error | null {
   if (data.mode === 'hunks') return rowsFromHunks(data.hunks);
   if (data.mode !== 'full') return null;
   try {
     return collapseUnchanged(rowsFromTexts(data.old ?? '', data.new ?? ''));
-  } catch {
-    // The server sends `full` only within the client's alignment
-    // budget, so this is a belt-and-braces path.
-    return null;
+  } catch (e) {
+    if (e instanceof DiffTooLargeError) return null;
+    return e instanceof Error ? e : new Error(String(e));
   }
 }
 
-function bodyFor(data: GitFileDiff, rows: DiffRow[] | null): DiffBody {
+function bodyFor(data: GitFileDiff, rows: DiffRow[] | Error | null): DiffBody {
   if (data.mode === 'error') return { kind: 'error', message: data.error ?? 'Could not load diff.' };
   if (data.mode === 'binary') return { kind: 'info', text: 'Binary file: no line-by-line diff.' };
+  if (rows instanceof Error) return { kind: 'error', message: `Could not align the diff: ${rows.message}` };
   if (rows === null) return { kind: 'info', text: 'This file is too large to diff in the browser.' };
   return { kind: 'rows', rows, empty: 'No changes against HEAD.' };
 }

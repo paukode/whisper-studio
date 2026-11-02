@@ -102,7 +102,7 @@ def _catalog_tool_names(monkeypatch, repo: str) -> set[str]:
     from server.skills import init_skills
 
     init_skills()
-    return {t["name"] for t in assemble_full_catalog(ws_connected=True)}
+    return {t["name"] for t in assemble_full_catalog()}
 
 
 def test_prompt_prose_only_references_real_tools(tmp_path, monkeypatch):
@@ -141,7 +141,7 @@ def test_catalog_is_identical_with_and_without_a_workspace(monkeypatch):
     init_skills()
 
     monkeypatch.setattr("server.workspace.get_workspace_path", lambda: None)
-    without_ws = [t["name"] for t in assemble_full_catalog(ws_connected=False)]
+    without_ws = [t["name"] for t in assemble_full_catalog()]
 
     for name in ("ws_write_file", "ws_create_file", "ws_edit_file", "ws_delete_file"):
         assert name in without_ws, f"{name} must be callable so the folder picker is reachable"
@@ -150,22 +150,9 @@ def test_catalog_is_identical_with_and_without_a_workspace(monkeypatch):
         assert name in without_ws, f"{name} must stay in the catalog without a workspace"
 
     monkeypatch.setattr("server.workspace.get_workspace_path", lambda: "/tmp")
-    with_ws = [t["name"] for t in assemble_full_catalog(ws_connected=True)]
+    with_ws = [t["name"] for t in assemble_full_catalog()]
 
     assert without_ws == with_ws, "catalog must be byte-stable across workspace flips"
-
-
-def test_catalog_is_identical_across_plan_and_grounding_flips():
-    """Plan mode and strict-RAG grounding are enforced at execution, never by
-    stripping schemas — a per-turn tools array rewrite is a cache miss."""
-    from server.chat.tool_pool import assemble_full_catalog
-    from server.skills import init_skills
-
-    init_skills()
-    base = [t["name"] for t in assemble_full_catalog()]
-    planning = [t["name"] for t in assemble_full_catalog(plan_mode=True)]
-    grounded = [t["name"] for t in assemble_full_catalog(suppress_workspace_search=True)]
-    assert base == planning == grounded
 
 
 def test_git_tools_still_load_with_a_git_workspace(tmp_path, monkeypatch):
@@ -181,7 +168,7 @@ def test_git_tools_still_load_with_a_git_workspace(tmp_path, monkeypatch):
     # And the picker-capable write tools are present exactly once.
     from server.chat.tool_pool import assemble_full_catalog
 
-    catalog = [t["name"] for t in assemble_full_catalog(ws_connected=True)]
+    catalog = [t["name"] for t in assemble_full_catalog()]
     assert catalog.count("ws_create_file") == 1
 
 

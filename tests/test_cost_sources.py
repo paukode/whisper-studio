@@ -12,6 +12,7 @@ from server.chat.engine.local import LocalAdapter
 from server.chat.engine.policy import LOCAL_POLICY
 from server.chat.engine.runner import TurnContext, run_turn
 from server.costs import tracker
+from tests.cost_rows import session_cost_rows
 
 m021 = importlib.import_module("server.migrations.021_cost_rows_source_and_provenance")
 
@@ -56,7 +57,7 @@ def _turn(session_id: str, source: str, usage: Usage) -> None:
 
 def test_the_engine_tags_each_round_with_the_turns_source():
     _turn("src-cron", "cron", Usage(input_tokens=10, output_tokens=5))
-    (row,) = tracker.get_session_costs("src-cron")
+    (row,) = session_cost_rows("src-cron")
     assert row["source"] == "cron"
     assert row["count_source"] == "reported" and row["estimated_fields"] == ""
 
@@ -65,7 +66,7 @@ def test_an_estimated_round_is_recorded_as_estimated():
     _turn(
         "src-est", "chat", Usage(input_tokens=250, output_tokens=40, estimated=("input", "output"))
     )
-    (row,) = tracker.get_session_costs("src-est")
+    (row,) = session_cost_rows("src-est")
     assert row["count_source"] == "estimated"
     assert row["estimated_fields"] == "input,output"
 
@@ -200,3 +201,10 @@ def test_migration_021_leaves_a_current_table_alone(tmp_path):
     m021.migrate(conn)
     conn.commit()
     assert _rows(conn) == before
+
+
+def test_a_history_only_source_still_labels_its_old_rows():
+    from server.costs.sources import HISTORY_ONLY, source_label
+
+    for source in HISTORY_ONLY:
+        assert source_label(source) != source

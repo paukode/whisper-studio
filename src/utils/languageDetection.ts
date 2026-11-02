@@ -25,7 +25,7 @@ const EXT_TO_LANG: Record<string, string> = {
   '.php': 'php',
   '.swift': 'swift',
   '.kt': 'kotlin', '.kts': 'kotlin',
-  '.r': 'r', '.R': 'r',
+  '.r': 'r',
   '.lua': 'lua',
   '.pl': 'perl', '.pm': 'perl',
   '.dockerfile': 'dockerfile',

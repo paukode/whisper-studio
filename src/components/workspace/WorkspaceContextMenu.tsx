@@ -19,10 +19,9 @@ export interface WorkspaceContextMenuProps {
   onFileSelect: (path: string) => void;
 }
 
-const isMac = typeof navigator !== 'undefined' && /Mac/.test(navigator.userAgent);
-const MOD = isMac ? '\u2318' : 'Ctrl+';
-const OPT = isMac ? '\u2325' : 'Alt+';
-const SHIFT = isMac ? '\u21E7' : 'Shift+';
+const MOD = '\u2318';
+const OPT = '\u2325';
+const SHIFT = '\u21E7';
 
 // ── Module-level state for file clipboard and comparison ──
 
@@ -38,13 +37,13 @@ let _compareSelection: string | null = null;
  *  nodes (not HTML strings), so building JSX here both renders correctly and
  *  auto-escapes the paths/snippets — no manual HTML escaping needed. Shared by
  *  Find File References and the in-folder search. */
-function renderRefList(results: Array<{ path: string; line: number; text: string }>): React.ReactNode {
+function renderRefList(results: Array<{ path: string; line: number; content: string }>): React.ReactNode {
   return (
     <div style={{ maxHeight: '50vh', overflow: 'auto', fontSize: 13 }}>
       {results.map((r, i) => (
         <div key={`${r.path}:${r.line}:${i}`} style={{ padding: '4px 0', borderBottom: '1px solid var(--border)' }}>
           <code style={{ color: 'var(--accent)' }}>{r.path}:{r.line}</code>{' '}
-          <span style={{ color: 'var(--text-muted)' }}>{r.text.trim()}</span>
+          <span style={{ color: 'var(--text-muted)' }}>{r.content.trim()}</span>
         </div>
       ))}
     </div>
@@ -59,14 +58,14 @@ function escapeRegExp(str: string): string {
 }
 
 /**
- * Full context menu for workspace file tree matching the original vanilla JS.
+ * Full context menu for the workspace file tree.
  *
- * File menu (from screenshot): Open, Open Preview, Open With...,
+ * File menu: Open, Open Preview, Open With...,
  *   Select for Compare, Find File References, Open Timeline,
  *   Add File to Chat, Cut, Copy, Copy Path, Copy Relative Path,
  *   Rename, Duplicate, Delete, Reveal in Finder.
  *
- * Folder menu (from screenshot): New File..., New Folder...,
+ * Folder menu: New File..., New Folder...,
  *   Find in Folder..., Add Folder to Chat, Paste,
  *   Copy Path, Copy Relative Path, Rename..., Delete,
  *   Reveal in Finder.
@@ -203,9 +202,11 @@ export const WorkspaceContextMenu: React.FC<WorkspaceContextMenuProps> = ({
   // ── Reveal in Finder ──
 
   const handleRevealInFinder = useCallback(() => {
-    // ``open -R`` is a benign macOS action that reveals the file in Finder. It
-    // passes _validate_command (no destructive patterns), so it needs no bypass.
-    void post('/api/workspace/shell', { command: `open -R "${path}"` }).catch(() => {});
+    // The reveal route resolves the path inside the workspace and runs
+    // ``open -R`` with an argument list, so no file name reaches a shell.
+    post('/api/workspace/reveal', { path }).catch((err) => {
+      useUIStore.getState().addToast({ type: 'error', message: toError(err).message });
+    });
     onClose();
   }, [path, onClose]);
 
@@ -301,7 +302,7 @@ export const WorkspaceContextMenu: React.FC<WorkspaceContextMenuProps> = ({
   const handleFindFileReferences = useCallback(async () => {
     onClose();
     try {
-      const data = await get<{ results?: Array<{ path: string; line: number; text: string }> }>(
+      const data = await get<{ results?: Array<{ path: string; line: number; content: string }> }>(
         `/api/workspace/grep?pattern=${encodeURIComponent(escapeRegExp(fileName))}&scope=.&limit=50`,
       );
       const results = data.results ?? [];
@@ -315,8 +316,8 @@ export const WorkspaceContextMenu: React.FC<WorkspaceContextMenuProps> = ({
         size: 'lg',
         body: renderRefList(results),
       });
-    } catch {
-      useUIStore.getState().addToast({ type: 'error', message: 'Find references not available', duration: 2000 });
+    } catch (err) {
+      useUIStore.getState().addToast({ type: 'error', message: `Find references failed: ${toError(err).message}` });
     }
   }, [fileName, onClose]);
 
@@ -370,8 +371,8 @@ export const WorkspaceContextMenu: React.FC<WorkspaceContextMenuProps> = ({
         size: 'lg',
         body,
       });
-    } catch {
-      useUIStore.getState().addToast({ type: 'error', message: 'Timeline not available', duration: 2000 });
+    } catch (err) {
+      useUIStore.getState().addToast({ type: 'error', message: `Timeline failed: ${toError(err).message}` });
     }
   }, [path, fileName, onClose]);
 
@@ -452,7 +453,7 @@ export const WorkspaceContextMenu: React.FC<WorkspaceContextMenuProps> = ({
     }) as Record<string, string | boolean> | null;
     if (!result || !result.pattern) return;
     try {
-      const data = await get<{ results?: Array<{ path: string; line: number; text: string }> }>(
+      const data = await get<{ results?: Array<{ path: string; line: number; content: string }> }>(
         `/api/workspace/grep?pattern=${encodeURIComponent(String(result.pattern))}&scope=${encodeURIComponent(path)}&limit=50`,
       );
       const results = data.results ?? [];
@@ -466,8 +467,8 @@ export const WorkspaceContextMenu: React.FC<WorkspaceContextMenuProps> = ({
         size: 'lg',
         body: renderRefList(results),
       });
-    } catch {
-      useUIStore.getState().addToast({ type: 'error', message: 'Search not available', duration: 2000 });
+    } catch (err) {
+      useUIStore.getState().addToast({ type: 'error', message: `Search failed: ${toError(err).message}` });
     }
   }, [path, onClose]);
 
@@ -477,14 +478,12 @@ export const WorkspaceContextMenu: React.FC<WorkspaceContextMenuProps> = ({
 
   const handleCut = useCallback(() => {
     _clipboard = { operation: 'cut', paths: [path] };
-    window.dispatchEvent(new CustomEvent('workspace-clipboard-change', { detail: _clipboard }));
     useUIStore.getState().addToast({ type: 'info', message: `Cut: ${fileName}`, duration: 1500, persist: false });
     onClose();
   }, [path, fileName, onClose]);
 
   const handleCopyFile = useCallback(() => {
     _clipboard = { operation: 'copy', paths: [path] };
-    window.dispatchEvent(new CustomEvent('workspace-clipboard-change', { detail: _clipboard }));
     useUIStore.getState().addToast({ type: 'info', message: `Copied: ${fileName}`, duration: 1500, persist: false });
     onClose();
   }, [path, fileName, onClose]);
@@ -577,13 +576,13 @@ export const WorkspaceContextMenu: React.FC<WorkspaceContextMenuProps> = ({
   }
 
   // ═══════════════════════════════════════════════
-  // Build menu items — exact match to vanilla screenshots
+  // Build menu items
   // ═══════════════════════════════════════════════
 
   const items: MenuItem[] = [];
 
   if (type === 'file') {
-    // ── File context menu (matches file_right_click.png) ──
+    // ── File context menu ──
     items.push({ label: 'Open', icon: '📄', onClick: handleOpen });
     items.push({ label: 'Open Preview', icon: '👁', onClick: () => void handleOpenPreview() });
     items.push({ label: 'Open With\u2026', icon: '📂', onClick: () => void handleOpenWith() });
@@ -615,7 +614,7 @@ export const WorkspaceContextMenu: React.FC<WorkspaceContextMenuProps> = ({
 
     items.push({ label: 'Reveal in Finder', icon: '📂', shortcut: `${OPT}${MOD}R`, onClick: handleRevealInFinder });
   } else {
-    // ── Folder context menu (matches folder_right_click.png) ──
+    // ── Folder context menu ──
     items.push({ label: 'New File\u2026', icon: '📄', onClick: handleNewFileStart, closeOnClick: false });
     items.push({ label: 'New Folder\u2026', icon: '📁', onClick: handleNewFolderStart, closeOnClick: false });
     items.push({ label: '', separator: true });

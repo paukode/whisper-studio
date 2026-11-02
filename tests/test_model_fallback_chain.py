@@ -1,12 +1,6 @@
-"""The budget-downgrade fallback chain must track the live model catalog.
-
-Regression: FALLBACK_CHAIN used to be a stale hardcoded list (["opus4.6",
-"sonnet", "haiku"]) while the catalog default moved to opus4.8 and gained
-opus4.7 / sonnet5 / fable5.0 / gpt5.5 / gpt5.4. get_next_fallback did
-FALLBACK_CHAIN.index(current), which raised ValueError for every key not in
-the stale list and returned None — making budget downgrading a silent no-op
-for the default model and nearly every other model.
-"""
+"""The budget-downgrade chain must track the live model catalog: "next
+cheaper" is ranked from the price list, so every priced model takes part and a
+stale hardcoded order can never make downgrading a silent no-op."""
 
 from server.costs.tracker import _MODEL_PRICING
 from server.infrastructure import model_fallback as mf
@@ -51,26 +45,13 @@ def test_unknown_key_does_not_raise():
     assert mf.get_next_fallback("") is None
 
 
-def test_the_static_chain_lists_every_shipped_cloud_model():
-    # The static order stands in when the price table is missing, so a model
-    # added to the catalog but not to the chain would never be a fallback.
-    import json
-    import os
+def test_resolve_downgrades_only_under_budget_pressure(monkeypatch):
+    models = {"opus5.5": "id-opus", "haiku": "id-haiku"}
+    monkeypatch.setattr(mf, "load_config", lambda: {"model_fallback_enabled": False})
+    assert mf.resolve_model_with_fallback("opus5.5", models, "s1") == ("opus5.5", "id-opus")
 
-    path = os.path.join(os.path.dirname(__file__), "..", "config.example.json")
-    with open(path) as f:
-        catalog = json.load(f)["chat_models"]
-    cloud = {k for k, v in catalog.items() if not (isinstance(v, dict) and v.get("is_local"))}
-    assert cloud
-    assert cloud <= set(mf._STATIC_FALLBACK_CHAIN)
-
-
-def test_fallback_chain_covers_catalog_keys():
-    # The chain used to walk chat_models is derived from pricing, so it must
-    # contain the current catalog keys (not the stale opus4.6-only list).
-    for key in ("opus5.5", "sonnet5.5", "haiku"):
-        assert key in mf.FALLBACK_CHAIN
-    # Ordered most-expensive first so resolve_model_with_fallback prefers the
-    # most capable available model.
-    costs = [_cost(k) for k in mf.FALLBACK_CHAIN if k in _MODEL_PRICING]
-    assert costs == sorted(costs, reverse=True)
+    monkeypatch.setattr(mf, "load_config", lambda: {"model_fallback_enabled": True})
+    monkeypatch.setattr(mf, "should_downgrade_for_budget", lambda sid, key: "sonnet5.5")
+    # sonnet5.5 is not configured here: the walk continues down to a configured key.
+    key, model_id = mf.resolve_model_with_fallback("opus5.5", models, "s1")
+    assert (key, model_id) == ("haiku", "id-haiku")

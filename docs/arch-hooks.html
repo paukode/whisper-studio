@@ -51,8 +51,6 @@
         <tr><td><code>Stop</code></td><td>When the turn is about to end</td><td>Refuse to end: return a reason and the turn continues. Bounded by <code>goal_max_consecutive_blocks</code> (default 8) so it can't loop forever.</td></tr>
       </tbody>
     </table></div>
-    <p><code>TurnEnd</code> is accepted in config as an alias for <code>Stop</code>; there is one wire point,
-      not two.</p>
     <p>A hook is a <code>HookDef</code> (<code class="path">server/hooks/schema.py</code>): an
       <code>event</code>, a shell <code>command</code>, a <code>matcher</code> (default <code>*</code>; exact
       name, a <code>pipe|list</code>, or a <code>/regex/</code> against the tool name), a
@@ -63,8 +61,8 @@
       regardless of matcher.</p>
 
     <h3 id="config-shape">Where hooks live</h3>
-    <p>Not in <code>config.json</code>. Your own hooks live in <code class="path">hooks.json</code> under the
-      app data directory (<code class="path">~/.whisper/data/hooks.json</code> in an installed app), with
+    <p>Not in <code>config.user.json</code>. Your own hooks live in <code class="path">hooks.json</code> under the
+      app data directory (<code class="path">~/.whisper/data/hooks.json</code>), with
       project trust recorded beside it in <code class="path">hooks_trust.json</code>. Project hooks live under
       a <code>"hooks"</code> key inside <code class="path">&lt;workspace&gt;/.whisper/settings.json</code>.
       Both use schema v2, nested by event:</p>
@@ -76,9 +74,9 @@
                   "enabled": true,
                   "on_error": "ignore"}],
   "Stop": []}}</code></pre></div>
-    <p>The retired v1 format (a flat <code>{event, tool, command}</code> list) is still read once from your
-      own <code>hooks.json</code> and rewritten as v2 on that first load, so an old file keeps working but
-      never loads twice. Project settings are v2 only.</p>
+    <p>A file in any other shape is not read: none of its hooks run, the app shows a notice, and it leaves
+      the file as it is. Hooks on an event the app does not know (for example <code>TurnEnd</code>) are not
+      run either, and the app shows a notice for them.</p>
 
     <h2 id="engine">Two phases, one contract</h2>
     <p><code>run_hooks(event, payload)</code> evaluates an event in two phases. <b>Phase 1</b> runs in-process
@@ -114,29 +112,27 @@
         envelope, with a <code>schema</code> version, the session id, the workspace, the model id, and
         <code>stop_hook_active</code>; the tool and prompt events send a smaller hand-built dict without the
         <code>schema</code> and <code>workspace</code> keys.</li>
-      <li><b>Environment</b>: your whole environment (minus the sandbox's denylist) plus five convenience
-        variables, <code>WHISPER_EVENT</code>, <code>WHISPER_TOOL</code>, <code>WHISPER_INPUT</code>,
-        <code>WHISPER_OUTPUT</code> and <code>WHISPER_SESSION</code>, the last three truncated to 500
-        characters.</li>
+      <li><b>Environment</b>: your whole environment, minus the sandbox's credential denylist. No
+        hook-specific variables are set; a hook reads its context (<code>event</code>,
+        <code>tool_name</code>, <code>tool_input</code>, <code>tool_output</code>,
+        <code>session_id</code>) from stdin. A command that names one of the
+        <code>WHISPER_EVENT</code>, <code>WHISPER_TOOL</code>, <code>WHISPER_INPUT</code>,
+        <code>WHISPER_OUTPUT</code>, or <code>WHISPER_SESSION</code> variables is not run: the app
+        shows a notice, and the hook's <code>on_error</code> decides the call.</li>
       <li><b>Working directory</b>: the connected workspace, or the app data directory when none is
         connected.</li>
       <li><b>Execution</b>: through the same <a href="arch-sandbox.html">sandbox</a> every shell command
-        uses, off the event loop, killed by process group on timeout.</li>
+        uses, off the event loop, killed by process group on timeout. A hook runs with no card, so its
+        writes are confined to the connected workspace (only the temporary folders when none is
+        connected). It cannot write the app's data or config, or any other folder. The Test button runs
+        a hook with the same confinement.</li>
     </ul>
-
-    <div class="callout callout--warn">
-      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg></span>
-      <div class="callout__body"><p>Those variables are passed via the subprocess environment
-        (<code>env=</code>), <b>not</b> prepended to the command. A command prefix would turn any hook that
-        begins with a shell construct (<code>if</code>, <code>for</code>, <code>case</code>) into a syntax
-        error whose exit code 2 reads as DENY, silently blocking every matched call.</p></div>
-    </div>
 
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
-      <div class="callout__body"><p>A hook that fails under <code>on_error: "ignore"</code> is recorded on the
-        outcome but not surfaced anywhere: neither the model nor the panel sees it. When you are debugging a
-        hook, the <b>Test</b> button is the only place raw stdout and stderr are shown.</p></div>
+      <div class="callout__body"><p>A hook that fails under <code>on_error: "ignore"</code> is written to the
+        server log as a warning, and neither the model nor the panel sees it. When you are debugging a hook,
+        the <b>Test</b> button is the only place raw stdout and stderr are shown.</p></div>
     </div>
 
     <h2 id="wiring">Wired across every path</h2>
@@ -160,13 +156,14 @@
       off too. Cron instead verifies its own runs with a separate <code>cron_verify</code> step; see
       <a href="arch-goals.html">The goal loop</a>.</p>
     <p>The completion gate calls the Stop hooks; it does not register one. That matters when you read the
-      transcript. The verification check of the gate emits the same <code>stop_hook_block</code> frame,
+      transcript. The verification check of the gate and a failed goal quality gate emit the same
+      <code>stop_hook_block</code> frame,
       which shows as <b>Continuing (Stop hook)</b>. Because of this, a turn can continue with no Stop
       hook configured. The claim check and the requested-file check send the model back with no frame.
       The <code>source</code> field of the decision tells which check blocked the turn.</p>
     <div class="spec">
       <dt><code class="path">server/hooks/engine.py</code></dt><dd><code>run_hooks(event, payload)</code>, the two-phase evaluator, <code>check_stop_hooks()</code>, and <code>dry_run()</code> for the Test button.</dd>
-      <dt><code class="path">server/hooks/schema.py</code></dt><dd><code>HookDef</code> / <code>HookOutcome</code>, the event list and its <code>TurnEnd</code> alias, matcher semantics, the stdin envelope, and config normalization.</dd>
+      <dt><code class="path">server/hooks/schema.py</code></dt><dd><code>HookDef</code> / <code>HookOutcome</code>, the event list, matcher semantics, the stdin envelope, and config normalization.</dd>
       <dt><code class="path">server/hooks/config_loader.py</code></dt><dd>User <code>hooks.json</code> plus project hooks in <code>&lt;workspace&gt;/.whisper/settings.json</code>, the latter inert until trusted.</dd>
     </div>
 
@@ -183,7 +180,9 @@
     <h2 id="api">The API and the panel</h2>
     <p>The Settings <em>Hooks</em> panel is backed by the <code>/api/hooks</code> routes; the assistant does
       not create hooks itself (there is no hook tool and no <code>/hooks</code> command, since hooks are a
-      user-owned guardrail).</p>
+      user-owned guardrail). The assistant's file tools need the permission mode's approval to change
+      <code>hooks.json</code> or <code>hooks_trust.json</code>, and a confined command cannot write
+      them.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Route</th><th>Method</th><th>Purpose</th></tr></thead>
       <tbody>

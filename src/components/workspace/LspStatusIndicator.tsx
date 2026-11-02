@@ -3,7 +3,7 @@ import type { LspStatus } from '@/hooks/useLsp';
 import { useUIStore } from '@/stores/uiStore';
 
 /** Human-readable label for the LSP status dot's tooltip + text. */
-export function lspStatusLabel(status: LspStatus, language: string, failure: string | null): string {
+function lspStatusLabel(status: LspStatus, language: string, failure: string | null): string {
   const server = `${language} language server`;
   switch (status) {
     case 'connecting':

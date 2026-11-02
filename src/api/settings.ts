@@ -2,8 +2,10 @@ import { post, put } from './client';
 
 // ── Permissions ─────────────────────────────────────────────────────
 
-export function updatePermissions(permissions: unknown): Promise<void> {
-  return put<void>('/api/permissions', permissions);
+/** Persist the permission mode (permissions.json). Rejects when the server
+ *  refuses or cannot be reached, so callers keep the old mode on screen. */
+export function putPermissionMode(mode: string): Promise<{ mode: string }> {
+  return put<{ mode: string }>('/api/permissions/mode', { mode });
 }
 
 /** One-click override for the auto-mode circuit breaker: resume classifying

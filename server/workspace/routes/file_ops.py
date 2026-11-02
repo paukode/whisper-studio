@@ -5,6 +5,7 @@ Read (`/file`, `/source-file`), mutate (`/write`, `/delete`, `/rename`,
 package router via decorator side-effects.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -12,18 +13,18 @@ import os
 from fastapi import Request
 from fastapi.responses import Response
 
-from server import file_state
-
 from .. import router
 from ..paths import (
     _WS_BINARY_EXTS,
     _WS_IMAGE_EXTS,
-    WORKSPACE_BACKUPS,
+    _atomic_write_bytes,
     _atomic_write_text,
     _normalize_lf,
+    _ws_path_allowed,
     _ws_validate_path,
 )
 from ..state import get_workspace_path
+from ..write_undo import UndoRefused, get_backup, undo_write
 
 log = logging.getLogger("whisper-studio")
 
@@ -84,25 +85,18 @@ def _resolve_indexed_file(path: str) -> str | None:
     Grounded-index citations link files by *absolute* path, and those files can
     live in an indexed folder that is not the connected workspace (or with no
     workspace connected at all). So an absolute path is accepted when it sits
-    inside the connected workspace or any known indexed workspace — the same
-    trust boundary /reveal uses. A relative path resolves against the connected
-    workspace. Returns the realpath of an existing file, or None.
+    inside the connected workspace or any known indexed workspace (the
+    /reveal roots without the save_file folders). A relative path resolves
+    against the connected workspace. Returns the realpath of an existing file,
+    or None.
     """
     if not path:
         return None
     if os.path.isabs(path):
         full = os.path.realpath(path)
-        roots: list[str] = []
-        ws = get_workspace_path()
-        if ws:
-            roots.append(os.path.realpath(ws))
-        try:  # lazy import to avoid a workspace<->index module cycle
-            from server.index import store as _index_store
+        from .os_integration import _inside_any, allowed_roots
 
-            roots += [os.path.realpath(r) for r in _index_store.list_indexed_workspaces()]
-        except Exception:
-            pass
-        inside = any(full == r or full.startswith(r + os.sep) for r in roots)
+        inside = _inside_any(full, allowed_roots(include_save_locations=False))
         if not inside or not os.path.isfile(full):
             return None
         return full
@@ -163,7 +157,7 @@ async def ws_source_file(path: str = "", raw: bool = False):
     ext = os.path.splitext(full)[1].lower()
     name = os.path.basename(full)
 
-    # Raw byte stream — <img>/<embed> src and the rich viewers' fetch target.
+    # Raw byte stream, <img>/<embed> src and the rich viewers' fetch target.
     # FileResponse streams from a threadpool: no whole-file read into memory,
     # no event-loop stall on a large cited file (indexed folders can hold
     # spreadsheets far bigger than anything a workspace tab would open).
@@ -190,14 +184,14 @@ async def ws_source_file(path: str = "", raw: bool = False):
                 data = f.read()
             text = await asyncio.to_thread(convert_document, data, ext, name)
             return {"path": full, "name": name, "kind": "markdown", "content": text}
-        except Exception as e:  # noqa: BLE001 — extraction is best-effort
+        except Exception as e:  # noqa: BLE001 (extraction is best-effort)
             log.warning("source-file extract failed for %s: %s", full, e)
             return {
                 "path": full,
                 "name": name,
                 "kind": "unsupported",
                 "message": "Couldn't extract a preview for this document. "
-                "Cmd/Ctrl-click the source link to open it in Finder.",
+                "Cmd-click the source link to reveal it in Finder.",
             }
 
     if ext in _WS_BINARY_EXTS:  # audio/video/archives/executables/…
@@ -206,7 +200,7 @@ async def ws_source_file(path: str = "", raw: bool = False):
             "name": name,
             "kind": "unsupported",
             "message": "Preview isn't available for this file type. "
-            "Cmd/Ctrl-click the source link to open it in Finder.",
+            "Cmd-click the source link to reveal it in Finder.",
         }
 
     # Everything else is text (code, markdown, txt, csv, json, …).
@@ -217,7 +211,7 @@ async def ws_source_file(path: str = "", raw: bool = False):
                 "name": name,
                 "kind": "unsupported",
                 "message": "This file is too large to preview here. "
-                "Cmd/Ctrl-click the source link to open it in Finder.",
+                "Cmd-click the source link to reveal it in Finder.",
             }
         with open(full, errors="replace") as f:
             content = f.read()
@@ -229,8 +223,15 @@ async def ws_source_file(path: str = "", raw: bool = False):
     return {"path": full, "name": name, "kind": kind, "content": content}
 
 
+# Office documents are zip packages, never text. The editor's save writes
+# text, so a save of one of these would destroy the document; it is refused.
+# The viewers open them in the default app instead.
+OFFICE_DOCUMENT_EXTS = frozenset({".docx", ".xlsx", ".pptx", ".doc", ".xls", ".ppt"})
+
+
 @router.post("/write")
 async def ws_write_endpoint(request: Request):
+    """The editor's save (and New File): writes text to a workspace file."""
     body = await request.json()
     ws = get_workspace_path()
     if not ws:
@@ -240,8 +241,19 @@ async def ws_write_endpoint(request: Request):
             media_type="application/json",
         )
     path = body.get("path", "")
+    if os.path.splitext(path)[1].lower() in OFFICE_DOCUMENT_EXTS:
+        name = os.path.basename(path) or path
+        return Response(
+            content=json.dumps(
+                {
+                    "error": f"{name} is an Office document, not text. The editor cannot save "
+                    "it; nothing was written. Open it in its default app to change it."
+                }
+            ),
+            status_code=415,
+            media_type="application/json",
+        )
     content = _normalize_lf(body.get("content", ""))
-    session_id = body.get("session_id", "")
     full = os.path.join(ws, path)
     if not _ws_validate_path(full, ws):
         return Response(
@@ -249,24 +261,7 @@ async def ws_write_endpoint(request: Request):
             status_code=403,
             media_type="application/json",
         )
-    # Staleness re-check at write time (file may have changed since approval)
-    if session_id and os.path.isfile(full):
-        allowed, reason = file_state.check_write_allowed(session_id, full)
-        if not allowed:
-            return Response(
-                content=json.dumps({"error": reason}),
-                status_code=409,
-                media_type="application/json",
-            )
-    if os.path.isfile(full):
-        try:
-            with open(full, errors="replace") as f:
-                WORKSPACE_BACKUPS[path] = f.read()
-        except Exception:
-            pass
     _atomic_write_text(full, content)
-    if session_id:
-        file_state.record_write(session_id, full)
     return {"path": path, "written": True, "size": len(content)}
 
 
@@ -289,11 +284,6 @@ async def ws_delete_endpoint(request: Request):
             media_type="application/json",
         )
     if os.path.isfile(full):
-        try:
-            with open(full, errors="replace") as f:
-                WORKSPACE_BACKUPS[path] = f.read()
-        except Exception:
-            pass
         os.remove(full)
     elif os.path.isdir(full):
         import shutil
@@ -472,7 +462,17 @@ async def ws_copy_file_endpoint(request: Request):
 
 @router.post("/undo")
 async def ws_undo_endpoint(request: Request):
+    """Undo one write the assistant made, named by its tool_use_id
+    (server/workspace/write_undo.py). Refuses, and changes nothing, when the
+    file is not as that write left it."""
     body = await request.json()
+    tool_use_id = body.get("tool_use_id")
+    if not isinstance(tool_use_id, str) or not tool_use_id:
+        return Response(
+            content=json.dumps({"error": "tool_use_id required"}),
+            status_code=400,
+            media_type="application/json",
+        )
     ws = get_workspace_path()
     if not ws:
         return Response(
@@ -480,20 +480,21 @@ async def ws_undo_endpoint(request: Request):
             status_code=400,
             media_type="application/json",
         )
-    path = body.get("path", "")
-    if path not in WORKSPACE_BACKUPS:
+    backup = get_backup(tool_use_id)
+    # The path is the server's own record, never the request's; it must still
+    # be inside the workspace (or the writing session's scratch folder).
+    if backup is not None and not _ws_path_allowed(backup.full, ws, backup.session_id):
         return Response(
-            content=json.dumps({"error": "No backup for this file"}),
-            status_code=404,
-            media_type="application/json",
-        )
-    full = os.path.join(ws, path)
-    if not _ws_validate_path(full, ws):
-        return Response(
-            content=json.dumps({"error": "Invalid path"}),
+            content=json.dumps({"error": f"{backup.path} is outside the workspace now"}),
             status_code=403,
             media_type="application/json",
         )
-    original = WORKSPACE_BACKUPS.pop(path)
-    _atomic_write_text(full, original)
-    return {"path": path, "restored": True}
+    try:
+        done = await asyncio.to_thread(undo_write, tool_use_id, _atomic_write_bytes)
+    except UndoRefused as e:
+        return Response(
+            content=json.dumps({"error": str(e)}),
+            status_code=e.status,
+            media_type="application/json",
+        )
+    return {"path": done.path, "restored": True, "removed": done.before is None}

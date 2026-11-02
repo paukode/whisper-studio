@@ -20,12 +20,17 @@ UNSTAGED_FIRST = " M first.txt\0 M second.txt\0M  staged.txt\0"
 
 
 def _fake_git(stdout: str):
-    """Answer the status call with `stdout`; any other git call fails."""
+    """Answer the status call with `stdout`, the upstream probe as a branch
+    with no upstream (exit 1, no output); any other git call fails."""
 
     def run(args, cwd, **_kwargs):
         if args == STATUS_PORCELAIN_ARGS:
             return subprocess.CompletedProcess(args, 0, stdout=stdout, stderr="")
-        return subprocess.CompletedProcess(args, 1, stdout="", stderr="no upstream")
+        if "rev-parse" in args and "@{upstream}" in args:
+            return subprocess.CompletedProcess(args, 1, stdout="", stderr="")
+        return subprocess.CompletedProcess(
+            args, 128, stdout="", stderr="fatal: no upstream configured for branch 'main'"
+        )
 
     return run
 
@@ -134,3 +139,13 @@ def test_changes_against_real_git(client):
     }
     for f in files:
         assert (repo / f["path"]).is_file()
+
+
+def test_a_folder_that_becomes_a_repository_is_found(tmp_path):
+    """A negative answer used to be cached until restart, so `git init` in a
+    connected folder kept reading as 'not a repo'."""
+    folder = tmp_path / "later"
+    folder.mkdir()
+    assert git_core.find_git_root(str(folder)) is None
+    subprocess.run(["git", "init", "-q"], cwd=folder, check=True)
+    assert git_core.find_git_root(str(folder)) == str(folder)

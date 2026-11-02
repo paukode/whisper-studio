@@ -1,16 +1,16 @@
-"""Install / uninstall a browsed GGUF as a config-driven local chat model.
+"""Install or remove a browsed GGUF or MLX model as a config-driven local chat model.
 
-This is the P0 "config path" (design §9): a browser install writes exactly the
-same ``chat_models`` dict entry a user would add by hand
+A browser install writes exactly the same ``chat_models`` dict entry a user
+would add by hand
 (server/local/registry.py), into the USER layer (``config.user.json``), then
 enqueues the download through the existing models-manager queue. Nothing
-downstream is new — the registry merges the entry in, the models catalog derives
+downstream is new, the registry merges the entry in, the models catalog derives
 a download row from the registry, the composer picker's live refresh shows it,
 and load-on-use goes through ``llama-server`` unchanged.
 
 Two hard-won rules from the config machinery are load-bearing here:
   * the entry MUST be written into ``chat_models`` as a DICT, never into the
-    derived ``chat_model_meta`` — the normalizer rebuilds meta from chat_models
+    derived ``chat_model_meta``, the normalizer rebuilds meta from chat_models
     on every load and would clobber a meta-only entry;
   * the merge must READ the raw USER layer (``_load_user_config``) and write it
     back via ``save_config``, so other user entries survive. It must NOT go
@@ -27,11 +27,12 @@ from server.model_browser import compat
 
 log = logging.getLogger("whisper-studio")
 
-# Context-window default and cap. 32768 is BOTH the floor and the default: the
-# full tool pool alone renders ~12K tokens, so a smaller window rejects the
-# first tool-using turn (see server/local/llama_server.py). We also cap at 32768
-# by default so a 256K-capable model still loads on an 18GB Mac; a power user can
-# raise ``ctx`` in config or via the chat-input slider afterwards.
+# Context-window default, floor and cap (see resolve_ctx). 32768 is the
+# default and the floor for an explicit request: the full tool pool alone
+# renders ~17.2K tokens, so a 16K window rejects the first tool-using turn. A
+# header context is capped at 32768 (a smaller one is kept as the model's
+# real window) so a 256K-capable model still loads on an 18GB Mac; a power
+# user can raise ``ctx`` in config or with the chat-input slider.
 DEFAULT_CTX = 32768
 CTX_CAP = 32768
 
@@ -49,12 +50,12 @@ def _key_part(text: str) -> str:
 def registry_key(repo_id: str, quant: str) -> str:
     """A unique, collision-proof config/registry key for (repo, quant). The
     ``local_`` prefix keeps it clearly on-device and away from the static
-    catalog keys (whisper/parakeet/…) and the built-in ``local_gemma`` key."""
+    catalog keys (whisper/parakeet/…) and the recommended ``local_gemma`` key."""
     return f"local_{_key_part(repo_id)}__{_key_part(quant)}"
 
 
 def _model_id(repo_id: str, quant: str) -> str:
-    """The picker/runtime sentinel id. MUST start with ``local:`` — cloud-path
+    """The picker/runtime sentinel id. MUST start with ``local:``, cloud-path
     code branches on that prefix before any Bedrock call."""
     return f"local:{_slug(repo_id)}-{_slug(quant)}"
 
@@ -62,7 +63,7 @@ def _model_id(repo_id: str, quant: str) -> str:
 def _dir_name(repo_id: str) -> str:
     """The models/ subdirectory for this repo. Recognizable (mirrors the repo
     id) and filesystem-safe. Quants of one repo share the dir and differ by
-    filename — the models-manager delete already handles that shared-dir case."""
+    filename, the models-manager delete already handles that shared-dir case."""
     return re.sub(r"[^A-Za-z0-9._-]+", "_", repo_id.replace("/", "__"))
 
 
@@ -85,11 +86,11 @@ def build_entry(
     n_ctx: int | None,
     header_ctx: int | None,
 ) -> tuple[str, dict]:
-    """(key, chat_models entry) for a browsed model — the exact hand-config shape.
+    """(key, chat_models entry) for a browsed model, the exact hand-config shape.
 
     Defaults, all overridable in the config editor afterwards:
       * ``supports_tools`` True only at or above ``AGENTIC_MIN_PARAMS_B`` (or when
-        the name carries no size) — the tool loop rides on llama-server
+        the name carries no size), the tool loop rides on llama-server
         ``--jinja``, which these instruct families support, but a model too small
         to drive it emits raw JSON into the chat instead of a parsed call.
 
@@ -126,7 +127,7 @@ def build_mlx_entry(
     fed through the same resolve_ctx policy as a GGUF header.
 
     The dir gets an ``__mlx`` suffix so it can never collide with the GGUF
-    lane's dir for the same repo — MLX deletes remove the WHOLE directory (no
+    lane's dir for the same repo, MLX deletes remove the WHOLE directory (no
     per-file guard is possible for a snapshot), so a shared dir would put the
     other entry's weights at risk.
     """
@@ -162,25 +163,15 @@ def write_entry(key: str, entry: dict) -> None:
     log.info("Model browser installed %s (%s) into the user config.", key, entry.get("repo_id"))
 
 
-def is_browser_entry(key: str) -> bool:
-    """Whether ``key`` is a local model the user layer defines (i.e. removable by
-    the browser). Recommended models not yet installed are not user-layer entries."""
-    cm = config_mod._load_user_config().get("chat_models")
-    return isinstance(cm, dict) and key in cm
-
-
 def is_local_model(key: str) -> bool:
     """Whether ``key`` is an on-device model in the effective catalog (installed
     or a downloaded recommendation). Local models are always fully deletable and
     re-downloadable from Discover, so "Remove from list" deletes them outright;
     Bedrock models use the recoverable ``chat_models_disabled`` hide-list."""
-    try:
-        from server.local.registry import local_models
+    from server.local.registry import local_models
 
-        if key in local_models():
-            return True
-    except Exception:  # pragma: no cover - defensive
-        pass
+    if key in local_models():
+        return True
     meta = config_mod.load_config().get("chat_model_meta") or {}
     return isinstance(meta.get(key), dict) and bool(meta[key].get("is_local"))
 
@@ -239,29 +230,27 @@ def adopt_local_index_llm() -> bool:
     return True
 
 
-# Marker written into the user layer once the sweep below has run. Without it the
-# sweep would re-fire every boot and stomp a user who deliberately turned tools
-# back on for a small model — which is a supported choice, just not the default.
+# Set in config.user.json by older versions once they had turned tools off for
+# the small models themselves. When it is there, a small model with tools on was
+# turned back on by the user (a supported choice), so it is not reported.
 _TOOLS_SWEEP_FLAG = "small_model_tools_swept"
 
 
-@config_mod.edits_user_config
-def disable_tools_on_small_models() -> list[str]:
-    """One-shot: turn ``supports_tools`` off for already-installed local models
-    below the agentic threshold, then mark the user layer so it never runs again.
+def small_models_with_tools() -> list[str]:
+    """Keys of on-device models in config.user.json that are below the agentic
+    threshold yet still have ``supports_tools`` on. Reads only.
 
     Installs made before the threshold existed all carry ``supports_tools`` True,
-    because that was the hardcoded default — including 1-3B models that answer a
-    plain "hey" with a raw JSON tool call. Their entries are the only thing
-    keeping them broken, so they are corrected in place ONCE rather than read
-    around forever at runtime. Returns the keys it changed.
+    because that was the hardcoded default, including 1-3B models that answer a
+    plain "hey" with a raw JSON tool call. New installs get the right value, and
+    startup never edits the user's file, so these are reported instead
+    (small_model_tool_notices) and the user decides.
     """
     raw = config_mod._load_user_config()
     if raw.get(_TOOLS_SWEEP_FLAG):
         return []
-
     chat_models = raw.get("chat_models")
-    changed: list[str] = []
+    found: list[str] = []
     if isinstance(chat_models, dict):
         for key, entry in chat_models.items():
             if not isinstance(entry, dict) or not entry.get("is_local"):
@@ -272,20 +261,26 @@ def disable_tools_on_small_models() -> list[str]:
             # repo_id (hand-written, weights resolved another way) is left alone.
             if compat.is_agentic_capable(entry.get("repo_id") or "", entry.get("filename") or ""):
                 continue
-            entry["supports_tools"] = False
-            changed.append(key)
+            found.append(key)
+    return found
 
-    raw[_TOOLS_SWEEP_FLAG] = True
-    config_mod.save_config(raw)
-    if changed:
-        log.info(
-            "Turned tool calling off for %d on-device model(s) under %sB: %s. "
-            "They are chat-only; re-enable in the config if you want to try.",
-            len(changed),
-            compat.AGENTIC_MIN_PARAMS_B,
-            ", ".join(changed),
+
+def small_model_tool_notices() -> list[tuple[str, str]]:
+    """(title, message) naming the small_models_with_tools(), for startup."""
+    keys = small_models_with_tools()
+    if not keys:
+        return []
+    return [
+        (
+            "Small models still have tool calling on",
+            f"These on-device models in {config_mod.USER_CONFIG_PATH} are under "
+            f"{compat.AGENTIC_MIN_PARAMS_B:g}B parameters and have tool calling on: "
+            f"{', '.join(keys)}. They may answer a plain message with raw tool-call "
+            "JSON. To make them chat-only, set supports_tools to false for them in that "
+            "file. If you turned tools on yourself, you can ignore this. The app leaves "
+            "your file as it is.",
         )
-    return changed
+    ]
 
 
 @config_mod.edits_user_config
@@ -314,7 +309,7 @@ def tombstone_entry(key: str) -> bool:
     visibility. Local models are deleted outright instead (they re-download from
     Discover), so this is Bedrock-only.
 
-    Order-preserving and idempotent — returns whether ``key`` was newly added.
+    Order-preserving and idempotent, returns whether ``key`` was newly added.
     Writes the same key the visibility toggles use, so both paths stay coherent.
     """
     raw = config_mod._load_user_config()

@@ -72,12 +72,19 @@ async def _batch(tool_uses, latch, *, unattended=False):
     from concurrent.futures import ThreadPoolExecutor
 
     from server.approval.bootstrap import register_defaults
+    from server.chat.tool_pool import assemble_full_catalog
+    from server.preview.tools import PREVIEW_TOOLS
+    from server.tool_inputs import schemas_for_tools
 
     register_defaults()
+    # Exercise workspace release with canonical preview schemas, independently
+    # of whether this test machine has installed the optional browser runtime.
+    schemas = schemas_for_tools([*assemble_full_catalog(), *PREVIEW_TOOLS])
     pool = ThreadPoolExecutor(max_workers=2)
     try:
         return await te.execute_tool_batch(
             tool_uses,
+            tool_schemas=schemas,
             is_concurrent_safe=lambda n: False,
             loop=asyncio.get_running_loop(),
             executor=pool,
@@ -365,9 +372,19 @@ def test_a_turn_started_inside_a_released_turn_inherits_its_latch(ws_a, ws_b, tm
 
 
 def _patch_agent_model(monkeypatch, fake_bedrock):
+    from server.workspace.tools import get_workspace_tools, get_workspace_write_tools
+
+    # Advertise the real schemas so these calls reach the workspace release gate,
+    # rather than failing strict input validation against an empty catalog.
+    tools = [
+        t
+        for t in [*get_workspace_tools(), *get_workspace_write_tools()]
+        if t["name"] in {"ws_read_file", "ws_delete_file"}
+    ]
     monkeypatch.setattr("server.chat.engine.anthropic._get_bedrock_client", lambda: fake_bedrock)
     monkeypatch.setattr(
-        "server.chat.tool_pool.assemble_partitioned_pool", lambda *a, **k: ([], [], 0)
+        "server.chat.tool_pool.assemble_partitioned_pool",
+        lambda *a, **k: (list(tools), [], len(tools)),
     )
 
 

@@ -70,11 +70,11 @@ Additionally drive the live preview to prove the UI renders and behaves:
 1. Start (or reuse) the dev server via the preview tools; if `preview_list`
    shows nothing and `preview_start` is unavailable, note that preview tooling
    is off and continue with the CI gate only.
-2. Load the relevant view, then check `read_console_messages` for errors,
-   `read_page` for the expected content/structure, and drive any changed
-   interaction (`computer` click/type, `form_input`) followed by a re-read to
-   confirm the result.
-3. Capture a screenshot as evidence for the summary.
+2. Load the relevant view, then check `preview_console_logs` for errors,
+   `preview_snapshot` (or `preview_inspect`) for the expected
+   content/structure, and drive any changed interaction (`preview_click`,
+   `preview_fill`) followed by a re-read to confirm the result.
+3. Capture a screenshot with `preview_screenshot` as evidence for the summary.
 
 ## Report
 

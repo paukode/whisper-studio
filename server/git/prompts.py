@@ -1,8 +1,10 @@
 """
-Git prompts — inject git context into system prompts.
+Git prompts: inject git context into system prompts.
 
 Generates the git status block and the git tool instructions block.
 """
+
+import subprocess
 
 from server.git.core import (
     _run_git,
@@ -10,7 +12,6 @@ from server.git.core import (
     get_branch,
     get_default_branch,
     get_file_status,
-    get_is_clean,
 )
 
 
@@ -26,7 +27,6 @@ def build_git_status_prompt(workspace_path: str) -> str:
 
     branch = get_branch(workspace_path)
     default = get_default_branch(workspace_path)
-    clean = get_is_clean(workspace_path)
 
     lines = [
         "# Git Status",
@@ -34,10 +34,12 @@ def build_git_status_prompt(workspace_path: str) -> str:
         f"Main branch (for PRs): {default}",
     ]
 
-    if clean:
-        lines.append("Status: (clean)")
-    else:
+    try:
         status = get_file_status(workspace_path)
+    except (RuntimeError, subprocess.TimeoutExpired) as e:
+        first = str(e).strip().splitlines()[0] if str(e).strip() else type(e).__name__
+        lines.append(f"Status: unavailable ({first})")
+    else:
         tracked = len(status["tracked"])
         untracked = len(status["untracked"])
         parts = []
@@ -45,17 +47,30 @@ def build_git_status_prompt(workspace_path: str) -> str:
             parts.append(f"{tracked} files modified")
         if untracked:
             parts.append(f"{untracked} untracked")
-        lines.append(f"Status: {', '.join(parts)}")
+        lines.append(f"Status: {', '.join(parts)}" if parts else "Status: (clean)")
 
-    # Recent commits
+    # Recent commits (a repository with no commit yet has none to show).
+    # Whether a commit exists is read from rev-parse's exit code (0 yes,
+    # 1 no), never from git's message text, which a localized git translates.
     try:
+        head = _run_git(
+            ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"], cwd=git_root, timeout=5
+        )
+        if head.returncode == 1:
+            return "\n".join(lines) + "\n"
+        if head.returncode != 0:
+            lines.append(f"Recent commits: unavailable ({head.stderr.strip()})")
+            return "\n".join(lines) + "\n"
         result = _run_git(["log", "-5", "--oneline"], cwd=git_root, timeout=5)
-        if result.returncode == 0 and result.stdout.strip():
-            lines.append("Recent commits:")
-            for commit_line in result.stdout.strip().split("\n"):
-                lines.append(f"  {commit_line}")
-    except Exception:
-        pass
+    except subprocess.TimeoutExpired:
+        lines.append("Recent commits: unavailable (git log timed out)")
+        return "\n".join(lines) + "\n"
+    if result.returncode == 0 and result.stdout.strip():
+        lines.append("Recent commits:")
+        for commit_line in result.stdout.strip().split("\n"):
+            lines.append(f"  {commit_line}")
+    elif result.returncode != 0:
+        lines.append(f"Recent commits: unavailable ({result.stderr.strip()})")
 
     return "\n".join(lines) + "\n"
 
@@ -64,8 +79,8 @@ def build_git_instructions_prompt() -> str:
     """Static git workflow instructions for the system prompt.
 
     Always included when git tools are in the tool pool so the LLM knows the
-    expected commit message style, PR body format, and safety rules. Static —
-    no dynamic git state — so it is registered on the cached WORKSPACE layer,
+    expected commit message style, PR body format, and safety rules. Static
+    (no dynamic git state), so it is registered on the cached WORKSPACE layer,
     NOT alongside build_git_status_prompt on the dynamic layer.
 
     Scope rule: per-tool usage guidance belongs in that tool's ``description``,
@@ -73,24 +88,10 @@ def build_git_instructions_prompt() -> str:
     a place here: intent disambiguation where guessing wrong is not reversible,
     the shape of output the user expects, and constraints that span tools so no
     single description can hold them.
-
-    What that rule removed, and why it is safe to have removed it:
-    - "How to clone" was a near-verbatim copy of git_clone's own description.
-    - The safety protocol (never update config, never skip hooks, never --amend,
-      never -i, warn on secret files) guarded against flags these tools do not
-      expose, and git_add_commit already says it never amends and rejects secret
-      files. The one real hole was the shell, which the shell rule below covers.
-    - The GitHub bullets restated the github / github_api / github_api_write
-      descriptions, which already carry the argv shape, the read-vs-mutate split,
-      the hard-blocked actions, and the "never claim a state a tool did not
-      confirm" rule.
-    - Step-by-step commit and branch-deletion procedures were multi-step
-      completion the model does unprompted, and git_delete_branch's own
-      description carries the one real ordering constraint (be on another branch).
     """
     return """# Commits
 
-Match the repository's existing style — read recent messages with git_log before
+Match the repository's existing style: read recent messages with git_log before
 writing one. Say why the change was made rather than restating the diff, and
 stage the files you actually touched rather than everything.
 
@@ -127,7 +128,7 @@ pop/apply) must be confirmed with the user before you call them.
 Do git and GitHub work through the git_* and github tools, never by shelling out
 through ws_run_command, terminal_run, or any other command tool. The shell path
 skips the approval cards, skips the verification the github tools perform, and is
-not authenticated for GitHub — which is how it has produced confident but false
+not authenticated for GitHub, which is how it has produced confident but false
 "I closed the PR" claims. That includes `git worktree add`, checkout, merge,
 rebase, and `reset --hard`.
 

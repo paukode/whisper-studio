@@ -12,7 +12,7 @@ import asyncio
 import json
 import os
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import File, Request, UploadFile
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -20,12 +20,10 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from server.infrastructure import sessions as _s
 from server.infrastructure.sessions import (
     CRON_INBOX_ID,
-    PROMPT_ROLES,
     _delete_session_sync,
     _get_conn,
     _lock_for,
     _row_to_dict,
-    _safe_col,
     _upsert_session,
     list_session_summaries,
     router,
@@ -56,97 +54,31 @@ def _message_text(content) -> str:
     return ""
 
 
-_SNIPPET_RADIUS = 40
-
-
-def _snippet(text: str, start: int, end: int) -> str:
-    """A short window of context around a match, flattened to one line."""
-    lo = max(0, start - _SNIPPET_RADIUS)
-    hi = min(len(text), end + _SNIPPET_RADIUS)
-    core = " ".join(text[lo:hi].split())
-    return ("…" if lo > 0 else "") + core + ("…" if hi < len(text) else "")
-
-
-def _search_session_row(row, pattern: re.Pattern) -> str | None:
-    """First match snippet for one session, or None.
-
-    Searches user/assistant message text first (what search users usually
-    mean by "content"), then transcript segment text. UI-only roles
-    (cron_event) never match, mirroring visible_chat_history.
-    """
-    try:
-        history = json.loads(row["chat_history"]) or []
-    except (TypeError, ValueError):
-        history = []
-    for msg in history:
-        if not isinstance(msg, dict) or msg.get("role") not in PROMPT_ROLES:
-            continue
-        text = _message_text(msg.get("content"))
-        m = pattern.search(text)
-        if m:
-            return _snippet(text, m.start(), m.end())
-    try:
-        segments = json.loads(row["segments"]) or []
-    except (TypeError, ValueError):
-        segments = []
-    for seg in segments:
-        text = seg.get("text") if isinstance(seg, dict) else None
-        if not isinstance(text, str):
-            continue
-        m = pattern.search(text)
-        if m:
-            return _snippet(text, m.start(), m.end())
-    return None
-
-
 # NOTE: declared before GET /api/sessions/{session_id}; FastAPI matches in
 # declaration order, so a later literal path would be captured as an id.
 @router.get("/api/sessions/search")
 async def search_sessions(q: str = "", limit: int = 50):
-    """Case-insensitive substring search over session content.
+    """Full-text search over session content (prefix-matched words).
 
     Backs the sidebar's optional "Search message content" toggle: the
     title-only filter stays client-side, this endpoint reports which
-    sessions ALSO match by message/transcript text, newest first, with a
-    snippet explaining the hit. Scanning every blob is fine at the current
-    scale (tens of sessions, a few hundred KB total); an FTS index is the
-    upgrade path if that ever changes.
+    sessions ALSO match by message/transcript text, with a snippet
+    explaining the hit.
     """
     needle = q.strip()
     if not needle:
         return {"results": [], "truncated": False}
     limit = max(1, min(limit, 200))
-    # FTS5 first (the same index the model's session_search tool uses); the
-    # regex scan below stays as the fallback for a build without FTS5.
+    # The same FTS5 index the model's session_search tool uses.
     from server.infrastructure import session_search as _fts
 
-    if _fts.available():
-        hits = _fts.search(needle, limit=limit, prefix=True, roles=_fts.SIDEBAR_ROLES)
-        return {
-            "results": [{"id": h["session_id"], "snippet": h["snippet"]} for h in hits],
-            "truncated": len(hits) >= limit,
-        }
-    pattern = re.compile(re.escape(needle), re.IGNORECASE)
-
-    def _all_rows():
-        with _get_conn() as conn:
-            return conn.execute(
-                "SELECT id, chat_history, segments FROM sessions ORDER BY updated_at DESC"
-            ).fetchall()
-
-    rows = await asyncio.to_thread(_all_rows)
-    results = []
-    truncated = False
-    for i, row in enumerate(rows):
-        snippet = _search_session_row(row, pattern)
-        if snippet is not None:
-            results.append({"id": row["id"], "snippet": snippet})
-            if len(results) >= limit:
-                # Unscanned rows may hold more matches; tell the client so
-                # capped results are never mistaken for a complete answer.
-                truncated = i < len(rows) - 1
-                break
-    return {"results": results, "truncated": truncated}
+    hits = await asyncio.to_thread(
+        _fts.search, needle, limit=limit, prefix=True, roles=_fts.SIDEBAR_ROLES
+    )
+    return {
+        "results": [{"id": h["session_id"], "snippet": h["snippet"]} for h in hits],
+        "truncated": len(hits) >= limit,
+    }
 
 
 def _load_session(session_id: str) -> dict | None:
@@ -165,8 +97,7 @@ def _session_event_frame(ev: dict) -> dict | None:
     """Map an event-bus event to the SSE frame the UI renders, or None when it
     is nothing the UI shows live.
 
-    Shared by the per-session channel and the multiplexed one below so the two
-    can never drift. Agent runtime progress (server/agents/runtime.py _emit)
+    Used by the multiplexed /api/sessions/events channel below. Agent runtime progress (server/agents/runtime.py _emit)
     is forwarded as ``agent_progress`` for the agent pane, which follows a run
     through this channel whichever session or private channel the run
     publishes on; the chat's own stream still folds the same events into the
@@ -258,7 +189,7 @@ async def all_session_events(request: Request):
     match. Each frame carries ``session_id`` and the client routes it to the
     right session itself.
 
-    This replaces one stream per open session. Browsers cap concurrent
+    One stream serves every open session. Browsers cap concurrent
     connections per origin (about 6 on HTTP/1.1), and a stream per session
     plus the chat stream exhausted that budget: a file upload or a second
     session's first request then sat queued in the browser until a running
@@ -285,7 +216,7 @@ async def all_session_events(request: Request):
                     return
                 try:
                     session_id, ev = await asyncio.wait_for(queue.get(), timeout=15.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     yield ": heartbeat\n\n"
                     continue
                 frame = _session_event_frame(ev)
@@ -342,7 +273,7 @@ async def _save_session_body(session_id: str, body: dict) -> None:
     generated_title = 1 if body.get("generatedTitle") else 0
     # The frontend sends `updatedAt` (per the Session type). If absent, fall
     # back to "now" so the row is at least sortable.
-    _now = datetime.now(timezone.utc).isoformat()
+    _now = datetime.now(UTC).isoformat()
     created_at = body.get("createdAt") or _now
     updated_at = body.get("updatedAt") or _now
     segments = json.dumps(body.get("segments", []))
@@ -395,7 +326,7 @@ async def patch_session_title(session_id: str, request: Request):
                 "title": title,
                 "custom": custom_title,
                 "generated": generated_title,
-                "now": datetime.now(timezone.utc).isoformat(),
+                "now": datetime.now(UTC).isoformat(),
                 "id": session_id,
             },
         )
@@ -426,19 +357,10 @@ _OPEN_WORKSPACE_APPS = ("vscode", "kiro", "finder")
 
 
 def _open_workspace_cmd(app: str, path: str) -> list[str]:
-    import platform
-
-    if platform.system() == "Darwin":
-        return {
-            "finder": ["open", path],
-            "vscode": ["open", "-a", "Visual Studio Code", path],
-            "kiro": ["open", "-a", "Kiro", path],
-        }[app]
-    # Best effort elsewhere: file manager via xdg-open, editors via their CLIs.
     return {
-        "finder": ["xdg-open", path],
-        "vscode": ["code", path],
-        "kiro": ["kiro", path],
+        "finder": ["open", path],
+        "vscode": ["open", "-a", "Visual Studio Code", path],
+        "kiro": ["open", "-a", "Kiro", path],
     }[app]
 
 
@@ -455,7 +377,7 @@ async def open_session_workspace(session_id: str, request: Request):
         row = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
     if row is None:
         return JSONResponse({"error": "not found"}, status_code=404)
-    path = _safe_col(row, "workspace_path", "")
+    path = row["workspace_path"]
     if not path or not os.path.isdir(path):
         return JSONResponse({"error": "session has no workspace folder"}, status_code=400)
     try:
@@ -485,7 +407,7 @@ async def beacon_save_session(session_id: str, request: Request):
 async def branch_session(session_id: str):
     """Fork the current session into a new session with the same history."""
     import uuid
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     with _get_conn() as conn:
         row = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
@@ -499,7 +421,7 @@ async def branch_session(session_id: str):
         branch_num = len(existing) + 1
         new_title = base_title + (" (branch)" if branch_num == 1 else f" (branch {branch_num})")
         new_id = str(uuid.uuid4())
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         conn.execute(
             """
             INSERT INTO sessions (id, title, custom_title, generated_title, created_at, updated_at, segments, chat_history, speaker_names)
@@ -533,18 +455,10 @@ def _session_export_lines(session_id: str, row) -> tuple[str, list[str]]:
     both produce byte-identical per-session content."""
     from server.utils import ndjson_dumps
 
-    try:
-        segments = json.loads(row["segments"]) or []
-    except (TypeError, ValueError):
-        segments = []
-    try:
-        chat_history = json.loads(row["chat_history"]) or []
-    except (TypeError, ValueError):
-        chat_history = []
-    try:
-        speaker_names = json.loads(row["speaker_names"]) or {}
-    except (TypeError, ValueError):
-        speaker_names = {}
+    # A column that does not parse raises: an export is never silently empty.
+    segments = json.loads(row["segments"]) or []
+    chat_history = json.loads(row["chat_history"]) or []
+    speaker_names = json.loads(row["speaker_names"]) or {}
     title = row["title"]
 
     lines = [
@@ -553,7 +467,7 @@ def _session_export_lines(session_id: str, row) -> tuple[str, list[str]]:
                 "type": "export_meta",
                 "session_id": session_id,
                 "title": title,
-                "exported_at": datetime.now(timezone.utc).isoformat(),
+                "exported_at": datetime.now(UTC).isoformat(),
                 "speaker_names": speaker_names,
             }
         )
@@ -635,7 +549,7 @@ async def bulk_export_sessions(request: Request):
     if not used_names:
         return JSONResponse({"error": "no matching sessions"}, status_code=404)
 
-    filename = f"sessions-export-{datetime.now(timezone.utc).strftime('%Y-%m-%d')}.zip"
+    filename = f"sessions-export-{datetime.now(UTC).strftime('%Y-%m-%d')}.zip"
     return Response(
         content=buf.getvalue(),
         media_type="application/zip",
@@ -734,7 +648,7 @@ def _insert_imported_session(
     import uuid
 
     new_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     with _get_conn() as conn:
         conn.execute(
             """
@@ -815,58 +729,6 @@ async def bulk_import_sessions(files: list[UploadFile] = File(...)):
             _import_one(name, data)
 
     return {"imported": imported, "failed": failed}
-
-
-@router.get("/api/sessions/{session_id}/events")
-async def session_events(session_id: str, request: Request):
-    """Long-lived SSE channel for out-of-band notifications scoped to a
-    chat session.
-
-    Subscribes to the agent event_bus for the entire lifetime of the
-    connection — unlike the ``/api/chat`` drainer, which only listens
-    during an in-flight tool batch. Background cron firings publish to
-    the same bus, so this is the path that lets a card appear in the
-    chat *without* the user submitting a new turn or refreshing the
-    page.
-
-    Routes exactly what the multiplexed channel routes (the frame helper
-    above is shared), so the two can never drift.
-
-    Sends a comment heartbeat every 15s so proxies don't time out.
-    """
-    from server.agents.event_bus import event_bus
-    from server.utils import ndjson_dumps
-
-    queue = event_bus.subscribe(session_id)
-
-    async def stream():
-        yield ": connected\n\n"
-        try:
-            while True:
-                if await request.is_disconnected():
-                    return
-                try:
-                    ev = await asyncio.wait_for(queue.get(), timeout=15.0)
-                except asyncio.TimeoutError:
-                    # SSE comment — keeps the connection alive without
-                    # firing a real event on the frontend.
-                    yield ": heartbeat\n\n"
-                    continue
-                frame = _session_event_frame(ev)
-                if frame is not None:
-                    yield f"data: {ndjson_dumps(frame)}\n\n"
-        finally:
-            event_bus.unsubscribe(session_id, queue)
-
-    return StreamingResponse(
-        stream(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache, no-transform",
-            "X-Accel-Buffering": "no",
-            "Connection": "keep-alive",
-        },
-    )
 
 
 @router.delete("/api/sessions/{session_id}")

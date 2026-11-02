@@ -3,8 +3,6 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 export interface InlineInputProps {
   /** Initial value for the input field. */
   initialValue?: string;
-  /** Placeholder text when the input is empty. */
-  placeholder?: string;
   /** Called when the user confirms the input (Enter key). */
   onConfirm: (value: string) => void;
   /** Called when the user cancels the input (Escape key or blur). */
@@ -12,13 +10,11 @@ export interface InlineInputProps {
 }
 
 /**
- * Inline input field used for rename and new-file/new-folder operations
- * within the file tree. Automatically focuses on mount and selects the
+ * Inline input field used to rename an entry in the file tree. Automatically focuses on mount and selects the
  * filename portion (before the last dot) for rename convenience.
  */
 export const InlineInput: React.FC<InlineInputProps> = ({
   initialValue = '',
-  placeholder,
   onConfirm,
   onCancel,
 }) => {
@@ -74,7 +70,6 @@ export const InlineInput: React.FC<InlineInputProps> = ({
       className="file-tree-inline-input"
       type="text"
       value={value}
-      placeholder={placeholder}
       onChange={(e) => setValue(e.target.value)}
       onKeyDown={handleKeyDown}
       onBlur={handleBlur}

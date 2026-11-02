@@ -60,10 +60,12 @@ return { fixed: results.filter(Boolean).length, verdicts,
 - `pipeline(items, ...stages)` — run each item through ALL stages independently,
   NO barrier between stages (item A can be in stage 3 while B is in stage 1).
   Each stage is `(prev, item, index) => Promise`. A stage that throws drops that
-  item to null. This is the DEFAULT for multi-stage work.
-- `parallel(thunks)` — a BARRIER: awaits all thunks. A thunk that throws → null,
-  so `.filter(Boolean)` before using. Use only when you need ALL results at once
-  (dedup/merge across the full set, early-exit on zero).
+  item to null and logs the error. This is the DEFAULT for multi-stage work.
+- `parallel(thunks)`: a BARRIER that awaits all thunks. A thunk that throws
+  becomes null (the error is logged), so `.filter(Boolean)` before using. Use
+  only when you need ALL results at once (dedup/merge across the full set,
+  early-exit on zero). In both, `AgentCapError`, `BudgetExceededError` and a
+  cancel are not dropped: they reject the whole call.
 - `phase(name)` — mark the current phase (must be one of meta.phases).
 - `log(...args)` — progress line to the user.
 - `args` — the frozen value you passed as workflow_run's `args`.
@@ -114,13 +116,10 @@ workflow — a saved script the user approved runs by name with no card, and
 def build_ultracode_directive() -> str:
     """The directive plus a live listing of the user's saved workflows so the
     model can invoke them by name (like skills)."""
-    directive = _BASE
-    try:
-        from server.workflows import store
+    from server.workflows import store
 
-        saved = store.list_scripts()
-    except Exception:
-        saved = []
+    directive = _BASE
+    saved = store.list_scripts()
     if saved:
         lines = "\n".join(
             f"- `{s['name']}`{' (trusted)' if s.get('trusted') else ''}: {s.get('description', '')}"

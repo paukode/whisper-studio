@@ -19,9 +19,6 @@ def ws(tmp_path, monkeypatch):
 
     monkeypatch.setattr(S, "WORKSPACE_CONFIG_PATH", str(tmp_path / "workspace.json"))
     monkeypatch.setattr(S, "RECENT_WORKSPACES_PATH", str(tmp_path / "recent.json"))
-    monkeypatch.setattr(E, "load_workspace_config", S.load_workspace_config)
-    monkeypatch.setattr(E, "save_workspace_config", S.save_workspace_config)
-    monkeypatch.setattr(E, "save_recent_workspace", S.save_recent_workspace)
     monkeypatch.setattr(E, "get_workspace_path", S.get_workspace_path)
     monkeypatch.setattr(fg, "GRANTS_PATH", str(tmp_path / "grants.json"))
     home = tmp_path / "home"
@@ -104,3 +101,42 @@ def test_switching_requires_the_user_to_have_asked(ws, monkeypatch):
     assert S.get_workspace_path().endswith("notes")
     switched = json.loads(E.execute_ws_open_folder({"path": "ml-ops", "switch": "true"}))
     assert switched["opened"] and S.get_workspace_path().endswith("ml-ops")
+
+
+def test_open_folder_now_switches_like_a_ui_connect(ws, monkeypatch, tmp_path):
+    """open_folder_now used to write the config itself: the git and file-tree
+    watchers kept pointing at the old folder and the old cwds survived."""
+    S, home = ws
+    pointed: dict = {}
+    cleared: list = []
+    monkeypatch.setattr(S, "_point_git_watcher_at", lambda p: pointed.update(git=p))
+    monkeypatch.setattr(S, "_point_workspace_watcher_at", lambda p: pointed.update(tree=p))
+    monkeypatch.setattr(S, "clear_workspace_scoped_state", lambda: cleared.append(True))
+    a = os.path.realpath(str(home / "Documents" / "notes"))
+    b = os.path.realpath(str(home / "Documents" / "ml-ops"))
+    S.connect_workspace(a)
+    cleared.clear()
+
+    out = json.loads(E.open_folder_now(b))
+
+    assert out["opened"] is True and out["path"] == b
+    assert S.get_workspace_path() == b
+    assert pointed == {"git": b, "tree": b}
+    assert cleared == [True]
+
+
+def test_a_folder_the_app_may_not_read_is_refused(ws, monkeypatch):
+    S, home = ws
+    locked = home / "Documents" / "notes"
+    real_listdir = os.listdir
+
+    def listdir(p):
+        if os.path.realpath(p) == os.path.realpath(str(locked)):
+            raise PermissionError(1, "Operation not permitted", str(locked))
+        return real_listdir(p)
+
+    monkeypatch.setattr(os, "listdir", listdir)
+    out = json.loads(E.open_folder_now(os.path.realpath(str(locked))))
+    assert out["error"].startswith("Cannot read ")
+    assert "Operation not permitted" in out["error"]
+    assert S.get_workspace_path() is None

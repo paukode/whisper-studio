@@ -89,7 +89,6 @@ def _access(agent_type: str) -> AgentToolAccess:
         agent_id="probe",
         depth=0,
         session_id=f"s-{uuid.uuid4().hex[:8]}",
-        ws_connected=True,
     )
 
 
@@ -126,6 +125,15 @@ def test_the_executor_hands_plan_mode_to_the_call_and_takes_it_back(monkeypatch)
     async def batch(plan_mode: bool):
         await te.execute_tool_batch(
             [{"id": "a", "name": "ws_read_file", "input": {"path": "a.txt"}}],
+            # Schema for the plan-scope observer's stub read tool.
+            tool_schemas={
+                "ws_read_file": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"],
+                    "additionalProperties": False,
+                }
+            },
             is_concurrent_safe=lambda n: False,
             loop=asyncio.get_running_loop(),
             executor=executor,
@@ -188,18 +196,15 @@ def test_while_the_app_is_in_plan_mode_agents_start_read_only(monkeypatch, works
 # ── MCP tools for read-only agents ──────────────────────────────────────────
 
 
-class _Hint:
-    def __init__(self, read_only: bool):
-        self.readOnlyHint = read_only
+def _mcp_tool(name: str, read_only: bool | None = None):
+    """A tool as the MCP SDK lists it, so the hint is read by its real field."""
+    from mcp import types
+
+    annotations = None if read_only is None else types.ToolAnnotations(read_only_hint=read_only)
+    return types.Tool(name=name, input_schema={"type": "object"}, annotations=annotations)
 
 
-class _McpTool:
-    def __init__(self, name: str, read_only: bool | None = None):
-        self.name = name
-        self.annotations = _Hint(read_only) if read_only is not None else None
-
-
-def _fake_mcp(monkeypatch, tools: list[_McpTool], config: dict) -> None:
+def _fake_mcp(monkeypatch, tools: list, config: dict) -> None:
     from server.mcp import mcp_manager
 
     monkeypatch.setattr(
@@ -226,7 +231,7 @@ def _fake_mcp(monkeypatch, tools: list[_McpTool], config: dict) -> None:
     ],
 )
 def test_an_mcp_tool_is_a_read_only_when_it_is_marked_one(monkeypatch, hint, config, is_write):
-    _fake_mcp(monkeypatch, [_McpTool("lookup", hint)], config)
+    _fake_mcp(monkeypatch, [_mcp_tool("lookup", hint)], config)
     assert _is_write_tool("mcp__srv__lookup") is is_write
 
 
@@ -238,19 +243,19 @@ def test_an_mcp_name_no_server_knows_is_kept_from_read_only_agents(monkeypatch):
 def test_a_read_only_custom_whitelist_stays_as_written(monkeypatch):
     """An MCP tool unmarked at load time (its server may not be connected
     yet) must not turn the whitelist into the whole read-only catalog."""
-    _fake_mcp(monkeypatch, [_McpTool("search")], {})
+    _fake_mcp(monkeypatch, [_mcp_tool("search")], {})
     cfg = build_agent_config(
         "jira_reader", read_only=True, tools=["mcp__srv__search"], system_prompt="read jira"
     )
     assert cfg.allowed_tools == frozenset({"mcp__srv__search"})
     pool = [{"name": "mcp__srv__search"}, {"name": "ws_read_file"}]
     assert filter_tools_for_agent(pool, cfg) == [], "unmarked: refused, nothing else added"
-    _fake_mcp(monkeypatch, [_McpTool("search", True)], {})
+    _fake_mcp(monkeypatch, [_mcp_tool("search", True)], {})
     assert [t["name"] for t in filter_tools_for_agent(pool, cfg)] == ["mcp__srv__search"]
 
 
 def test_a_read_only_agent_is_offered_only_the_marked_mcp_tools(monkeypatch):
-    _fake_mcp(monkeypatch, [_McpTool("lookup", True), _McpTool("create_issue")], {})
+    _fake_mcp(monkeypatch, [_mcp_tool("lookup", True), _mcp_tool("create_issue")], {})
     pool = [{"name": "mcp__srv__lookup"}, {"name": "mcp__srv__create_issue"}]
     kept = {t["name"] for t in filter_tools_for_agent(pool, AGENT_TYPES["explore"])}
     assert kept == {"mcp__srv__lookup"}
@@ -458,8 +463,8 @@ def test_a_voice_turn_keeps_the_memory_tools_an_unattended_run_defers(monkeypatc
     monkeypatch.setattr(
         "server.infrastructure.feature_flags.is_enabled", lambda name, *a, **k: True
     )
-    voice = {t["name"] for t in _round_catalog("s-voice", False, attended=True)}
-    unattended = {t["name"] for t in _round_catalog("s-wake", False)}
+    voice = {t["name"] for t in _round_catalog("s-voice", attended=True)}
+    unattended = {t["name"] for t in _round_catalog("s-wake")}
     assert CHAT_CORE_TOOLS <= voice
     assert CHAT_CORE_TOOLS.isdisjoint(unattended)
 
@@ -479,7 +484,7 @@ def test_an_agent_can_still_load_the_memory_tools_it_is_not_offered(monkeypatch)
 def test_an_mcp_server_that_connects_mid_run_is_available_next_round(monkeypatch):
     catalog = [{"name": "ws_read_file"}, {"name": "tool_search"}]
     monkeypatch.setattr("server.chat.tool_pool.assemble_full_catalog", lambda **kw: list(catalog))
-    _fake_mcp(monkeypatch, [_McpTool("lookup")], {})
+    _fake_mcp(monkeypatch, [_mcp_tool("lookup")], {})
     general, explore = _access("general"), _access("explore")
     assert "mcp__srv__lookup" not in general.scope.permitted
 

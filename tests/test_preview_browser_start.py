@@ -136,3 +136,23 @@ def test_a_failure_after_the_launch_closes_what_it_started(fake_playwright):
         assert session.page is None and session.browser is None
 
     asyncio.run(scenario())
+
+
+def test_a_response_that_cannot_be_read_names_its_error():
+    """A failing request.response() used to leave status '?' with no reason."""
+    import asyncio
+
+    from server.preview.browser import BrowserSession
+
+    class _Req:
+        method = "GET"
+        url = "http://localhost:5173/app.js"
+
+        async def response(self):
+            raise RuntimeError("Target closed")
+
+    session = BrowserSession()
+    asyncio.run(session._record_request(_Req(), failed=False))
+    assert "?  GET    http://localhost:5173/app.js  (response unreadable: Target closed)" in (
+        session.network_text()
+    )

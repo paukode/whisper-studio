@@ -96,30 +96,26 @@ def _install_annotations(fmt: str) -> dict[str, dict]:
     have this" instead of letting the user queue the same multi-GB download
     twice. Download state comes from the models-manager queue (the SAME source
     the Chat tab renders). Filenames let the GGUF quant picker mark the exact
-    quant; MLX entries have none (the repo is the unit). Never raises: an
-    annotation failure must not sink the search."""
-    try:
-        from server.local.registry import local_models
-        from server.models_manager import catalog, manager
+    quant; MLX entries have none (the repo is the unit). A registry or queue
+    error fails the search with its reason."""
+    from server.local.registry import local_models
+    from server.models_manager import catalog, manager
 
-        by_key = {e.key: e for e in catalog.entries() if e.group == catalog.GROUP_LOCAL_CHAT}
-        out: dict[str, dict] = {}
-        for key, m in local_models().items():
-            if (m.get("engine") == "mlx") != (fmt == "mlx"):
-                continue
-            entry = by_key.get(key)
-            if entry is None:
-                continue
-            state, _err = manager.state_of(entry)
-            slot = out.setdefault(m["repo_id"], {"installed": [], "downloading": []})
-            if state == "installed":
-                slot["installed"].append(m.get("filename") or "")
-            elif state in ("downloading", "queued"):
-                slot["downloading"].append(m.get("filename") or "")
-        return out
-    except Exception as e:  # pragma: no cover - defensive
-        log.debug("Could not annotate install states: %s", e)
-        return {}
+    by_key = {e.key: e for e in catalog.entries() if e.group == catalog.GROUP_LOCAL_CHAT}
+    out: dict[str, dict] = {}
+    for key, m in local_models().items():
+        if (m.get("engine") == "mlx") != (fmt == "mlx"):
+            continue
+        entry = by_key.get(key)
+        if entry is None:
+            continue
+        state, _err = manager.state_of(entry)
+        slot = out.setdefault(m["repo_id"], {"installed": [], "downloading": []})
+        if state == "installed":
+            slot["installed"].append(m.get("filename") or "")
+        elif state in ("downloading", "queued"):
+            slot["downloading"].append(m.get("filename") or "")
+    return out
 
 
 def _official_bases(query: str | None) -> list[hf_client.SearchHit]:

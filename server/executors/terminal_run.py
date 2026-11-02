@@ -18,7 +18,7 @@ Every call goes through the [WS_APPROVAL] → approval_request pipeline.
 The approval card shows the literal command + mode.
 
 Non-interactive only. Commands that wait for stdin (vim, less, ssh password
-prompts) get caught by `_LOOKS_INTERACTIVE` and refused at validation, so
+prompts) get caught by `_looks_interactive` and refused at validation, so
 they never reach the PTY and can't hang the chat turn.
 """
 
@@ -255,20 +255,15 @@ def _process_name(pid: int) -> str:
     """The executable name of ``pid``: its basename, with a login shell's
     leading '-' dropped. Empty when it cannot be read (a leaderless group)."""
     import subprocess
-    import sys
 
     try:
-        if sys.platform.startswith("linux"):
-            with open(f"/proc/{pid}/comm", encoding="utf-8", errors="replace") as f:
-                name = f.read().strip()
-        else:
-            out = subprocess.run(
-                ["ps", "-o", "comm=", "-p", str(pid)],
-                capture_output=True,
-                text=True,
-                timeout=1.0,
-            )
-            name = out.stdout.strip()
+        out = subprocess.run(
+            ["ps", "-o", "comm=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            timeout=1.0,
+        )
+        name = out.stdout.strip()
     except (OSError, subprocess.SubprocessError):
         return ""
     return os.path.basename(name).lstrip("-")
@@ -368,44 +363,40 @@ async def do_terminal_run(payload: dict) -> tuple[bool, str]:
     write_mode = "open"
     if mode == "sandbox":
         # The harness confines by default: every sandboxed run is
-        # workspace-write (writes limited to cwd + temp by the OS), whether a
-        # human approved it or an agent auto-ran it. Consent (approval) and
+        # workspace-write (writes limited by the OS to the workspace, this
+        # session's scratch folder and temp), whether a human approved it or
+        # an agent auto-ran it. Consent (approval) and
         # confinement (sandbox) are independent — approving a command does not
         # widen the sandbox; only an explicit danger-full-access escalation
         # does, and resolve_static_decision forces a per-call approval for
         # that, so a blanket "Yes, all cli" grant can never cover it.
         write_mode = _WRITE_MODE_FOR_PERMS[perms]
 
-        from server.sandbox import pty_sandbox_backend
+        from server.sandbox import (
+            SANDBOX_UNAVAILABLE_MESSAGE,
+            SandboxUnavailableError,
+            pty_sandbox_backend,
+        )
 
-        if write_mode != "open" and pty_sandbox_backend() == "none":
-            if payload.get("__agent__"):
-                # Unattended run with no OS backend: fail closed rather than
-                # silently running unconfined with nobody watching.
-                return False, (
-                    "No OS sandbox backend is available on this machine, so the "
-                    "workspace-write confinement this unattended command requires "
-                    "cannot be enforced. Refusing to run it unconfined."
-                )
-            # Interactive (human-approved) run: proceed, but say so — silent
-            # unconfined passthrough is what this disclosure exists to prevent.
-            preamble = (
-                "[sandbox unavailable] No OS sandbox backend on this machine; "
-                "the command ran WITHOUT write confinement.\n"
-            )
-            write_mode = "open"
+        # No OS sandbox: refuse in every write mode (the deny-list guards the
+        # credentials even under danger-full-access), never run unconfined.
+        if pty_sandbox_backend() == "none":
+            return False, SANDBOX_UNAVAILABLE_MESSAGE
 
         from server.workspace.paths import own_scratch_dir
 
-        result = await run_in_sandbox(
-            command,
-            cwd=cwd,
-            timeout=timeout,
-            write_mode=write_mode,
-            scratch_dir=own_scratch_dir(payload.get("session_id")),
-            write_root=ws,
-            secret_reads=secret,
-        )
+        try:
+            result = await run_in_sandbox(
+                command,
+                cwd=cwd,
+                timeout=timeout,
+                write_mode=write_mode,
+                scratch_dir=own_scratch_dir(payload.get("session_id")),
+                write_root=ws,
+                secret_reads=secret,
+            )
+        except SandboxUnavailableError as e:
+            return False, str(e)
     else:
         session = latest_visible_session()
         if session is None:
@@ -420,7 +411,10 @@ async def do_terminal_run(payload: dict) -> tuple[bool, str]:
                 session = None
         opened = session is None
         if session is None:
-            session = await open_visible_session(cwd)
+            try:
+                session = await open_visible_session(cwd)
+            except FileNotFoundError as e:
+                return False, str(e)
         show_visible_session(session, opened=opened)
         result = await run_in_session(session, command, timeout=timeout)
 
@@ -462,10 +456,6 @@ async def do_terminal_run(payload: dict) -> tuple[bool, str]:
 _CONTROL_KEYS = frozenset("\x03\x04\x11")
 
 _WAIT_REASON_HINTS = {
-    "stdin_read": (
-        "The program is waiting for input (blocked reading stdin). Send the next "
-        "line with terminal_send."
-    ),
     "inferred_idle": (
         "Output went quiet and the program appears to be waiting. If it prompted, "
         "send input with terminal_send; otherwise it may still be working — send an "
@@ -488,7 +478,7 @@ async def do_terminal_send(payload: dict) -> tuple[bool, str]:
     finish. Use this to drive REPLs and prompts. Returns (ok, text)."""
     from server.terminal import get_or_open_interactive, send_and_wait
 
-    chat_session_id = (payload.get("__session_id__") or payload.get("session_id") or "").strip()
+    chat_session_id = (payload.get("session_id") or "").strip()
     if not chat_session_id:
         return False, "no chat session id to key the interactive terminal"
 
@@ -523,11 +513,22 @@ async def do_terminal_send(payload: dict) -> tuple[bool, str]:
     if text and not text.endswith(("\n", *_CONTROL_KEYS)):
         text += "\n"
 
+    from server.sandbox import (
+        SANDBOX_UNAVAILABLE_MESSAGE,
+        SandboxUnavailableError,
+        pty_sandbox_backend,
+    )
     from server.workspace.paths import own_scratch_dir
 
-    session = get_or_open_interactive(
-        chat_session_id, cwd, scratch_dir=own_scratch_dir(chat_session_id), write_root=ws
-    )
+    # Refuse before a session (and its PTY and proxy) is opened at all.
+    if pty_sandbox_backend() == "none":
+        return False, SANDBOX_UNAVAILABLE_MESSAGE
+    try:
+        session = get_or_open_interactive(
+            chat_session_id, cwd, scratch_dir=own_scratch_dir(chat_session_id), write_root=ws
+        )
+    except SandboxUnavailableError as e:
+        return False, str(e)
     result = await send_and_wait(session, text, timeout=timeout)
 
     reason = result["wait_reason"]
@@ -539,7 +540,7 @@ async def do_terminal_send(payload: dict) -> tuple[bool, str]:
 async def do_terminal_close(payload: dict) -> tuple[bool, str]:
     from server.terminal import close_interactive
 
-    chat_session_id = (payload.get("__session_id__") or payload.get("session_id") or "").strip()
+    chat_session_id = (payload.get("session_id") or "").strip()
     if not chat_session_id:
         return False, "no chat session id"
     closed = close_interactive(chat_session_id)

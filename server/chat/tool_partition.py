@@ -6,10 +6,9 @@ this session has ACTIVATED (via tool_search or history replay); everything
 else appears only as a one-line entry in the deferred index inside the system
 prompt, discoverable and loadable on demand.
 
-The partition applies to the full stable catalog. Per-turn mode filters
-(plan-mode blocks, strict-RAG suppression) no longer strip the catalog —
-they are enforced at execution time — so activation intersects with a
-catalog that is byte-stable across those flips.
+The partition applies to the full catalog, which is byte-stable across
+per-turn state (plan mode, workspace connect or disconnect): restrictions
+are enforced at execution time, never by stripping schemas.
 """
 
 import logging
@@ -101,19 +100,14 @@ def core_names(*, chat: bool = True) -> frozenset[str]:
     ``progressive_tools_core_extra`` / ``progressive_tools_defer_extra`` are
     hand-edit-only operator knobs (no UI, not in the example config): lists of
     tool names to force into or out of the always-advertised core set."""
-    extra: set[str] = set()
-    defer: set[str] = set()
-    try:
-        from server.infrastructure.config import load_config
-        from server.infrastructure.feature_flags import is_enabled
+    from server.infrastructure.config import load_config
+    from server.infrastructure.feature_flags import is_enabled
 
-        cfg = load_config()
-        extra = {str(n) for n in (cfg.get("progressive_tools_core_extra") or [])}
-        defer = {str(n) for n in (cfg.get("progressive_tools_defer_extra") or [])}
-        if chat and is_enabled("skill_self_improvement"):
-            extra.add("skill_manage")
-    except Exception:
-        pass
+    cfg = load_config()
+    extra = {str(n) for n in (cfg.get("progressive_tools_core_extra") or [])}
+    defer = {str(n) for n in (cfg.get("progressive_tools_defer_extra") or [])}
+    if chat and is_enabled("skill_self_improvement"):
+        extra.add("skill_manage")
     if chat:
         extra |= CHAT_CORE_TOOLS
     # tool_search is the way back to everything else; it can never defer.
@@ -124,7 +118,7 @@ def core_names(*, chat: bool = True) -> frozenset[str]:
 def partition_pool(
     catalog: list[dict], activated: list[str], *, chat: bool = True
 ) -> tuple[list[dict], list[dict], int]:
-    """Split a post-mode-filter catalog into (advertised, deferred, core_count).
+    """Split the full catalog into (advertised, deferred, core_count).
 
     Advertised ordering is cache-critical: core tools keep the catalog's
     existing sorted order (stable prefix), activated tools are APPENDED in
@@ -145,4 +139,6 @@ def partition_pool(
             advertised.append(tool)
             seen.add(name)
     deferred = [t for t in catalog if t["name"] not in seen]
-    return advertised, deferred, core_count
+    from server.tool_inputs import ToolCatalog
+
+    return ToolCatalog(advertised, available=catalog), deferred, core_count

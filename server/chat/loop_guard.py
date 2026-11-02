@@ -115,30 +115,25 @@ def canonical_args(tool_input: dict | None) -> str:
 
 
 def enabled() -> bool:
-    try:
-        from server.infrastructure.feature_flags import is_enabled
+    from server.infrastructure.feature_flags import is_enabled
 
-        return is_enabled("tool_loop_guard")
-    except Exception:  # noqa: BLE001 - a config hiccup must never disable tools
-        return True
+    return is_enabled("tool_loop_guard")
 
 
 def caps() -> dict[str, int]:
     """Per-turn call caps: DEFAULT_CAPS overlaid with the ``tool_loop_caps``
-    config map (a 0 disables a cap)."""
-    merged = dict(DEFAULT_CAPS)
-    try:
-        from server.infrastructure.config import load_config
+    config map (a 0 disables a cap). A malformed map raises ValueError."""
+    from server.infrastructure.config import load_config
 
-        raw = load_config().get("tool_loop_caps") or {}
-        if isinstance(raw, dict):
-            for name, value in raw.items():
-                try:
-                    merged[str(name)] = int(value)
-                except (TypeError, ValueError):
-                    continue
-    except Exception:  # noqa: BLE001
-        pass
+    merged = dict(DEFAULT_CAPS)
+    raw = load_config().get("tool_loop_caps") or {}
+    if not isinstance(raw, dict):
+        raise ValueError("tool_loop_caps must be an object of tool name to call cap.")
+    for name, value in raw.items():
+        try:
+            merged[str(name)] = int(value)
+        except (TypeError, ValueError):
+            raise ValueError(f"tool_loop_caps.{name} must be an integer, not {value!r}.") from None
     return merged
 
 

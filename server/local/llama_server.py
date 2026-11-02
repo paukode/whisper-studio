@@ -1,21 +1,18 @@
 """Lifecycle for the ``llama-server`` subprocess that serves on-device models.
 
-Why a subprocess instead of the in-process llama-cpp-python bindings: upstream
-llama.cpp's server owns the tool-calling and reasoning parsers for every model
-family it supports, so a new GGUF dropped into config gets tool calls and a
-thinking channel WITHOUT us hand-writing a per-family parser. The bindings expose
-no such parser (only Functionary/ChatML handlers that would replace the model's
-own template), which is why the previous path was hardcoded to Gemma's markers.
+Why llama.cpp's own server: it owns the tool-calling and reasoning parsers for
+every model family it supports, so a new GGUF dropped into config gets tool
+calls and a thinking channel without a hand-written per-family parser.
 
 What this module owns:
   * finding the pinned binary (the app's bundled copy, or setup.sh's)
   * starting it against one model at a chosen context size, and waiting for
     /health
-  * one resident model at a time — switching models stops the old process first,
+  * one resident model at a time, switching models stops the old process first,
     matching the memory-constrained on-device build (e.g. M3/18GB)
   * stopping it cleanly on server shutdown so no orphan holds the port or RAM
 
-It deliberately does NOT know about chat, tools or SSE — server/local/
+It deliberately does NOT know about chat, tools or SSE, server/local/
 server_stream.py speaks HTTP to whatever this has running.
 """
 
@@ -81,7 +78,7 @@ _log_path: str | None = None
 
 
 class LlamaServerUnavailable(RuntimeError):
-    """The binary is missing or too old — carries the actionable fix."""
+    """The binary is missing or too old, carries the actionable fix."""
 
 
 def binary_path() -> str | None:
@@ -99,32 +96,30 @@ def binary_path() -> str | None:
 
 
 def installed_build() -> int | None:
-    """The installed build number, or None if it can't be determined.
+    """The installed build number, or None when there is no binary or its
+    ``--version`` output names no build (ensure_available refuses both).
 
     llama-server prints its build to stderr and also loads a GPU backend on
-    ``--version``, so this is best-effort and short-timeout: an unknown build is
-    treated as "probably fine" rather than blocking startup.
+    ``--version``. A ``--version`` that cannot run raises
+    LlamaServerUnavailable with the reason.
     """
     exe = binary_path()
     if not exe:
         return None
     try:
         out = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=60)
-        blob = f"{out.stderr}\n{out.stdout}"
-    except Exception as e:  # pragma: no cover - environment dependent
-        log.debug("llama-server --version failed: %s", e)
-        return None
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise LlamaServerUnavailable(f"Could not run '{exe} --version': {e}") from e
+    blob = f"{out.stderr}\n{out.stdout}"
     import re
 
-    # MIN_BUILD compares the build number. Since llama.cpp took semantic
-    # versions it prints "version: 0.5.0 (build 10350, commit 7fe450e)", before
-    # that "version: 10090 (7347430f4)", and older builds "build: 3901" or a bare
-    # "b3901" tag. A semantic version's major is never the build, so "version:"
-    # only counts when the "(" of the commit follows the number.
-    m = (
-        re.search(r"^\s*version:\s*(\d+)\s*\(", blob, re.I | re.M)
-        or re.search(r"build[:\s]+(\d+)", blob, re.I)
-        or re.search(r"\bb(\d{4,})\b", blob)
+    # MIN_BUILD compares the build number, read the way setup.sh's
+    # llama_server_build reads it: "version: 0.5.0 (build 10350, commit
+    # 7fe450e)" since llama.cpp took semantic versions, "version: 10090
+    # (7347430f4)" before. A semantic version's major is never the build, so
+    # "version:" only counts when the "(" of the commit follows the number.
+    m = re.search(r"^\s*version:\s*(\d+)\s*\(", blob, re.I | re.M) or re.search(
+        r"build[:\s]+(\d+)", blob, re.I
     )
     return int(m.group(1)) if m else None
 
@@ -138,7 +133,12 @@ def ensure_available() -> str:
             "Run 'bash setup.sh', which installs the pinned llama.cpp build."
         )
     build = installed_build()
-    if build is not None and build < MIN_BUILD:
+    if build is None:
+        raise LlamaServerUnavailable(
+            f"Could not read the build of {exe} from its --version output, so it may be "
+            f"older than build {MIN_BUILD}. Run 'bash setup.sh' to install the pinned build."
+        )
+    if build < MIN_BUILD:
         raise LlamaServerUnavailable(
             f"llama-server build {build} is too old for current model architectures "
             f"(need >= {MIN_BUILD}; older builds fail with 'unknown model "
@@ -169,8 +169,8 @@ def resident_key() -> str | None:
 def resident_n_ctx() -> int | None:
     """Context size the running process was started with, or None.
 
-    This is the TRUE window for an on-device turn — the ``--ctx-size`` the
-    subprocess was launched with — so the context meter must read it here rather
+    This is the TRUE window for an on-device turn, the ``--ctx-size`` the
+    subprocess was launched with, so the context meter must read it here rather
     than from the cloud ``context_windows`` config map, which knows nothing about
     local models.
     """
@@ -188,7 +188,7 @@ def base_url() -> str | None:
 
 
 def log_tail(lines: int = 40) -> str:
-    """Last lines of the subprocess log — used to explain a failed start."""
+    """Last lines of the subprocess log, used to explain a failed start."""
     if not _log_path or not os.path.exists(_log_path):
         return ""
     try:
@@ -294,7 +294,7 @@ def ensure_serving(key: str, n_ctx: int | None = None) -> str:
 
     Reuses the running process when it already serves this key at this context
     size; otherwise stops it and starts a new one (only one model is resident).
-    Blocking — a cold start loads gigabytes of weights, so call it off the event
+    Blocking, a cold start loads gigabytes of weights, so call it off the event
     loop. Raises LlamaServerUnavailable with the fix, or RuntimeError with the
     subprocess log tail when the model itself fails to load.
     """
@@ -307,12 +307,12 @@ def ensure_serving(key: str, n_ctx: int | None = None) -> str:
     if key not in models:
         raise RuntimeError(f"Unknown local model: {key}")
     meta = models[key]
-    # Explicit request > the user's last slider choice (sticky, shared with the
-    # in-process runtime) > the model default. Without the sticky tier a lazy
-    # chat-turn start would restart the server back down at 16K even though the
-    # badge says 32K/64K.
-    # 32K floor: with the full tool pool always advertised (~12K tokens of
-    # schemas), 16K left almost no room for transcript + conversation.
+    # Explicit request > the user's last slider choice (sticky, kept in
+    # runtime.py) > the model's ctx > 32768. Without the sticky tier a lazy
+    # chat-turn start would restart the server at the model default even
+    # though the badge shows the user's choice. 32768 is the default, not a
+    # floor: the full tool pool alone renders ~17.2K tokens, so a 16K window
+    # rejects the first turn.
     target_ctx = int(n_ctx or requested_n_ctx() or meta.get("ctx") or 32768)
 
     with _lock:
@@ -367,14 +367,13 @@ def ensure_serving(key: str, n_ctx: int | None = None) -> str:
             "--ctx-size",
             str(target_ctx),
             # ONE slot. The default is 4, and each slot gets its own KV cache, so
-            # the default quadruples KV memory for a single-user desktop app —
+            # the default quadruples KV memory for a single-user desktop app,
             # enough to OOM Metal on an 18GB machine at a large context. One
             # request at a time is also what the UI does.
             "--parallel",
             "1",
-            # Reuse cached prompt prefixes across turns via KV shifting — the
-            # subprocess equivalent of the in-process prefix cache, so a follow-up
-            # turn doesn't re-prefill the whole system+tools prompt.
+            # Reuse cached prompt prefixes across turns via KV shifting, so a
+            # follow-up turn doesn't re-prefill the whole system+tools prompt.
             "--cache-reuse",
             "256",
             # Extract reasoning into a separate channel instead of leaking the raw
@@ -431,7 +430,7 @@ def _strip_reasoning_markers(text: str) -> str:
 
     Observed on the non-streaming endpoint: when upstream's reasoning parser does
     not claim a model's thought channel, ``reasoning_content`` comes back empty and
-    the content arrives as ``"<channel|>the real answer"`` — sometimes with the
+    the content arrives as ``"<channel|>the real answer"``, sometimes with the
     whole thought block ahead of it. Callers here want clean prose or JSON (session
     summaries, index extraction), so keep only what follows the LAST close marker
     and drop any stray markers. Text without markers is returned untouched.
@@ -450,7 +449,7 @@ def reap_orphans() -> int:
     """Kill leftover llama-server processes serving OUR models. Returns the count.
 
     The lifespan shutdown hook stops the child on a graceful exit, but SIGKILL
-    (force quit, OOM killer, `kill -9`) skips it — and because the child runs in
+    (force quit, OOM killer, `kill -9`) skips it, and because the child runs in
     its own session it survives, holding gigabytes and its port forever. Called
     at startup so a hard-killed run cleans up after itself.
 
@@ -492,17 +491,3 @@ def reap_orphans() -> int:
         except (ProcessLookupError, PermissionError) as e:
             log.debug("Could not reap llama-server pid %d: %s", pid, e)
     return killed
-
-
-def status() -> dict:
-    """Snapshot for /api diagnostics."""
-    exe = binary_path()
-    return {
-        "installed": bool(exe),
-        "binary": exe,
-        "min_build": MIN_BUILD,
-        "running": is_running(),
-        "model": resident_key(),
-        "base_url": base_url(),
-        "n_ctx": _state.get("n_ctx"),
-    }

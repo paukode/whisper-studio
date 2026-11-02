@@ -24,7 +24,7 @@ import threading
 import time
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from server.infrastructure.paths import storage_root
 
@@ -44,7 +44,7 @@ _COLUMNS = (
 
 
 def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 @contextmanager
@@ -302,11 +302,11 @@ def list_tasks(
 def _prune_finished_locked(conn) -> None:
     """Drop finished rows past the TTL and cap the finished backlog.
 
-    Output files on disk are left alone (same policy as the old in-memory
-    registry); GC of data/background_output is a separate concern.
+    Output files on disk are left alone; GC of data/background_output is a
+    separate concern.
     """
     cutoff = (
-        datetime.fromtimestamp(time.time() - FINISHED_TTL_S, tz=timezone.utc)
+        datetime.fromtimestamp(time.time() - FINISHED_TTL_S, tz=UTC)
         .isoformat()
         .replace("+00:00", "Z")
     )
@@ -374,13 +374,8 @@ def _pid_alive(pid: int) -> bool:
 
 
 def _system_boot_time() -> float | None:
-    """Epoch seconds of the last system boot (macOS sysctl / Linux /proc)."""
+    """Epoch seconds of the last system boot (macOS sysctl kern.boottime)."""
     try:
-        if os.path.exists("/proc/stat"):
-            with open("/proc/stat") as f:
-                for line in f:
-                    if line.startswith("btime "):
-                        return float(line.split()[1])
         import re
         import subprocess
 

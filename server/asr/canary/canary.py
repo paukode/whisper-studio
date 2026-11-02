@@ -103,13 +103,10 @@ class Model(nn.Module):
             PreprocessArgs as PPreprocessArgs,
         )
         from .audio import log_mel_spectrogram
-        from .base import load_audio
 
         pp = self.config.preprocessor
 
-        if isinstance(audio, (str, Path)):
-            audio = load_audio(str(audio), sr=pp.sample_rate)
-        elif isinstance(audio, np.ndarray):
+        if isinstance(audio, np.ndarray):
             audio = mx.array(audio)
 
         if audio.ndim == 3:
@@ -548,17 +545,3 @@ class Model(nn.Module):
                 stacklevel=3,
             )
             return None
-
-    @classmethod
-    def from_pretrained(cls, path_or_repo: str, *, dtype: mx.Dtype = mx.bfloat16):
-        """Load model from a local directory or HuggingFace repo.
-
-        .. deprecated::
-            Use `mlx_audio.stt.load()` instead.
-        """
-        warnings.warn(
-            "Model.from_pretrained() is deprecated. Use mlx_audio.stt.load() instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        raise NotImplementedError("use server.asr.canary_backend.load_canary_model")

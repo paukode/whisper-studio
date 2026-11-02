@@ -247,12 +247,9 @@ def load_custom_agent_types(workspace_path: str | None = None) -> dict[str, Agen
     (server.workspace.get_workspace_path()) when not given explicitly.
     """
     if workspace_path is None:
-        try:
-            from server.workspace import get_workspace_path
+        from server.workspace import get_workspace_path
 
-            workspace_path = get_workspace_path()
-        except Exception:
-            workspace_path = None
+        workspace_path = get_workspace_path()
 
     types = _load_agents_dir(_user_agents_dir())
     types.update(_load_agents_dir(_project_agents_dir(workspace_path)))

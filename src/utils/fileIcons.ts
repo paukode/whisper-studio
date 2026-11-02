@@ -35,7 +35,7 @@ const FILE_ICONS: Record<string, string> = {
   '.gitignore': '🚫',
   '.swift': '🦅',
   '.kt': '🟠', '.kts': '🟠',
-  '.r': '📈', '.R': '📈',
+  '.r': '📈',
   '.lua': '🌙',
   '.pl': '🐪', '.pm': '🐪',
   '.dart': '🎯',

@@ -1,24 +1,22 @@
-"""System prompt builder — structured, layered construction.
+"""System prompt builder: structured, layered construction.
 
 Assembles the system prompt from a section registry with priority ordering.
-Each section is a named, prioritized block that can be independently enabled,
-disabled, or overridden.
+Each section is a named, prioritized block, enabled per request.
 
-Architecture (inspired by Claude Code's 6-layer system):
-  1. Identity (base persona) — always included, highest priority
-  2. Mode modifiers (brief, plan) — conditional on session config
-  3. Workspace context (code rules, ws instructions) — conditional on workspace
-  4. Dynamic context (git status, memory, transcript) — per-request
-  5. Tool guidance (task tracking, MCP) — always included
-  6. Extensions (custom injections) — lowest priority
+Layers:
+  1. Identity (base persona, code-output rule, user rules): always included
+  2. Mode (brief): conditional on session config
+  3. Workspace (workspace and git instructions, project instructions,
+     learning guidance, rules capture, narration, visuals, deferred tool index)
+  4. Dynamic (plan mode, memory, session memory, git status): per request
+  5. Tool guidance (task tracking and the live task list): per request
 
-The static/dynamic boundary exists at layer 3/4: layers 1-3 are stable within
-a session (good for prompt caching), while layers 4-6 change per request.
+The static/dynamic boundary is between layers 3 and 4: layers 1-3 are stable
+within a session (prompt-cached), while layers 4-5 change per request.
 """
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import IntEnum
@@ -37,8 +35,6 @@ from server.prompts.workspace import (
 
 __all__ = ["build_system_prompt", "build_system_prompt_split", "get_registry"]
 
-log = logging.getLogger("whisper-studio")
-
 
 class PromptLayer(IntEnum):
     """Priority layers for prompt sections. Lower number = higher priority = earlier in prompt."""
@@ -48,7 +44,6 @@ class PromptLayer(IntEnum):
     WORKSPACE = 30
     DYNAMIC = 40
     TOOL_GUIDANCE = 50
-    EXTENSION = 60  # reserved for plugin-registered sections; no in-repo user by design
 
 
 @dataclass
@@ -68,11 +63,7 @@ class PromptSection:
         if not self.enabled:
             return ""
         if self.builder:
-            try:
-                return self.builder(**kwargs)
-            except Exception as e:
-                log.warning("Prompt section '%s' builder failed: %s", self.name, e)
-                return ""
+            return self.builder(**kwargs)
         return self.content
 
 
@@ -86,20 +77,8 @@ class PromptRegistry:
         """Register or replace a prompt section."""
         self._sections[section.name] = section
 
-    def unregister(self, name: str) -> None:
-        """Remove a section by name."""
-        self._sections.pop(name, None)
-
     def get(self, name: str) -> PromptSection | None:
         return self._sections.get(name)
-
-    def enable(self, name: str) -> None:
-        if name in self._sections:
-            self._sections[name].enabled = True
-
-    def disable(self, name: str) -> None:
-        if name in self._sections:
-            self._sections[name].enabled = False
 
     def get_sections(self) -> list[PromptSection]:
         """Return all sections sorted by layer then priority."""
@@ -107,10 +86,6 @@ class PromptRegistry:
             self._sections.values(),
             key=lambda s: (s.layer, s.priority),
         )
-
-    def get_section_names(self) -> list[str]:
-        """Return names of all registered sections in order."""
-        return [s.name for s in self.get_sections()]
 
 
 # ── Global registry ──────────────────────────────────────────────────
@@ -200,8 +175,7 @@ def _build_task_tracking_section(session_id: str = "default", **_) -> str:
         "\n\nTASK TRACKING: For complex multi-step requests, use task_create to create tasks, "
         "task_update to mark them in_progress/completed, and task_list to review progress. "
         "When you begin a fresh multi-step plan after an earlier one is already finished, "
-        "task_stop the old completed tasks first so the task list reflects only the current plan. "
-        f"Always pass session_id='{session_id}' to task tools."
+        "task_stop the old completed tasks first so the task list reflects only the current plan."
     )
     # Inject the live task list (with IDs) so a resumed or continued turn keeps
     # working the SAME plan instead of re-deriving it and creating duplicates.
@@ -209,12 +183,9 @@ def _build_task_tracking_section(session_id: str = "default", **_) -> str:
     # a page refresh the model would otherwise come back blind to the tasks it
     # already created. Reading the list here also self-heals stray in_progress
     # state (get_session_tasks enforces a single active task).
-    try:
-        from server.tasks_tracker import get_session_tasks
+    from server.tasks_tracker import get_session_tasks
 
-        tasks = get_session_tasks(session_id)
-    except Exception:
-        tasks = []
+    tasks = get_session_tasks(session_id)
     if tasks:
         rendered = "\n".join(
             f"  - [{t.get('status', 'pending')}] {t.get('id')}: {t.get('subject', '')}"
@@ -323,10 +294,8 @@ _registry.register(
 def _build_learning_guidance(**_) -> str:
     """When to reach for session_search and skill_manage. Flag-gated, and the
     flags are session-stable, so this sits in the cached STATIC block."""
-    try:
-        from server.infrastructure.feature_flags import is_enabled
-    except Exception:  # noqa: BLE001
-        return ""
+    from server.infrastructure.feature_flags import is_enabled
+
     parts: list[str] = []
     if is_enabled("session_search"):
         parts.append(
@@ -498,19 +467,15 @@ def _resolve_sections(
     turn, which is how ~1.5K tokens of fixed git instructions came to ride along
     behind 120 tokens of real git status.
 
-    Invariant: ``static + dynamic`` is byte-identical to the single-string prompt
-    the legacy builder produced. So callers that don't cache are unaffected, and
-    the cached static prefix never drifts from the uncached string.
-
-    The legacy builder concatenates ALL ``prepend`` sections before ALL ``main``
-    sections, across layers. Byte-equality therefore holds only if no dynamic
-    section uses ``prepend`` (otherwise the split would reorder it). If a dynamic
-    prepend ever appears, we fall back to putting everything in the dynamic block
-    (caching disabled for that build, correctness preserved) and log it.
+    Invariant: ``static + dynamic`` is byte-identical to the single-string
+    prompt (build_system_prompt), so the cached static prefix never drifts from
+    the uncached string. ``prepend`` sections go before the other sections of
+    the static block, so only a static-layer section may use it; a dynamic one
+    raises ValueError.
     """
     registry = get_registry()
 
-    # Configure mode sections (identical to the legacy builder).
+    # Configure the per-request sections.
     brief_section = registry.get("brief_mode")
     if brief_section:
         brief_section.enabled = brief_mode
@@ -542,35 +507,20 @@ def _resolve_sections(
 
     static_prepend: list[str] = []
     static_main: list[str] = []
-    dyn_prepend: list[str] = []
     dyn_main: list[str] = []
     for section in registry.get_sections():
         if not section.enabled:
             continue
+        is_static = int(section.layer) <= int(PromptLayer.WORKSPACE)
+        if section.prepend and not is_static:
+            raise ValueError(f"Prompt section {section.name!r} is dynamic and cannot prepend.")
         text = section.resolve(**kwargs)
         if not text:
             continue
-        is_static = int(section.layer) <= int(PromptLayer.WORKSPACE)
         if section.prepend:
-            (static_prepend if is_static else dyn_prepend).append(text)
+            static_prepend.append(text)
         else:
             (static_main if is_static else dyn_main).append(text)
-
-    if dyn_prepend:
-        # A dynamic-layer prepend would be reordered by the split — unsafe.
-        # Put the whole prompt in the (uncached) dynamic block instead.
-        log.warning("System-prompt split disabled: a dynamic-layer section uses prepend.")
-        full = (
-            "".join(static_prepend)
-            + "".join(dyn_prepend)
-            + "".join(static_main)
-            + "".join(dyn_main)
-        )
-        if ultracode:
-            from server.prompts.ultracode import build_ultracode_directive
-
-            full += build_ultracode_directive()
-        return "", full
 
     static_block = "".join(static_prepend) + "".join(static_main)
     dynamic_block = "".join(dyn_main)

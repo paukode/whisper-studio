@@ -849,7 +849,7 @@ def _delete_sites(command: str, depth: int, walk: _Walk | None = None) -> list[D
     walk = walk if walk is not None else _Walk()
     command = strip_heredoc_bodies(command)
     sites: list[DeleteSite] = []
-    # _statements splits as split_subcommands does: on every UNQUOTED ;, &
+    # split_statements splits as split_subcommands does: on every UNQUOTED ;, &
     # and | (pipeline stages included), not on bare newlines: a multi-line
     # script has no separator between lines at all, so without the line
     # split a line merely following an rm-free first line would never be

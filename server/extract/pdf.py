@@ -5,10 +5,6 @@ scanned/image-only PDF comes back empty. When that happens we rasterize the
 pages with pypdfium2 (BSD/Apache, license-clean) and OCR them.
 """
 
-import logging
-
-log = logging.getLogger("whisper-studio")
-
 # A born-digital PDF yields plenty of text; a scanned one yields ~nothing.
 _SCANNED_TEXT_THRESHOLD = 100  # non-whitespace chars
 _MAX_OCR_PAGES = 30  # bound OCR work so uploads stay responsive
@@ -35,25 +31,16 @@ def extract_pdf(content: bytes, markitdown_text: str) -> str:
 
 
 def _render_pages(content: bytes):
-    try:
-        import pypdfium2 as pdfium
-    except Exception as e:
-        log.warning("pypdfium2 unavailable: %s", e)
-        return []
+    """Rasterize up to _MAX_OCR_PAGES pages. A corrupt or unsupported PDF
+    raises, so the caller reports the error instead of "no content"."""
+    import pypdfium2 as pdfium
 
     images = []
-    pdf = None
+    pdf = pdfium.PdfDocument(content)
     try:
-        pdf = pdfium.PdfDocument(content)
         for i in range(min(len(pdf), _MAX_OCR_PAGES)):
             bitmap = pdf[i].render(scale=_RENDER_SCALE)
             images.append(bitmap.to_pil())
-    except Exception as e:
-        log.warning("PDF rasterize failed: %s", e)
     finally:
-        if pdf is not None:
-            try:
-                pdf.close()
-            except Exception:
-                pass
+        pdf.close()
     return images

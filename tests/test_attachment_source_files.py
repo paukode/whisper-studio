@@ -62,9 +62,10 @@ def test_a_missing_file_is_not_reported_as_available(store):
     assert "source_path" not in store.get_attachment("a3")
 
 
-def test_an_unwritable_directory_degrades_instead_of_failing(store, monkeypatch):
+def test_an_unwritable_directory_fails_with_the_reason(store, monkeypatch):
     monkeypatch.setattr(attachment_store, "source_files_dir", lambda: "/proc/nope")
-    assert store.save_source_file("a4", "x.csv", b"data") == ""
+    with pytest.raises(OSError):
+        store.save_source_file("a4", "x.csv", b"data")
 
 
 # ---------------------------------------------------------------- retention

@@ -58,15 +58,6 @@ def _get_bedrock_client():
     )
 
 
-def _reset_bedrock_client_cache() -> None:
-    """Test hook: drops cached clients so the next ``_get_bedrock_client()``
-    builds fresh ones (tests/conftest.py resets between tests). Nothing in the
-    config-update path calls this: clients are keyed per region, so a region
-    change simply builds a new entry."""
-    with _BEDROCK_CLIENT_LOCK:
-        _BEDROCK_CLIENTS.clear()
-
-
 def _downloaded_local_only(config: dict | None = None) -> dict:
     """On-device models present in the registry (downloaded) but NOT in config
     chat_models. The app ships no local chat models, so a recommended model the
@@ -75,16 +66,12 @@ def _downloaded_local_only(config: dict | None = None) -> dict:
     disk-authoritative for local models (only surfaces downloaded recommendations
     plus config is_local entries), so this yields exactly the downloaded ones the
     config doesn't already carry. ``config`` is the catalog to compare against
-    (a workspace-aware ``load_config(ws)``); omitted, the global config. Never
-    raises: a registry hiccup must not break the chat catalog."""
-    try:
-        from server.local.registry import local_models
+    (a workspace-aware ``load_config(ws)``); omitted, the global config."""
+    from server.local.registry import local_models
 
-        cfg = load_config() if config is None else config
-        cfg_keys = set(cfg.get("chat_models", {}))
-        return {k: m for k, m in local_models().items() if k not in cfg_keys}
-    except Exception:  # pragma: no cover - defensive
-        return {}
+    cfg = load_config() if config is None else config
+    cfg_keys = set(cfg.get("chat_models", {}))
+    return {k: m for k, m in local_models().items() if k not in cfg_keys}
 
 
 def _get_chat_models(config: dict | None = None) -> dict:
@@ -98,7 +85,7 @@ def _get_chat_models(config: dict | None = None) -> dict:
 def _get_chat_model_meta(config: dict | None = None) -> dict:
     """Per-model metadata (label, thinking mode). Sibling of chat_models,
     populated by infrastructure.config._normalize_chat_models from the same
-    rich shape on disk. Empty dict if config.json hasn't been loaded yet.
+    rich shape on disk. Empty dict if the config hasn't been loaded yet.
     Downloaded local models without a config entry are folded in with derived
     meta so the picker can badge them and route selection through the local
     runtime. ``config`` as for ``_get_chat_models``."""

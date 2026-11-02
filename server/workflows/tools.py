@@ -21,7 +21,11 @@ import os
 from server.workflows import manager, store
 from server.workflows.journal import run_dir
 from server.workflows.launch_policy import is_session_granted, launch_decision
-from server.workflows.runtime import DEFAULT_WORKFLOW_BUDGET_TOKENS, parse_workflow
+from server.workflows.runtime import (
+    DEFAULT_WORKFLOW_BUDGET_TOKENS,
+    NodeNotFoundError,
+    parse_workflow,
+)
 
 log = logging.getLogger("whisper-studio")
 
@@ -122,31 +126,19 @@ def _model_key_for(model_id: str) -> str:
     global lookup, and the run would silently drop from ultracode to Sonnet's
     max. Callers must supply their own default (see _default_model_key).
     """
-    try:
-        from server.infrastructure.config import load_config
+    from server.agents.providers.base import model_key_for_id
 
-        for k, v in (load_config().get("chat_models", {}) or {}).items():
-            if v == model_id:
-                return k
-    except Exception:
-        pass
-    return ""
+    return model_key_for_id(model_id)
 
 
 def _default_model_key() -> str:
-    """The configured default chat model key — the right fallback when an id
+    """The configured default chat model key, the right fallback when an id
     cannot be reversed. Never "" (an empty key infers the standard ladder, which
     would clamp ultracode away just as silently as the old "sonnet" did)."""
-    try:
-        from server.infrastructure.config import load_config
+    from server.infrastructure.config import load_config
 
-        cfg = load_config()
-        key = cfg.get("default_chat_model")
-        if key and key in (cfg.get("chat_models") or {}):
-            return key
-        return next(iter(cfg.get("chat_models") or {}), "sonnet5.5")
-    except Exception:
-        return "sonnet5.5"
+    # It names a chat_models entry whenever chat_models is not empty.
+    return load_config()["default_chat_model"]
 
 
 def _preview(
@@ -333,6 +325,8 @@ async def execute_workflow_run(tool_input, session_id, model_id, effort_label) -
         return "Error: provide a `script`, a saved `name`, or a `resume_from_run_id`.", []
     try:
         meta = await asyncio.to_thread(parse_workflow, script)  # spawns node; keep off the loop
+    except NodeNotFoundError as e:
+        return f"Error: {e}", []
     except ValueError as e:
         return f"Workflow script error: {e}", []
     # The same inline script approved from a card earlier this session (byte
@@ -410,6 +404,8 @@ async def execute_workflow_save(tool_input, session_id: str = "") -> str:
         return "Error: script is required."
     try:
         meta = await asyncio.to_thread(parse_workflow, script)  # spawns node; keep off the loop
+    except NodeNotFoundError as e:
+        return f"Error: {e}"
     except ValueError as e:
         return f"Workflow script error: {e}"
     # A script the user already approved this session is saved TRUSTED: the

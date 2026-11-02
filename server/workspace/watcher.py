@@ -1,6 +1,6 @@
 """The file tree follows the disk: a watcher on the connected workspace.
 
-``watchfiles`` (the Rust notify crate: FSEvents on macOS, inotify on Linux)
+``watchfiles`` (the Rust notify crate: FSEvents on macOS)
 watches the connected folder recursively on a daemon thread. Every batch of
 raw changes is reduced to the folders whose listing may differ and the files
 whose content changed (every entry counts: the listing hides nothing, so a
@@ -95,10 +95,6 @@ class WorkspaceWatcher:
         self._thread: threading.Thread | None = None
         self._stop: threading.Event | None = None
         self._lock = threading.Lock()
-
-    @property
-    def root(self) -> str | None:
-        return self._root
 
     def set_workspace(self, root: str | None) -> None:
         """Watch ``root``; None stops. A watch already running on ``root`` stays."""

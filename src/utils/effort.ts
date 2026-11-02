@@ -8,7 +8,7 @@
 export const EFFORT_ORDER = ['none', 'low', 'medium', 'high', 'extra', 'max', 'ultracode'] as const;
 export type EffortLevel = (typeof EFFORT_ORDER)[number];
 
-export const EFFORT_LABELS: Record<string, string> = {
+const EFFORT_LABELS: Record<string, string> = {
   none: 'None',
   low: 'Low',
   medium: 'Medium',
@@ -49,7 +49,7 @@ export function clampEffort(level: string, allowed: string[]): string {
   return allowed.find((lv) => lv !== 'none') ?? allowed[0];
 }
 
-/** Map a legacy/unknown value (e.g. the retired 'auto') onto a known level. */
+/** Map an unknown value onto the default level. */
 export function normalizeEffort(level: string | undefined | null): string {
   return level && (EFFORT_ORDER as readonly string[]).includes(level) ? level : DEFAULT_EFFORT;
 }

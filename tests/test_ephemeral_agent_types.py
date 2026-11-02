@@ -88,6 +88,7 @@ def test_ephemeral_inline_spawn_runs_and_surfaces_type(monkeypatch):
             agent_id="a1",
             agent_type=resolved.agent_type,
             status="completed",
+            stop_reason="completed",
             turns_used=2,
             tools_called=["ws_read_file"],
             usage={},

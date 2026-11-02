@@ -13,7 +13,7 @@ from server.mcp import mcp_manager
 log = logging.getLogger("whisper-studio")
 
 router = APIRouter(prefix="/api/skills", tags=["skills"])
-# WHISPER.md endpoints (Feature 10 + 18) ride their own router, mounted
+# WHISPER.md endpoints ride their own router, mounted
 # separately in server/main.py. Both routers' handlers live in skills_routes.
 whisper_md_router = APIRouter(prefix="/api/whisper-md", tags=["whisper-md"])
 
@@ -25,12 +25,51 @@ SKILLS_CONFIG_PATH = os.path.join(DATA_DIR, "skills_config.json")
 SKILLS: dict = {}
 TOOLS: list[dict] = []
 
+
+def skill_name_key(name: str) -> str:
+    """The identity of a skill name: case and '-' versus '_' do not count, so
+    'Foo-Bar' and 'foo_bar' are the same skill (and the same file on APFS)."""
+    return (name or "").strip().lower().replace("-", "_")
+
+
+def skill_name_taken(name: str, ignore: str = "") -> str | None:
+    """The loaded skill that already holds ``name``, or None. ``ignore`` is the
+    skill being edited or renamed, which may keep its own name. Every save
+    and rename refuses a taken name, and so does an import unless the user
+    ticked overwrite (server/skills_import.py, which then replaces the old
+    skill): two skills with one name would load as one and silently replace
+    the other."""
+    key = skill_name_key(name)
+    if not key:
+        return None
+    ignore_key = skill_name_key(ignore)
+    for existing in SKILLS:
+        existing_key = skill_name_key(existing)
+        if existing_key == key and existing_key != ignore_key:
+            return existing
+    return None
+
+
+def frontmatter_name(content: str) -> str:
+    """The ``name:`` value of a skill file's frontmatter, or "" when it has none.
+    It is the name the skill loads under, whatever the file is called."""
+    if not content.startswith("---"):
+        return ""
+    end = content.find("---", 3)
+    if end < 0:
+        return ""
+    for line in content[3:end].split("\n"):
+        if line.startswith("name:"):
+            return line.split(":", 1)[1].strip()
+    return ""
+
+
 # Transcript-driven skills whose primary text argument can overflow the context
 # window and therefore may need map-reduce condensation (see
 # server.summarize.mapreduce). Applies only to tools loaded from the skills
 # folder; the summarize_transcript built-in takes no text argument (the server
 # passes the transcript separately, condensed upstream in routes.py).
-_TRANSCRIPT_SKILLS = {"meeting_notes", "catch_up"}
+_TRANSCRIPT_SKILLS = {"meeting_notes"}
 
 
 def load_skills(skills_dir: str = None) -> dict:
@@ -113,7 +152,7 @@ def load_skills(skills_dir: str = None) -> dict:
                     s.strip() for s in frontmatter["style_options"].split(",")
                 ]
             name = frontmatter.get("name", fname.replace(".md", "").replace("-", "_"))
-            # Feature 9: per-skill model override
+            # Per-skill model override
             skill_model = frontmatter.get("model", "").strip() or None
             skills[name] = {
                 "name": name,
@@ -149,9 +188,23 @@ def load_skills_config() -> dict:
 
 
 def save_skills_config(config: dict):
-    os.makedirs(os.path.dirname(SKILLS_CONFIG_PATH), exist_ok=True)
-    with open(SKILLS_CONFIG_PATH, "w") as f:
-        json.dump(config, f, indent=2)
+    """Atomic write (temp file + os.replace), so a crash mid-write can never
+    leave a half-written file that reads as "nothing disabled or trusted"."""
+    import tempfile
+
+    directory = os.path.dirname(SKILLS_CONFIG_PATH)
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".skills_config.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(config, f, indent=2)
+        os.replace(tmp, SKILLS_CONFIG_PATH)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def command_runs_trusted_skill(command: str) -> bool:
@@ -215,7 +268,7 @@ def init_skills():
 
 
 def get_skill_model(skill_name: str) -> str | None:
-    """Feature 9: Return the model override for a skill, if specified."""
+    """Return the model override for a skill, if specified."""
     skill = SKILLS.get(skill_name)
     if skill:
         return skill.get("model")
@@ -226,7 +279,11 @@ def _tool_run_skill(skill_name: str, tool_input: dict) -> str:
     """Generic handler for prompt-based skills (no executor)."""
     skill = SKILLS[skill_name]
     input_lines = "\n".join(
-        f"{k}: {v}" for k, v in tool_input.items() if v and k != "__session_id__"
+        # Internal markers the gate stamps on every call (__session_id__,
+        # __secret_reads__, __agent__) are not the user's request.
+        f"{k}: {v}"
+        for k, v in tool_input.items()
+        if v and not str(k).startswith("__")
     )
     body = skill["body"]
     # Folder skills: resolve ${CLAUDE_SKILL_DIR} / relative script refs to
@@ -272,9 +329,8 @@ def execute_tool(
         return "[MCP tools must be called via execute_mcp_tool]"
     skill = SKILLS.get(tool_name)
     if skill:
-        # Defensive: transcript-driven skills (meeting_notes,
-        # summarize_transcript, catch_up) expect a chunk of text as
-        # their primary argument — usually called ``notes``,
+        # Defensive: a transcript-driven skill (meeting_notes) expects a
+        # chunk of text as its primary argument, usually called ``notes``,
         # ``text``, or ``transcript``. The user message hint already
         # asks Claude to pass the transcript, but if the model still
         # arrives here with an empty/short value AND a transcript
@@ -309,7 +365,13 @@ def execute_tool(
                 if len(val) > limit:
                     tool_input = {**tool_input, arg_name: maybe_condense_transcript(val)}
         executor_name = skill.get("executor")
-        if executor_name and executor_name in EXECUTORS:
+        if executor_name:
+            if executor_name not in EXECUTORS:
+                # A typo or a removed executor never runs as a prompt skill.
+                return (
+                    f"Error: skill '{tool_name}' names executor '{executor_name}', "
+                    "which is not registered."
+                )
             return EXECUTORS[executor_name](tool_input, transcript, current_attachments)
         return _tool_run_skill(tool_name, tool_input)
     if tool_name in EXECUTORS:

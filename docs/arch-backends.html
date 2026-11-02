@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Model backends &amp; modes - Whisper Studio Docs</title>
-  <meta name="description" content="How Whisper Studio picks and runs a chat backend: on-device models through llama-server or MLX, OpenAI GPT over Bedrock, and the default Anthropic Claude path, plus retry, context budgets, compaction, and the separate model-mode concept.">
+  <meta name="description" content="How Whisper Studio picks and runs a chat backend: on-device models through llama-server or MLX, OpenAI GPT over Bedrock, and Anthropic Claude over Bedrock, plus retry, context budgets, compaction, and model modes.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -16,9 +16,9 @@
   <main class="doc" data-page="arch-backends">
     <h1>Model backends &amp; modes</h1>
     <p class="subtitle">Whisper Studio can send a chat turn to three very different runtimes: an
-      on-device model server, OpenAI GPT over Bedrock, or the default Anthropic Claude path. The choice
-      is made from one thing (the model key you picked in the toolbar) and it happens before any tokens
-      stream.</p>
+      on-device model server, OpenAI GPT over Bedrock, or Anthropic Claude over Bedrock. The choice
+      is made from one thing (the model key you picked in the composer) and it happens before any
+      tokens stream.</p>
 
     <p>Every chat turn enters the same endpoint in <code class="path">server/chat/routes.py</code>, but
       not every turn talks to the same provider. Only the on-device branch returns its own response
@@ -34,12 +34,13 @@
     </figure>
 
     <h2 id="the-decision">One key, one engine, three adapters</h2>
-    <p>The toolbar model key is latched on the first turn of a session, so switching models in Settings
-      never disrupts an in-flight conversation. Once the system prompt and messages are assembled, the
+    <p>The model key comes from the composer with each turn. Only the catalog and the default model
+      are latched on the first turn of a session, so a Settings change never disrupts an in-flight
+      conversation. Once the system prompt and messages are assembled, the
       endpoint asks two yes/no questions in order, and the first "yes" wins:</p>
     <ol class="steps">
       <li>
-        <h4>Is it a local model?</h4>
+        <h4>Is it an on-device model?</h4>
         <p><code class="path">server/chat/routes.py</code> calls <code>local_chat_response(...)</code>
           (<code class="path">server/local/route.py</code>). If <code>is_local_model()</code> matches
           the key (that is, the key is in the on-device registry; keys are prefixed <code>local_</code>
@@ -60,36 +61,35 @@
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
       <div class="callout__body"><p><b>One loop, thin adapters.</b> Rounds, budgets, wind-down
-        reminders, proactive/reactive compaction, the salvage round, tool execution through the shared
+        reminders, fail-closed compaction, the final no-tools round, tool execution through the shared
         safety gate, approval pauses, and cost accounting all live in the engine and behave identically
         for every provider. Adapters own only the wire protocol. Compaction summarizes through
         <code>one_shot</code> with the session's own model, so no provider depends on another. The same
         engine also runs cron fires, subagents, and headless turns
         (<code>run_headless_turn</code> in <code class="path">server/exec/headless.py</code>, a
-        Python-callable entry with <code>output_schema</code> and <code>ephemeral</code> options), which
-        is what gave those paths local-model support.</p></div>
+        Python-callable entry with <code>output_schema</code> and <code>ephemeral</code> options), so
+        those paths run on-device models too.</p></div>
     </div>
 
     <h2 id="context-budgets">Context windows and compaction budgets</h2>
     <p>Before the engine can decide when to compact, it needs to know how large a prompt this model
       accepts. <code class="path">server/chat/engine/windows.py</code> answers that for every provider,
-      in this order: the <code>context_window</code> on the model's <code>chat_models</code> entry, then
-      a per-family default, and for on-device models the live context size the model server is actually
-      running at.</p>
+      in this order: the <code>context_window</code> on the model's <code>chat_models</code> entry; for
+      on-device models, the live context size the model server is actually running at; then a
+      per-provider default. A model with no window (an on-device key that is not installed, or an
+      unknown provider) is an error, not a guess.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Model</th><th>Input cap</th></tr></thead>
       <tbody>
         <tr><td>Fable 5.1, Opus 5.5, Sonnet 5.5</td><td>1,000,000 tokens</td></tr>
         <tr><td>Haiku 4.5</td><td>200,000 tokens</td></tr>
-        <tr><td>GPT-6 Astra, GPT-6.1 Sol</td><td>922,000 tokens (OpenAI's published max input; mantle accepted a 348K prompt for Astra and a 300K prompt for GPT-6.1 Sol)</td></tr>
-        <tr><td>GPT-6 Luna</td><td>278,528 tokens (the cap the mantle deployment enforces; GPT-6 Luna publishes 922,000 upstream but stays here until mantle is shown to accept more)</td></tr>
-        <tr><td>Any other Claude id</td><td>200,000 tokens (the Anthropic family default)</td></tr>
+        <tr><td>GPT-6 Astra, GPT-6.1 Sol</td><td>922,000 tokens</td></tr>
+        <tr><td>GPT-6 Luna</td><td>278,528 tokens (the cap the mantle deployment enforces)</td></tr>
+        <tr><td>Any other Claude id</td><td>1,000,000 tokens for a 1M-context family, otherwise 200,000 (the Anthropic default)</td></tr>
+        <tr><td>Any other GPT id</td><td>278,528 tokens (the OpenAI-on-Bedrock default)</td></tr>
         <tr><td>On-device models</td><td>The running context size, then the size you last asked for, then the registry <code>ctx</code></td></tr>
       </tbody>
     </table></div>
-    <p>The 1M figure is applied by model id rather than trusted from config: a Claude entry left at
-      <code>200000</code> by an older config is lifted to 1,000,000 on read when its id belongs to a
-      1M-context family, because any other explicit value is treated as a deliberate override.</p>
     <p>From the window the engine derives the usable prompt budget. The Claude window is <em>total</em>
       (prompt plus answer), so the answer allowance is reserved out of it: 64K tokens for Haiku, 128K for
       every other Claude tier, matching the adapter's own <code>max_tokens</code> clamp. The GPT
@@ -97,12 +97,14 @@
       their <code>max_output</code>, defaulting to 4096. The result is floored at a quarter of the window
       so a misconfigured output reserve can never starve the prompt. Proactive compaction fires at 95
       percent of that budget and the last-resort truncation at 98 percent, estimated at four characters
-      per token. When a deployment rejects a prompt anyway, the engine reads the real cap straight out of
-      the rejection text and budgets against that number from then on.</p>
+      per token. When a deployment rejects a prompt anyway, the adapter recognizes the rejection as
+      prompt-too-long (the OpenAI adapter reads the cap in its text) and the engine makes one
+      compaction attempt.</p>
 
-    <h2 id="anthropic-path">The Anthropic adapter (default)</h2>
-    <p>This is the adapter most turns use, running the Claude models in your config: Fable 5.1,
-      Opus 5.5, Sonnet 5.5, and Haiku 4.5. The engine loop from
+    <h2 id="anthropic-path">The Anthropic adapter</h2>
+    <p>This adapter serves every cloud model that is not an OpenAI model: the Claude models in your
+      config, Fable 5.1, Opus 5.5, Sonnet 5.5, and Haiku 4.5. (The shipped default chat model is
+      GPT-6 Luna, and a fresh install starts in Local mode.) The engine loop from
       <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a> drives it, so the
       backend-specific parts are the Bedrock client, the request body (prompt-cache checkpoints,
       effort/thinking), and the resilience wrappers around each round.</p>
@@ -113,7 +115,7 @@
       <code class="path">server/chat/infra.py</code>. A fresh client per call multiplies boto3's
       connection pool by the number of concurrent agents and can exhaust the macOS default file-descriptor
       limit (256), so the cache exists to keep sockets bounded (the pool is capped at 32 connections).
-      Changing the region in Settings clears the cache so the next call rebuilds it.</p>
+      Clients are cached per region, so a region change builds a new client on the next call.</p>
     <p>The streaming call is <code>invoke_model_with_response_stream</code>. Chunks arrive as
       <code>content_block</code> and <code>message</code> events, which the loop parses into
       <code>text</code>, <code>thinking</code>, and <code>tool_use</code> blocks as they stream.</p>
@@ -133,11 +135,13 @@
     </table></div>
     <p>Backoff is capped exponential: 500ms, 1s, 2s, 4s, up to a 10s ceiling. When the wrapper raises
       <code>PromptTooLongError</code>, the <b>engine</b> runs <b>reactive compaction</b>
-      (<code class="path">server/chat/engine/runner.py</code>, for every provider): it drops the oldest
-      message pairs, calls <code>compact_messages_with_claude(...)</code>, and retries the round. If the
-      conversation is still too long after that, it surfaces an error asking you to start a new session.
-      (Reactive compaction is the mid-stream safety net; the endpoint also compacts pre-emptively when
-      history grows large. See <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a>.)</p>
+      (<code class="path">server/chat/engine/runner.py</code>, for every provider): it calls
+      <code>compact_messages_with_claude(...)</code> once on the full history and retries the round
+      with the smaller result. Compaction fails closed: when it fails, does not shrink the history, or
+      the next request is still too long, the history stays unchanged and the turn stops with an error
+      that says to check the compaction model or start a new conversation. (The endpoint also compacts
+      before the first call when history is already large. See
+      <a href="arch-chat-pipeline.html#compaction-persistence">Chat &amp; tool orchestration</a>.)</p>
     <p>That wrapper only covers the <em>request</em>. A stream that has already returned HTTP 200 and
       then dies (Bedrock raises <code>ModelStreamErrorException</code> or
       <code>InternalServerException</code> as a non-chunk event; the OpenAI path sees a
@@ -154,8 +158,8 @@
       prompt-cache token counts and an estimated USD cost (via <code>call_cost</code>, which prices the
       round at its own tier; OpenAI's cached and cache-written tokens are subsets of its input tokens
       and are billed once, local rounds record at $0),
-      which feeds the session and daily spend caps. If a cap is exceeded, the turn stops with an
-      error. See <a href="arch-costs.html">Cost tracking &amp; budgets</a>.</p>
+      which feeds the session and daily spend caps. The first trip (the hard cap, or 90 percent of it)
+      turns tools off for one final answer round; the next trip ends the turn. See <a href="arch-costs.html">Cost tracking &amp; budgets</a>.</p>
 
     <h2 id="local">On-device models</h2>
     <p>The local backend (<code class="path">server/local/</code>) runs a model entirely offline, in a
@@ -164,13 +168,16 @@
       the model's registry entry picks which one it belongs to:</p>
     <ul>
       <li><b>llama-server</b> for GGUF weights. This is upstream llama.cpp's own HTTP server and the
-        only thing in the app that runs a GGUF. It is a real binary, found on <code>PATH</code> and then
-        in the Homebrew locations, so if it is missing or too old a local turn fails loudly with the
-        command that fixes it.</li>
+        only thing in the app that runs a GGUF. The Mac app runs its bundled, pinned build
+        (<code>WHISPER_LLAMA_SERVER_PATH</code>); a source install runs the same build, which
+        <code>setup.sh</code> installs in <code class="path">vendor/llama</code>
+        (<code class="path">server/local/llama_pin.env</code>). A <code>llama-server</code> on
+        <code>PATH</code> or from Homebrew is never used. If the binary is missing or too old, a local
+        turn fails with the command that fixes it.</li>
       <li><b>MLX</b> for MLX-format weights, served by <code>mlx_lm server</code> running inside the
-        app's own Python interpreter. Availability is therefore an import check, not a <code>PATH</code>
-        lookup, and the error names the fix (<code>venv/bin/pip install mlx-lm</code>, or
-        <code>bash setup.sh --local</code>).</li>
+        app's own Python interpreter. mlx-lm ships with both installs, so availability is an import
+        check. If the import fails, the error says to run <code>bash setup.sh</code> (a source
+        checkout) or reinstall the app.</li>
     </ul>
     <p>The subprocess is the point. Each server owns the chat template plus the tool-call and
       reasoning parsers for the model families it supports, so a model added to config gets parsed
@@ -190,8 +197,9 @@
         non-streaming <code>complete(...)</code> used by the workspace index and the on-device session
         summariser, which deliberately sends no tools.</dd>
       <dt><code class="path">server/local/llama_server.py</code></dt>
-      <dd>The GGUF subprocess lifecycle: locating the binary (PATH, then Homebrew) and checking its
-        build, starting / reusing / restarting it, the <code>/health</code> wait, <code>stop()</code>,
+      <dd>The GGUF subprocess lifecycle: locating the pinned binary
+        (<code>WHISPER_LLAMA_SERVER_PATH</code>, else <code class="path">vendor/llama</code>) and
+        checking its build, starting / reusing / restarting it, the <code>/health</code> wait, <code>stop()</code>,
         and orphan reaping. It knows nothing about chat, tools, or SSE.</dd>
       <dt><code class="path">server/local/mlx_server.py</code></dt>
       <dd>The same lifecycle for <code>mlx_lm server</code>. Its weights are a whole-repo snapshot
@@ -204,9 +212,9 @@
         loose-argument coercion, tool-result message rendering, and the local post-turn memory hooks.
         The agentic loop itself lives in the unified engine.</dd>
       <dt><code class="path">server/local/registry.py</code></dt>
-      <dd>The effective model registry: the curated Discover catalog
-        (<code>RECOMMENDED_LOCAL_MODELS</code>) gated on downloaded weights, merged with every
-        <code>is_local</code> entry in config's <code>chat_models</code>, config winning per key.</dd>
+      <dd>The effective model registry: every <code>is_local</code> entry in config's
+        <code>chat_models</code>, laid over the curated Discover catalog
+        (<code>RECOMMENDED_LOCAL_MODELS</code>) when the key matches, config winning per field.</dd>
       <dt><code class="path">server/local/runtime.py</code></dt>
       <dd>Everything around the weights: the live registry view (<code>LOCAL_MODELS</code>), GGUF
         download and paths, capability flags, the sticky context-size request, and
@@ -227,8 +235,7 @@
       with nothing loaded. The whole transition runs under one lock so two concurrent loads for
       different engines cannot both end up resident, or SIGTERM each other's freshly started server.</p>
     <p>A load that would displace the resident server <b>waits for live chat turns to drain</b> instead
-      of stopping a model mid-answer, which is what used to kill an in-flight reply when you switched
-      models in the composer. The wait gives up with a readable error after ten minutes
+      of stopping a model mid-answer. The wait gives up with a readable error after ten minutes
       (<code>WHISPER_LOCAL_BUSY_WAIT_S</code>), and the model-load endpoint can cancel out of it. A turn
       on the already-resident model skips all of this on a lock-free fast path, so it never queues
       behind another model's download. The call is blocking either way, so both the chat path and the
@@ -273,12 +280,10 @@
         <code>RECOMMENDED_LOCAL_MODELS</code> in <code class="path">server/local/registry.py</code> is a
         curated Discover catalog of four models (<code>local_gemma</code>,
         <code>local_gemma_coder</code>, <code>local_qwen35_9b</code>,
-        <code>local_ministral3_14b</code>); a recommended model only enters the effective catalog once
-        its weights are on disk, so a model downloaded by a prior release is never orphaned. Each
-        recommended entry carries <code>size_bytes</code> so Discover can warn about memory fit before
-        the download starts. User installs land in <code>chat_models</code> and are always present, even
-        mid-download; the effective list merges config entries over the recommended catalog, config
-        winning per key. Adding a model is a one-place change: an entry carrying <code>repo_id</code>,
+        <code>local_ministral3_14b</code>). A Discover install writes the model's
+        <code>chat_models</code> entry, which is present at once, even mid-download, and the
+        recommendation fills any field that entry leaves out. Each recommended entry carries
+        <code>size_bytes</code> so Discover can warn about memory fit before the download starts. Adding a model is a one-place change: an entry carrying <code>repo_id</code>,
         <code>filename</code>, and <code>dir</code> alongside the picker fields becomes downloadable,
         loadable, and selectable with no code change. An MLX entry adds <code>engine: "mlx"</code> and
         needs only <code>repo_id</code> and <code>dir</code>, because its weights are a whole-repo
@@ -294,9 +299,7 @@
         gets the same instruction: do the next step immediately, and do not stop after a plan with no
         tool call. When a workspace is connected, a short note tells the model to use the
         <code>ws_*</code> tools. The note also tells the model that a request for "this code" that
-        names no file refers to the workspace. On 2026-10-23, a benchmark with Gemma 4 12B, Qwen3.5 9B,
-        and Ministral 3 14B used 6 requests with 5 runs each. The full cloud prompt gave a smaller
-        number of tool calls than the local prompt.</li>
+        names no file refers to the workspace.</li>
       <li><b>One more request after a plan with no tool call.</b> A local model can end a short
         answer with a plan for its next step and no tool call. Because the loop starts a new round
         only after a tool call, this answer ends the turn. In this condition, the adapter sends one more
@@ -343,8 +346,9 @@
         <code>AttributeError</code>. Parallel tool calls work here, matching how the cloud paths batch
         reads.</li>
     </ul>
-    <p>The loop itself matches the cloud paths: up to 50 tool rounds, with calls forbidden on the last
-      round so the model must synthesize an answer from what it has. Tool execution goes through the
+    <p>The loop itself matches the cloud paths: up to the round limit in Settings &gt; Costs &gt;
+      Budget (120 by default), with calls forbidden on the last round so the model must synthesize an
+      answer from what it has. Tool execution goes through the
       engine's shared <code>execute_tool_batch</code> and <code>process_tool_results</code> pipeline, so
       an on-device turn is gated by the same <a href="arch-approval.html">permission modes</a> and
       approval flow, and a pause lands in the unified pause store (<code>paused_sessions</code> in
@@ -354,7 +358,7 @@
       <code class="path">server/chat/tool_partition.py</code>), the advertised pool everywhere is the
       core set plus session-activated tools, with the rest reachable through a deferred index via
       <code>tool_search</code>. On-device turns are billed at $0 but still emit a <code>usage</code>
-      frame in the cloud shape. It just never touches AWS.</p>
+      frame in the cloud shape. It never touches AWS.</p>
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
@@ -362,7 +366,7 @@
         Condensing an oversized transcript runs a fast per-chunk extraction (the map step), and because
         only one on-device model is resident at a time, that step runs on the model you are chatting with
         (its key is threaded into the condense call), falling back to whatever model is currently resident
-        (<code>loaded_key()</code>) and then the first downloaded model - rather than loading a fixed model
+        (<code>loaded_key()</code>) and then the first downloaded model, rather than loading a fixed model
         and evicting the one you are chatting with. So the map step never restarts the model server on a
         different model. See
         <a href="arch-summarization.html#modes">Transcript summarization</a>.</p></div>
@@ -384,15 +388,10 @@
     <p>Two GPT-specific controls are mapped from the app's own settings:</p>
     <ul>
       <li><b>Reasoning effort.</b> <code>reasoning_effort_for(...)</code> maps the app's effort label to
-        OpenAI's reasoning effort. Every GPT model in the catalog has a <code>max</code> tier above
-        <code>xhigh</code>: when <code>_supports_max_effort(...)</code> is true the top-tier labels
-        (<code>max</code> / <code>ultracode</code>) ride it, while only <code>extra</code> always
-        collapses to <code>xhigh</code>. GPT-6 has no <code>none</code> rung in the app: bedrock-mantle rejects it
-        for Astra (verified live), and the app currently applies Astra's ladder to every GPT-6 id, so
-        Astra, Luna and GPT-6.1 Sol all run <code>low</code> through <code>max</code> and a <code>none</code>
-        label degrades to <code>low</code> instead of being rejected by the endpoint. OpenAI documents a
-        <code>none</code> rung for Luna; the check narrows to Astra once mantle is shown to
-        accept it for Luna.</li>
+        OpenAI's reasoning effort. Every GPT-6 model offers <code>low</code>, <code>medium</code>,
+        <code>high</code>, and <code>max</code>. <code>extra</code> maps to <code>xhigh</code>,
+        <code>ultracode</code> to <code>max</code>, and a <code>none</code> label runs as
+        <code>low</code>, because bedrock-mantle rejects <code>none</code> for GPT-6 Astra.</li>
       <li><b>Verbosity.</b> <code>verbosity_for(...)</code> resolves the response verbosity
         (<code>low</code> / <code>medium</code> / <code>high</code>): a per-request override wins, then
         the model's configured default, otherwise <code>medium</code>.</li>
@@ -405,9 +404,8 @@
         to interpret timing phrases as "reason briefly." Requests route to the app-wide
         <code>bedrock_region</code>, with an optional per-model <code>openai_region</code> override in
         <code>chat_model_meta</code>. Every GPT model follows <code>bedrock_region</code>
-        (<code>us-east-1</code> by default), GPT-6 Astra included: it shipped pinned to
-        <code>us-west-2</code> until bedrock-mantle began serving it in <code>us-east-1</code> too
-        (measured 2026-10-03), and a saved copy of that old pin is ignored. Each GPT model is served
+        (<code>us-east-1</code> by default) unless its entry sets <code>openai_region</code>. Each GPT
+        model is served
         in its own set of US regions (the table below) and every EU region answers 404, so
         <code>us-east-1</code> is the one region that serves every GPT model. Nothing
         reroutes a call to another region: the 404 names the regions that serve the model and the
@@ -415,8 +413,7 @@
         entry), and <code>/doctor</code> warns about a GPT model whose region Bedrock does not serve
         it in before the first turn fails.</p></div>
     </div>
-    <p>Where bedrock-mantle serves each GPT model, measured with one call per model and region on
-      2026-09-29, and for GPT-6 Astra and GPT-6.1 Sol on 2026-10-03
+    <p>Where bedrock-mantle serves each GPT model
       (<code class="path">server/openai_bedrock/runtime.py</code> carries the same table):</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Model</th><th>us-east-1</th><th>us-east-2</th><th>us-west-2</th></tr></thead>
@@ -426,14 +423,12 @@
       </tbody>
     </table></div>
 
-    <p>The decision chain above describes the <em>top-level</em> chat turn. The
-      agent and subagent runtime is provider-agnostic too (WS-C):
-      <code class="path">server/agents/providers/</code> holds <code>base</code>,
-      <code>anthropic</code>, and <code>openai</code> adapters, and
-      <code>get_adapter(model_key, model_id)</code> returns a <code>ProviderTurn</code> in canonical
-      Anthropic shape, so a subagent can run on GPT-on-Bedrock as well as on Claude (with effort
-      propagation and shared <code>AGENT_CALL_CONCURRENCY</code>). See
-      <a href="arch-ultracode.html">The ultracode workflow runtime</a>.</p>
+    <p>The decision chain above describes the <em>top-level</em> chat turn. Subagents run on the same
+      turn engine and the same Anthropic, OpenAI, and Local adapters, so a subagent can run on Claude,
+      GPT, or an on-device model, sharing <code>AGENT_CALL_CONCURRENCY</code>. Only the optional
+      structured-output step at the end of a run uses the separate adapters in
+      <code class="path">server/agents/providers/</code>. See
+      <a href="arch-agents.html">Sub-agents &amp; the event bus</a>.</p>
 
     <h2 id="config">Where the model list comes from</h2>
     <p>The cloud model catalogue is config-driven, resolved in
@@ -442,7 +437,7 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Config key</th><th>What it holds</th></tr></thead>
       <tbody>
-        <tr><td><code>chat_models</code></td><td>Map of model key to its entry. A plain string is read as the model id; the usual form is an object carrying the id plus its metadata.</td></tr>
+        <tr><td><code>chat_models</code></td><td>Map of model key to its entry: an object carrying the <code>id</code> plus its metadata. An entry without an <code>id</code> string is a config error.</td></tr>
         <tr><td><code>chat_model_meta</code></td><td>The metadata half of that map after normalization: label, <code>context_window</code>, thinking mode, <code>supports_tools</code>, <code>is_local</code>, <code>engine</code>, <code>provider</code>, <code>effort_tier</code>, and <code>verbosity</code>.</td></tr>
         <tr><td><code>chat_models_disabled</code></td><td>Keys hidden from the composer picker. A disabled on-device model stays manageable in Models, so its weights can still be deleted.</td></tr>
         <tr><td><code>default_chat_model</code></td><td>The key used when no model is selected.</td></tr>
@@ -453,8 +448,8 @@
     <p>On-device models sit in the same <code>chat_models</code> map, marked <code>is_local</code> and
       carrying their weight fields (<code>repo_id</code>, <code>filename</code>, <code>dir</code>, and
       optionally <code>ctx</code>, defaulting to 32K). <code class="path">server/local/registry.py</code>
-      merges those over the recommended Discover catalog, where a recommended model only counts once its
-      weights are on disk, and their <code>id</code> is a <code>local:</code> sentinel that never
+      lays those over the recommended Discover catalog, and their <code>id</code> is a
+      <code>local:</code> sentinel that never
       reaches Bedrock. For every field the Settings UI writes, see
       <a href="ref-settings.html">Settings &amp; config keys</a>.</p>
 
@@ -480,7 +475,7 @@
       model is not configured in this install, the resolver keeps walking down rather than silently
       skipping the downgrade. A model with no price entry is never downgraded, since it bills at zero
       already. With the checkbox off, the model you selected is the model that runs, and a cap is
-      enforced by stopping the turn instead. See <a href="arch-costs.html">Cost tracking &amp;
+      enforced by the final no-tools round and then by stopping the turn. See <a href="arch-costs.html">Cost tracking &amp;
       budgets</a>.</p>
 
     <h3 id="model-aliases">Family aliases for agent overrides</h3>
@@ -496,24 +491,25 @@
 
     <h2 id="modes-vs-models">Model backend is not model mode</h2>
     <p>This is the distinction that trips people up. The <b>chat model</b> (which backend runs your turn)
-      is one setting, chosen in the toolbar. The <b>model mode</b> (cloud / hybrid / local) is a
-      different setting entirely, and it controls the <em>indexing and retrieval stack</em>, not the
-      chat model.</p>
+      is one setting, chosen in the composer. The <b>model mode</b> (cloud / hybrid / local) is a
+      different setting: it decides where the <em>indexing and retrieval stack</em> runs, which chat
+      models the picker offers, and whether cloud calls are allowed at all.</p>
     <div class="cols-2">
       <div class="card">
-        <h3>Chat model (toolbar)</h3>
+        <h3>Chat model (composer)</h3>
         <p>Selects the backend for the conversation itself: Claude, GPT, or an on-device model. This
           is the decision chain on this page.</p>
       </div>
       <div class="card">
         <h3>Model mode (cloud / hybrid / local)</h3>
-        <p>Selects where the RAG stack runs: embeddings, the reranker, and entity extraction for the
-          <a href="arch-index.html">workspace index</a>. It does not change your chat model. A fresh
-          install starts in <b>local</b> mode.</p>
+        <p>Selects where the RAG stack runs (embeddings, the reranker, and entity extraction for the
+          <a href="arch-index.html">workspace index</a>) and which chat models the picker offers:
+          cloud models only in Cloud mode, on-device models only in Local mode, both in Hybrid mode.
+          Local mode refuses every cloud call. A fresh install starts in <b>local</b> mode.</p>
       </div>
     </div>
-    <p>So you can, for example, chat with cloud Claude while your index embeddings run locally, or run
-      an on-device model while nothing about your indexing changes. The two settings are independent. For a
+    <p>So to chat with cloud Claude while your index embeddings run on-device, use Hybrid mode and
+      set the embedding backend to on-device. For a
       hands-on tour of the mode dial, see the <a href="tut-model-modes.html">Model modes</a> tutorial;
       for what each capability actually runs in each mode, see
       <a href="arch-index.html">Index / GraphRAG &amp; search</a>.</p>

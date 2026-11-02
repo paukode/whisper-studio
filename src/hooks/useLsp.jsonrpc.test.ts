@@ -1,7 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { JsonRpcConnection } from './lsp/jsonrpc';
 import {
-  lspToMonacoPosition,
   monacoToLspPosition,
   lspToMonacoRange,
   lspToMonacoSeverity,
@@ -163,20 +162,9 @@ describe('JsonRpcConnection', () => {
 });
 
 describe('position & range mapping (0-based LSP <-> 1-based Monaco)', () => {
-  it('converts an LSP position to a Monaco position', () => {
-    expect(lspToMonacoPosition({ line: 0, character: 0 })).toEqual({ lineNumber: 1, column: 1 });
-    expect(lspToMonacoPosition({ line: 4, character: 2 })).toEqual({ lineNumber: 5, column: 3 });
-  });
-
   it('converts a Monaco position back to an LSP position', () => {
     expect(monacoToLspPosition(1, 1)).toEqual({ line: 0, character: 0 });
     expect(monacoToLspPosition(5, 3)).toEqual({ line: 4, character: 2 });
-  });
-
-  it('round-trips a position', () => {
-    const monaco = { lineNumber: 12, column: 7 };
-    const lsp = monacoToLspPosition(monaco.lineNumber, monaco.column);
-    expect(lspToMonacoPosition(lsp)).toEqual(monaco);
   });
 
   it('converts an LSP range to a 1-based Monaco range', () => {

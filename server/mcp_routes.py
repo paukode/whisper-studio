@@ -11,13 +11,17 @@ import json
 from fastapi import APIRouter, Request
 from fastapi.responses import Response
 
-from server.mcp import _VALID_APPROVAL_MODES, mcp_manager
+from server.mcp import _VALID_APPROVAL_MODES, effective_approval_mode, mcp_manager
 
 router = APIRouter(prefix="/api/mcp", tags=["mcp"])
 
 
-def _clamp_approval_mode(mode) -> str:
-    return mode if mode in _VALID_APPROVAL_MODES else "auto"
+def _checked_approval_mode(value, field: str) -> str:
+    """A tier the request sends must be a valid one: raises ValueError
+    otherwise (the route answers 400), never saved as a different tier."""
+    if value not in _VALID_APPROVAL_MODES:
+        raise ValueError(f"{field} must be one of {', '.join(sorted(_VALID_APPROVAL_MODES))}.")
+    return value
 
 
 def _extract_mcp_extra_fields(body: dict, old: dict | None = None) -> dict:
@@ -31,7 +35,8 @@ def _extract_mcp_extra_fields(body: dict, old: dict | None = None) -> dict:
     For an update (`old` given), a field absent from the request body
     carries the previous value forward (as command/args/env already do
     in mcp_update_server), so a partial edit never silently
-    resets the rest of the entry.
+    resets the rest of the entry. A field the body sends empty is removed.
+    An approval tier the body sends must be valid (ValueError otherwise).
     """
     old = old or {}
     extra: dict = {}
@@ -43,14 +48,19 @@ def _extract_mcp_extra_fields(body: dict, old: dict | None = None) -> dict:
     ).strip()
     if token_env_var:
         extra["bearer_token_env_var"] = token_env_var
-    approval_mode = body.get("approval_mode", old.get("approval_mode"))
-    if approval_mode is not None:
-        extra["approval_mode"] = _clamp_approval_mode(approval_mode)
-    tool_overrides = body.get("tool_overrides", old.get("tool_overrides"))
-    if isinstance(tool_overrides, dict) and tool_overrides:
-        extra["tool_overrides"] = {
-            str(k): _clamp_approval_mode(v) for k, v in tool_overrides.items()
-        }
+    if "approval_mode" in body:
+        extra["approval_mode"] = _checked_approval_mode(body["approval_mode"], "approval_mode")
+    elif old.get("approval_mode") is not None:
+        extra["approval_mode"] = old["approval_mode"]
+    if "tool_overrides" in body:
+        tool_overrides = body["tool_overrides"]
+        if isinstance(tool_overrides, dict) and tool_overrides:
+            extra["tool_overrides"] = {
+                str(k): _checked_approval_mode(v, f"tool_overrides.{k}")
+                for k, v in tool_overrides.items()
+            }
+    elif isinstance(old.get("tool_overrides"), dict) and old["tool_overrides"]:
+        extra["tool_overrides"] = old["tool_overrides"]
     enabled_tools = body.get("enabled_tools", old.get("enabled_tools"))
     if isinstance(enabled_tools, list) and enabled_tools:
         extra["enabled_tools"] = [str(t) for t in enabled_tools]
@@ -65,6 +75,33 @@ def _extract_mcp_extra_fields(body: dict, old: dict | None = None) -> dict:
     ):
         extra["call_timeout_seconds"] = call_timeout
     return extra
+
+
+# The entry keys the Settings form owns: PUT rebuilds exactly these. Any other
+# key in the stored entry (read_only, read_only_tools, ...) is kept as it is.
+_FORM_KEYS = frozenset(
+    {
+        "command",
+        "args",
+        "env",
+        "enabled",
+        "url",
+        "bearer_token_env_var",
+        "approval_mode",
+        "tool_overrides",
+        "enabled_tools",
+        "disabled_tools",
+        "call_timeout_seconds",
+    }
+)
+
+
+def _bad_request(message: str) -> Response:
+    return Response(
+        content=json.dumps({"error": message}),
+        status_code=400,
+        media_type="application/json",
+    )
 
 
 def _not_found(name: str) -> Response:
@@ -140,7 +177,7 @@ async def mcp_servers_status():
             # only, never the token value, which is never persisted.
             "url": str(conf.get("url") or ""),
             "bearer_token_env_var": str(conf.get("bearer_token_env_var") or ""),
-            "approval_mode": _clamp_approval_mode(conf.get("approval_mode", "auto")),
+            "approval_mode": effective_approval_mode(conf.get("approval_mode")),
             "tool_overrides": _str_map(conf.get("tool_overrides")),
             "enabled_tools": _str_list(conf.get("enabled_tools")),
             "disabled_tools": _str_list(conf.get("disabled_tools")),
@@ -162,7 +199,10 @@ async def mcp_add_server(request: Request):
     command = body.get("command", "").strip()
     args = body.get("args", [])
     env = body.get("env", {})
-    extra = _extract_mcp_extra_fields(body)
+    try:
+        extra = _extract_mcp_extra_fields(body)
+    except ValueError as e:
+        return _bad_request(str(e))
     if not name or not (command or extra.get("url")):
         return Response(
             content=json.dumps({"error": "name and either command or url are required"}),
@@ -239,17 +279,18 @@ async def mcp_update_server(name: str, request: Request):
     command = body.get("command", old.get("command", "")).strip()
     args = body.get("args", old.get("args", []))
     env = body.get("env", old.get("env", {}))
-    # Preserve the persisted `enabled` flag. Rebuilding the entry as
-    # {command, args, env} only would drop it, silently flipping the
-    # server's state on every edit or rename. The Settings UI uses PUT for
-    # both in-place edit and rename (missing flag counts as enabled,
-    # matching load_config's backfill).
+    # Preserve the persisted `enabled` flag: the Settings UI uses PUT for both
+    # in-place edit and rename, and a missing flag counts as enabled.
     enabled = bool(old.get("enabled", True))
-    extra = _extract_mcp_extra_fields(body, old)
+    try:
+        extra = _extract_mcp_extra_fields(body, old)
+    except ValueError as e:
+        return _bad_request(str(e))
     target_name = new_name if new_name and new_name != name else name
     if target_name != name:
         config.pop(name)
     config[target_name] = {
+        **{k: v for k, v in old.items() if k not in _FORM_KEYS},
         "command": command,
         "args": args,
         "env": env,

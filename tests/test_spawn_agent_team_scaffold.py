@@ -29,6 +29,7 @@ def test_spawn_agent_emits_team_scaffold(monkeypatch):
             agent_id="a1",
             agent_type="general",
             status="completed",
+            stop_reason="completed",
             turns_used=3,
             tools_called=["ws_grep"],
             usage={},
@@ -72,8 +73,8 @@ def test_spawn_label_truncates_and_takes_first_line():
 
 def test_spawn_agent_registers_stoppable_team(monkeypatch):
     # While the agent runs, _teams[team_id] must hold the cancellable task so
-    # POST /api/teams/{team_id}/stop works (the card's Stop button was a silent
-    # no-op before). After completion the task handle is removed.
+    # Stop (cancel_task, then stop_team) works. After completion the task
+    # handle is removed.
     import asyncio
 
     from server.agent_tools.teams import _teams
@@ -89,6 +90,7 @@ def test_spawn_agent_registers_stoppable_team(monkeypatch):
             agent_id="a1",
             agent_type="general",
             status="completed",
+            stop_reason="completed",
             turns_used=1,
             tools_called=[],
             usage={},
@@ -134,6 +136,7 @@ def test_spawn_agent_preflight_failure_publishes_failed_row(monkeypatch):
             agent_id="",
             agent_type="general",
             status="failed",
+            stop_reason="error",
             turns_used=0,
             tools_called=[],
             usage={},
@@ -176,6 +179,7 @@ def test_spawn_agent_publishes_on_the_turn_event_channel(monkeypatch):
             agent_id="a1",
             agent_type="general",
             status="completed",
+            stop_reason="completed",
             turns_used=1,
             tools_called=[],
             usage={},

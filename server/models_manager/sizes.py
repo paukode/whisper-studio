@@ -3,7 +3,7 @@
 Real numbers come from the HF Hub API (per-file sizes via
 ``HfApi().model_info(repo_id, files_metadata=True)``), fetched lazily in a
 background thread the first time the catalog is requested and cached in memory
-for the life of the process. Until a fetch lands — or forever, when offline —
+for the life of the process. Until a fetch lands, or forever, when offline,
 the hardcoded fallback table below answers instead, so the UI always has a
 plausible size to show. GGUF entries count only their one target file; every
 other entry sums the whole repo.
@@ -42,7 +42,7 @@ FALLBACK_SIZES: dict[str, int] = {
 }
 
 _cache: dict[str, int] = {}  # cache key -> real size from the HF API
-_attempted: set[str] = set()  # fetched (or failed) once already — don't retry
+_attempted: set[str] = set()  # fetched (or failed) once already, don't retry
 _lock = threading.Lock()
 
 
@@ -51,13 +51,17 @@ def _cache_key(entry: ModelEntry) -> str:
 
 
 def fetch_size(repo_id: str, filename: str | None = None) -> int | None:
-    """Sum of per-file sizes for a repo (or one file of it) from the HF API.
-    Network-bound and blocking; returns None on any failure."""
+    """Sum of per-file sizes for a repo (or one file of it, every shard of a
+    sharded GGUF) from the HF API. Network-bound and blocking; returns None
+    on any failure."""
+    from server.model_browser.compat import shard_filenames
+
+    wanted = set(shard_filenames(filename)) if filename is not None else None
     try:
         from huggingface_hub import HfApi
 
         info = HfApi().model_info(repo_id, files_metadata=True)
-    except Exception as e:  # offline, gated repo, bad id — all non-fatal
+    except Exception as e:  # offline, gated repo, bad id, all non-fatal
         log.debug("HF size fetch failed for %s: %s", repo_id, e)
         return None
     total = 0
@@ -65,7 +69,7 @@ def fetch_size(repo_id: str, filename: str | None = None) -> int | None:
         size = getattr(sibling, "size", None)
         if not size:
             continue
-        if filename is not None and sibling.rfilename != filename:
+        if wanted is not None and sibling.rfilename not in wanted:
             continue
         total += int(size)
     return total or None
@@ -82,7 +86,7 @@ def prefetch(entries: list[ModelEntry]) -> None:
     """Kick a background fetch of real sizes for entries not yet attempted.
 
     Fire-and-forget: callers keep serving fallback estimates until the thread
-    fills the cache. One attempt per repo per process — a failure (offline)
+    fills the cache. One attempt per repo per process, a failure (offline)
     leaves the fallback in charge rather than re-blocking on every poll.
     """
     todo: list[tuple[str, str, str | None]] = []

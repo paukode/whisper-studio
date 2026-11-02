@@ -1,18 +1,16 @@
 """
-Core git utilities — git discovery, state queries, caching.
+Core git utilities, git discovery, state queries, caching.
 
 All functions are sync. Uses subprocess.run() for git commands
 and direct file I/O for filesystem reads, matching Whisper's existing patterns.
 """
 
 import os
-import re
 import shutil
 import subprocess
 import unicodedata
 from functools import lru_cache
 
-from server.git.config_parser import parse_git_config_value
 from server.git.filesystem import (
     get_common_dir,
     is_safe_ref_name,
@@ -22,7 +20,7 @@ from server.git.filesystem import (
 
 # --- Internal helpers ---
 
-_GIT_ROOT_CACHE: dict[str, str | None] = {}
+_GIT_ROOT_CACHE: dict[str, str] = {}
 _GIT_ROOT_CACHE_MAX = 50
 
 
@@ -76,6 +74,8 @@ def find_git_root(start_path: str) -> str | None:
 
     .git can be a directory (regular repo) or file (worktree/submodule).
     Returns the normalized (NFC) path to the repo root, or None if not found.
+    Only a found root is cached: a folder that becomes a repository later
+    (``git init``) is seen on the next call.
     """
     resolved = os.path.abspath(start_path)
 
@@ -83,7 +83,6 @@ def find_git_root(start_path: str) -> str | None:
         return _GIT_ROOT_CACHE[resolved]
 
     current = resolved
-    root = os.path.splitdrive(current)[0] + os.sep if os.name == "nt" else "/"
 
     while True:
         git_path = os.path.join(current, ".git")
@@ -103,20 +102,6 @@ def find_git_root(start_path: str) -> str | None:
             break
         current = parent
 
-    # Check root directory as well
-    git_path = os.path.join(root, ".git")
-    try:
-        st = os.stat(git_path)
-        if st.st_mode & 0o170000 in (0o040000, 0o100000):
-            result = unicodedata.normalize("NFC", root)
-            _evict_if_full()
-            _GIT_ROOT_CACHE[resolved] = result
-            return result
-    except OSError:
-        pass
-
-    _evict_if_full()
-    _GIT_ROOT_CACHE[resolved] = None
     return None
 
 
@@ -132,7 +117,7 @@ def _evict_if_full() -> None:
 
 
 def get_branch(path: str) -> str:
-    """Get current branch name. Falls back to HEAD SHA if detached, or 'HEAD' on error."""
+    """Current branch name, or "HEAD" when HEAD is detached or unreadable."""
     from server.git.filesystem import resolve_git_dir
 
     git_dir = resolve_git_dir(path)
@@ -163,7 +148,6 @@ def get_default_branch(path: str) -> str:
     """Resolve default branch name.
 
     Priority: origin/HEAD symref > origin/main > origin/master > 'main' fallback.
-    Uses filesystem reads first, falls back to subprocess for remote show.
     """
     from server.git.filesystem import resolve_git_dir
 
@@ -198,29 +182,6 @@ def get_default_branch(path: str) -> str:
     return "main"
 
 
-def get_remote_url(path: str) -> str | None:
-    """Get remote origin URL. Tries filesystem first, falls back to git command."""
-    from server.git.filesystem import resolve_git_dir
-
-    git_dir = resolve_git_dir(path)
-    if not git_dir:
-        return None
-
-    # Try reading from config directly (no subprocess)
-    url = parse_git_config_value(git_dir, "remote", "origin", "url")
-    if url:
-        return url
-
-    # In worktrees, the config with remote URLs is in the common dir
-    common_dir = get_common_dir(git_dir)
-    if common_dir and common_dir != git_dir:
-        url = parse_git_config_value(common_dir, "remote", "origin", "url")
-        if url:
-            return url
-
-    return None
-
-
 # --- Watcher-backed cached helpers ---
 #
 # These read from the GitFileWatcher cache. The watcher invalidates on
@@ -240,42 +201,6 @@ def get_cached_head(path: str) -> str:
     from server.git.watcher import git_watcher
 
     return git_watcher.get(f"head:{path}", lambda: get_head(path))
-
-
-def normalize_git_remote_url(url: str) -> str | None:
-    """Normalize git remote URL to canonical 'host/owner/repo' form.
-
-    Handles SSH, HTTPS, SSH URL, git protocol, and localhost proxy formats.
-    Returns lowercase normalized string, or None if URL can't be parsed.
-    """
-    trimmed = url.strip()
-    if not trimmed:
-        return None
-
-    # Handle SSH format: git@host:owner/repo.git
-    ssh_match = re.match(r"^git@([^:]+):(.+?)(?:\.git)?$", trimmed)
-    if ssh_match:
-        return f"{ssh_match.group(1)}/{ssh_match.group(2)}".lower()
-
-    # Handle HTTPS/SSH URL format: https://host/owner/repo.git or ssh://git@host/owner/repo
-    url_match = re.match(r"^(?:https?|ssh|git)://(?:[^@]+@)?([^/]+)/(.+?)(?:\.git)?$", trimmed)
-    if url_match:
-        host = url_match.group(1)
-        path = url_match.group(2)
-
-        # CCR git proxy URLs: http://...@127.0.0.1:PORT/git/owner/repo
-        if _is_localhost(host) and path.startswith("git/"):
-            proxy_path = path[4:]  # Remove "git/" prefix
-            segments = proxy_path.split("/")
-            # 3+ segments where first contains a dot → host/owner/repo (GHE format)
-            if len(segments) >= 3 and "." in segments[0]:
-                return proxy_path.lower()
-            # 2 segments → owner/repo (legacy format, assume github.com)
-            return f"github.com/{proxy_path}".lower()
-
-        return f"{host}/{path}".lower()
-
-    return None
 
 
 # NUL-separated so paths come back unquoted (a space or a non-ASCII byte
@@ -308,40 +233,21 @@ def parse_porcelain_status(stdout: str) -> list[tuple[str, str]]:
     return entries
 
 
-def get_is_clean(path: str) -> bool:
-    """Check if working tree is clean (no uncommitted changes)."""
-    try:
-        result = _run_git(["--no-optional-locks", "status", "--porcelain"], cwd=path)
-        return result.stdout.strip() == ""
-    except Exception:
-        return True
-
-
 def get_file_status(path: str) -> dict:
     """Get tracked and untracked file lists.
 
-    Returns: {"tracked": [...], "untracked": [...]}
+    Returns: {"tracked": [...], "untracked": [...]}. Raises RuntimeError with
+    git's message when `git status` fails (a corrupt index, a "dubious
+    ownership" refusal), so a broken repository never reads as clean.
     """
-    try:
-        result = _run_git(STATUS_PORCELAIN_ARGS, cwd=path)
-        tracked = []
-        untracked = []
-        for status, filename in parse_porcelain_status(result.stdout):
-            if status == "??":
-                untracked.append(filename)
-            else:
-                tracked.append(filename)
-        return {"tracked": tracked, "untracked": untracked}
-    except Exception:
-        return {"tracked": [], "untracked": []}
-
-
-# --- Private helpers ---
-
-
-def _is_localhost(host: str) -> bool:
-    """Check if host is localhost or 127.x.x.x."""
-    host_no_port = host.split(":")[0]
-    return host_no_port == "localhost" or bool(
-        re.match(r"^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$", host_no_port)
-    )
+    result = _run_git(STATUS_PORCELAIN_ARGS, cwd=path)
+    if result.returncode != 0:
+        raise RuntimeError(f"git status failed: {result.stderr.strip()}")
+    tracked = []
+    untracked = []
+    for status, filename in parse_porcelain_status(result.stdout):
+        if status == "??":
+            untracked.append(filename)
+        else:
+            tracked.append(filename)
+    return {"tracked": tracked, "untracked": untracked}

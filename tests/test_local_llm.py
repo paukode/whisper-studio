@@ -11,7 +11,6 @@ import asyncio
 import pytest
 
 import server.local.runtime as L
-from server.local import tools as T
 
 
 @pytest.fixture(autouse=True)

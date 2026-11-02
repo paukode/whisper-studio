@@ -37,7 +37,8 @@ def pending_completions(session_id: str) -> list[dict]:
         from server.tasks import registry
 
         rows = registry.list_tasks(session_id=session_id, limit=50)
-    except Exception:
+    except Exception as e:  # noqa: BLE001 - the turn goes on without the reports
+        log.warning("background completions not read for %s: %s", session_id, e)
         return []
     out = []
     for t in rows:

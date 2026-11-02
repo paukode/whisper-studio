@@ -91,9 +91,8 @@ async def route_tool(
     if tool_name in ("task_create", "task_update", "task_list", "task_get", "task_stop"):
         from server.tasks_tracker import execute_task_tool, get_session_tasks
 
-        tool_input["session_id"] = session_id  # Always use real session ID
         output = await _submit(
-            loop, executor, lambda ci=tool_input: execute_task_tool(tool_name, ci)
+            loop, executor, lambda ci=tool_input: execute_task_tool(tool_name, ci, session_id)
         )
         side_effects.append({"todo_update": get_session_tasks(session_id)})
         return output, side_effects
@@ -129,17 +128,6 @@ async def route_tool(
 
         output = await _submit(
             loop, executor, lambda ci=tool_input: execute_lsp_tool(tool_name, ci)
-        )
-        return output, side_effects
-
-    # --- Worktree tools ---
-    if tool_name in ("ws_create_worktree", "ws_diff_worktree", "ws_merge_worktree"):
-        from server.skills import execute_tool
-
-        output = await _submit(
-            loop,
-            executor,
-            lambda ci=tool_input: execute_tool(tool_name, ci, transcript, attachments),
         )
         return output, side_effects
 
@@ -294,15 +282,15 @@ async def route_tool(
 
     # --- Workspace open folder ---
     if tool_name == "ws_open_folder":
+        from server.approval.markers import APPROVAL, is_app_request
         from server.workspace import execute_ws_open_folder
 
         result = await _submit(loop, executor, lambda ci=tool_input: execute_ws_open_folder(ci))
-        try:
-            parsed = json.loads(result)
-            if parsed.get("__ws_switch__"):
-                side_effects.append({"ws_folder_opened": parsed["__ws_switch__"]})
-        except Exception:
-            pass
+        if is_app_request(result, APPROVAL):
+            return result, side_effects  # the folder_access card
+        parsed = json.loads(result)
+        if parsed.get("__ws_switch__"):
+            side_effects.append({"ws_folder_opened": parsed["__ws_switch__"]})
         return result, side_effects
 
     # --- Notebook tools ---
@@ -373,7 +361,6 @@ async def route_tool(
         from server.agent_tools import execute_tool_search
         from server.chat.tool_pool import assemble_full_catalog
         from server.infrastructure.effort import is_ultracode
-        from server.workspace import get_workspace_path
 
         # The TRUE full catalog (pre-partition): every registered tool,
         # including plan/result-cache/preview/worktree/background-task tools.
@@ -381,11 +368,7 @@ async def route_tool(
         # callable next round. ultracode rides along so the catalog matches the
         # round's own — searching for "workflow" from an ultracode turn must not
         # come back empty for tools the very same turn can call.
-        all_t = assemble_full_catalog(
-            plan_mode=False,
-            ws_connected=bool(get_workspace_path()),
-            ultracode=is_ultracode(effort_label),
-        )
+        all_t = assemble_full_catalog(ultracode=is_ultracode(effort_label))
         activation_key = session_id
         if tool_scope is not None:
             # An agent finds only what it may run (a read-only agent is never
@@ -435,13 +418,12 @@ async def route_tool(
             )
         except Exception as e:
             log.warning("notify_user: durable record failed: %s", e)
-        # Carry the delivered message in the tool_result itself instead of a
-        # generic ack. The message previously lived ONLY in the side-effect
-        # dict above, invisible to the model's own transcript and to any
-        # evaluator reading it (server.goals.tail.render_tail renders
-        # tool_result content into the judged tail for both the interactive
-        # completion gate and cron's own verify-and-continue) — a plain
-        # "sent." made a genuinely-delivered report look like missing work.
+        # Carry the delivered message in the tool_result itself, not a generic
+        # ack: the side-effect dict above is invisible to the model's own
+        # transcript and to any evaluator reading it (server.goals.tail.
+        # render_tail renders tool_result content into the judged tail for
+        # the completion gate and cron's verify-and-continue), where a plain
+        # "sent." would make a delivered report look like missing work.
         if message.strip():
             return f"Notification sent to user: {message}", side_effects
         return "Notification sent to user.", side_effects
@@ -474,7 +456,7 @@ async def route_tool(
 
         return execute_workflow_list(tool_input, session_id), side_effects
 
-    # --- CI tools (WS-J: watch + autofix) ---
+    # --- CI tools (watch + autofix) ---
     if tool_name == "ci_watch":
         from server.ci.tools import execute_ci_watch
 
@@ -534,7 +516,7 @@ async def route_tool(
         from server.agent_tools import execute_send_message
 
         output = execute_send_message(
-            tool_input, from_id=_nesting["agent_id"] if _nesting else "main"
+            tool_input, session_id, from_id=_nesting["agent_id"] if _nesting else "main"
         )
         return output, side_effects
 
@@ -555,13 +537,9 @@ async def route_tool(
         return "\n".join(f"[From {m.from_id}]: {m.content}" for m in msgs), side_effects
 
     if tool_name == "complete_coordination":
-        # Agent-runtime-only tool. The pre-migration inline loop returned
-        # immediately on seeing this call (a hard turn-stop); routed through
-        # the shared executor there is no such mid-round short-circuit, so
-        # it resolves as a normal tool_result carrying the summary — the
-        # coordinator's next round then naturally ends the turn once it has
-        # nothing further to do (one extra round versus the old immediate
-        # stop, not a behavior loss).
+        # Agent-runtime-only tool. It resolves as a normal tool_result
+        # carrying the summary; the coordinator's next round then ends the
+        # turn once it has nothing further to do.
         return tool_input.get("summary", "Coordination complete."), side_effects
 
     if tool_name == "list_agents":

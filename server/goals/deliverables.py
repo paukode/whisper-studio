@@ -54,7 +54,7 @@ _ENGINE_PREFIXES = (
     _SALVAGE_PREFIX,
     _VERIFY_PREFIX,
 )
-_TOOL_RESULT_TYPES = ("tool_result", "function_call_output")
+_TOOL_RESULT_TYPES = ("tool_result",)
 _ARTIFACT_TOOLS = ("create_artifact", "edit_artifact")
 
 # Tools that can write a file outside the workspace, and where a call names
@@ -113,9 +113,7 @@ def _texts(content) -> list[str]:
     if not isinstance(content, list):
         return []
     return [
-        str(b.get("text", ""))
-        for b in content
-        if isinstance(b, dict) and b.get("type") in ("text", "input_text")
+        str(b.get("text", "")) for b in content if isinstance(b, dict) and b.get("type") == "text"
     ]
 
 
@@ -181,8 +179,8 @@ def last_user_prompt(messages: list) -> str:
 
 
 def called_tools(rows: list) -> list[str]:
-    """The names of the tools the assistant rows among ``rows`` call (an
-    Anthropic tool_use block or a Responses function_call item), in order."""
+    """The names of the tools the assistant rows among ``rows`` call (their
+    tool_use blocks), in order."""
     return [
         str(b.get("name") or "")
         for m in rows
@@ -190,13 +188,13 @@ def called_tools(rows: list) -> list[str]:
         and m.get("role") == "assistant"
         and isinstance(m.get("content"), list)
         for b in m["content"]
-        if isinstance(b, dict) and b.get("type") in ("tool_use", "function_call")
+        if isinstance(b, dict) and b.get("type") == "tool_use"
     ]
 
 
 def _calls_a_tool(content) -> bool:
     return isinstance(content, list) and any(
-        isinstance(b, dict) and b.get("type") in ("tool_use", "function_call") for b in content
+        isinstance(b, dict) and b.get("type") == "tool_use" for b in content
     )
 
 
@@ -272,7 +270,7 @@ def _assistant_strings(content) -> list[str]:
     for b in content if isinstance(content, list) else []:
         if not isinstance(b, dict):
             continue
-        if b.get("type") in ("tool_use", "function_call"):
+        if b.get("type") == "tool_use":
             out.append(json.dumps(call_input(b), ensure_ascii=False, default=str))
         else:
             out.append(str(b.get("text", "")))
@@ -295,9 +293,8 @@ def assistant_named_paths(rows: list, workspace: str | None) -> set[str]:
 
 
 def artifact_created(messages: list) -> bool:
-    """True if this turn contains a create_artifact or edit_artifact call
-    (Anthropic tool_use block or Responses function_call item); both put a
-    card in the chat."""
+    """True if this turn contains a create_artifact or edit_artifact call;
+    both put a card in the chat."""
     return any(name in _ARTIFACT_TOOLS for name in called_tools(turn_messages(messages)))
 
 
@@ -311,14 +308,8 @@ def artifact_claim_unmet(messages: list) -> bool:
 
 
 def call_input(block: dict) -> dict:
-    """A tool call's arguments: an Anthropic block's input, or a Responses
-    item's arguments, which arrive as JSON text."""
-    given = block.get("input", block.get("arguments"))
-    if isinstance(given, str):
-        try:
-            given = json.loads(given)
-        except ValueError:
-            return {}
+    """A tool_use block's arguments."""
+    given = block.get("input")
     return given if isinstance(given, dict) else {}
 
 
@@ -362,9 +353,7 @@ def targeted_paths(messages: list, workspace: str | None) -> set[str]:
         and m.get("role") == "assistant"
         and isinstance(m.get("content"), list)
         for b in m["content"]
-        if isinstance(b, dict)
-        and b.get("type") in ("tool_use", "function_call")
-        and b.get("name") in OUTSIDE_WRITERS
+        if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") in OUTSIDE_WRITERS
         for p in _write_targets(str(b["name"]), call_input(b))
         if p
     }
@@ -425,7 +414,6 @@ def check_claims(
     *,
     plan_mode: bool = False,
     session_has_artifact: bool = False,
-    max_attempts: int = MAX_CLAIM_NUDGES,
     started_at: float | None = None,
     calls: list | None = None,
     receipts: list | None = None,
@@ -457,8 +445,7 @@ def check_claims(
     that writes outside the workspace named as its target is checked
     (``targeted_paths``), and an artifact-card claim always is. A look around
     with terminal_run makes no planned file a claim."""
-    used = claim_nudges_used(messages)
-    if used >= max_attempts or not claim_nudge_allowed(messages):
+    if not claim_nudge_allowed(messages):
         return None
     replies = reply_texts(messages)
     if not replies:

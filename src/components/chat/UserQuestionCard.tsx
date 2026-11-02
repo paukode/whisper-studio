@@ -1,5 +1,8 @@
 import React, { useState, useCallback, useId, useMemo, useRef } from 'react';
 import type { ChatMessage as ChatMessageType } from '@/types/chat';
+import { get } from '@/api/client';
+import { useUIStore } from '@/stores/uiStore';
+import { toError } from '@/utils/toError';
 import { getActiveChatStore } from '@/stores/sessionRuntimes';
 
 /** Match only the conventional "Other"/"Other (please specify)" sentinel — not
@@ -54,7 +57,7 @@ export function withBrowseOption(question: string, options: string[]): string[] 
   return [...withoutOther, 'Browse…'];
 }
 
-/** Interactive user question card matching vanilla renderUserQuestion */
+/** Interactive single-question card (rows saved with the singular userQuestion). */
 export const UserQuestionCard: React.FC<{
   question: string;
   options: string[];
@@ -141,13 +144,14 @@ export const UserQuestionCard: React.FC<{
                   // Open native macOS folder picker
                   void (async () => {
                     try {
-                      const resp = await fetch('/api/workspace/pick-folder');
-                      const data = (await resp.json()) as { path?: string | null; cancelled?: boolean };
+                      const data = await get<{ path: string | null; cancelled?: boolean }>(
+                        '/api/workspace/pick-folder',
+                      );
                       if (data.path) {
                         submitAnswer(data.path);
                       }
                     } catch (err) {
-                      console.error('Folder picker failed:', err);
+                      useUIStore.getState().addToast({ type: 'error', message: toError(err).message });
                     }
                   })();
                 } else {
@@ -322,11 +326,12 @@ export const UserQuestionGroupCard: React.FC<{ message: ChatMessageType }> = ({ 
                   if (isBrowse) {
                     void (async () => {
                       try {
-                        const resp = await fetch('/api/workspace/pick-folder');
-                        const data = (await resp.json()) as { path?: string | null; cancelled?: boolean };
+                        const data = await get<{ path: string | null; cancelled?: boolean }>(
+                          '/api/workspace/pick-folder',
+                        );
                         if (data.path) setAnswer(q.toolUseId, data.path);
                       } catch (err) {
-                        console.error('Folder picker failed:', err);
+                        useUIStore.getState().addToast({ type: 'error', message: toError(err).message });
                       }
                     })();
                     return;

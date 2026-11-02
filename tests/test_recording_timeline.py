@@ -237,7 +237,9 @@ def ws_client(monkeypatch):
     ws_mod._carryover.clear()
     app = FastAPI()
     app.include_router(ws_mod.router)
-    with TestClient(app, base_url="http://localhost") as client:
+    with TestClient(
+        app, base_url="http://localhost", headers={"origin": "http://127.0.0.1:41430"}
+    ) as client:
         yield client, backend
     ws_mod._chunk_counters.clear()
     ws_mod._carryover.clear()

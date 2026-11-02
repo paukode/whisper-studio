@@ -19,6 +19,27 @@ import { useIndexSearchStore } from './indexSearchStore';
 import { useComposerAttachmentsStore } from './composerAttachmentsStore';
 import { useCronUnreadStore } from './cronUnreadStore';
 import { refreshSessionUsage } from './sessionUsage';
+import { toError } from '@/utils/toError';
+
+/** Sessions whose save failure is already in the notification bell. A lasting
+ *  failure is retried every 30 s; only the first one of a run is persisted,
+ *  and a successful save clears the id so a later failure is reported again. */
+const reportedSaveFailures = new Set<string>();
+
+/** Say that a session could not be stored. One toast per session (keyed),
+ *  so the 30 s retries of a lasting failure collapse into a counter instead
+ *  of a stack; the session stays unsaved and the next save tries again. */
+function reportSaveFailure(id: string, what: 'create' | 'save', err: unknown): void {
+  console.warn(`Failed to ${what} session:`, err);
+  const firstReport = !reportedSaveFailures.has(id);
+  reportedSaveFailures.add(id);
+  useUIStore.getState().addToast({
+    type: 'error',
+    key: `session-save-${id}`,
+    persist: firstReport,
+    message: `Could not ${what} this session, so recent changes are not stored yet: ${toError(err).message}`,
+  });
+}
 
 
 /** Deleting a session that owns the live recording must stop the engine
@@ -194,29 +215,20 @@ export const useSessionStore = create<SessionState>()(persist((set, get) => ({
 
   loadSessions: async () => {
     try {
-      const raw = await sessionsApi.getSessions();
-      const parsed = SessionListResponseSchema.safeParse(raw);
-      const summaries: SessionSummary[] = parsed.success
-        ? parsed.data.map((s) => ({
-            id: s.id,
-            title: s.title,
-            date: s.date,
-            segmentCount: s.segmentCount,
-            chatCount: s.chatCount,
-            workspacePath: s.workspacePath,
-            pinned: s.pinned,
-            archived: s.archived,
-          }))
-        : (Array.isArray(raw) ? raw : []).map((s) => ({
-            id: s.id,
-            title: s.title || 'Untitled',
-            date: ('date' in s ? String((s as Record<string, unknown>).date ?? '') : ''),
-            segmentCount: 0,
-            chatCount: s.chatHistory?.length ?? 0,
-            workspacePath: '',
-            pinned: false,
-            archived: false,
-          }));
+      // A list that does not match the summary schema is an error (with
+      // the reason), never a list of zeroed rows.
+      const summaries: SessionSummary[] = SessionListResponseSchema.parse(
+        await sessionsApi.getSessions(),
+      ).map((s) => ({
+        id: s.id,
+        title: s.title,
+        date: s.date,
+        segmentCount: s.segmentCount,
+        chatCount: s.chatCount,
+        workspacePath: s.workspacePath,
+        pinned: s.pinned,
+        archived: s.archived,
+      }));
       // Sort by date descending (most recent first)
       summaries.sort((a, b) => {
         if (!a.date && !b.date) return 0;
@@ -229,7 +241,7 @@ export const useSessionStore = create<SessionState>()(persist((set, get) => ({
       console.warn('Failed to load sessions:', err);
       useUIStore.getState().addToast({
         type: 'error',
-        message: 'Failed to load sessions',
+        message: `Failed to load sessions: ${toError(err).message}`,
         duration: 4000,
       });
     }
@@ -276,9 +288,10 @@ export const useSessionStore = create<SessionState>()(persist((set, get) => ({
     const created = saveSources(id);
     sessionsApi.createSession(newSession).then(
       () => {
+        reportedSaveFailures.delete(id);
         if (created && get().liveSessions[id]) serverCopies.set(id, created);
       },
-      (err) => console.warn('Failed to create session:', err),
+      (err) => reportSaveFailure(id, 'create', err),
     );
 
     // Note: a live recording deliberately SURVIVES new-session creation
@@ -630,9 +643,10 @@ export const useSessionStore = create<SessionState>()(persist((set, get) => ({
     const saving = sessionsApi.updateSession(id, saveBody(sources));
     saving.then(
       () => {
+        reportedSaveFailures.delete(id);
         if (get().liveSessions[id]) serverCopies.set(id, sources);
       },
-      (err) => console.warn('Failed to save session:', err),
+      (err) => reportSaveFailure(id, 'save', err),
     );
     return saving;
   },

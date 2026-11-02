@@ -1,9 +1,9 @@
-# Whisper Studio - documentation site
+# Whisper Studio documentation site
 
 A hand-built, self-contained documentation website for Whisper Studio. Plain
 HTML + CSS + vanilla JS: **no build step, no dependencies, and zero external
 network calls** (fonts are self-hosted), so it renders correctly on an
-isolated / internal-only network.
+isolated or internal-only network.
 
 ## Preview locally
 
@@ -35,8 +35,8 @@ path (a project-pages subpath, a custom domain, or a local file).
 official Pages actions (no build step).
 
 - One-time: in the repo, **Settings > Pages > Source = "GitHub Actions"**.
-- Push to `main` (or run the workflow manually via **Actions > Deploy docs to
-  GitHub Pages > Run workflow**).
+- Push a change under `docs/` to `main` (or run the workflow manually via
+  **Actions > Deploy docs to GitHub Pages > Run workflow**).
 - Served at `https://<owner>.github.io/<repo>/`.
 
 No Pages at all? The same files work from any static host (nginx, `python3 -m

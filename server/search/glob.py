@@ -4,7 +4,6 @@ Finds files matching glob patterns within the connected workspace.
 Uses rg --files with --glob for fast, multi-threaded directory walking.
 """
 
-import logging
 import os
 
 from server.executors import register_executor
@@ -14,10 +13,9 @@ from server.search.engine import (
     pagination_hint,
     rg_raw,
     truncate_large_output,
+    unreadable_note,
 )
 from server.workspace import get_workspace_path
-
-log = logging.getLogger("whisper-studio")
 
 # Default file limit — configurable via WHISPER_GLOB_LIMIT env var.
 _DEFAULT_GLOB_LIMIT = int(os.environ.get("WHISPER_GLOB_LIMIT", 500))
@@ -43,7 +41,9 @@ def exec_ws_glob(tool_input, transcript, current_attachments):
     except Exception as e:
         return f"Search error: {e}"
 
-    if returncode != 0 and stderr.strip():
+    # Exit 2 with output: rg listed what it could but some paths were unreadable.
+    partial = returncode == 2 and stdout.strip()
+    if returncode != 0 and stderr.strip() and not partial:
         return f"Search error (exit {returncode}): {stderr.strip()}"
 
     files = stdout.rstrip("\n").split("\n") if stdout.strip() else []
@@ -59,6 +59,8 @@ def exec_ws_glob(tool_input, transcript, current_attachments):
         result += f"\n{hint}"
     else:
         result += f"\n({len(paginated)} files)"
+    if partial:
+        result += "\n" + unreadable_note(stderr)
     return truncate_large_output(result)
 
 

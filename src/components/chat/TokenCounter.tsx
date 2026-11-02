@@ -16,8 +16,7 @@ export const formatTokenCount = (n: number): string => {
  * The session's token/cost readout, under the composer.
  *
  * One readout for the whole app: tokens in, tokens out, how full the model's
- * context window is, and cost so far. The status strip below the terminal used
- * to repeat the same three numbers from the same store fields, so it now
+ * context window is, and cost so far. The status strip below the terminal
  * carries only workspace state (model, effort, git, tasks).
  *
  * Tokens and cost are SESSION totals — every turn added up, rehydrated from the
@@ -27,7 +26,7 @@ export const formatTokenCount = (n: number): string => {
  *
  * The cost is marked the way the Costs tab marks the session's row: a
  * session with GPT rounds shows that GPT is priced at list rates, with the
- * dated note that AWS billed it at $0 (decision 2) in the label, and a cost
+ * dated note that AWS billed it at $0 in the label, and a cost
  * resting on estimated token counts reads as estimated.
  */
 export const TokenCounter: React.FC = () => {

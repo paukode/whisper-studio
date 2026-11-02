@@ -1,13 +1,4 @@
-"""HTML to Word, via python-docx — the engine behind create_docx.
-
-Replaces macOS `textutil`, which converted through the Cocoa HTML importer
-and was lossy in ways nothing reported: table cell shading vanished, fonts
-resolved to whatever the system had rather than what the CSS asked for, and
-point sizes arrived inflated by 4/3 because the importer converted at 96
-DPI. Undoing that damage took regex surgery on the emitted OOXML. Building
-the document directly means the file says what we meant the first time, and
-it works off macOS, so the docx tests finally run on every CI runner instead
-of skipping on Linux.
+"""HTML to Word, via python-docx: the engine behind create_docx.
 
 The supported vocabulary is deliberately the one create_docx advertises,
 not "HTML":
@@ -24,11 +15,9 @@ wrapper degrades to plain content instead of vanishing. Anything genuinely
 beyond this vocabulary is office_script's job, and create_docx's description
 says so.
 
-Cell shading IS honored here (`bgcolor`, or `background-color` in a `style`
-attribute), because it costs three lines with python-docx and its silent
-loss under textutil is what exposed the whole gap. That is a floor, not the
-feature set: office_script remains the answer for merges, borders, images,
-and everything else.
+Cell shading is honored (`bgcolor`, or `background-color` in a `style`
+attribute). That is a floor, not the feature set: office_script remains the
+answer for merges, borders, images, and everything else.
 """
 
 import re
@@ -111,6 +100,13 @@ _NAMED_COLORS = {
     "beige": "F5F5DC",
     "ivory": "FFFFF0",
 }
+
+
+def _text_of(node: "_Node") -> str:
+    """All the text under ``node``, markup dropped (a pre block's lines)."""
+    if node.tag == "#text":
+        return node.text
+    return "".join(_text_of(c) for c in node.children)
 
 
 def parse_color(raw: str) -> str | None:
@@ -343,6 +339,12 @@ class _Renderer:
             target.add_run().add_break()
             return
 
+        if container is not None and tag in ("hr", "ul", "ol", "blockquote", "pre"):
+            # A block inside a table cell stays in the cell: its lines join
+            # the cell paragraph with line breaks, never a body paragraph.
+            self._cell_block(node, style, container, list_depth)
+            return
+
         if tag == "hr":
             self._close_paragraph()
             self.doc.add_paragraph("_" * 40)
@@ -389,6 +391,37 @@ class _Renderer:
         # Unknown or already-inside-a-cell element: stay transparent so its
         # text still reaches the document.
         self._walk_children(node, style, container, list_depth)
+
+    def _cell_block(self, node: _Node, style: _RunStyle, cell_paragraph, list_depth: int):
+        def line_break():
+            if cell_paragraph.text:
+                cell_paragraph.add_run().add_break()
+
+        tag = node.tag
+        if tag == "hr":
+            line_break()
+            return
+        if tag in ("ul", "ol"):
+            number = 0
+            for item in node.children:
+                if item.tag != "li":
+                    self._walk(item, style, cell_paragraph, list_depth)
+                    continue
+                number += 1
+                line_break()
+                bullet = f"{number}. " if tag == "ol" else "\N{BULLET} "
+                self._add_text(bullet, style, cell_paragraph)
+                self._walk_children(item, style, cell_paragraph, list_depth + 1)
+            return
+        line_break()
+        if tag == "pre":
+            for i, part in enumerate(_text_of(node).split("\n")):
+                if i:
+                    cell_paragraph.add_run().add_break()
+                if part:
+                    self._add_text(part, style.derive(mono=True), cell_paragraph)
+            return
+        self._walk_children(node, style, cell_paragraph, list_depth)
 
     def _render_list(self, node: _Node, style: _RunStyle, container, depth: int):
         base = "List Number" if node.tag == "ol" else "List Bullet"

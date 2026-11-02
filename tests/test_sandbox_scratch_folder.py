@@ -17,7 +17,6 @@ terminal_send and run_python.
 import asyncio
 import json
 import os
-import platform
 import shutil
 import tempfile
 
@@ -28,11 +27,6 @@ from server.workspace import paths
 from server.workspace.paths import own_scratch_dir
 
 SID = "sess-1"
-
-needs_sandbox_exec = pytest.mark.skipif(
-    platform.system() != "Darwin" or shutil.which("sandbox-exec") is None,
-    reason="needs macOS sandbox-exec",
-)
 
 
 @pytest.fixture
@@ -72,14 +66,6 @@ def test_package_caches_live_in_the_scratch_folder_of_a_confined_run(tmp_path):
     assert sandbox._scratch_env("workspace", None) == {}
 
 
-def test_bwrap_binds_the_scratch_folder_except_read_only(tmp_path):
-    ws, scratch = str(tmp_path / "ws"), str(tmp_path / SID)
-    argv = sandbox._bwrap_argv("ls", ws, None, "workspace", scratch_dir=scratch)
-    head = argv[: argv.index("--chdir")]
-    assert any(head[i : i + 3] == ["--bind", scratch, scratch] for i in range(len(head)))
-    assert scratch not in sandbox._bwrap_argv("ls", ws, None, "readonly", scratch_dir=scratch)
-
-
 def test_popen_sandboxed_hands_the_cache_env_to_a_confined_child(tmp_path, monkeypatch):
     seen = {}
 
@@ -89,20 +75,20 @@ def test_popen_sandboxed_hands_the_cache_env_to_a_confined_child(tmp_path, monke
             seen["argv"] = argv
 
     monkeypatch.setattr(sandbox.subprocess, "Popen", FakePopen)
-    monkeypatch.setattr(sandbox, "_is_sandbox_exec_available", lambda: False)
-    monkeypatch.setattr(sandbox, "_is_bwrap_available", lambda: False)
+    monkeypatch.setattr(sandbox, "_is_sandbox_exec_available", lambda: True)
     scratch = str(tmp_path / SID)
     with open(os.devnull, "w") as out:
-        sandbox.popen_sandboxed(
+        _, profile_path = sandbox.popen_sandboxed(
             "true", cwd=str(tmp_path), stdout_file=out, write_mode="workspace", scratch_dir=scratch
         )
+    os.unlink(profile_path)
+    assert seen["argv"][0] == "sandbox-exec"
     assert seen["env"]["npm_config_cache"] == os.path.join(scratch, "cache", "npm")
 
 
 # ── the kernel agrees ─────────────────────────────────────────────────────
 
 
-@needs_sandbox_exec
 def test_a_confined_command_writes_its_own_scratch_but_not_another():
     """Under the home folder, not temp: temp is writable to every confined
     run, so a probe there would pass whatever the profile says."""
@@ -134,7 +120,6 @@ def test_a_confined_command_writes_its_own_scratch_but_not_another():
         shutil.rmtree(ws, ignore_errors=True)
 
 
-@needs_sandbox_exec
 def test_terminal_run_writes_its_sessions_scratch_without_escalation(monkeypatch):
     """The field case end to end: a default terminal_run (workspace-write, no
     danger-full-access) creates and removes files in its scratch folder."""

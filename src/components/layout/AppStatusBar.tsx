@@ -13,8 +13,7 @@ import { useVoiceClock } from '@/hooks/useVoiceClock';
  * sync, and a running background-task count that opens the tasks panel.
  *
  * Tokens, cost and the context meter deliberately live in ONE place, the
- * composer's TokenCounter, which is where the eye already is while typing;
- * this strip used to duplicate them from the same store fields.
+ * composer's TokenCounter, which is where the eye already is while typing.
  *
  * Every datum is read from an existing store (no new plumbing): the model
  * from settingsStore, git from the shared /api/git status + events, tasks
@@ -33,7 +32,7 @@ export const AppStatusBar: React.FC = () => {
   const setTaskPanelOpen = useBackgroundTaskStore((s) => s.setPanelOpen);
   const taskPanelOpen = useBackgroundTaskStore((s) => s.panelOpen);
 
-  const git = useGitStatusBar(wsConnected);
+  const { status: git, error: gitError } = useGitStatusBar(wsConnected);
   const voiceStatus = useVoiceStore((s) => s.status);
   const voiceRegion = useVoiceStore((s) => s.region);
   const { renewIn: voiceRenewIn } = useVoiceClock();
@@ -58,7 +57,14 @@ export const AppStatusBar: React.FC = () => {
         </span>
       )}
 
-      {git?.branch && (
+      {gitError && (
+        <span className="asb-seg asb-git asb-git-error" title={gitError}>
+          <span className="asb-git-icon">⎇</span>
+          git status failed
+        </span>
+      )}
+
+      {!gitError && git?.branch && (
         <span
           className={`asb-seg asb-git${git.clean ? '' : ' dirty'}`}
           title={

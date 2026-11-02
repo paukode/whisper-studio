@@ -17,14 +17,8 @@ interface SheetData {
 }
 
 /**
- * Spreadsheet viewer using exceljs.
- *
- * Migrated from xlsx@0.18.5 which carried CVE-2023-30533 (proto
- * pollution) and CVE-2024-22363 (ReDoS) — both trigger on parsing a
- * malicious .xlsx upload. exceljs has neither, is maintained, and the
- * resulting shape (`{sheetNames, sheets: name -> rows of strings}`)
- * is identical to what the previous code produced so the table render
- * below is unchanged.
+ * Spreadsheet viewer using exceljs. The parsed shape is
+ * `{sheetNames, sheets: name -> rows of strings}`.
  */
 export const SpreadsheetViewer: React.FC<SpreadsheetViewerProps> = ({ filePath, rawUrl }) => {
   const fileName = filePath.split('/').pop() ?? filePath;

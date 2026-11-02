@@ -9,8 +9,9 @@ immediately). Safe to call from any thread; no-ops the persist if the server
 loop hasn't been captured yet.
 
 Rows carried this way: ``cron_event`` (via cron_scheduler's delegate),
-``agent_report`` and ``agent_answer`` (server/agents/wake.py) and
-``session_message`` (server/agent_tools/cross_session.py). ``PROMPT_ROLES`` in
+``agent_report`` and ``agent_answer`` (server/agents/wake.py), ``task_report``
+(server/tasks/wake.py) and ``session_message``
+(server/agent_tools/cross_session.py). ``PROMPT_ROLES`` in
 server/infrastructure/sessions.py decides which of them the model reads.
 
 Background-task lifecycle (``emit_task_event``) is the exception: it is
@@ -20,7 +21,7 @@ header's task list hydrates from that, so no chat row is written.
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 log = logging.getLogger("whisper-studio")
 
@@ -45,7 +46,7 @@ def _result_excerpt(kind: str, text: str) -> str:
 
 
 def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 async def init_task_service() -> None:
@@ -127,7 +128,7 @@ def _duration_ms(task: dict) -> int | None:
         finished = (
             datetime.fromisoformat(finished_raw.replace("Z", "+00:00"))
             if finished_raw
-            else datetime.now(timezone.utc)
+            else datetime.now(UTC)
         )
         return max(0, int((finished - started).total_seconds() * 1000))
     except (KeyError, TypeError, ValueError):

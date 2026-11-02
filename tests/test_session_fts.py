@@ -45,9 +45,8 @@ def _seed():
         conn.execute("UPDATE sessions SET title = 'Dataclasses' WHERE id = 'py'")
 
 
-def test_fts_is_available_and_mirrors_appends():
+def test_fts_mirrors_appends():
     _seed()
-    assert ss.available() is True
     hits = ss.search("kubernetes deployment")
     assert [h["session_id"] for h in hits] == ["kube"]
     assert hits[0]["title"] == "K8s rollback" and hits[0]["msg_index"] == 0
@@ -186,3 +185,59 @@ def test_reindex_is_incremental_and_edits_reindex_from_the_change():
             f"SELECT seq FROM {ss.STATE_TABLE} WHERE session_id = 'kube'"
         ).fetchone()[0]
     assert all(seq * ss._SPAN <= rid < (seq + 1) * ss._SPAN for rid in rows().values())
+
+
+def _save(session_id: str, history: list, segments: str = "[]") -> None:
+    sessions._upsert_session(
+        session_id,
+        title="Pets",
+        custom_title=0,
+        generated_title=0,
+        created_at="a",
+        updated_at="b",
+        segments=segments,
+        chat_history_frontend=history,
+        speaker_names="{}",
+    )
+
+
+def test_an_edit_that_keeps_the_length_reindexes_the_message():
+    sessions._ensure_db()
+    _save(
+        "pets", [{"role": "user", "content": "find cats"}, {"role": "assistant", "content": "ok"}]
+    )
+    assert [h["session_id"] for h in ss.search("cats")] == ["pets"]
+    # Same role, same text length: only the content differs.
+    _save(
+        "pets", [{"role": "user", "content": "find dogs"}, {"role": "assistant", "content": "ok"}]
+    )
+    assert ss.search("cats") == []
+    assert [h["session_id"] for h in ss.search("dogs")] == ["pets"]
+
+
+def test_a_transcript_edit_that_keeps_the_length_reindexes_the_segment():
+    sessions._ensure_db()
+    seg = lambda t: json.dumps([{"speaker": "A", "text": t}])  # noqa: E731
+    _save("talk", [], segments=seg("budget for lisbon"))
+    assert [h["session_id"] for h in ss.search("lisbon")] == ["talk"]
+    _save("talk", [], segments=seg("budget for oporto"))
+    assert ss.search("lisbon") == []
+    assert [h["session_id"] for h in ss.search("oporto")] == ["talk"]
+
+
+def test_migration_025_rebuilds_the_mirror():
+    import importlib
+
+    from server.migrations.runner import _discover_migrations
+
+    _seed()
+    with sessions._get_conn() as conn:
+        conn.execute(f"DELETE FROM {ss.FTS_TABLE}")
+    assert ss.search("kubernetes") == []
+    with sessions._get_conn() as conn:
+        importlib.import_module("server.migrations.025_session_search_content_digests").migrate(
+            conn
+        )
+    assert [h["session_id"] for h in ss.search("kubernetes")] == ["kube"]
+    versions = [m["version"] for m in _discover_migrations()]
+    assert 25 in versions and versions == sorted(versions)

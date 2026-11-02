@@ -1,32 +1,17 @@
-"""Memory system — two-tier persistent memory with extraction and recall.
+"""Memory system: two-tier persistent memory with extraction and recall.
 
 Tiers:
-    global  (data/global_memory/)       — cross-workspace, alive in plain chat
-    project (data/memory/<slug>/)       — scoped to the open workspace
+    global  (data/global_memory/)         cross-workspace, alive in plain chat
+    project (data/memory/<slug>/)         scoped to the open workspace
 
-Public API:
-    init_memory()                — Ensure data directories exist (main.py lifespan)
-    MEMORY_TOOLS                 — Bedrock tool schemas for LLM
-    MEMORY_TOOL_NAMES            — frozenset of tool names
-    ensure_memory_dir(ws_path)   — Project memory dir if feature enabled
-    ensure_global_memory_dir()   — Global memory dir if feature enabled
+init_memory() creates the data directories at startup (main.py lifespan).
 """
 
 import logging
 import os
 
-from server.memory.memdir import (
-    GLOBAL_MEMORY_DIR,
-    MEMORY_BASE,
-    SCOPE_GLOBAL,
-    SCOPE_PROJECT,
-    ensure_global_memory_dir,
-    ensure_memory_dir,
-    get_global_memory_dir,
-    get_memory_dir,
-)
+from server.memory.memdir import GLOBAL_MEMORY_DIR, MEMORY_BASE
 from server.memory.session_memory import SESSION_MEMORY_DIR
-from server.memory.tools import MEMORY_TOOL_NAMES, MEMORY_TOOLS
 
 log = logging.getLogger("whisper-studio")
 

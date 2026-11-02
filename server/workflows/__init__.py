@@ -1,11 +1,11 @@
-"""Whisper Workflow Runtime (WS-D) — the real ultracode.
+"""Whisper Workflow Runtime.
 
-The model writes a deterministic JS orchestration script; a locked-down Node 22
+The model writes a deterministic JS orchestration script; a locked-down Node 26
 harness executes it detached from the chat turn, proxying every ``agent()`` call
-back over stdio JSON-RPC into the Python server (WS-C adapter, both providers).
+back over stdio JSON-RPC into the Python server (both providers).
 Server-enforced 16-way concurrency, a 1000-agent lifetime cap, token budgets, a
 resumable journal, and an upfront phase-preview approval.
 
-Modules land across slices: rpc/journal/store (foundations), harness/* (Node),
+Modules: rpc/journal/store (foundations), harness/* (Node),
 runtime/agent_adapter/manager (execution), tools/routes (exposure).
 """

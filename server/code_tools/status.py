@@ -245,6 +245,13 @@ def _eslint(ws: str | None) -> ToolStatus:
             f"{label} is installed{where} but cannot lint: {missing_eslint_config_reason(install)}."
         )
         return status
+    # ESLint runs on this node: one that cannot start (wrong architecture, a
+    # missing library) means ESLint cannot run, whatever its config says.
+    try:
+        node_version = _version_of([node, "--version"])
+    except ToolUnavailable as e:
+        status.reason = f"{label} is installed{where} but Node.js does not run: {e}."
+        return status
     status.ok = True
     if config:
         status.note = f"Uses {config}."
@@ -257,10 +264,7 @@ def _eslint(ws: str | None) -> ToolStatus:
             f"the config nearest each file, so files under {_listed(dirs)} get ESLint checks "
             "and files elsewhere do not."
         )
-    try:
-        status.note += f" Runs with Node {_version_of([node, '--version'])}."
-    except ToolUnavailable:
-        pass
+    status.note += f" Runs with Node {node_version}."
     if not at_root:
         dirs = [os.path.relpath(i.project_dir, root) for i in installs]
         status.note += (

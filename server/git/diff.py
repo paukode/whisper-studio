@@ -1,5 +1,5 @@
 """
-Git diff system — fetching and parsing with size safeguards.
+Git diff system, fetching and parsing with size safeguards.
 
 Provides diff totals and per-file stats with intelligent size limits.
 Detects transient git states (merge/rebase/cherry-pick/revert) and skips
@@ -14,7 +14,6 @@ from server.git.core import (
     _run_git,
     find_git_root,
     get_default_branch,
-    get_remote_url,
 )
 from server.git.filesystem import resolve_git_dir
 
@@ -22,7 +21,7 @@ from server.git.filesystem import resolve_git_dir
 
 GIT_TIMEOUT_S = 5
 MAX_FILES = 50  # Per-file detail limit
-MAX_DIFF_SIZE_BYTES = 1_000_000  # 1MB — skip files larger than this
+MAX_DIFF_SIZE_BYTES = 1_000_000  # 1MB, skip files larger than this
 MAX_FILES_FOR_DETAILS = 500  # Skip per-file details if more files than this
 SINGLE_FILE_DIFF_TIMEOUT_S = 3
 
@@ -54,7 +53,6 @@ class ToolUseDiff:
     deletions: int
     changes: int
     patch: str
-    repository: str | None = None
 
 
 # --- Transient state detection ---
@@ -152,8 +150,10 @@ def fetch_git_diff(path: str) -> GitDiffResult | None:
 def fetch_single_file_git_diff(path: str, file_path: str) -> ToolUseDiff | None:
     """Fetch structured diff for a single file against merge base (PR-like diff).
 
-    Falls back to diffing against HEAD if merge base cannot be determined.
+    Diffs against HEAD when there is no merge base with origin/<default>.
     For untracked files, generates synthetic diff showing all additions.
+    Returns None for an unchanged file; raises RuntimeError (or
+    subprocess.TimeoutExpired) when git fails.
     """
     git_root = find_git_root(os.path.dirname(os.path.abspath(file_path)))
     if not git_root:
@@ -162,35 +162,33 @@ def fetch_single_file_git_diff(path: str, file_path: str) -> ToolUseDiff | None:
     abs_file = os.path.abspath(file_path)
     rel_file = os.path.relpath(abs_file, git_root)
 
-    # Check if file is tracked
-    try:
-        track_result = _run_git(
-            ["ls-files", "--error-unmatch", rel_file],
-            cwd=git_root,
-            timeout=SINGLE_FILE_DIFF_TIMEOUT_S,
-        )
-        is_tracked = track_result.returncode == 0
-    except Exception:
-        is_tracked = False
+    # Check if file is tracked: exit 0 tracked, 1 untracked, anything else
+    # (a timeout raises) is a git failure, never a guess.
+    track_result = _run_git(
+        ["ls-files", "--error-unmatch", "--", rel_file],
+        cwd=git_root,
+        timeout=SINGLE_FILE_DIFF_TIMEOUT_S,
+    )
+    if track_result.returncode not in (0, 1):
+        raise RuntimeError(f"git ls-files failed: {track_result.stderr.strip()}")
 
-    if not is_tracked:
-        # Untracked file — generate synthetic diff
-        return _generate_synthetic_diff(abs_file, rel_file, git_root)
+    if track_result.returncode == 1:
+        # Untracked file: generate a synthetic diff
+        return _generate_synthetic_diff(abs_file, rel_file)
 
     # Get diff reference (merge base or HEAD)
     diff_ref = _get_diff_ref(git_root)
 
-    try:
-        result = _run_git(
-            ["diff", diff_ref, "--", rel_file],
-            cwd=git_root,
-            timeout=SINGLE_FILE_DIFF_TIMEOUT_S,
-        )
-        if result.returncode != 0 or not result.stdout.strip():
-            return None
-        return _parse_raw_diff_to_tool_use(rel_file, result.stdout, git_root)
-    except Exception:
+    result = _run_git(
+        ["diff", diff_ref, "--", rel_file],
+        cwd=git_root,
+        timeout=SINGLE_FILE_DIFF_TIMEOUT_S,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"git diff failed: {result.stderr.strip()}")
+    if not result.stdout.strip():
         return None
+    return _parse_raw_diff_to_tool_use(rel_file, result.stdout)
 
 
 # --- Parsing ---
@@ -207,15 +205,12 @@ def parse_git_numstat(path: str) -> dict[str, DiffFileStats] | None:
     if not git_root:
         return None
 
-    try:
-        result = _run_git(
-            ["--no-optional-locks", "diff", "HEAD", "--numstat"],
-            cwd=git_root,
-            timeout=GIT_TIMEOUT_S,
-        )
-        if result.returncode != 0:
-            return None
-    except Exception:
+    result = _run_git(
+        ["--no-optional-locks", "diff", "HEAD", "--numstat"],
+        cwd=git_root,
+        timeout=GIT_TIMEOUT_S,
+    )
+    if result.returncode != 0:
         return None
 
     per_file: dict[str, DiffFileStats] = {}
@@ -250,21 +245,18 @@ def parse_shortstat(path: str) -> tuple[int, int, int] | None:
     """Parse 'git diff --shortstat' for quick totals.
 
     Returns (files_changed, insertions, deletions) or None on failure.
-    O(1) memory — git computes totals without loading all content.
+    O(1) memory, git computes totals without loading all content.
     """
     git_root = find_git_root(path)
     if not git_root:
         return None
 
-    try:
-        result = _run_git(
-            ["--no-optional-locks", "diff", "HEAD", "--shortstat"],
-            cwd=git_root,
-            timeout=GIT_TIMEOUT_S,
-        )
-        if result.returncode != 0:
-            return None
-    except Exception:
+    result = _run_git(
+        ["--no-optional-locks", "diff", "HEAD", "--shortstat"],
+        cwd=git_root,
+        timeout=GIT_TIMEOUT_S,
+    )
+    if result.returncode != 0:
         return None
 
     output = result.stdout.strip()
@@ -295,15 +287,14 @@ def parse_shortstat(path: str) -> tuple[int, int, int] | None:
 
 def _fetch_untracked_files(git_root: str, max_files: int) -> dict[str, DiffFileStats]:
     """Fetch untracked file stats (excluding ignored files)."""
-    try:
-        result = _run_git(
-            ["ls-files", "--others", "--exclude-standard"],
-            cwd=git_root,
-            timeout=GIT_TIMEOUT_S,
-        )
-        if result.returncode != 0 or not result.stdout.strip():
-            return {}
-    except Exception:
+    result = _run_git(
+        ["ls-files", "--others", "--exclude-standard"],
+        cwd=git_root,
+        timeout=GIT_TIMEOUT_S,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"git ls-files failed: {result.stderr.strip()}")
+    if not result.stdout.strip():
         return {}
 
     untracked: dict[str, DiffFileStats] = {}
@@ -317,24 +308,21 @@ def _fetch_untracked_files(git_root: str, max_files: int) -> dict[str, DiffFileS
 
 
 def _get_diff_ref(git_root: str) -> str:
-    """Get the best reference for diffing: merge base with the default
-    branch, falling back to HEAD."""
+    """Get the best reference for diffing: the merge base with the default
+    branch, or HEAD when there is none (no origin/<default> branch, or no
+    common history with it)."""
     default_branch = get_default_branch(git_root)
-    try:
-        result = _run_git(
-            ["merge-base", "HEAD", f"origin/{default_branch}"],
-            cwd=git_root,
-            timeout=SINGLE_FILE_DIFF_TIMEOUT_S,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
-    except Exception:
-        pass
-
+    result = _run_git(
+        ["merge-base", "HEAD", f"origin/{default_branch}"],
+        cwd=git_root,
+        timeout=SINGLE_FILE_DIFF_TIMEOUT_S,
+    )
+    if result.returncode == 0 and result.stdout.strip():
+        return result.stdout.strip()
     return "HEAD"
 
 
-def _generate_synthetic_diff(abs_file: str, rel_file: str, git_root: str) -> ToolUseDiff | None:
+def _generate_synthetic_diff(abs_file: str, rel_file: str) -> ToolUseDiff | None:
     """Generate synthetic diff for untracked files (all lines as additions)."""
     try:
         file_size = os.path.getsize(abs_file)
@@ -356,9 +344,6 @@ def _generate_synthetic_diff(abs_file: str, rel_file: str, git_root: str) -> Too
     patch_lines.extend(f"+{line}" for line in lines)
     patch = "\n".join(patch_lines)
 
-    # Detect repository for metadata
-    repository = _get_github_repo(git_root)
-
     return ToolUseDiff(
         filename=rel_file,
         status="added",
@@ -366,11 +351,10 @@ def _generate_synthetic_diff(abs_file: str, rel_file: str, git_root: str) -> Too
         deletions=0,
         changes=line_count,
         patch=patch,
-        repository=repository,
     )
 
 
-def _parse_raw_diff_to_tool_use(filename: str, raw_diff: str, git_root: str) -> ToolUseDiff:
+def _parse_raw_diff_to_tool_use(filename: str, raw_diff: str) -> ToolUseDiff:
     """Parse raw unified diff into ToolUseDiff format."""
     additions = 0
     deletions = 0
@@ -387,8 +371,6 @@ def _parse_raw_diff_to_tool_use(filename: str, raw_diff: str, git_root: str) -> 
             elif line.startswith("-") and not line.startswith("---"):
                 deletions += 1
 
-    repository = _get_github_repo(git_root)
-
     return ToolUseDiff(
         filename=filename,
         status="modified",
@@ -396,21 +378,4 @@ def _parse_raw_diff_to_tool_use(filename: str, raw_diff: str, git_root: str) -> 
         deletions=deletions,
         changes=additions + deletions,
         patch="\n".join(patch_lines),
-        repository=repository,
     )
-
-
-def _get_github_repo(git_root: str) -> str | None:
-    """Get GitHub 'owner/repo' string if this is a github.com repo."""
-    from server.git.core import normalize_git_remote_url
-
-    remote_url = get_remote_url(git_root)
-    if not remote_url:
-        return None
-    normalized = normalize_git_remote_url(remote_url)
-    if not normalized:
-        return None
-    # Only return for github.com repos
-    if normalized.startswith("github.com/"):
-        return normalized[len("github.com/") :]
-    return None

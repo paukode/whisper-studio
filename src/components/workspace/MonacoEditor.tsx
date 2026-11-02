@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import Editor, { type OnMount, type OnChange } from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
 import { useTheme } from '@/providers/ThemeProvider';
-import { useMonaco } from '@/hooks/useMonaco';
 import { useLsp } from '@/hooks/useLsp';
 import { useUIStore } from '@/stores/uiStore';
 import { LspStatusIndicator } from './LspStatusIndicator';
@@ -142,10 +141,9 @@ export interface MonacoEditorProps {
 }
 
 /**
- * Wraps @monaco-editor/react with Whisper Studio theme integration,
- * matching the original vanilla JS editor config exactly:
- *   DM Mono 13px, minimap off, wordWrap off, tabSize 4,
- *   bracket colorization, smooth cursor, custom themes, Ctrl+S/W keybindings,
+ * Wraps @monaco-editor/react with Whisper Studio theme integration:
+ *   DM Mono 14px, minimap off, wordWrap off, tabSize 4,
+ *   bracket colorization, smooth cursor, custom themes, Cmd+S/W keybindings,
  *   cursor position tracking, and live theme switching.
  */
 export const MonacoEditor: React.FC<MonacoEditorProps> = ({
@@ -162,7 +160,6 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
   workspaceRoot,
 }) => {
   const { resolvedTheme, paletteId } = useTheme();
-  const { setEditorTheme } = useMonaco();
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof import('monaco-editor') | null>(null);
   const decorationsRef = useRef<editor.IEditorDecorationsCollection | null>(null);
@@ -240,13 +237,12 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
     };
   }, [filePath]);
 
-  // Live theme switching. Goes through useMonaco so the same path is used
-  // anywhere we ever need to switch the editor theme outside this component.
+  // Live theme switching on the Monaco namespace this editor mounted with.
   useEffect(() => {
     const m = monacoRef.current;
     if (!m) return;
-    setEditorTheme(getMonacoTheme(resolvedTheme, paletteId));
-  }, [resolvedTheme, paletteId, setEditorTheme]);
+    m.editor.setTheme(getMonacoTheme(resolvedTheme, paletteId));
+  }, [resolvedTheme, paletteId]);
 
   const handleMount: OnMount = useCallback(
     (ed, monaco) => {
@@ -260,7 +256,7 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
       registerWhisperThemes(monaco);
       monaco.editor.setTheme(getMonacoTheme(resolvedTheme, paletteId));
 
-      // Ctrl+S — Save file
+      // Cmd+S: Save file
       ed.addAction({
         id: 'whisper-save',
         label: 'Save File',
@@ -271,7 +267,7 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
         },
       });
 
-      // Ctrl+W — Close tab
+      // Cmd+W: Close tab
       ed.addAction({
         id: 'whisper-close-tab',
         label: 'Close Tab',

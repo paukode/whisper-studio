@@ -14,25 +14,9 @@ export interface GitFileStatusProps {
   onViewDiff?: (path: string) => void;
 }
 
-const STATUS_LABELS: Record<string, string> = {
-  modified: 'M',
-  added: 'A',
-  deleted: 'D',
-  renamed: 'R',
-  copied: 'C',
-  untracked: '?',
-  M: 'M',
-  A: 'A',
-  D: 'D',
-  R: 'R',
-  C: 'C',
-  '?': '?',
-};
-
 /**
  * Individual file status row in the git changes panel.
  * Displays status badge, file path, per-file line stats, and discard button.
- * Matches the vanilla ws-git-change-item structure.
  *
  * Two targets on one row: the row opens the file in the editor, its
  * status letter opens the diff.
@@ -79,7 +63,8 @@ export const GitFileStatus: React.FC<GitFileStatusProps> = ({
     [path, onViewDiff],
   );
 
-  const statusLabel = STATUS_LABELS[status] ?? status.charAt(0).toUpperCase();
+  // The server sends one letter: M, A, D, R or ? (untracked).
+  const statusLabel = status;
   const fileName = path.split('/').pop() ?? path;
   const dirPath = path.includes('/') ? path.slice(0, path.lastIndexOf('/') + 1) : '';
 

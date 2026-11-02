@@ -81,14 +81,4 @@ describe('NativeAudioMixer', () => {
     mixer.push(new Float32Array(10));
     expect(console.warn).toHaveBeenCalledTimes(1);
   });
-
-  it('reset clears buffered samples and re-arms the overflow log', () => {
-    const mixer = new NativeAudioMixer(2);
-    mixer.push(new Float32Array([1, 2, 3]));
-    expect(console.warn).toHaveBeenCalledTimes(1);
-    mixer.reset();
-    expect(mixer.buffered).toBe(0);
-    mixer.push(new Float32Array([1, 2, 3]));
-    expect(console.warn).toHaveBeenCalledTimes(2);
-  });
 });

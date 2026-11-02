@@ -33,6 +33,22 @@ def test_grant_then_no_longer_asks(tmp_path):
     assert needs_grant(str(target)) is False
 
 
+def test_an_unreadable_grants_file_asks_again_and_is_not_overwritten(tmp_path):
+    from server.security import folder_grants as fg
+
+    earlier = tmp_path / "earlier"
+    earlier.mkdir()
+    target = tmp_path / "project1"
+    target.mkdir()
+    path = tmp_path / "folder_grants.json"
+    path.write_text('{"granted": ["' + str(earlier) + '"],}')
+    before = path.read_bytes()
+    assert fg.needs_grant(str(earlier)) is True
+    ok, err = fg.grant(str(target))
+    assert not ok and "cannot be read" in err
+    assert path.read_bytes() == before
+
+
 def test_grant_covers_children_but_not_siblings_or_parent(tmp_path):
     from server.security.folder_grants import grant, needs_grant
 
@@ -180,9 +196,6 @@ def test_ws_open_folder_proceeds_silently_once_granted(tmp_path, monkeypatch):
     from server.workspace.executors import execute_ws_open_folder
 
     monkeypatch.setattr("server.workspace.executors.get_workspace_path", lambda: None)
-    monkeypatch.setattr("server.workspace.executors.save_workspace_config", lambda c: None)
-    monkeypatch.setattr("server.workspace.executors.load_workspace_config", lambda: {})
-    monkeypatch.setattr("server.workspace.executors.save_recent_workspace", lambda p: None)
     target = tmp_path / "project1"
     target.mkdir()
 
@@ -203,9 +216,6 @@ def _wire_workspace_to_tmp(monkeypatch, tmp_path):
 
     monkeypatch.setattr(S, "WORKSPACE_CONFIG_PATH", str(tmp_path / "workspace.json"))
     monkeypatch.setattr(S, "RECENT_WORKSPACES_PATH", str(tmp_path / "recent.json"))
-    monkeypatch.setattr(E, "load_workspace_config", S.load_workspace_config)
-    monkeypatch.setattr(E, "save_workspace_config", S.save_workspace_config)
-    monkeypatch.setattr(E, "save_recent_workspace", S.save_recent_workspace)
     monkeypatch.setattr(E, "get_workspace_path", S.get_workspace_path)
     return S
 

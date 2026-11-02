@@ -1,15 +1,15 @@
 """Pause-and-resume tests for the ask_user_question tool.
 
-chat.py must save _paused_sessions when a tool batch contains
-ask_user_question; otherwise the user's answer arrives as a fresh user message
+The engine must stash the turn in server/chat/engine/pause.paused_sessions
+when a tool batch contains ask_user_question; otherwise the user's answer arrives as a fresh user message
 and Bedrock sees a tool_use without a matching tool_result.
 
 These tests pin the contract:
   1. process_tool_results emits a placeholder tool_result for every
      ask_user_question tool_use_id, so the messages array is well-formed.
-  2. The placeholder is the new ASK_USER_PAUSE marker — a future
+  2. The placeholder is the ASK_USER_PAUSE marker: a later
      continuation turn can find and replace it by tool_use_id.
-  3. has_user_question is True so the chat handler stashes _paused_sessions.
+  3. has_user_question is True so the engine stashes the paused turn.
 """
 
 import asyncio

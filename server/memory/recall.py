@@ -1,4 +1,4 @@
-"""Memory recall — selects relevant memories at query time via Haiku side-query.
+"""Memory recall: selects relevant memories at query time via Haiku side-query.
 
 At each user query:
 1. Scan both memory tiers (global always; project when a workspace is open)
@@ -14,7 +14,7 @@ import json
 import logging
 import os
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from botocore.config import Config as BotoConfig
 
@@ -35,7 +35,7 @@ MAX_RECALL_TOKENS = 256
 
 # Cached per-region client for the recall side-query (mirrors
 # server/chat/infra's pattern). A fresh boto3 client per turn meant a new TLS
-# handshake on every message — a visible slice of time-to-first-token. The
+# handshake on every message, a visible slice of time-to-first-token. The
 # recall-specific short timeouts are why this doesn't reuse the chat client.
 _RECALL_CLIENTS: dict[str, object] = {}
 _RECALL_CLIENT_LOCK = threading.Lock()
@@ -53,13 +53,6 @@ def _get_recall_client(region: str):
         region_name=region,
         config=BotoConfig(read_timeout=30, connect_timeout=5, retries={"max_attempts": 1}),
     )
-
-
-def _reset_recall_client_cache() -> None:
-    """Test hook — drops cached clients so monkeypatched boto3 takes effect
-    (tests/conftest.py resets between tests, same as the chat client cache)."""
-    with _RECALL_CLIENT_LOCK:
-        _RECALL_CLIENTS.clear()
 
 
 def _resolve_tiers(ws_path: str | None) -> list[tuple[str, str]]:
@@ -97,7 +90,7 @@ def _build_tier_manifest(entries: list[tuple[str, MemoryFile]]) -> str:
     lines = []
     for scope, m in entries:
         tag = f"[{m.type}] " if m.type else ""
-        ts = datetime.fromtimestamp(m.mtime, tz=timezone.utc).strftime("%Y-%m-%d")
+        ts = datetime.fromtimestamp(m.mtime, tz=UTC).strftime("%Y-%m-%d")
         desc = f": {m.description}" if m.description else ""
         lines.append(f"- {tag}{_entry_key(scope, m)} ({ts}){desc}")
     return "\n".join(lines)
@@ -138,7 +131,7 @@ async def _select_entries(
 
     # On-device (local) turns must stay fully offline: skip the Haiku ranking
     # side-query and return the most recent memories. With a large store this
-    # loses smart ranking, but it never leaves the machine — recall parity for
+    # loses smart ranking, but it never leaves the machine, recall parity for
     # Gemma without breaking isolation. Local mode is the same for every turn,
     # whatever model it runs on: the manifest never goes to Bedrock there.
     from server.infrastructure.cloud_guard import cloud_allowed
@@ -295,9 +288,7 @@ def _build_context(
         # Add freshness note
         try:
             mtime = os.path.getmtime(path)
-            age_days = (
-                datetime.now(tz=timezone.utc) - datetime.fromtimestamp(mtime, tz=timezone.utc)
-            ).days
+            age_days = (datetime.now(tz=UTC) - datetime.fromtimestamp(mtime, tz=UTC)).days
             if age_days == 0:
                 freshness = "today"
             elif age_days == 1:

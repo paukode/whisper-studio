@@ -31,7 +31,6 @@ import secrets
 import signal
 import struct
 import subprocess
-import sys
 import termios
 import threading
 import time
@@ -130,20 +129,12 @@ class _PtySession:
         # reader's read returns). Instead the reader owns the close — it exits
         # once it sees _closing (or the shell dies) and closes the fd after its
         # final read returns. See _pty_reader.
-        had_reader = self._reader_task is not None
         self._closing = True
         try:
             os.kill(self.process.pid, signal.SIGHUP)
         except (ProcessLookupError, OSError):
             pass
         self._reader_task = None
-        if not had_reader:
-            # No reader was ever started (defensive): nobody else will close the
-            # fd, so close it here. Normal sessions always have a reader.
-            try:
-                os.close(self.master_fd)
-            except OSError:
-                pass
         if self.profile_path:
             try:
                 os.unlink(self.profile_path)
@@ -213,12 +204,9 @@ def _child_acquire_ctty():
     process group — the shell keeps its startup $COLUMNS/$LINES forever
     and never rewraps on resize."""
     os.setsid()
-    try:
-        fcntl.ioctl(0, termios.TIOCSCTTY, 0)
-    except OSError:
-        # Degrade to the old no-ctty behavior (shell works, resize doesn't)
-        # rather than failing the spawn — preexec exceptions abort Popen.
-        pass
+    # A failure here aborts Popen with the error (preexec exceptions do),
+    # rather than leaving a terminal that never rewraps on resize.
+    fcntl.ioctl(0, termios.TIOCSCTTY, 0)
 
 
 def _create_pty_session(
@@ -246,7 +234,7 @@ def _create_pty_session(
     Visible sessions use the user's login shell (`zsh -l`) so the prompt
     looks normal. Sandbox sessions use a minimal shell with no rc files
     — predictable PATH, no theming, no plugin output mixed into command
-    results. Falls back to /bin/sh if zsh/bash aren't available.
+    results.
     """
     session_id = uuid.uuid4().hex[:12]
 
@@ -257,15 +245,10 @@ def _create_pty_session(
     fcntl.ioctl(master_fd, termios.TIOCSWINSZ, winsize)
 
     if hidden:
-        # Minimal, deterministic shell for sandbox runs. zsh -f / bash
-        # --norc skip all per-user dotfiles so a fancy prompt theme can't
-        # pollute command output.
-        if os.path.exists("/bin/bash"):
-            shell_cmd = ["/bin/bash", "--noprofile", "--norc"]
-        elif os.path.exists("/bin/zsh"):
-            shell_cmd = ["/bin/zsh", "-f"]
-        else:
-            shell_cmd = ["/bin/sh"]
+        # Minimal, deterministic shell for sandbox runs: bash --norc skips all
+        # per-user dotfiles so a fancy prompt theme can't pollute command
+        # output. /bin/bash ships with every macOS release.
+        shell_cmd = ["/bin/bash", "--noprofile", "--norc"]
     else:
         shell = os.environ.get("SHELL", "/bin/zsh")
         shell_cmd = [shell, "-l"]
@@ -294,30 +277,47 @@ def _create_pty_session(
     # Sandbox the hidden (terminal_run) PTY: run its shell under sandbox-exec
     # so commands typed into it inherit the same filesystem deny-list as the
     # workspace shell. Visible sessions are the user's own terminal and stay
-    # unsandboxed. No-op off macOS (validation is still applied upstream).
+    # unsandboxed. Without sandbox-exec the wrap raises SandboxUnavailableError
+    # and the hidden shell never starts.
     # A confined one may also write the chat session's own scratch folder,
     # where its npm, pip and uv caches live.
     profile_path = None
     if hidden:
         from server.sandbox import build_pty_sandbox_wrap
 
-        shell_cmd, profile_path = build_pty_sandbox_wrap(
-            shell_cmd,
-            write_root,
-            write_mode=write_mode,
-            scratch_dir=scratch_dir,
-            secret_reads=secret_reads,
-        )
+        try:
+            shell_cmd, profile_path = build_pty_sandbox_wrap(
+                shell_cmd,
+                write_root,
+                write_mode=write_mode,
+                scratch_dir=scratch_dir,
+                secret_reads=secret_reads,
+            )
+        except Exception:
+            os.close(master_fd)
+            os.close(slave_fd)
+            raise
 
-    process = subprocess.Popen(
-        shell_cmd,
-        stdin=slave_fd,
-        stdout=slave_fd,
-        stderr=slave_fd,
-        cwd=cwd,
-        env=env,
-        preexec_fn=_child_acquire_ctty,
-    )
+    try:
+        process = subprocess.Popen(
+            shell_cmd,
+            stdin=slave_fd,
+            stdout=slave_fd,
+            stderr=slave_fd,
+            cwd=cwd,
+            env=env,
+            preexec_fn=_child_acquire_ctty,
+        )
+    except BaseException:
+        # A failed spawn (no controlling tty, a missing folder) leaks nothing.
+        os.close(master_fd)
+        os.close(slave_fd)
+        if profile_path:
+            try:
+                os.unlink(profile_path)
+            except OSError:
+                pass
+        raise
     os.close(slave_fd)
 
     # Set master_fd to non-blocking
@@ -373,7 +373,7 @@ _DEFAULT_TIMEOUT_S = 30
 #   bare: BEL (\x07), bare CR not followed by LF, backspace
 _CSI_RE = re.compile(r"\x1b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]")
 _OSC_RE = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
-_C1_RE = re.compile(r"\x1b[\(\)=>\\(]")
+_C1_RE = re.compile(r"\x1b[()][0-9A-Za-z]|\x1b[=>\\]")
 _BEL_RE = re.compile(r"\x07")
 _CR_RE = re.compile(r"\r(?!\n)")
 _BS_RE = re.compile(r".\x08")  # backspace deletes prev char
@@ -504,21 +504,6 @@ async def run_in_session(
 _SETTLE_WINDOW_S = 0.4
 _SEND_POLL_INTERVAL = 0.05
 
-# Wait-channel substrings that mean "blocked reading a terminal". Per-OS
-# dialects (Linux /proc/<pid>/wchan vs macOS `ps -o wchan`); deliberately not a
-# union — matching the wrong OS's spelling would misclassify a busy process.
-#
-# Platform honesty: on Linux /proc/<pid>/wchan names the kernel function, so a
-# tty read is positively detectable. On macOS `ps -o wchan` returns "-" for
-# other processes under normal privileges, so stdin_read cannot be PROVEN there
-# and the classifier conservatively reports inferred_idle instead of
-# over-claiming. The darwin entry is kept for the rare host where wchan is
-# exposed; it simply never matches otherwise.
-_TTY_READ_WCHANS = {
-    "linux": ("n_tty_read", "tty_read", "wait_woken"),
-    "darwin": ("ttyin",),
-}
-
 
 def _foreground_pgrp(session: "_PtySession") -> int | None:
     """The process group currently in the FOREGROUND of the PTY — the group
@@ -531,67 +516,19 @@ def _foreground_pgrp(session: "_PtySession") -> int | None:
         return None
 
 
-def _wait_channel(pid: int) -> str:
-    """Best-effort kernel wait-channel for `pid` — what the process is blocked
-    in right now. Empty string when it can't be read. Used only as a positive
-    signal for `stdin_read`; a miss falls back to `inferred_idle`."""
-    try:
-        if sys.platform.startswith("linux"):
-            with open(f"/proc/{pid}/wchan", encoding="utf-8", errors="replace") as f:
-                return f.read().strip()
-        if sys.platform == "darwin":
-            out = subprocess.run(
-                ["ps", "-o", "wchan=", "-p", str(pid)],
-                capture_output=True,
-                text=True,
-                timeout=1.0,
-            )
-            return out.stdout.strip()
-    except (OSError, subprocess.SubprocessError):
-        return ""
-    return ""
-
-
-def _blocked_on_tty_read(pgrp: int) -> bool:
-    """True when the foreground group's leader is positively blocked reading
-    the terminal (i.e. prompting for input). Conservative: unknown → False, so
-    the caller reports the weaker `inferred_idle` rather than over-claiming."""
-    if pgrp is None or pgrp <= 0:
-        return False
-    signatures = _TTY_READ_WCHANS.get(
-        "linux" if sys.platform.startswith("linux") else sys.platform, ()
-    )
-    if not signatures:
-        return False
-    wchan = _wait_channel(pgrp)
-    return any(sig in wchan for sig in signatures)
-
-
 def classify_wait_reason(session: "_PtySession", *, settled: bool) -> str:
     """Why did an interactive send stop waiting?
 
     session_exit  — the shell process is gone.
-    stdin_read    — a foreground child is blocked reading the terminal
-                    (it is prompting for input).
-    inferred_idle — output went quiet and either control returned to the
-                    shell prompt, or a child is waiting but we can't prove
-                    it's a stdin read.
+    inferred_idle: output went quiet: control returned to the shell prompt,
+                    or a child is waiting (macOS cannot prove it is a stdin
+                    read).
     timeout       — output never settled within the budget.
     """
     if not session.alive:
         return "session_exit"
     if not settled:
         return "timeout"
-    fg = _foreground_pgrp(session)
-    try:
-        shell_pgrp = os.getpgid(session.process.pid)
-    except OSError:
-        shell_pgrp = None
-    if fg is not None and shell_pgrp is not None and fg == shell_pgrp:
-        # Control is back at the shell prompt — ready for the next command.
-        return "inferred_idle"
-    if _blocked_on_tty_read(fg):
-        return "stdin_read"
     return "inferred_idle"
 
 
@@ -607,9 +544,8 @@ async def send_and_wait(
     ``{output, wait_reason, session_alive}``.
 
     "Ready" means output has stayed quiet for `settle` seconds (the program is
-    waiting), or the session exited. The wait_reason names which, and whether a
-    quiet program is specifically blocked reading stdin (`stdin_read`) or merely
-    idle (`inferred_idle`). This is the contract that lets a caller drive an
+    waiting), or the session exited. The wait_reason names which. This is the
+    contract that lets a caller drive an
     interactive REPL without a fixed sleep or a completion marker.
     """
     timeout = max(0.2, min(float(timeout), _MAX_TIMEOUT_S))
@@ -742,7 +678,8 @@ async def open_visible_session(cwd: str) -> _PtySession:
     kind the panel's + button opens, once its shell has printed its prompt or
     the wait ran out. Call on the event loop: the reader task needs it."""
     if not os.path.isdir(cwd):
-        cwd = os.path.expanduser("~")
+        # The command was approved for this folder: never type it elsewhere.
+        raise FileNotFoundError(f"cwd not found: {cwd}")
     _reap_dead_sessions()
     session = _create_pty_session(cwd, _OPENED_COLS, _OPENED_ROWS)
     deadline = time.monotonic() + _SHELL_READY_TIMEOUT_S

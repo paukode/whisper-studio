@@ -21,12 +21,9 @@ _TOP_HIT_WINDOW = 3
 
 
 def _enabled() -> bool:
-    try:
-        from server.infrastructure.feature_flags import is_enabled
+    from server.infrastructure.feature_flags import is_enabled
 
-        return is_enabled("session_search")
-    except Exception:  # noqa: BLE001
-        return True
+    return is_enabled("session_search")
 
 
 def _int(value, default: int | None) -> int | None:
@@ -58,10 +55,6 @@ def execute_session_search(tool_input: dict, session_id: str = "") -> str:
         return json.dumps({"shape": "read", **view})
 
     if query:
-        if not _ss.available():
-            return json.dumps(
-                {"error": "full-text search is unavailable in this build (SQLite without FTS5)"}
-            )
         roles: tuple[str, ...] = _ss.MODEL_ROLES
         if tool_input.get("include_tool_output"):
             roles = (*roles, "tool")

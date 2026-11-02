@@ -122,7 +122,7 @@ def test_extension_raises_a_running_agents_cap(monkeypatch):
     assert result.turns_used == 3
     assert result.stop_reason == "turn_limit"
     assert "reached turn limit (3)" in result.output
-    assert extensions.get("ext-me") is None  # unregistered once the run ends
+    assert "ext-me" not in extensions._live  # unregistered once the run ends
 
 
 def test_turn_start_events_carry_the_budget_readout(monkeypatch):

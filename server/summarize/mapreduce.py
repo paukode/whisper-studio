@@ -142,12 +142,9 @@ def _cfg(config: dict | None = None) -> dict:
     Numeric fields are coerced to int so a malformed value never raises later in
     the hot path (the size gate and thresholds must not crash a chat turn)."""
     cfg = dict(_DEFAULTS)
-    try:
-        user = (config or load_config()).get("map_reduce_summary") or {}
-        if isinstance(user, dict):
-            cfg.update({k: v for k, v in user.items() if k in _DEFAULTS})
-    except Exception as e:  # never let a config read break summarisation
-        log.warning("map_reduce_summary config read failed (%s); using defaults", e)
+    user = (config or load_config()).get("map_reduce_summary") or {}
+    if isinstance(user, dict):
+        cfg.update({k: v for k, v in user.items() if k in _DEFAULTS})
     for k in _INT_FIELDS:
         try:
             cfg[k] = int(cfg[k])
@@ -241,13 +238,9 @@ def _input_budget(model_key: str | None, n_ctx: int | None = None) -> int | None
     """The reader's input budget in tokens, or None when unknown."""
     if not model_key:
         return None
-    try:
-        from server.chat.engine.windows import input_budget
+    from server.chat.engine.windows import input_budget
 
-        return input_budget(model_key, _requested_window_meta(model_key, n_ctx))
-    except Exception as e:  # noqa: BLE001 - sizing must never break a chat turn
-        log.debug("input budget for %s unavailable: %s", model_key, e)
-        return None
+    return input_budget(model_key, _requested_window_meta(model_key, n_ctx))
 
 
 def _requested_window_meta(model_key: str, n_ctx: int | None) -> dict | None:
@@ -387,8 +380,15 @@ def _map_model(engine: str, chat_model_key: str | None) -> str:
     to, else the engine itself. Part of the cache key, so a different map model
     never serves another one's result."""
     if engine == "local":
-        return resolve_local_key(chat_model_key)
+        return resolve_local_key(_local_reader_key(chat_model_key))
     return engine
+
+
+def _local_reader_key(chat_model_key: str | None) -> str | None:
+    """A cloud reader is not an explicit selection of the local map model."""
+    from server.local.runtime import is_local_model
+
+    return chat_model_key if chat_model_key and is_local_model(chat_model_key) else None
 
 
 def _cache_key(text: str, cfg: dict, map_model: str, limit: int, max_out: int) -> str:
@@ -404,23 +404,34 @@ def _cache_key(text: str, cfg: dict, map_model: str, limit: int, max_out: int) -
 def _condense(
     text: str, cfg: dict, *, engine: str, max_out: int, chat_model_key: str | None = None
 ) -> tuple[str, bool]:
-    """Map every chunk and join the extracts. Returns ``(text, complete)``;
-    ``complete`` is False when any chunk's map call failed, so the caller does
-    not cache a result with a hole in it. Raises when nothing was extracted."""
+    """Map every chunk and join the extracts. A chunk whose map call failed
+    keeps its place as a visible ``[Segment i of n failed: ...]`` marker, so
+    the reader knows that part is missing and why. Returns
+    ``(text, complete)``; ``complete`` is False when a chunk failed or came
+    back empty, so the caller does not cache a result with a gap in it.
+    Raises when nothing was extracted (the caller then truncates and says
+    why)."""
     local = _is_local_engine(engine)
     chunk_chars = cfg["local_chunk_chars"] if local else cfg["chunk_chars"]
     chunks = _chunk(text, chunk_chars, cfg["overlap_chars"], cfg["max_chunks"])
     if not chunks:
         raise RuntimeError("the transcript produced no chunks")
     n = len(chunks)
-    errors: list[str] = []
+    errors: list[tuple[int, str]] = []
     results = _map_all(chunks, engine, cfg, chat_model_key=chat_model_key, errors=errors)
     extracts = [r.strip() for r in results if r.strip()]
     if not extracts:
-        # Every map call failed or came back empty; the caller truncates the
-        # raw transcript rather than hand the model nothing.
-        raise RuntimeError(errors[0] if errors else "every map extraction came back empty")
-    condensed = "\n\n".join(extracts)
+        if errors:
+            raise RuntimeError(f"{len(errors)} of {n} segments failed: {errors[0][1]}")
+        raise RuntimeError("every map extraction came back empty")
+    failed = dict(errors)
+    parts = []
+    for i, r in enumerate(results, 1):
+        if i in failed:
+            parts.append(f"[Segment {i} of {n} failed: {failed[i]}. Its part is missing.]")
+        elif r.strip():
+            parts.append(r.strip())
+    condensed = "\n\n".join(parts)
     # Bound the condensed result to what the reader takes, so the "reduce" turn
     # does not overflow. The map input is already sized for the map engine.
     if len(condensed) > max_out:
@@ -450,14 +461,14 @@ def _map_all(
     cfg: dict,
     *,
     chat_model_key: str | None = None,
-    errors: list[str] | None = None,
+    errors: list[tuple[int, str]] | None = None,
 ) -> list[str]:
     """Run the per-chunk map calls, preserving order. The chunks are independent
     by construction (each extraction prompt is self-contained), so the cloud
     path fans them out with bounded concurrency to cut first-token latency. The
     local path (the alias or a specific on-device key) stays serial: a single
     llama.cpp instance cannot run concurrent completions. A failed chunk's
-    reason is appended to ``errors``."""
+    1-based index and reason are appended to ``errors``."""
     n = len(chunks)
 
     def run(i: int, c: str) -> str:
@@ -541,27 +552,27 @@ def _map_chunk(
     cfg: dict,
     *,
     chat_model_key: str | None = None,
-    errors: list[str] | None = None,
+    errors: list[tuple[int, str]] | None = None,
 ) -> str:
-    """Extract raw material from one chunk. A single failed chunk returns ``""``
-    (logged, its reason appended to ``errors``) rather than sinking the whole
-    condensation."""
+    """Extract raw material from one chunk. A failed chunk returns ``""`` with
+    ``(i, reason)`` appended to ``errors``, so the other chunks still finish
+    and ``_condense`` marks that segment as failed in the notes."""
     try:
         return one_shot(
             MAP_SYSTEM,
             MAP_USER.format(i=i, n=n, chunk=chunk),
             max_tokens=int(cfg["map_max_tokens"]),
             engine=engine,
-            # Only the "local" alias follows a local model key; resolve_local_key
-            # ignores a cloud chat key, and a cloud or specific-key map ignores it.
-            local_model_key=chat_model_key if engine == "local" else None,
+            # Only an on-device reader selects the local writer. A cloud
+            # reader leaves the explicit local alias to follow the resident model.
+            local_model_key=_local_reader_key(chat_model_key) if engine == "local" else None,
             feature="Transcript condensation",
             source="condensation",
         )
     except Exception as e:
         log.warning("map extraction failed for chunk %d/%d: %s", i, n, e)
         if errors is not None:
-            errors.append(str(e))
+            errors.append((i, str(e)))
         return ""
 
 

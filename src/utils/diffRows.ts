@@ -29,7 +29,7 @@ export type DiffRow =
   | { kind: 'gap'; count: number; rows: DiffRow[] };
 
 /** Unchanged lines kept either side of a change when collapsing. */
-export const DEFAULT_CONTEXT_LINES = 3;
+const DEFAULT_CONTEXT_LINES = 3;
 
 /**
  * Split file text into lines for diffing.

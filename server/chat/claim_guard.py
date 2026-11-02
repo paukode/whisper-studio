@@ -162,17 +162,14 @@ class _Paused:
 
 
 def _checking_claims() -> bool:
-    try:
-        from server.infrastructure.feature_flags import is_enabled
+    from server.infrastructure.feature_flags import is_enabled
 
-        return is_enabled("deliverable_check")
-    except Exception:  # noqa: BLE001 - an unreadable flag keeps the check on
-        return True
+    return is_enabled("deliverable_check")
 
 
 def _calls_tools(content) -> bool:
     return isinstance(content, list) and any(
-        isinstance(b, dict) and b.get("type") in ("tool_use", "function_call") for b in content
+        isinstance(b, dict) and b.get("type") == "tool_use" for b in content
     )
 
 
@@ -859,11 +856,7 @@ class ClaimGuard:
             return
         from server.artifacts import list_artifacts
 
-        try:
-            self._cards = bool(await asyncio.to_thread(list_artifacts, self.session_id))
-        except Exception as e:  # noqa: BLE001 - a lookup bug must never abort a turn
-            log.warning("artifact lookup for the claim guard failed (%s)", e)
-            self._cards = False
+        self._cards = bool(await asyncio.to_thread(list_artifacts, self.session_id))
         self._ev = self._evidence()
 
     def _note_items(self) -> list:
@@ -916,10 +909,7 @@ def _gate_reads_reply(policy, scope: str) -> bool:
         return True
     from server.goals.gate import goal_in_play
 
-    try:
-        return goal_in_play(scope)
-    except Exception:  # noqa: BLE001 - an unreadable goal store means no goal
-        return False
+    return goal_in_play(scope)
 
 
 def _cut(text: str, drops: list[str]) -> str:

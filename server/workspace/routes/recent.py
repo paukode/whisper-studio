@@ -2,14 +2,12 @@
 folders are protected from removal so a live index is never orphaned.
 """
 
-import json
 import os
 
 from fastapi import Request
 
 from .. import router
-from ..paths import RECENT_WORKSPACES_PATH
-from ..state import load_recent_workspaces
+from ..state import load_recent_workspaces, save_recent_workspaces
 
 
 @router.get("/recent")
@@ -18,26 +16,22 @@ async def ws_recent():
 
 
 def _indexed_recent_paths() -> set[str]:
-    """Absolute paths of recents that currently have an index — these are kept
-    in the list (removing a recent must never orphan an active index)."""
-    try:
-        from server.index import store
+    """Absolute paths of recents that currently have an index, these are kept
+    in the list (removing a recent must never orphan an active index). An
+    index store error fails the request, so no recent is dropped on a guess."""
+    from server.index import store
 
-        return {os.path.abspath(os.path.expanduser(p)) for p in store.list_indexed_workspaces()}
-    except Exception:
-        return set()
+    return {os.path.abspath(os.path.expanduser(p)) for p in store.list_indexed_workspaces()}
 
 
 def _save_recent(recent: list[str]) -> dict:
-    os.makedirs(os.path.dirname(RECENT_WORKSPACES_PATH), exist_ok=True)
-    with open(RECENT_WORKSPACES_PATH, "w") as f:
-        json.dump(recent, f, indent=2)
+    save_recent_workspaces(recent)
     return {"recent": recent}
 
 
 @router.post("/recent/remove")
 async def ws_recent_remove(request: Request):
-    """Remove ONE folder from the recent list. Indexed folders are protected —
+    """Remove ONE folder from the recent list. Indexed folders are protected,
     they stay until their index is removed first."""
     body = await request.json()
     path = body.get("path", "")

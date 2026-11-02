@@ -7,7 +7,7 @@ import os
 import stat
 import tempfile
 
-from server.workspace import _check_writable
+from server.workspace.state import _check_writable
 
 
 def test_check_writable_true_for_normal_dir():

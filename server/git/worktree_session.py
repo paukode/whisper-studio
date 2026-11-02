@@ -107,7 +107,7 @@ _SESSIONS: dict[str, WorktreeSession] = {}
 
 # The harvest feature mutates sessions from _agent_executor worker THREADS
 # (set_session on cleanup) while the event loop enters worktrees for other
-# agents — so every read/write of _SESSIONS and every rewrite of the persist
+# agents, so every read/write of _SESSIONS and every rewrite of the persist
 # file must hold this lock.
 _SESSIONS_LOCK = threading.RLock()
 
@@ -167,7 +167,7 @@ def all_sessions() -> dict[str, WorktreeSession]:
 
 
 def _git_env() -> dict[str, str]:
-    """Same hygiene as core._run_git — never hang waiting for credentials."""
+    """Same hygiene as core._run_git, never hang waiting for credentials."""
     env = os.environ.copy()
     env["GIT_TERMINAL_PROMPT"] = "0"
     env["GIT_ASKPASS"] = ""
@@ -206,7 +206,7 @@ def enter_worktree(repo_root: str, slug: str, session_id: str) -> WorktreeSessio
         if result.returncode != 0:
             # If the branch already exists (e.g. user manually created it
             # before), retry without -b. This matches Claude Code's "resume
-            # existing worktree" semantics — same slug = same worktree.
+            # existing worktree" semantics, same slug = same worktree.
             if "already exists" in (result.stderr or ""):
                 result = subprocess.run(
                     ["git", "worktree", "add", target, branch],

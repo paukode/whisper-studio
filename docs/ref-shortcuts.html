@@ -15,14 +15,13 @@
 <body>
   <main class="doc" data-page="ref-shortcuts">
     <h1>Keyboard shortcuts</h1>
-    <p class="subtitle">The small set of keys that speed up chat, recording, and the workspace. Whisper
+    <p class="subtitle">The small set of keys that speed up chat, the panes, and the workspace. Whisper
       Studio keeps its shortcut list short on purpose, so the ones that exist are worth learning.</p>
 
-    <p>Global shortcuts use <code>mod</code>, which resolves to <kbd>Cmd</kbd> on macOS and <kbd>Ctrl</kbd>
-      on Linux or Windows. So <kbd>Cmd</kbd> <kbd>K</kbd> and <kbd>Ctrl</kbd> <kbd>K</kbd> do the same
-      thing depending on your machine. Because Whisper Studio is a macOS-first app, this page shows the
-      <kbd>Cmd</kbd> form. A key only fires as a shortcut when nothing else has already consumed it, so
-      typing inside an input, an open autocomplete, or a modal keeps its normal behavior.</p>
+    <p>Whisper Studio runs on macOS, and its global shortcuts use <kbd>Cmd</kbd>. <kbd>Ctrl</kbd> keeps
+      its normal macOS text-editing meaning (for example <kbd>Ctrl</kbd> <kbd>K</kbd> in a text field).
+      A key only fires as a shortcut when nothing else has already consumed it, so an open
+      autocomplete, a modal, or an editor that uses the key keeps its normal behavior.</p>
 
     <h2 id="chat-input">Chat input</h2>
     <p>The chat textarea is where you will use keys the most. Sending is on <kbd>Enter</kbd> so a quick
@@ -34,7 +33,7 @@
         <tr><td><kbd>Shift</kbd> <kbd>Enter</kbd></td><td>Insert a newline without sending.</td></tr>
         <tr><td><kbd>Cmd</kbd> <kbd>Enter</kbd></td><td>Force-send now, even while the slash-command autocomplete is open. An explicit "send this" that is never captured as a menu selection.</td></tr>
         <tr><td><kbd>/</kbd> <span class="badge badge--muted">at the start</span></td><td>Open the slash-command menu. It fires only when the slash is the first character of the message, so a slash inside a sentence stays a slash. Keep typing to filter, and after the command plus a space the menu offers that command's own options (models, effort levels, themes). See <a href="ref-slash-commands.html">Slash commands</a>.</td></tr>
-        <tr><td><kbd>@</kbd></td><td>Open the mention menu, anywhere in the message: files, skills, MCP tools, <code>@index</code>, <code>@docs</code>, and your other sessions.</td></tr>
+        <tr><td><kbd>@</kbd></td><td>Open the mention menu, anywhere in the message: files, skills, MCP servers, <code>@index</code>, <code>@docs</code>, and your other sessions.</td></tr>
       </tbody>
     </table></div>
 
@@ -48,13 +47,16 @@
 
     <h2 id="kill-switch">The ESC kill switch</h2>
     <p>The single most useful key while an agent is working is <kbd>Esc</kbd>. When a turn is streaming,
-      or any sub-agents are still running, pressing <kbd>Esc</kbd> (this is the same action as the
-      <b>Stop</b> button) instantly kills the active stream and every running sub-agent for the session
-      you are viewing.</p>
+      or a <code>/subagent</code> run you started in this session is still running, pressing
+      <kbd>Esc</kbd> (this is the same action as the <b>Stop</b> button) instantly kills the active
+      stream and those <code>/subagent</code> runs for the session you are viewing. It also stops the
+      shell commands and background shell tasks that the current turn started. Detached agents and
+      workflow runs keep running: stop them from the header's Background tasks list or from the run
+      card.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Keys</th><th>Action</th></tr></thead>
       <tbody>
-        <tr><td><kbd>Esc</kbd> <span class="badge badge--muted">while streaming</span></td><td>Kill the current stream and all running sub-agents (same as pressing Stop).</td></tr>
+        <tr><td><kbd>Esc</kbd> <span class="badge badge--muted">while streaming</span></td><td>Kill the current stream, this session's <code>/subagent</code> runs, and the shell work the turn started (same as pressing Stop).</td></tr>
         <tr><td><kbd>Esc</kbd> <span class="badge badge--muted">voice work pending</span></td><td>Cancel background work left over from a voice conversation.</td></tr>
       </tbody>
     </table></div>
@@ -77,8 +79,8 @@
     </div>
 
     <h2 id="global">Global app keys</h2>
-    <p>These work from anywhere in the app (as long as focus is not captured by a text field or an open
-      menu that needs the key). They open the interface pieces you reach for most.</p>
+    <p>These work from anywhere in the app, text fields included, unless the focused element uses the
+      key itself (for example the code editor). They open the interface pieces you reach for most.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Keys</th><th>Action</th></tr></thead>
       <tbody>
@@ -87,8 +89,7 @@
         <tr><td><kbd>Cmd</kbd> <kbd>,</kbd></td><td>Open Settings. See <a href="ref-settings.html">Settings &amp; config keys</a>.</td></tr>
       </tbody>
     </table></div>
-    <p>On Linux or Windows, substitute <kbd>Ctrl</kbd> for <kbd>Cmd</kbd> in the rows above. The
-      command palette (<kbd>Cmd</kbd> <kbd>K</kbd>) is the fastest way to reach an action whose exact
+    <p>The command palette (<kbd>Cmd</kbd> <kbd>K</kbd>) is the fastest way to reach an action whose exact
       key you do not remember, so it is worth making a habit of: type to filter, <kbd>Arrow Up</kbd> /
       <kbd>Arrow Down</kbd> to move, <kbd>Enter</kbd> to run, <kbd>Esc</kbd> to close. It covers a new
       conversation, connecting a workspace, the index explorer, the transcript and sidebar toggles, the
@@ -101,12 +102,14 @@
       <thead><tr><th>Keys</th><th>Action</th></tr></thead>
       <tbody>
         <tr><td><kbd>Ctrl</kbd> <kbd>`</kbd></td><td>Collapse or expand the terminal panel. <kbd>Cmd</kbd> <kbd>`</kbd> does the same.</td></tr>
+        <tr><td><kbd>Cmd</kbd> <kbd>S</kbd> <span class="badge badge--muted">editor</span></td><td>Save the open file.</td></tr>
+        <tr><td><kbd>Cmd</kbd> <kbd>W</kbd> <span class="badge badge--muted">editor</span></td><td>Close the editor tab.</td></tr>
         <tr><td><kbd>Ctrl</kbd> <kbd>Tab</kbd></td><td>Cycle forward through the open editor tabs.</td></tr>
         <tr><td><kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>Tab</kbd></td><td>Cycle backward through them.</td></tr>
         <tr><td><kbd>Enter</kbd> <span class="badge badge--muted">file tree</span></td><td>On a folder, expand or collapse it; on a file, start renaming it (Finder behavior).</td></tr>
         <tr><td><kbd>F2</kbd> <span class="badge badge--muted">file tree</span></td><td>Rename the selected file or folder.</td></tr>
         <tr><td><kbd>Space</kbd> <span class="badge badge--muted">file tree</span></td><td>Open the file, or expand the folder.</td></tr>
-        <tr><td><kbd>Cmd</kbd> <span class="badge badge--muted">click</span></td><td>Modifier-click a file link in a reply to reveal it in Finder instead of opening it in the editor. On a localhost link, it opens a real browser tab instead of the preview pane.</td></tr>
+        <tr><td><kbd>Cmd</kbd> or <kbd>Option</kbd> <span class="badge badge--muted">click</span></td><td>Modifier-click a file link in a reply to reveal it in Finder instead of opening it in the editor. On a localhost link, it opens a real browser tab instead of the preview pane.</td></tr>
       </tbody>
     </table></div>
 
@@ -145,7 +148,9 @@
 
     <h2 id="mac-app">Mac app menu</h2>
     <p>The Mac app adds the standard menu bar keys on top of everything above: <kbd>Cmd</kbd>
-      <kbd>R</kbd> reloads the view, <kbd>Cmd</kbd> <kbd>H</kbd> hides the app, <kbd>Cmd</kbd>
+      <kbd>R</kbd> reloads the view, <kbd>Cmd</kbd> <kbd>0</kbd> resets the zoom to actual size,
+      <kbd>Cmd</kbd> <kbd>+</kbd> (or <kbd>Cmd</kbd> <kbd>=</kbd>) zooms in, <kbd>Cmd</kbd> <kbd>-</kbd>
+      zooms out (the app remembers the zoom level), <kbd>Cmd</kbd> <kbd>H</kbd> hides the app, <kbd>Cmd</kbd>
       <kbd>Q</kbd> quits it, and the Edit menu carries the usual <kbd>Cmd</kbd> <kbd>Z</kbd>,
       <kbd>Shift</kbd> <kbd>Cmd</kbd> <kbd>Z</kbd>, <kbd>Cmd</kbd> <kbd>X</kbd>, <kbd>Cmd</kbd>
       <kbd>C</kbd>, <kbd>Cmd</kbd> <kbd>V</kbd>, and <kbd>Cmd</kbd> <kbd>A</kbd>. Open in Browser and

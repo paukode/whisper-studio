@@ -1,6 +1,6 @@
 """The managed-model catalog: every downloadable model, with live disk state.
 
-One entry per model the app can download on demand — ASR/diarization weights,
+One entry per model the app can download on demand, ASR/diarization weights,
 the workspace-index models, and the on-device chat GGUFs. Each entry records
 where the model lives under ``models_root()`` and which file marks it as
 installed, REUSING the layout the owning module's ensure_* function checks
@@ -9,13 +9,13 @@ installed, REUSING the layout the owning module's ensure_* function checks
 Paths are re-rooted at ``models_root()`` on every query instead of read from
 the owning modules' frozen ``*_MODEL_DIR`` constants: those are resolved once
 at import time, so they go stale when ``WHISPER_HOME`` changes afterwards
-(tests, packaged-app relaunch). The *relative* layout — directory name and
-sentinel filename — is taken from the modules themselves, so the check cannot
+(tests, packaged-app relaunch). The *relative* layout, directory name and
+sentinel filename, is taken from the modules themselves, so the check cannot
 drift from what the ensure functions actually download.
 
 The static entries are built lazily (the ASR modules import numpy) and cached;
 local-chat entries are re-read from the config-driven registry on every call so
-a model added to config.json shows up without a restart.
+a model added to config.user.json shows up without a restart.
 """
 
 from __future__ import annotations
@@ -60,9 +60,10 @@ def _static_entries() -> tuple[ModelEntry, ...]:
 
     ``dir_name``/``sentinel_rel`` are computed from the modules' own path
     constants (relative to their MODELS_DIR) so the catalog checks exactly the
-    files their ensure functions download. The three ASR sentinels are local
-    variables inside the ensure functions, so their basenames are mirrored here
-    with a pointer to the source.
+    files their ensure functions download. Whisper's sentinel is the module's
+    WHISPER_SENTINEL; the Parakeet and Canary sentinels are local variables
+    inside their ensure functions, so their basenames are mirrored here with a
+    pointer to the source.
     """
     from server.asr import canary_translator, parakeet_backend, whisper_backend
     from server.diarization import embedder as speaker_embedder
@@ -78,14 +79,12 @@ def _static_entries() -> tuple[ModelEntry, ...]:
             group=GROUP_TRANSCRIPTION,
             repo_id=whisper_backend.WHISPER_REPO_ID,
             dir_name=rel(whisper_backend.WHISPER_MODEL_DIR, whisper_backend.MODELS_DIR),
-            # Mirrors whisper_backend._ensure_model's weight_file check
-            # (this MLX repo ships npz weights, not safetensors).
-            sentinel_rel="weights.npz",
+            sentinel_rel=whisper_backend.WHISPER_SENTINEL,
             ensure_module="server.asr.whisper_backend",
             ensure_func="_ensure_model",
             note=(
                 "Highest transcription accuracy, 99 languages, detects the "
-                "language per sentence — best for mixed-language meetings. "
+                "language per sentence, best for mixed-language meetings. "
                 "Translates into English only."
             ),
         ),
@@ -166,11 +165,7 @@ def _static_entries() -> tuple[ModelEntry, ...]:
             sentinel_rel="hyperparams.yaml",
             ensure_module="server.diarization.embedder",
             ensure_func="_ensure_ecapa_files",
-            note=(
-                "Fallback speaker encoder, used automatically when "
-                "ReDimNet2 is unavailable (offline first run) or when "
-                "speaker_embedder is set to ecapa."
-            ),
+            note="Speaker encoder used when speaker_embedder is set to ecapa.",
         ),
         ModelEntry(
             key="qwen3_embed",
@@ -221,7 +216,7 @@ def _static_entries() -> tuple[ModelEntry, ...]:
 def _local_chat_entries() -> list[ModelEntry]:
     """One entry per on-device chat model in the config-driven registry.
 
-    Re-read on every call (the registry is a live built-ins + config merge).
+    Re-read on every call (the registry is a live view of config.user.json).
     The sentinel matches ``server.local.runtime.is_downloaded``: for GGUF the
     weight file itself, for MLX the completion marker ensure_downloaded writes
     after the whole snapshot lands (config.json arrives long before the
@@ -234,7 +229,7 @@ def _local_chat_entries() -> list[ModelEntry]:
     static_keys = {e.key for e in _static_entries()}
     out: list[ModelEntry] = []
     for key, m in local_models().items():
-        if key in static_keys:  # defensive: a config key must not shadow a built-in entry
+        if key in static_keys:  # a config key must not shadow a static catalog entry
             log.warning("Local model key %r collides with a catalog entry; skipping.", key)
             continue
         is_mlx = m.get("engine") == "mlx"
@@ -274,12 +269,56 @@ def is_installed(entry: ModelEntry) -> bool:
     return os.path.exists(os.path.join(model_dir(entry), entry.sentinel_rel))
 
 
+def gguf_paths(entry: ModelEntry) -> list[str]:
+    """Every path on disk that belongs to a GGUF entry's file in its folder:
+    each shard of it, and Hugging Face's per-file download bookkeeping under
+    ``.cache/huggingface/download`` (lock, metadata, and the .incomplete
+    partial of a download in flight). Other quants of the same repo share the
+    folder and are not included. Reads only; creates nothing."""
+    import glob
+
+    # The name hf gives a partial download (huggingface_hub/_local_folder.py,
+    # LocalDownloadFilePaths.incomplete_path), pinned with the hf version.
+    from huggingface_hub._local_folder import _short_hash
+
+    from server.model_browser.compat import shard_filenames
+
+    root = model_dir(entry)
+    download = os.path.join(root, ".cache", "huggingface", "download")
+    found: list[str] = []
+    for name in shard_filenames(entry.gguf_filename or ""):
+        for path in (
+            os.path.join(root, name),
+            os.path.join(download, f"{name}.lock"),
+            os.path.join(download, f"{name}.metadata"),
+        ):
+            if os.path.exists(path):
+                found.append(path)
+        # hf hashes the metadata file's BASENAME and keeps the partial next to
+        # it, so a shard in a repo subfolder ("Q4_K_M/x-00001-of-00003.gguf")
+        # has its partial under download/Q4_K_M/.
+        sub = os.path.dirname(name)
+        partial = f"{_short_hash(os.path.basename(name) + '.metadata')}.*.incomplete"
+        found.extend(glob.glob(os.path.join(glob.escape(os.path.join(download, sub)), partial)))
+    return found
+
+
 def bytes_on_disk(entry: ModelEntry) -> int:
-    """Total bytes under the model's directory — including hf's .incomplete
-    files, so an in-flight download's progress is visible as tree growth."""
+    """Bytes the model has on disk, including hf's .incomplete files, so an
+    in-flight download's progress is visible as growth. A GGUF entry counts
+    only its own file (every shard) because the quants of one repo share a
+    folder; any other entry counts its whole folder."""
     root = model_dir(entry)
     if not os.path.isdir(root):
         return 0
+    if entry.gguf_filename:
+        total = 0
+        for path in gguf_paths(entry):
+            try:
+                total += os.path.getsize(path)
+            except OSError:
+                continue
+        return total
     total = 0
     for dirpath, _dirnames, filenames in os.walk(root):
         for name in filenames:

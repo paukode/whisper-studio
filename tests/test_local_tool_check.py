@@ -177,9 +177,7 @@ def test_fresh_session_tools_match_the_first_chat_round():
     from server.chat.engine.runner import _assemble_round_tools
 
     ctx = SimpleNamespace(
-        plan_mode=False,
         ws_path="/tmp/example",
-        suppress_ws_search=False,
         effort_label=None,
         session_id="a-session-with-no-activations",
     )
@@ -222,12 +220,43 @@ def test_a_run_without_a_usable_call_fails_the_check(stack, reply, reason):
     assert result["runs"] == 1
 
 
-def test_coerced_arguments_pass_like_the_executor_sees_them(stack):
-    """`path: []` from a fine-tune reaches the executor as "" (server_stream
-    coercion), so the call runs and the run passes."""
-    stack.replies = [call_reply("ws_list_directory", {"path": []})]
+@pytest.mark.parametrize(
+    "name, args, field",
+    [
+        ("ws_list_directory", {"path": []}, "path"),
+        ("ws_read_file", {"path": "x.py", "limit": "10"}, "limit"),
+        ("ws_grep", {"pattern": "TODO", "case_sensitive": "false"}, "case_sensitive"),
+    ],
+)
+def test_wrong_argument_types_fail_without_coercion(stack, name, args, field):
+    """The real probe catalog rejects arrays, string numerics and string booleans."""
+    stack.replies = [call_reply(name, args)]
 
-    assert tool_check.run_check(KEY)["state"] == "passed"
+    result = tool_check.run_check(KEY)
+
+    assert result["state"] == "failed"
+    assert result["reason"] == f"called {name} with {field} of the wrong type"
+    assert result["passed"] == 0
+    assert result["runs"] == len(stack.requests) == 1
+
+
+@pytest.mark.parametrize(
+    "name, args",
+    [
+        ("ws_read_file", {"path": "x.py", "limit": 10}),
+        ("ws_grep", {"pattern": "TODO", "case_sensitive": False}),
+    ],
+)
+def test_valid_numeric_and_boolean_arguments_pass(stack, name, args):
+    """Properly typed inputs pass against the unchanged real probe tools."""
+    stack.replies = [call_reply(name, args)]
+
+    result = tool_check.run_check(KEY)
+
+    assert result["state"] == "passed"
+    assert result["reason"] == ""
+    assert result["passed"] == result["runs"] == result["total"] == tool_check.RUNS
+    assert len(stack.requests) == tool_check.RUNS
 
 
 def test_failure_after_passing_runs_reports_how_far_it_got(stack):

@@ -2,10 +2,9 @@
 
 Two columns persist absolute paths into the data directory: attachments'
 ``source_path`` (the uploaded original, re-read into prompts) and background
-tasks' ``output_path`` (re-read for tails). The relocation to ~/.whisper moves
-the files themselves at boot (paths.relocate_legacy_home, which runs before
-this migration); this rewrites the recorded prefixes so the rows keep
-resolving with no compatibility symlinks left in Application Support.
+tasks' ``output_path`` (re-read for tails). The release that moved user data
+to ~/.whisper also moved the files at boot (that startup step is gone); this
+rewrites the recorded prefixes so the rows keep resolving.
 
 A dev checkout is a no-op (the old and new prefixes are the same directory),
 and re-running is a no-op (the old prefix no longer matches anything).

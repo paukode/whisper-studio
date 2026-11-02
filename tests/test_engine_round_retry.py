@@ -68,6 +68,25 @@ def test_retry_is_bounded_then_surfaces_the_error(monkeypatch):
     assert len(client.requests) == 1 + runner_mod._ROUND_RETRIES_MAX
 
 
+def test_retry_uses_the_extended_round_cap(monkeypatch):
+    # A run with one round of its own and one granted by a live extension:
+    # the retry budget follows the extended cap, not the original limit.
+    monkeypatch.setattr("server.infrastructure.run_limits.round_limit", lambda: 1)
+    monkeypatch.setattr(runner_mod, "round_cap", lambda ext, max_rounds, n: max_rounds + 1)
+    client = FakeBedrockClient(
+        [
+            [_stream_error()],
+            [msg_start(), *text_block("Recovered answer."), *msg_end(stop_reason="end_turn")],
+        ]
+    )
+    lines = run_chat_turn(monkeypatch, client, {"question": "go"})
+    joined = "\n".join(lines)
+
+    assert "Recovered answer." in joined
+    assert '"error"' not in joined
+    assert len(client.requests) == 2
+
+
 def test_no_retry_after_answer_text_streamed(monkeypatch):
     # A retryable fault AFTER text reached the client must not re-run the
     # round — the re-run would duplicate the streamed answer.

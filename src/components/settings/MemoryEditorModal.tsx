@@ -24,8 +24,8 @@ export const MemoryEditorModal: React.FC<MemoryEditorModalProps> = ({ isOpen, on
   const { data: loaded, isLoading, isError, error: loadError, dataUpdatedAt } = useQuery({
     queryKey: ['whisper-md'],
     queryFn: async (): Promise<string> => {
-      const data = await get<{ content: string } | string>('/api/whisper-md');
-      return typeof data === 'string' ? data : (data.content ?? '');
+      const data = await get<{ content: string }>('/api/whisper-md');
+      return data.content;
     },
     enabled: isOpen,
     staleTime: 0,
@@ -130,7 +130,9 @@ export const MemoryEditorModal: React.FC<MemoryEditorModalProps> = ({ isOpen, on
             />
           )}
           <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center' }}>
-            <button className="btn btn-primary btn-sm" id="memorySaveBtn" onClick={() => void handleSave()} type="button">
+            {/* No Save until the file loaded: saving over a file that could
+                not be read would replace its instructions. */}
+            <button className="btn btn-primary btn-sm" id="memorySaveBtn" onClick={() => void handleSave()} type="button" disabled={loading || isError}>
               Save WHISPER.md
             </button>
             <button className="btn btn-sm" id="memoryDeleteBtn" onClick={() => void handleDelete()} type="button">

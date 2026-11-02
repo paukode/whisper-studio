@@ -85,7 +85,9 @@ def test_one_shot_local_engine_still_runs_in_local_mode(set_mode, cloud_clients,
     set_mode("local")
     monkeypatch.setattr(local_rt, "is_local_model", lambda k: k == "local_gemma")
     monkeypatch.setattr(local_rt, "is_downloaded", lambda k: True)
-    monkeypatch.setattr(local_rt, "complete", lambda key, system, user, max_tokens: f"ran:{key}")
+    monkeypatch.setattr(
+        oneshot, "_local_one_shot", lambda key, system, user, max_tokens: f"ran:{key}"
+    )
     out = oneshot.one_shot("s", "u", max_tokens=8, engine="local_gemma", source="condensation")
     assert out == "ran:local_gemma"
     assert cloud_clients == []
@@ -100,9 +102,16 @@ def test_one_shot_writer_off_runs_no_model(set_mode, cloud_clients, monkeypatch)
     def no_local(*a, **k):
         raise AssertionError("Off must not run an on-device model either")
 
-    monkeypatch.setattr(local_rt, "complete", no_local)
+    monkeypatch.setattr(oneshot, "_local_one_shot", no_local)
     with pytest.raises(RuntimeError, match="Off"):
         oneshot.one_shot("s", "u", max_tokens=8, source="condensation")
+    assert cloud_clients == []
+
+
+def test_a_removed_on_device_writer_is_refused_not_sent_to_the_cloud(set_mode, cloud_clients):
+    cfg = set_mode("hybrid", backends={"index_llm": "local_removed_model"})
+    with pytest.raises(RuntimeError, match="local_removed_model"):
+        oneshot.resolve_map_engine(cfg)
     assert cloud_clients == []
 
 
@@ -134,7 +143,7 @@ def test_aux_refusal_matches_what_aux_one_shot_does(set_mode, cloud_clients, mon
 
     monkeypatch.setattr(local_rt, "is_local_model", lambda k: k == "local_gemma")
     monkeypatch.setattr(local_rt, "is_downloaded", lambda k: True)
-    monkeypatch.setattr(local_rt, "complete", lambda key, system, user, max_tokens: "ok")
+    monkeypatch.setattr(oneshot, "_local_one_shot", lambda key, system, user, max_tokens: "ok")
     for mode in MODES:
         for key in ("haiku", "local_gemma"):
             set_mode(mode, auxiliary_models={"ci_diagnose": key})

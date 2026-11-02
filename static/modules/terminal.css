@@ -1,4 +1,4 @@
-/* Terminal Panel — full-width bottom panel */
+/* Terminal Panel, full-width bottom panel */
 
 .ws-terminal-panel {
     position: relative;
@@ -74,18 +74,6 @@
 .ws-terminal-tab-close:hover { opacity: 1 !important; background: var(--border); }
 
 .ws-terminal-tab-label { cursor: default; }
-
-.ws-terminal-tab-rename {
-    background: var(--bg-primary);
-    border: 1px solid var(--accent);
-    color: var(--text-primary);
-    font-size: var(--fs-caption);
-    font-family: inherit;
-    padding: 0 4px;
-    width: 80px;
-    border-radius: 2px;
-    outline: none;
-}
 
 /* Header actions (new terminal, close panel) */
 .ws-terminal-actions {
@@ -190,7 +178,7 @@
     color: var(--text-secondary);
 }
 
-/* Worktree-session chip — shown when the chat is in an isolated worktree */
+/* Worktree-session chip, shown when the chat is in an isolated worktree */
 .ws-terminal-worktree-chip {
     margin-left: 6px;
     padding: 1px 6px;

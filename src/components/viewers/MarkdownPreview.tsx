@@ -1,13 +1,11 @@
 import React, { useCallback, useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { readFile } from '@/api/workspace';
 import { renderMarkdownSafe } from '@/utils/sanitizeHtml';
 import { useHtmlProp } from '@/hooks/useHtmlProp';
 import { downloadFile } from '@/utils/downloadFile';
 
 export interface MarkdownPreviewProps {
   filePath: string;
-  content?: string;
+  content: string;
   onEdit?: () => void;
 }
 
@@ -22,27 +20,14 @@ export function escapeHtml(s: string): string {
 }
 
 /**
- * Markdown preview matching the original ws-markdown-viewer.
- * Toolbar with Preview (active) + Edit buttons, plus open-in-tab and download actions.
- * Uses the ws-markdown-* CSS classes already defined in style.css.
+ * Markdown preview (ws-markdown-viewer): a toolbar with Preview (active) +
+ * Edit, plus open-in-tab and download actions. The caller passes the content.
  *
- * Safety: marked.parse produces sanitized HTML from markdown source.
- * The content comes from the user's own workspace files (same origin),
- * matching the original vanilla JS implementation.
+ * Safety: the HTML is sanitized by DOMPurify (renderMarkdownSafe), because a
+ * workspace file can come from anywhere.
  */
-export const MarkdownPreview: React.FC<MarkdownPreviewProps> = ({ filePath, content: initialContent, onEdit }) => {
+export const MarkdownPreview: React.FC<MarkdownPreviewProps> = ({ filePath, content, onEdit }) => {
   const fileName = filePath.split('/').pop() ?? filePath;
-
-  // Fetch the file only when the caller didn't pass content. react-query gives
-  // loading/error state without a setState-in-effect.
-  const { data: fetched, isLoading: queryLoading, isError } = useQuery({
-    queryKey: ['ws-file-content', filePath],
-    queryFn: () => readFile(filePath),
-    enabled: initialContent === undefined,
-    staleTime: 30_000,
-  });
-  const content = initialContent ?? (isError ? '*Failed to load file*' : fetched ?? '');
-  const isLoading = initialContent === undefined && queryLoading;
 
   // Workspace .md files can be authored externally (cloned repos, file shares,
   // AI-generated content the user accepted). Sanitize via DOMPurify so an
@@ -66,17 +51,6 @@ export const MarkdownPreview: React.FC<MarkdownPreviewProps> = ({ filePath, cont
       'text/html',
     );
   }, [fileName, html]);
-
-  if (isLoading) {
-    return (
-      <div className="ws-markdown-viewer" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '24px' }} aria-busy="true">
-        <span className="skeleton skeleton-text" style={{ width: '40%' }} />
-        <span className="skeleton skeleton-text" style={{ width: '90%' }} />
-        <span className="skeleton skeleton-text" style={{ width: '85%' }} />
-        <span className="skeleton skeleton-text" style={{ width: '60%' }} />
-      </div>
-    );
-  }
 
   return (
     <div className="ws-markdown-viewer">
@@ -117,14 +91,8 @@ export const MarkdownPreview: React.FC<MarkdownPreviewProps> = ({ filePath, cont
   );
 };
 
-/**
- * Renders parsed markdown HTML. Content comes from the user's own workspace files
- * parsed by the `marked` library, matching the original vanilla JS approach.
- */
+/** Renders markdown HTML already sanitized by renderMarkdownSafe (DOMPurify). */
 const MarkdownContent: React.FC<{ html: string }> = ({ html }) => {
-  // dangerouslySetInnerHTML is intentional: `html` is workspace markdown
-  // already parsed by `marked`. (No react/no-danger rule is configured here,
-  // so no disable directive is needed.)
   const innerHtml = useHtmlProp(html);
   return <div className="ws-markdown-preview markdown-body" dangerouslySetInnerHTML={innerHtml} />;
 };

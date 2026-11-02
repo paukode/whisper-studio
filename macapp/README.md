@@ -14,7 +14,10 @@ bash macapp/make_dmg.sh     # produces dist-app/WhisperStudio-<version>.dmg
 
 Downloads (Python runtime, llama-server, ffmpeg/ffprobe, node) are cached in
 `build-app/downloads/` and stages are skipped when already done; re-runs are
-fast. Versions and checksums are pinned at the top of `build_app.sh`.
+fast. Versions and checksums are pinned at the top of `build_app.sh`, except
+the ones shared with `setup.sh`: llama.cpp in `server/local/llama_pin.env`,
+ffmpeg/ffprobe in `macapp/ffmpeg_pin.env`, and the Node version in `.nvmrc`
+(its checksum stays in `build_app.sh`).
 
 The bundle also ships the Playwright browsers for Live Preview (stage b2):
 `playwright install chromium` runs once with the standalone runtime into
@@ -32,26 +35,47 @@ with `bash macapp/shell/build_shell.sh`.
 
 ## Env contract (shell -> backend)
 
-The shell finds a free port, then spawns `python3 -m server.main` with
+The shell picks its port (41410, or the nearest free port within 5 either
+way; it stops with an error when all are taken), then spawns
+`python3 -m server.main` with
 cwd = `Contents/Resources/backend` and this environment:
 
 | Variable | Value |
 | --- | --- |
 | `HOST` | `127.0.0.1` |
-| `PORT` | free port picked at launch |
-| `WHISPER_HOME` | `~/Library/Application Support/WhisperStudio` (a pre-set `WHISPER_HOME` is respected, for testing). Holds `storage/` (session history) and `logs/`, nothing else. All user-editable state (the config files, `models/`, `skills/`, `plugins/`, `agents/`, `data/` for memory, workflows and attachments) lives at `~/.whisper`; the first boot moves any existing Application Support copies there and rewrites recorded paths (no symlinks left behind). Bytecode caches go to `~/Library/Caches/WhisperStudio`. |
-| `WHISPER_BIN_DIR` | `Contents/Resources/bin` (backend prepends it to PATH) |
+| `PORT` | the port picked at launch (41410 when free) |
+| `WHISPER_HOME` | `~/Library/Application Support/WhisperStudio` (a pre-set `WHISPER_HOME` is respected, for testing). Holds `storage/` (session history) and `logs/`, nothing else. All user-editable state (the config files, `WHISPER.md`, `rules/`, `models/`, `skills/`, `plugins/`, `agents/`, `data/` for memory, workflows and attachments) lives at `~/.whisper`. |
+| `WHISPER_BIN_DIR` | `Contents/Resources/bin` (the shell puts it first on PATH) |
 | `WHISPER_LLAMA_SERVER_PATH` | `Resources/bin/llama-server` |
 | `WHISPER_FFMPEG_PATH` | `Resources/bin/ffmpeg` |
 | `WHISPER_FFPROBE_PATH` | `Resources/bin/ffprobe` |
 | `WHISPER_NODE_PATH` | `Resources/bin/node` |
 | `PLAYWRIGHT_BROWSERS_PATH` | `Resources/pw-browsers` (bundled Chromium for Live Preview; inherited by preview workers, so no runtime browser download ever happens) |
+| `WHISPER_PARENT_PID` | the shell's own pid, so the backend shuts itself down when the shell dies without a signal |
 | `PATH` | `Resources/bin` prepended to the inherited PATH |
+| `PYTHONUNBUFFERED` | `1` |
+| `PYTHONPYCACHEPREFIX` | `~/Library/Caches/WhisperStudio/pycache` (bytecode caches never land inside the signed bundle) |
 
 Backend stdout/stderr are appended to `$WHISPER_HOME/logs/backend.log` with a
 timestamp line per launch ("Show Logs" in the Whisper Studio menu reveals it).
 The shell polls `/health` for up to 120 s before showing the UI, and on quit
 sends SIGTERM, waits up to 15 s, then SIGKILLs the backend.
+
+## Microphone (native capture)
+
+Inside the shell the recorder reads the microphone natively, never through
+WebKit's getUserMedia: `macapp/shell/NativeMicCapture.swift` opens the input
+device with `AVAudioEngine`, voice processing off, and streams 16 kHz mono
+Int16 chunks to the page over the `nativeMic` bridge
+(`window.webkit.messageHandlers.nativeMic` / `window.__whisperNativeMic`;
+frontend wrapper `src/services/nativeMicSource.ts`). macOS asks for
+microphone permission for Whisper Studio on the first recording.
+
+A source install gets the same mic and system/app capture in the browser:
+`setup.sh` compiles these Swift files into a helper program
+(`vendor/capture/whisper-capture`, built by `macapp/helper/build_helper.sh`),
+and the backend relays it to the page over one WebSocket
+(`server/capture_helper.py`).
 
 ## Audio sources (native system/app capture)
 
@@ -60,7 +84,7 @@ alongside or instead of the microphone. In the app, open the headphones menu
 next to Record:
 
 - **Microphone**: always available; can be turned off only while a native
-  source is armed ("native only" mode, which never calls getUserMedia).
+  source is armed ("native only" mode, which records from that source alone).
 - **System audio**: everything the Mac plays. EVERY process belonging to
   Whisper Studio itself (shell, its WebKit GPU/media helpers, the spawned
   backend tree) is excluded from the tap.
@@ -94,15 +118,15 @@ Int16 with `AVAudioConverter` and pushed to the SPA over a WKWebView bridge
 
 The aggregate device contains NO physical sub-devices: including the real
 output device opens an IO path to the user's speakers/headphones (Bluetooth
-headsets flip into call mode and the app shows up in the audio chain). Only
-if the tap-only aggregate fails does the shell fall back to including the
-default output device, and then every output buffer is zero-filled in the
-IOProc and the tap's input buffers are located by format rather than assumed
-at index 0. The default input/output devices are never modified.
+headsets flip into call mode and the app shows up in the audio chain). If
+the tap-only aggregate cannot be created or started, the capture fails and
+the UI shows the error. The default input/output devices are never modified.
 
 **Requirements and permission**
 
-- macOS **14.4 or later** (the taps API). On older systems the shell injects
+- macOS **14.4 or later** (the taps API), and the private
+  `responsibility_get_pid_responsible_for_pid` symbol that keeps the app's own
+  WebKit helpers out of the global tap. Without either, the shell injects
   `available:false` and the menu shows no native section.
 - TCC: the first capture start triggers the OS **System Audio Recording**
   prompt (`NSAudioCaptureUsageDescription` in `Info.plist`). If denied, the
@@ -184,8 +208,8 @@ natively:
   (registered in `src/services/shellToastBridge.ts`): a "Saved to
   Downloads: <file>" toast appears and persists to the notification bell
   (source "export"). Failures raise an error toast with the reason. If the
-  hook is missing (older cached page), the shell logs to stderr and stays
-  silent: no alert, no crash.
+  hook is missing (the page has not registered it yet, or a non-app page is
+  loaded), the shell logs to stderr: no alert, no crash.
 
 **Permission**: the first write into `~/Downloads` triggers the standard
 macOS "wants to access your Downloads folder" consent prompt. For a
@@ -266,9 +290,10 @@ disable-library-validation, audio-input), required by CPython/torch and
 llama.cpp Metal under the hardened runtime.
 
 Bundle id defaults to `io.paukode.whisper-studio` (override with `BUNDLE_ID`).
-Version comes from `git describe --tags --always`, falling back to `0.1.0`.
+Version comes from `git describe --tags --always` (or `APP_VERSION`); outside a
+git checkout the build stops.
 
-## Known v1 limitations
+## Known limitations
 
 - Only `bin/node` is bundled (no npm). The assistant's JS/TS checks run the
   workspace's own ESLint with it, so a workspace without ESLint gets none. The
@@ -284,5 +309,4 @@ Version comes from `git describe --tags --always`, falling back to `0.1.0`.
   Whisper Studio menu for flows that need a real Chrome tab. Inside the
   shell, native system/app capture (see "Audio sources" above) covers the
   meeting use case instead, so the tab row is hidden there.
-- The app icon is a plain solid-colour placeholder.
 - Intel Macs are unsupported (arm64-only binaries throughout).

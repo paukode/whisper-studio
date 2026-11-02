@@ -31,8 +31,8 @@ from server.workspace import get_workspace_path
 _LIST_VERBS = frozenset({"list"})
 _READ_STRIP_FLAGS = frozenset({"--web", "-w"})
 
-# (family, verb) -> (read_verb, expected_state | None) for verify-after-mutate.
-_VERIFY: dict[tuple[str, str], tuple[str, str | None]] = {
+# (family, verb) -> (read_verb, expected_state) for verify-after-mutate.
+_VERIFY: dict[tuple[str, str], tuple[str, str]] = {
     ("pr", "close"): ("view", "CLOSED"),
     ("pr", "reopen"): ("view", "OPEN"),
     ("pr", "merge"): ("view", "MERGED"),
@@ -140,8 +140,6 @@ def _verify_github(args: list[str], cwd: str, mutation_out: str) -> tuple[bool, 
         state = json.loads(out).get("state")
     except Exception:
         return True, f"{mutation_out}\n[state unverified]".strip()
-    if expected is None:
-        return True, f"{family} {verb} done (state now {state})."
     if state == expected:
         return True, f"Verified: {family} #{ident} is now {state}."
     return False, f"{family} #{ident} is {state} after {verb} (expected {expected})."
@@ -177,7 +175,7 @@ def _build_api_args(payload: dict, *, body_tmp: str | None) -> list[str]:
     for k, val in (payload.get("fields") or {}).items():
         args += ["-f", f"{k}={val}"]
     # JSON body via a server-written tempfile (model cannot point --input at a
-    # local file — closes the @file exfil).
+    # local file, closes the @file exfil).
     if body_tmp:
         args += ["--input", body_tmp]
     return args
@@ -293,16 +291,20 @@ def _verify_api(payload: dict, cwd: str, mutation_out: str) -> tuple[bool, str]:
     endpoint = payload.get("endpoint", "")
     if payload.get("graphql_mutation"):
         # GraphQL responses are the mutation's own output, not an independent
-        # read — mark UNVERIFIED honestly.
+        # read, mark UNVERIFIED honestly.
         return (
             True,
-            f"{mutation_out}\n[GraphQL mutation sent — state not independently verified]".strip(),
+            f"{mutation_out}\n[GraphQL mutation sent, state not independently verified]".strip(),
         )
     if method == "DELETE":
-        rc, _ = run_gh(["api", endpoint], cwd=cwd, timeout=30)
-        if rc != 0:
+        rc, out = run_gh(["api", endpoint], cwd=cwd, timeout=30)
+        if rc == 0:
+            return False, f"{endpoint} still exists after DELETE."
+        # Only a 404 proves the delete; a timeout, rate limit or auth error
+        # on the re-read says nothing about the resource.
+        if "HTTP 404" in out or "Not Found" in out:
             return True, f"Verified: {endpoint} no longer exists (deleted)."
-        return False, f"{endpoint} still exists after DELETE."
+        return True, f"{mutation_out}\n[deletion not re-verified: {out}]".strip()
     # Re-GET the resource by its returned url when present.
     try:
         url = json.loads(mutation_out).get("url") if mutation_out else None
@@ -312,4 +314,4 @@ def _verify_api(payload: dict, cwd: str, mutation_out: str) -> tuple[bool, str]:
         rc, out = run_gh(["api", url], cwd=cwd, timeout=30)
         if rc == 0:
             return True, f"Verified via re-read.\n{mutation_out}".strip()
-    return True, f"{mutation_out}\n[mutation sent — state not independently re-verified]".strip()
+    return True, f"{mutation_out}\n[mutation sent, state not independently re-verified]".strip()

@@ -1,17 +1,17 @@
-// Workflow harness bootstrap (Node 22, zero npm deps).
+// Workflow harness bootstrap (Node 26, zero npm deps).
 //
 // A child process launched by server/workflows/runtime.py. It speaks ndjson
-// JSON-RPC over stdio: it EMITS requests ({id, method, params}: agent, workflow,
-// budget_spent) and notifications ({method, params}: phase, log, meta, done,
+// JSON-RPC over stdio: it EMITS requests ({id, method, params}: agent, tool,
+// workflow, budget_spent) and notifications ({method, params}: phase, log, meta, done,
 // fatal); it RECEIVES control ({method: start|cancel}) and responses
-// ({id, result} | {id, error}). stdout carries ONLY protocol JSON — everything
+// ({id, result} | {id, error}). stdout carries ONLY protocol JSON, everything
 // else goes to stderr.
 //
 // Two modes (from the `start` message):
-//   parse — compile the source (syntax check) and extract+validate the
+//   parse: compile the source (syntax check) and extract+validate the
 //           `export const meta` object literal WITHOUT executing the script,
 //           then emit a `meta` notification.
-//   run   — evaluate the script in a locked-down vm context (guards + API
+//   run: evaluate the script in a locked-down vm context (guards + API
 //           globals), await its returned result, emit `done`.
 
 import vm from "node:vm";
@@ -112,10 +112,9 @@ async function runScript({ source, args, meta }) {
   // wrapper, and the script's top-level `await`/`return` work in the async IIFE.
   const body = source.replace(/\bexport\s+const\s+meta\b/, "const meta");
 
-  const api = makeApi(rpcCall, notify, meta, {
-    value: args,
-    __budget_total__: args?.__budget_total__ ?? null,
-  });
+  // args is {value, __budget_total__} as the runtime sends it; the script's
+  // `args` global is its value.
+  const api = makeApi(rpcCall, notify, meta, args);
 
   const sandbox = Object.assign(Object.create(null), {
     agent: api.agent,

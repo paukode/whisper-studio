@@ -3,7 +3,7 @@ import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { getFileIcon } from '@/utils/fileIcons';
 
 /**
- * Tab bar matching the original _ideRenderTabs():
+ * Tab bar:
  *   icon | name | dirty dot | diff/src toggle (if dirty) | close button
  * Plus Ctrl+Tab cycling.
  */

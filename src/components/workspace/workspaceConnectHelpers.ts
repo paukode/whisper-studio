@@ -37,8 +37,8 @@ export function formatMtime(mtime: number): string {
 /** Strip trailing slashes so a typed "/x/y/" matches the realpath-normalized
  *  "/x/y" that connect stores in recents. Browsed-in paths are already
  *  canonical (the server returns realpath), so this only matters for typed or
- *  pasted paths. (Symlinked typed paths can still diverge from the index's
- *  abspath key — a deeper backend inconsistency left out of this change.) */
+ *  pasted paths. A typed path through a symlink can still differ from the
+ *  index's abspath key. */
 export function normalizeWsPath(p: string): string {
   const t = p.trim().replace(/\/+$/, '');
   return t || p.trim();

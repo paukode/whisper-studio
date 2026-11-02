@@ -23,7 +23,7 @@
     <p>This page is the whole architecture in one place, at two levels of zoom: the
       <a href="#system-overview">system map</a> (every major component and the boundaries between
       them) and the <a href="#chat-turn-sequence">chat-turn sequence</a> (what happens when you send a
-      message). Both diagrams are interactive - <b>click any box</b> to trace where its data flows, and
+      message). Both diagrams are interactive: <b>click any box</b> to trace where its data flows, and
       use <b>Expand</b> for full-screen zoom and pan.</p>
 
     <h2 id="system-overview">1. System overview</h2>
@@ -42,12 +42,16 @@
       <div class="card"><h3>Localhost by default</h3><p>The server binds <code>127.0.0.1</code>, so an
         untrusted network can't reach it. LAN exposure takes an explicit <code>HOST=0.0.0.0</code>
         opt-in.</p></div>
-      <div class="card"><h3>Transcription is local</h3><p>The Whisper model loads on first record and
-        runs in-process; audio bytes never leave the machine. Only a transcript can become a Bedrock
-        prompt - and only when you type something.</p></div>
+      <div class="card"><h3>Transcription is local</h3><p>The speech model (Parakeet or Whisper)
+        loads on first record and runs in-process; recorded audio never leaves the machine. Voice
+        mode is the one path that sends audio: it streams your speech to Amazon Nova 2 Sonic, and only
+        in Hybrid or Cloud mode.</p></div>
       <div class="card"><h3>Bedrock is the only cloud LLM</h3><p>No telemetry, no proxy, no gateway.
         The signed request goes straight from the local process to
-        <code>bedrock-runtime.&lt;region&gt;.amazonaws.com</code> and back.</p></div>
+        <code>bedrock-runtime.&lt;region&gt;.amazonaws.com</code> (Claude, Nova Sonic, Cohere) or
+        <code>bedrock-mantle.&lt;region&gt;.api.aws</code> (GPT) and back. In Hybrid and Cloud modes
+        the app also calls Bedrock in the background (session titles, memory, compaction, the index);
+        Local mode makes no Bedrock calls.</p></div>
       <div class="card"><h3>MCP servers are explicit</h3><p>Either local child processes spawned by
         <code>server/mcp.py</code> over stdio, or remote HTTP servers you configure by URL (with an
         optional bearer-token env var). Per-server <code>approval_mode</code> and
@@ -65,7 +69,7 @@
 
     <h2 id="chat-turn-sequence">2. Chat-turn sequence</h2>
     <p>When you submit a message, the server builds the prompt, streams the model, and drives an
-      agentic tool loop - pausing for approval on any risky action - before persisting the result.</p>
+      agentic tool loop (pausing for approval on any risky action) before persisting the result.</p>
     <figure class="diagram-figure wide">
       <div id="chat-turn-diagram" class="diagram"></div>
       <figcaption>One chat turn, keystroke to persisted message. Click a step to trace it; use
@@ -82,16 +86,17 @@
         <code>ephemeral</code> options.</li>
       <li><b><code>visible_chat_history</code> filter.</b> Before building the Bedrock messages array,
         non-prompt rows (<code>cron_event</code>) are stripped, so they persist on disk and render in
-        the chat without inflating the prompt or the token bill. Three roles are translated rather than dropped: <code>session_message</code> (a
-        message pushed in from another session) and <code>agent_report</code> (agent work that
-        finished with no live turn) both become user turns, and <code>agent_answer</code> becomes the
+        the chat without inflating the prompt or the token bill. Four roles are translated rather than dropped: <code>session_message</code> (a
+        message pushed in from another session), <code>agent_report</code> (agent work that
+        finished with no live turn), and <code>task_report</code> (a background command's result that
+        arrived after its turn ended) become user turns, and <code>agent_answer</code> becomes the
         assistant's own previous message. Each of those roles carries a per-session row cap.</li>
       <li><b>Progressive tool disclosure.</b> With the <code>progressive_tools</code> flag on, a turn
         advertises a core set plus the tools this session has already activated; the rest are
         discoverable via <code>tool_search</code> from a compact index
         (<code class="path">server/chat/tool_partition.py</code>). The same partitioning applies to
         cron, subagent, and headless turns.</li>
-      <li><b>Register always, refuse at execution.</b> Plan mode, strict-RAG grounding, and workspace
+      <li><b>Register always, refuse at execution.</b> Plan mode and workspace
         connect or disconnect do not rewrite the advertised tools array. The catalogue stays
         byte-stable across those flips and the restriction is applied when the call runs, because
         rewriting the array invalidates the cached prompt prefix every time it changes.</li>
@@ -121,14 +126,14 @@
     <table>
       <thead><tr><th>Layer</th><th>What it does</th><th>Boundary or defence-in-depth?</th></tr></thead>
       <tbody>
-        <tr><td><code>127.0.0.1</code> default bind</td><td>Closes LAN reachability</td><td><b>Boundary</b> - kernel-level</td></tr>
-        <tr><td>DOMPurify on every <code>dangerouslySetInnerHTML</code> site</td><td>Strips <code>&lt;script&gt;</code>, inline handlers, and <code>javascript:</code> URLs from any HTML reaching the React DOM</td><td><b>Boundary</b> for the chat/Markdown render path - without it a prompt-injected page fetched via <code>web_fetch</code> could run JS in the SPA origin</td></tr>
-        <tr><td>Approval router with a server-held pause</td><td>Real consent flow for risky commands</td><td><b>Boundary</b> - the server stashes the paused turn and re-validates the payload itself; the client can't fabricate approval</td></tr>
+        <tr><td><code>127.0.0.1</code> default bind</td><td>Closes LAN reachability</td><td><b>Boundary</b>: kernel-level</td></tr>
+        <tr><td>DOMPurify on every <code>dangerouslySetInnerHTML</code> site</td><td>Strips <code>&lt;script&gt;</code>, inline handlers, and <code>javascript:</code> URLs from any HTML reaching the React DOM</td><td><b>Boundary</b> for the chat/Markdown render path: without it a prompt-injected page fetched via <code>web_fetch</code> could run JS in the SPA origin</td></tr>
+        <tr><td>Approval router with a server-held pause</td><td>Real consent flow for risky commands</td><td><b>Boundary</b>: the server stashes the paused turn and re-validates the payload itself; the client can't fabricate approval</td></tr>
         <tr><td><code>validate_command</code> (regex deny-list)</td><td>Catches <code>rm -rf /</code>, <code>mkfs</code>, <code>dd of=/dev/…</code>, reads of sensitive paths</td><td><b>Defence-in-depth</b> in front of the sandbox on every command path; regex-based and bypassable alone</td></tr>
-        <tr><td><code>sandbox-exec(5)</code> / <code>bwrap</code></td><td>macOS/Linux sandbox profile around every shell + code execution path (including the terminal PTY)</td><td><b>Boundary</b> - the strongest layer; even if everything above is bypassed, code runs with the secret-store deny-list applied (writes always; reads unless the mode is Bypass or a person approved the read)</td></tr>
-        <tr><td><code>_AWS_READONLY_GUARD</code> in <code>executors/code.py</code></td><td>Monkey-patches <code>botocore</code> to reject non-read AWS calls</td><td><b>Defence-in-depth only</b> - user code in the same process can <code>del</code> the patch; the real container is <code>sandbox-exec</code></td></tr>
+        <tr><td><code>sandbox-exec(5)</code></td><td>macOS sandbox profile around every shell + code execution path (including the terminal PTY). When <code>sandbox-exec</code> cannot be used, the command does not run.</td><td><b>Boundary</b>: the strongest layer; even if everything above is bypassed, code runs with the secret-store deny-list applied (writes always; reads unless the mode is Bypass or a person approved the read)</td></tr>
+        <tr><td><code>_AWS_READONLY_GUARD</code> in <code>executors/code.py</code></td><td>Monkey-patches <code>botocore</code> to reject non-read AWS calls</td><td><b>Defence-in-depth only</b>: user code in the same process can <code>del</code> the patch; the real container is <code>sandbox-exec</code></td></tr>
         <tr><td>Plugin loader (<code>enabled</code> allow-list)</td><td>Dropping a <code>.py</code> into <code>plugins/</code> does nothing until explicitly enabled</td><td><b>Boundary</b> for the drive-by-plugin vector</td></tr>
-        <tr><td>Credential environment denylist (<code class="path">server/security/sensitive_env.py</code>)</td><td>Strips GitHub tokens from sandboxed shells, and GitHub tokens plus cloud and API keys from every local MCP child process</td><td><b>Defence-in-depth</b> - exact variable names only, and the background-task shell path inherits the parent environment unscrubbed</td></tr>
+        <tr><td>Credential environment denylist (<code class="path">server/security/sensitive_env.py</code>)</td><td>Strips GitHub tokens from sandboxed shells, and GitHub tokens plus cloud and API keys from every local MCP child process</td><td><b>Defence-in-depth</b>: exact variable names only, and the background-task shell path inherits the parent environment unscrubbed</td></tr>
       </tbody>
     </table>
 
@@ -137,8 +142,7 @@
       <code>(allow default)</code> plus <code>deny</code> rules for a curated secret-store list
       (sourced from <code>expanded_sandbox_paths()</code> in
       <code class="path">server/security/sensitive_paths.py</code>, consumed as
-      <code>_DENIED_PATHS</code> in <code>server/sandbox.py</code>), and the Linux bwrap setup
-      <code>--ro-bind</code>s the filesystem read-only and masks the same paths. It denies writes
+      <code>_DENIED_PATHS</code> in <code>server/sandbox.py</code>). It denies writes
       to SSH/GPG keys, cloud credentials, git credentials, browser cookies/keychains, shell
       history, and password-manager stores in every mode. Reads of these credential stores depend on
       the permission mode (<code class="path">server/security/secret_reads.py</code>): Bypass reads
@@ -147,7 +151,7 @@
       read-only, for the AWS tools. See
       <a href="arch-sandbox.html#secret-reads">Secret reads by permission mode</a>.</p>
     <p>A second dimension sits on top of that deny-list: how much the command may <b>write</b>. Three
-      modes exist - write anywhere, write only inside the workspace and the temp directories, or
+      modes exist: write anywhere, write only inside the workspace and the temp directories, or
       write nothing. The assistant picks between them with a <code>sandbox_permissions</code>
       parameter (<code>workspace-write</code>, the default, <code>read-only</code>, or
       <code>danger-full-access</code>), and asking for full access always raises an approval card
@@ -160,10 +164,10 @@
       <div class="callout__body"><p><b>Accepted residual.</b> Because the default is <em>allow</em>,
         the sandbox by default does not restrict network access (sandboxed <code>git</code>/<code>npm</code>/<code>pip</code>/<code>aws</code>/build
         commands need it) and does not block reads of secret files that aren't on the deny-list. An
-        opt-in egress policy (Settings → Permissions; <code>network_policy</code>, enforced by an
+        opt-in egress policy (Settings → Keys and permissions → Permissions; <code>network_policy</code>, enforced by an
         SNI-filtering proxy in <code class="path">server/security/egress_policy.py</code>) can pin
         sandboxed commands to curated or user-allowed domains. This is the boundary you should trust
-        last and most - everything above it is layered defence.</p></div>
+        last and most: everything above it is layered defence.</p></div>
     </div>
 
     <h3>Workspace path containment</h3>
@@ -179,25 +183,25 @@
     <table>
       <thead><tr><th>Concern</th><th>File</th></tr></thead>
       <tbody>
-        <tr><td>Add a new chat tool</td><td><code>server/agent_tools/</code> (schema) + <code>server/tool_router.py</code> (dispatch) + <code>server/executors/&lt;area&gt;.py</code></td></tr>
+        <tr><td>Add a new chat tool</td><td>the schema next to the subsystem's executor (for example <code>server/executors/tools.py</code>), registered in <code>server/chat/tool_pool.py</code> + <code>server/tool_router.py</code> (dispatch) + the executor</td></tr>
         <tr><td>Add an HTTP endpoint</td><td>one of the routers in <code>server/</code>, mounted in <code>server/main.py</code></td></tr>
         <tr><td>Add a frontend component</td><td><code>src/components/&lt;area&gt;/</code>, wired into <code>src/App.tsx</code> for a new top-level surface</td></tr>
         <tr><td>Add a session-scoped event</td><td><code>server/agents/event_bus.py</code> (publisher) + <code>src/stores/sessionRuntimes.ts</code> (consumer)</td></tr>
         <tr><td>Change a permission rule</td><td><code>server/security/permissions.py</code> (rules, per-category defaults, network policy) + <code>server/security/command_validator.py</code> (deny patterns); the auto-mode classifier lives in <code>server/auto_mode.py</code></td></tr>
-        <tr><td>Add a setting</td><td><code>server/infrastructure/config.py</code> (<code>DEFAULTS</code> + optional env overlay) + the relevant Settings panel</td></tr>
+        <tr><td>Add a setting</td><td><code>server/infrastructure/config.py</code> (<code>DEFAULTS</code>) + the relevant Settings panel</td></tr>
       </tbody>
     </table>
 
     <h2 id="not-in-diagram">What's deliberately not on the map</h2>
     <ul>
-      <li>The <b>companion</b> subsystem - an optional sidecar that can be toggled off entirely.</li>
-      <li><b>Background tasks</b> - used to run long commands without holding an HTTP connection.</li>
-      <li>The <b>skill autocomplete</b> and <b>@-mention</b> paths in the chat input - pure frontend,
-        no backend round-trip.</li>
+      <li>The <b>companion</b> subsystem: an optional sidecar that can be toggled off entirely.</li>
+      <li><b>Background tasks</b>: used to run long commands without holding an HTTP connection.</li>
+      <li>The <b>skill autocomplete</b> and <b>@-mention</b> paths in the chat input: small lookups
+        (the <code>@file:</code> completion queries the backend file search).</li>
     </ul>
     <p>These are real parts of the system but aren't on the critical path for "how does a chat turn
       complete and stay safe?", which is what this page is for. Every box above is also a link into a
-      focused page - the whole <a href="arch-overview.html">Architecture</a> section is a zoom into one
+      focused page: the whole <a href="arch-overview.html">Architecture</a> section is a zoom into one
       part of this map.</p>
   </main>
 

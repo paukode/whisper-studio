@@ -37,7 +37,6 @@ async function renderPanel(engines: IndexEngineOption[], engine = 'none') {
     <QueryClientProvider client={qc}>
       <IndexSettingsPanel
         settings={settings(engine)}
-        agentSupported
         onChange={vi.fn()}
         onEngineChange={vi.fn()}
         onDescriptionsEngineChange={vi.fn()}
@@ -98,7 +97,6 @@ describe('IndexSettingsPanel engine picker', () => {
       <QueryClientProvider client={qc}>
         <IndexSettingsPanel
           settings={settings('none')}
-          agentSupported
           onChange={vi.fn()}
           onEngineChange={vi.fn()}
           onDescriptionsEngineChange={vi.fn()}
@@ -106,5 +104,14 @@ describe('IndexSettingsPanel engine picker', () => {
       </QueryClientProvider>,
     );
     expect(optionText().join(' ')).not.toMatch(/Gemma|Qwen|Haiku/);
+  });
+});
+
+describe('IndexSettingsPanel background refresh', () => {
+  // The launchd helper exists on every supported Mac, so the option is always
+  // offered; it used to wait for /api/workspace/index/agent to say "supported".
+  it('always offers to keep refreshing when the app is closed', async () => {
+    await renderPanel([HAIKU]);
+    expect(screen.getByText('Keep refreshing even when the app is closed')).toBeTruthy();
   });
 });

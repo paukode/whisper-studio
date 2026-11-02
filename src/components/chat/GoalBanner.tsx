@@ -5,6 +5,9 @@
  */
 import React, { useCallback, useEffect } from 'react';
 import { useGoalStore } from '@/stores/goalStore';
+import { useUIStore } from '@/stores/uiStore';
+import { clearSessionGoal, getSessionGoal } from '@/api/goals';
+import { toError } from '@/utils/toError';
 import type { GoalVerdict } from '@/types/chat';
 import { ICON } from './activityIcons';
 
@@ -32,10 +35,16 @@ export const GoalBanner: React.FC<{ sessionId: string | null }> = ({ sessionId }
   const attempt = useGoalStore((s) => (sessionId ? s.byId[sessionId]?.attempt : 0) ?? 0);
   const cap = useGoalStore((s) => (sessionId ? s.byId[sessionId]?.cap : 8) ?? 8);
 
-  const clear = useCallback(() => {
+  // The banner goes only once the server has dropped the goal, so it never
+  // hides a goal the completion gate still enforces.
+  const clear = useCallback(async () => {
     if (!sessionId) return;
-    useGoalStore.getState().clearGoal(sessionId);
-    void fetch(`/api/sessions/${sessionId}/goal`, { method: 'DELETE' }).catch(() => {});
+    try {
+      await clearSessionGoal(sessionId);
+      useGoalStore.getState().clearGoal(sessionId);
+    } catch (err) {
+      useUIStore.getState().addToast({ type: 'error', message: `Could not clear the goal: ${toError(err).message}` });
+    }
   }, [sessionId]);
 
   // Hydrate from the server when the session changes (the goal persists on the
@@ -43,15 +52,21 @@ export const GoalBanner: React.FC<{ sessionId: string | null }> = ({ sessionId }
   useEffect(() => {
     if (!sessionId) return;
     let cancelled = false;
-    void fetch(`/api/sessions/${sessionId}/goal`)
-      .then((r) => (r.ok ? r.json() : null))
+    void getSessionGoal(sessionId)
       .then((data) => {
-        if (cancelled || !data) return;
+        if (cancelled) return;
         if (data.goal && data.state?.active) {
           useGoalStore.getState().setGoal(sessionId, data.goal, true);
         }
       })
-      .catch(() => {});
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        useUIStore.getState().addToast({
+          type: 'error',
+          key: 'goal-hydrate',
+          message: `Could not read this session's goal: ${toError(err).message}`,
+        });
+      });
     return () => {
       cancelled = true;
     };
@@ -77,7 +92,7 @@ export const GoalBanner: React.FC<{ sessionId: string | null }> = ({ sessionId }
           {attempt}/{cap}
         </span>
       )}
-      <button type="button" className="goal-banner-clear" onClick={clear} aria-label="Clear goal">
+      <button type="button" className="goal-banner-clear" onClick={() => void clear()} aria-label="Clear goal">
         {ICON.x}
       </button>
     </div>

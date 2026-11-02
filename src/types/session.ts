@@ -43,8 +43,3 @@ export interface TranscriptSegment {
   // The transcript marks it instead of implying the cut is exact.
   overlap?: boolean;
 }
-
-export interface Speaker {
-  key: string;                 // Original key from diarization
-  displayName: string;         // User-assigned name or default
-}

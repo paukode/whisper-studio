@@ -1,9 +1,9 @@
-"""Approval executor bodies — the thin async wrappers each ApprovalSpec runs.
+"""Approval executor bodies, the thin async wrappers each ApprovalSpec runs.
 
 Split out of bootstrap.py (which keeps register_defaults and the spec
 declarations) so both stay under the repo's per-file line budget. Each function
 delegates to the sibling executor/endpoint logic; the frontend never knows which
-one runs — it POSTs {action, payload} to /api/approval/execute.
+one runs, it POSTs {action, payload} to /api/approval/execute.
 
 Bodies that can block for long (commands, git, gh, python, aws, worktrees,
 a tree delete, a cross-volume move) run in a worker thread (asyncio.to_thread), so
@@ -19,6 +19,7 @@ a Stop pressed while one runs ends the turn and the action reports its outcome.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -41,20 +42,21 @@ async def _do_write(payload: dict) -> ApprovalOutcome:
     full = os.path.join(ws, path)
     if not workspace._ws_path_allowed(full, ws, payload.get("session_id")):
         return ApprovalOutcome(ok=False, error="Invalid path")
-    # The file before the write: the undo backup, and the old side of the
-    # diff stats and the stored edit below. Empty for a created file; None
-    # for a file that exists but could not be read, whose change is unknown
-    # (a read failure must not make an overwrite look like a create). Read
-    # with its line ends as they are on disk, so the write's own move to LF
-    # counts in the stats and shows in the diff, as git counts it; the undo
-    # backup keeps the text as an editor reads it.
+    # The file before the write: the undo copy (its exact bytes), and the
+    # old side of the diff stats and the stored edit below. Empty for a
+    # created file; None for a file that exists but could not be read, whose
+    # change is unknown (a read failure must not make an overwrite look like
+    # a create) and which gets no undo. Decoded with its line ends as they
+    # are on disk, so the write's own move to LF counts in the stats and
+    # shows in the diff, as git counts it.
     original: str | None = ""
+    before: bytes | None = None
     created = not os.path.isfile(full)
     if not created:
         try:
-            with open(full, errors="replace", newline="") as f:
-                original = f.read()
-            workspace.WORKSPACE_BACKUPS[path] = original.replace("\r\n", "\n").replace("\r", "\n")
+            with open(full, "rb") as f:
+                before = f.read()
+            original = before.decode("utf-8", errors="replace")
         except Exception:
             original = None
     try:
@@ -92,6 +94,17 @@ async def _do_write(payload: dict) -> ApprovalOutcome:
         else:
             note = await asyncio.to_thread(ruff.after_save, full, ws)
         output = f"{output}\n\n{note}"
+    # The undo copy of this one write, keyed by its tool_use id, with the
+    # file as the write and ruff left it (server/workspace/write_undo.py).
+    # A write with no id (a direct call) or an unreadable old file keeps none.
+    tool_use_id = payload.get("__tool_use_id__")
+    if tool_use_id and original is not None:
+        from server.workspace.write_undo import record_write
+
+        try:
+            record_write(tool_use_id, full, path, payload.get("session_id"), before)
+        except OSError as e:
+            log.warning("write %s: no undo copy kept, the file could not be read back: %s", path, e)
     # The stats are computed once, here, after ruff: against the file as it
     # is on disk now, so a fix or a reformat counts. They ride on the
     # outcome to the inline path's skill_result meta and the card's JSON (a
@@ -147,14 +160,14 @@ def _write_stats(
 async def _do_folder_access(payload: dict) -> ApprovalOutcome:
     """Persist an ask-once grant for a folder OUTSIDE the connected workspace.
 
-    Approving this is the user saying "yes, this app may read that folder" —
+    Approving this is the user saying "yes, this app may read that folder",
     recorded permanently (server/security/folder_grants.py) so the same
     folder is never asked about again. Refused outright for credential
     stores and for any ancestor of one, no matter what the prompt said:
     that refusal is the whole reason a prompt-injected "approve my ~/.ssh
     access" can't become a durable grant.
 
-    Never auto-approvable by an unattended agent — granting the app new
+    Never auto-approvable by an unattended agent, granting the app new
     filesystem reach is exactly the decision that needs a human.
     """
     refusal = refuse_if_agent(payload, what="Granting access to a new folder")
@@ -165,7 +178,7 @@ async def _do_folder_access(payload: dict) -> ApprovalOutcome:
     raw = payload.get("path") or ""
     real = _canonical(raw)
     if not real:
-        return ApprovalOutcome(ok=False, error="No folder path given — nothing to grant.")
+        return ApprovalOutcome(ok=False, error="No folder path given, nothing to grant.")
 
     # Refuse protected paths BEFORE creating anything. grant() would reject
     # them anyway, but only after makedirs had already put a directory inside
@@ -189,7 +202,7 @@ async def _do_folder_access(payload: dict) -> ApprovalOutcome:
 
     # Finish the action the user actually approved. The card says "open this
     # folder as the workspace", so recording the grant and stopping there left
-    # the workspace disconnected — the user clicked Approve and nothing opened.
+    # the workspace disconnected, the user clicked Approve and nothing opened.
     # Connecting here also makes /api/approval/execute's before/after diff fire
     # ws_folder_opened, so the panel switches to the new root.
     if payload.get("connect"):
@@ -197,7 +210,7 @@ async def _do_folder_access(payload: dict) -> ApprovalOutcome:
 
         return ApprovalOutcome(ok=True, output=open_folder_now(real))
 
-    # Report the CANONICAL path, not the raw input — the user should see the
+    # Report the CANONICAL path, not the raw input, the user should see the
     # folder that was actually recorded, not "~/x" or a relative spelling.
     return ApprovalOutcome(ok=True, output=f"Access granted to {real}")
 
@@ -215,20 +228,15 @@ async def _do_delete(payload: dict) -> ApprovalOutcome:
         return ApprovalOutcome(ok=False, error="Path not found")
     try:
         # A large tree (node_modules) takes seconds to remove.
-        await asyncio.to_thread(_delete_path, workspace, path, full)
+        await asyncio.to_thread(_delete_path, full)
     except Exception as e:
         return ApprovalOutcome(ok=False, error=f"Delete failed: {e}")
     return ApprovalOutcome(ok=True, output=f"Deleted {path}")
 
 
-def _delete_path(workspace, path: str, full: str) -> None:
-    """Keep a file's text for undo, then remove the file or the whole tree."""
+def _delete_path(full: str) -> None:
+    """Remove the file or the whole tree."""
     if os.path.isfile(full):
-        try:
-            with open(full, errors="replace") as f:
-                workspace.WORKSPACE_BACKUPS[path] = f.read()
-        except Exception:
-            pass
         os.remove(full)
     elif os.path.isdir(full):
         shutil.rmtree(full)
@@ -241,10 +249,10 @@ async def _do_save_to_path(payload: dict) -> ApprovalOutcome:
     create_docx/pptx/xlsx/pdf) build their full content at tool-call time
     and stage it in the app sandbox (server/workspace/paths.py's
     stage_file_bytes); approving here just moves the ready file into place.
-    Unlike _do_write/_do_create above, this does NOT require a connected
-    workspace — get_workspace_path() is never consulted.
+    Unlike _do_write above, this does NOT require a connected
+    workspace, get_workspace_path() is never consulted.
 
-    Re-validates everything here (not just in the tool executors) — this is
+    Re-validates everything here (not just in the tool executors), this is
     the single hub every approval executes through, and the payload could
     in principle reach it directly via POST /api/approval/execute. In
     particular, staged_path MUST be inside the staging root: without that
@@ -268,7 +276,7 @@ async def _do_save_to_path(payload: dict) -> ApprovalOutcome:
     if not os.path.isfile(real_staged):
         return ApprovalOutcome(
             ok=False,
-            error="The staged file no longer exists (staging entries expire after 24h) — re-run the tool.",
+            error="The staged file no longer exists (staging entries expire after 24h), re-run the tool.",
         )
 
     size = os.path.getsize(real_staged)
@@ -313,7 +321,7 @@ async def _do_create_document(payload: dict) -> ApprovalOutcome:
     """Write a create_docx/pptx/xlsx/pdf tool's generated bytes into the
     connected workspace. Re-resolves the workspace root at click time (same
     as _do_write) rather than trusting a full path computed when the tool
-    was called — the workspace could in principle have changed in between."""
+    was called, the workspace could in principle have changed in between."""
     import base64
 
     from server import workspace
@@ -545,8 +553,23 @@ def _gh_api_summary(p: dict) -> str:
 
 
 def _gh_api_render(p: dict) -> str:
+    """The card's body: the method and path, then everything the request
+    sends (body, fields, a GraphQL mutation and its variables), so a person
+    sees the whole request before it runs."""
     method = p.get("method") or "POST"
-    return f"gh api --method {method} {p.get('endpoint', '?')}"
+    lines = [f"gh api --method {method} {p.get('endpoint', '?')}"]
+    for label, key in (
+        ("body", "body"),
+        ("fields", "fields"),
+        ("mutation", "graphql_mutation"),
+        ("variables", "graphql_vars"),
+    ):
+        value = p.get(key)
+        if value in (None, "", {}):
+            continue
+        text = value if isinstance(value, str) else json.dumps(value, indent=2, sort_keys=True)
+        lines.append(f"{label}:\n{text}")
+    return "\n".join(lines)
 
 
 async def _do_git_checkout(payload: dict) -> ApprovalOutcome:
@@ -568,6 +591,19 @@ async def _do_git_merge(payload: dict) -> ApprovalOutcome:
 
     ok, output = await asyncio.to_thread(do_git_merge, payload)
     return ApprovalOutcome(ok=ok, output=output if ok else None, error=None if ok else output)
+
+
+async def _do_ws_merge_worktree(payload: dict) -> ApprovalOutcome:
+    from server.workspace.executors import do_ws_merge_worktree
+
+    ok, output = await asyncio.to_thread(do_ws_merge_worktree, payload)
+    return ApprovalOutcome(ok=ok, output=output if ok else None, error=None if ok else output)
+
+
+def _ws_merge_render(p: dict) -> str:
+    from server.workspace.executors import _merge_argv
+
+    return shlex.join(_merge_argv(str(p.get("name", "?")), str(p.get("branch", "?"))))
 
 
 async def _do_git_stash(payload: dict) -> ApprovalOutcome:
@@ -633,7 +669,7 @@ async def _do_command(payload: dict) -> ApprovalOutcome:
     command = (payload.get("command") or "").strip()
     if not command:
         return ApprovalOutcome(ok=False, error="No command")
-    # Same validation gate as /api/workspace/shell: the sandbox alone does not
+    # Same validation gate as ws_run_command: the sandbox alone does not
     # stop an approved command from e.g. reading ~/.ssh, so the dangerous-pattern
     # and sensitive-path checks run here too.
     # The gate settled secret_access: set in Bypass, else only on a card a
@@ -702,11 +738,11 @@ def _mcp_tool_call_summary(p: dict) -> str:
 
 async def _do_mcp_elicit_respond(payload: dict) -> ApprovalOutcome:
     """Deliver a human's answer to a pending MCP elicitation (an MCP server
-    asking for input mid tool-call — see server/mcp.py's
+    asking for input mid tool-call, see server/mcp.py's
     _build_elicitation_callback). refuse_if_agent is defense in depth here:
     the PRIMARY guard against an unattended subagent auto-answering lives in
     the elicitation callback itself (it declines immediately for a call
-    flagged `__agent__`, before any pending record — or approval action —
+    flagged `__agent__`, before any pending record, or approval action,
     ever exists), but this executor is the same generic hub every other
     approval flows through, so it gets the same stamp check as the rest."""
     refusal = refuse_if_agent(payload, what="Answering an MCP elicitation")

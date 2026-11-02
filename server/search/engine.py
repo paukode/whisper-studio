@@ -1,6 +1,6 @@
-"""Ripgrep search engine — binary detection and low-level subprocess interface.
+"""Ripgrep search engine: binary detection and low-level subprocess interface.
 
-Detects the rg binary once at import time (memoized). Provides raw functions
+Resolves the rg binary on first use (memoized). Provides raw functions
 to invoke rg for grep and glob operations. All higher-level logic (output
 modes, pagination, sorting) lives in grep.py and glob.py.
 """
@@ -9,6 +9,7 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 from functools import lru_cache
 
 from server.infrastructure.paths import data_root
@@ -40,8 +41,10 @@ def get_rg_path() -> str:
 
     Resolution order:
       1. WHISPER_RG_PATH environment variable (explicit override)
-      2. shutil.which("rg") — find on PATH
-      3. pip-installed ripgrep package binary location
+      2. shutil.which("rg"): find on PATH
+      3. the rg the pinned ripgrep wheel installs next to the Python
+         interpreter (venv/bin in a source install, the bundled runtime's bin
+         in the packaged app)
 
     Raises RuntimeError if ripgrep is not available.
     """
@@ -57,20 +60,15 @@ def get_rg_path() -> str:
         log.info("ripgrep: found on PATH at %s", system_rg)
         return system_rg
 
-    # 3. pip-installed ripgrep package
-    try:
-        import ripgrep as _rg_pkg  # noqa: F401
-
-        pip_rg = shutil.which("rg")  # should now be on PATH after pip install
-        if pip_rg:
-            log.info("ripgrep: found via pip package at %s", pip_rg)
-            return pip_rg
-    except ImportError:
-        pass
+    # 3. The ripgrep wheel's binary, next to the interpreter.
+    wheel_rg = os.path.join(os.path.dirname(sys.executable), "rg")
+    if os.path.isfile(wheel_rg) and os.access(wheel_rg, os.X_OK):
+        log.info("ripgrep: using the bundled binary at %s", wheel_rg)
+        return wheel_rg
 
     raise RuntimeError(
-        "ripgrep (rg) is required but not found. "
-        "Install via: brew install ripgrep  OR  pip install ripgrep"
+        f"ripgrep (rg) is required but not found on PATH or at {wheel_rg}. "
+        "Reinstall the app, or set WHISPER_RG_PATH."
     )
 
 
@@ -150,6 +148,13 @@ def truncate_large_output(output: str) -> str:
         f"{tail}\n"
         f"Full output saved to: {filepath}"
     )
+
+
+def unreadable_note(stderr: str) -> str:
+    """A one-line note for results rg found while some paths were unreadable
+    (rg exits 2 but still prints every match it could read)."""
+    first = next((ln.strip() for ln in stderr.splitlines() if ln.strip()), "")
+    return f"(Some paths could not be read, so results may be incomplete: {first})"
 
 
 def pagination_hint(offset: int, limit_used: int) -> str:

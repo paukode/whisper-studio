@@ -71,9 +71,6 @@ def _get_conn():
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA busy_timeout=5000")
         conn.execute("PRAGMA synchronous=NORMAL")
-    except sqlite3.DatabaseError as e:
-        log.warning("failed to set sqlite pragmas: %s", e)
-    try:
         yield conn
         conn.commit()
     finally:
@@ -136,29 +133,15 @@ def source_files_dir() -> str:
 
 
 def save_source_file(aid: str, filename: str, content: bytes) -> str:
-    """Persist an upload's bytes; returns the path, or '' if it could not be
-    written. Never raises: losing the original degrades analysis quality, it
-    does not break the attachment."""
+    """Persist an upload's bytes and return the path. An OSError (disk full,
+    permissions) propagates, so the upload fails with the reason."""
     ext = os.path.splitext(filename)[1].lower()[:16]
     directory = source_files_dir()
     path = os.path.join(directory, f"{aid}{ext}")
-    try:
-        os.makedirs(directory, exist_ok=True)
-        with open(path, "wb") as fh:
-            fh.write(content)
-        return path
-    except OSError as e:
-        log.warning("could not keep source bytes for %s: %s", filename, e)
-        return ""
-
-
-def _row_value(row, column: str, default=""):
-    """Read a column that may not exist yet on a database the migration
-    runner has not reached (tests reach this module directly)."""
-    try:
-        return row[column]
-    except (IndexError, KeyError):
-        return default
+    os.makedirs(directory, exist_ok=True)
+    with open(path, "wb") as fh:
+        fh.write(content)
+    return path
 
 
 def sweep_source_files() -> int:
@@ -200,7 +183,7 @@ def _row_to_record(row, include_binary: bool = True) -> dict:
     }
     # The original bytes, when we kept them. This is what lets run_python
     # compute over the WHOLE file instead of the sample in the prompt.
-    source = _row_value(row, "source_path")
+    source = row["source_path"]
     if source and os.path.exists(source):
         rec["source_path"] = source
     if row["kind"] == "image":

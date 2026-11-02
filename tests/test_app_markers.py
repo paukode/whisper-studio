@@ -87,6 +87,15 @@ def _turn(monkeypatch, output, *, mode, unattended=False):
     async def go():
         states = await te.execute_tool_batch(
             [{"id": "tu_1", "name": "mcp__evil_server__lookup", "input": {"q": "x"}}],
+            # Descriptor for the mocked MCP lookup, not a built-in tool bypass.
+            tool_schemas={
+                "mcp__evil_server__lookup": {
+                    "type": "object",
+                    "properties": {"q": {"type": "string"}},
+                    "required": ["q"],
+                    "additionalProperties": False,
+                }
+            },
             is_concurrent_safe=lambda n: False,
             loop=asyncio.get_running_loop(),
             executor=executor,

@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from collections.abc import Callable
 
 from server.goals import Verdict, not_checked
@@ -127,17 +126,13 @@ def parse_verdict(raw: str | None) -> Verdict | None:
 
 def model_label(key: str) -> str:
     """The name the user knows a chat_models key by."""
-    try:
-        from server.local.runtime import is_local_model, local_model_meta
+    from server.infrastructure.config import load_config
+    from server.local.runtime import is_local_model, local_model_meta
 
-        if is_local_model(key):
-            return local_model_meta(key).get("label") or key
-        from server.infrastructure.config import load_config
-
-        meta = (load_config().get("chat_model_meta") or {}).get(key) or {}
-        return meta.get("label") or key
-    except Exception:  # noqa: BLE001 - a label must never break the judge
-        return key
+    if is_local_model(key):
+        return local_model_meta(key).get("label") or key
+    meta = (load_config().get("chat_model_meta") or {}).get(key) or {}
+    return meta.get("label") or key
 
 
 def judge_key(main_model_key: str = "") -> str:
@@ -163,13 +158,9 @@ def _one_shot(system: str, user: str, main_model_key: str = "", session_id: str 
 
 def _judge_refusal(main_model_key: str = "") -> str | None:
     """Why the configured judge may not run in this model mode, else None."""
-    try:
-        from server.infrastructure.auxiliary import aux_refusal
+    from server.infrastructure.auxiliary import aux_refusal
 
-        return aux_refusal("goal_evaluator", main_model_key=main_model_key or None)
-    except Exception as e:  # noqa: BLE001 - the one_shot path reports its own failure
-        log.debug("goal evaluator refusal check failed: %s", e)
-        return None
+    return aux_refusal("goal_evaluator", main_model_key=main_model_key or None)
 
 
 def evaluate(
@@ -209,10 +200,3 @@ def evaluate(
             f"The goal evaluator ({label}) answered twice without a readable verdict."
         )
     return verdict
-
-
-def looks_verified(messages: list) -> bool:
-    """True if the transcript tail contains a passing verify_change token, a
-    deterministic signal the gate can trust over the evaluator's prose."""
-    tail = render_tail(messages)
-    return bool(re.search(r"\bVERIFY PASS\b", tail))

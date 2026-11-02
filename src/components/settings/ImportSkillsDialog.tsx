@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useState } from 'react';
-import { post } from '@/api/client';
+import { post, readErrorBody } from '@/api/client';
 import { useBackdropDismiss } from '@/hooks/useBackdropDismiss';
 
 interface PreviewSkill {
@@ -13,7 +13,7 @@ interface PreviewSkill {
 
 interface ImportResult {
   imported: Array<{ name: string }>;
-  conflicts: Array<{ name?: string; subpath: string }>;
+  conflicts: Array<{ name?: string; subpath: string; reason?: string }>;
   errors: Array<{ subpath: string; reason: string }>;
 }
 
@@ -21,17 +21,6 @@ type Mode = 'git' | 'local';
 
 const errMsg = (e: unknown): string =>
   e instanceof Error ? e.message : String(e);
-
-/** Read a JSON error body ({error} or {detail}) from a failed multipart
- *  response, falling back to the status text. */
-async function readError(resp: Response): Promise<string> {
-  try {
-    const body = (await resp.json()) as { error?: string; detail?: string };
-    return body.error || body.detail || `HTTP ${resp.status}`;
-  } catch {
-    return `HTTP ${resp.status}`;
-  }
-}
 
 /** Import folder skills from a git URL OR a local folder: preview the available
  *  skills, select some, and import them into /skills/ (hot-reloaded, no restart).
@@ -51,6 +40,8 @@ export const ImportSkillsDialog: React.FC<{
   const [error, setError] = useState('');
   const [skills, setSkills] = useState<PreviewSkill[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Off by default: a taken name is a conflict. Ticked, the import replaces
+  // the installed skill of that name.
   const [overwrite, setOverwrite] = useState(false);
   const [filter, setFilter] = useState('');
   const [searchDesc, setSearchDesc] = useState(false);
@@ -105,7 +96,7 @@ export const ImportSkillsDialog: React.FC<{
         method: 'POST',
         body: buildForm(files),
       });
-      if (!resp.ok) throw new Error(await readError(resp));
+      if (!resp.ok) throw new Error(await readErrorBody(resp));
       const r = (await resp.json()) as { skills: PreviewSkill[] };
       setSkills(r.skills ?? []);
       if ((r.skills ?? []).length === 0) setError('No skills found in that folder.');
@@ -124,17 +115,25 @@ export const ImportSkillsDialog: React.FC<{
       return next;
     });
 
-  const applyResult = (r: ImportResult) => {
+  const applyResult = (r: ImportResult, replacing: boolean) => {
     onImported();
     // Clean success: close the dialog. If some skills hit conflicts/errors,
-    // keep it open with a summary so the user can enable overwrite and retry.
+    // keep it open with a summary. Unticked, a taken name is a conflict the
+    // user resolves by ticking Overwrite existing (or renaming the old one);
+    // ticked, a conflict names its own reason (a folder that holds another
+    // skill, a name held outside the skills folder).
     if (r.conflicts.length === 0 && r.errors.length === 0) {
       onClose();
       return;
     }
     const parts = [`Imported ${r.imported.length}`];
-    if (r.conflicts.length)
-      parts.push(`${r.conflicts.length} already existed (enable overwrite to replace)`);
+    if (r.conflicts.length && !replacing) {
+      const names = r.conflicts.map((c) => c.name || c.subpath).join(', ');
+      parts.push(`Not imported, a skill with the same name exists: ${names}`);
+    } else if (r.conflicts.length) {
+      const items = r.conflicts.map((c) => `${c.name || c.subpath} (${c.reason ?? 'conflict'})`).join(', ');
+      parts.push(`Not imported: ${items}`);
+    }
     if (r.errors.length) parts.push(`${r.errors.length} failed`);
     setSummary(parts.join(' · '));
   };
@@ -151,14 +150,14 @@ export const ImportSkillsDialog: React.FC<{
           subpaths: [...selected],
           overwrite,
         });
-        applyResult(r);
+        applyResult(r, overwrite);
       } else {
         const fd = buildForm(localFiles);
         fd.append('subpaths', JSON.stringify([...selected]));
         fd.append('overwrite', overwrite ? 'true' : 'false');
         const resp = await fetch('/api/skills/import/local', { method: 'POST', body: fd });
-        if (!resp.ok) throw new Error(await readError(resp));
-        applyResult((await resp.json()) as ImportResult);
+        if (!resp.ok) throw new Error(await readErrorBody(resp));
+        applyResult((await resp.json()) as ImportResult, overwrite);
       }
     } catch (e) {
       setError(errMsg(e));
@@ -209,7 +208,7 @@ export const ImportSkillsDialog: React.FC<{
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          background: 'var(--surface-1)',
+          background: 'var(--bg-surface)',
           color: 'var(--text-primary)',
           borderRadius: 'var(--radius-lg)',
           width: 'min(680px, 92vw)',
@@ -293,7 +292,6 @@ export const ImportSkillsDialog: React.FC<{
                 // imperatively so the picker selects a whole directory tree.
                 if (el) {
                   el.setAttribute('webkitdirectory', '');
-                  el.setAttribute('directory', '');
                 }
               }}
               type="file"
@@ -311,7 +309,9 @@ export const ImportSkillsDialog: React.FC<{
         )}
 
         {error && <div style={{ color: 'var(--accent-record)' }}>{error}</div>}
-        {summary && <div style={{ color: 'var(--text-success)' }}>{summary}</div>}
+        {/* Only a partial import leaves a summary (a clean one closes the
+            dialog), so it always names something that was not imported. */}
+        {summary && <div role="status" style={{ color: 'var(--warning)' }}>{summary}</div>}
 
         {skills.length > 0 && (
           <>
@@ -375,7 +375,10 @@ export const ImportSkillsDialog: React.FC<{
               ))}
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <label style={{ display: 'flex', gap: '6px', alignItems: 'center', fontSize: '14px' }}>
+              <label
+                style={{ display: 'flex', gap: '6px', alignItems: 'center', fontSize: '14px' }}
+                title="Replace an installed skill that has the same name."
+              >
                 <input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} />
                 Overwrite existing
               </label>

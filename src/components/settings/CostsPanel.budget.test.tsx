@@ -20,10 +20,12 @@ const CONFIG = {
 const TODAY_URL = '/api/costs/usage?from=2026-09-23&to=2026-09-23&granularity=day&split=model';
 // Totals a test lays over today's report (read when the request is made).
 let todayTotals: Partial<UsageTotals> | null = null;
+// Set by a test to make GET /api/config fail.
+let configError: Error | null = null;
 
 vi.mock('@/api/client', () => ({
   get: vi.fn((url: string) => {
-    if (url === '/api/config') return Promise.resolve(CONFIG);
+    if (url === '/api/config') return configError ? Promise.reject(configError) : Promise.resolve(CONFIG);
     if (url === TODAY_URL && todayTotals) {
       const report = usageFor(url);
       return Promise.resolve({ ...report, totals: { ...report.totals, ...todayTotals } });
@@ -55,6 +57,16 @@ describe('CostsPanel: budget save wiring', () => {
   afterEach(() => {
     vi.useRealTimers();
     todayTotals = null;
+    configError = null;
+  });
+
+  it('a failed config read shows why and keeps Save Budget off, so blank caps are never saved', async () => {
+    configError = new Error('config.user.json is not valid JSON');
+    renderPanel();
+    expect((await screen.findByRole('alert')).textContent).toContain(
+      'Could not load the budget settings: config.user.json is not valid JSON',
+    );
+    expect((screen.getByRole('button', { name: /save budget/i }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it('seeds the budget fields from GET /api/config on mount', async () => {
@@ -132,11 +144,6 @@ describe('CostsPanel: budget save wiring', () => {
       max_daily_cost_usd: 20,
       model_fallback_enabled: true,
     });
-
-    // The old names that update_config silently dropped must be gone.
-    expect(body).not.toHaveProperty('max_session_cost');
-    expect(body).not.toHaveProperty('max_daily_cost');
-    expect(body).not.toHaveProperty('model_fallback');
   });
 
   it('clearing a field sends 0, not an omitted key, so the old limit cannot survive the save', async () => {

@@ -46,12 +46,9 @@ def _active_override() -> str | None:
     """The current task's worktree override, or None outside isolation.
     Lazy-imported: cwd_tracker is a small leaf module and workspace.state
     pulls in a much larger graph."""
-    try:
-        from server.workspace.state import get_workspace_override
+    from server.workspace.state import get_workspace_override
 
-        return get_workspace_override()
-    except Exception:  # noqa: BLE001 — never let tracking break a command
-        return None
+    return get_workspace_override()
 
 
 def _key(session_id: str, override: str | None) -> str:

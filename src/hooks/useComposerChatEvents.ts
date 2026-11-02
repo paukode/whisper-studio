@@ -10,8 +10,7 @@ type ChatStream = ReturnType<typeof useChatStream>;
  *  - `whisper-submit-answer` — from UserQuestionCard / UserQuestionGroupCard.
  *    The `detail.answers` array ({tool_use_id, content}) is sent via
  *    `approvedToolResult` so Bedrock sees proper tool_results for the
- *    ask_user_question tool_use blocks. `detail.answer` (single string) is a
- *    plain chat send — the live path for WorkspacePromptCard's resume flow.
+ *    ask_user_question tool_use blocks (WorkspacePromptCard resumes the same way).
  *  - `whisper-regenerate`: from the Regenerate button of a user bubble
  *    (ChatMessage) or an assistant turn (TurnBubble), both naming the user
  *    message to send again. Truncates history at that index and resends its
@@ -22,17 +21,10 @@ export function useComposerChatEvents(chatStream: ChatStream): void {
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail as
-        | {
-            answer?: string;
-            answers?: Array<{ tool_use_id: string; content: string }>;
-          }
+        | { answers?: Array<{ tool_use_id: string; content: string }> }
         | undefined;
       if (detail?.answers && detail.answers.length > 0) {
         void chatStream.send('', { approvedToolResult: detail.answers });
-        return;
-      }
-      if (detail?.answer) {
-        void chatStream.send(detail.answer);
       }
     };
     window.addEventListener('whisper-submit-answer', handler);

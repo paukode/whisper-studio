@@ -87,7 +87,56 @@ def test_status_no_upstream_degrades_to_zero(client, tmp_path, monkeypatch):
     assert data["behind"] == 0
 
 
+def test_status_with_a_pruned_upstream_reports_zero(client, tmp_path):
+    """A branch whose upstream was deleted on the remote and pruned (the state
+    after a merged PR) still returns status with 0/0, not a 500."""
+    c, work = client
+    origin = tmp_path / "origin"
+    _git(["push", "-q", "origin", "HEAD:feat"], work)
+    _git(["checkout", "-q", "-b", "feat"], work)
+    _git(["branch", "--set-upstream-to=origin/feat"], work)
+    _git(["push", "-q", "origin", "--delete", "feat"], work)
+    _git(["fetch", "-q", "--prune"], work)
+    assert origin.exists()
+
+    res = c.get("/api/git/status")
+    assert res.status_code == 200
+    assert res.json()["ahead"] == 0
+    assert res.json()["behind"] == 0
+
+
+def test_status_on_a_detached_head_reports_zero(client):
+    c, work = client
+    _git(["checkout", "-q", "--detach"], work)
+
+    res = c.get("/api/git/status")
+    assert res.status_code == 200
+    assert (res.json()["ahead"], res.json()["behind"]) == (0, 0)
+
+
 def _app_for():
     app = FastAPI()
     app.include_router(router)
     return app
+
+
+def test_a_corrupt_index_is_an_error_not_a_clean_tree(client):
+    """`git status` failing used to read as a clean tree with no files."""
+    c, work = client
+    (work / ".git" / "index").write_bytes(b"junk")
+
+    res = c.get("/api/git/status")
+    assert res.status_code == 500
+    assert "git status failed" in res.json()["detail"]
+    assert c.get("/api/git/changes").status_code == 500
+
+
+def test_the_status_prompt_says_status_is_unavailable(client):
+    from server.git.prompts import build_git_status_prompt
+
+    _c, work = client
+    (work / ".git" / "index").write_bytes(b"junk")
+
+    text = build_git_status_prompt(str(work))
+    assert "Status: unavailable (git status failed:" in text
+    assert "(clean)" not in text

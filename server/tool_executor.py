@@ -34,7 +34,6 @@ from server.approval.markers import (
 from server.hooks import run_hooks
 from server.preview.start_policy import never_prompts
 from server.security.permissions import MODE_BYPASS
-from server.security.secret_reads import SECRET_READS_KEY
 from server.tool_approvals import PAUSE as APPROVAL_PAUSE
 from server.tool_approvals import REPLY as APPROVAL_REPLY
 from server.tool_approvals import gate_approval
@@ -308,6 +307,7 @@ async def execute_tool_batch(
     session_denials: dict,
     model_id: str,
     plan_mode: bool,
+    tool_schemas: dict,
     mode: str = "default",
     effort_label: str | None = None,
     unattended: bool = False,
@@ -340,18 +340,31 @@ async def execute_tool_batch(
 
     ``unattended`` marks every dispatched call as originating from a turn with
     no human present (subagents today). It stamps ``__agent__`` onto the call
-    input exactly like ``server.agents.runtime._with_session_id`` already does
-    for the pre-migration agent loop, so high-blast-radius executors (GitHub
-    mutations via ``refuse_if_agent``, MCP's elicitation callback) keep
-    refusing to act or answer on a human's behalf.
+    input, so high-blast-radius executors (GitHub mutations via
+    ``refuse_if_agent``, MCP's elicitation callback) keep refusing to act or
+    answer on a human's behalf.
 
     Returns ToolState objects in the same order as the input tool_uses.
     """
-    # Build state objects indexed by tool_use_id for quick lookup
+    from server.tool_inputs import ToolInputError, validate_call_ids, validate_tool_input
+
+    # Preflight the argument round before any hooks, router or approvals.
+    # Schemas are the issued round's snapshot, never rebuilt here.
+    validate_call_ids(tool_uses)
     states = [ToolState(tool_use=tu) for tu in tool_uses]
     state_by_id = {s.tool_id: s for s in states}
+    try:
+        for state in states:
+            if tool_scope is not None and state.tool_name not in tool_scope.permitted:
+                continue  # the scope refusal below needs no argument processing
+            validate_tool_input(state.tool_name, state.tool_use.get("input"), tool_schemas)
+    except ToolInputError as exc:
+        for state in states:
+            state.status = "skipped"
+            state.output = f"[Refused] No tools in this round ran. {exc}"
+        return states
 
-    # Shared abort flag — set when a command tool fails
+    # Shared abort flag, set when a command tool fails.
     command_error: str | None = None
 
     async def _run_one(state: ToolState) -> None:
@@ -359,22 +372,6 @@ async def execute_tool_batch(
         nonlocal command_error
         tool_name = state.tool_name
         state.status = "executing"
-
-        # Input mutation safety — three separate copies:
-        #   1. state.tool_use["input"] — original (preserved for API/Bedrock messages)
-        #   2. hook_input — clone for hooks (observable, never mutated by execution)
-        #   3. call_input — clone for execution (may be mutated by tool handlers)
-        hook_input = copy.deepcopy(state.tool_use["input"])
-        call_input = copy.deepcopy(state.tool_use["input"])
-        call_input["__session_id__"] = session_id
-        if unattended:
-            call_input["__agent__"] = True
-        # Whether this call may read the credential stores without a card
-        # (server/security/secret_reads.py): only in bypassPermissions, and
-        # always set, so a value the model sent never counts.
-        call_input[SECRET_READS_KEY] = mode == MODE_BYPASS
-
-        # --- Pre-execution checks ---
 
         # Agent tool scope: a name outside the run's entitlement never runs.
         if tool_scope is not None and tool_name not in tool_scope.permitted:
@@ -386,6 +383,11 @@ async def execute_tool_batch(
             log.info("agent tool scope refused %s", tool_name)
             tool_scope.refused()
             return
+
+        # Three copies: original history, observable hook input, dispatch input.
+        # Server-owned context is stamped only after hook rewrite validation.
+        hook_input = copy.deepcopy(state.tool_use["input"])
+        call_input = copy.deepcopy(state.tool_use["input"])
 
         # Sibling abort: skip writes if a command tool failed
         if command_error and not is_concurrent_safe(tool_name):
@@ -469,12 +471,22 @@ async def execute_tool_batch(
                     {"hook_blocked": {"tool_name": tool_name, "reason": pre.reason}}
                 )
             return
-        # A hook may rewrite the tool input before execution.
+        # A hook may rewrite arguments, never the server's authorization stamps.
         if pre.updated_input is not None:
+            try:
+                validate_tool_input(tool_name, pre.updated_input, tool_schemas)
+            except ToolInputError as exc:
+                state.status = "skipped"
+                state.output = f"[Refused] Hook-rewritten input was not dispatched. {exc}"
+                return
             call_input = copy.deepcopy(pre.updated_input)
-            call_input["__session_id__"] = session_id
-            if unattended:
-                call_input["__agent__"] = True
+        call_input["__session_id__"] = session_id
+        call_input.pop("__agent__", None)
+        if unattended:
+            call_input["__agent__"] = True
+        from server.security.secret_reads import SECRET_READS_KEY
+
+        call_input[SECRET_READS_KEY] = mode == MODE_BYPASS
 
         # --- Dispatch ---
         if tool_scope is not None:
@@ -949,6 +961,14 @@ async def _process_tool_results(
                         "content": content,
                     }
                 )
+            elif state.status == "skipped":
+                # Refused before it ran (hook, plan mode, loop guard, scope):
+                # its own refusal and frames, never "re-issue it", which
+                # would invite the model to retry a refused call.
+                for effect in state.side_effects:
+                    if SIDE_EFFECT_PAUSE not in effect:
+                        sse_events.append(ndjson_dumps(effect))
+                _reply(state, out, tool_results, sse_events)
             elif state.tool_id == paused_id:
                 # The paused call's row is answered by its card; the folder
                 # card's call already has its frame.

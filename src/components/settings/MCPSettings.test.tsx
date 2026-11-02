@@ -6,17 +6,16 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 // The panel reads the one MCP store (mcpStore); its refresh goes through
 // get() and the enable switch through patch(). Mutations (post/put/del) are
 // exercised in the remote/approval-granularity and elicitation blocks below.
-const { getMock, postMock, patchMock } = vi.hoisted(() => ({
+const { getMock, postMock, putMock, patchMock } = vi.hoisted(() => ({
   getMock: vi.fn(),
   postMock: vi.fn(),
+  putMock: vi.fn(),
   patchMock: vi.fn(),
 }));
-vi.mock('@/api/client', () => ({ get: getMock, put: vi.fn(), post: postMock, del: vi.fn(), patch: patchMock }));
+vi.mock('@/api/client', () => ({ get: getMock, put: putMock, post: postMock, del: vi.fn(), patch: patchMock }));
 
 import { MCPSettings, parseMcpArgs } from './MCPSettings';
-import { MoreMenu } from '@/components/chat/MoreMenu';
 import { useMcpStore, type MCPServerInfo } from '@/stores/mcpStore';
-import { useSettingsStore } from '@/stores/settingsStore';
 import { useUIStore } from '@/stores/uiStore';
 
 function server(name: string, over: Partial<MCPServerInfo> = {}): MCPServerInfo {
@@ -162,42 +161,6 @@ describe('MCPSettings: one live list', () => {
   });
 });
 
-// Enabling/disabling MCP servers now lives ONLY in Settings → MCP. The composer
-// MoreMenu used to carry a per-server tick that shared this write path; that UI
-// was removed, so the menu must no longer render any MCP section or toggle even
-// when a server is configured. (The model still gets enabled servers' tools via
-// the backend; @-mention insertion is unaffected — it lives in ChatInput.)
-describe('composer MoreMenu has no MCP toggle (moved to Settings → MCP)', () => {
-  const moreMenuProps = {
-    open: true,
-    section: null,
-    setSection: vi.fn(),
-    onToggle: vi.fn(),
-    onClose: vi.fn(),
-    indexes: [],
-    selectedIndexes: [],
-    toggleIndex: vi.fn(),
-    wsConnected: false,
-    onInsertSkill: vi.fn(),
-  };
-
-  beforeEach(() => {
-    useUIStore.setState({ addToast: vi.fn().mockReturnValue('t') as never });
-    useSettingsStore.setState({ skills: [] as never });
-    seed([ECHO]);
-  });
-
-  it('renders no MCP section, tick, or "MCP servers" row even with a server configured', () => {
-    const { container } = renderWithClient(<MoreMenu {...moreMenuProps} />);
-    // The old MCP section and its per-server checkbox tick are gone.
-    expect(container.querySelector('#more-sec-mcp')).toBeNull();
-    expect(container.querySelector('#more-sec-mcp input[type="checkbox"]')).toBeNull();
-    expect(screen.queryByText('MCP servers')).toBeNull();
-    // The menu itself is intact (the Skills control still renders).
-    expect(screen.getByText('Skills')).toBeInTheDocument();
-  });
-});
-
 describe('parseMcpArgs — args field parsing', () => {
   it('parses a JSON array pasted with curly/smart quotes (the AgentCore paste)', () => {
     const raw = '[“awslabs.amazon-bedrock-agentcore-mcp-server@latest”]';
@@ -214,7 +177,7 @@ describe('parseMcpArgs — args field parsing', () => {
     expect(parseMcpArgs('   ')).toEqual({ args: [] });
   });
 
-  it('errors on non-JSON input (no comma-split fallback)', () => {
+  it('errors on non-JSON input', () => {
     expect('error' in parseMcpArgs('--flag, value')).toBe(true);
   });
 
@@ -381,5 +344,51 @@ describe('MCPSettings: pending elicitations', () => {
 
     expect(screen.getByText('No MCP servers configured.')).toBeInTheDocument();
     expect(screen.queryByText(/needs input/i)).toBeNull();
+  });
+});
+
+describe('MCPSettings: clearing fields on edit', () => {
+  beforeEach(() => {
+    getMock.mockReset();
+    putMock.mockReset();
+    putMock.mockResolvedValue({});
+    useUIStore.setState({ addToast: vi.fn().mockReturnValue('t') as never });
+  });
+
+  it('sends cleared fields as explicit empty values so the stored ones are removed', async () => {
+    const stored = server('srv', {
+      env: { TOKEN_X: 'secret' },
+      url: 'https://example.com/mcp',
+      bearer_token_env_var: 'MY_TOKEN',
+      tool_overrides: { delete_all: 'approve' },
+      enabled_tools: ['get_data'],
+      disabled_tools: ['delete_all'],
+    });
+    getMock.mockResolvedValue(responseFor([stored]));
+    seed([stored]);
+    renderWithClient(<MCPSettings />);
+    await waitFor(() => expect(screen.getByText('Edit')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText('Edit'));
+    fireEvent.change(screen.getByDisplayValue('{"TOKEN_X":"secret"}'), { target: { value: '' } });
+    fireEvent.change(screen.getByDisplayValue('https://example.com/mcp'), { target: { value: '' } });
+    fireEvent.change(screen.getByDisplayValue('MY_TOKEN'), { target: { value: '' } });
+    fireEvent.change(screen.getByDisplayValue('{"delete_all":"approve"}'), { target: { value: '' } });
+    fireEvent.change(screen.getByDisplayValue('get_data'), { target: { value: '' } });
+    fireEvent.change(screen.getByDisplayValue('delete_all'), { target: { value: '' } });
+    fireEvent.click(screen.getByText('Save'));
+
+    await waitFor(() => expect(putMock).toHaveBeenCalled());
+    expect(putMock).toHaveBeenCalledWith(
+      '/api/mcp/servers/srv',
+      expect.objectContaining({
+        env: {},
+        url: '',
+        bearer_token_env_var: '',
+        tool_overrides: {},
+        enabled_tools: [],
+        disabled_tools: [],
+      }),
+    );
   });
 });

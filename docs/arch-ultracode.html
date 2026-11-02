@@ -22,7 +22,8 @@
       GPT-on-Bedrock.</p>
 
     <p>The runtime lives in <code class="path">server/workflows/</code>. The model authors a script; a single
-      Node process parses and validates it; the user approves it; then the run executes detached while the
+      Node process parses and validates it; the user approves it (unless the permission mode launches it
+      directly, see <a href="#approval">Approval and trust</a>); then the run executes detached while the
       Python side enforces the limits and streams progress back as a live card. <b>Click a box</b> in the
       diagram to trace a workflow from authored script to finished run.</p>
 
@@ -83,13 +84,13 @@ return { confirmed: results.flat().filter(f =&gt; f.verdict?.isReal) }</code></p
     <div class="table-wrap"><table>
       <thead><tr><th>Hook</th><th>What it does</th></tr></thead>
       <tbody>
-        <tr><td><code>agent(prompt, opts?)</code></td><td>Spawn one subagent. Always resolves to an object: <code>{ text, output, usage, status, agent_id, model_key, model_warning }</code>. <code>text</code> is the agent's final message; <code>output</code> is the schema-validated object when <code>opts.schema</code> was given, so read <code>result.output.findings</code>, not <code>result.findings</code>. A failed agent resolves with <code>status: 'failed'</code> rather than throwing. <code>opts</code>: <code>label</code>, <code>phase</code>, <code>schema</code>, <code>model</code>, <code>effort</code>, <code>isolation:'worktree'</code>, <code>agentType</code>.</td></tr>
-        <tr><td><code>pipeline(items, …stages)</code></td><td>Run each item through all stages independently, <b>no barrier</b> between stages. Item A can be in stage 3 while B is still in stage 1. The default for multi-stage work.</td></tr>
-        <tr><td><code>parallel(thunks)</code></td><td>Run tasks concurrently and await them all - a barrier. A thrown thunk resolves to <code>null</code> (filter before use). Use only when you truly need every result together.</td></tr>
+        <tr><td><code>agent(prompt, opts?)</code></td><td>Spawn one subagent. Always resolves to an object: <code>{ text, output, usage, status, agent_id, model_warning }</code>. <code>text</code> is the agent's final message; <code>model_warning</code> is set when <code>opts.model</code> was refused; <code>output</code> is the schema-validated object when <code>opts.schema</code> was given, so read <code>result.output.findings</code>, not <code>result.findings</code>. A failed agent resolves with <code>status: 'failed'</code> rather than throwing. <code>opts</code>: <code>label</code>, <code>phase</code>, <code>schema</code>, <code>model</code>, <code>effort</code>, <code>isolation:'worktree'</code>, <code>agentType</code>.</td></tr>
+        <tr><td><code>pipeline(items, …stages)</code></td><td>Run each item through all stages independently, <b>no barrier</b> between stages. Item A can be in stage 3 while B is still in stage 1. A stage that throws drops that item to <code>null</code> and the error is logged. <code>AgentCapError</code>, <code>BudgetExceededError</code> and a cancel are not dropped: they reject the whole call, so the script can catch them. The default for multi-stage work.</td></tr>
+        <tr><td><code>parallel(thunks)</code></td><td>Run tasks concurrently and await them all - a barrier. A thrown thunk becomes <code>null</code> and the error is logged (filter before use). <code>AgentCapError</code>, <code>BudgetExceededError</code> and a cancel reject the whole call, so the script can catch them. Use only when you truly need every result together.</td></tr>
         <tr><td><code>phase(title)</code></td><td>Name the stretch of work the run is in. The card shows the current phase name; it does not nest agents under it, and a title absent from <code>meta.phases</code> logs a warning.</td></tr>
         <tr><td><code>log(...parts)</code></td><td>Append a line to the run's journal (<code>console.log</code> and <code>console.error</code> are aliases). It is a record for you to read afterwards, not something the card renders.</td></tr>
-        <tr><td><code>tool(name, args?)</code> · <code>tools.&lt;name&gt;(args)</code></td><td>Call a <b>read-only</b> tool directly, with no model in the loop, and get its output string. <code>tools</code> is a proxy, so <code>tools.ws_grep({ pattern })</code> and <code>tool('ws_grep', { pattern })</code> are the same call. Write tools are refused, and unknown names fail closed. Capped at 500 tool calls per run.</td></tr>
-        <tr><td><code>workflow(name, args?)</code></td><td>Run another saved workflow inline as a sub-step (one level of nesting; shares the parent's caps and budget).</td></tr>
+        <tr><td><code>tool(name, args?)</code> · <code>tools.&lt;name&gt;(args)</code></td><td>Call a <b>read-only</b> tool directly, with no model in the loop, and get its output string. <code>tools</code> is a proxy, so <code>tools.ws_grep({ pattern })</code> and <code>tool('ws_grep', { pattern })</code> are the same call. Write tools are refused, and unknown names fail closed. MCP tools that are marked read-only are allowed too. <code>agent()</code> and <code>tool()</code> calls share one counter, and <code>tool()</code> is refused after 500 calls of either kind in a run.</td></tr>
+        <tr><td><code>workflow(name, args?)</code></td><td>Run another saved workflow inline as a sub-step (one level of nesting; shares the parent's caps and budget). The called workflow must be saved and approved (from its preview card once, or earlier in this session); if not, <code>workflow()</code> returns <code>status: 'failed'</code>.</td></tr>
         <tr><td><code>budget</code></td><td><code>{ total, spent(), remaining() }</code> - the run's output-token budget. <code>spent()</code>/<code>remaining()</code> are async (a live RPC read of the token ledger), for dynamic loops (<code>while (await budget.remaining() &gt; 50_000) …</code>).</td></tr>
         <tr><td><code>args</code></td><td>The JSON value passed into the run, verbatim - the way a saved workflow is parameterized.</td></tr>
       </tbody>
@@ -99,7 +100,9 @@ return { confirmed: results.flat().filter(f =&gt; f.verdict?.isReal) }</code></p
     <p>The script runs inside a Node&nbsp;22 <code>vm</code> context created by
       <code class="path">server/workflows/harness/harness.mjs</code>. The context is deliberately bare: there
       is no <code>require</code>, <code>process</code>, <code>fs</code>, <code>fetch</code>, or module
-      system - only the hooks above and the standard JS built-ins. On top of that,
+      system - only the hooks above and the standard JS built-ins. The harness runs on the
+      <code>node</code> that <code>WHISPER_NODE_PATH</code> names, or else the first <code>node</code> on
+      <code>PATH</code>. When there is neither, the run fails with "Node.js was not found". On top of that,
       <code class="path">harness/guards.mjs</code> installs determinism guards so a resume always replays
       identically:</p>
     <div class="spec">
@@ -116,7 +119,8 @@ return { confirmed: results.flat().filter(f =&gt; f.verdict?.isReal) }</code></p
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg></span>
       <div class="callout__body"><p>Honest caveat: a <code>vm</code> context is <b>not</b> a certified security
-        boundary. The real anchor is defence in depth - the user approves every new script before it runs,
+        boundary. The real anchor is defence in depth - the user approves every new script before it runs
+        (unless the Workflow runs mode is Bypass, or Auto with a budget of 600,000 output tokens or less),
         the context has no dangerous globals, the child's environment is scrubbed, and codegen-from-strings
         is disabled. Treat a workflow script the way you treat any code you are about to run: read the
         preview.</p></div>
@@ -139,8 +143,10 @@ return { confirmed: results.flat().filter(f =&gt; f.verdict?.isReal) }</code></p
         well as before dispatch - that bounds a parallel burst's overshoot to the concurrency window
         instead of the whole cap.</p></li>
       <li><h4>A 500-call read-only tool ceiling</h4><p><code>tool()</code> and <code>tools.&lt;name&gt;()</code>
-        share the run's call counter. Each name is checked against the executor registry and refused unless
-        it is registered read-only, failing closed on a name the registry does not know.</p></li>
+      use the run's sequence counter, which <code>agent()</code> calls also advance, so <code>tool()</code>
+      is refused once the run has made 500 calls of either kind. Each name is checked against the executor
+      registry and refused unless it is registered read-only (or is an MCP tool marked read-only), failing
+      closed on a name the registry does not know.</p></li>
       <li><h4>A pinned workspace</h4><p>The run's root is frozen when it is previewed or launched, so every
         agent in it resolves workspace tools against that path rather than whatever folder happens to be
         connected by the time it starts. An explicit path must already exist, and one outside the connected
@@ -148,9 +154,10 @@ return { confirmed: results.flat().filter(f =&gt; f.verdict?.isReal) }</code></p
       <li><h4>A resumable journal</h4><p>Every phase and agent call is appended to the run's journal; the
         resume cache is built from it (see below).</p></li>
     </ol>
-    <p>None of these is a config key: they are code constants, so a deployment cannot widen them from
-      <code class="path">config.json</code>. The only per-run knob is <code>budget_tokens</code>, which a
-      launch may set and which the approval gate reads.</p>
+    <p>None of these is a config key: they are code constants, so they cannot be widened from the config
+    (<code class="path">config.user.json</code>). The only per-run limit is <code>budget_tokens</code>,
+    which a launch may set and which the approval gate reads; <code>workspace_path</code> pins the
+    folder.</p>
     <p>USD cost is still priced per agent against the model that actually ran (a per-agent
       <code>opts.model</code> override is billed at that model's rate) and rolls up into the run's ledger
       and the session cost log, but it is display only - enforcement is the token counter. Because
@@ -165,15 +172,16 @@ return { confirmed: results.flat().filter(f =&gt; f.verdict?.isReal) }</code></p
     <h2 id="bridge">The Node harness to Python bridge</h2>
     <p>The script and the runtime speak line-delimited JSON-RPC over the child's stdio, framed by
       <code class="path">server/workflows/rpc.py</code> (a 10&nbsp;MB line ceiling, typed error constants for
-      budget / cap / cancel / depth). Only the calls that need the model cross the boundary: an
-      <code>agent()</code> or nested <code>workflow()</code> becomes a request to Python; every other
-      statement is pure in-sandbox JS. This is what lets the same script run unchanged on either provider -
+      budget / cap / cancel / depth). <code>agent()</code>, nested <code>workflow()</code>,
+      <code>tool()</code> (and <code>tools.&lt;name&gt;()</code>), and <code>budget.spent()</code> /
+      <code>budget.remaining()</code> are requests to Python; <code>phase()</code> and <code>log()</code>
+      are notifications; every other statement is pure in-sandbox JS. This is what lets the same script run unchanged on either provider -
       the harness never talks to a model directly.</p>
     <p>On the Python side, <code class="path">server/workflows/agent_adapter.py</code> turns one
       <code>agent()</code> RPC into one <a href="arch-agents.html">run_agent</a> call. It maps the harness
       opts (<code>schema</code> to <code>structured_schema</code>, <code>effort</code>, <code>model</code>,
       <code>isolation</code>, <code>agentType</code>) and normalizes the result back to
-      <code>{ text, output, usage, status, agent_id }</code>. Because it rides the
+      <code>{ text, output, usage, status, agent_id, model_warning }</code>. Because it rides the
       <a href="arch-backends.html">provider-agnostic runtime</a>, a workflow launched from a GPT-on-Bedrock
       session spawns GPT subagents, and one launched from a Claude session spawns Claude subagents -
       structured output is validated on both.</p>
@@ -189,21 +197,23 @@ return { confirmed: results.flat().filter(f =&gt; f.verdict?.isReal) }</code></p
     <h2 id="journal-resume">Journal, resume, and lifecycle</h2>
     <p>Runs are registered in the <code>workflow_runs</code> table (see
       <a href="arch-persistence.html">Persistence</a>) with an immutable on-disk script snapshot and an
-      append-only journal under <code class="path">data/workflows/runs/&lt;run_id&gt;/</code>. The run is driven
+      append-only journal under <code class="path">workflows/runs/&lt;run_id&gt;/</code> in the data root
+      (<code class="path">~/.whisper/data</code> for the Mac app, <code class="path">data/</code> in the
+      checkout for a source install; <code>WHISPER_DATA_DIR</code> or <code>data_dir</code> move it). Saved
+      scripts are under <code class="path">workflows/scripts/&lt;name&gt;/</code> in the same root. The run is driven
       detached via the shared async-task machinery; its outcome is published on a per-run event-bus channel
       (<code>workflow:{run_id}</code>) so a reloaded session re-attaches. On boot, <code>reconcile_stale()</code>
       flips any orphaned <code>running</code> row to <code>stale</code> - its journal stays resumable.</p>
     <p>Resume is the payoff of determinism. Every <code>agent()</code> call is keyed by a
       <code>call_hash</code> of its <em>prompt and opts</em> (display-only fields like <code>label</code> and
-      <code>phase</code> are dropped). When a run is resumed, the longest unchanged prefix of calls returns
-      cached results instantly - ordered by issue <code>seq</code>, not completion order, so two identical
-      parallel calls replay into the right positions - and only the first edited call and everything after
-      it runs live. Same script and same args means a 100% cache hit; editing one stage re-runs that stage
-      onward.</p>
+      <code>phase</code> are dropped). When a run is resumed, every call whose prompt and opts match a
+      completed call of the earlier run replays from the cache, wherever it is in the script. Results with
+      the same hash replay first in, first out in issue <code>seq</code> order (not completion order), so
+      two identical parallel calls replay into the right positions. Calls with a changed prompt or opts run
+      live, and so do calls whose inputs depend on changed results. Failed calls are not cached. Same script
+      and same args means a 100% cache hit.</p>
     <h3 id="deliverables">Deliverable verification</h3>
-    <p>A run used to be "completed" the moment its script returned without raising, so a script whose own
-      return text said it could not write the file still produced a green card. Now a script that produces
-      files lists their paths in its return value under <code>deliverables</code> (strings, or
+    <p>A script that produces files lists their paths in its return value under <code>deliverables</code> (strings, or
       <code>{path}</code> objects; relative paths resolve against the run's workspace), and
       <code>verify_deliverables</code> checks each one <b>before</b> the run is finalized. Any path that is
       missing or zero bytes downgrades the run to <code>failed</code> with an error naming the first few,
@@ -212,14 +222,11 @@ return { confirmed: results.flat().filter(f =&gt; f.verdict?.isReal) }</code></p
       claim that it wrote one.</p>
 
     <h3 id="result-cards">Readable results</h3>
-    <p>What the task card shows and the model reads next turn is prose, not JSON.
-      <code>_render_result</code> walks the script's return value by hand (strings verbatim, lists as
-      <code>- item</code> lines, dicts as <code>key: value</code>, nested with indentation), because
-      <code>json.dumps</code> escaped every apostrophe and turned every paragraph break into a literal
-      <code>\n</code>, which the card then rendered exactly as written. The excerpt is capped at 2,048
-      characters, and a workflow result keeps its <b>head</b> rather than its tail: unlike a shell log, a
-      workflow report leads with its headline (status, agent count, cost), and tailing it showed a
-      mid-sentence fragment with the headline cut off.</p>
+    <p>What the Background tasks list shows and the model reads next turn is prose, not JSON.
+    <code>_render_result</code> walks the script's return value (strings as written, lists as
+    <code>- item</code> lines, dicts as <code>key: value</code>, nested with indentation). The excerpt is
+    capped at 2,048 characters, and a workflow result keeps its <b>head</b> rather than its tail, because
+    a workflow report leads with its headline (status, agent count, cost).</p>
 
     <div class="spec">
       <dt><code class="path">server/workflows/journal.py</code></dt><dd><code>call_hash</code>, the append-only writer, and <code>load_resume_cache</code> (seq-ordered).</dd>
@@ -242,12 +249,13 @@ return { confirmed: results.flat().filter(f =&gt; f.verdict?.isReal) }</code></p
       later edited, since it is pinned by hash, and session grants are process memory that a restart
       clears. A resume replays a run you already approved. This preview-then-approve gate is the same
       mechanism the CI autofix below reuses.</p>
-    <p>Whether a new script shows the card at all is decided by the <b>workflow</b> row under
-      Settings &rsaquo; Permissions &rsaquo; Per-Category Defaults
-      (<code class="path">server/workflows/launch_policy.py</code> reads the <code>category_modes</code>
-      entry, falling back to the global permission mode): <code>bypassPermissions</code> launches with no
-      card, <code>auto</code> launches runs budgeted within the 600,000-token default and cards anything
-      bigger, <code>dontAsk</code> declines the launch, and every other mode asks as before. Trusted saved
+    <p>Whether a new script shows the card at all is decided by the <b>Workflow runs</b> row under
+    Settings &rsaquo; Keys and permissions &rsaquo; Permissions &rsaquo; Per-Category Defaults
+    (<code class="path">server/workflows/launch_policy.py</code> reads the <code>category_modes</code>
+    entry, and uses the global permission mode when the row is "Use global setting"): <b>Bypass</b>
+    launches with no card, <b>Auto</b> launches runs budgeted within the 600,000-token default and
+    shows the card for anything bigger, <b>Don't ask</b> declines the launch, and every other mode
+    (Asks first, Plan, Accept edits) shows the card. Trusted saved
       workflows and resumes never consult this gate, and no mode loosens the runtime's server-side limits
       above - the concurrency semaphore, the agent cap, the token budget, and the vm jail apply
       regardless.</p>
@@ -255,9 +263,9 @@ return { confirmed: results.flat().filter(f =&gt; f.verdict?.isReal) }</code></p
     <h2 id="ci-autofix">CI watch and PR autofix: ultracode applied</h2>
     <p>The clearest use of the runtime is the CI loop in <code class="path">server/ci/</code>. After you push,
       <code>ci_watch</code> follows a branch's GitHub Actions run to its conclusion as a detached
-      <a href="arch-cron.html">background task</a>. When it fails, <code>ci_autofix</code> reads the failing
+      <a href="arch-agents.html">background task</a>. When it fails, <code>ci_autofix</code> reads the failing
       logs, diagnoses each failure into structured findings, and <b>generates a workflow script</b> that
-      applies the minimal fixes and then runs the <code>verify_change</code> skill. That generated script is
+      applies the minimal fixes and then runs the <code>verify_change</code> tool. That generated script is
       handed to you through the very same <code>workflow_preview</code> card - so nothing is edited or pushed
       until you approve it, and once approved it runs under the runtime's budget, journal, and run card.
       Untrusted CI-log text is embedded as double-encoded JSON and clearly delimited as data in the fix
@@ -274,7 +282,7 @@ return { confirmed: results.flat().filter(f =&gt; f.verdict?.isReal) }</code></p
       duplicating them.</p>
     <div class="spec">
       <dt><a href="arch-agents.html">Provider-agnostic agents</a></dt><dd>Every <code>agent()</code> is a <code>run_agent</code> call, so workflows inherit Claude/GPT parity, usage accounting, effort, structured output, and worktree isolation.</dd>
-      <dt><a href="arch-agents.html">The task registry</a></dt><dd>A CI watch is a row in the unified background-task registry, so it appears in the header's task list. A workflow run is mirrored into that same registry as a <code>workflow</code>-kind row, on top of its own <code>workflow_runs</code> row and <code>WorkflowRunCard</code>, so it shows up in the tasks panel too and posts a task card when it ends.</dd>
+      <dt><a href="arch-agents.html">The task registry</a></dt><dd>A CI watch is a row in the unified background-task registry, so it appears in the header's task list. A workflow run is mirrored into that same registry as a <code>workflow</code>-kind row, on top of its own <code>workflow_runs</code> row and <code>WorkflowRunCard</code>, so it shows up in the header's Background tasks list too, and its result is injected into the next turn (<code class="path">server/agents/completion_inject.py</code>).</dd>
       <dt><a href="arch-tools.html">Tool disclosure and hooks</a></dt><dd>The workflow and CI tools surface only in the ultracode tier; workflow subagents still pass through the same Pre/PostToolUse hooks and tool executors.</dd>
       <dt>The built-in verify_change tool</dt><dd>Generated fix workflows end by running the repo's verification gate, which emits a deterministic <code>VERIFY PASS</code> / <code>VERIFY FAIL</code> line - the same tool the goal completion gate keys on.</dd>
     </div>

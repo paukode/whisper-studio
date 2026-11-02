@@ -64,20 +64,16 @@ def _ensure_model() -> str:
         snapshot_download(
             repo_id=CANARY_REPO_ID,
             local_dir=CANARY_MODEL_DIR,
-            local_dir_use_symlinks=False,
         )
         log.info("Canary model download complete.")
     return os.path.abspath(CANARY_MODEL_DIR)
 
 
-def is_loaded() -> bool:
-    return _model is not None
-
-
 def load() -> None:
     """Load the model into memory (mirrors mlx-audio's base_load_model steps,
-    minus its quantization/remapping branches the fp16 repo never hits). Run
-    on ``executor``."""
+    minus its quantization/remapping branches the fp16 repo never hits). The
+    weights load strictly: a key-mapping break raises instead of leaving
+    layers at random init. Run on ``executor``."""
     global _model
     if _model is not None:
         return
@@ -91,33 +87,14 @@ def load() -> None:
 
         log.info("Loading Canary model from %s ...", model_dir)
         config = json.loads((model_dir / "config.json").read_text())
-        config["model_path"] = str(model_dir)
         model = Model(ModelConfig.from_dict(config))
-        weights = mx.load(str(model_dir / "model.safetensors"))
-        if hasattr(model, "sanitize"):
-            weights = model.sanitize(weights)
-        model.load_weights(list(weights.items()), strict=False)
+        weights = model.sanitize(mx.load(str(model_dir / "model.safetensors")))
+        model.load_weights(list(weights.items()), strict=True)
         mx.eval(model.parameters())
         model.eval()
         # Loads the SentencePiece tokenizer from the model dir.
         _model = Model.post_load_hook(model, model_dir)
         log.info("Canary model loaded.")
-
-
-def unload() -> None:
-    """Release the weights."""
-    global _model
-    _model = None
-    try:
-        import mlx.core as mx
-
-        mx.clear_cache()
-    except Exception as e:
-        log.debug("Canary mx cache clear on unload failed: %s", e)
-    import gc
-
-    gc.collect()
-    log.info("Canary model unloaded.")
 
 
 def _lid(audio: np.ndarray, candidates: tuple[str, ...]) -> tuple[str | None, float]:

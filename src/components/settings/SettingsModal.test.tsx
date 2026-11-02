@@ -106,20 +106,10 @@ describe('SettingsModal — deep-link routing', () => {
     expect(screen.getByRole('tab', { name: 'Costs' })).toHaveAttribute('aria-selected', 'true');
   });
 
-  it('the retired id "stats" is not routed: it opens the default, API keys', () => {
-    // Stats was folded into Costs; no alias keeps the old id alive.
-    openAt('stats');
-    expect(screen.getByText('APISettings')).toBeInTheDocument();
-    expect(
-      screen.getByRole('button', { name: /Keys and permissions/i }),
-    ).toHaveAttribute('aria-current', 'page');
-  });
-
-  it('Usage and advanced opens on Costs and has no Stats sub-tab', () => {
+  it('Usage and advanced opens on Costs', () => {
     openAt('usage-advanced');
     expect(screen.getAllByRole('tab')[0]).toHaveTextContent('Costs');
     expect(screen.getByText('CostsPanel')).toBeInTheDocument();
-    expect(screen.queryByRole('tab', { name: 'Stats' })).toBeNull();
   });
 
   it('old id "hooks" opens Tasks and hooks → Hooks', () => {
@@ -129,12 +119,6 @@ describe('SettingsModal — deep-link routing', () => {
       screen.getByRole('button', { name: /Tasks and hooks/i }),
     ).toHaveAttribute('aria-current', 'page');
     expect(screen.getByRole('tab', { name: 'Hooks' })).toHaveAttribute('aria-selected', 'true');
-  });
-
-  it('has no Workflows destination anywhere in Settings', () => {
-    // Removed by user request: workflows are approved and managed from chat.
-    openAt('hooks');
-    expect(screen.queryByText(/^Workflows$/)).not.toBeInTheDocument();
   });
 
   it('old id "apikeys" opens Keys and permissions → API keys', () => {
@@ -168,7 +152,7 @@ describe('SettingsModal — deep-link routing', () => {
   });
 
   it('an unknown tab id falls back to Keys and permissions → API keys', () => {
-    openAt('general'); // the store's initial default value
+    openAt('no-such-tab');
     expect(screen.getByText('APISettings')).toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: /Keys and permissions/i }),

@@ -193,11 +193,7 @@ def test_reserved_companion_bytes_zero_when_no_companion_dirs_exist(tmp_path, mo
         "server.diarization.embedder.REDIMNET_CACHE_DIR",
     ):
         monkeypatch.setattr(target, missing)
-    service._reserved_companion_bytes.cache_clear()
-    try:
-        assert service._reserved_companion_bytes() == 0
-    finally:
-        service._reserved_companion_bytes.cache_clear()
+    assert service._reserved_companion_bytes() == 0
 
 
 def test_reserved_companion_bytes_counts_only_the_active_asr_backend(tmp_path, monkeypatch):
@@ -217,18 +213,10 @@ def test_reserved_companion_bytes_counts_only_the_active_asr_backend(tmp_path, m
     monkeypatch.setattr("server.diarization.embedder.REDIMNET_CACHE_DIR", missing)
 
     monkeypatch.setattr(cfg, "load_config", lambda: {"transcription_backend": "streaming"})
-    service._reserved_companion_bytes.cache_clear()
-    try:
-        assert service._reserved_companion_bytes() == 5000  # parakeet only ("streaming" alias)
-    finally:
-        service._reserved_companion_bytes.cache_clear()
+    assert service._reserved_companion_bytes() == 5000  # parakeet only ("streaming" alias)
 
     monkeypatch.setattr(cfg, "load_config", lambda: {"transcription_backend": "whisper"})
-    service._reserved_companion_bytes.cache_clear()
-    try:
-        assert service._reserved_companion_bytes() == 9000  # whisper only
-    finally:
-        service._reserved_companion_bytes.cache_clear()
+    assert service._reserved_companion_bytes() == 9000  # whisper only
 
 
 def test_reserved_companion_bytes_never_counts_index_models(tmp_path, monkeypatch):
@@ -249,11 +237,7 @@ def test_reserved_companion_bytes_never_counts_index_models(tmp_path, monkeypatc
         "server.index.config.RERANK_MODEL_DIR",
     ):
         monkeypatch.setattr(target, str(big_index_model))
-    service._reserved_companion_bytes.cache_clear()
-    try:
-        assert service._reserved_companion_bytes() == 0
-    finally:
-        service._reserved_companion_bytes.cache_clear()
+    assert service._reserved_companion_bytes() == 0
 
 
 # ── search: arch filtering, dedup, ranking ───────────────────────────
@@ -434,7 +418,6 @@ def isolated_home(tmp_path, monkeypatch):
     monkeypatch.setenv("WHISPER_HOME", str(tmp_path))
     monkeypatch.setattr(cfg, "EXAMPLE_CONFIG_PATH", str(example))
     monkeypatch.setattr(cfg, "USER_CONFIG_PATH", str(tmp_path / "config.user.json"))
-    monkeypatch.setattr(cfg, "CONFIG_PATH", str(tmp_path / "config.json"))
     monkeypatch.setattr(cfg, "_system_cache", None)
     monkeypatch.setattr(cfg, "_system_cache_key", None)
     cfg._invalidate_cache()
@@ -565,42 +548,29 @@ def test_install_honours_explicit_n_ctx(isolated_home, monkeypatch):
     assert "supports_thinking" not in result
 
 
-def test_uninstall_removes_user_entry(isolated_home, monkeypatch):
-    _stub_hf_and_queue(monkeypatch)
-    result = service.install_model("unsloth/Qwen3-0.6B-GGUF", "Qwen3-0.6B-Q4_K_M.gguf")
-    key = result["key"]
-
-    # Stub the manager so uninstall doesn't touch disk / llama-server.
-    monkeypatch.setattr("server.models_manager.catalog.get_entry", lambda k: None)
-    out = service.uninstall_model(key)
-    assert out["removed"] is True
-    data = json.loads((isolated_home / "config.user.json").read_text())
-    assert key not in data.get("chat_models", {})
+# ── small models installed before the agentic gate: reported, never rewritten ──
+_SMALL_WITH_TOOLS = {
+    "id": "local:small",
+    "is_local": True,
+    "supports_tools": True,
+    "repo_id": "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF",
+    "filename": "Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf",
+}
 
 
-def test_uninstall_refuses_non_browser_key(isolated_home, monkeypatch):
-    with pytest.raises(service.InstallError):
-        service.uninstall_model("local_gemma")  # a built-in, not a user entry
-
-
-# ── one-shot sweep: models installed before the agentic gate existed ──────────
-def _write_user_config(home, payload):
-    (home / "config.user.json").write_text(json.dumps(payload))
+def _write_user_config(home, payload) -> str:
+    text = json.dumps(payload)
+    (home / "config.user.json").write_text(text)
     cfg._invalidate_cache()
+    return text
 
 
-def test_sweep_disables_tools_on_previously_installed_small_models(isolated_home):
-    _write_user_config(
+def test_small_models_with_tools_are_reported_and_the_file_is_left_alone(isolated_home):
+    text = _write_user_config(
         isolated_home,
         {
             "chat_models": {
-                "local_small": {
-                    "id": "local:small",
-                    "is_local": True,
-                    "supports_tools": True,
-                    "repo_id": "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF",
-                    "filename": "Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf",
-                },
+                "local_small": dict(_SMALL_WITH_TOOLS),
                 "local_big": {
                     "id": "local:big",
                     "is_local": True,
@@ -608,48 +578,32 @@ def test_sweep_disables_tools_on_previously_installed_small_models(isolated_home
                     "repo_id": "unsloth/Qwen3.5-9B-GGUF",
                     "filename": "Qwen3.5-9B-Q4_K_M.gguf",
                 },
+                # A cloud model has no local tool loop and is never reported.
                 "opus5.0": {"id": "cloud-model", "supports_tools": True},
             }
         },
     )
 
-    assert install.disable_tools_on_small_models() == ["local_small"]
+    assert install.small_models_with_tools() == ["local_small"]
+    [(title, message)] = install.small_model_tool_notices()
+    assert title == "Small models still have tool calling on"
+    assert "local_small" in message and "local_big" not in message
+    assert f"{compat.AGENTIC_MIN_PARAMS_B:g}B parameters" in message
+    assert (isolated_home / "config.user.json").read_text() == text
 
-    data = json.loads((isolated_home / "config.user.json").read_text())
-    assert data["chat_models"]["local_small"]["supports_tools"] is False
-    assert data["chat_models"]["local_big"]["supports_tools"] is True
-    # A cloud model has no local tool loop and must never be touched by this.
-    assert data["chat_models"]["opus5.0"]["supports_tools"] is True
 
-
-def test_sweep_runs_once_so_a_deliberate_re_enable_sticks(isolated_home):
+def test_a_small_model_turned_back_on_after_the_old_sweep_is_not_reported(isolated_home):
+    # Older versions set this flag after turning tools off themselves, so tools
+    # on now is the user's own choice.
     _write_user_config(
         isolated_home,
-        {
-            "chat_models": {
-                "local_small": {
-                    "id": "local:small",
-                    "is_local": True,
-                    "supports_tools": True,
-                    "repo_id": "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF",
-                    "filename": "Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf",
-                }
-            }
-        },
+        {"small_model_tools_swept": True, "chat_models": {"local_small": dict(_SMALL_WITH_TOOLS)}},
     )
-    assert install.disable_tools_on_small_models() == ["local_small"]
-
-    # The user turns it back on by hand — a supported choice.
-    data = json.loads((isolated_home / "config.user.json").read_text())
-    data["chat_models"]["local_small"]["supports_tools"] = True
-    _write_user_config(isolated_home, data)
-
-    assert install.disable_tools_on_small_models() == []
-    data = json.loads((isolated_home / "config.user.json").read_text())
-    assert data["chat_models"]["local_small"]["supports_tools"] is True
+    assert install.small_models_with_tools() == []
+    assert install.small_model_tool_notices() == []
 
 
-def test_sweep_leaves_an_entry_with_no_repo_id_alone(isolated_home):
+def test_an_entry_with_no_repo_id_is_not_reported(isolated_home):
     _write_user_config(
         isolated_home,
         {
@@ -662,9 +616,12 @@ def test_sweep_leaves_an_entry_with_no_repo_id_alone(isolated_home):
             }
         },
     )
-    assert install.disable_tools_on_small_models() == []
-    data = json.loads((isolated_home / "config.user.json").read_text())
-    assert data["chat_models"]["local_handrolled"]["supports_tools"] is True
+    assert install.small_models_with_tools() == []
+
+
+def test_no_user_config_reports_nothing_and_creates_nothing(isolated_home):
+    assert install.small_model_tool_notices() == []
+    assert not (isolated_home / "config.user.json").exists()
 
 
 # ── recommended: the curated Discover catalog + one-click install ─────────────
@@ -810,25 +767,6 @@ def test_remove_from_list_deletes_local_user_entry(isolated_home, monkeypatch):
     assert key not in data.get("chat_models_disabled", [])
 
 
-def test_remove_from_list_deletes_a_downloaded_recommendation(isolated_home, monkeypatch):
-    # A recommended model present on disk (e.g. from a prior release) with no user
-    # config entry is still LOCAL — remove deletes it, never tombstones.
-    monkeypatch.setattr(
-        "server.local.registry._recommended_downloaded_on_disk",
-        lambda entry: entry.get("id") == "local:gemma-4-12b-it-qat-q4_0",
-    )
-    monkeypatch.setattr("server.models_manager.catalog.get_entry", lambda k: None)
-    out = service.remove_from_list("local_gemma")
-    assert out["scope"] == "local"
-
-    data = (
-        json.loads((isolated_home / "config.user.json").read_text())
-        if (isolated_home / "config.user.json").exists()
-        else {}
-    )
-    assert "local_gemma" not in data.get("chat_models_disabled", [])
-
-
 def test_remove_from_list_refuses_a_model_answering_in_a_chat(isolated_home, monkeypatch):
     """Refused as a whole: the config entry stays with the weights, instead of
     the entry vanishing while gigabytes of weights stay on disk unlisted."""
@@ -850,14 +788,37 @@ def test_remove_from_list_refuses_a_model_answering_in_a_chat(isolated_home, mon
 
     with pytest.raises(manager.ModelBusy):
         service.remove_from_list(key)
-    with pytest.raises(manager.ModelBusy):
-        service.uninstall_model(key)
     data = json.loads((isolated_home / "config.user.json").read_text())
     assert key in data.get("chat_models", {}), "the entry was dropped while the model answered"
 
 
-@pytest.mark.parametrize("path", ["/api/models/browse/k1/entry", "/api/models/browse/k1"])
-def test_remove_and_uninstall_answer_409_with_the_reason(monkeypatch, path):
+def test_remove_from_list_keeps_the_entry_when_the_folder_is_shared(isolated_home, monkeypatch):
+    """A shared-folder refusal used to read as 'nothing on disk': the entry
+    went and the weights stayed behind with no entry."""
+    from server.models_manager import manager
+
+    _stub_hf_and_queue(monkeypatch)
+    key = service.install_model("unsloth/Qwen3-0.6B-GGUF", "Qwen3-0.6B-Q4_K_M.gguf")["key"]
+    monkeypatch.setattr("server.models_manager.catalog.get_entry", lambda k: object())
+    monkeypatch.setattr(manager, "cancel", lambda e: None)
+
+    def shared(entry):
+        raise manager.Conflict("This model shares its folder with another entry.")
+
+    monkeypatch.setattr(manager, "delete", shared)
+    with pytest.raises(manager.Conflict, match="shares its folder"):
+        service.remove_from_list(key)
+    data = json.loads((isolated_home / "config.user.json").read_text())
+    assert key in data.get("chat_models", {})
+
+    def gone(entry):
+        raise manager.NotOnDisk("Nothing to delete: this model is not on disk.")
+
+    monkeypatch.setattr(manager, "delete", gone)
+    assert service.remove_from_list(key)["removed_entry"] is True
+
+
+def test_remove_answers_409_with_the_reason(monkeypatch):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
@@ -868,10 +829,9 @@ def test_remove_and_uninstall_answer_409_with_the_reason(monkeypatch, path):
         raise manager.ModelBusy("This model is answering in a chat right now.")
 
     monkeypatch.setattr(service, "remove_from_list", busy)
-    monkeypatch.setattr(service, "uninstall_model", busy)
     app = FastAPI()
     app.include_router(router)
-    r = TestClient(app).delete(path)
+    r = TestClient(app).delete("/api/models/browse/k1/entry")
     assert r.status_code == 409
     assert "answering" in r.json()["detail"]
 
@@ -905,3 +865,19 @@ def test_registry_key_is_stable_and_prefixed():
     assert key.startswith("local_")
     # Different quant → different key (so two quants of one repo coexist).
     assert key != install.registry_key("unsloth/Qwen3-0.6B-GGUF", "Q8_0")
+
+
+def test_a_config_error_reaches_the_local_registry_and_discover(monkeypatch):
+    """A broken config used to read as an empty local catalog, so a local
+    chat silently went down the cloud path and Discover lost its badges."""
+    from server.infrastructure import config
+    from server.local import registry
+
+    def broken():
+        raise config.ConfigFileError("config.user.json is not valid JSON")
+
+    monkeypatch.setattr(config, "unfiltered_chat_models", broken)
+    with pytest.raises(config.ConfigFileError):
+        registry._config_local_models()
+    with pytest.raises(config.ConfigFileError):
+        install.is_local_model("local_gemma")

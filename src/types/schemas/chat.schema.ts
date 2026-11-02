@@ -50,7 +50,7 @@ export const TeamProgressEventSchema = z.object({
  *  field is declared, since a nested z.object drops the keys it does not
  *  name; the optional ones also accept null, which reads as absent. `kind`
  *  stays an open string: a kind this client does not know yet still renders. */
-export const DeliverySchema = z.object({
+const DeliverySchema = z.object({
   kind: z.string(),
   target: z.string(),
   label: z.string(),
@@ -124,7 +124,7 @@ export const SSEEventDataSchema = z.object({
     tool_use_id: z.string(),
     action: z.string(),
     category: z.string(),
-    preview: z.enum(['diff', 'command', 'list', 'text']),
+    preview: z.enum(['diff', 'command', 'text']),
     summary: z.string(),
     payload: z.record(z.string(), z.unknown()),
     risk_hint: z.enum(['low', 'medium', 'high']).nullable().optional(),
@@ -236,7 +236,6 @@ export const SSEEventDataSchema = z.object({
     run_id: z.string().optional(),
     status: z.enum(['ok', 'failed']).optional(),
     text: z.string().optional(),
-    interval_minutes: z.number().optional(),
     schedule_label: z.string().optional(),
     next_run: z.string().optional(),
     duration_ms: z.number().optional(),
@@ -258,7 +257,6 @@ export const SSEEventDataSchema = z.object({
     full_size: z.number().optional(),
     kept_bytes: z.number().optional(),
     cache_filename: z.string().nullable().optional(),
-    cache_path: z.string().nullable().optional(),
   }).optional(),
 
   // Usage/tokens
@@ -266,9 +264,9 @@ export const SSEEventDataSchema = z.object({
     input_tokens: z.number().optional(),
     output_tokens: z.number().optional(),
     total_input: z.number().optional(),
-    total_output: z.number().optional(),
-    total_prompt: z.number().optional(),
-    estimated_cost_usd: z.number().optional(),
+    total_output: z.number(),
+    total_prompt: z.number(),
+    estimated_cost_usd: z.number(),
     context_used: z.number().optional(),
     context_max: z.number().optional(),
   }).optional(),

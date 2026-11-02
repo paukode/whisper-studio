@@ -42,15 +42,12 @@ function parseToolNameList(raw: string): string[] {
 
 /** Copying a JSON snippet from docs/chat often converts straight quotes to
  *  curly ones (" " ' '), which are invalid JSON. Normalize them back. */
-export const dequoteSmart = (s: string): string =>
+const dequoteSmart = (s: string): string =>
   s.replace(/[“”]/g, '"').replace(/[‘’]/g, "'");
 
-/** Parse the args text field into a string[]. args is just JSON: it must be a
- *  JSON array of strings (empty field = no args). There is no comma-split or
- *  wrap-as-one-arg fallback — invalid input is a hard error, never reinterpreted
- *  (silently wrapping a bracketed string as one arg is exactly what broke
- *  launched commands). The only leniency is normalizing curly quotes to straight
- *  ones, the copy-paste artifact that turns a valid array into invalid JSON. */
+/** Parse the args text field into a string[]: a JSON array of strings (empty
+ *  field = no args). Invalid input is an error, never reinterpreted. Curly
+ *  quotes, a copy-paste artifact, are normalized to straight ones first. */
 export function parseMcpArgs(raw: string): { args: string[] } | { error: string } {
   const trimmed = raw.trim();
   if (!trimmed) return { args: [] };
@@ -149,7 +146,10 @@ export const MCPSettings: React.FC = () => {
     }
     const args = parsedArgs.args;
 
-    let env: Record<string, string> | undefined;
+    // Cleared fields are sent as explicit empty values: an edit (PUT) keeps
+    // the stored value of any field the body leaves out, so leaving a cleared
+    // field out would keep its old value (an env var, a url, a tool list).
+    let env: Record<string, string> = {};
     if (formData.env.trim()) {
       try {
         const parsed = z.record(z.string(), z.string()).safeParse(JSON.parse(dequoteSmart(formData.env)));
@@ -165,7 +165,7 @@ export const MCPSettings: React.FC = () => {
       }
     }
 
-    let toolOverrides: Record<string, string> | undefined;
+    let toolOverrides: Record<string, string> = {};
     if (formData.toolOverrides.trim()) {
       try {
         const parsed = z
@@ -183,18 +183,13 @@ export const MCPSettings: React.FC = () => {
       }
     }
 
-    const bearerTokenEnvVar = formData.bearerTokenEnvVar.trim() || undefined;
-    const approvalMode = formData.approvalMode || 'auto';
-    const enabledTools = parseToolNameList(formData.enabledTools);
-    const disabledTools = parseToolNameList(formData.disabledTools);
-
     const extraBody = {
-      url: url || undefined,
-      bearer_token_env_var: bearerTokenEnvVar,
-      approval_mode: approvalMode,
+      url,
+      bearer_token_env_var: formData.bearerTokenEnvVar.trim(),
+      approval_mode: formData.approvalMode || 'auto',
       tool_overrides: toolOverrides,
-      enabled_tools: enabledTools.length ? enabledTools : undefined,
-      disabled_tools: disabledTools.length ? disabledTools : undefined,
+      enabled_tools: parseToolNameList(formData.enabledTools),
+      disabled_tools: parseToolNameList(formData.disabledTools),
     };
 
     setSaving(true);
@@ -295,6 +290,8 @@ export const MCPSettings: React.FC = () => {
           payload: { elicitation_id: e.elicitation_id, response_action: responseAction, content },
         });
         await useMcpStore.getState().refresh();
+      } catch (err) {
+        setError(`Could not answer ${e.server}: ${err instanceof Error ? err.message : String(err)}`);
       } finally {
         setElicitationBusy(null);
       }
@@ -303,7 +300,7 @@ export const MCPSettings: React.FC = () => {
   );
 
   const statusClass = (status: string) => {
-    if (status === 'running' || status === 'connected') return 'connected';
+    if (status === 'connected') return 'connected';
     if (status === 'error') return 'error';
     return 'stopped';
   };

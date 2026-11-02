@@ -117,10 +117,12 @@ async def lsp_websocket_proxy(
         await _fail(websocket, server.reason)
         return
 
-    # Resolve workspace path
-    ws_path = workspace or os.getcwd()
-    if not os.path.isdir(ws_path):
-        ws_path = os.getcwd()
+    # The language server runs in the editor's workspace, never in the
+    # backend's own working directory.
+    ws_path = workspace
+    if not ws_path or not os.path.isdir(ws_path):
+        await _fail(websocket, f"Workspace folder not found: {workspace or '(none)'}")
+        return
 
     log.info("LSP proxy: starting %s for %s (workspace=%s)", server.argv, language, ws_path)
 
@@ -196,7 +198,7 @@ async def lsp_websocket_proxy(
             try:
                 await asyncio.wait_for(process.wait(), timeout=2)
                 await asyncio.wait_for(asyncio.shield(stderr_task), timeout=1)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
 
         for task in pending:
@@ -222,7 +224,7 @@ async def lsp_websocket_proxy(
             try:
                 process.terminate()
                 await asyncio.wait_for(process.wait(), timeout=3)
-            except (asyncio.TimeoutError, ProcessLookupError):
+            except (TimeoutError, ProcessLookupError):
                 try:
                     process.kill()
                 except ProcessLookupError:

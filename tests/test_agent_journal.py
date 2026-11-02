@@ -218,7 +218,6 @@ def _team_fixture(monkeypatch):
     from server.agent_tools import spawn as spawn_mod
 
     monkeypatch.setattr(spawn_mod, "_active_agent_counts", {})
-    monkeypatch.setattr("server.agents.journal.team_manifest", lambda *a, **k: None)
 
 
 def test_team_summary_carries_the_whole_report_and_the_relay_rule(monkeypatch):

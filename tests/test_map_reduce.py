@@ -232,19 +232,30 @@ def test_is_claude_id():
     assert not oneshot._is_claude_id("")
 
 
-def test_pick_claude_fallback_never_returns_non_claude(monkeypatch):
-    models = {
-        "gpt5.5": "openai.gpt-5.5",
-        "opus4.8": "global.anthropic.claude-opus-4-8",
-        "haiku": "global.anthropic.claude-haiku-4-5",
-    }
-    monkeypatch.setattr(chat_infra, "_get_default_model", lambda: "gpt5.5")
-    assert oneshot._pick_claude_fallback(models).startswith("global.anthropic.claude")
-    monkeypatch.setattr(chat_infra, "_get_default_model", lambda: "opus4.8")
-    assert oneshot._pick_claude_fallback(models) == "global.anthropic.claude-opus-4-8"
-    # No Claude in the catalogue -> None (caller raises rather than misroute).
-    monkeypatch.setattr(chat_infra, "_get_default_model", lambda: "gpt5.5")
-    assert oneshot._pick_claude_fallback({"gpt5.5": "openai.gpt-5.5", "l": "local:x"}) is None
+def test_missing_explicit_cloud_key_never_uses_another_model(monkeypatch):
+    from unittest.mock import Mock
+
+    monkeypatch.setattr("server.infrastructure.cloud_guard.require_cloud", lambda *_: None)
+    monkeypatch.setattr(
+        chat_infra,
+        "_get_chat_models",
+        lambda: {
+            "gpt5.5": "openai.gpt-5.5",
+            "opus4.8": "global.anthropic.claude-opus-4-8",
+        },
+    )
+    client = Mock(side_effect=AssertionError("must refuse before client construction"))
+    with pytest.raises(RuntimeError, match="not configured"):
+        oneshot.one_shot(
+            "sys",
+            "usr",
+            max_tokens=100,
+            engine="cloud",
+            cloud_model_key="missing",
+            source="condensation",
+            get_bedrock_client=client,
+        )
+    client.assert_not_called()
 
 
 def test_execute_tool_condenses_later_oversized_key(monkeypatch):
@@ -310,7 +321,7 @@ def _fake_runtime(monkeypatch, *, resident, downloaded):
     def no_download(*a, **k):
         raise AssertionError("must not download local weights")
 
-    monkeypatch.setattr(rt, "complete", fake_complete)
+    monkeypatch.setattr(oneshot, "_local_one_shot", fake_complete)
     monkeypatch.setattr(rt, "ensure_downloaded", no_download)
     return used
 
@@ -374,7 +385,7 @@ def test_condense_local_threads_chat_model_key(monkeypatch):
 
     from server.local import runtime as rt
 
-    monkeypatch.setattr(rt, "complete", extract)
+    monkeypatch.setattr(oneshot, "_local_one_shot", extract)
     out = mr.maybe_condense_transcript(
         _big(400), config=_cfg(engine="local"), chat_model_key="local_gemma_coder"
     )

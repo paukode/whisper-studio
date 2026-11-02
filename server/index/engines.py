@@ -4,14 +4,13 @@ The per-workspace settings store an ``engine`` string for relationship
 mapping (``typed_relations``), entity descriptions, and AI-written chunk
 headers. Valid LLM engine values:
 
-- ``"haiku"`` — cloud, Bedrock Claude Haiku
+- ``"haiku"``: cloud, Bedrock Claude Haiku
 - any on-device model key from the local registry (``local_gemma``,
   ``local_qwen35_9b``, ...), sourced from ``chat_models`` in the config
-- ``"local"`` — "follow the available on-device model": the preferred default
+- ``"local"``: follow the installed on-device model, the preferred default
   (``local_gemma``) when it is installed, else the first installed local model.
-  Accepted so folder settings written before the model picker existed keep
-  working, and so ``local`` mode resolves even though the app ships no local
-  model by default (the user installs one from Discover).
+  It is the Local mode default, so ``local`` mode resolves even though the app
+  ships no local model (the user installs one from Discover).
 
 ``"none"`` and ``"gliner2"`` are pass-specific sentinels owned by the callers
 (wssettings validates them); they are not LLM engines.
@@ -19,7 +18,7 @@ headers. Valid LLM engine values:
 
 from server.local import registry as local_registry
 
-LEGACY_LOCAL_ALIAS = "local"
+LOCAL_ALIAS = "local"
 _PREFERRED_LOCAL_KEY = "local_gemma"
 
 
@@ -28,7 +27,7 @@ def resolve_local_model(engine: str) -> str | None:
     value is not a local engine ("haiku", "none", "gliner2", unknown) OR when it
     is the ``"local"`` alias but no on-device model is installed yet."""
     models = local_registry.local_models()
-    if engine == LEGACY_LOCAL_ALIAS:
+    if engine == LOCAL_ALIAS:
         if _PREFERRED_LOCAL_KEY in models:
             return _PREFERRED_LOCAL_KEY
         return next(iter(models), None)  # first installed local model, or None

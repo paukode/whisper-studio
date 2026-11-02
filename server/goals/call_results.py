@@ -85,7 +85,7 @@ _RUN_OWN_HEADS = ("Error:", "[", "No workspace", "No command")
 # A call that has not finished: moved to the background, a terminal program
 # still waiting for input or still printing, a command past its time limit.
 _PENDING_RE = re.compile(
-    r"^\[Background Task Started\]|^wait_reason:\s*(?:stdin_read|timeout)\b"
+    r"^\[Background Task Started\]|^wait_reason:\s*timeout\b"
     r"|^TIMED OUT after\b|^exit_code:\s*None\b",
     re.MULTILINE,
 )
@@ -206,9 +206,8 @@ def _finished(name: str, given: dict, result: str) -> tuple[str, bool] | None:
 
 
 def turn_calls(rows: list, cache: dict | None = None) -> list[Call]:
-    """Every tool call among ``rows`` with what it returned (an Anthropic
-    tool_use and its tool_result, or a Responses function_call and its
-    function_call_output). A call with no result yet did nothing. ``cache``
+    """Every tool call among ``rows`` with what it returned (a tool_use and
+    its tool_result). A call with no result yet did nothing. ``cache``
     keeps each call's arguments as text across calls, by id. A background
     command that a later task_status or task_output shows finished with exit
     0 did what it was asked, and what that later call printed is part of its
@@ -225,18 +224,14 @@ def turn_calls(rows: list, cache: dict | None = None) -> list[Call]:
                     _result_text(b.get("content")),
                     bool(b.get("is_error")),
                 )
-            elif b.get("type") == "function_call_output":
-                results[str(b.get("call_id"))] = (_result_text(b.get("output")), False)
     calls: list[Call] = []
     for m in rows:
         if not isinstance(m, dict) or m.get("role") != "assistant":
             continue
         for b in m.get("content") if isinstance(m.get("content"), list) else []:
-            if not isinstance(b, dict) or b.get("type") not in ("tool_use", "function_call"):
+            if not isinstance(b, dict) or b.get("type") != "tool_use":
                 continue
-            key = str(
-                b.get("id") if b.get("type") == "tool_use" else b.get("call_id") or b.get("id")
-            )
+            key = str(b.get("id"))
             name = str(b.get("name") or "")
             given = call_input(b)
             text = cache.get(key) if cache is not None else None

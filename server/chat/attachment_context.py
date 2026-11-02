@@ -88,7 +88,7 @@ def render_attachment_blocks(
                     },
                 }
             )
-            # Text-only models (the local Gemma build) can't read the pixels,
+            # Text-only models (some on-device models) can't read the pixels,
             # so surface any OCR'd text as a sibling text part. Vision models
             # still get the image block above. The marker is emitted even with
             # no OCR text so the image's presence is detectable in the context.

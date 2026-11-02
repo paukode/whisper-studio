@@ -1,14 +1,14 @@
 """All `@register_executor` handlers for workspace tools.
 
-Imports from sibling modules (paths/state/filesystem/commands) — no FastAPI
+Imports from sibling modules (paths/state/filesystem/commands), no FastAPI
 or route deps. The decorators fire at import time, so the package `__init__.py`
 must import this module for tool registration to take effect.
 
 Also home to:
-- execute_ws_open_folder: the public bridge used by chat.py / tool_router.py
+- execute_ws_open_folder: the bridge tool_router.py calls
 - _normalize_quotes + _replace_with_normalization: quote-tolerant matching
   used by ws_edit_file
-- _WORKTREES: in-memory registry shared with the worktree route handlers
+- _WORKTREES: in-memory worktree registry, cleared on a workspace switch
 
 ws_run_command asks read_only._is_read_only_command whether a command may skip
 the approval card; one that does runs under the read-only OS sandbox.
@@ -37,7 +37,6 @@ from .commands import (
 from .filesystem import _ws_list_dir
 from .paths import (
     _WS_BINARY_EXTS,
-    WORKSPACE_BACKUPS,
     _is_system_path,
     _normalize_lf,
     _ws_path_allowed,
@@ -47,13 +46,10 @@ from .paths import (
 )
 from .read_only import _is_read_only_command
 from .state import (
-    CONFIG_LOCK,
     _workspace_prompt_payload,
+    connect_workspace,
     get_workspace_path,
-    load_workspace_config,
     resolve_write_destination,
-    save_recent_workspace,
-    save_workspace_config,
     workspace_lost_message,
 )
 
@@ -136,7 +132,7 @@ def open_folder_now(path: str) -> str:
     """Create the folder if needed, connect it, and return connection info.
 
     The part of ws_open_folder that actually DOES the thing, split out so the
-    approval executor (server/approval/bootstrap.py::_do_folder_access) can
+    approval executor (server/approval/executors.py::_do_folder_access) can
     complete the very action the user approved instead of only recording the
     permission for it. ``path`` must already be expanded and realpath'd.
 
@@ -148,16 +144,15 @@ def open_folder_now(path: str) -> str:
         return json.dumps({"error": lost})
     try:
         os.makedirs(path, exist_ok=True)
-    except Exception as e:
+    except OSError as e:
         return json.dumps({"error": f"Could not create folder: {e}"})
-    # Connect workspace (serialized with the connect/disconnect handlers)
-    with CONFIG_LOCK:
-        config = load_workspace_config()
-        config["path"] = path
-        config.pop("mode", None)  # retired field; scrub it from old configs
-        save_workspace_config(config)
-    save_recent_workspace(path)
-    WORKSPACE_BACKUPS.clear()
+    # The same connect as the UI's (config, recents, backups, the git and
+    # workspace watchers, and on a switch the old workspace's cwds and
+    # worktrees), as a tool: a turn that lost its workspace is refused.
+    try:
+        path = connect_workspace(path)
+    except ValueError as e:
+        return json.dumps({"error": str(e)})
     entries = _ws_list_dir(path)
     return json.dumps(
         {
@@ -246,7 +241,7 @@ def execute_ws_open_folder(tool_input: dict) -> str:
         )
     # Ask the user once before reaching into a folder they have not already
     # approved, then remember the answer forever (folder_grants). Approving
-    # the card OPENS the folder as well as recording the grant — the user
+    # the card OPENS the folder as well as recording the grant, the user
     # approved "open this folder", so granting without opening would leave
     # them staring at a still-disconnected workspace. From then on this check
     # passes silently, including for every folder beneath the granted one.
@@ -344,13 +339,13 @@ def _exec_ws_read_file(tool_input, transcript, current_attachments):
         skipped = len(result_lines) - len(head_lines) - len(tail_lines)
         if skipped > 0:
             result = "\n".join(head_lines)
-            result += f"\n\n... [{skipped} lines omitted — file exceeds token budget ({total_lines} total lines)] ...\n\n"
+            result += f"\n\n... [{skipped} lines omitted: file exceeds token budget ({total_lines} total lines)] ...\n\n"
             result += "\n".join(tail_lines)
             result += (
                 f"\n\n(Token budget: showing first {len(head_lines)} + last {len(tail_lines)} lines. "
                 f"Use offset/limit to read specific sections.)"
             )
-        # Fall through — result is now within budget
+        # Fall through, result is now within budget
 
     file_state.record_read(session_id, full, offset, limit, len(numbered))
     return result
@@ -380,6 +375,10 @@ def _exec_ws_list_dir(tool_input, transcript, current_attachments):
             fp = os.path.join(full, name)
             if os.path.isdir(fp):
                 entries.append(f"  {name}/")
+            elif os.path.islink(fp) and not os.path.exists(fp):
+                # A dangling symlink has no size; one used to fail the whole
+                # listing with "No such file or directory".
+                entries.append(f"  {name}  (broken link to {os.readlink(fp)})")
             else:
                 sz = os.path.getsize(fp)
                 entries.append(f"  {name}  ({sz} bytes)")
@@ -529,7 +528,7 @@ def _exec_ws_edit_file(tool_input, transcript, current_attachments):
         "session_id": session_id,
     }
     # Flag a fuzzy match so the approval banner can tell the user the edit
-    # only matched after quote normalization — the model's old_string did not
+    # only matched after quote normalization, the model's old_string did not
     # match the file byte-for-byte (typographic vs. ASCII quotes). Omitted on
     # exact matches so the hint only shows when it is actually relevant.
     if used_normalization:
@@ -581,8 +580,8 @@ def _stage_and_request_save(dest: str, filename: str, data: bytes) -> str:
     destination against the sensitive-path denylist, write the FINISHED
     bytes to the app-sandbox staging area, and return the [WS_APPROVAL]
     payload whose approval simply MOVES the ready file into place
-    (server/approval/bootstrap.py's _do_save_to_path). By the time the user
-    sees the card the file already exists — approving cannot fail on
+    (server/approval/executors.py's _do_save_to_path). By the time the user
+    sees the card the file already exists, approving cannot fail on
     content problems, and declining leaves nothing outside the sandbox."""
     from server.security.sensitive_paths import is_sensitive_path
 
@@ -611,14 +610,14 @@ def _exec_ws_create_file(tool_input, transcript, current_attachments):
 
     if kind == "absolute":
         # No workspace connected (or the user named an explicit location):
-        # stage the finished content and request the move — never connects
+        # stage the finished content and request the move, never connects
         # a persistent workspace.
         return _stage_and_request_save(target, os.path.basename(target), content.encode("utf-8"))
 
     full = target
     path = tool_input.get("path", "")
     if os.path.isdir(full):
-        return f"Directory already exists: {path}. You don't need to create directories — they are created automatically when you create files inside them. Proceed to create the files directly."
+        return f"Directory already exists: {path}. You don't need to create directories: they are created automatically when you create files inside them. Proceed to create the files directly."
     if os.path.isfile(full):
         return f"File already exists: {path}. Use ws_write_file to modify it."
     payload = json.dumps(
@@ -634,7 +633,7 @@ def _exec_ws_create_file(tool_input, transcript, current_attachments):
 
 @register_executor("save_file", read_only=False, concurrent_safe=False)
 def _exec_save_file(tool_input, transcript, current_attachments):
-    """One-shot 'save this file somewhere' — never connects a persistent
+    """One-shot 'save this file somewhere', never connects a persistent
     workspace (get_workspace_path() is not even consulted here) and never
     asks the user where to save.
 
@@ -657,7 +656,7 @@ def _exec_save_file(tool_input, transcript, current_attachments):
     else:
         folder = tool_input.get("suggested_location") or "Documents"
         if folder not in ("Documents", "Downloads"):
-            folder = "Documents"
+            return f"Error: suggested_location must be Documents or Downloads (got {folder!r})."
         dest = os.path.join(os.path.expanduser(f"~/{folder}"), filename)
 
     content = tool_input.get("content", "")
@@ -675,7 +674,7 @@ def _exec_save_file(tool_input, transcript, current_attachments):
     return _stage_and_request_save(dest, filename, data)
 
 
-@register_executor("ws_delete_file", read_only=False, concurrent_safe=False, destructive=True)
+@register_executor("ws_delete_file", read_only=False, concurrent_safe=False)
 def _exec_ws_delete_file(tool_input, transcript, current_attachments):
     ws = get_workspace_path()
     if not ws:
@@ -920,7 +919,9 @@ def _start_background_command(
     secret_reads: bool = False,
     wake_on_finish: bool = False,
 ) -> str:
-    """Start a command in the background and return a status message."""
+    """Start a command in the background and return a status message.
+    Raises RuntimeError when it could not start (no OS sandbox, a spawn
+    error), so the caller reports an error, not a started task."""
     from server.tasks.shell import start_shell_task
 
     task_info = start_shell_task(
@@ -934,6 +935,8 @@ def _start_background_command(
         secret_reads=secret_reads,
         wake_on_finish=wake_on_finish,
     )
+    if task_info.get("status") == "failed":
+        raise RuntimeError(task_info.get("error") or "the background command did not start")
     return _background_started_message(
         command, task_info["task_id"], task_info["output_path"], reports_back=wake_on_finish
     )
@@ -967,7 +970,7 @@ def _background_started_message(
 # Feature 8: Git Worktree Isolation
 # =============================================================================
 
-_WORKTREES: dict[str, dict] = {}  # name -> {path, branch, base_branch}
+_WORKTREES: dict[str, dict] = {}  # name -> {"branch": its whisper/<name> branch}
 
 
 @register_executor("ws_create_worktree", read_only=False, concurrent_safe=False)
@@ -975,9 +978,6 @@ def _exec_ws_create_worktree(tool_input, transcript, current_attachments):
     ws = get_workspace_path()
     if not ws:
         return "No workspace connected."
-    git_dir = os.path.join(ws, ".git")
-    if not os.path.isdir(git_dir):
-        return "Workspace is not a git repository."
     name = tool_input.get("name", "").strip()
     if not name:
         import time
@@ -993,6 +993,18 @@ def _exec_ws_create_worktree(tool_input, transcript, current_attachments):
         validate_worktree_slug(name)
     except ValueError as e:
         return f"Invalid worktree name: {e}"
+    # git decides: a linked worktree (.git is a file) or a folder inside a
+    # repository is a repository too.
+    probe = subprocess.run(
+        ["git", "rev-parse", "--is-inside-work-tree"],
+        capture_output=True,
+        text=True,
+        cwd=ws,
+        timeout=15,
+    )
+    if probe.returncode != 0 or probe.stdout.strip() != "true":
+        reason = probe.stderr.strip()
+        return "Workspace is not a git repository" + (f": {reason}" if reason else ".")
     branch = f"whisper/{name}"
     worktree_path = os.path.join(ws, ".worktrees", name)
     try:
@@ -1005,7 +1017,7 @@ def _exec_ws_create_worktree(tool_input, transcript, current_attachments):
         )
         if result.returncode != 0:
             return f"Failed to create worktree: {result.stderr.strip()}"
-        _WORKTREES[name] = {"path": worktree_path, "branch": branch, "base": "HEAD"}
+        _WORKTREES[name] = {"branch": branch}
         return json.dumps({"created": True, "name": name, "branch": branch, "path": worktree_path})
     except Exception as e:
         return f"Worktree error: {e}"
@@ -1028,14 +1040,43 @@ def _exec_ws_diff_worktree(tool_input, transcript, current_attachments):
             cwd=ws,
             timeout=15,
         )
+        if result.returncode != 0:
+            return f"Diff error: {result.stderr.strip()}"
         diff = result.stdout.strip()
         return diff if diff else "(no changes in worktree)"
     except Exception as e:
         return f"Diff error: {e}"
 
 
+def _merge_argv(name: str, branch: str) -> list[str]:
+    """The merge, as argv, never a shell string. Git ref names permit
+    shell-active characters (brace expansion `{a,b}`, `;`, `(`) and quotes, so
+    the branch and the name go to git as literal argv elements, the same way
+    do_git_merge and the sibling worktree ops do. The `-m` message keeps a
+    descriptive merge commit."""
+    return ["git", "merge", "--no-ff", branch, "-m", f"Merge worktree {name}"]
+
+
+def _current_branch(ws: str) -> tuple[str | None, str | None]:
+    """(branch checked out in ``ws``, error). A detached HEAD reads "HEAD"."""
+    result = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        capture_output=True,
+        text=True,
+        cwd=ws,
+        timeout=15,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        return None, f"Cannot read the current branch: {detail}"
+    return result.stdout.strip(), None
+
+
 @register_executor("ws_merge_worktree", read_only=False, concurrent_safe=False)
 def _exec_ws_merge_worktree(tool_input, transcript, current_attachments):
+    """Ask to merge a worktree branch into the current branch. The merge runs
+    in do_ws_merge_worktree once the permission mode or a person allows it."""
+    session_id = tool_input.pop("__session_id__", "")
     ws = get_workspace_path()
     if not ws:
         return "No workspace connected."
@@ -1043,27 +1084,61 @@ def _exec_ws_merge_worktree(tool_input, transcript, current_attachments):
     info = _WORKTREES.get(name)
     if not info:
         return f"Worktree '{name}' not found."
-    # Run the merge with ARGV, never a shell string. Git ref names permit
-    # shell-active characters (brace expansion `{a,b}`, `;`, `(`) and quotes,
-    # so interpolating the branch/name into a shell `command` payload was a
-    # command-injection vector. Passing them as literal argv elements — the
-    # same way do_git_merge and the sibling worktree ops (ws_create_worktree,
-    # ws_diff_worktree) do — means the shell never parses them. The `-m`
-    # message keeps the user-facing behavior (a descriptive merge commit).
+    target, err = _current_branch(ws)
+    if err:
+        return f"Error: {err}"
+    return approval_request(
+        {
+            "action": "ws_merge_worktree",
+            "name": name,
+            "branch": info["branch"],
+            "target": target,
+            "session_id": session_id,
+        }
+    )
+
+
+def do_ws_merge_worktree(payload: dict) -> tuple[bool, str]:
+    """Run an allowed worktree merge. The branch comes from the worktree
+    registry, not the payload, and the merge runs only into the branch the
+    card named."""
+    from server.approval.spec import refuse_if_agent
+
+    refusal = refuse_if_agent(payload, what="A worktree merge")
+    if refusal:
+        return False, refusal.error
+    ws = get_workspace_path()
+    if not ws:
+        return False, "No workspace connected."
+    name = payload.get("name", "")
+    info = _WORKTREES.get(name)
+    if not info:
+        return False, f"Worktree '{name}' not found."
     branch = info["branch"]
-    msg = f"Merge worktree {name}"
+    if branch != payload.get("branch"):
+        return False, f"Worktree '{name}' is now on {branch}, not the branch that was approved."
+    target, err = _current_branch(ws)
+    if err:
+        return False, err
+    if target != payload.get("target"):
+        return (
+            False,
+            f"The current branch is now {target}, not {payload.get('target')}. Nothing was merged.",
+        )
     try:
         result = subprocess.run(
-            ["git", "merge", "--no-ff", branch, "-m", msg],
+            _merge_argv(name, branch),
             capture_output=True,
             text=True,
             cwd=ws,
             timeout=30,
         )
-        if result.returncode != 0:
-            detail = (result.stderr or result.stdout).strip()
-            return f"Failed to merge worktree: {detail}"
-        output = (result.stdout + result.stderr).strip()
-        return json.dumps({"merged": True, "name": name, "branch": branch, "output": output})
-    except Exception as e:
-        return f"Merge error: {e}"
+    except Exception as e:  # noqa: BLE001 (surface any spawn failure)
+        return False, f"Merge error: {e}"
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        return False, f"Failed to merge worktree: {detail}"
+    output = (result.stdout + result.stderr).strip()
+    return True, json.dumps(
+        {"merged": True, "name": name, "branch": branch, "target": target, "output": output}
+    )

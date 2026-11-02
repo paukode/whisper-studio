@@ -15,12 +15,8 @@ from server import artifacts as A
 
 
 @pytest.fixture(autouse=True)
-def _fresh():
-    for sid in ("s1", "act-1", "act-2", "act-3", "route-1"):
-        A.forget_session(sid)
-    yield
-    for sid in ("s1", "act-1", "act-2", "act-3", "route-1"):
-        A.forget_session(sid)
+def _fresh(monkeypatch):
+    monkeypatch.setattr(A, "_versions", {})
 
 
 def _html(n_lines: int = 10) -> str:

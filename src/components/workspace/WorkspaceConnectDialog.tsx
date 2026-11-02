@@ -1,6 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useUIStore, dialogConfirm } from '@/stores/uiStore';
+import { toError } from '@/utils/toError';
+
+/** Say why an index or recent-folder action failed. */
+const reportFailure = (what: string, err: unknown) =>
+  useUIStore.getState().addToast({ type: 'error', message: `${what}: ${toError(err).message}` });
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { get, post } from '@/api/client';
 import {
@@ -10,7 +15,6 @@ import {
   cancelIndex,
   getIndexSettings,
   updateIndexSettings,
-  getIndexAgent,
   removeRecentWorkspace,
   clearUnindexedRecents,
   type IndexStatus,
@@ -23,7 +27,7 @@ import { STORAGE_KEYS } from '@/utils/storageKeys';
 import { IndexSettingsPanel } from './IndexSettingsPanel';
 import { RecentWorkspaceItem } from './RecentWorkspaceItem';
 import { WorkspaceBrowser } from './WorkspaceBrowser';
-import { settleWorkspaceOps } from '@/services/workspaceConnection';
+import { reportConnectWarnings, settleWorkspaceOps } from '@/services/workspaceConnection';
 import {
   normalizeWsPath,
   type BrowseEntry,
@@ -32,7 +36,7 @@ import {
 } from './workspaceConnectHelpers';
 
 /**
- * Workspace connect dialog overlay matching the vanilla HTML structure.
+ * Workspace connect dialog overlay.
  * Includes folder browser and recent workspaces.
  */
 export const WorkspaceConnectDialog: React.FC = () => {
@@ -84,8 +88,8 @@ export const WorkspaceConnectDialog: React.FC = () => {
   const sortedEntries = React.useMemo(() => sortList(browserEntries), [browserEntries, sortList]);
   const sortedFiles = React.useMemo(() => sortList(browserFiles), [browserFiles, sortList]);
 
-  // Recent workspaces — shared hook (same react-query key + shape as the
-  // toolbar Workspace dropdown).
+  // Recent workspaces: shared hook (same react-query key + shape as the
+  // composer's workspace group).
   const recentWorkspaces = useRecentWorkspaces(isOpen);
   const queryClient = useQueryClient();
 
@@ -98,11 +102,16 @@ export const WorkspaceConnectDialog: React.FC = () => {
   // we show "Stopping…" immediately so the click visibly registers, then clear
   // the flag once a status poll reports the build is no longer running.
   const [stopping, setStopping] = useState<Record<string, boolean>>({});
-  // Per-folder settings (loaded lazily when a folder's ⋯ menu opens), the open
-  // menu's path, and whether the background helper is supported on this platform.
+  // Per-folder settings (loaded lazily when a folder's ⋯ menu opens) and the
+  // open menu's path.
   const [settingsByPath, setSettingsByPath] = useState<Record<string, IndexSettings>>({});
+  const [settingsErrorByPath, setSettingsErrorByPath] = useState<Record<string, string>>({});
+  const loadSettings = useCallback((p: string) => {
+    getIndexSettings(p)
+      .then((s) => setSettingsByPath((prev) => ({ ...prev, [p]: s })))
+      .catch((err: unknown) => setSettingsErrorByPath((prev) => ({ ...prev, [p]: toError(err).message })));
+  }, []);
   const [openMenu, setOpenMenu] = useState<string | null>(null);
-  const [agentSupported, setAgentSupported] = useState(false);
   const statusesRef = useRef(statuses);
   useEffect(() => {
     statusesRef.current = statuses;
@@ -144,14 +153,6 @@ export const WorkspaceConnectDialog: React.FC = () => {
     [clearStoppedFlags],
   );
 
-  // Is the background helper supported here (macOS)? Once per open.
-  useEffect(() => {
-    if (!isOpen) return;
-    getIndexAgent()
-      .then((a) => setAgentSupported(a.supported))
-      .catch(() => {});
-  }, [isOpen]);
-
   // For a freshly-picked folder (not yet in Recent), load its pending index
   // settings when "index on connect" is ticked, so the inline steps below the
   // toggle reflect — and persist to — the same per-folder store the ⋯ menu uses.
@@ -159,10 +160,8 @@ export const WorkspaceConnectDialog: React.FC = () => {
     const p = normalizeWsPath(path);
     if (!isOpen || !indexOnConnect || !p) return;
     if (recentWorkspaces.includes(p) || settingsByPath[p]) return;
-    getIndexSettings(p)
-      .then((s) => setSettingsByPath((prev) => ({ ...prev, [p]: s })))
-      .catch(() => {});
-  }, [isOpen, indexOnConnect, path, recentWorkspaces, settingsByPath]);
+    loadSettings(p);
+  }, [isOpen, indexOnConnect, path, recentWorkspaces, settingsByPath, loadSettings]);
 
   // Open a folder's ⋯ menu, lazily loading its settings. Safe for any state:
   // a not-yet-indexed folder reads the pending pre-index store server-side (no
@@ -171,15 +170,11 @@ export const WorkspaceConnectDialog: React.FC = () => {
     (wsPath: string) => {
       setOpenMenu((cur) => {
         const next = cur === wsPath ? null : wsPath;
-        if (next && !settingsByPath[next]) {
-          getIndexSettings(next)
-            .then((s) => setSettingsByPath((prev) => ({ ...prev, [next]: s })))
-            .catch(() => {});
-        }
+        if (next && !settingsByPath[next]) loadSettings(next);
         return next;
       });
     },
-    [settingsByPath],
+    [settingsByPath, loadSettings],
   );
 
   // Patch one folder's settings and keep the local copy in sync with the server.
@@ -187,7 +182,7 @@ export const WorkspaceConnectDialog: React.FC = () => {
     (wsPath: string, patch: Parameters<typeof updateIndexSettings>[1]) => {
       updateIndexSettings(wsPath, patch)
         .then((s) => setSettingsByPath((prev) => ({ ...prev, [wsPath]: s })))
-        .catch(() => {});
+        .catch((err: unknown) => reportFailure('Could not save the index settings', err));
     },
     [],
   );
@@ -259,8 +254,8 @@ export const WorkspaceConnectDialog: React.FC = () => {
       }));
       try {
         await buildIndex(wsPath);
-      } catch {
-        /* surfaced via polled status */
+      } catch (err) {
+        reportFailure('Could not start indexing', err);
       }
       void refreshStatuses([wsPath]);
       // The workspace panel's Explore button watches the same status under
@@ -275,8 +270,9 @@ export const WorkspaceConnectDialog: React.FC = () => {
       e.stopPropagation();
       try {
         await removeIndex(wsPath);
-      } catch {
-        /* ignore */
+      } catch (err) {
+        reportFailure('Could not remove the index', err);
+        return;
       }
       setStatuses((prev) => ({ ...prev, [wsPath]: { indexed: false, building: false } }));
       // Hide the workspace panel's Explore button for the now-unindexed folder.
@@ -291,8 +287,8 @@ export const WorkspaceConnectDialog: React.FC = () => {
       e.stopPropagation();
       try {
         await removeRecentWorkspace(wsPath);
-      } catch {
-        /* ignore */
+      } catch (err) {
+        reportFailure('Could not forget the folder', err);
       }
       void queryClient.invalidateQueries({ queryKey: ['workspace-recent'] });
     },
@@ -302,8 +298,8 @@ export const WorkspaceConnectDialog: React.FC = () => {
   const handleClearUnindexed = useCallback(async () => {
     try {
       await clearUnindexedRecents();
-    } catch {
-      /* ignore */
+    } catch (err) {
+      reportFailure('Could not clear the folders', err);
     }
     void queryClient.invalidateQueries({ queryKey: ['workspace-recent'] });
   }, [queryClient]);
@@ -317,8 +313,8 @@ export const WorkspaceConnectDialog: React.FC = () => {
       setStopping((prev) => ({ ...prev, [wsPath]: true }));
       try {
         await cancelIndex(wsPath);
-      } catch {
-        /* ignore */
+      } catch (err) {
+        reportFailure('Could not stop indexing', err);
       }
       // The build stops after the current file; the poll clears both flags.
       void refreshStatuses([wsPath]);
@@ -444,7 +440,8 @@ export const WorkspaceConnectDialog: React.FC = () => {
       try {
         // A disconnect clicked just before must reach the server first.
         await settleWorkspaceOps();
-        const data = await post<{ path?: string }>('/api/workspace/connect', { path: trimmed });
+        const data = await post<{ path?: string; warnings?: string[] }>('/api/workspace/connect', { path: trimmed });
+        reportConnectWarnings(data?.warnings);
         // Use the CANONICAL path the server resolved (~ expanded, symlinks
         // and relative segments collapsed) rather than the raw input, so the
         // stored root and everything keyed off it (LSP roots, indexing,
@@ -459,7 +456,7 @@ export const WorkspaceConnectDialog: React.FC = () => {
         // Kick off indexing in the background if requested; it continues
         // server-side after the dialog closes.
         if (indexOnConnect) {
-          buildIndex(connectedPath).catch(() => {});
+          buildIndex(connectedPath).catch((err: unknown) => reportFailure('Could not start indexing', err));
         }
         closeDialog();
       } catch (err: unknown) {
@@ -494,7 +491,7 @@ export const WorkspaceConnectDialog: React.FC = () => {
 
   // Native OS folder picker as a secondary option. The in-page browser is
   // the canonical flow (recents + sorting); this is for users who prefer
-  // the system dialog. Silently no-ops if the backend can't open one.
+  // the system dialog. If the request fails it says so and points to Browse.
   const handleNativePick = useCallback(async () => {
     try {
       const data = await get<{ path: string | null; cancelled?: boolean }>(
@@ -502,7 +499,7 @@ export const WorkspaceConnectDialog: React.FC = () => {
       );
       if (data.path) void connectTo(data.path);
     } catch {
-      setError('Native folder picker is not available here. Use Browse instead.');
+      setError('Could not open the folder picker. Use Browse instead.');
     }
   }, [connectTo]);
 
@@ -524,7 +521,7 @@ export const WorkspaceConnectDialog: React.FC = () => {
     (wsPath: string) => {
       setPath(wsPath);
       setBrowserOpen(false);
-      // Auto-connect like vanilla JS (wsConnectConfirm.click())
+      // Auto-connect the picked folder.
       void connectTo(wsPath);
     },
     [connectTo],
@@ -573,8 +570,8 @@ export const WorkspaceConnectDialog: React.FC = () => {
       status={statuses[wsPath]}
       stopping={!!stopping[wsPath]}
       settings={settingsByPath[wsPath]}
+      settingsError={settingsErrorByPath[wsPath]}
       menuOpen={openMenu === wsPath}
-      agentSupported={agentSupported}
       onSelect={() => handleSelectRecent(wsPath)}
       onRemoveRecent={(e) => void handleRemoveRecent(e, wsPath)}
       onToggleMenu={(e) => {
@@ -715,7 +712,6 @@ export const WorkspaceConnectDialog: React.FC = () => {
                   <div className="ws-new-settings-title">Indexing options for this folder</div>
                   <IndexSettingsPanel
                     settings={newFolderSettings}
-                    agentSupported={agentSupported}
                     onChange={(patch) => updateOne(normalizedPath, patch)}
                     onEngineChange={(v, label) => void handleEngineChange(normalizedPath, 'typed_relations', v, label)}
                     onDescriptionsEngineChange={(v, label) => void handleEngineChange(normalizedPath, 'entity_descriptions', v, label)}

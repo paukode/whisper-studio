@@ -5,7 +5,7 @@ Makes a side call to Claude Haiku to assess the risk level of a pending
 permission approval and return a short explanation for the user.
 
 Returns: {"riskLevel": "LOW"|"MEDIUM"|"HIGH", "explanation": str, "reasoning": str, "risk": str}
-Returns None on any error or if disabled in config — always non-blocking.
+Returns None on any error or if disabled in config, always non-blocking.
 """
 
 import asyncio
@@ -15,7 +15,7 @@ import re
 
 log = logging.getLogger("whisper-studio")
 
-_EXPLAINER_TIMEOUT = 3.0  # seconds — hard limit so approval dialog is never delayed
+_EXPLAINER_TIMEOUT = 3.0  # seconds, hard limit so approval dialog is never delayed
 
 _SYSTEM_PROMPT = """\
 You are a security risk assessor for an AI coding assistant called Whisper Studio.
@@ -66,7 +66,6 @@ async def explain_permission(
     tool_input: dict,
     recent_messages: list[dict],
     config: dict,
-    model_id: str,
     session_id: str = "",
 ) -> dict | None:
     """
@@ -78,11 +77,11 @@ async def explain_permission(
 
     try:
         result = await asyncio.wait_for(
-            _call_explainer(tool_name, tool_input, recent_messages, config, model_id, session_id),
+            _call_explainer(tool_name, tool_input, recent_messages, config, session_id),
             timeout=_EXPLAINER_TIMEOUT,
         )
         return result
-    except asyncio.TimeoutError:
+    except TimeoutError:
         log.debug("Permission explainer timed out for %s", tool_name)
         return None
     except Exception as e:
@@ -95,15 +94,12 @@ async def _call_explainer(
     tool_input: dict,
     recent_messages: list[dict],
     config: dict,
-    model_id: str,
     session_id: str = "",
 ) -> dict | None:
     import boto3
 
-    from server.infrastructure.config import DEFAULTS
-
     region = config.get("bedrock_region", "us-east-1")
-    chat_models = config.get("chat_models", DEFAULTS["chat_models"])
+    chat_models = config["chat_models"]
     from server.infrastructure.auxiliary import aux_model_id
 
     haiku = aux_model_id(

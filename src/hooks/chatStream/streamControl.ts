@@ -9,6 +9,7 @@
  */
 import { getChatStore, getRuntime } from '@/stores/sessionRuntimes';
 import { subagentsOf, useSubagentStore } from '@/stores/subagentStore';
+import { useUIStore } from '@/stores/uiStore';
 import type { ChatState } from '@/stores/chatStore';
 import type { ChatMessage, ToolUseEvent } from '@/types/chat';
 import { labelCommit } from './activityLabels';
@@ -197,13 +198,22 @@ export function killSessionStream(sessionId: string | null): void {
       // Also stop the shell work this stream started: its foreground
       // commands and the background tasks it launched. Nothing from an
       // earlier turn, and nothing at all when no stream is running.
-      // Fire-and-forget: the kill switch stays synchronous; a failed request
-      // only means the work finishes on its own.
-      void fetch('/api/workspace/shell/tasks/stop', {
+      // Not awaited: the kill switch stays synchronous. A failed request is
+      // reported, because the turn's commands then keep running.
+      const stopFailed = (why: string) =>
+        useUIStore.getState().addToast({
+          type: 'error',
+          message: `Stop could not reach the server, so the turn's commands may still be running: ${why}`,
+        });
+      fetch('/api/workspace/shell/tasks/stop', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ session_id: sessionId, since }),
-      }).catch(() => {});
+      })
+        .then((resp) => {
+          if (!resp.ok) stopFailed(`HTTP ${resp.status}`);
+        })
+        .catch((err: unknown) => stopFailed(err instanceof Error ? err.message : String(err)));
     }
     if (chat.isStreaming) {
       // Same commit the AbortError catch in useChatStream performs: partial
@@ -218,11 +228,7 @@ export function killSessionStream(sessionId: string | null): void {
 
   const subagents = useSubagentStore.getState();
   for (const teamId of subagentsOf(subagents, sessionId)) {
-    try {
-      subagents.stops[teamId]?.();
-    } catch {
-      // One bad callback must not block stopping the rest.
-    }
+    subagents.stops[teamId]?.();
     subagents.unregister(teamId);
   }
 }

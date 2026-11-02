@@ -1,9 +1,8 @@
 """
 In-process hook registry.
 
-Plugins (and the workflow runtime, WS-E) register async interceptors keyed by
-event. They run in-process — no shell, no sandbox — and can block or add
-context. This is the single Python-side registration point the hooks engine
+Plugins register async interceptors keyed by event. They run in-process (no
+shell, no sandbox) and can block or add context. This is the single Python-side registration point the hooks engine
 (server/hooks/engine.py) consumes as its first evaluation phase.
 
 ``register_hook(event, fn)`` where ``async fn(payload) -> dict | None`` returns
@@ -13,8 +12,19 @@ plugins/security_checks.py is untouched.
 """
 
 import logging
+from dataclasses import dataclass
 
 log = logging.getLogger("whisper-studio")
+
+
+@dataclass(frozen=True)
+class InProcessHookError:
+    """A crashed in-process hook on a non-PreToolUse event. A separate type,
+    not a key in a control dict, so JSON a shell hook prints can never pose
+    as one."""
+
+    message: str
+
 
 # event -> list of async callables
 _hooks: dict[str, list] = {}
@@ -26,17 +36,27 @@ def register_hook(event: str, fn) -> None:
     log.info("In-process hook registered for %s: %s", event, getattr(fn, "__qualname__", fn))
 
 
-async def run_inprocess(event: str, payload: dict) -> list[dict]:
+async def run_inprocess(event: str, payload: dict) -> list[dict | InProcessHookError]:
     """Run all in-process hooks for an event; returns their non-None results
-    (structured-control dicts) in registration order. The engine merges them."""
-    results: list[dict] = []
+    (structured-control dicts) in registration order. The engine merges them.
+
+    A hook that raises fails closed on PreToolUse (a deny naming the hook and
+    its error, so a crashed security check never lets the call through) and
+    is reported as an InProcessHookError on every other event."""
+    results: list[dict | InProcessHookError] = []
     for hook in list(_hooks.get(event, ())):
         try:
             r = await hook(payload)
-            if r is not None:
-                results.append(r)
         except Exception as e:
-            log.warning("In-process hook error (%s): %s", event, e)
+            name = getattr(hook, "__qualname__", repr(hook))
+            log.exception("In-process hook %s failed on %s", name, event)
+            if event == "PreToolUse":
+                results.append({"decision": "deny", "reason": f"Hook {name} failed: {e}"})
+            else:
+                results.append(InProcessHookError(f"hook {name}: {e}"))
+            continue
+        if r is not None:
+            results.append(r)
     return results
 
 

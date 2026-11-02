@@ -24,10 +24,9 @@ import re
 import shutil
 import subprocess
 import sys
+import tomllib
 from collections.abc import Iterator
 from dataclasses import dataclass
-
-import tomllib
 
 from server.infrastructure.binaries import resolve
 

@@ -1,4 +1,4 @@
-// Whisper Studio — native system/app audio capture for the macOS shell.
+// Whisper Studio: native system/app audio capture for the macOS shell.
 //
 // Captures the audio OUTPUT of the Mac (all of it, or one chosen app) with
 // Core Audio process taps (macOS 14.4+): CATapDescription →
@@ -12,10 +12,8 @@
 // don't need one, and including the real output device opens an IO path to
 // the user's speakers/headphones (Bluetooth headsets flip into call mode,
 // the OS shows the app in the audio chain, and the tap's input buffers get
-// interleaved with the headset's own mic streams). Only if tap-only aggregate
-// creation/start fails does the code fall back to including the default
-// output device — and then every output buffer is zero-filled in the IOProc
-// and the tap's input buffers are located by format, never assumed at index 0.
+// interleaved with the headset's own mic streams). If the tap-only aggregate
+// cannot be created or started, capture fails with that error.
 //
 // Source rows are grouped by USER-FACING APP: helper processes (Chrome
 // Helper, WebKit GPU/media XPC services) collapse into their owning app via
@@ -23,10 +21,10 @@
 // process belonging to Whisper Studio itself (shell, its WebKit helpers, the
 // spawned backend tree) is excluded from both the list and global-tap capture.
 //
-// Bridge contract (pinned — the frontend mirrors it in
+// Bridge contract (pinned, the frontend mirrors it in
 // src/services/nativeAudioSource.ts):
 //   * injected at documentStart, main frame only:
-//       window.__WHISPER_NATIVE_AUDIO = { platform: "macos", available: bool }
+//       window.__WHISPER_NATIVE_AUDIO = { available: bool }
 //   * page → native: window.webkit.messageHandlers.nativeAudio.postMessage
 //       {cmd:"list"} | {cmd:"start", pid:-1|N, bundleID?} | {cmd:"stop"}
 //   * native → page (all via evaluateJavaScript on the main thread):
@@ -151,26 +149,11 @@ enum CAQuery {
         guard status == noErr else { return AudioObjectID(kAudioObjectUnknown) }
         return objectID
     }
-
-    /// UID string of the default output device. READ-ONLY — used only for the
-    /// legacy fallback aggregate; the default devices are never modified.
-    static func defaultOutputDeviceUID() -> String? {
-        var addr = address(kAudioHardwarePropertyDefaultOutputDevice)
-        var deviceID = AudioObjectID(kAudioObjectUnknown)
-        var dataSize = UInt32(MemoryLayout<AudioObjectID>.size)
-        guard
-            AudioObjectGetPropertyData(
-                AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &dataSize, &deviceID)
-                == noErr,
-            deviceID != kAudioObjectUnknown
-        else { return nil }
-        return readString(deviceID, kAudioDevicePropertyDeviceUID)
-    }
 }
 
 // MARK: - Process → user-facing app resolution (shared with the smoke CLI)
 
-/// BSD process name via libproc — the fallback for audio clients that are not
+/// BSD process name via libproc, the fallback for audio clients that are not
 /// regular apps (no NSRunningApplication, no bundle id), e.g. CLI players.
 func processName(_ pid: pid_t) -> String? {
     var buf = [CChar](repeating: 0, count: 1024)
@@ -199,17 +182,29 @@ func parentPid(of pid: pid_t) -> pid_t {
     return pid_t(info.pbi_ppid)
 }
 
-/// The pid TCC holds responsible for a process — maps XPC helpers (WebKit
+/// The pid TCC holds responsible for a process, maps XPC helpers (WebKit
 /// GPU/media services, which do NOT live inside their host's .app bundle) to
-/// their host app. Resolved via dlsym so a missing symbol degrades gracefully.
+/// their host app. Resolved via dlsym: without it our own WebKit helpers
+/// cannot be excluded from the global tap, so capture is unsupported (see
+/// responsibilityAPIAvailable) instead of running with that hole.
 private typealias ResponsiblePidFn = @convention(c) (pid_t) -> pid_t
 private let _responsiblePidFn: ResponsiblePidFn? = {
     guard let sym = dlsym(UnsafeMutableRawPointer(bitPattern: -2) /* RTLD_DEFAULT */,
                           "responsibility_get_pid_responsible_for_pid")
-    else { return nil }
+    else {
+        nativeAudioLog(
+            "responsibility_get_pid_responsible_for_pid is missing; native capture is off "
+                + "because our own helper processes could not be excluded")
+        return nil
+    }
     return unsafeBitCast(sym, to: ResponsiblePidFn.self)
 }()
 
+/// True when the responsibility API resolved. Capture needs it.
+var responsibilityAPIAvailable: Bool { _responsiblePidFn != nil }
+
+/// The responsible pid, or the pid itself when the API reports none (a
+/// process that already exited). Only called once the API is known present.
 func responsiblePid(for pid: pid_t) -> pid_t {
     guard let fn = _responsiblePidFn else { return pid }
     let r = fn(pid)
@@ -228,7 +223,7 @@ enum NativeAudioEnumeration {
 
     /// Resolved identity of one audio process: which app row it belongs to.
     struct ResolvedApp {
-        /// Grouping key — same key ⇒ same row.
+        /// Grouping key, same key ⇒ same row.
         let key: String
         let name: String
         let bundleID: String?
@@ -250,7 +245,7 @@ enum NativeAudioEnumeration {
         return NSString.path(withComponents: Array(comps[0...idx]))
     }
 
-    /// True when `execPath` lives inside (or is) `bundlePath`. Pure — the
+    /// True when `execPath` lives inside (or is) `bundlePath`. Pure, the
     /// smoke CLI asserts our own-bundle exclusion through this.
     static func belongsToBundle(execPath: String, bundlePath: String?) -> Bool {
         guard let bundlePath, !bundlePath.isEmpty else { return false }
@@ -295,12 +290,12 @@ enum NativeAudioEnumeration {
     /// Resolve the user-facing app a process belongs to.
     ///
     /// Order matters (verified against a live process dump):
-    ///  1. Outermost .app ancestor of the process's OWN executable path —
+    ///  1. Outermost .app ancestor of the process's OWN executable path,
     ///     catches Chrome/Slack/Teams-style nested helper bundles.
     ///  2. Framework XPC services only (path contains ".xpc/"): hop to the
-    ///     RESPONSIBLE process and use its app — WebKit GPU/media helpers
+    ///     RESPONSIBLE process and use its app, WebKit GPU/media helpers
     ///     run from WebKit.framework, never from the host app's bundle.
-    ///  3. Otherwise keep the process name (afplay) — deliberately NOT the
+    ///  3. Otherwise keep the process name (afplay), deliberately NOT the
     ///     responsible app, or a CLI player would show as its terminal.
     ///
     /// Grouping keys on the resolved bundle id first: Chrome's main process
@@ -347,11 +342,13 @@ enum NativeAudioEnumeration {
             guard let pid = CAQuery.readPID(obj, kAudioProcessPropertyPID), pid > 0
             else { continue }
             if onlyRunningOutput {
-                // "Producing audio" = running output; fall back to the generic
-                // is-running flag on systems where the output selector errors.
-                let running =
-                    CAQuery.readUInt32(obj, kAudioProcessPropertyIsRunningOutput)
-                    ?? CAQuery.readUInt32(obj, kAudioProcessPropertyIsRunning) ?? 0
+                // "Producing audio" = running output. A process whose flag
+                // cannot be read is left out of the list, and logged.
+                guard let running = CAQuery.readUInt32(obj, kAudioProcessPropertyIsRunningOutput)
+                else {
+                    nativeAudioLog("could not read IsRunningOutput for pid \(pid); not listed")
+                    continue
+                }
                 guard running != 0 else { continue }
             }
             guard !isOwnProcess(pid: pid, ownPid: ownPid) else { continue }
@@ -373,9 +370,10 @@ enum NativeAudioEnumeration {
     }
 
     /// Rows for the picker: the fixed {pid:-1, "System audio"} entry plus one
-    /// row per app. Each app row carries ALL its audio pids ("pids"); "pid"
-    /// stays as the first pid for bridge back-compat. Enumeration does NOT
-    /// trigger the TCC prompt (only starting a tap does).
+    /// row per app. Each app row carries ALL its audio pids ("pids") and, as
+    /// "pid", the first of them: the page tells rows apart by it and sends it
+    /// back in {cmd:"start"}. Enumeration does NOT trigger the TCC prompt
+    /// (only starting a tap does).
     static func listSources() -> [[String: Any]] {
         var out: [[String: Any]] = [["pid": -1, "name": "System audio"]]
         for app in listGroupedApps(onlyRunningOutput: true) {
@@ -391,7 +389,7 @@ enum NativeAudioEnumeration {
         return out
     }
 
-    /// Every Core Audio process object belonging to Whisper Studio itself —
+    /// Every Core Audio process object belonging to Whisper Studio itself,
     /// the exclusion list for the global tap (shell + WebKit helpers +
     /// backend process tree, not just the shell pid).
     static func ownProcessObjects() -> (objects: [AudioObjectID], pids: [pid_t]) {
@@ -458,7 +456,7 @@ enum NativeAudioEnumeration {
                 withJSONObject: listSources(), options: [.sortedKeys]),
             let json = String(data: data, encoding: .utf8)
         else { return "[]" }
-        // JSON is a valid JS literal except for U+2028/U+2029 — escape them
+        // JSON is a valid JS literal except for U+2028/U+2029, escape them
         // since this string is interpolated into evaluateJavaScript source.
         return
             json
@@ -474,7 +472,7 @@ enum NativeAudioEnumeration {
 /// base64 chunks.
 ///
 /// All mutable state is confined to `queue`, which is also the dispatch queue
-/// the IOProc block runs on — CoreAudio never invokes the block on its
+/// the IOProc block runs on, CoreAudio never invokes the block on its
 /// realtime thread when a queue is supplied, and the block only sees buffers
 /// valid for the duration of the call, so everything is copied before use.
 @available(macOS 14.4, *)
@@ -503,13 +501,6 @@ final class NativeAudioCaptureSession {
     private var inputFormat: AVAudioFormat?
     private var pending: [Int16] = []
     private var running = false
-    /// True when the tap-only aggregate failed and the fallback aggregate
-    /// (which includes the default output device) is in use.
-    private var usedOutputFallback = false
-    /// Resolved index of the tap's first buffer inside the IOProc input ABL
-    /// (only ever non-zero in fallback mode). Nil until located.
-    private var tapBufferStart: Int?
-    private var tapLayoutLogged = false
 
     // Silent-capture watchdog (queue-confined).
     private var watchdog: DispatchSourceTimer?
@@ -521,13 +512,13 @@ final class NativeAudioCaptureSession {
     private let outputFormat = AVAudioFormat(
         commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: true)!
 
-    /// (base64, sampleCount, rms) — called on the capture queue. rms is the
+    /// (base64, sampleCount, rms), called on the capture queue. rms is the
     /// root-mean-square of the chunk in [0, 1] (a live level for the UI).
     var onChunk: ((String, Int, Double) -> Void)?
-    /// Mid-capture failure — called on the capture queue, after teardown.
+    /// Mid-capture failure, called on the capture queue, after teardown.
     var onError: ((String) -> Void)?
     /// Capture is running but silent (no callbacks, or only zero samples,
-    /// for 5 s) — called once per session on the capture queue.
+    /// for 5 s), called once per session on the capture queue.
     var onWarning: ((String) -> Void)?
 
     init(pid: pid_t, bundleID: String? = nil) {
@@ -545,7 +536,7 @@ final class NativeAudioCaptureSession {
 
     /// Create tap + aggregate + IOProc and start the device. Runs on the
     /// capture queue (AudioHardwareCreateProcessTap can block on the TCC
-    /// prompt — never call from the main thread). Exactly one of
+    /// prompt, never call from the main thread). Exactly one of
     /// completion(nil) / completion(message) is invoked, on the queue.
     func start(completion: @escaping (String?) -> Void) {
         queue.async {
@@ -577,6 +568,11 @@ final class NativeAudioCaptureSession {
     // MARK: queue-confined internals
 
     private func startLocked() throws {
+        guard responsibilityAPIAvailable else {
+            throw NativeAudioError(
+                message:
+                    "System audio capture is unavailable: macOS did not provide the API that keeps Whisper Studio's own audio out of the capture.")
+        }
         // 1. Tap description: one code path for both modes.
         let description: CATapDescription
         if targetPid < 0 {
@@ -608,7 +604,7 @@ final class NativeAudioCaptureSession {
         description.muteBehavior = .unmuted  // the user keeps hearing the audio
 
         // 2. Create the tap. This is the call gated by the "System Audio
-        //    Recording" TCC permission — denial comes back as an error here.
+        //    Recording" TCC permission, denial comes back as an error here.
         var newTapID = AudioObjectID(kAudioObjectUnknown)
         var status = AudioHardwareCreateProcessTap(description, &newTapID)
         nativeAudioLog("AudioHardwareCreateProcessTap → OSStatus \(status) \(fourCC(status))")
@@ -644,34 +640,20 @@ final class NativeAudioCaptureSession {
         }
         converter = newConverter
 
-        // 5+6. Aggregate + IOProc + start. Tap-only first (no physical
-        //      sub-devices — no IO path to the user's output); fall back to
-        //      including the default output device only if that fails, with
-        //      output buffers zero-filled in the IOProc.
-        do {
-            try setUpAggregateAndIOLocked(tapUUID: description.uuid, includeOutputDevice: false)
-        } catch {
-            let message = (error as? NativeAudioError)?.message ?? error.localizedDescription
-            nativeAudioLog(
-                "tap-only aggregate path failed (\(message)); retrying with the default "
-                    + "output device as a sub-device (output buffers stay zero-filled)")
-            tearDownAggregateLocked()
-            usedOutputFallback = true
-            tapBufferStart = nil
-            try setUpAggregateAndIOLocked(tapUUID: description.uuid, includeOutputDevice: true)
-        }
+        // 5+6. Tap-only aggregate (no physical sub-devices, so no IO path to
+        //      the user's output) + IOProc + start. A failure stops the start.
+        try setUpAggregateAndIOLocked(tapUUID: description.uuid)
 
         nativeAudioLog(
             "capture started (pid \(targetPid), tap \(tapID), aggregate \(aggregateID), "
                 + "format \(tapFormat.sampleRate) Hz/\(tapFormat.channelCount)ch, "
-                + (usedOutputFallback ? "fallback aggregate with output device)" : "tap-only aggregate)"))
+                + "tap-only aggregate)")
     }
 
-    /// Create the aggregate (optionally with the default output device as a
-    /// sub-device), install the IOProc and start the device. Throws with the
-    /// failing step's OSStatus; the caller decides whether to fall back.
-    private func setUpAggregateAndIOLocked(tapUUID: UUID, includeOutputDevice: Bool) throws {
-        var composition: [String: Any] = [
+    /// Create the tap-only aggregate, install the IOProc and start the
+    /// device. Throws with the failing step's OSStatus.
+    private func setUpAggregateAndIOLocked(tapUUID: UUID) throws {
+        let composition: [String: Any] = [
             kAudioAggregateDeviceNameKey: "Whisper Studio Capture",
             kAudioAggregateDeviceUIDKey: UUID().uuidString,
             kAudioAggregateDeviceIsPrivateKey: true,
@@ -684,21 +666,11 @@ final class NativeAudioCaptureSession {
                 ]
             ],
         ]
-        if includeOutputDevice {
-            guard let outputUID = CAQuery.defaultOutputDeviceUID() else {
-                throw NativeAudioError(
-                    message: "Could not resolve the default output device for the fallback aggregate.")
-            }
-            composition[kAudioAggregateDeviceMainSubDeviceKey] = outputUID
-            composition[kAudioAggregateDeviceSubDeviceListKey] = [
-                [kAudioSubDeviceUIDKey: outputUID]
-            ]
-        }
 
         var newAggregateID = AudioObjectID(kAudioObjectUnknown)
         var status = AudioHardwareCreateAggregateDevice(composition as CFDictionary, &newAggregateID)
         nativeAudioLog(
-            "AudioHardwareCreateAggregateDevice(\(includeOutputDevice ? "with output" : "tap-only")) "
+            "AudioHardwareCreateAggregateDevice(tap-only) "
                 + "→ OSStatus \(status) \(fourCC(status))")
         guard status == noErr, newAggregateID != kAudioObjectUnknown else {
             throw NativeAudioError(
@@ -724,14 +696,14 @@ final class NativeAudioCaptureSession {
         }
     }
 
-    /// IOProc payload — runs on `queue`; buffers are only valid inside the call.
+    /// IOProc payload, runs on `queue`; buffers are only valid inside the call.
     private func handleIO(
         input inInputData: UnsafePointer<AudioBufferList>,
         output outOutputData: UnsafeMutablePointer<AudioBufferList>
     ) {
         // The capture must NEVER write audio to a physical output: zero-fill
-        // every output buffer first (a no-op for the tap-only aggregate,
-        // which has no output streams; load-bearing in fallback mode).
+        // every output buffer (the tap-only aggregate has no output streams,
+        // so this is a guard, not a path).
         let outABL = UnsafeMutableAudioBufferListPointer(outOutputData)
         for buf in outABL {
             if let data = buf.mData, buf.mDataByteSize > 0 {
@@ -748,57 +720,10 @@ final class NativeAudioCaptureSession {
         guard ablPointer.count > 0 else { return }
 
         // How many buffers the TAP contributes: 1 when interleaved, one per
-        // channel when deinterleaved.
+        // channel when deinterleaved. The tap is the aggregate's only input,
+        // so its buffers start at index 0.
         let tapBufferCount = inputFormat.isInterleaved ? 1 : Int(inputFormat.channelCount)
-        let chansPerBuffer = inputFormat.isInterleaved ? Int(inputFormat.channelCount) : 1
-
-        // Locate the tap's buffers inside the input ABL. Tap-only aggregate:
-        // the tap is the only input, index 0. Fallback aggregate: the output
-        // sub-device may contribute its own input streams (Bluetooth headsets
-        // expose their mic!), so find the run of buffers matching the tap's
-        // channel layout — searching from the END, where taps are appended.
-        var start = 0
-        if usedOutputFallback {
-            if let cached = tapBufferStart {
-                start = cached
-            } else {
-                var found = -1
-                var candidate = ablPointer.count - tapBufferCount
-                while candidate >= 0 {
-                    var matches = true
-                    for i in 0..<tapBufferCount
-                    where Int(ablPointer[candidate + i].mNumberChannels) != chansPerBuffer {
-                        matches = false
-                        break
-                    }
-                    if matches {
-                        found = candidate
-                        break
-                    }
-                    candidate -= 1
-                }
-                if found < 0 {
-                    if !tapLayoutLogged {
-                        tapLayoutLogged = true
-                        let layout = ablPointer.map { Int($0.mNumberChannels) }
-                        nativeAudioLog(
-                            "could not locate the tap in the fallback aggregate's input "
-                                + "buffers (channel layout \(layout), expected \(tapBufferCount) "
-                                + "buffer(s) of \(chansPerBuffer)ch)")
-                    }
-                    return
-                }
-                tapBufferStart = found
-                start = found
-                if !tapLayoutLogged {
-                    tapLayoutLogged = true
-                    let layout = ablPointer.map { Int($0.mNumberChannels) }
-                    nativeAudioLog(
-                        "fallback aggregate input layout \(layout); tap buffers at "
-                            + "index \(found)..<\(found + tapBufferCount)")
-                }
-            }
-        }
+        let start = 0
         guard start + tapBufferCount <= ablPointer.count else { return }
 
         let bytesPerFrame = Int(asbd.mBytesPerFrame)
@@ -934,7 +859,6 @@ final class NativeAudioCaptureSession {
         converter = nil
         inputFormat = nil
         pending.removeAll()
-        tapBufferStart = nil
     }
 }
 
@@ -947,9 +871,10 @@ final class NativeAudioBridge: NSObject, WKScriptMessageHandler {
 
     static let messageHandlerName = "nativeAudio"
 
-    /// Process taps need macOS 14.4+ (runtime check, not just compile-time).
+    /// Process taps need macOS 14.4+ (runtime check, not just compile-time)
+    /// and the responsibility API that keeps our own helpers out of the tap.
     static var isSupported: Bool {
-        if #available(macOS 14.4, *) { return true }
+        if #available(macOS 14.4, *) { return responsibilityAPIAvailable }
         return false
     }
 
@@ -967,7 +892,7 @@ final class NativeAudioBridge: NSObject, WKScriptMessageHandler {
     /// creating the WKWebView; assign `webView` right after.
     func install(into configuration: WKWebViewConfiguration) {
         let marker =
-            "window.__WHISPER_NATIVE_AUDIO = { platform: \"macos\", available: \(Self.isSupported) };"
+            "window.__WHISPER_NATIVE_AUDIO = { available: \(Self.isSupported) };"
         let script = WKUserScript(
             source: marker, injectionTime: .atDocumentStart, forMainFrameOnly: true)
         configuration.userContentController.addUserScript(script)
@@ -1016,7 +941,7 @@ final class NativeAudioBridge: NSObject, WKScriptMessageHandler {
 
     @available(macOS 14.4, *)
     private func handleList() {
-        // Enumeration walks Core Audio process objects — cheap, but keep it
+        // Enumeration walks Core Audio process objects, cheap, but keep it
         // off the main thread anyway; the reply hops back via emit().
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let json = NativeAudioEnumeration.sourcesJSON()
@@ -1026,7 +951,7 @@ final class NativeAudioBridge: NSObject, WKScriptMessageHandler {
 
     @available(macOS 14.4, *)
     private func handleStart(pid: pid_t, bundleID: String?) {
-        // Replace any previous capture — one native source at a time.
+        // Replace any previous capture, one native source at a time.
         if let old = session {
             old.stop()
             session = nil
@@ -1064,7 +989,7 @@ final class NativeAudioBridge: NSObject, WKScriptMessageHandler {
     @available(macOS 14.4, *)
     private func handleStop() {
         guard let session else {
-            // Nothing running — still acknowledge so the page never hangs.
+            // Nothing running, still acknowledge so the page never hangs.
             emit("window.__whisperNativeAudio && window.__whisperNativeAudio.onStopped();")
             return
         }
@@ -1093,10 +1018,8 @@ final class NativeAudioBridge: NSObject, WKScriptMessageHandler {
 
     private func emitWarning(_ message: String) {
         nativeAudioLog("warning → page: \(message)")
-        // onWarning is newer than onError — guard the callback itself so an
-        // older page bundle is a silent no-op, never a JS exception.
         emit(
-            "window.__whisperNativeAudio && window.__whisperNativeAudio.onWarning && window.__whisperNativeAudio.onWarning(\(Self.jsStringLiteral(message)));"
+            "window.__whisperNativeAudio && window.__whisperNativeAudio.onWarning(\(Self.jsStringLiteral(message)));"
         )
     }
 

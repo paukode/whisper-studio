@@ -1,8 +1,8 @@
 """Filesystem primitives, path validation, and shared constants.
 
-Lowest layer of the workspace package — depends on nothing else inside it.
+Lowest layer of the workspace package, depends on nothing else inside it.
 Owns the mutable backup dict so any caller (executors, routes, the approval
-bootstrap module) mutates the same object regardless of how it was imported.
+executors) mutates the same object regardless of how it was imported.
 """
 
 import logging
@@ -17,70 +17,24 @@ log = logging.getLogger("whisper-studio")
 
 
 def _atomic_write_text(full: str, content: str) -> None:
-    """Write `content` to `full` atomically: write to a unique sibling temp
-    file, fsync it, then os.replace into place.
-
-    The temp file gets a UNIQUE name (via tempfile.mkstemp) rather than a
-    per-process constant (`.name.tmp.<pid>`). Two concurrent writes to the same
-    destination therefore use distinct temp files and cannot clobber each
-    other's partial write before the atomic replace.
-
-    Preserves the destination's existing permissions when overwriting; a new
-    file gets the process umask default (matching a plain open()) instead of
-    mkstemp's restrictive 0o600.
-    """
-    parent = os.path.dirname(full) or "."
-    os.makedirs(parent, exist_ok=True)
-    basename = os.path.basename(full)
-    # Capture pre-existing mode so we can restore it after the replace
-    existing_mode: int | None = None
-    try:
-        existing_mode = stat.S_IMODE(os.stat(full).st_mode)
-    except FileNotFoundError:
-        pass
-    fd, tmp = tempfile.mkstemp(dir=parent, prefix=f".{basename}.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as f:
-            f.write(content)
-            f.flush()
-            try:
-                os.fsync(f.fileno())
-            except OSError:
-                # fsync not supported on all filesystems; non-fatal
-                pass
-        # Decide the destination mode, then apply it to the temp file so the
-        # atomic replace lands with the right permissions (no window where
-        # `full` briefly carries the wrong mode).
-        if existing_mode is not None:
-            target_mode: int | None = existing_mode
-        else:
-            # New file: match a plain open()'s umask-derived permissions rather
-            # than mkstemp's 0o600, which would silently tighten new files.
-            umask = os.umask(0)
-            os.umask(umask)
-            target_mode = 0o666 & ~umask
-        if target_mode is not None:
-            try:
-                os.chmod(tmp, target_mode)
-            except OSError as e:
-                log.debug("could not set mode on %s: %s", tmp, e)
-        os.replace(tmp, full)
-    except Exception:
-        # Best-effort cleanup of the temp file on failure
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
-        raise
+    """Write ``content`` to ``full`` atomically as UTF-8 (see
+    :func:`_atomic_write_bytes`)."""
+    _atomic_write_bytes(full, content.encode("utf-8"))
 
 
 def _atomic_write_bytes(full: str, data: bytes) -> None:
-    """Byte-mode counterpart to `_atomic_write_text`: the exact same
-    atomic temp-file-then-rename pattern (unique mkstemp sibling, fsync,
-    permission-preserving os.replace), just opened in 'wb' with no
-    `_normalize_lf` pass — binary content (e.g. a base64-decoded save_file
-    payload) must round-trip byte-for-byte, not have its line endings
-    rewritten.
+    """Write ``data`` to ``full`` atomically: write a unique sibling temp file
+    (tempfile.mkstemp), fsync it, then os.replace it into place.
+
+    The unique temp name means two concurrent writes to the same destination
+    cannot clobber each other's partial write before the replace. Binary
+    content round-trips byte for byte (no line-ending pass).
+
+    Preserves the destination's existing permissions when overwriting; a new
+    file gets the process umask default (matching a plain open()) instead of
+    mkstemp's restrictive 0o600. A failed fsync or chmod fails the write: the
+    caller is told, rather than getting a file that is not durable or carries
+    the wrong mode.
     """
     parent = os.path.dirname(full) or "."
     os.makedirs(parent, exist_ok=True)
@@ -95,13 +49,9 @@ def _atomic_write_bytes(full: str, data: bytes) -> None:
         with os.fdopen(fd, "wb") as f:
             f.write(data)
             f.flush()
-            try:
-                os.fsync(f.fileno())
-            except OSError:
-                # fsync not supported on all filesystems; non-fatal
-                pass
+            os.fsync(f.fileno())
         if existing_mode is not None:
-            target_mode: int | None = existing_mode
+            target_mode = existing_mode
         else:
             # New file: match a plain open()'s umask-derived permissions
             # rather than mkstemp's 0o600, which would silently tighten
@@ -109,14 +59,12 @@ def _atomic_write_bytes(full: str, data: bytes) -> None:
             umask = os.umask(0)
             os.umask(umask)
             target_mode = 0o666 & ~umask
-        if target_mode is not None:
-            try:
-                os.chmod(tmp, target_mode)
-            except OSError as e:
-                log.debug("could not set mode on %s: %s", tmp, e)
+        # Applied to the temp file so the atomic replace lands with the right
+        # permissions (no window where ``full`` carries the wrong mode).
+        os.chmod(tmp, target_mode)
         os.replace(tmp, full)
-    except Exception:
-        # Best-effort cleanup of the temp file on failure
+    except BaseException:
+        # Remove the temp file on failure; the destination is untouched.
         try:
             os.remove(tmp)
         except OSError:
@@ -143,24 +91,21 @@ def _resolve_path(path: str) -> str:
     return path
 
 
-# Repo root lives three dirname() calls above this file:
-#   server/workspace/paths.py -> server/workspace -> server -> <repo>
 DATA_DIR = data_root()
 WORKSPACE_CONFIG_PATH = os.path.join(DATA_DIR, "workspace_config.json")
 RECENT_WORKSPACES_PATH = os.path.join(DATA_DIR, "recent_workspaces.json")
 # Directories written to via the one-shot save_file flow (server/workspace/
-# state.py's record_save_location). Never 'connected' or 'indexed' — this is
+# state.py's record_save_location). Never 'connected' or 'indexed', this is
 # purely so a file saved this way stays clickable/revealable via /open-with
 # and /reveal afterward. See server/workspace/routes/os_integration.py.
 SAVE_LOCATIONS_PATH = os.path.join(DATA_DIR, "save_locations.json")
-WORKSPACE_BACKUPS: dict[str, str] = {}
 
 
 def get_scratch_dir(session_id: str) -> str:
     """Per-session scratch directory for intermediate/throwaway files (temp
     scripts, probe files, format-conversion intermediates) that don't belong
     in the connected workspace. Created on first use; the caller is
-    responsible for deleting anything it writes here once the task is done —
+    responsible for deleting anything it writes here once the task is done,
     this helper never cleans up on its own.
     """
     safe_id = session_id.strip() or "default"
@@ -207,7 +152,7 @@ def in_other_scratch(filepath: str, session_id: str | None) -> bool:
 # File-saving tools build their full content BEFORE the approval card is
 # shown: the finished bytes are written to this app-sandbox staging area at
 # tool-call time, and approving just MOVES the ready file to the user's
-# destination (server/approval/bootstrap.py's _do_save_to_path). By the time
+# destination (server/approval/executors.py's _do_save_to_path). By the time
 # the user sees the card, the file already exists and cannot fail to build.
 
 _STAGING_MAX_AGE_SECONDS = 24 * 3600
@@ -223,7 +168,7 @@ def stage_file_bytes(data: bytes, filename: str) -> str:
     Each staged file gets its own random subdirectory so the original
     filename is preserved for the eventual move. Declined approvals leave
     their staged file behind (the approval pipeline never calls back on No),
-    so every call also garbage-collects entries older than 24h — bounded,
+    so every call also garbage-collects entries older than 24h, bounded,
     best-effort cleanup with no background task needed."""
     import shutil
     import time

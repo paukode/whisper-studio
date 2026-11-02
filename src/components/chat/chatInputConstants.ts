@@ -5,6 +5,8 @@
  * all reference one source of truth. Nothing here touches React state —
  * pure data + one pure function (matchSubmitTrigger). */
 
+import type { IconName } from '@/components/chat/activityIcons';
+
 /* Human-readable summary of the file types the attach button, drag-drop, and
  * the /file: and @file: flows accept. Shown in the attach-button tooltip and
  * the file-search submenu so the supported types are discoverable at the point
@@ -12,13 +14,13 @@
 export const SUPPORTED_ATTACHMENT_SUMMARY =
   'images, PDF, Office docs, audio, video, code, text';
 
-/* ── Slash command definitions (matching vanilla commands.js) ── */
+/* ── Slash command definitions ── */
 
 /* A slash-command argument option. A plain string is both shown and inserted
  * verbatim (e.g. `/effort low`). The object form lets the label shown in the
  * autocomplete differ from the value inserted after the command — used by
- * `/model` so the picker shows the version label ("Sonnet 4.6") while the
- * command still inserts the model key ("sonnet"), matching the model box under
+ * `/model` so the picker shows the version label ("Sonnet 5.5") while the
+ * command still inserts the model key ("sonnet5.5"), matching the model box under
  * the composer. */
 export type SlashOption = string | { label: string; value: string };
 export const optLabel = (o: SlashOption): string => (typeof o === 'string' ? o : o.label);
@@ -26,7 +28,8 @@ export const optValue = (o: SlashOption): string => (typeof o === 'string' ? o :
 
 export interface SlashCommand {
   cmd: string;
-  icon: string;
+  /** An ICON key (activityIcons.tsx): the menus draw SVG icons, never emoji. */
+  icon: IconName;
   desc: string;
   category?: string;
   options?: SlashOption[];
@@ -34,36 +37,35 @@ export interface SlashCommand {
 }
 
 // Base list — the `model` entry's `options` is hydrated inside the component
-// from useSettingsStore.models so adding a new entry in config.json surfaces
+// from useSettingsStore.models so adding a new entry in config.user.json surfaces
 // in the slash-command autocomplete without code changes here.
 //
 // KEEP THIS LIST ALPHABETICAL BY `cmd`. The autocomplete dropdown and the
 // /help dialog render in array order, so alphabetical entries make commands
 // easy to scan and find. When adding a command, insert it in sorted position.
 export const BASE_SLASH_COMMANDS: SlashCommand[] = [
-  { cmd: 'btw ', icon: '💬', desc: 'Ask a side question', category: 'ai' },
-  { cmd: 'clear ', icon: '🧹', desc: 'Clear chat display', category: 'general' },
-  { cmd: 'doctor ', icon: '🩺', desc: 'Run diagnostics', category: 'debug' },
-  { cmd: 'doctor context ', icon: '📏', desc: 'Rightsize the system prompt', category: 'debug' },
-  { cmd: 'effort ', icon: '🎯', desc: 'Set thinking depth', options: ['low', 'medium', 'high', 'extra', 'max', 'ultracode'], category: 'ai' },
-  { cmd: 'export ', icon: '💾', desc: 'Export conversation as text', category: 'general' },
-  { cmd: 'file:', icon: '📂', desc: 'Reference a workspace file', submenu: true, category: 'workspace' },
-  { cmd: 'goal ', icon: '🎯', desc: 'Set a goal and start working toward it (clear to end, gate add <cmd> for a must-pass check)', category: 'ai' },
-  { cmd: 'help ', icon: '❓', desc: 'Show available commands', category: 'general' },
-  { cmd: 'mcp:', icon: '🔌', desc: 'Browse MCP tools', submenu: true, category: 'workspace' },
-  { cmd: 'memory ', icon: '💡', desc: 'Toggle memory (on/off/status)', options: ['on', 'off', 'status'], category: 'ai' },
-  { cmd: 'model ', icon: '🧠', desc: 'Switch chat model', category: 'ai' },
-  { cmd: 'notify ', icon: '🔔', desc: 'Toggle browser notifications', category: 'settings' },
-  { cmd: 'plan ', icon: '📋', desc: 'Enable plan mode', category: 'ai' },
-  { cmd: 'rename ', icon: '✏️', desc: 'Rename this session', category: 'general' },
-  { cmd: 'settings ', icon: '⚙️', desc: 'Open settings', category: 'settings' },
-  { cmd: 'skills:', icon: '⚡', desc: 'Browse available skills', submenu: true, category: 'workspace' },
-  { cmd: 'subagent ', icon: '🤖', desc: 'Spawn a focused subagent for a one-shot task', category: 'ai' },
-  { cmd: 'theme ', icon: '🎨', desc: 'Switch theme', options: ['auto', 'light', 'dark'], category: 'settings' },
-  { cmd: 'verbosity ', icon: '📏', desc: 'Set response length', options: ['brief', 'normal', 'detailed'], category: 'ai' },
-  { cmd: 'workflow ', icon: '⚙️', desc: 'Run a saved workflow by name', category: 'ai' },
-  { cmd: 'ci ', icon: '🧪', desc: 'Watch CI for a branch, or `ci autofix` a failing run', category: 'ai' },
-  { cmd: 'workspace ', icon: '📁', desc: 'Connect workspace', category: 'workspace' },
+  { cmd: 'ci ', icon: 'checkSquare', desc: 'Watch CI for a branch, or `ci autofix` a failing run', category: 'ai' },
+  { cmd: 'clear ', icon: 'x', desc: 'Clear chat display', category: 'general' },
+  { cmd: 'doctor ', icon: 'pulse', desc: 'Run diagnostics', category: 'debug' },
+  { cmd: 'doctor context ', icon: 'ruler', desc: 'Rightsize the system prompt', category: 'debug' },
+  { cmd: 'effort ', icon: 'sliders', desc: 'Set thinking depth', options: ['low', 'medium', 'high', 'extra', 'max', 'ultracode'], category: 'ai' },
+  { cmd: 'export ', icon: 'arrowDown', desc: 'Export conversation as text', category: 'general' },
+  { cmd: 'file:', icon: 'fileText', desc: 'Reference a workspace file', submenu: true, category: 'workspace' },
+  { cmd: 'goal ', icon: 'flag', desc: 'Set a goal and start working toward it (clear to end, gate add <cmd> for a must-pass check)', category: 'ai' },
+  { cmd: 'help ', icon: 'info', desc: 'Show available commands', category: 'general' },
+  { cmd: 'mcp:', icon: 'link', desc: 'Browse MCP tools', submenu: true, category: 'workspace' },
+  { cmd: 'memory ', icon: 'database', desc: 'Toggle memory (on/off/status)', options: ['on', 'off', 'status'], category: 'ai' },
+  { cmd: 'model ', icon: 'sparkle', desc: 'Switch chat model', category: 'ai' },
+  { cmd: 'notify ', icon: 'bell', desc: 'Toggle browser notifications', category: 'settings' },
+  { cmd: 'plan ', icon: 'list', desc: 'Enable plan mode', category: 'ai' },
+  { cmd: 'rename ', icon: 'pencil', desc: 'Rename this session', category: 'general' },
+  { cmd: 'settings ', icon: 'wrench', desc: 'Open settings', category: 'settings' },
+  { cmd: 'skills:', icon: 'zap', desc: 'Browse available skills', submenu: true, category: 'workspace' },
+  { cmd: 'subagent ', icon: 'users', desc: 'Spawn a focused subagent for a one-shot task', category: 'ai' },
+  { cmd: 'theme ', icon: 'moon', desc: 'Switch theme', options: ['auto', 'light', 'dark'], category: 'settings' },
+  { cmd: 'verbosity ', icon: 'ruler', desc: 'Set response length', options: ['brief', 'normal', 'detailed'], category: 'ai' },
+  { cmd: 'workflow ', icon: 'graph', desc: 'Run a saved workflow by name', category: 'ai' },
+  { cmd: 'workspace ', icon: 'folder', desc: 'Connect workspace', category: 'workspace' },
 ];
 
 export const HELP_CATEGORY_ORDER = ['general', 'ai', 'workspace', 'settings', 'debug'];
@@ -205,7 +207,7 @@ export function matchColonSubmenu(before: string): { type: string; query: string
 
 /* ── Autocomplete item type ── */
 export interface ACItem {
-  icon: string;
+  icon: IconName;
   name: string;
   desc: string;
   insert: string;
@@ -213,11 +215,11 @@ export interface ACItem {
 
 /* ── @ mention root entries ── */
 export const AT_ROOT_ENTRIES: ACItem[] = [
-  { icon: '📂', name: '@file:', desc: 'Reference a workspace file', insert: '@file:' },
-  { icon: '⚡', name: '@skills:', desc: 'Browse skills', insert: '@skills:' },
-  { icon: '🔌', name: '@mcp:', desc: 'Browse MCP tools', insert: '@mcp:' },
-  { icon: '🔎', name: '@index', desc: 'Search your indexed folders for this message', insert: '@index' },
-  { icon: '📖', name: '@docs', desc: 'Ask the app documentation (answers cite pages)', insert: '@docs' },
+  { icon: 'folder', name: '@file:', desc: 'Reference a workspace file', insert: '@file:' },
+  { icon: 'zap', name: '@skills:', desc: 'Browse skills', insert: '@skills:' },
+  { icon: 'link', name: '@mcp:', desc: 'Browse MCP tools', insert: '@mcp:' },
+  { icon: 'search', name: '@index', desc: 'Search your indexed folders for this message', insert: '@index' },
+  { icon: 'book', name: '@docs', desc: 'Ask the app documentation (answers cite pages)', insert: '@docs' },
 ];
 
 /* ── Autocomplete popup heading ── */

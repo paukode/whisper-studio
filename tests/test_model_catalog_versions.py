@@ -18,7 +18,6 @@ import pytest
 from server.infrastructure.effort import (
     effort_levels_for,
     infer_effort_tier,
-    openai_effort_tier_for,
 )
 
 _EXAMPLE = os.path.join(os.path.dirname(__file__), "..", "config.example.json")
@@ -58,7 +57,7 @@ def test_a_declared_ladder_is_the_one_its_bedrock_id_infers():
             continue
         model_id = entry["id"]
         if model_id.startswith("openai."):
-            inferred = openai_effort_tier_for(model_id)
+            inferred = "openai6"
         else:
             inferred = infer_effort_tier("", model_id)
         assert inferred == declared, (key, model_id, inferred)

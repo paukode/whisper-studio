@@ -4,7 +4,7 @@ import { dialogConfirm, useUIStore } from './uiStore';
 import { listDir } from '@/api/workspace';
 
 /** The connected root a new tab belongs to (undefined with none). */
-export const currentRoot = (): string | undefined => useUIStore.getState().wsPath || undefined;
+const currentRoot = (): string | undefined => useUIStore.getState().wsPath || undefined;
 
 /** The tab shows a file of the connected root. A tab kept from another root
  *  holds a different file that happens to share the relative path. */
@@ -379,7 +379,7 @@ export function loadedDirs(tree: FileTreeEntry[]): string[] {
 /** The tree with the folder at `dirPath` given the fresh listing `entries`,
  *  merged (see `mergeTree`) so loaded subtrees under it survive. Unchanged
  *  when no such folder is in the tree any more. */
-export function mergeAt(
+function mergeAt(
   tree: FileTreeEntry[],
   dirPath: string,
   entries: FileTreeEntry[],

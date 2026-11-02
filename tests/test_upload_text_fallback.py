@@ -47,3 +47,18 @@ def test_binary_content_still_rejected():
     )
     assert r.status_code == 400
     assert "Unsupported file type" in r.json()["error"]
+
+
+def test_an_image_that_cannot_be_decoded_is_refused_at_upload():
+    r = client.post("/api/upload", files={"files": ("shot.png", b"not a png", "image/png")})
+    assert r.status_code == 400
+    assert r.json()["error"] == "Could not read image: shot.png"
+
+
+def test_an_upload_whose_bytes_cannot_be_kept_fails_with_the_reason(monkeypatch):
+    from server import attachment_store
+
+    monkeypatch.setattr(attachment_store, "source_files_dir", lambda: "/proc/nope")
+    r = client.post("/api/upload", files={"files": ("notes.log", b"line\n", "text/plain")})
+    assert r.status_code == 500
+    assert r.json()["error"].startswith("Could not keep notes.log:")

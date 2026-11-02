@@ -1,4 +1,4 @@
-"""The on-device model registry — built-in defaults plus anything in config.
+"""The on-device model registry: config entries over the curated recommendations.
 
 Adding a local model is a ONE-place change: give it an entry in ``chat_models``
 with ``is_local: true`` and the weight fields, and it becomes downloadable,
@@ -15,7 +15,7 @@ loadable and selectable with no code change::
       "ctx": 32768
     }
 
-MLX-format models work the same way with ``"engine": "mlx"`` — the weights are
+MLX-format models work the same way with ``"engine": "mlx"``, the weights are
 a whole-repo snapshot, so there is no ``filename``::
 
     "local_qwen_mlx": {
@@ -35,13 +35,14 @@ loader fields (``repo_id``, ``filename``, ``dir``) describe one model, and
 splitting them across two config sections is how you get a model that shows in
 the UI but cannot load (or vice versa).
 
-Recommended vs shipped: the app ships NO local chat models by default — a fresh
+Recommended models: the app ships NO local chat models by default; a fresh
 install has an empty on-device catalog until the user downloads one from Settings
 > Models > Discover. ``RECOMMENDED_LOCAL_MODELS`` below is a curated set the
 Discover tab surfaces for one-click install; a recommended model only enters the
-effective catalog once its weights are on disk (so it shows up after download,
-and a model downloaded by a prior release is not orphaned). Anything the user
-adds/installs lands in ``chat_models`` and is always present, even mid-download.
+effective catalog through its ``chat_models`` entry, which a Discover install
+writes; the recommendation fills any field that entry leaves out. Anything the
+user adds or installs lands in ``chat_models`` and is present at once, even
+mid-download.
 """
 
 from __future__ import annotations
@@ -64,8 +65,8 @@ def _required_fields(entry: dict) -> tuple[str, ...]:
 
 
 # Curated on-device models the Discover tab offers for one-click install. These
-# are NOT shipped into the catalog — a recommended model only appears (and only
-# becomes loadable) once its weights are on disk. `id` is a sentinel that never
+# are NOT in the catalog by themselves: a recommended model appears once a
+# chat_models entry with its key exists (a Discover install writes one). `id` is a sentinel that never
 # reaches Bedrock (the router branches on the "local:" prefix before any AWS
 # call). 32K ctx default: the FULL tool pool ("Tools: All") renders a ~17.2K-token
 # prompt, so a 16K window rejects the first tool turn; 32K loads on an M3/18GB
@@ -80,7 +81,7 @@ RECOMMENDED_LOCAL_MODELS: dict[str, dict] = {
         "dir": "gemma-4-12b-it-qat-q4_0",
         "ctx": 32768,
         "supports_tools": True,
-        # Exact GGUF size from the HF repo listing — lets Discover warn before
+        # Exact GGUF size from the HF repo listing, lets Discover warn before
         # download on a machine too small for this quant, same as a searched one.
         "size_bytes": 6975879296,
     },
@@ -126,21 +127,16 @@ def _config_local_models() -> dict[str, dict]:
 
     Reads the normalized merge of the SYSTEM and USER layers WITHOUT the
     ``chat_models_disabled`` hide-list: disabling a model only hides it from the
-    composer picker — its weights must stay downloadable/deletable here, or a
+    composer picker, its weights must stay downloadable/deletable here, or a
     disabled model's gigabytes would become unmanageable (and, for user-added
-    models, invisible). Never raises: a broken config must not take the local
-    runtime down.
+    models, invisible). A config that cannot be read raises its error.
     """
-    try:
-        from server.infrastructure.config import unfiltered_chat_models
+    from server.infrastructure.config import unfiltered_chat_models
 
-        # Model ids live in the PARALLEL ``ids`` map, not in meta — reading
-        # them from meta yields None and silently invents "local:<key>", which
-        # then overwrites a built-in's real sentinel and breaks key_for_id().
-        ids, meta = unfiltered_chat_models()
-    except Exception as e:  # pragma: no cover - defensive
-        log.debug("Could not read chat model config for local registry: %s", e)
-        return {}
+    # Model ids live in the PARALLEL ``ids`` map, not in meta: reading them
+    # from meta yields None and silently invents "local:<key>", which then
+    # overwrites a recommended model's real id and breaks key_for_id().
+    ids, meta = unfiltered_chat_models()
 
     out: dict[str, dict] = {}
     for key, m in meta.items():
@@ -151,8 +147,9 @@ def _config_local_models() -> dict[str, dict]:
             "label": m.get("label") or key,
             "supports_tools": bool(m.get("supports_tools", False)),
         }
-        # Only carry weight fields the config actually set, so a built-in of the
-        # same key keeps supplying the rest instead of being blanked out.
+        # Only carry weight fields the config actually set, so a recommended
+        # model of the same key keeps supplying the rest instead of being
+        # blanked out.
         for field in (*_REQUIRED, "ctx", "engine"):
             if m.get(field):
                 entry[field] = m[field]
@@ -174,7 +171,7 @@ def _recommended_downloaded_on_disk(entry: dict) -> bool:
 
 def recommended_models() -> dict[str, dict]:
     """The curated Discover catalog with a ``downloaded`` flag per entry. Not
-    filtered by anything — the Discover tab shows every recommendation."""
+    filtered by anything, the Discover tab shows every recommendation."""
     return {
         key: {**entry, "downloaded": _recommended_downloaded_on_disk(entry)}
         for key, entry in RECOMMENDED_LOCAL_MODELS.items()
@@ -182,30 +179,22 @@ def recommended_models() -> dict[str, dict]:
 
 
 def local_models() -> dict[str, dict]:
-    """The effective on-device catalog: recommended models that are DOWNLOADED,
-    merged with the user's config ``is_local`` entries (config winning per key).
+    """The effective on-device catalog: the user's config ``is_local``
+    entries. An entry whose key is a recommended model is laid over that
+    recommendation, so a config entry may set just one field (``ctx``) and
+    the recommendation fills the rest.
 
     A fresh install ships nothing local, so this is empty until the user
-    downloads a model from Discover — which writes a config entry (always
-    present, so an in-progress download shows immediately) and, once complete,
-    also satisfies the on-disk check. A recommended model left on disk by a prior
-    release still appears here even without a config entry, so its weights stay
-    manageable instead of being orphaned.
+    downloads a model from Discover, which writes a config entry (present at
+    once, so an in-progress download shows immediately).
 
     Entries that still lack a required weight field after the merge are dropped
-    with a warning — a half-declared model would otherwise fail later at load
+    with a warning, a half-declared model would otherwise fail later at load
     time with a much less obvious error.
     """
-    merged: dict[str, dict] = {
-        key: dict(entry)
-        for key, entry in RECOMMENDED_LOCAL_MODELS.items()
-        if _recommended_downloaded_on_disk(entry)
-    }
+    merged: dict[str, dict] = {}
     for key, entry in _config_local_models().items():
-        if key in merged:
-            merged[key].update(entry)
-        else:
-            merged[key] = dict(entry)
+        merged[key] = {**RECOMMENDED_LOCAL_MODELS.get(key, {}), **entry}
 
     usable: dict[str, dict] = {}
     for key, entry in merged.items():

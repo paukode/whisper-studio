@@ -57,26 +57,19 @@ def rebind_original_sslcontext_setters(original: type, name: str = GLOBAL_NAME) 
     return fixed
 
 
-def install_system_trust() -> bool:
-    """Inject truststore into ``ssl`` and repair the original class. Returns
-    True when the system store is active. Fails open: if truststore is missing
-    the bundled CA list stays in use; if the repair fails the injection is
-    undone so nothing is left half-patched."""
+def install_system_trust() -> None:
+    """Inject truststore (a pinned dependency) into ``ssl`` and repair the
+    original class. Any failure raises: a missing truststore or a failed
+    injection is a broken install, and a repair that cannot be proven is
+    undone first so nothing is left half-patched."""
     import ssl
 
-    try:
-        import truststore
-    except Exception as exc:  # noqa: BLE001 - optional dependency
-        log.warning("system trust store unavailable, using the bundled CA list: %s", exc)
-        return False
+    import truststore
+
     original = ssl.SSLContext
-    try:
-        truststore.inject_into_ssl()
-    except Exception as exc:  # noqa: BLE001
-        log.warning("system trust store injection failed, using the bundled CA list: %s", exc)
-        return False
+    truststore.inject_into_ssl()
     if ssl.SSLContext is original:
-        return True  # nothing was rebound (already injected, or a no-op build)
+        return  # nothing was rebound (already injected)
     try:
         fixed = rebind_original_sslcontext_setters(original)
         # Prove the repair on a throwaway instance of the ORIGINAL class: the
@@ -84,18 +77,13 @@ def install_system_trust() -> bool:
         probe = original(ssl.PROTOCOL_TLS_CLIENT)
         probe.options |= ssl.OP_NO_COMPRESSION
         probe.verify_mode = ssl.CERT_REQUIRED
-        log.info("system trust store active (truststore); %d ssl setters rebound", fixed)
-        return True
-    except Exception as exc:  # noqa: BLE001 - includes RecursionError
-        try:
-            truststore.extract_from_ssl()
-        finally:
-            log.warning(
-                "system trust store disabled: the original ssl.SSLContext could not be "
-                "repaired after injection (%s); using the bundled CA list",
-                type(exc).__name__,
-            )
-        return False
+    except Exception as exc:  # includes RecursionError
+        truststore.extract_from_ssl()
+        raise RuntimeError(
+            "The system trust store could not be installed: the original "
+            f"ssl.SSLContext could not be repaired after injection ({type(exc).__name__})."
+        ) from exc
+    log.info("system trust store active (truststore); %d ssl setters rebound", fixed)
 
 
 __all__ = ["GLOBAL_NAME", "install_system_trust", "rebind_original_sslcontext_setters"]

@@ -2,8 +2,8 @@
 
 Keeps server/chat/routes.py lean (and under the file-size budget): the endpoint
 calls ``local_chat_response(...)`` once, right after the system prompt + messages
-are built. This function decides whether the turn is a local (on-device) one —
-fresh or an approval resume — and returns the ``StreamingResponse``, or ``None``
+are built. This function decides whether the turn is a local (on-device) one,
+fresh or an approval resume, and returns the ``StreamingResponse``, or ``None``
 to let the cloud Claude path proceed.
 
 Local turns run on the unified turn engine (server/chat/engine) through the
@@ -11,7 +11,8 @@ LocalAdapter with the LOCAL policy: the completion gate runs only while a goal
 is active, and its judge is this same resident model (server/goals/
 local_judge.py); an empty tool-executor model id keeps the permission
 explainer offline, and compaction summarizes via the resident on-device model.
-The path stays fully offline end to end.
+In Local mode the turn stays offline end to end; in Hybrid mode the auto-mode
+classifier, memory extraction and dream consolidation use cloud models.
 """
 
 from __future__ import annotations
@@ -38,7 +39,6 @@ def local_chat_response(
     session_approvals: dict,
     session_denials: dict,
     session_config: dict,
-    suppress_ws_search: bool = False,
     heartbeat=None,
     is_disconnected=None,
     ws_latch=None,
@@ -48,10 +48,10 @@ def local_chat_response(
     if not is_local_model(model_key):
         return None
 
-    # Approval continuations flow through the SAME generic branch as the cloud
-    # paths now: routes.py rebuilds the canonical messages from the unified
-    # pause store before calling here, so a local resume is just a normal
-    # engine turn continuing from the restored history.
+    # Approval continuations flow through the same generic branch as the
+    # cloud paths: routes.py rebuilds the canonical messages from the unified
+    # pause store before calling here, so a local resume is a normal engine
+    # turn continuing from the restored history.
 
     from server.local.runtime import supports_tools
 
@@ -68,7 +68,7 @@ def local_chat_response(
     # at a stale size. Without this, a backend restart wiped the in-memory
     # sticky value and the next turn silently relaunched llama-server at the
     # registry default while the UI showed the user's larger choice (64K chip,
-    # n_ctx=32768 exceed_context_size errors). Clamped like the load endpoint —
+    # n_ctx=32768 exceed_context_size errors). Clamped like the load endpoint,
     # never trust a client-supplied size. Recorded via set_requested_n_ctx so
     # the non-chat callers (session summariser, index extraction) reuse the
     # same size instead of bouncing the server.
@@ -83,7 +83,7 @@ def local_chat_response(
 
         set_requested_n_ctx(n_ctx)
     # Lean system prompt: the cloud one is tool/workspace-heavy (~2-2.5k tokens
-    # the local model can't use) — drop it to speed prefill and free n_ctx,
+    # the local model can't use), drop it to speed prefill and free n_ctx,
     # keeping only project/memory context plus, when tools are on, a short marker
     # that a workspace is connected (so the model reaches it via ws_* tools
     # instead of claiming no project was provided).
@@ -161,7 +161,6 @@ def local_chat_response(
                 ws_path=ws_path,
                 # The chat route's workspace latch (see TurnContext.ws_latch).
                 ws_latch=ws_latch,
-                suppress_ws_search=suppress_ws_search,
                 transcript=transcript,
                 current_attachments=current_attachments,
                 session_denials=session_denials,

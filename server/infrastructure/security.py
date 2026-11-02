@@ -94,3 +94,11 @@ def is_ws_origin_allowed(origin: str | None) -> bool:
     WS connections). A handshake with no Origin is allowed (native clients);
     a cross-site Origin is rejected to prevent cross-site WebSocket hijacking."""
     return not is_cross_site_origin(origin)
+
+
+def is_ws_origin_present_and_allowed(origin: str | None) -> bool:
+    """Strict origin check for the audio sockets (/ws and /ws/capture-helper):
+    the handshake must carry an Origin, and it must be a trusted host. Their
+    only clients are pages (a browser, or the Mac app's WKWebView at
+    http://127.0.0.1:<port>), which always send one."""
+    return bool(origin) and not is_cross_site_origin(origin)

@@ -33,6 +33,7 @@ def _fake_result(**overrides):
         agent_id="a1",
         agent_type="explore",
         status="completed",
+        stop_reason="completed",
         turns_used=1,
         tools_called=[],
         usage={},

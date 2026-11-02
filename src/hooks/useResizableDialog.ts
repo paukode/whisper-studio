@@ -56,8 +56,9 @@ export function useResizableDialog(key: string, opts: Options = {}) {
   useEffect(() => {
     try {
       localStorage.setItem(key, JSON.stringify(geo));
-    } catch {
-      /* ignore persistence failures */
+    } catch (err) {
+      // The geometry holds for this window only.
+      console.warn('[storage] could not save', key, err);
     }
   }, [key, geo]);
 

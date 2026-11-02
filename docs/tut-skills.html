@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Skills - Whisper Studio Docs</title>
-  <meta name="description" content="Built-in skills load automatically when they fit your request, and you can add your own as Markdown files in the skills directory. What ships, how selection works, and how to write and invoke a custom skill.">
+  <meta name="description" content="Bundled skills load when they match your request. Add your own skills as Markdown files in the skills folder. This page shows the selection, custom skills, and the skills that Claude writes.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -15,97 +15,121 @@
 <body>
   <main class="doc" data-page="tut-skills">
     <h1>Skills</h1>
-    <p class="subtitle">Skills are small, focused capabilities Claude can reach for mid-conversation.
-      The built-in ones load automatically when they fit your request, and you can add your own by
-      dropping a Markdown file into the <code class="path">skills/</code> directory.</p>
+    <p class="subtitle">A skill is a small capability that Claude can use during a conversation.
+      The bundled skills load when they match your request. To add your own skill, put a Markdown
+      file in the <code class="path">skills/</code> folder.</p>
 
-    <p class="lead">You never have to name a skill. You just ask for what you want, and Claude picks
-      the skill whose description matches. This page shows what ships in the box, how selection works,
-      how to write and invoke a skill of your own, and how Claude writes skills for itself when you
-      correct the way it works.</p>
+    <p class="lead">You do not name a skill. Ask for the result, and Claude selects the skill
+      whose description matches. This page shows these items:</p>
+    <ul>
+      <li>The bundled skills and the selection of a skill.</li>
+      <li>How to write and use your own skill.</li>
+      <li>How Claude writes skills when you correct its work.</li>
+    </ul>
 
     <figure class="diagram-figure wide">
       <div id="skills-flow-diagram" class="diagram"></div>
-      <figcaption>From your message to the answer. Each enabled skill is offered to the model as a
-        tool (indexed compactly, loaded on demand); Claude invokes the matching one, which may use
-        other tools before the result streams back.</figcaption>
+      <figcaption>From your message to the answer. The app gives each enabled skill to the model as
+        a tool, in a short index. Claude calls the matching skill. The skill can use other tools
+        before the result comes into the chat.</figcaption>
     </figure>
 
-    <h2 id="what-is-a-skill">What a skill actually is</h2>
+    <h2 id="what-is-a-skill">What a skill is</h2>
     <p>A skill is a Markdown file with a small YAML header (the frontmatter) and a body. The
-      frontmatter names the skill and describes when to use it; the body is the instructions the
-      model follows once the skill runs. On startup, Whisper Studio reads every file in
-      <code class="path">skills/</code> and turns each one into a tool. With progressive tool
-      disclosure (the default), skill tools are not all handed to Claude with full schemas up front:
-      the model sees a compact index of names and one-line descriptions, and loads a skill's full
-      definition on demand via <code>tool_search</code>, or drives it through the always-available
-      <code>skill_list</code> and <code>skill_invoke</code> tools. Because a skill <em>is</em> a
-      tool, selection is still just normal tool use: Claude reads the descriptions and calls the one
-      that fits.</p>
-    <p>Skills come in two shapes:</p>
+      frontmatter gives the name of the skill and the conditions for its use. The body contains the
+      instructions that the model obeys when the skill runs. At startup, Whisper Studio reads each
+      file in <code class="path">skills/</code> and makes a tool from it.</p>
+    <p>Progressive tool disclosure is on by default. Thus, the model does not get the full schema of each skill tool at the start. The model gets a short index of names and descriptions.</p>
+    <p> The
+      model loads the full definition of a skill with <code>tool_search</code>. It can also use the
+      <code>skill_list</code> and <code>skill_invoke</code> tools, which are always available. A
+      skill is a tool. Thus, Claude reads the descriptions and calls the skill that matches.</p>
+    <p>There are two types of skills:</p>
     <ul>
-      <li><b>Prompt skills.</b> The body is guidance the model reads and applies directly (for
-        example, a house style for meeting notes). No code runs on your machine.</li>
-      <li><b>Executor skills.</b> The frontmatter names an <code>executor</code>, so invoking the
-        skill runs backend code instead (the executor must be registered in server code).</li>
+      <li><b>Prompt skills.</b> The body is guidance that the model reads and uses, for example a
+        style for meeting notes. No code runs on this Mac.</li>
+      <li><b>Executor skills.</b> The frontmatter names an <code>executor</code>. When the skill
+        runs, backend code runs. The server code must register the executor.</li>
     </ul>
 
-    <h2 id="built-in">Built-in tools vs. bundled skills</h2>
-    <p>Core capabilities, web search and fetch, sandboxed Python, shell commands, AWS reads and
-      writes, document analysis, and transcript summaries, are <em>built-in tools</em>: they ship in
-      code, are always available, and do not appear in the Skills panel. You do not enable or invoke
-      them by hand; you just ask, and the model picks them by relevance. See
-      <a href="ref-tools.html#builtin-tools">Agent tools → Built-in core tools</a> for the list.</p>
-    <p>The skills below are the bundled starting set. They load automatically when relevant, and you
-      can edit, rename, disable, or delete them in Settings → Skills like any skill you add
-      yourself.</p>
+    <h2 id="built-in">Built-in tools and bundled skills</h2>
+    <p>The core capabilities are <em>built-in tools</em>. Examples are web search, web fetch, Python in the sandbox, shell commands, AWS operations, document analysis, and transcript summaries.
+      They are in the code, they are always available, and they do not show in the skills panel.
+      You do not enable them. Ask for the result, and the model selects the tool. Refer to
+      <a href="ref-tools.html#builtin-tools">Agent tools → Built-in core tools</a>.</p>
+    <p>The skills below are the bundled set. They load when they match the request. You can edit,
+      rename, disable, or delete them in "Settings", "Skills and plugins", "Skills", as your own
+      skills.</p>
     <div class="table-wrap"><table>
-      <thead><tr><th>Skill</th><th>What it does</th><th>Ask something like</th></tr></thead>
+      <thead><tr><th>Skill</th><th>Function</th><th>Example request</th></tr></thead>
       <tbody>
-        <tr><td><b>Meeting Notes</b></td><td>A fuller, polished write-up: overview, decisions, an owner / action / deadline table, discussion points, blockers, and next steps.</td><td>"Write up minutes for this meeting."</td></tr>
-        <tr><td><b>Translate</b></td><td>Translates the transcript or any text to a target language.</td><td>"Translate this into Kurdish."</td></tr>
-        <tr><td><b>Presentation Builder</b></td><td>Drafts a structured slide deck from a topic or source material.</td><td>"Build me a 10-slide deck on this."</td></tr>
-        <tr><td><b>Catch Up</b></td><td>A plain-language recap for someone who joined late, plus suggested follow-up and clarifying questions.</td><td>"Catch me up on what I missed."</td></tr>
+        <tr><td><b>Meeting Notes</b></td><td>Full meeting notes: overview, decisions, a table of owner, action, and deadline, discussion points, blockers, and next steps.</td><td>"Write up minutes for this meeting."</td></tr>
+        <tr><td><b>Translate</b></td><td>Translates the transcript or a text to a target language.</td><td>"Translate this into Kurdish."</td></tr>
+        <tr><td><b>Presentation Builder</b></td><td>Writes a slide deck from a topic or from source material.</td><td>"Build me a 10-slide deck on this."</td></tr>
+        <tr><td><b>Catch Up</b></td><td>A recap for a person who joined late, and questions to ask next.</td><td>"Catch me up on what I missed."</td></tr>
       </tbody>
     </table></div>
-    <p>The transcript skills - Meeting Notes and Catch Up - work from the live or recorded transcript,
-      which the server supplies for you (as does the built-in Summarize Transcript tool). A very long
-      transcript is condensed automatically before they run, so a multi-hour session still summarizes
-      cleanly; see <a href="arch-summarization.html">Transcript summarization</a>.</p>
+    <p>Meeting Notes and Catch Up use the live or recorded transcript. The server gives the
+      transcript to the skill, as for the built-in Summarize Transcript tool. The app makes a long
+      transcript shorter before these skills run. Refer to
+      <a href="arch-summarization.html">Transcript summarization</a>.</p>
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
-      <div class="callout__body"><p>The Web Search tool works best with a Tavily API key. Set
-        <code>TAVILY_API_KEY</code> in the environment (it takes precedence) or the
-        <code>tavily_api_key</code> field in <code class="path">config.json</code>. Without a key the
-        tool stays callable: if an Amazon Bedrock AgentCore browser MCP server is enabled it answers
-        by driving that browser instead, and with neither it returns setup guidance rather than
-        results. Everything else keeps working either way. See
+      <div class="callout__body"><p>The web search tool uses a Tavily API key. Add the key in
+        "Settings", "API keys", in the field "Tavily API Key (for web search)". The app saves the
+        key in <code class="path">config.user.json</code>. The <code>TAVILY_API_KEY</code>
+        environment variable has priority over the saved key.</p>
+        <p>With no Tavily key, the tool does not return search results. If an Amazon Bedrock
+        AgentCore browser MCP server is enabled, the tool tells the model to use that browser. If
+        not, the tool returns instructions for the configuration. The other tools work in all cases. Refer to
         <a href="ref-env.html">Environment variables</a>.</p></div>
     </div>
 
-    <h2 id="seeing-it-run">Seeing a skill run</h2>
-    <p>When Claude invokes a skill, a small inline indicator appears in the message stream as the call
-      starts, carried on the <code>skill</code> and <code>skill_input</code> SSE events. Click into
-      that indicator to open the trace: which skill ran, the input it received, and what it returned.
-      This is the same tracing you get for any tool call, so a skill never happens invisibly.</p>
+    <h2 id="seeing-it-run">See a skill run</h2>
+    <p>When Claude calls a skill, a small indicator shows in the message. The
+      <code>skill</code> and <code>skill_input</code> SSE events carry it. Click the indicator to
+      open the trace: the skill name, its input, and its result. Each tool call has the same
+      trace. Thus, a skill does not run without a record.</p>
 
-    <h2 id="managing">Turning skills on and off</h2>
-    <p>Every skill is listed in <b>Settings, Skills</b>, where you can enable or disable each one and
-      read its definition. Disabling a skill removes it from the catalogue, so Claude can no longer
-      pick it. The on and off state is stored in <code class="path">skills_config.json</code> under the
-      data directory, separately from the skill files themselves, so toggling a built-in skill off never
-      edits or deletes it. The panel's toolbar has <b>+ New Skill</b> for writing one in the app and
-      <b>Import skill</b> for bringing in skills shared by someone else, and <b>Import project</b>
-      during onboarding copies skills over from an existing Claude Code or Codex project.</p>
+    <h2 id="managing">Enable and disable skills</h2>
+    <p>"Settings", "Skills and plugins", "Skills" lists each skill. You can enable or disable each
+      skill and read its definition. When you disable a skill, the app removes it from the
+      catalog, and Claude cannot select it.</p>
+    <p>The app keeps the on and off state in <code class="path">skills_config.json</code> in the
+      data folder. The skill files stay the same. Thus, when you disable a bundled skill, the app
+      does not edit or delete it. The toolbar of the panel has these buttons:</p>
+    <ul>
+      <li>"+ New Skill": write a skill in the app.</li>
+      <li>"Import skill": add skills that a different person shared.</li>
+    </ul>
+    <p>Each skill has a unique name. Case and the difference between "-" and "_" do not
+      make a different name. Thus, "Deploy-Staging" and "deploy_staging" are the same name.
+      The app does not save or rename a skill when a different skill has that name.</p>
+    <p>The editor does not replace the skill that you have. It shows "A skill named
+      deploy_staging already exists". To continue, use a different name, or delete the
+      skill that you have.</p>
+    <p>The import dialog has an "Overwrite existing" checkbox. It is clear at the start. When
+      the checkbox is clear, the import does not replace the skill that you have. The dialog
+      shows "Not imported, a skill with the same name exists" and the names. When you select
+      the checkbox, the import replaces the skill that has the same name.</p>
+    <p>The app keeps the old skill until the copy is complete. If the copy fails, the app puts
+      back the old skill. The import can also replace a skill that came with the app. It does
+      not use the name of a built-in tool.</p>
+    <p>"Settings", "Import project" copies skills, instructions, and MCP servers from a Claude
+      Code or Codex CLI project. Refer to <a href="tut-mcp-plugins.html#import-project">Import a
+      Claude Code or Codex project</a>.</p>
 
-    <h2 id="custom">Writing a custom skill</h2>
-    <p>A custom skill is one Markdown file in <code class="path">skills/</code>. The frontmatter is
-      the important part: <code>name</code> is how the skill is invoked, and <code>description</code>
-      is what Claude reads when deciding whether this skill fits your request. Write the description
-      the way you would explain the skill to a colleague, since it is the whole basis for selection.
-      The optional <code>triggers</code> line lists example phrases that hint when the skill applies.</p>
+    <h2 id="custom">Write a custom skill</h2>
+    <p>A custom skill is one Markdown file in <code class="path">skills/</code>. The frontmatter
+      is the most important part:</p>
+    <ul>
+      <li><code>name</code> is the name for a call of the skill.</li>
+      <li><code>description</code> is the text that Claude reads to select a skill. Write it as
+        you explain the skill to a colleague. The selection uses only this text.</li>
+      <li><code>triggers</code> is optional. It lists example phrases for the skill.</li>
+    </ul>
 
-    <p>Here is a minimal prompt skill. Save it as
+    <p>This example is a minimal prompt skill. Save it as
       <code class="path">skills/standup-notes.md</code>:</p>
     <div class="code-block"><pre><code>---
 name: standup_notes
@@ -120,142 +144,144 @@ input_schema:
 
 Rewrite the notes as a clean standup update. For each person, list:
 Yesterday, Today, and Blockers. Put anything that sounds like a blocker
-under Blockers even if it wasn't labelled that way. Keep it terse.</code></pre></div>
+under Blockers even if it was not labelled that way. Keep it terse.</code></pre></div>
 
-    <p>The steps to add and use it:</p>
+    <p>To add and use the skill:</p>
     <ol class="steps">
-      <li><h4>Create the file</h4><p>Drop your <code>.md</code> file into
-        <code class="path">skills/</code>, or use <b>+ New Skill</b> in <b>Settings, Skills</b> to
-        write it in the app. Files created in the UI are validated and hot-reloaded, no restart
-        needed.</p></li>
-      <li><h4>Confirm it loaded</h4><p>Ask Claude to run <code>skill_list</code>, or open
-        <b>Settings, Skills</b>. Your skill should appear with its description and trigger count.</p></li>
-      <li><h4>Just ask</h4><p>Say something that matches the description ("clean up these standup
-        notes"). Claude selects the skill on its own. You do not have to type its name.</p></li>
-      <li><h4>Or invoke it by name</h4><p>If you want to force a specific skill, Claude can call
-        <code>skill_invoke</code> with the skill's <code>name</code> and your <code>input</code>.</p></li>
+      <li><h4>Make the file</h4><p>Put your <code>.md</code> file in
+        <code class="path">skills/</code>. Or click "+ New Skill" in the skills panel and write the
+        skill in the app. The app validates and loads a skill from the panel immediately. You do
+        not restart the app.</p></li>
+      <li><h4>Make sure that the skill loaded</h4><p>Open the skills panel, or ask Claude to run
+        <code>skill_list</code>. The list shows your skill with its description and the number of
+        triggers.</p></li>
+      <li><h4>Ask for the result</h4><p>Write a request that matches the description, for example
+        "clean up these standup notes". Claude selects the skill. You do not type its name.</p></li>
+      <li><h4>Optional: call the skill by name</h4><p>Ask Claude to use the skill by its name.
+        Claude then calls <code>skill_invoke</code> with the <code>name</code> of the skill and your
+        <code>input</code>.</p></li>
     </ol>
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
-      <div class="callout__body"><p>Selection lives and dies by the <code>description</code>. If a
-        skill is being ignored, sharpen its description to say plainly when to use it, and list a few
-        realistic <code>triggers</code>. If two skills overlap, disable the one you don't want so
-        Claude isn't guessing between them.</p></div>
+      <div class="callout__body"><p>The selection uses the <code>description</code>. If Claude
+        does not select a skill, write the description again. Say clearly when to use the skill, and
+        add some realistic <code>triggers</code>. If two skills have the same function, disable one
+        of them.</p></div>
     </div>
 
-    <h3 id="the-two-tools">skill_list, skill_invoke and skill_manage</h3>
-    <p>Three tools let Claude work with skills directly, rather than relying only on automatic
-      selection:</p>
+    <h3 id="the-two-tools">skill_list, skill_invoke, and skill_manage</h3>
+    <p>Three tools let Claude use skills directly, without the automatic selection:</p>
     <div class="spec">
-      <dt><code>skill_list</code></dt><dd>Returns every available skill with its name, description, and triggers. Claude calls this to discover what is on hand before picking one.</dd>
-      <dt><code>skill_invoke</code></dt><dd>Runs a named skill. It takes a <code>skill_name</code> and an <code>input</code> string, then applies the skill to that input.</dd>
-      <dt><code>skill_manage</code></dt><dd>The write side: read a skill's text and file list, create one, patch or append to it, add or remove a support file, and delete a skill it created itself. See <a href="#self-maintained">Skills Claude writes for itself</a>.</dd>
+      <dt><code>skill_list</code></dt><dd>Returns each available skill with its name, description, and triggers. Claude calls it to find the skills before it selects one.</dd>
+      <dt><code>skill_invoke</code></dt><dd>Runs a skill. It receives a <code>skill_name</code> and an <code>input</code> text, and applies the skill to the input.</dd>
+      <dt><code>skill_manage</code></dt><dd>Writes skills. It can read a skill and its file list, and make a skill. It can change text, add or remove a support file, and delete a skill that it made. Refer to <a href="#self-maintained">Skills that Claude writes</a>.</dd>
     </div>
-    <p>You rarely need to think about the first two. They exist so Claude can be explicit ("let me list
-      the skills, then invoke the right one") when a request is ambiguous or when you name a skill
-      outright.</p>
+    <p>Usually, you do not think of the first two tools. Claude uses them when a request is not
+      clear, or when you name a skill.</p>
 
     <h2 id="folder-skills">Folder skills</h2>
-    <p>A skill can also be a whole directory instead of a single file: a folder containing a
-      <code>SKILL.md</code> plus its own scripts, references, and assets. These are loaded whole, and
-      the skill's instructions can point Claude at bundled scripts to run. Folder skills are read-only
-      in the UI (you edit the files on disk), and you can mark one <b>trusted</b> so that when it runs
-      a script from inside its own directory, that specific command is auto-approved. Untrusted
-      folder skills still surface the normal approval card. See
-      <a href="tut-permissions.html">Permissions &amp; approvals</a> for what trust does and does not
-      grant.</p>
+    <p>A skill can also be a folder. The folder contains a <code>SKILL.md</code> file and its
+      scripts, references, and assets. The app loads the full folder. The instructions of the skill
+      can tell Claude to run the scripts of the folder.</p>
+    <p>You cannot edit a folder skill in the app. Edit its files on disk. You can mark a folder
+      skill as <b>trusted</b>. Then, when the skill runs a script from its own folder, the app
+      approves that command automatically. An untrusted folder skill shows the usual approval card.
+      Refer to <a href="tut-permissions.html">Permissions &amp; approvals</a>.</p>
 
-    <h2 id="self-maintained">Skills Claude writes for itself</h2>
-    <p>Skills are also Claude's procedural memory: how to do a class of task the way <em>you</em> want
-      it. So it maintains them itself. After a turn, a background review looks over what just
-      happened and asks one question: did the user correct my workflow, or did a non-trivial
-      procedure emerge that a future session would need to reproduce? If so, it encodes it with
-      <code>skill_manage</code>. This is the same review that writes memories, described in
-      <a href="tut-memory.html#learning-review">Memory &amp; WHISPER.md</a>. The dividing line is
-      simple: memory holds facts that apply in every session, a skill holds how to do one kind of
-      job.</p>
-    <p>It prefers editing to creating, in a fixed order:</p>
+    <h2 id="self-maintained">Skills that Claude writes</h2>
+    <p>Skills are also the procedures of Claude: how to do a type of task in the way that you
+      like. Thus, Claude writes and changes skills. After a turn, a review in the background
+      examines the turn. It asks: did the user correct the work procedure, or did a procedure occur
+      that a new session can use again? If yes, the review writes it with
+      <code>skill_manage</code>.</p>
+    <p>The same review writes the memories. Refer to
+      <a href="tut-memory.html#learning-review">Memory &amp; WHISPER.md</a>. A memory is a fact for
+      all sessions. A skill shows how to do one type of task.</p>
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+      <div class="callout__body"><p>The review runs only in the Hybrid and Cloud model modes. It
+        does not run in Local mode, which is the mode of a new install.</p></div>
+    </div>
+    <p>The review changes a skill before it makes a new skill. It uses this sequence:</p>
     <ol class="steps">
-      <li><h4>Patch a skill used this turn</h4><p>If a skill ran and you corrected its output, that
-        skill gets the fix. It reads the current text first, then replaces an exact passage.</p></li>
-      <li><h4>Patch an existing skill for that class of task</h4><p>Even if it did not run this turn,
-        an existing skill that covers the job is the right home.</p></li>
-      <li><h4>Add a reference file</h4><p>Bulk that does not belong in the main instructions goes into
-        a <code class="path">references/</code> file under the skill.</p></li>
-      <li><h4>Create a new skill, last</h4><p>Only when nothing fits. The name describes a class of
-        work (<code>deploy_staging</code>, <code>weekly_report</code>), never today's task.</p></li>
+      <li><h4>Change a skill that ran in this turn</h4><p>If a skill ran and you corrected its
+        output, the review corrects that skill. It reads the current text first, and then replaces
+        an exact passage.</p></li>
+      <li><h4>Change a skill for that type of task</h4><p>If a skill for the task is available, the
+        review changes it, also when it did not run in this turn.</p></li>
+      <li><h4>Add a reference file</h4><p>Long text goes into a file in the
+        <code class="path">references/</code> folder of the skill.</p></li>
+      <li><h4>Make a new skill</h4><p>The review makes a new skill only when no skill matches. The
+        name describes a type of work, for example <code>deploy_staging</code> or
+        <code>weekly_report</code>.</p></li>
     </ol>
-    <p>You stay in control of the result:</p>
+    <p>You control the result:</p>
     <ul>
-      <li>Skills it created carry <code>created_by: agent</code> in their frontmatter, so you can tell
-        them apart from yours.</li>
-      <li>It can only delete a skill it created. One of yours it can edit, but removing it is a
-        Settings action.</li>
-      <li>Names are validated and cannot collide with a built-in tool name, every file path is
-        resolved inside the skill's own folder, and support files may only land in
+      <li>A skill that Claude made has <code>created_by: agent</code> in its frontmatter.</li>
+      <li>Claude can delete only a skill that it made. Claude can edit your skills, but only you
+        can delete them, in "Settings".</li>
+      <li>The app validates each name. A name cannot be the same as a built-in tool name. Each
+        file path must be in the folder of the skill. Support files can go only in
         <code class="path">references/</code>, <code class="path">scripts/</code>,
         <code class="path">templates/</code>, or <code class="path">assets/</code>.</li>
-      <li>The instructions file is capped at 64 KB and a support file at 200 KB, which is the nudge to
-        keep depth in <code class="path">references/</code> rather than in the skill body.</li>
-      <li>Every change is a file on disk. Open <b>Settings, Skills</b> to read it, edit it, or turn
-        the skill off.</li>
+      <li>The instructions file can be maximum 64 KB. A support file can be maximum 200 KB.</li>
+      <li>Each change is a file on disk. Open the skills panel to read, edit, or disable the
+        skill.</li>
     </ul>
-    <p>A toast tells you when it happens, for example <b>"Skills updated: 1 skill updated"</b>. If you
-      would rather Claude never touched its own skills, turn off the
-      <code>skill_self_improvement</code> feature flag in Settings; <code>skill_manage</code> then
-      refuses and the review sticks to memory.</p>
+    <p>A toast tells you of each change, for example "Skills updated: 1 skill updated". To stop
+      these changes, disable the <code>skill_self_improvement</code> feature flag in "Settings".
+      Then <code>skill_manage</code> refuses each change, and the review writes only memory.</p>
 
-    <h2 id="safety">Sandboxing and guardrails</h2>
-    <p>Anything a skill reaches for runs behind the same protections as every other tool. Two of the
-      built-in tools skills commonly lean on illustrate the pattern:</p>
+    <h2 id="safety">Sandbox and guardrails</h2>
+    <p>The tools that a skill uses have the same protections as all tools. Two built-in tools
+      show this:</p>
     <div class="cols-2">
       <div class="card">
-        <h3>run_python is sandboxed</h3>
-        <p>The built-in <code>run_python</code> tool runs code in a subprocess with a short timeout,
-          inside the OS sandbox. It is meant for quick computation, not for running arbitrary
-          programs against your machine.</p>
+        <h3>run_python runs in the sandbox</h3>
+        <p>The built-in <code>run_python</code> tool runs code in a subprocess, with a short
+          timeout, in the macOS sandbox. It is for quick calculations.</p>
       </div>
       <div class="card">
         <h3>aws_boto3 is read-only</h3>
-        <p>The built-in <code>aws_boto3</code> tool allows only read operations (list, describe,
-          get). Write actions are the job of the separate <code>aws_cli</code> built-in tool, which
-          sits behind an approval card.</p>
+        <p>The built-in <code>aws_boto3</code> tool accepts only read operations (list, describe,
+          get). For write actions, Claude uses the <code>aws_cli</code> tool, which shows an
+          approval card.</p>
       </div>
     </div>
-    <p>The real boundary is the OS sandbox (<code>sandbox-exec</code> on macOS); the read-only Boto3
-      guard and the command validator are defence-in-depth on top of it. For the full picture of what
-      contains a skill and what merely double-checks it, see <a href="arch-sandbox.html">Sandbox
-      &amp; security</a> and the <a href="ref-security.html">security model</a>.</p>
+    <p>The main protection is the macOS sandbox (<code>sandbox-exec</code>). The read-only Boto3
+      guard and the command validator are more layers on top of the sandbox. Refer to
+      <a href="arch-sandbox.html">Sandbox &amp; security</a> and the
+      <a href="ref-security.html">security model</a>.</p>
 
     <div class="callout callout--warn">
-      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg></span>
-      <div class="callout__body"><p>A skill's instructions run with Claude's tools. Treat an imported
-        or shared skill like any code you did not write: read its <code>SKILL.md</code> and scripts
-        before you trust it, and leave it untrusted until you have.</p></div>
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+      <div class="callout__body"><p><b>WARNING:</b> Read an imported skill before you mark it
+        trusted. The instructions of a skill run with the tools of Claude. Examine its
+        <code>SKILL.md</code> and its scripts as you examine code from a different person.</p></div>
     </div>
 
-    <h2 id="key-files">Where skills live</h2>
-    <p>Skills are yours to edit, so they sit in the user directory:
-      <code class="path">~/.whisper/skills/</code> in the Mac app, and
-      <code class="path">skills/</code> at the repo root in a source checkout. The bundled set is
-      copied there once on first launch and never restored afterwards, so a skill you rename or
-      delete stays that way.</p>
+    <h2 id="key-files">Where the skills are</h2>
+    <p>The skills are in your user folder:</p>
+    <ul>
+      <li>Mac app: <code class="path">~/.whisper/skills/</code>. At the first start, the app copies
+        the bundled skills into this folder one time. After that, the app does not copy them again.
+        Thus, a skill that you rename or delete stays renamed or deleted.</li>
+      <li>Source install: the <code class="path">skills/</code> folder of the checkout.</li>
+    </ul>
     <div class="spec">
-      <dt><code class="path">skills/</code></dt><dd>Skill definitions: one Markdown file per skill, plus folder skills as subdirectories.</dd>
-      <dt><code class="path">skills_config.json</code></dt><dd>Which skills are disabled or trusted, kept apart from the skill files (under the data directory).</dd>
-      <dt><code class="path">server/skills.py</code></dt><dd>Loads the files, parses frontmatter, and builds the tool catalogue; the HTTP handlers live in <code class="path">server/skills_routes.py</code>.</dd>
-      <dt><code class="path">server/agent_tools/skill_manage.py</code></dt><dd>The <code>skill_manage</code> executor: name validation, path confinement, size caps, and the agent-created delete rule.</dd>
+      <dt><code class="path">skills/</code></dt><dd>The skill definitions: one Markdown file for each skill, and a subfolder for each folder skill.</dd>
+      <dt><code class="path">skills_config.json</code></dt><dd>The disabled and trusted skills, in the data folder, separate from the skill files.</dd>
+      <dt><code class="path">server/skills.py</code></dt><dd>Reads the files and the frontmatter, and makes the tool catalog. The HTTP handlers are in <code class="path">server/skills_routes.py</code>.</dd>
+      <dt><code class="path">server/agent_tools/skill_manage.py</code></dt><dd>The <code>skill_manage</code> executor: name validation, path limits, size limits, and the delete rule.</dd>
     </div>
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
       <div class="callout__body"><p><b>Related:</b> <a href="tut-memory.html">Memory &amp;
-        WHISPER.md</a> (the review that also writes skills),
-        <a href="tut-research.html">Web research</a> (the
-        built-in web tools in action), <a href="tut-mcp-plugins.html">MCP &amp; plugins</a>
-        (other ways to add tools), and the architecture pages
-        <a href="arch-tools.html">Tool dispatch &amp; executors</a> and
+        WHISPER.md</a>, <a href="tut-research.html">Web research</a>,
+        <a href="tut-mcp-plugins.html">MCP &amp; plugins</a>,
+        <a href="arch-tools.html">Tool dispatch &amp; executors</a>, and
         <a href="arch-sandbox.html">Sandbox &amp; security</a>.</p></div>
     </div>
   </main>

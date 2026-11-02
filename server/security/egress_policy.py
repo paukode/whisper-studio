@@ -1,37 +1,37 @@
 """Outbound-network egress policy for sandboxed command execution.
 
 DEFAULT-OFF FEATURE. Today, ``run_sandboxed`` (server/sandbox.py) opens a
-network-unrestricted sandbox: the macOS/bwrap profile is ``(allow default)``
+network-unrestricted sandbox: the macOS profile is ``(allow default)``
 with no per-domain filtering, so any sandboxed command can reach any host on
 the internet. ``_SANDBOX_ENV_DENYLIST`` in sandbox.py already stops one
 specific leak (inherited GitHub tokens); this module addresses the general
-case — restricting WHERE a sandboxed command can send bytes at all, for users
+case, restricting WHERE a sandboxed command can send bytes at all, for users
 who opt in.
 
 Three tiers, selected via ``permissions.json``'s ``network_policy.tier``:
-  - "permissive"  — no restriction. Today's behavior. DEFAULT.
-  - "curated"     — a seed allowlist of common package-registry/docs/API
+  - "permissive"    no restriction. Today's behavior. DEFAULT.
+  - "curated"       a seed allowlist of common package-registry/docs/API
                     domains (see CURATED_ALLOWLIST below), plus any
                     user-added custom domains.
-  - "restrictive" — nothing is allowed outbound except domains the user has
+  - "restrictive", nothing is allowed outbound except domains the user has
                     explicitly added to ``custom_allowed_domains``.
 
-Enforcement mechanism — an SNI-filtering local proxy
+Enforcement mechanism, an SNI-filtering local proxy
 -----------------------------------------------------
 Rather than terminating TLS (which would require minting and trusting a new
-CA inside the sandboxed child — a much bigger footgun, and one more secret
+CA inside the sandboxed child, a much bigger footgun, and one more secret
 that itself needs protecting), this module runs a small local TCP proxy that
 never decrypts anything. For HTTPS traffic tunneled through it (the normal
 case when a client honors ``HTTPS_PROXY`` and CONNECTs to us), the ONE
 handshake message sent in cleartext by every TLS client, before any
-encryption keys exist, is the ClientHello — and it carries the destination
+encryption keys exist, is the ClientHello, and it carries the destination
 hostname in its Server Name Indication (SNI) extension whenever the client
 sets one (virtually all modern HTTP libraries and CLIs do, since it is
 required for the server to pick the right TLS certificate on shared
 hosting/CDNs). We parse just that one plaintext message, check the hostname
 against the active tier's allowlist, and either relay the raw bytes
 transparently to the real destination or refuse the connection. No key
-material, no application data, no decryption — the proxy is exactly as
+material, no application data, no decryption, the proxy is exactly as
 blind to the payload as a firewall would be, just smarter about the
 destination.
 
@@ -44,26 +44,25 @@ Known limitations (read before trusting this as an airtight boundary)
    instance) would ignore the proxy entirely. That is why server/sandbox.py
    ALSO adds `(deny network-outbound (remote ip "*:443"))` /
    `"*:80"` rules to the macOS profile when a non-permissive tier is active
-   — forcing ALL direct outbound HTTP(S) through the kernel-level sandbox
-   boundary, not just asking nicely via an env var. See sandbox.py for the
-   Linux (bwrap) story, which is weaker (implemented but untested here).
+   forcing ALL direct outbound HTTP(S) through the kernel-level sandbox
+   boundary, not just asking nicely via an env var.
 2. Method-level restriction (``methods_only_safe``: block POST/PUT/PATCH/
    DELETE even to allowlisted domains) can only be enforced on the tiny
    sliver of traffic that arrives as plaintext HTTP (no CONNECT tunnel).
    The overwhelming majority of real traffic is HTTPS-over-CONNECT, where
-   the HTTP method lives inside the encrypted TLS payload — we cannot see
+   the HTTP method lives inside the encrypted TLS payload, we cannot see
    it without terminating TLS, which this design deliberately does not do.
    For that traffic, ``methods_only_safe`` has NO effect. This is
-   documented, not silently pretended to work — see `_handle_connect`.
+   documented, not silently pretended to work, see `_handle_connect`.
 3. DNS (port 53) is not restricted or inspected. DNS-based exfiltration
    (encoding data in subdomain labels of otherwise-innocuous-looking
    queries) is a known technique this feature does not address. Out of
    scope for this change.
 4. A ClientHello split across more than one TLS record (very large,
-   rarely seen in practice — would need an unusually large session ticket
+   rarely seen in practice, would need an unusually large session ticket
    or extension set) will fail SNI extraction; the CONNECT-tunnel path
    falls back to trusting the plaintext CONNECT target in that case (still
-   allowlist-checked, just without the SNI cross-check — see
+   allowlist-checked, just without the SNI cross-check, see
    `_handle_connect`).
 """
 
@@ -87,10 +86,8 @@ TIER_RESTRICTIVE = "restrictive"
 
 VALID_TIERS = frozenset({TIER_PERMISSIVE, TIER_CURATED, TIER_RESTRICTIVE})
 
-# The shape of `permissions.json`'s "network_policy" key. Kept as a plain
-# literal (not imported by server/security/permissions.py) to avoid a
-# circular import — permissions.py embeds an equivalent literal in its own
-# DEFAULTS; keep the two in sync by hand if this shape changes.
+# The shape of `permissions.json`'s "network_policy" key; permissions.py
+# uses it as its DEFAULTS entry.
 DEFAULT_NETWORK_POLICY = {
     "tier": TIER_PERMISSIVE,
     "custom_allowed_domains": [],
@@ -98,73 +95,53 @@ DEFAULT_NETWORK_POLICY = {
 }
 
 # ---------------------------------------------------------------------------
-# Curated seed allowlist — common package-registry / docs / API domains a
+# Curated seed allowlist, common package-registry / docs / API domains a
 # development sandbox legitimately needs to reach. Deliberately NOT
 # exhaustive: grow it via a user's `custom_allowed_domains` for anything
 # project-specific rather than expanding this list without bound. Grouped
-# by ecosystem for reviewability. (70 domains.)
+# by ecosystem for reviewability. Each entry also allows its subdomains
+# (is_domain_allowed), so no entry is a subdomain of another.
 # ---------------------------------------------------------------------------
 CURATED_ALLOWLIST: frozenset[str] = frozenset(
     {
         # npm / Node
         "npmjs.com",
-        "www.npmjs.com",
         "npmjs.org",
-        "registry.npmjs.org",
         "yarnpkg.com",
-        "registry.yarnpkg.com",
         "nodejs.org",
         # Python / PyPI
         "pypi.org",
-        "files.pythonhosted.org",
         "pythonhosted.org",
-        "test.pypi.org",
         "python.org",
-        "docs.python.org",
         # Ruby
         "rubygems.org",
         # GitHub (code hosting, raw content, release assets, API, git protocol)
         "github.com",
-        "raw.githubusercontent.com",
-        "objects.githubusercontent.com",
-        "codeload.github.com",
-        "api.github.com",
-        "gist.githubusercontent.com",
         "githubusercontent.com",
         # GitLab / Bitbucket
         "gitlab.com",
         "bitbucket.org",
         # Docker / OCI container registries
         "docker.com",
-        "www.docker.com",
         "registry-1.docker.io",
         "auth.docker.io",
-        "production.cloudflare.docker.com",
         "ghcr.io",
         "quay.io",
         "gcr.io",
         # Rust
         "crates.io",
-        "static.crates.io",
-        "index.crates.io",
         "docs.rs",
         # Go
         "golang.org",
-        "proxy.golang.org",
-        "sum.golang.org",
         "pkg.go.dev",
         # .NET / NuGet
         "nuget.org",
-        "www.nuget.org",
-        "api.nuget.org",
         # Java / Maven
         "maven.org",
-        "repo1.maven.org",
         "repo.maven.apache.org",
         "central.sonatype.com",
         # PHP / Composer
         "packagist.org",
-        "repo.packagist.org",
         "getcomposer.org",
         # Perl / CPAN
         "metacpan.org",
@@ -175,19 +152,12 @@ CURATED_ALLOWLIST: frozenset[str] = frozenset(
         "conda.io",
         "repo.anaconda.com",
         "conda-forge.org",
-        # Linux distro package mirrors
-        "deb.debian.org",
-        "archive.ubuntu.com",
-        "security.ubuntu.com",
         # Homebrew
         "brew.sh",
-        "formulae.brew.sh",
         # Hugging Face
         "huggingface.co",
-        "cdn-lfs.huggingface.co",
         # Common CDNs used to fetch package assets
         "jsdelivr.net",
-        "cdn.jsdelivr.net",
         "unpkg.com",
         "cdnjs.cloudflare.com",
         # Docs / Q&A references
@@ -205,7 +175,7 @@ RESTRICTIVE_ALLOWLIST: frozenset[str] = frozenset()
 def tier_allowlist(tier: str) -> frozenset[str]:
     """The seed allowlist for a tier, before adding the user's custom domains.
     Permissive has no allowlist concept (nothing is checked), so it returns
-    empty here — callers must special-case permissive via is_domain_allowed."""
+    empty here, callers must special-case permissive via is_domain_allowed."""
     if tier == TIER_CURATED:
         return CURATED_ALLOWLIST
     if tier == TIER_RESTRICTIVE:
@@ -245,7 +215,7 @@ def get_active_policy() -> dict:
     """The live network_policy config from permissions.json, merged over
     DEFAULT_NETWORK_POLICY so a partially-saved/older config still has every
     key. Cheap file read (same cost as permissions.load_permissions()
-    elsewhere) — call fresh each time so a tier change in settings takes
+    elsewhere), call fresh each time so a tier change in settings takes
     effect on the very next sandboxed command, no restart needed."""
     from server.security.permissions import load_permissions
 
@@ -257,8 +227,8 @@ def get_active_policy() -> dict:
 # TLS ClientHello / SNI parsing
 #
 # No decryption happens anywhere in this module. The ClientHello is the
-# first message of a TLS handshake and — by protocol design, so servers can
-# pick a certificate before any key exchange happens — is sent in the clear.
+# first message of a TLS handshake and, by protocol design, so servers can
+# pick a certificate before any key exchange happens, is sent in the clear.
 # Everything after it (the rest of the handshake, and all application data)
 # stays fully encrypted and is never inspected; we only ever look at this
 # one plaintext framing message.
@@ -274,14 +244,14 @@ _SNI_NAME_TYPE_HOST_NAME = 0x00
 def extract_sni(data: bytes) -> str | None:
     """Parse the SNI hostname out of a single TLS record containing a
     ClientHello. Returns None if `data` isn't a well-formed, COMPLETE
-    handshake record with a host_name SNI entry — including the case where
+    handshake record with a host_name SNI entry, including the case where
     `data` is simply too short (an incomplete read); callers reading live
     from a socket should keep accumulating bytes and retry rather than
     treat a None here as a hard failure until they've hit a size cap (see
     `_recv_full_clienthello` in the proxy below).
 
     Deliberately conservative: any malformed-looking input just returns
-    None (fail closed on ambiguity — callers fall back to whatever
+    None (fail closed on ambiguity, callers fall back to whatever
     non-SNI-based check they have, e.g. the plaintext CONNECT target).
     """
     try:
@@ -292,7 +262,7 @@ def extract_sni(data: bytes) -> str | None:
         record_len = struct.unpack(">H", data[3:5])[0]
         end = _TLS_RECORD_HEADER_LEN + record_len
         if len(data) < end:
-            return None  # incomplete — caller should read more and retry
+            return None  # incomplete, caller should read more and retry
         handshake = data[_TLS_RECORD_HEADER_LEN:end]
 
         if len(handshake) < 4 or handshake[0] != _TLS_CLIENT_HELLO_MSG_TYPE:
@@ -356,7 +326,7 @@ def _parse_server_name_extension(ext_data: bytes) -> str | None:
 # ---------------------------------------------------------------------------
 
 # Generous upper bound on how much of a CONNECT request / ClientHello we'll
-# buffer before giving up — real requests are tiny fractions of this; it
+# buffer before giving up, real requests are tiny fractions of this; it
 # only exists to bound memory/time on a hostile or broken client.
 _MAX_HEADER_BYTES = 8192
 _MAX_CLIENTHELLO_BYTES = 16384  # a TLS record's own length field caps at 16KB
@@ -372,20 +342,10 @@ def _recv_until(sock: socket.socket, marker: bytes, max_bytes: int) -> tuple[byt
     `(head, leftover)` where `head` ends exactly at (and includes) the
     marker and `leftover` is any bytes read PAST it.
 
-    That split matters: a single `recv()` call can return more than one
-    logical message's worth of bytes (e.g. a client that pipelines its
-    CONNECT request and its ClientHello back-to-back, with no delay, is
-    common — some HTTP libraries don't wait for the 200 before starting the
-    TLS handshake). Early versions of this function returned the whole
-    accumulated buffer and callers only ever looked at the first line,
-    silently discarding `leftover` — which then meant the "peek the
-    ClientHello" step in `_handle_connect` blocked on a fresh `recv()` for
-    bytes that had, in fact, already arrived and been read (just dropped),
-    hanging until its own timeout fired. Caught by
-    tests/test_egress_policy.py flaking intermittently; fixed by threading
-    `leftover` through to whichever handler needs it next.
+    The leftover bytes belong to the next message (a pipelined ClientHello
+    after a CONNECT, or a request body), so the caller must forward them.
 
-    Raises ValueError/ConnectionError on abuse or hangup — callers treat
+    Raises ValueError/ConnectionError on abuse or hangup, callers treat
     both as "can't service this connection, close it".
     """
     buf = b""
@@ -403,7 +363,7 @@ def _recv_until(sock: socket.socket, marker: bytes, max_bytes: int) -> tuple[byt
 def _recv_full_clienthello(sock: socket.socket, already: bytes) -> bytes:
     """Keep reading until `already` contains a complete TLS record (per its
     own length field) or we hit `_MAX_CLIENTHELLO_BYTES`. Returns whatever
-    was accumulated either way — extract_sni() itself decides if it's
+    was accumulated either way, extract_sni() itself decides if it's
     parseable; this just avoids handing extract_sni a chopped-off record
     when a few more bytes were still in flight."""
     buf = already
@@ -431,10 +391,10 @@ def _relay(
     `_IDLE_RELAY_TIMEOUT_S`. `preloaded` is bytes already read from the
     client (e.g. the first chunk of the ClientHello, consumed while
     sniffing SNI) that must be forwarded to upstream before relaying
-    continues — otherwise those bytes would simply be lost.
+    continues, otherwise those bytes would simply be lost.
 
     This is the ONLY place payload bytes are touched, and they are never
-    inspected here — just moved. Runs in the calling thread using a
+    inspected here, just moved. Runs in the calling thread using a
     selector so a single thread services both directions of one
     connection (keeps thread count to one per connection, not two)."""
     if preloaded:
@@ -473,14 +433,14 @@ def handle_connection(client_sock: socket.socket) -> None:
     request are supported, matching what HTTPS_PROXY/HTTP_PROXY-aware
     clients actually send:
 
-    1. `CONNECT host:port HTTP/1.1` — the standard way curl/pip/npm/git/etc
+    1. `CONNECT host:port HTTP/1.1`, the standard way curl/pip/npm/git/etc
        tunnel HTTPS through a configured proxy. We reply 200, then the
        client's real TLS handshake rides on top of this same socket. See
        `_handle_connect`.
     2. A plain absolute-form HTTP request (`GET http://host/path HTTP/1.1`)
-       — used for plain (non-TLS) `http://` URLs under HTTP_PROXY. See
+       used for plain (non-TLS) `http://` URLs under HTTP_PROXY. See
        `_handle_plain_http`. This is also the ONLY path where
-       `methods_only_safe` can be enforced — see module docstring point 2.
+       `methods_only_safe` can be enforced, see module docstring point 2.
 
     Anything else (garbage, a client that doesn't speak proxy protocol at
     all) is closed without a response.
@@ -542,14 +502,14 @@ def _handle_connect(
     # target we just allowlist-checked above. A client that CONNECTs to an
     # allowed hostname but then negotiates TLS toward a *different* one is
     # trying to smuggle traffic past a proxy that only reads the CONNECT
-    # line — refuse that outright, even though the CONNECT target alone
+    # line, refuse that outright, even though the CONNECT target alone
     # already passed. If the tunneled bytes don't parse as a TLS
     # ClientHello at all (not everything over a CONNECT tunnel has to be
     # TLS), we fall back to trusting the CONNECT-target check alone.
     #
     # `leftover` may already hold the start of this (a client that pipelines
     # its ClientHello right after CONNECT, without waiting for the 200, can
-    # have it arrive in the same read as the CONNECT headers) — only issue a
+    # have it arrive in the same read as the CONNECT headers), only issue a
     # fresh recv() if nothing came along for free.
     first_bytes = leftover
     if not first_bytes:
@@ -564,7 +524,7 @@ def _handle_connect(
         sni = extract_sni(preloaded)
         if sni is not None and _normalize_domain(sni) != _normalize_domain(host):
             log.warning(
-                "egress proxy: SNI %r does not match CONNECT target %r — closing (possible bypass attempt)",
+                "egress proxy: SNI %r does not match CONNECT target %r, closing (possible bypass attempt)",
                 sni,
                 host,
             )
@@ -593,11 +553,11 @@ def _handle_plain_http(
     absolute-form request directly (typical only for explicit `http://`
     URLs under HTTP_PROXY) rather than tunneling via CONNECT. Because these
     bytes are cleartext, this is the one place `methods_only_safe` can
-    actually be enforced end to end — see module docstring point 2 for why
+    actually be enforced end to end, see module docstring point 2 for why
     it can't be enforced on the (far more common) CONNECT/HTTPS path.
 
     `leftover` is any request-body bytes that arrived in the same read as
-    the header terminator (see `_recv_until`) — forwarded on ahead of
+    the header terminator (see `_recv_until`), forwarded on ahead of
     whatever the relay picks up next so nothing sent before we finished
     reading headers gets silently dropped."""
     request_line = head.split(b"\r\n", 1)[0]
@@ -695,12 +655,6 @@ class EgressProxy:
             except OSError:
                 pass
 
-    def stop(self) -> None:
-        try:
-            self._sock.close()
-        except OSError:
-            pass
-
 
 _proxy_lock = threading.Lock()
 _proxy_instance: EgressProxy | None = None
@@ -711,7 +665,7 @@ def ensure_proxy_running() -> tuple[str, int]:
     already-running instance's (host, port) on every subsequent call. The
     proxy itself re-reads the active policy on every connection (see
     `handle_connection` -> `get_active_policy`), so it does not need to be
-    restarted when the tier changes — only started once, lazily, the first
+    restarted when the tier changes, only started once, lazily, the first
     time it's actually needed."""
     global _proxy_instance
     with _proxy_lock:
@@ -719,14 +673,3 @@ def ensure_proxy_running() -> tuple[str, int]:
             _proxy_instance = EgressProxy()
             _proxy_instance.start()
         return _proxy_instance.address
-
-
-def _reset_proxy_for_tests() -> None:
-    """Test-only: stop and forget the singleton so a test can start a fresh
-    instance (e.g. to assert on a freshly bound port). Not used by
-    production code."""
-    global _proxy_instance
-    with _proxy_lock:
-        if _proxy_instance is not None:
-            _proxy_instance.stop()
-        _proxy_instance = None

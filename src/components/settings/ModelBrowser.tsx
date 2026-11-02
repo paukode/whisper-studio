@@ -14,6 +14,7 @@ import {
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useUIStore } from '@/stores/uiStore';
 import { humanSize } from '@/utils/humanSize';
+import { toError } from '@/utils/toError';
 
 /** Compact download count: 4685368 → "4.7M", 308619 → "309K". */
 const humanCount = (n: number | null | undefined): string => {
@@ -160,10 +161,8 @@ function installToast(res: InstallResult) {
 
 /** Compact quant picker for one repo: a single dropdown of quants (recommended
  *  preselected, size in each label) next to one Download button, on one row.
- *  The quant list is still fetched lazily — on first interaction with the
- *  select — so browsing a long result list doesn't hammer the detail endpoint.
- *  Recommended default, size display, sharded handling, and the install call
- *  are unchanged from the old expandable radio list. */
+ *  The quant list is still fetched lazily (on first interaction with the
+ *  select), so browsing a long result list does not hammer the detail endpoint. */
 const RepoRow: React.FC<{ result: BrowseResult }> = ({ result }) => {
   // `activated` flips true on the first interaction with the select, which
   // enables the detail fetch. Until then the row shows a placeholder option and
@@ -459,6 +458,13 @@ const RecommendedSection: React.FC = () => {
       query.state.data?.recommended?.some((m) => m.downloading) ? 4000 : false,
   });
   const models = query.data?.recommended ?? [];
+  if (query.isError) {
+    return (
+      <p className="settings-empty" role="alert" style={{ marginBottom: 20 }}>
+        Could not load the Recommended models: {toError(query.error).message}
+      </p>
+    );
+  }
   if (query.isLoading || models.length === 0) return null;
   return (
     <div style={{ marginBottom: 20 }}>

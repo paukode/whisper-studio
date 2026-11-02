@@ -9,17 +9,13 @@ assistant-queryable face of the knowledge graph — distinct from
 
 from __future__ import annotations
 
-import logging
 import os
-from urllib.parse import quote
 
 from server.executors import register_executor
 from server.workspace import get_workspace_path
 
 from . import paths
-from .citations import citation_link
-
-log = logging.getLogger("whisper-studio")
+from .citations import citation_link, file_link
 
 
 def _cite(ws: str, path: str, start: int | None, end: int | None) -> str:
@@ -28,7 +24,7 @@ def _cite(ws: str, path: str, start: int | None, end: int | None) -> str:
     href = os.path.normpath(os.path.join(ws, path)) if ws and not path.startswith("/") else path
     if start:
         return citation_link(path, start, end or start, href)
-    return f"[{path}](#wsfile={quote(href)})"
+    return file_link(path, href)
 
 
 @register_executor("workspace_graph_query", read_only=True, concurrent_safe=True)

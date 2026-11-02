@@ -1,11 +1,12 @@
 """Cost budget enforcement: per-session and daily cost limits.
 
-Checks are performed before each Bedrock API call. When a limit is exceeded,
-the caller receives a warning or hard stop depending on configuration.
+The engine checks before each round, whatever the provider. A reached cap,
+or the soft limit (a fraction of a cap), gives the turn one final round with
+tools off; the next trip ends it. Agent spawns and wakes check the hard cap.
 
-Budget settings in config.json:
-    max_session_cost_usd: 0.0    (0 = unlimited)
-    max_daily_cost_usd: 0.0      (0 = unlimited; the day is the UTC day)
+The two Settings keys:
+    max_session_cost_usd    (0 = unlimited)
+    max_daily_cost_usd      (0 = unlimited; the day is the UTC day)
 
 Both caps price the recorded token counts with the current rate table
 (server.costs.tracker.estimate_cost), the same figure the Costs tab shows. A

@@ -58,14 +58,6 @@ def test_stop_endpoint_on_finished_task(client):
     assert r.json() == {"stopped": False, "status": "completed"}
 
 
-def test_stop_session_endpoint(tmp_path, client):
-    info = shell.start_shell_task("sleep 30", cwd=str(tmp_path), session_id="s-esc")
-    time.sleep(0.2)
-    r = client.post("/api/background-tasks/stop-session", json={"session_id": "s-esc"})
-    assert info["task_id"] in r.json()["stopped"]
-    assert client.post("/api/background-tasks/stop-session", json={}).status_code == 400
-
-
 def test_todo_tracker_routes_not_shadowed():
     """The /api/background-tasks prefix must not collide with the todo
     tracker's /api/tasks routes."""

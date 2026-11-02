@@ -330,7 +330,7 @@ def test_headless_output_schema_yields_validated_structured_result(monkeypatch):
             }
         ]
     )
-    monkeypatch.setattr("server.chat._get_bedrock_client", lambda: fake_old)
+    monkeypatch.setattr("server.chat.infra._get_bedrock_client", lambda: fake_old)
 
     schema = {
         "type": "object",

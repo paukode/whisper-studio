@@ -1,6 +1,6 @@
 /**
- * Recording controller — the meeting-recorder engine, extracted from
- * Header.tsx and decoupled from the viewed session.
+ * Recording controller: the meeting-recorder engine, decoupled from the
+ * viewed session.
  *
  * The recording binds to its OWNING session at start(): the websocket
  * carries that session id, every transcript/interim/speaker_update
@@ -205,7 +205,7 @@ let modelGateActive = false;
  *  cancel, put the header select back to the engine still in use. */
 let activeBackend = 'streaming';
 /** True while a live engine switch is gating the new engine's download, so a
- *  second switch can't race a set_backend relay past a half-finished one. */
+ *  second switch can't race a set_model relay past a half-finished one. */
 let liveSwitchActive = false;
 /** The user dismissed the server-driven "loading into memory" banner. A native
  *  MLX load can't be aborted mid-flight, so we simply stop re-showing its ramp
@@ -304,14 +304,6 @@ async function resolveNativePid(sel: NativeSourceSelection): Promise<number> {
   return sel.pid;
 }
 
-/** Fallback RMS for chunks from older shells that don't send one. */
-function computeRms(samples: Float32Array): number {
-  if (samples.length === 0) return 0;
-  let sum = 0;
-  for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
-  return Math.sqrt(sum / samples.length);
-}
-
 /** One console line per recording when the mixer misbehaves — the mic path
  *  must stay alive regardless, so mixer failures are logged, not thrown. */
 let mixerFailureLogged = false;
@@ -319,13 +311,13 @@ let mixerFailureLogged = false;
 /** Decoded native chunk (16 kHz mono Float32). Mixed mode buffers it for the
  *  mic worklet (the mic is the clock master); native-only mode has no mic
  *  clock, so the chunks drive the chunker/websocket directly. */
-function handleNativeAudio(samples: Float32Array, rms?: number): void {
+function handleNativeAudio(samples: Float32Array, rms: number): void {
   if (!useRecordingStore.getState().isRecording) return;
   if (!nativeAudioMarked) {
     nativeAudioMarked = true;
     mark('first_native_audio', { dbfs: frameDbfs(samples) });
   }
-  useRecordingStore.getState().setNativeLevel(rms ?? computeRms(samples));
+  useRecordingStore.getState().setNativeLevel(rms);
   if (nativeMixer) {
     // Fail-open: a mixer fault must never take the MIC down with it. Drop
     // this native chunk and keep recording; the worklet handler below keeps
@@ -582,6 +574,16 @@ function connectWS(t: Take): void {
             .filter((u) => typeof u?.chunk_id === 'number')
             .map((u) => ({ chunk_id: storeChunkId(t, u.chunk_id), speaker: u.speaker })),
         );
+      } else if (msg.type === 'speaker_error') {
+        // Speaker labelling failed on the server: the sentences keep their
+        // provisional labels, and the user is told why.
+        useUIStore.getState().addToast({
+          type: 'error',
+          message: `Speaker labels stopped: ${String(msg.message ?? 'unknown error')}`,
+          duration: 10000,
+          key: 'recording-speaker-error',
+          source: 'recording',
+        });
       } else if (msg.type === 'speaker_named') {
         // The voiceprint gallery recognised somebody who has been recorded
         // before: apply their stored name the same way a manual rename does.
@@ -1030,9 +1032,8 @@ function stop(): void {
 
     // Synchronous save of the session that OWNS this recording, with every
     // final and translation line the server sent for it.
-    try {
-      if (owner) useSessionStore.getState().saveSession(owner.sessionId);
-    } catch { /* best-effort */ }
+    // saveSession reports its own failure.
+    if (owner) useSessionStore.getState().saveSession(owner.sessionId);
     resolveSettled();
   };
 
@@ -1103,8 +1104,11 @@ function revertBackend(backend: string): void {
   activeBackend = backend;
   chunkSamples = chunkSamplesForBackend(backend);
   useSettingsStore.getState().updateConfig({ transcriptionBackend: backend });
-  void put('/api/config', { transcription_backend: backend }).catch(() => {
-    /* best-effort persist; the in-memory revert already corrected the UI */
+  put('/api/config', { transcription_backend: backend }).catch((err: unknown) => {
+    useUIStore.getState().addToast({
+      type: 'error',
+      message: `Could not save the transcription engine; the next start may use the other one: ${err instanceof Error ? err.message : String(err)}`,
+    });
   });
 }
 

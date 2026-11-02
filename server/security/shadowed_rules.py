@@ -5,9 +5,9 @@ Detects unreachable permission rules in a rule list so users can fix
 config mistakes before they cause unexpected behaviour.
 
 Two shadow types:
-  deny_shadowed_by_allow    — a broad allow rule fires before a specific deny rule,
+  deny_shadowed_by_allow      a broad allow rule fires before a specific deny rule,
                               making the deny unreachable.
-  specific_shadowed_by_wildcard — a specific allow/ask rule follows a wildcard rule
+  specific_shadowed_by_wildcard, a specific allow/ask rule follows a wildcard rule
                               for the same tool and action, making the specific rule
                               unreachable.
 """
@@ -44,8 +44,9 @@ def detect_shadowed_rules(rules: list[dict]) -> list[dict]:
             action_j = rule_j.get("action", "")
             pattern_j = rule_j.get("pattern", rule_j.get("prefix", "*"))
 
-            # Rules only interact when they apply to the same tool (or one is wildcard *)
-            if not _tools_overlap(tool_i, tool_j):
+            # An earlier rule covers a later one only when it applies to every
+            # tool the later one does: the same tool, or the wildcard *.
+            if not _covers_tool(tool_j, tool_i):
                 continue
 
             # Type 1: deny_shadowed_by_allow
@@ -90,9 +91,11 @@ def detect_shadowed_rules(rules: list[dict]) -> list[dict]:
     return warnings
 
 
-def _tools_overlap(tool_a: str, tool_b: str) -> bool:
-    """Two rules overlap when they share a tool name or either is the global wildcard."""
-    return tool_a == tool_b or tool_a == "*" or tool_b == "*"
+def _covers_tool(earlier: str, later: str) -> bool:
+    """Whether an earlier rule's tool covers every tool a later rule matches.
+    A tool-specific rule never shadows a later "*" rule: that rule still
+    applies to every other tool."""
+    return earlier == later or earlier == "*"
 
 
 def _is_wildcard(pattern: str) -> bool:

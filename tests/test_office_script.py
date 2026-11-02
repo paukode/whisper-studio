@@ -516,3 +516,21 @@ def test_revising_in_place_replaces_rather_than_multiplies(tmp_path):
 
     assert [p.text for p in Document(dest).paragraphs] == ["v1", "v2"]
     assert [p.name for p in tmp_path.iterdir()] == ["report.docx"]
+
+
+def test_approval_writes_into_the_sessions_scratch_folder(tmp_path, monkeypatch):
+    from server.workspace import paths
+    from server.workspace.paths import get_scratch_dir
+
+    monkeypatch.setattr(paths, "DATA_DIR", str(tmp_path / "data"))
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    monkeypatch.setattr("server.workspace.get_workspace_path", lambda: str(ws))
+    dest = os.path.join(get_scratch_dir("office-scratch-sid"), "probe.docx")
+    payload = _payload(tmp_path, _MAKE_DOCX, path=dest)
+
+    refused = _run(_do_office_script(payload))
+    assert not refused.ok and refused.error == "Invalid path"
+    outcome = _run(_do_office_script({**payload, "session_id": "office-scratch-sid"}))
+    assert outcome.ok, outcome.error
+    assert os.path.isfile(dest)

@@ -1,4 +1,4 @@
-"""Session memory — per-session structured summaries.
+"""Session memory: per-session structured summaries.
 
 Maintains a markdown file per session with fixed sections:
 Goals, Decisions, Context, Blockers. Updated incrementally
@@ -228,8 +228,7 @@ async def _run_session_update(
 async def _run_agent_session_update(existing: str, excerpt: str, session_id: str) -> str | None:
     """Cloud path: summarise via the read-only session_summarizer agent, which
     runs under the summary prompt. This function writes the file from its
-    reply. It ran as memory_extractor, whose extraction prompt and write tools
-    led it to save the summary into long-term memory as well."""
+    reply."""
     from server.agents.runtime import run_agent
 
     result = await run_agent(

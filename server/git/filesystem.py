@@ -1,5 +1,5 @@
 """
-Filesystem-based git state reading — no subprocess spawning.
+Filesystem-based git state reading, no subprocess spawning.
 
 Reads .git/HEAD, refs, packed-refs, config, and commondir directly from disk.
 Used on hot paths where subprocess overhead matters (prompt building, cache invalidation).
@@ -61,7 +61,7 @@ def read_git_head(git_dir: str) -> dict | None:
             if not is_safe_ref_name(name):
                 return None
             return {"type": "branch", "name": name}
-        # Unusual symref (not a local branch) — resolve to SHA
+        # Unusual symref (not a local branch), resolve to SHA
         if not is_safe_ref_name(ref):
             return None
         sha = resolve_ref(git_dir, ref)
@@ -157,7 +157,7 @@ def is_safe_ref_name(name: str) -> bool:
 def is_valid_git_sha(s: str) -> bool:
     """Validate git SHA: 40 hex chars (SHA-1) or 64 hex chars (SHA-256).
 
-    Only accepts full-length hashes — rejects abbreviated SHAs.
+    Only accepts full-length hashes, rejects abbreviated SHAs.
     """
     return bool(re.match(r"^[0-9a-f]{40}$", s) or re.match(r"^[0-9a-f]{64}$", s))
 
@@ -174,3 +174,30 @@ def get_common_dir(git_dir: str) -> str | None:
         return os.path.normpath(os.path.join(git_dir, content))
     except OSError:
         return None
+
+
+def path_inside(root: str, rel_path: str, *, follow_leaf: bool = True) -> str | None:
+    """The normalized absolute path of ``rel_path`` under ``root``, or None
+    when it is not strictly inside ``root``.
+
+    Both the lexical path and its realpath must sit below the root (plus
+    ``os.sep``), so an empty path, the root itself, ``..`` steps, a sibling
+    folder that shares the root's name prefix, and a symlink that leads out
+    are all refused. With ``follow_leaf=False`` only the parent folder is
+    resolved, for callers that act on a symlink itself (delete, checkout)
+    and never read through it.
+    """
+    if not rel_path:
+        return None
+    real_root = os.path.realpath(root)
+    full = os.path.normpath(os.path.join(real_root, rel_path))
+    prefix = real_root.rstrip(os.sep) + os.sep
+    if not full.startswith(prefix):
+        return None
+    if follow_leaf:
+        resolved = os.path.realpath(full)
+    else:
+        resolved = os.path.join(os.path.realpath(os.path.dirname(full)), os.path.basename(full))
+    if not resolved.startswith(prefix):
+        return None
+    return full

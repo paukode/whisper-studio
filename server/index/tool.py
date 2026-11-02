@@ -9,7 +9,6 @@ yet (the model can't index — that's a user action in the workspace dialog).
 
 from __future__ import annotations
 
-import logging
 import os
 
 from server.executors import register_executor
@@ -17,8 +16,6 @@ from server.workspace import get_workspace_path
 
 from . import paths
 from .citations import citation_link
-
-log = logging.getLogger("whisper-studio")
 
 _SNIPPET_CHARS = 240
 
@@ -33,7 +30,7 @@ def _ref(rel_path: str, start: int, end: int, ws: str) -> str:
 
     Display text stays workspace-relative; the ``#wsfile=`` href is absolute (so
     it resolves regardless of the connected workspace) and carries the cited line
-    range, which the client scrolls to. Cmd/Ctrl-click reveals in Finder."""
+    range, which the client scrolls to. Cmd-click reveals in Finder."""
     href = os.path.normpath(os.path.join(ws, rel_path))
     return citation_link(rel_path, start, end, href)
 
@@ -86,7 +83,7 @@ def exec_workspace_semantic_search(tool_input, transcript, current_attachments):
         "When you use any of this, cite the source files by copying the markdown "
         "links exactly as given above, including the #wsfile=...&L=start-end "
         "fragment; clicking one opens the file at the cited lines in the side "
-        "panel (Cmd/Ctrl-click reveals it in Finder). Always end your answer with "
+        "panel (Cmd-click reveals it in Finder). Always end your answer with "
         "a 'Sources' section: a short list with one such link per line for every "
         "file you drew on."
     )

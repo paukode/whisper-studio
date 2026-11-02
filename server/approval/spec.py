@@ -1,4 +1,4 @@
-"""ApprovalSpec dataclass — what a tool declares about its approval needs."""
+"""ApprovalSpec dataclass, what a tool declares about its approval needs."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from typing import Literal
 
 log = logging.getLogger("whisper-studio")
 
-PreviewKind = Literal["diff", "command", "list", "text"]
+PreviewKind = Literal["diff", "command", "text"]
 RiskHint = Literal["low", "medium", "high"]
 
 # Payload key holding the workspace root a workspace-bound card was raised in.
@@ -65,7 +65,7 @@ def refuse_if_agent(payload: dict, what: str = "This action") -> ApprovalOutcome
     """Refuse a mutation that a subagent auto-approved with no human present.
 
     The subagent path (server/agents/runtime.py) auto-executes `[WS_APPROVAL]`
-    actions unconditionally — category / risk_hint / session approvals are NOT
+    actions unconditionally, category / risk_hint / session approvals are NOT
     consulted there. `_execute_ws_approval_inline(agent=True)` stamps `__agent__`
     onto such payloads. High-blast-radius executors (GitHub mutations, and any
     irreversible/remote action) call this first and bail out if the stamp is
@@ -85,7 +85,7 @@ def refuse_if_agent(payload: dict, what: str = "This action") -> ApprovalOutcome
 
 
 def refuse_if_agent_rm(payload: dict, command_field: str = "command") -> ApprovalOutcome | None:
-    """Refuse rm (and its close cousins — see is_rm_command) from an unattended
+    """Refuse rm (and its close cousins, see is_rm_command) from an unattended
     subagent, unconditionally.
 
     Deleting files is exactly the kind of irreversible action a human must see
@@ -125,19 +125,18 @@ class ApprovalSpec:
     """Declarative description of an approval-required tool.
 
     `category` is the bucket session-memory uses ("Yes for all writes" stores
-    `allow` here). Extensible — categories are discovered by walking the
+    `allow` here). Extensible, categories are discovered by walking the
     registry, not pinned to a literal union.
 
-    `preview` picks which of the four frontend renderers shows the action:
-    diff (file content changes), command (shell), list (multi-file ops),
-    text (free-form summary).
+    `preview` picks which of the three frontend renderers shows the action:
+    diff (file content changes), command (shell), text (free-form summary).
 
     `summary` produces the one-line human-readable label. Pass a string for
     constant labels or a callable that takes the tool input dict for
     dynamic ones.
 
     `executor` is the function that actually performs the action on Yes.
-    Single hub — the frontend never knows which endpoint runs the work.
+    Single hub, the frontend never knows which endpoint runs the work.
 
     `render_command` is an optional callable that produces the literal
     command/preview-body string. When set, `build_payload` injects it as
@@ -182,7 +181,7 @@ class ApprovalSpec:
             try:
                 return self.summary(tool_input)
             except Exception as e:  # noqa: BLE001 - summary fns are user-defined
-                return f"({self.category} action — summary error: {e})"
+                return f"({self.category} action, summary error: {e})"
         return self.summary
 
     def build_payload(self, tool_input: dict) -> dict:
@@ -193,8 +192,11 @@ class ApprovalSpec:
         if self.render_command and "command" not in payload:
             try:
                 payload["command"] = self.render_command(tool_input)
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as e:  # noqa: BLE001 (a card must never show a blank command)
+                log.exception("approval %s: command preview failed", self.category)
+                # A display-only key: "command" is what the approved
+                # executors run, so preview text never goes there.
+                payload["command_preview_error"] = f"Command preview unavailable: {e}"
         # Outside payload_fields on purpose: the gate stamps it on every card
         # of a workspace-bound action, and it must survive the whitelist.
         if WORKSPACE_ROOT_KEY in tool_input:

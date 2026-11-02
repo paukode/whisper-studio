@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { ZodType } from 'zod';
 
 /**
  * Typed localStorage sync hook.
@@ -9,24 +8,17 @@ import type { ZodType } from 'zod';
  *
  * @param key - The localStorage key
  * @param defaultValue - Fallback value when key is not present or parsing fails
- * @param schema - Optional Zod schema to validate parsed values
  * @returns A tuple of [value, setValue] similar to useState
  */
 export function useLocalStorage<T>(
   key: string,
   defaultValue: T,
-  schema?: ZodType<T>,
 ): [T, (value: T | ((prev: T) => T)) => void] {
   const [storedValue, setStoredValue] = useState<T>(() => {
     try {
       const item = localStorage.getItem(key);
       if (item === null) return defaultValue;
-      const raw: unknown = JSON.parse(item);
-      if (schema) {
-        const result = schema.safeParse(raw);
-        return result.success ? result.data : defaultValue;
-      }
-      return raw as T;
+      return JSON.parse(item) as T;
     } catch {
       return defaultValue;
     }
@@ -38,8 +30,10 @@ export function useLocalStorage<T>(
         const nextValue = value instanceof Function ? value(prev) : value;
         try {
           localStorage.setItem(key, JSON.stringify(nextValue));
-        } catch {
-          // localStorage may be unavailable (quota exceeded, private browsing)
+        } catch (err) {
+          // Quota or a blocked store: the preference holds for this window
+          // only. Not rethrown, this runs inside a React state updater.
+          console.warn('[storage] could not save', key, err);
         }
         return nextValue;
       });
@@ -56,14 +50,7 @@ export function useLocalStorage<T>(
           setStoredValue(defaultValue);
           return;
         }
-        const raw: unknown = JSON.parse(event.newValue);
-        if (schema) {
-          const result = schema.safeParse(raw);
-          setStoredValue(result.success ? result.data : defaultValue);
-          return;
-        }
-        setStoredValue(raw as T);
-        return;
+        setStoredValue(JSON.parse(event.newValue) as T);
       } catch {
         setStoredValue(defaultValue);
       }
@@ -73,7 +60,7 @@ export function useLocalStorage<T>(
     return () => {
       window.removeEventListener('storage', handleStorageChange);
     };
-  }, [key, defaultValue, schema]);
+  }, [key, defaultValue]);
 
   return [storedValue, setValue];
 }

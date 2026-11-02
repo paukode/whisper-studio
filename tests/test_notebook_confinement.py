@@ -171,3 +171,86 @@ def test_non_ipynb_path_rejected(tmp_path, monkeypatch):
     )
     assert "error" in result
     assert ".ipynb" in result["error"]
+
+
+# --- Cell types --------------------------------------------------------------
+
+
+def _proposed(result_str: str) -> dict:
+    assert result_str.startswith("[WS_APPROVAL]")
+    return json.loads(json.loads(result_str[len("[WS_APPROVAL]") :])["content"])
+
+
+def _two_cell_nb(path):
+    nb = {
+        **MINIMAL_NB,
+        "cells": [
+            {"cell_type": "markdown", "source": "# Title", "metadata": {}, "id": "md0"},
+            {
+                **MINIMAL_NB["cells"][0],
+                "outputs": [{"output_type": "stream"}],
+                "execution_count": 1,
+            },
+        ],
+    }
+    path.write_text(json.dumps(nb, indent=1), encoding="utf-8")
+
+
+def test_replacing_a_markdown_cell_without_a_type_keeps_it_markdown(tmp_path, monkeypatch):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    nb_path = ws / "doc.ipynb"
+    _two_cell_nb(nb_path)
+    _set_ws(monkeypatch, ws)
+    nb = _proposed(
+        notebook.execute_notebook_tool(
+            "notebook_edit",
+            {"notebook_path": str(nb_path), "cell_index": 0, "new_source": "# New title"},
+        )
+    )
+    cell = nb["cells"][0]
+    assert cell["cell_type"] == "markdown" and cell["source"] == "# New title"
+    assert "outputs" not in cell and "execution_count" not in cell
+
+
+def test_turning_a_code_cell_into_markdown_drops_its_outputs(tmp_path, monkeypatch):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    nb_path = ws / "doc.ipynb"
+    _two_cell_nb(nb_path)
+    _set_ws(monkeypatch, ws)
+    nb = _proposed(
+        notebook.execute_notebook_tool(
+            "notebook_edit",
+            {
+                "notebook_path": str(nb_path),
+                "cell_index": 1,
+                "new_source": "Notes",
+                "cell_type": "markdown",
+            },
+        )
+    )
+    cell = nb["cells"][1]
+    assert cell["cell_type"] == "markdown"
+    assert "outputs" not in cell and "execution_count" not in cell
+
+
+def test_insert_defaults_to_a_code_cell(tmp_path, monkeypatch):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    nb_path = ws / "doc.ipynb"
+    _two_cell_nb(nb_path)
+    _set_ws(monkeypatch, ws)
+    nb = _proposed(
+        notebook.execute_notebook_tool(
+            "notebook_edit",
+            {
+                "notebook_path": str(nb_path),
+                "cell_index": 1,
+                "new_source": "x = 1",
+                "edit_mode": "insert",
+            },
+        )
+    )
+    cell = nb["cells"][2]
+    assert cell["cell_type"] == "code" and cell["outputs"] == [] and cell["execution_count"] is None

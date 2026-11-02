@@ -213,7 +213,7 @@ def test_memory_hooks_call_session_update_extraction_and_dream(monkeypatch):
     monkeypatch.setattr(
         STREAM, "_spawn_extraction", lambda mk, msgs, sid, ws: seen.append(("extract", sid, ws))
     )
-    monkeypatch.setattr(STREAM, "_spawn_dream", lambda mk, ws: seen.append(("dream", ws)))
+    monkeypatch.setattr(STREAM, "_spawn_dream", lambda ws: seen.append(("dream", ws)))
     STREAM._spawn_memory_hooks("local_gemma", _messages(1), "s3", "/ws")
     assert seen == [("session", "s3"), ("extract", "s3", "/ws"), ("dream", "/ws")]
 
@@ -395,9 +395,9 @@ def test_cursor_save_preserves_other_sessions_turn_counters(
     assert data["sessions"]["B"] == 4
 
 
-def test_legacy_cursor_file_without_turns_key(mem_dirs, fresh_extract_state, monkeypatch):
+def test_turns_save_keeps_existing_cursors(mem_dirs, fresh_extract_state, monkeypatch):
     """A pre-existing sessions-only .cursor.json loads cleanly: turns default
-    to 0 and the legacy cursors are preserved on rewrite."""
+    to 0 and the existing cursors are preserved on rewrite."""
     calls = _fake_agent(monkeypatch)
     mem_dirs["global"].mkdir(parents=True, exist_ok=True)
     (mem_dirs["global"] / ".cursor.json").write_text(json.dumps({"sessions": {"old": 4}}))

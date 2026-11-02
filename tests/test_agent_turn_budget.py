@@ -175,7 +175,7 @@ def test_turn_limit_distills_structured_output(monkeypatch):
         ],
     }
     fake_old = _FakeBedrock([structured_resp])
-    monkeypatch.setattr("server.chat._get_bedrock_client", lambda: fake_old)
+    monkeypatch.setattr("server.chat.infra._get_bedrock_client", lambda: fake_old)
 
     cfg = AgentConfig(agent_type="general", max_turns=2, deadline_seconds=None)
     result = asyncio.run(

@@ -23,12 +23,12 @@ WSDiagram.mount("overview-diagram", {
   ],
   nodes: [
     { id: "spa", group: "browser", col: 0, row: 0, label: "React 19 SPA", sub: "components + hooks", desc: "Chat, live transcript, and the workspace IDE. Streams over hooks like useChatStream and useChatInputMic." },
-    { id: "stores", group: "browser", col: 0, row: 1, label: "Zustand stores", sub: "per-session runtimes", desc: "Client state: chat, session, workspace, recording, settings. Up to three sessions stream at once." },
+    { id: "stores", group: "browser", col: 0, row: 1, label: "Zustand stores", sub: "per-session runtimes", desc: "Client state: chat, session, workspace, recording, settings. Three session runtimes stay in memory; a busy session is never evicted, so more can stream at once." },
     { id: "sanitize", group: "browser", col: 0, row: 2, label: "sanitizeHtml", sub: "marked + DOMPurify", desc: "Every Markdown render is sanitized before it reaches the DOM, so a prompt-injected page cannot run script in the SPA origin." },
 
     { id: "rest", group: "transport", col: 1, row: 0, label: "REST", sub: "/api JSON", desc: "Request/response endpoints for chat, sessions, workspace, git, config, and more." },
     { id: "sse", group: "transport", col: 1, row: 1, label: "SSE", sub: "tokens + events", desc: "Server-Sent Events carry streamed chat tokens and per-session agent/cron events." },
-    { id: "ws", group: "transport", col: 1, row: 2, label: "WebSocket", sub: "audio · PTY · LSP", desc: "Binary PCM16 audio in, plus the terminal PTY and the LSP proxy channel." },
+    { id: "ws", group: "transport", col: 1, row: 2, label: "WebSocket", sub: "audio · voice · PTY · LSP", desc: "Binary PCM16 recording audio in (/ws), the voice-mode stream (/ws/voice), the terminal PTY, the LSP proxy, the Live preview screencast, and the capture helper of a source install (/ws/capture-helper)." },
 
     { id: "chatR", group: "server", col: 2, row: 0, label: "chat", sub: "chat/routes.py", desc: "The streaming state machine: builds the prompt, invokes the model, and drives the agentic tool loop. It also owns the session busy slot, so a message sent while the turn runs is queued into that turn instead of starting a second one." },
     { id: "sessR", group: "server", col: 3, row: 0, label: "sessions", sub: "infrastructure/sessions.py", desc: "List, load, rename, delete, and persist sessions (routes in sessions_routes.py); the per-session UPSERT with merge." },
@@ -48,22 +48,22 @@ WSDiagram.mount("overview-diagram", {
     { id: "ex_git", group: "tools", col: 5, row: 3, label: "git", sub: "status · diff · commit", desc: "Git operations against the workspace repo." },
     { id: "ex_mem", group: "tools", col: 5, row: 4, label: "memory", sub: "recall · write", desc: "Reads and writes the cross-session memory store. content, search, and other executors sit alongside these." },
 
-    { id: "validator", group: "security", col: 6, row: 0, label: "command validator", sub: "deny-list", desc: "Deny-list in front of the sandbox: catches rm -rf /, mkfs, sensitive reads, hidden command substitution and in-place edits. It also flags any deleting command so it always raises an approval card." },
+    { id: "validator", group: "security", col: 6, row: 0, label: "command validator", sub: "deny-list", desc: "Deny-list in front of the sandbox: catches rm -rf /, mkfs, sensitive reads, hidden command substitution and in-place edits. A command that deletes outside the workspace and the app's own folders always raises an approval card; a delete inside them follows the permission mode." },
     { id: "apprReg", group: "security", col: 6, row: 1, label: "approval registry", sub: "action to executor", desc: "Maps each approval action name to its ApprovalSpec and executor. The executor re-validates the payload at execute time, since the endpoint could in principle be POSTed directly." },
-    { id: "sandbox", group: "security", col: 6, row: 2, label: "sandbox", sub: "sandbox-exec / bwrap", desc: "The OS jail around every shell and code path, with a secret-store deny-list and three write modes (anywhere, workspace only, nothing). The boundary trusted last and most." },
+    { id: "sandbox", group: "security", col: 6, row: 2, label: "sandbox", sub: "sandbox-exec", desc: "The macOS jail around every shell and code path, with a secret-store deny-list and three write modes (anywhere, workspace only, nothing). It fails closed: when sandbox-exec cannot be used, the command does not run. The boundary trusted last and most." },
 
-    { id: "whisper", group: "local", col: 6, row: 3, label: "On-device ASR", sub: "2 engines + Canary translate", desc: "Whisper or Parakeet transcribes on-device, with optional live translation (Canary or Apple). Audio bytes never leave the machine." },
-    { id: "diarize", group: "local", col: 6, row: 4, label: "Speaker encoder", sub: "ReDimNet2 / ECAPA", desc: "Speaker embeddings and clustering on-device (server/diarization/embedder.py). ReDimNet2 is the default, ECAPA the fallback; named voices are remembered across sessions as voiceprints." },
-    { id: "index", group: "index", col: 6, row: 5, label: "index + search", sub: "embeddings · GraphRAG", desc: "Workspace embeddings, reranking, entities, and retrieval grounding." },
+    { id: "whisper", group: "local", col: 6, row: 3, label: "On-device ASR", sub: "2 engines + Canary translate", desc: "Whisper or Parakeet transcribes on-device, with optional live translation (Canary, or Apple Translation in the Mac app). Audio bytes never leave the machine." },
+    { id: "diarize", group: "local", col: 6, row: 4, label: "Speaker encoder", sub: "ReDimNet2 / ECAPA", desc: "Speaker embeddings and clustering on-device (server/diarization/embedder.py). speaker_embedder picks the encoder: ReDimNet2 by default, ECAPA when selected. Named voices are remembered across sessions only when speaker_voiceprints is on (off by default)." },
+    { id: "index", group: "index", col: 6, row: 5, label: "index + search", sub: "embeddings · GraphRAG", desc: "Workspace embeddings, reranking, entities, and retrieval grounding. On-device in Local mode, on Bedrock (Cohere, Haiku) in Cloud mode, per capability in Hybrid mode." },
     { id: "sched", group: "local", col: 6, row: 6, label: "APScheduler", sub: "cron jobs", desc: "Fires scheduled jobs, which run a chat turn in the background." },
-    { id: "localchat", group: "local", col: 6, row: 7, label: "On-device chat model", sub: "llama-server / MLX", desc: "In local mode, chat runs entirely on your machine through the same turn engine - GGUF weights through llama-server, or an MLX model through mlx-lm. No Bedrock call at all." },
+    { id: "localchat", group: "local", col: 6, row: 7, label: "On-device chat model", sub: "llama-server / MLX", desc: "In local mode, chat runs entirely on your machine through the same turn engine: GGUF weights through llama-server, or an MLX model through mlx-lm. No Bedrock call at all." },
 
-    { id: "db", group: "persist", kind: "store", col: 7, row: 0, label: "SQLite (WAL)", sub: "sessions · costs · cron", desc: "The single database for sessions, the cost log, and cron runs." },
+    { id: "db", group: "persist", kind: "store", col: 7, row: 0, label: "SQLite (WAL)", sub: "sessions · costs · cron", desc: "sessions.db holds sessions, the cost log, and cron runs. Each indexed workspace has its own index database." },
     { id: "wsfs", group: "persist", kind: "store", col: 7, row: 1, label: "Workspace files", sub: "+ WHISPER.md", desc: "Your connected project files and the project WHISPER.md." },
-    { id: "cfg", group: "persist", kind: "store", col: 7, row: 2, label: "config.json", sub: "+ env overlay", desc: "Per-machine config: at the repo root in a dev checkout, under the app home (WHISPER_HOME) in a packaged install, with the TAVILY_API_KEY env overlay on top." },
-    { id: "memdir", group: "persist", kind: "store", col: 7, row: 3, label: "data/memory", sub: "two-tier", desc: "The two-tier memory store (global + project), injected into later prompts." },
+    { id: "cfg", group: "persist", kind: "store", col: 7, row: 2, label: "config.user.json", sub: "+ env overlay", desc: "Your settings, over the shipped config.example.json defaults: in ~/.whisper for the Mac app, at the checkout root for a source install, with the TAVILY_API_KEY env overlay on top." },
+    { id: "memdir", group: "persist", kind: "store", col: 7, row: 3, label: "memory store", sub: "data/memory + global_memory", desc: "The two-tier memory store: project memory in data/memory, global memory in data/global_memory, injected into later prompts." },
 
-    { id: "bedrock", group: "external", kind: "external", col: 7, row: 4, label: "Amazon Bedrock", sub: "Claude · GPT · Sonic", desc: "The only cloud LLM call, made only when you submit a chat message and a cloud model is selected. Bedrock hosts the Claude and GPT models in the picker, and carries the Amazon Nova 2 Sonic voice stream." },
+    { id: "bedrock", group: "external", kind: "external", col: 7, row: 4, label: "Amazon Bedrock", sub: "Claude · GPT · Sonic", desc: "The only cloud LLM. Called for chat turns on cloud models and for background work (memory recall, titles, captions, the goal judge, CI diagnosis, cron runs, cloud-mode indexing), never in Local mode. Bedrock hosts the Claude and GPT models in the picker, and carries the Amazon Nova 2 Sonic voice stream." },
     { id: "mcp", group: "external", kind: "external", col: 7, row: 5, label: "MCP servers", sub: "stdio or HTTP, optional", desc: "External tool providers: local child processes over stdio, or remote HTTP servers you explicitly configure (URL plus optional bearer-token env var). Per-server approval_mode and tool allow/deny lists gate what they expose." },
     { id: "tavily", group: "external", kind: "external", col: 7, row: 6, label: "Tavily", sub: "web search", desc: "Optional web-search provider for the research tools." }
   ],
@@ -81,7 +81,7 @@ WSDiagram.mount("overview-diagram", {
     { from: "chatR", to: "localchat", label: "invoke, local mode" },
     { from: "chatR", to: "trouter" },
     { from: "chatR", to: "agents" },
-    { from: "chatR", to: "db", label: "persist" },
+    { from: "sessR", to: "db", label: "persist" },
     { from: "chatR", to: "index", label: "grounding" },
     { from: "trouter", to: "texec" },
     { from: "texec", to: "ex_web" },

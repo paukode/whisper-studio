@@ -21,12 +21,19 @@ from server.workflows.runtime import WorkflowRun
 
 class _Hint:
     def __init__(self, read_only: bool):
-        self.readOnlyHint = read_only
+        self.read_only_hint = read_only
 
 
 class _McpTool:
     def __init__(self, name: str, read_only: bool | None = None):
         self.name = name
+        self.description = "Stub MCP tool for read-only permission tests"
+        self.input_schema = {
+            "type": "object",
+            "properties": {"table": {"type": "string"}},
+            "required": ["table"] if name == "describe_table" else [],
+            "additionalProperties": False,
+        }
         self.annotations = _Hint(read_only) if read_only is not None else None
 
 
@@ -48,7 +55,9 @@ def mcp(monkeypatch):
                 for t in tools
             },
         )
-        monkeypatch.setattr(mcp_manager, "load_config", lambda: config)
+        # The fake server is configured and enabled; its read-only policy still varies.
+        server_config = {"srv": {"enabled": True, **config.get("srv", {})}}
+        monkeypatch.setattr(mcp_manager, "load_config", lambda: server_config)
 
         async def call_tool(name, args):
             calls.append((name, args))
@@ -88,7 +97,18 @@ def test_an_mcp_tool_marked_read_only_runs(mcp, tool, config):
     calls = mcp([tool], config)
     reply = _call("mcp__srv__describe_table", {"table": "deals"})
     assert reply == {"ok": {"output": "rows for deals"}}
-    assert calls == [("mcp__srv__describe_table", {"table": "deals"})]
+    # This mock captures the manager boundary, before its reserved-key removal.
+    assert calls == [
+        (
+            "mcp__srv__describe_table",
+            {
+                "table": "deals",
+                "__session_id__": "s1",
+                "__agent__": True,
+                "__secret_reads__": False,
+            },
+        )
+    ]
 
 
 @pytest.mark.parametrize(

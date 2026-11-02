@@ -7,6 +7,7 @@ import { useUIStore } from '@/stores/uiStore';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import {
   disconnectWorkspace,
+  reportConnectWarnings,
   settleWorkspaceOps,
   syncWorkspaceStatus,
 } from './workspaceConnection';
@@ -208,5 +209,22 @@ describe('syncWorkspaceStatus', () => {
     take('/api/workspace/status').resolve(json({ connected: true, path: '/back' }));
     await expect(again).resolves.toBe('applied');
     expect(useUIStore.getState().wsPath).toBe('/back');
+  });
+});
+
+describe('reportConnectWarnings', () => {
+  it('shows each note a connect came back with as a warning toast', () => {
+    const addToast = vi.fn();
+    useUIStore.setState({ addToast } as never);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    reportConnectWarnings(['The damaged workspace config was replaced (bad JSON).']);
+    reportConnectWarnings(undefined);
+
+    expect(addToast).toHaveBeenCalledTimes(1);
+    expect(addToast.mock.calls[0][0]).toMatchObject({
+      type: 'warning',
+      message: 'The damaged workspace config was replaced (bad JSON).',
+    });
   });
 });

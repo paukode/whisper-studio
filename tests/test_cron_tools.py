@@ -13,6 +13,7 @@ import json
 
 import server.cron_scheduler as C
 from server.approval.markers import approval_request
+from server.cron_run import _assemble_cron_tools
 from tests.golden_harness import FakeBedrockClient, msg_end, msg_start, text_block, tool_use_block
 
 
@@ -24,7 +25,7 @@ def test_aws_boto3_not_duplicated():
     # The pool always contains the native aws_boto3. cron must advertise it
     # exactly once, or Bedrock rejects InvokeModel.
     pool = [_tool("aws_boto3"), _tool("web_search"), _tool("ask_user_question")]
-    names = [t["name"] for t in C._assemble_cron_tools(pool)]
+    names = [t["name"] for t in _assemble_cron_tools(pool)]
     assert names.count("aws_boto3") == 1
     assert len(names) == len(set(names))
 
@@ -32,7 +33,7 @@ def test_aws_boto3_not_duplicated():
 def test_ask_user_question_is_dropped():
     # Unattended runs can never answer it; leaving it in would hang the job.
     pool = [_tool("web_search"), _tool("ask_user_question")]
-    names = [t["name"] for t in C._assemble_cron_tools(pool)]
+    names = [t["name"] for t in _assemble_cron_tools(pool)]
     assert "ask_user_question" not in names
     assert "web_search" in names
 
@@ -45,7 +46,7 @@ def test_aws_boto3_comes_from_the_real_pool_with_canonical_schema():
     from server.executors.tools import AWS_BOTO3_TOOL
 
     pool = assemble_full_catalog()
-    tools = C._assemble_cron_tools(pool)
+    tools = _assemble_cron_tools(pool)
     aws = [t for t in tools if t["name"] == "aws_boto3"]
     assert len(aws) == 1
     assert aws[0] == AWS_BOTO3_TOOL
@@ -71,10 +72,14 @@ def _run_cron_job(
     import server.prompts.rules as R
     import server.tool_executor as TE
     import server.workspace as WS
+    from server.agent_tools.schemas import NOTIFY_USER_TOOL
+    from server.executors.tools import TERMINAL_RUN_TOOL, WEB_SEARCH_TOOL
 
+    # Only advertise this harness's supported calls, using canonical descriptors
+    # before the config stub removes optional dependencies. Explicit [] stays empty.
+    _tools = [TERMINAL_RUN_TOOL, NOTIFY_USER_TOOL, WEB_SEARCH_TOOL] if tools is None else tools
     monkeypatch.setattr(C, "load_cron_jobs", lambda: [job])
     monkeypatch.setattr("server.chat.engine.anthropic._get_bedrock_client", lambda: fake_stream)
-    _tools = tools or []
     # A fresh list per call, as the real pool returns.
     monkeypatch.setattr(
         TP, "assemble_partitioned_pool", lambda **k: (list(_tools), [], len(_tools))

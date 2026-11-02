@@ -178,13 +178,6 @@ def _caption_client():
     )
 
 
-def _reset_caption_client_cache() -> None:
-    """Test hook: drop the cached client so a patched boto3 takes effect
-    (tests/conftest.py resets it between tests, like the chat client)."""
-    with _CLIENT_LOCK:
-        _CLIENTS.clear()
-
-
 def _labelled(name: str) -> bool:
     return name not in _SKIP_NAMES and not name.startswith(_SKIP_PREFIXES)
 
@@ -277,7 +270,7 @@ async def _caption(future: concurrent.futures.Future, ids: list[str]) -> dict | 
     ended or was stopped) still cancels it."""
     try:
         reply = await asyncio.wait_for(asyncio.wrap_future(future), LABEL_TIMEOUT_S)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         log.debug(
             "Activity label timed out (%.1f s); the deterministic label stays", LABEL_TIMEOUT_S
         )

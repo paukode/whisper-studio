@@ -22,8 +22,8 @@ def _capture_dream(monkeypatch):
 
     calls = []
 
-    async def fake_record(ws_path, *, model_id):
-        calls.append({"ws_path": ws_path, "model_id": model_id})
+    async def fake_record(ws_path):
+        calls.append({"ws_path": ws_path})
 
     monkeypatch.setattr(DM, "record_and_maybe_dream", fake_record)
     monkeypatch.setattr(AT, "spawn", lambda coro, *, name=None: asyncio.run(coro))
@@ -37,13 +37,12 @@ def test_dream_hook_fires_in_hybrid_mode(monkeypatch):
     monkeypatch.setattr(MM, "current_mode", lambda config=None: "hybrid")
     calls = _capture_dream(monkeypatch)
 
-    STREAM._spawn_dream("local_gemma", "/ws")
+    STREAM._spawn_dream("/ws")
 
     assert len(calls) == 1
     assert calls[0]["ws_path"] == "/ws"
     # The local sentinel id is threaded (the consolidator agent resolves its
     # own model), matching the extraction hook.
-    assert calls[0]["model_id"] == L.local_model_meta("local_gemma").get("id", "")
 
 
 def test_dream_hook_fires_without_workspace(monkeypatch):
@@ -55,7 +54,7 @@ def test_dream_hook_fires_without_workspace(monkeypatch):
     monkeypatch.setattr(MM, "current_mode", lambda config=None: "hybrid")
     calls = _capture_dream(monkeypatch)
 
-    STREAM._spawn_dream("local_gemma", None)
+    STREAM._spawn_dream(None)
 
     assert len(calls) == 1
     assert calls[0]["ws_path"] is None
@@ -70,7 +69,7 @@ def test_dream_hook_skips_when_fully_offline(monkeypatch):
     cfg._invalidate_cache()
     calls = _capture_dream(monkeypatch)
     try:
-        STREAM._spawn_dream("local_gemma", "/ws")
+        STREAM._spawn_dream("/ws")
     finally:
         cfg._invalidate_cache()
     assert calls == []
@@ -83,5 +82,5 @@ def test_dream_hook_gated_on_dream_consolidation_flag(monkeypatch):
     monkeypatch.setattr(MM, "current_mode", lambda config=None: "hybrid")
     calls = _capture_dream(monkeypatch)
 
-    STREAM._spawn_dream("local_gemma", "/ws")
+    STREAM._spawn_dream("/ws")
     assert calls == []

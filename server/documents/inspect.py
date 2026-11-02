@@ -102,9 +102,9 @@ def _inspect_docx(path: str) -> str:
         lines.append("")
         lines.append(f"Table {i} — {len(rows)} rows x {n_cols} cols, style '{style_name}'")
         lines.append(f"  address cells as: doc.tables[{i}].rows[r].cells[c]  (r,c are 0-based)")
-        for r, row in enumerate(rows[:MAX_SHEET_ROWS]):
+        for r, row in enumerate(rows[:MAX_ROWS_PER_TABLE]):
             lines.append(_row_line(f"row {r}", [c.text for c in row.cells]))
-        lines.extend(_more(min(len(rows), MAX_SHEET_ROWS), len(rows), "rows"))
+        lines.extend(_more(min(len(rows), MAX_ROWS_PER_TABLE), len(rows), "rows"))
     lines.extend(_more(min(len(doc.tables), MAX_TABLES), len(doc.tables), "tables"))
     return "\n".join(lines)
 

@@ -210,7 +210,6 @@ def test_an_image_push_is_no_git_push_and_names_its_registry():
 @pytest.mark.parametrize(
     "name,result",
     [
-        ("terminal_send", "wait_reason: stdin_read\nwaiting for input\n---\nUsername:"),
         ("terminal_send", "wait_reason: timeout\nstill printing\n---\nWriting objects: 40%"),
         ("terminal_run", "[User approved] ok.\n\nTIMED OUT after 120s.\nexit_code: None\n---\n"),
         (

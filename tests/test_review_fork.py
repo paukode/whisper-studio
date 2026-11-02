@@ -53,7 +53,29 @@ class FakeAdapter:
 def _fork(adapter, messages=None):
     return review_fork.ReviewFork(
         adapter=adapter,
-        tools=[{"name": "memory_write"}, {"name": "ws_run_command"}],
+        # STUB descriptors for fake_route: this memory writer only takes a filename.
+        tools=[
+            {
+                "name": "memory_write",
+                "description": "Stub memory writer",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"filename": {"type": "string"}},
+                    "required": ["filename"],
+                    "additionalProperties": False,
+                },
+            },
+            {
+                "name": "ws_run_command",
+                "description": "Stub command, restricted during review",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"command": {"type": "string"}},
+                    "required": ["command"],
+                    "additionalProperties": False,
+                },
+            },
+        ],
         core_count=1,
         messages=messages
         or [
@@ -120,10 +142,8 @@ def test_a_chat_round_offers_every_tool_the_review_may_run(monkeypatch):
     real = feature_flags.is_enabled
     on = {"auto_memory", "skill_self_improvement", "progressive_tools"}
     monkeypatch.setattr(feature_flags, "is_enabled", lambda name: name in on or real(name))
-    catalog = {t["name"] for t in assemble_full_catalog(ws_connected=False)}
-    advertised, _deferred, _core = assemble_partitioned_pool(
-        ws_connected=False, session_id="s-review-fresh"
-    )
+    catalog = {t["name"] for t in assemble_full_catalog()}
+    advertised, _deferred, _core = assemble_partitioned_pool(session_id="s-review-fresh")
 
     runnable = review_fork.ALLOWED_TOOLS & catalog
     assert {"memory_write", "skill_manage"} <= runnable

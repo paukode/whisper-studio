@@ -1,6 +1,7 @@
+import { toError } from '@/utils/toError';
 import React, { useCallback, useEffect, useState } from 'react';
 import { useUIStore } from '@/stores/uiStore';
-import { settleWorkspaceOps, syncWorkspaceStatus } from '@/services/workspaceConnection';
+import { reportConnectWarnings, settleWorkspaceOps, syncWorkspaceStatus } from '@/services/workspaceConnection';
 import { ICON } from '@/components/chat/activityIcons';
 
 export interface WorkspacePromptCardProps {
@@ -71,7 +72,7 @@ export const WorkspacePromptCard: React.FC<WorkspacePromptCardProps> = ({
           window.dispatchEvent(new CustomEvent('whisper-workspace-refresh'));
         }
       } catch {
-        // Unreachable backend: leave the panel exactly as it is (PR #71).
+        // Unreachable backend: leave the panel exactly as it is.
       }
     })();
     return () => { cancelled = true; };
@@ -98,18 +99,23 @@ export const WorkspacePromptCard: React.FC<WorkspacePromptCardProps> = ({
         return;
       }
 
-      const data = (await resp.json()) as { writable?: boolean };
-      setResolved(path);
-      useUIStore.getState().setWsConnected(true, path);
+      // The server answers with the CANONICAL root (~ expanded, symlinks
+      // resolved); everything downstream compares against that, not the
+      // raw picked path.
+      const data = (await resp.json()) as { path: string; writable?: boolean; warnings?: string[] };
+      const root = data.path;
+      reportConnectWarnings(data.warnings);
+      setResolved(root);
+      useUIStore.getState().setWsConnected(true, root);
       window.dispatchEvent(new CustomEvent('whisper-workspace-refresh'));
       // Soft writability hint (see _check_writable on the backend). We
       // never refuse the connection on this signal because os.access is
       // unreliable for network mounts, root, and macOS ACLs; we just tell
       // the user up front that writes might fail.
-      if (data?.writable === false) {
+      if (data.writable === false) {
         useUIStore.getState().addToast({
           type: 'info',
-          message: `Connected to ${path}. Folder may be read-only. Writes will be confirmed on first attempt.`,
+          message: `Connected to ${root}. Folder may be read-only. Writes will be confirmed on first attempt.`,
           duration: 5000,
         });
       }
@@ -121,7 +127,7 @@ export const WorkspacePromptCard: React.FC<WorkspacePromptCardProps> = ({
       // re-issuing the write tool, and the file never landed on disk.
       dispatchResume(
         toolUseId,
-        `Workspace connected to ${path}. ` +
+        `Workspace connected to ${root}. ` +
           `IMPORTANT: the original tool call did NOT execute: ` +
           `no workspace was connected at the time. ` +
           `Re-issue the same tool call now (with the workspace-relative path) to actually perform the action.`,
@@ -138,7 +144,12 @@ export const WorkspacePromptCard: React.FC<WorkspacePromptCardProps> = ({
     setError(null);
     try {
       const resp = await fetch('/api/workspace/pick-folder');
-      const data = (await resp.json()) as { path?: string | null; cancelled?: boolean };
+      const data = (await resp.json()) as {
+        path?: string | null;
+        cancelled?: boolean;
+        error?: string;
+      };
+      if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
       if (data.path) {
         await connectAndResume(data.path);
       } else {
@@ -146,7 +157,7 @@ export const WorkspacePromptCard: React.FC<WorkspacePromptCardProps> = ({
       }
     } catch (err) {
       console.error('Folder picker failed:', err);
-      setError('Could not open the folder picker.');
+      setError(toError(err).message);
       setIsBusy(false);
     }
   }, [connectAndResume]);

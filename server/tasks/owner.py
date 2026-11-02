@@ -15,9 +15,6 @@ carry no owner, and that is what a chat Stop stops.
 
 import contextvars
 from collections.abc import Awaitable
-from typing import TypeVar
-
-T = TypeVar("T")
 
 _WORK_OWNER: contextvars.ContextVar[str] = contextvars.ContextVar("work_owner", default="")
 
@@ -27,7 +24,7 @@ def current() -> str:
     return _WORK_OWNER.get()
 
 
-async def run_owned(owner: str, aw: Awaitable[T]) -> T:
+async def run_owned[T](owner: str, aw: Awaitable[T]) -> T:
     """Await ``aw`` with every command it starts owned by ``owner``."""
     token = _WORK_OWNER.set(owner)
     try:

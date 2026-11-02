@@ -27,8 +27,8 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
-from datetime import datetime, timezone
+import tomllib
+from datetime import UTC, datetime
 
 from server import folder_skills, skills_import
 from server.mcp import mcp_manager
@@ -126,7 +126,7 @@ def _import_instructions(
     if not content:
         return {"status": "skipped", "reason": f"{filename} is empty"}
 
-    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    stamp = datetime.now(UTC).strftime("%Y-%m-%d")
     note = f"<!-- Migrated from {tool_label} ({filename}) on {stamp} -->\n\n"
     block = note + content
 
@@ -276,6 +276,17 @@ def _import_mcp_servers(source_path: str, config_rels: list[str], parser) -> dic
         if name in config:
             skipped.append({"name": name, "reason": "already configured"})
             continue
+        if not str(conf.get("command", "") or "").strip():
+            # A remote server (url) or an entry without a command would be
+            # saved as a server that never starts. Remote servers carry a
+            # URL and a token variable, so the user adds them in Settings.
+            reason = (
+                "remote (url) server: add it in Settings > MCP"
+                if conf.get("url")
+                else "no command to run"
+            )
+            skipped.append({"name": name, "reason": reason})
+            continue
         config[name] = {
             "command": str(conf.get("command", "") or ""),
             "args": list(conf.get("args", []) or []),
@@ -303,126 +314,13 @@ def _parse_claude_mcp_config(path: str) -> dict[str, dict]:
 
 
 def _parse_codex_mcp_config(path: str) -> dict[str, dict]:
-    """Codex CLI's config.toml: ``[mcp_servers.NAME]`` tables. Uses stdlib
-    ``tomllib`` when available (Python 3.11+); whisper's runtime floor is
-    3.10 (see pyproject.toml), so on 3.10 this falls back to a minimal
-    hand-rolled extractor covering just the ``mcp_servers`` tables rather
-    than adding a TOML dependency for one onboarding path."""
-    try:
-        import tomllib
-    except ImportError:
-        with open(path, errors="replace") as f:
-            text = f.read()
-        servers = parse_mcp_servers_toml_fallback(text)
-    else:
-        with open(path, "rb") as f:
-            data = tomllib.load(f)
-        servers = data.get("mcp_servers") or {}
+    """Codex CLI's config.toml: ``[mcp_servers.NAME]`` tables."""
+    with open(path, "rb") as f:
+        data = tomllib.load(f)
+    servers = data.get("mcp_servers") or {}
 
     out = {}
     for name, conf in servers.items():
         if isinstance(conf, dict):
             out[str(name)] = conf
     return out
-
-
-# --- minimal TOML [mcp_servers.*] fallback (Python < 3.11 only) ---------
-
-_SECTION_RE = re.compile(r"^\[mcp_servers\.(?P<name>\"[^\"]+\"|'[^']+'|[^.\]\s]+)\]\s*$")
-
-
-def _split_top_level(s: str, sep: str) -> list[str]:
-    """Split ``s`` on ``sep`` at bracket/brace depth 0, ignoring separators
-    inside quoted strings or nested ``[...]`` / ``{...}``."""
-    parts: list[str] = []
-    depth = 0
-    buf = ""
-    in_str = False
-    quote = ""
-    for ch in s:
-        if in_str:
-            buf += ch
-            if ch == quote:
-                in_str = False
-            continue
-        if ch in "\"'":
-            in_str = True
-            quote = ch
-            buf += ch
-            continue
-        if ch in "[{":
-            depth += 1
-        elif ch in "]}":
-            depth -= 1
-        if ch == sep and depth == 0:
-            parts.append(buf)
-            buf = ""
-        else:
-            buf += ch
-    if buf.strip():
-        parts.append(buf)
-    return parts
-
-
-def _parse_toml_scalar(raw: str):
-    val = raw.strip().rstrip(",").strip()
-    if not val:
-        return None
-    if len(val) >= 2 and val[0] == val[-1] and val[0] in ('"', "'"):
-        return val[1:-1]
-    if val.startswith("[") and val.endswith("]"):
-        return [_parse_toml_scalar(p) for p in _split_top_level(val[1:-1], ",") if p.strip()]
-    if val.startswith("{") and val.endswith("}"):
-        out = {}
-        for part in _split_top_level(val[1:-1], ","):
-            if "=" not in part:
-                continue
-            k, _, v = part.partition("=")
-            out[k.strip().strip("\"'")] = _parse_toml_scalar(v)
-        return out
-    if val in ("true", "false"):
-        return val == "true"
-    return val
-
-
-def parse_mcp_servers_toml_fallback(text: str) -> dict[str, dict]:
-    """Minimal ``[mcp_servers.NAME]`` extractor for when ``tomllib`` is
-    unavailable (Python < 3.11). Handles quoted or bare server names,
-    string/array/inline-table values, and values that wrap across lines
-    inside brackets/braces. Anything else in the file (other tables,
-    comments, array-of-tables) is ignored rather than raising — a partial
-    read is better than failing the whole import over an unrelated section
-    this fallback doesn't understand."""
-    servers: dict[str, dict] = {}
-    current: dict | None = None
-    lines = text.splitlines()
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        i += 1
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        m = _SECTION_RE.match(stripped)
-        if m:
-            name = m.group("name").strip().strip("\"'")
-            current = {}
-            servers[name] = current
-            continue
-        if stripped.startswith("["):
-            # A different table entirely — stop collecting into `current`.
-            current = None
-            continue
-        if current is None or "=" not in stripped:
-            continue
-        key, _, val = stripped.partition("=")
-        key = key.strip()
-        val = val.strip()
-        # A bracketed/braced value may wrap across following lines.
-        while (val.count("[") + val.count("{")) > (val.count("]") + val.count("}")) and i < len(
-            lines
-        ):
-            val += "\n" + lines[i]
-            i += 1
-        current[key] = _parse_toml_scalar(val)
-    return servers

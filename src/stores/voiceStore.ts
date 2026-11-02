@@ -99,16 +99,13 @@ export interface VoiceState {
   /** Take (and drop) the team reports of one run for its committed message. */
   takeTeamReports: (runId: string) => Record<string, TeamReportData> | undefined;
   adjustDraining: (delta: number) => void;
-  clearSteps: () => void;
-  /** Drop the steps of one delegated run once its answer is on screen. */
-  removeSteps: (runId: string) => void;
   /** Drop everything a run left behind (steps, agent reports, its card). */
   removeRun: (runId: string) => void;
   /** Drop one of Sonic's own steps by tool_use_id. */
   dropStep: (id: string) => void;
   setPendingRequest: (req: VoicePendingRequest | null) => void;
   upsertStep: (step: VoiceStep) => void;
-  finishStep: (name: string, status: 'ok' | 'error', detail: string, runId?: string, output?: string) => void;
+  finishStep: (name: string, status: 'ok' | 'error', detail: string, runId: string, output?: string) => void;
   adjustPending: (delta: number) => void;
   markStreamStarted: () => void;
   setMuted: (muted: boolean) => void;
@@ -122,7 +119,6 @@ export interface VoiceState {
     region?: string;
     voices?: VoiceOption[];
   }) => void;
-  setVoiceId: (voiceId: string) => void;
   reset: () => void;
 }
 
@@ -213,9 +209,6 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
     return mine;
   },
   adjustDraining: (delta) => set((s) => ({ draining: Math.max(0, s.draining + delta) })),
-  clearSteps: () => set({ steps: [] }),
-  removeSteps: (runId) =>
-    set((s) => ({ steps: s.steps.filter((st) => !stepBelongsTo(st, runId)) })),
   removeRun: (runId) =>
     set((s) => {
       const teamReports = { ...s.teamReports };
@@ -249,7 +242,7 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
       // most recent running step with that name in the same run.
       for (let i = s.steps.length - 1; i >= 0; i--) {
         const st = s.steps[i];
-        if (st.name === name && st.status === 'running' && (!runId || !st.runId || st.runId === runId)) {
+        if (st.name === name && st.status === 'running' && st.runId === runId) {
           const next = s.steps.slice();
           next[i] = { ...st, status, detail, ...(output ? { output } : {}) };
           return { steps: next };
@@ -276,7 +269,6 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
       ...(region ? { region } : {}),
       ...(voices ? { voices } : {}),
     }),
-  setVoiceId: (voiceId) => set({ voiceId }),
   // Ending the conversation keeps background-run state while any socket is
   // still draining it.
   reset: () =>
@@ -298,10 +290,7 @@ function keepRunState(s: VoiceState) {
   };
 }
 
-/** A delegated run's step: tagged with its run id, or an untagged assistant
- *  step (older servers), which the first answer to land takes along. */
+/** A delegated run's step: an assistant step tagged with that run's id. */
 export const stepBelongsTo = (step: VoiceStep, runId: string): boolean =>
-  step.source === 'assistant' && (step.runId === runId || !step.runId);
+  step.source === 'assistant' && step.runId === runId;
 
-/** True while a voice conversation is open (any state but off). */
-export const isVoiceOn = (status: VoiceStatus): boolean => status !== 'off';

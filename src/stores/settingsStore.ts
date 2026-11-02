@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { AppConfig, IndexCapability, ModelEntry, ModelsResponse } from '@/types/settings';
 import { get, put } from '@/api/client';
+import { putPermissionMode } from '@/api/settings';
 import {
   AppConfigResponseSchema,
   ModelsResponseSchema,
@@ -10,6 +11,7 @@ import {
 } from '@/types/schemas';
 import { useUIStore } from './uiStore';
 import { clampEffort, normalizeEffort, DEFAULT_EFFORT } from '@/utils/effort';
+import { toError } from '@/utils/toError';
 
 /** Local-model context-window bounds (tokens). 32K is the floor AND the default:
  *  the full tool pool is always advertised and its prompt alone is ~12K tokens,
@@ -20,9 +22,9 @@ import { clampEffort, normalizeEffort, DEFAULT_EFFORT } from '@/utils/effort';
  *  coerced back up to 32K on read. Persisted to localStorage since the
  *  settings store has no persist middleware. */
 const LOCAL_CTX_KEY = 'whisper.localContextWindow';
-export const LOCAL_CTX_MIN = 32768;
-export const LOCAL_CTX_MAX = 262144;
-export const LOCAL_CTX_DEFAULT = 32768;
+const LOCAL_CTX_MIN = 32768;
+const LOCAL_CTX_MAX = 262144;
+const LOCAL_CTX_DEFAULT = 32768;
 
 function readLocalContextWindow(): number {
   try {
@@ -69,28 +71,25 @@ function refreshVoiceStatus(): void {
 
 /** Hydrate the Memory toggle from its backend feature flag, so the toolbar
  *  shows the real state and what the active mode leaves out of it (Local mode
- *  recalls memories but records none). Re-read after a mode switch. Never
- *  rejects: with the flags API unavailable the current value stays. */
+ *  recalls memories but records none). Re-read after a mode switch. Rejects
+ *  when the flags cannot be read, so the toggle never shows a guessed state
+ *  without saying so. */
 async function loadMemoryFlag(): Promise<void> {
-  try {
-    const flags = await get<Record<string, { enabled?: boolean; local_mode_note?: string | null }>>(
-      '/api/feature-flags',
-    );
-    useSettingsStore.setState({
-      autoMemory: !!flags.auto_memory?.enabled,
-      autoMemoryNote: flags.auto_memory?.local_mode_note || null,
-    });
-  } catch {
-    // Flags API unavailable: keep the current value.
-  }
+  const flags = await get<Record<string, { enabled?: boolean; local_mode_note?: string | null }>>(
+    '/api/feature-flags',
+  );
+  useSettingsStore.setState({
+    autoMemory: !!flags.auto_memory?.enabled,
+    autoMemoryNote: flags.auto_memory?.local_mode_note || null,
+  });
 }
 
 /** The thinking level for on-device models, kept apart from the cloud effort
  *  level so switching between a cloud and a local model changes neither.
  *  Max (no thinking cap) is the default; persisted like the context window. */
 const LOCAL_THINKING_KEY = 'whisper.localThinkingLevel';
-export const LOCAL_THINKING_LEVELS = ['none', 'low', 'medium', 'high', 'max'];
-export const LOCAL_THINKING_DEFAULT = 'max';
+const LOCAL_THINKING_LEVELS = ['none', 'low', 'medium', 'high', 'max'];
+const LOCAL_THINKING_DEFAULT = 'max';
 
 function readLocalThinkingLevel(): string {
   try {
@@ -201,7 +200,6 @@ export interface SettingsState {
   localThinkingLevel: string;
   /** GPT-5.x verbosity (text.verbosity); only used by openai_bedrock models. */
   verbosity: string;
-  planMode: boolean;
   autoMemory: boolean;
   /** What the active mode leaves out of auto memory (Local mode recalls but
    *  records nothing), from the flag's `local_mode_note`; null when nothing. */
@@ -222,7 +220,10 @@ export interface SettingsState {
   setEffortLevel: (level: string) => void;
   setLocalThinkingLevel: (level: string) => void;
   setVerbosity: (v: string) => void;
-  setPlanMode: (on: boolean) => void;
+  /** Switch the permission mode: the server write first, then the store, so
+   *  the UI never shows a mode the server does not enforce. Rejects on
+   *  failure with the store unchanged. */
+  setPermissionMode: (mode: string) => Promise<void>;
   setAutoMemory: (on: boolean) => void;
   /** Set the index/RAG model mode (cloud | hybrid | local), persisting to config. */
   setModelMode: (mode: AppConfig['modelMode']) => void;
@@ -237,9 +238,9 @@ export interface SettingsState {
 const defaultConfig: AppConfig = {
   chatModels: {},
   effortLevel: DEFAULT_EFFORT,
-  briefMode: false,
   permissionMode: 'default',
   transcriptionBackend: 'streaming',
+  speakerEmbedder: 'redimnet',
   translateMode: 'off',
   translateTarget: 'en',
   modelMode: 'cloud',
@@ -303,7 +304,6 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
   effortLevel: DEFAULT_EFFORT,
   localThinkingLevel: readLocalThinkingLevel(),
   verbosity: readVerbosity() ?? 'medium',
-  planMode: false,
   // Global memory defaults ON (matches config.example.json feature_flags.auto_memory).
   autoMemory: true,
   autoMemoryNote: null,
@@ -317,14 +317,14 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
       const config: AppConfig = {
         chatModels: (d.chat_models as Record<string, string>) ?? {},
         effortLevel: normalizeEffort(d.effort_level as string | undefined),
-        briefMode: Boolean(d.brief_mode ?? false),
         permissionMode: String(d.permission_mode ?? 'default'),
         transcriptionBackend: String(d.transcription_backend ?? 'streaming'),
-        // Legacy stored modes from the earlier design map to Canary.
-        translateMode: (() => {
-          const raw = String(d.translate_mode ?? 'off');
-          return raw === 'auto' || raw === 'model' ? 'canary' : raw;
-        })(),
+        speakerEmbedder: String(d.speaker_embedder ?? 'redimnet'),
+        // The dropdown's translators. Any other stored value runs none (the
+        // server's resolve_translator returns None for it), so it reads as off.
+        translateMode: ['off', 'canary', 'apple'].includes(String(d.translate_mode))
+          ? String(d.translate_mode)
+          : 'off',
         translateTarget: String(d.translate_target ?? 'en'),
         modelMode: ((d.model_mode as AppConfig['modelMode']) ?? 'cloud'),
         backends: ((d.backends as AppConfig['backends']) ?? {}),
@@ -335,24 +335,9 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
         effortLevel: normalizeEffort(config.effortLevel),
       });
 
-      // One-time migration: the old standalone brief toggle is now the "Brief"
-      // end of the unified Response length control (stored as verbosity). If the
-      // user hasn't picked a length yet, carry over their brief preference.
-      if (!readVerbosity() && config.briefMode) {
-        persistVerbosity('low');
-        set({ verbosity: 'low' });
-      }
-
-      // Load actual permission mode from the permissions endpoint (ground truth)
-      try {
-        const perms = await get<{ mode?: string }>('/api/permissions', { schema: PermissionsResponseSchema });
-        const actualMode = perms.mode ?? 'default';
-        set({ planMode: actualMode === 'plan' });
-        set((state) => ({ config: { ...state.config, permissionMode: actualMode } }));
-      } catch {
-        // Permissions API not available — fall back to config value
-        set({ planMode: config.permissionMode === 'plan' });
-      }
+      // The permission mode the server enforces lives in permissions.json.
+      const perms = await get<{ mode?: string }>('/api/permissions', { schema: PermissionsResponseSchema });
+      set((state) => ({ config: { ...state.config, permissionMode: perms.mode ?? 'default' } }));
 
       // Hydrate the global-memory toggle from its backend feature flag so the
       // toolbar reflects the real state (and the on-by-default config value),
@@ -362,7 +347,7 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
       console.warn('Failed to load config:', err);
       useUIStore.getState().addToast({
         type: 'error',
-        message: 'Failed to load config',
+        message: `Failed to load config: ${toError(err).message}`,
         duration: 4000,
       });
     }
@@ -484,8 +469,9 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
     set({ verbosity: v });
   },
 
-  setPlanMode: (on) => {
-    set({ planMode: on });
+  setPermissionMode: async (mode) => {
+    await putPermissionMode(mode);
+    set((state) => ({ config: { ...state.config, permissionMode: mode } }));
   },
 
   setAutoMemory: (on) => {
@@ -520,7 +506,9 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
         const s = useSettingsStore.getState();
         void s.loadModels();
         void s.loadDataRetention();
-        void loadMemoryFlag();
+        loadMemoryFlag().catch((err: unknown) => {
+          useUIStore.getState().addToast({ type: 'error', message: `Could not read the memory setting: ${toError(err).message}` });
+        });
         refreshVoiceStatus();
       })
       .catch(() => {

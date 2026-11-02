@@ -319,36 +319,30 @@ def test_codex_mcp_servers_parsed_from_config_toml(tmp_path, isolated_skills, is
     assert servers["foo"]["env"] == {"API_KEY": "abc"}
 
 
-# --- the minimal TOML fallback parser (exercised directly; tomllib covers
-# --- the primary path on this test runner's Python 3.11+) ------------------
-
-
-def test_toml_fallback_parses_mcp_servers_and_ignores_other_tables():
-    text = (
-        "[mcp_servers.alpha]\n"
-        'command = "npx"\n'
-        'args = ["-y", "server-a"]\n'
-        'env = { KEY = "value", OTHER = "x" }\n'
-        "\n"
-        "[mcp_servers.beta]\n"
-        'command = "/usr/bin/beta"\n'
-        "\n"
-        "[unrelated]\n"
-        'foo = "bar"\n'
+def test_remote_mcp_server_is_skipped_with_a_reason(tmp_path, isolated_skills, isolated_mcp):
+    src = tmp_path / "src"
+    _write(
+        str(src / ".mcp.json"),
+        json.dumps(
+            {
+                "mcpServers": {
+                    "remote": {"type": "http", "url": "https://mcp.example.com/mcp"},
+                    "local": {"command": "npx", "args": ["-y", "server"]},
+                }
+            }
+        ),
     )
-    out = ie.parse_mcp_servers_toml_fallback(text)
-    assert set(out) == {"alpha", "beta"}
-    assert out["alpha"]["command"] == "npx"
-    assert out["alpha"]["args"] == ["-y", "server-a"]
-    assert out["alpha"]["env"] == {"KEY": "value", "OTHER": "x"}
-    assert out["beta"]["command"] == "/usr/bin/beta"
-    assert "unrelated" not in out
+    ws = tmp_path / "ws"
+    ws.mkdir()
 
+    result = ie.import_claude_project(str(src), str(ws))
 
-def test_toml_fallback_handles_multiline_array():
-    text = '[mcp_servers.wrapped]\nargs = [\n  "-y",\n  "server-b"\n]\ncommand = "npx"\n'
-    out = ie.parse_mcp_servers_toml_fallback(text)
-    assert out["wrapped"]["args"] == ["-y", "server-b"]
+    assert result["mcp"]["added"] == ["local"]
+    assert [s["name"] for s in result["mcp"]["skipped"]] == ["remote"]
+    assert "url" in result["mcp"]["skipped"][0]["reason"]
+    with open(isolated_mcp) as f:
+        servers = json.load(f)["servers"]
+    assert "remote" not in servers
 
 
 # --- bad source/workspace paths raise a recoverable error -------------------

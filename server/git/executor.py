@@ -1,5 +1,5 @@
 """
-Git tool executor — handles git tool calls with safety validation.
+Git tool executor, handles git tool calls with safety validation.
 
 Each tool handler validates inputs against the security layer, executes
 git commands via subprocess.run(), parses output, tracks operations,
@@ -17,7 +17,7 @@ from server.git.core import (
     get_default_branch,
 )
 from server.git.diff import fetch_single_file_git_diff
-from server.git.filesystem import is_safe_ref_name
+from server.git.filesystem import is_safe_ref_name, path_inside
 from server.git.security import contains_secret_files
 from server.workspace import get_workspace_path
 
@@ -139,8 +139,13 @@ def _exec_git_diff(tool_input, transcript, current_attachments):
 
     # Single file diff (PR-like, against merge base)
     if single_file:
-        abs_file = os.path.join(cwd, single_file)
-        result = fetch_single_file_git_diff(cwd, abs_file)
+        abs_file = path_inside(cwd, single_file)
+        if abs_file is None:
+            return f"Error: file must be a path inside the repository ({cwd}): {single_file}"
+        try:
+            result = fetch_single_file_git_diff(cwd, abs_file)
+        except (RuntimeError, subprocess.TimeoutExpired) as e:
+            return f"Error: {e}"
         if not result:
             return f"No diff for {single_file} (file may be unchanged or not found)."
         header = f"File: {result.filename} ({result.status})\n"
@@ -172,7 +177,7 @@ def _exec_git_log(tool_input, transcript, current_attachments):
     file_path = tool_input.get("file")
     oneline = tool_input.get("oneline", True)
 
-    # `branch` sits before the `--` separator, so it must be validated —
+    # `branch` sits before the `--` separator, so it must be validated,
     # an option-like value (e.g. "--output=/path") would otherwise be
     # parsed by git as a flag rather than a revision.
     if branch and not is_safe_ref_name(branch):
@@ -226,7 +231,7 @@ def _exec_git_show(tool_input, transcript, current_attachments):
 
     # The ref is a positional revision that precedes the `--` separator, so
     # the separator alone cannot stop an option-like value ("--output=/path")
-    # from being parsed as a git flag — validate it against the ref allowlist.
+    # from being parsed as a git flag, validate it against the ref allowlist.
     if ref and not is_safe_ref_name(ref):
         return f"Error: invalid ref name: {ref}"
 
@@ -295,7 +300,7 @@ def _exec_git_stash_list(tool_input, transcript, current_attachments):
 
 
 # Anchored regex for accepted git remote URL forms. Allows alnum, dot,
-# slash, at, colon, underscore, hyphen — explicitly NO shell metachars,
+# slash, at, colon, underscore, hyphen, explicitly NO shell metachars,
 # spaces, semicolons, backticks, or quotes. Rejects file:// to keep
 # the assistant from cloning arbitrary local paths.
 import re as _re  # noqa: E402
@@ -322,7 +327,7 @@ def do_git_clone(payload: dict) -> tuple[bool, str]:
         return False, "url is required"
     if not _GIT_URL_RE.match(url):
         return False, (
-            f"invalid url {url!r} — accepted forms are https://, ssh://, "
+            f"invalid url {url!r}; accepted forms are https://, ssh://, "
             "or git@host:path (no shell metacharacters, no file://)"
         )
 
@@ -361,7 +366,7 @@ def do_git_clone(payload: dict) -> tuple[bool, str]:
             env=env,
         )
     except subprocess.TimeoutExpired:
-        return False, "git clone timed out after 300s — network too slow or repo too large"
+        return False, "git clone timed out after 300s (network too slow or repo too large)"
 
     if result.returncode != 0:
         return False, f"git clone failed: {(result.stderr or result.stdout or '').strip()}"
@@ -386,7 +391,7 @@ def do_git_clone(payload: dict) -> tuple[bool, str]:
 def _exec_git_clone(tool_input, transcript, current_attachments):
     """Emit an approval request. Actual `git clone` runs only after the
     user clicks Yes (or 'Yes, all cli' is set for the session). Unlike
-    every other git_* tool, this one does NOT call _get_git_cwd() — by
+    every other git_* tool, this one does NOT call _get_git_cwd(), by
     design, it runs without a pre-existing workspace."""
     import json
 
@@ -425,9 +430,18 @@ def do_git_add_commit(payload: dict) -> tuple[bool, str]:
         if rc != 0:
             return False, f"staging failed: {stderr.strip()}"
     elif stage_all:
-        stdout, stderr, rc = _git(["diff", "--cached", "--name-only"], cwd)
-        stdout2, _, _ = _git(["diff", "--name-only"], cwd)
-        all_files = [f for f in (stdout.strip() + "\n" + stdout2.strip()).split("\n") if f.strip()]
+        # ``git add -A`` stages untracked files too, so every path it would
+        # stage is checked: staged, modified and untracked (not ignored).
+        all_files: list[str] = []
+        for args in (
+            ["diff", "--cached", "--name-only"],
+            ["diff", "--name-only"],
+            ["ls-files", "--others", "--exclude-standard"],
+        ):
+            stdout, stderr, rc = _git(args, cwd)
+            if rc != 0:
+                return False, f"could not list the changes to stage: {stderr.strip()}"
+            all_files.extend(f for f in stdout.split("\n") if f.strip())
         secrets = contains_secret_files(all_files)
         if secrets:
             return False, f"refusing to stage potential secret files: {', '.join(secrets)}"
@@ -448,7 +462,7 @@ def do_git_add_commit(payload: dict) -> tuple[bool, str]:
 
 @register_executor("git_add_commit", read_only=False, concurrent_safe=False)
 def _exec_git_add_commit(tool_input, transcript, current_attachments):
-    """Emit an approval request — the actual commit only runs once the
+    """Emit an approval request, the actual commit only runs once the
     user clicks Yes (or the session has pre-approved 'cli'). Mirrors how
     ws_write_file routes through the approval system."""
     import json
@@ -621,7 +635,7 @@ def do_git_push_pr(payload: dict) -> tuple[bool, str]:
     default_branch = get_default_branch(cwd)
     if branch == default_branch:
         return False, (
-            f"on default branch '{default_branch}' — create a new branch first with git_create_branch before pushing a PR"
+            f"on default branch '{default_branch}': create a new branch first with git_create_branch before pushing a PR"
         )
 
     stdout, stderr, rc = _git(["push", "-u", "origin", branch], cwd, timeout=30)
@@ -629,36 +643,17 @@ def do_git_push_pr(payload: dict) -> tuple[bool, str]:
     if rc != 0:
         return False, f"push failed: {stderr.strip()}"
 
-    gh_args = ["gh", "pr", "create", "--title", title]
+    from server.git.gh_common import run_gh
+
+    gh_args = ["pr", "create", "--title", title]
     if body:
         gh_args.extend(["--body", body])
     if base:
         gh_args.extend(["--base", base])
-    try:
-        result = subprocess.run(
-            gh_args,
-            capture_output=True,
-            text=True,
-            cwd=cwd,
-            timeout=30,
-            stdin=subprocess.DEVNULL,
-        )
-    except FileNotFoundError:
-        return True, (
-            f"Pushed to origin/{branch} successfully.\n\n{push_output}\n\n"
-            f"PR creation skipped: 'gh' CLI not found. Install it from https://cli.github.com/"
-        )
-    except Exception as e:
-        return True, (
-            f"Pushed to origin/{branch} successfully.\n\n{push_output}\n\nPR creation failed: {e}"
-        )
-
-    pr_output = (result.stdout + result.stderr).strip()
-    if result.returncode != 0:
-        return True, (
-            f"Pushed to origin/{branch} successfully.\n\n{push_output}\n\n"
-            f"But PR creation failed: {result.stderr.strip()}\n"
-            f"You can create the PR manually or ensure 'gh' CLI is installed and authenticated."
+    rc, pr_output = run_gh(gh_args, cwd=cwd, timeout=30, approved=True)
+    if rc != 0:
+        return False, (
+            f"Pushed to origin/{branch}, but the PR was not created: {pr_output}\n\n{push_output}"
         )
     return True, f"Pushed to origin/{branch} and created PR:\n\n{pr_output}"
 

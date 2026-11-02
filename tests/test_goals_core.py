@@ -110,36 +110,26 @@ def test_tail_slices_giant_tool_result():
     assert "elided" in out
 
 
-def test_tail_renders_responses_items():
+def test_tail_renders_tool_calls_and_results():
     from server.goals.tail import render_tail
 
     msgs = [
-        {"role": "user", "content": [{"type": "input_text", "text": "do it"}]},
+        {"role": "user", "content": [{"type": "text", "text": "run the tests"}]},
         {
             "role": "assistant",
             "content": [
-                {"type": "output_text", "text": "ok"},
-                {"type": "function_call", "name": "ws_bash"},
+                {"type": "text", "text": "ok"},
+                {"type": "tool_use", "id": "c1", "name": "ws_run_command", "input": {}},
             ],
         },
+        {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "c1", "content": "42 passed"}],
+        },
+        {"role": "assistant", "content": [{"type": "text", "text": "all green"}]},
     ]
     out = render_tail(msgs)
-    assert "do it" in out and "ok" in out and "ws_bash" in out
-
-
-def test_tail_renders_top_level_responses_tool_items():
-    # The OpenAI loop's input_items carry tool activity as TOP-LEVEL items with
-    # no role/content — they must still be visible to the evaluator.
-    from server.goals.tail import render_tail
-
-    msgs = [
-        {"role": "user", "content": [{"type": "input_text", "text": "run the tests"}]},
-        {"type": "function_call", "call_id": "c1", "name": "ws_run_command", "arguments": "{}"},
-        {"type": "function_call_output", "call_id": "c1", "output": "42 passed"},
-        {"role": "assistant", "content": [{"type": "output_text", "text": "all green"}]},
-    ]
-    out = render_tail(msgs)
-    assert "ws_run_command" in out
+    assert "run the tests" in out and "ok" in out and "ws_run_command" in out
     assert "42 passed" in out
     assert "all green" in out
 
@@ -225,16 +215,6 @@ def test_evaluator_failure_is_not_checked_with_the_reason(monkeypatch):
     v = evaluator.evaluate("goal", [])
     assert calls["n"] == 1  # a failed call is not retried
     assert v.is_not_checked and "no Claude cloud model id available" in v.feedback
-
-
-def test_looks_verified():
-    from server.goals.evaluator import looks_verified
-
-    assert looks_verified([{"role": "assistant", "content": "ran gate\nVERIFY PASS"}])
-    assert not looks_verified([{"role": "assistant", "content": "VERIFY FAIL: tests red"}])
-
-
-# ── gate ─────────────────────────────────────────────────────────────────────
 
 
 def _ctx(sid, **kw):
@@ -457,13 +437,14 @@ def test_gate_deliverable_block_respects_the_cap(tmp_path, monkeypatch):
     from server.goals import gate
 
     monkeypatch.setattr(gate, "_flag_on", lambda n, d=True: True)
-    monkeypatch.setattr(gate, "_max_blocks", lambda ctx: 2)
     sid = _mk_session()
     msgs = [
         {"role": "user", "content": "write the report"},
         {"role": "assistant", "content": f"Saved to: `{tmp_path}/report.docx`"},
     ]
-    d = _run(gate.run_completion_gate(_ctx(sid, messages=msgs, attempt=2)))
+    d = _run(
+        gate.run_completion_gate(_ctx(sid, messages=msgs, attempt=2, max_consecutive_blocks=2))
+    )
     assert not d.block and d.source == "cap"
     assert d.frame["goal_cap_reached"]["source"] == "deliverable"
 

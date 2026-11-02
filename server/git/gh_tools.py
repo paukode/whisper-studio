@@ -13,7 +13,7 @@ GITHUB_TOOLS = [
             '["pr","close","2"]. Covers pr, issue, run, checks, release, repo, workflow, label, '
             "gist, project, and search. For raw REST/GraphQL, use github_api / github_api_write "
             "instead. Reads run immediately; mutations show the exact command for approval and are "
-            "verified afterward. argv only — no shell syntax, pipes, or redirects. auth/config/"
+            "verified afterward. argv only, no shell syntax, pipes, or redirects. auth/config/"
             "secret/extension/alias are blocked. Deleting or transferring a repo, or changing its "
             "visibility, is NEVER permitted (the user must do it on GitHub). Never tell the user a "
             "PR/issue is closed, merged, or open unless a tool result this turn confirmed that state."

@@ -50,7 +50,7 @@ def _stub_tool(name: str):
     t = MagicMock()
     t.name = name
     t.description = f"stub tool {name}"
-    t.inputSchema = {"type": "object", "properties": {}}
+    t.input_schema = {"type": "object", "properties": {}}
     return t
 
 
@@ -297,6 +297,48 @@ def test_tool_overrides_wins_over_server_level_approval_mode(isolated_mcp):
 
     assert mgr.get_tool_approval_tier("srv", "get_data") == "auto"
     assert mgr.get_tool_approval_tier("srv", "delete_everything") == "approve"
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"approval_mode": "Approve"},
+        {"approval_mode": "auto", "tool_overrides": {"delete_everything": "aprove"}},
+    ],
+)
+def test_an_invalid_tier_gates_as_approve_never_auto(isolated_mcp, entry):
+    """A hand-edited typo must not drop the gate: it fails closed."""
+    with open(isolated_mcp, "w") as f:
+        json.dump(
+            {"servers": {"srv": {"command": "x", "args": [], "env": {}, "enabled": True, **entry}}},
+            f,
+        )
+    mgr = MCPManager()
+    _seed(mgr, "srv", ["delete_everything"])
+    assert mgr.get_tool_approval_tier("srv", "delete_everything") == "approve"
+    assert asyncio.run(mgr.call_tool("mcp__srv__delete_everything", {})).startswith("[WS_APPROVAL]")
+
+
+def test_saving_an_invalid_tier_is_refused(isolated_mcp, monkeypatch):
+    from server import mcp_routes
+
+    with open(isolated_mcp, "w") as f:
+        json.dump({"servers": {"srv": {"command": "x", "args": [], "env": {}}}}, f)
+    mgr = MCPManager()
+    monkeypatch.setattr(mcp_routes, "mcp_manager", mgr)
+
+    class _Req:
+        def __init__(self, body):
+            self._body = body
+
+        async def json(self):
+            return self._body
+
+    for body in ({"approval_mode": "Approve"}, {"tool_overrides": {"t": "nope"}}):
+        resp = asyncio.run(mcp_routes.mcp_update_server("srv", _Req(body)))
+        assert resp.status_code == 400
+    with open(isolated_mcp) as f:
+        assert "approval_mode" not in json.load(f)["servers"]["srv"]
 
 
 def test_get_tool_approval_tier_for_tool_name_resolves_via_sanitized_name(isolated_mcp):

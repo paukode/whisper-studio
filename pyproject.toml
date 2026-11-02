@@ -1,17 +1,16 @@
 [tool.ruff]
-# The app's runtime floor is Python 3.10 (README, setup.sh); CI runs on 3.13.
-# pyupgrade (UP) rewrites code up to this target, so pin it to the SUPPORT FLOOR,
-# not the CI version, to avoid emitting 3.11+/3.12-only syntax that would break
-# users on 3.10/3.11.
-target-version = "py310"
+# The app's runtime floor is Python 3.12 (setup.sh, the voice SDK); the app and
+# CI run 3.13. pyupgrade (UP) rewrites code up to this target, so pin it to the
+# floor, not the CI version.
+target-version = "py312"
 # Match the frontend's Prettier printWidth (.prettierrc) for cross-language parity.
 line-length = 100
 
 # skills/ holds prompt skills (markdown) plus any user-imported skill scripts
-# (server/skills_import.py drops third-party folders here) — not first-party
+# (server/skills_import.py drops third-party folders here), not first-party
 # app code. venv, data, storage, models, node_modules and static/dist are
 # gitignored and excluded automatically (ruff respects .gitignore).
-# server/asr/canary is VENDORED from mlx-audio (MIT) — excluded so the diff
+# server/asr/canary is VENDORED from mlx-audio (MIT), excluded so the diff
 # against upstream stays limited to provenance headers and import rewrites,
 # never style rewrites (see server/asr/canary/__init__.py).
 extend-exclude = ["skills", "server/asr/canary"]
@@ -33,8 +32,9 @@ ignore = ["E501"]
 # router/executor singleton before importing submodules, so imports aren't all at
 # the top of the file.
 "**/__init__.py" = ["F401", "E402"]
-# main.py must run the legacy-home relocation BEFORE importing the server
-# modules, whose path constants freeze at import time.
+# main.py must run the macOS-on-Apple-silicon platform guard
+# (server/infrastructure/platform_guard.py) BEFORE importing any third-party or
+# server module, so an unsupported machine stops with one clear message.
 "server/main.py" = ["E402"]
 # Test modules keep fixtures/imports that ruff reads as unused.
 "tests/**" = ["F401"]

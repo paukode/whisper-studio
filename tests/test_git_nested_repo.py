@@ -66,3 +66,16 @@ def test_repo_stays_inside_the_workspace_and_must_be_a_repository(parent, tmp_pa
     assert gx._exec_git_status({"repo": "notes"}, "", None) == (
         "notes is not a git repository (it has no .git)."
     )
+
+
+def test_a_single_file_diff_stays_inside_the_repository(parent):
+    """``file`` used to be joined to the repo with no check, so '../site/x'
+    or an absolute path returned the whole text of a file in another repo."""
+    (parent / "site" / ".env").write_text("TOKEN=secret\n")
+    (parent / "site" / ".gitignore").write_text(".env\n")
+    for name in ("../site/.env", str(parent / "site" / ".env")):
+        out = gx._exec_git_diff({"repo": "app", "file": name}, "", None)
+        assert out.startswith("Error: file must be a path inside the repository")
+        assert "secret" not in out
+    (parent / "app" / "a.txt").write_text("two\n")
+    assert "+two" in gx._exec_git_diff({"repo": "app", "file": "a.txt"}, "", None)

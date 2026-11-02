@@ -1,6 +1,6 @@
 """Switching workspaces must drop state scoped to the old workspace.
 
-`connect_workspace` used to clear only WORKSPACE_BACKUPS. The per-session cwd
+`connect_workspace` used to clear only the undo copies. The per-session cwd
 (`server.cwd_tracker`) and the worktree registry (`_WORKTREES` in
 `server.workspace.executors`) survived the switch, so after moving to a new
 workspace read-only commands kept running in the OLD folder and worktree ops

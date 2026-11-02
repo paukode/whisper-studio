@@ -26,9 +26,8 @@ function StatusIcon({ status }: { status: string }) {
 
 /**
  * TasksPanel — the tasks list body for a dock panel. Reads the active session's
- * task list from taskStore (fed by the `todo_update` SSE feed). Extracted from
- * TasksDrawer so the same content renders inside the RightDock instead of a
- * separate slide-over.
+ * task list from taskStore (fed by the `todo_update` SSE feed), inside the
+ * RightDock.
  */
 export const TasksPanel: React.FC = () => {
   const currentSessionId = useSessionStore((s) => s.currentSessionId);
@@ -68,4 +67,3 @@ export const TasksPanel: React.FC = () => {
   );
 };
 
-export default TasksPanel;

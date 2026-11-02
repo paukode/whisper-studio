@@ -1,13 +1,14 @@
-"""Multi-agent teams: create a named team of parallel agents (cancellable via
-POST /api/teams/{team_id}/stop) and disband it. The in-memory ``_teams`` store
-is shared with server/chat/routes.py, which reads it to stop a running team.
+"""Multi-agent teams: create a named team of parallel agents and disband it.
+A running team stops through stop_team: Stop in the task list or agent pane
+(POST /api/background-tasks/{task_id}/stop) reaches it via
+server.tasks.agents.cancel_task, which reads the in-memory ``_teams`` store.
 """
 
 import asyncio
 import json
 import uuid
 
-from server.agents.journal import RELAY_NOTE, REPORT_CHARS, team_manifest
+from server.agents.journal import RELAY_NOTE, REPORT_CHARS
 from server.agents.journal import load as load_journal
 from server.tasks.events import emit_agent_report
 
@@ -42,25 +43,6 @@ def stop_team(team_id: str) -> bool:
     team["stop_requested"] = True
     task.cancel()
     return True
-
-
-def _terminal_paragraph(text: str, max_chars: int = 300) -> str:
-    """Return the final non-empty paragraph of ``text``, capped at ``max_chars``.
-
-    Agents conclude with their findings — head-slicing keeps the opening
-    narration and loses the conclusion. Walk from the end backwards so the
-    visible summary is the actual finding.
-    """
-    if not text:
-        return ""
-    cleaned = text.strip()
-    if not cleaned:
-        return ""
-    paragraphs = [p.strip() for p in cleaned.split("\n\n") if p.strip()]
-    tail = paragraphs[-1] if paragraphs else cleaned
-    if len(tail) <= max_chars:
-        return tail
-    return "…" + tail[-(max_chars - 1) :]
 
 
 def _status_label(r: dict) -> str:
@@ -132,7 +114,7 @@ async def _settle_cancelled_members(gather_task: asyncio.Task) -> None:
 async def execute_team_create(
     tool_input: dict,
     model_id: str,
-    session_id: str = "default",
+    session_id: str,
     effort_label: str | None = None,
     *,
     parent_agent_id: str | None = None,
@@ -161,7 +143,6 @@ async def execute_team_create(
     team_name = tool_input.get("team_name", "team")
     description = tool_input.get("description", "")
     agents = tool_input.get("agents", [])
-    session_id = tool_input.get("session_id", session_id)
 
     team_id = uuid.uuid4().hex[:8]
     _teams[team_id] = {
@@ -246,7 +227,7 @@ async def execute_team_create(
                 # head is what the parent and the card need, not the tail.
                 "result": result.output[:REPORT_CHARS],
                 "status": result.status,
-                "stop_reason": getattr(result, "stop_reason", result.status),
+                "stop_reason": result.stop_reason,
                 "turns_used": result.turns_used,
             }
         except asyncio.CancelledError:
@@ -263,8 +244,8 @@ async def execute_team_create(
         finally:
             _release_agent_slot(session_id)
 
-    # Run the members through a named task so the stop endpoint
-    # (POST /api/teams/{team_id}/stop) can cancel the whole team mid-flight.
+    # Run the members through a named task so stop_team (reached from Stop in
+    # the task list or agent pane) can cancel the whole team mid-flight.
     member_ids = [uuid.uuid4().hex[:10] for _ in agents]
     _teams[team_id]["member_ids"] = member_ids
     gather_task = asyncio.ensure_future(
@@ -291,11 +272,6 @@ async def execute_team_create(
             await _settle_cancelled_members(gather_task)
             orphaned = _reports_from_journals(agents, member_ids, session_id)
             _teams[team_id]["agents"] = orphaned
-            team_manifest(
-                session_id,
-                team_id,
-                {"team_id": team_id, "team_name": team_name, "members": orphaned},
-            )
             emit_agent_report(
                 session_id,
                 {
@@ -321,20 +297,6 @@ async def execute_team_create(
         _teams.get(team_id, {}).pop("task", None)
 
     _teams[team_id]["agents"] = list(agent_results)
-    team_manifest(
-        session_id,
-        team_id,
-        {
-            "team_id": team_id,
-            "team_name": team_name,
-            "description": description,
-            "members": [
-                {k: r.get(k) for k in ("name", "agent_id", "agent_type", "status", "stop_reason")}
-                for r in agent_results
-            ],
-        },
-    )
-
     summary = _team_summary(team_name, agent_results, stopped_by_user)
 
     if progress_channel:

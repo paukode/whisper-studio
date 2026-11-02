@@ -2,7 +2,7 @@
 
 Ports the loop coverage from the pre-engine local path: thinking/text
 normalization, tool rounds through the shared safety gate, approval pauses via
-the unified store, argument coercion before dispatch, the empty-turn message,
+the unified store, unmodified arguments before dispatch, the empty-turn message,
 token accounting (cached-prefix semantics), and the offline invariants (no
 Bedrock client, empty tool-executor model id).
 """
@@ -225,7 +225,11 @@ def test_last_round_payload_forbids_tools(monkeypatch):
     assert fake.payloads[0]["tool_choice"] == "none"
 
 
-def test_adapter_coerces_loose_argument_types(monkeypatch):
+def test_adapter_preserves_unmodified_argument_values(monkeypatch):
+    import pytest
+
+    from server.tool_inputs import ToolInputError, schemas_for_tools, validate_tool_input
+
     adapter = LocalAdapter(
         model_key="k",
         base_url="http://x",
@@ -233,12 +237,13 @@ def test_adapter_coerces_loose_argument_types(monkeypatch):
         thinking_level=None,
         tools_enabled=True,
     )
-    fake = _fake_rounds(([], [{"id": "c", "name": "t", "input": {"n": "5", "b": "true"}}]))
+    given = {"n": "5", "b": "true"}
+    fake = _fake_rounds(([], [{"id": "c", "name": "t", "input": given}]))
     monkeypatch.setattr(SS, "_stream_round", fake)
     tools = [
         {
             "name": "t",
-            "description": "",
+            "description": "Stub integer and boolean inputs",
             "input_schema": {
                 "type": "object",
                 "properties": {"n": {"type": "integer"}, "b": {"type": "boolean"}},
@@ -258,7 +263,10 @@ def test_adapter_coerces_loose_argument_types(monkeypatch):
     from server.chat.engine.events import ToolCall
 
     call = next(e for e in evs if isinstance(e, ToolCall))
-    assert call.input == {"n": 5, "b": True}
+    assert call.input == given == {"n": "5", "b": "true"}
+    with pytest.raises(ToolInputError, match="type constraint"):
+        validate_tool_input(call.name, call.input, schemas_for_tools(tools))
+    assert call.input == given
 
 
 def test_empty_turn_gets_an_explanatory_line(monkeypatch):
@@ -337,8 +345,12 @@ def test_context_overflow_raises_prompt_too_long_and_salvages(monkeypatch):
         return [c async for c in run_turn(ctx)]
 
     blob = "".join(asyncio.run(go()))
-    assert "synthesizing a final answer" in blob
-    assert "Salvaged locally." in blob
+    assert "Context compaction failed" in blob
+    assert "history is unchanged" in blob
+    assert "Salvaged locally." not in blob
+    assert calls_round["n"] == 1
+    assert ctx.messages == [{"role": "user", "content": "big"}]
+    assert blob.count("data: [DONE]") == 1
 
 
 def test_usage_frame_reports_cached_prefix_semantics(monkeypatch):

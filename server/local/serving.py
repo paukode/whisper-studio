@@ -1,7 +1,7 @@
 """Engine dispatch for the on-device model servers.
 
-Two engines serve local chat models — llama-server for GGUF weights and
-``mlx_lm server`` for MLX snapshots — and both speak the same OpenAI-compatible
+Two engines serve local chat models, llama-server for GGUF weights and
+``mlx_lm server`` for MLX snapshots, and both speak the same OpenAI-compatible
 ``/v1/chat/completions`` SSE, so everything above this module (LocalAdapter,
 the stream parser, the turn engine) is engine-agnostic. This facade is the one
 place that knows which engine a model key belongs to, and it owns the
@@ -9,9 +9,9 @@ cross-engine residency rule: ONE local model resident at a time across BOTH
 engines, because chat weights and the ASR stack already share unified memory
 on the memory-constrained on-device build (e.g. M3/18GB).
 
-Callers that used to import llama_server directly (chat routes, engine
-windows, main's lifecycle hooks, the models manager) go through here instead,
-so adding a third engine stays a one-module change.
+Callers (chat routes, engine windows, main's lifecycle hooks, the models
+manager) go through here rather than an engine module, so adding a third
+engine stays a one-module change.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ _BUSY_WAIT_TIMEOUT_S = int(os.environ.get("WHISPER_LOCAL_BUSY_WAIT_S", "600"))
 
 # Live chat turns currently streaming from the resident server. A transition
 # that would displace that server (different key, or a context-size change)
-# WAITS for this to drain instead of stopping the server mid-stream — the bug
+# WAITS for this to drain instead of stopping the server mid-stream, the bug
 # where switching models in the composer killed the in-flight answer
 # ("round 0 failed" with an empty error and a turn with no text).
 _busy_lock = threading.Lock()
@@ -61,7 +61,7 @@ _release_when_idle: str | None = None
 def begin_turn() -> None:
     """Mark a chat turn as streaming from the resident server. Callers must
     pair with ``end_turn`` in a finally. ``ensure_serving(mark_busy=True)``
-    does this atomically with the residency check — prefer that."""
+    does this atomically with the residency check, prefer that."""
     global _busy_turns
     with _busy_lock:
         _busy_turns += 1
@@ -198,8 +198,8 @@ _transition_lock = threading.Lock()
 
 
 def engine_of(key: str | None) -> str:
-    """``"mlx"`` or ``"gguf"`` for a registry key (unknown keys read as gguf,
-    matching the pre-MLX default for every existing entry)."""
+    """``"mlx"`` or ``"gguf"`` for a registry key: gguf unless the entry says
+    ``"engine": "mlx"`` (unknown keys read as gguf)."""
     if not key:
         return "gguf"
     from server.local.runtime import LOCAL_MODELS
@@ -238,13 +238,13 @@ def ensure_serving(
     One local model resident at a time is a CROSS-engine invariant, so the
     whole transition runs under the facade lock. Ordering mirrors what each
     engine already does internally: validate the engine and fetch the weights
-    FIRST, and only then evict the other engine's resident model — a doomed
+    FIRST, and only then evict the other engine's resident model, a doomed
     request (mlx-lm missing, unknown key) or a minutes-long first download must
     never leave the machine with nothing resident. Blocking (a cold start loads
     gigabytes), so call it off the event loop.
 
     A transition that would displace the resident server (different key, or a
-    context-size change) waits for live chat turns to finish first — stopping
+    context-size change) waits for live chat turns to finish first, stopping
     a server mid-stream kills the answer being written. ``should_abort`` lets
     a waiting caller bail out (the model-load endpoint passes its cancel
     flag); it is checked again once the transition lock is acquired, so a call
@@ -460,7 +460,12 @@ def _server_error_message(r) -> str:
     return (r.text or "").strip()[:200] or "no message"
 
 
-def _resident_answer(r, max_tokens: int) -> str:
+def _resident_answer(r, max_tokens: int, *, allow_truncated: bool = False) -> str:
+    """The answer text of a non-streaming chat-completions response. Raises
+    ResidentCallError for an HTTP error, a malformed or empty answer, and,
+    unless ``allow_truncated``, an answer that ran past ``max_tokens``.
+    ``allow_truncated`` is for prose callers that use a cut-off answer as it
+    is; JSON callers keep the default, since a cut-off JSON does not parse."""
     if r.status_code >= 400:
         raise ResidentCallError(
             f"the model server answered HTTP {r.status_code}: {_server_error_message(r)}"
@@ -472,7 +477,7 @@ def _resident_answer(r, max_tokens: int) -> str:
     choices = (data.get("choices") if isinstance(data, dict) else None) or []
     if not choices or not isinstance(choices[0], dict):
         raise ResidentCallError("the model server returned no answer")
-    if choices[0].get("finish_reason") == "length":
+    if choices[0].get("finish_reason") == "length" and not allow_truncated:
         raise ResidentCallError(f"the answer ran past its {max_tokens}-token budget")
     msg = choices[0].get("message") or {}
     text = llama_server._strip_reasoning_markers(msg.get("content") or "")
@@ -557,43 +562,45 @@ async def complete_on_resident(
         end_turn()
 
 
-def complete(key: str, system_prompt: str, user: str, max_tokens: int = 1500) -> str:
-    """One-shot, NON-streaming generation; returns the assistant text ('' on
-    failure). Blocking — starts the model server if it isn't already serving
-    ``key``, so call it off the event loop.
+def complete(
+    key: str,
+    system_prompt: str,
+    user: str,
+    max_tokens: int = 1500,
+    *,
+    allow_truncated: bool = False,
+) -> str:
+    """One-shot, NON-streaming generation; returns the assistant text.
+    Blocking: starts the model server if it isn't already serving ``key``, so
+    call it off the event loop.
 
     The non-chat entry point (workspace-index extraction, the on-device session
     summariser), engine-agnostic: both servers answer the same non-streaming
-    chat-completions request. Deliberately sends no tools — these callers want
-    prose or JSON back, not a tool call.
+    chat-completions request. Deliberately sends no tools: these callers want
+    prose or JSON back, not a tool call. Built like ``complete_on_resident``:
+    temperature 0 and thinking off for a thinking model, so a small budget is
+    not spent on reasoning. Raises (the server could not start, an HTTP error,
+    ResidentCallError for an answer that ran out of budget or held only
+    reasoning); it never returns an empty string. ``allow_truncated`` returns
+    an answer cut off at ``max_tokens`` instead of raising, for prose callers
+    (chunk context, entity descriptions) that use it as it is.
     """
     import httpx
 
-    try:
-        url = ensure_serving(key)
-    except Exception as e:
-        log.warning("complete(%s): model server unavailable: %s", key, e)
-        return ""
-    try:
-        r = httpx.post(
-            f"{url}/v1/chat/completions",
-            json={
-                "model": wire_model(key),
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user},
-                ],
-                "max_tokens": max_tokens,
-                "stream": False,
-            },
-            timeout=_ONESHOT_TIMEOUT,
-        )
-        r.raise_for_status()
-        choices = (r.json() or {}).get("choices") or []
-        if not choices:
-            return ""
-        msg = choices[0].get("message") or {}
-        return llama_server._strip_reasoning_markers(msg.get("content") or "")
-    except Exception as e:
-        log.warning("complete(%s) failed: %s", key, e)
-        return ""
+    from server.local import thinking
+
+    url = ensure_serving(key)
+    body: dict = {
+        "model": wire_model(key),
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user},
+        ],
+        "max_tokens": max_tokens,
+        "stream": False,
+        "temperature": 0,
+    }
+    if thinking.caps_for(key).can_think:
+        body.update(thinking.off_fields(mlx=engine_of(key) == "mlx"))
+    r = httpx.post(f"{url}/v1/chat/completions", json=body, timeout=_ONESHOT_TIMEOUT)
+    return _resident_answer(r, max_tokens, allow_truncated=allow_truncated)

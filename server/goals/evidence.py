@@ -55,7 +55,7 @@ from urllib.parse import quote
 
 from server.goals import claims as c
 from server.goals.acts import Act, reads_only
-from server.goals.call_results import Call, merge_calls, report_texts, succeeded, turn_calls
+from server.goals.call_results import Call, merge_calls, report_texts, turn_calls
 from server.goals.deliverables import (
     last_user_prompt,
     resolve_path,
@@ -63,7 +63,7 @@ from server.goals.deliverables import (
     turn_messages,
 )
 
-__all__ = ["Call", "Evidence", "Verdict", "check", "not_done", "succeeded", "turn_calls"]
+__all__ = ["Call", "Evidence", "Verdict", "check", "not_done", "turn_calls"]
 
 # Filesystem times are coarse and a tool may stamp a file a moment before the
 # turn's clock started.
@@ -216,14 +216,11 @@ _SENTENCES_RE = re.compile(r"(?<=[.!?])\s+|\n")
 
 @dataclass(frozen=True)
 class Verdict:
-    """What checking one claim found. ``checked`` False means it could not
-    be checked here and is let through (a planned file, a description).
-    ``note`` says what is true instead, for the user and the model;
+    """What checking one claim found. ``note`` says what is true instead, for the user and the model;
     ``pending`` marks a claim whose act a call started and has not finished;
     ``receipt`` describes what was verified, for the chat's chips."""
 
     ok: bool
-    checked: bool = True
     note: str = ""
     receipt: dict | None = None
     pending: bool = False
@@ -289,7 +286,6 @@ _ENV_WORDS = frozenset(w for w, _p in _ENVS)
 _FAMILY_WORDS = frozenset(w for w, _p in _FAMILIES) | frozenset(
     {"github", "aws", "gcp", "azure", "serverless", "ecr", "s3", "git"}
 )
-_WHAT_WORDS = frozenset({"image", "package", "site", "release", "git"})
 
 
 def _scope_ok(claim: c.Claim, act: Act) -> bool:
@@ -719,7 +715,7 @@ def _check_removed(claim: c.Claim, ev: Evidence, path: str, shown: str, tried: b
         if ev.removed(path, index=True) or (not os.path.lexists(path) and ev.removed(path)):
             return Verdict(True, receipt=_path_receipt(c.REMOVED, path, "untracked"))
         if not tried and ev.recap(claim):
-            return Verdict(True, checked=False)
+            return Verdict(True)
         return Verdict(False, note=f"no call in this turn took {shown} out of git")
     if os.path.lexists(path):
         return Verdict(False, note=f"{shown} still exists")
@@ -775,12 +771,12 @@ def _check_path(claim: c.Claim, ev: Evidence) -> Verdict:
         # A relative path with no workspace to read it against: a path in
         # prose is let through; the app's own link to a file is not.
         if not claim.deliverable:
-            return Verdict(True, checked=False)
+            return Verdict(True)
         return Verdict(False, note=f"{shown} is in no folder this chat can read")
     path = ev.path(target)
     if ev.plan_targets is not None and path not in ev.plan_targets:
         if not (claim.firm and claim.made):
-            return Verdict(True, checked=False)
+            return Verdict(True)
     tried = _path_tried(claim, ev)
     if claim.kind == c.REMOVED:
         return _check_removed(claim, ev, path, shown, tried)
@@ -856,7 +852,7 @@ def _check_act(claim: c.Claim, ev: Evidence) -> Verdict:
         if ev.link_made(claim.target):
             return Verdict(True, receipt=_act_receipt(claim, None))
         if ev.recap(claim) and any(_url_in(claim.target, a.text) for a in ev.before.acts):
-            return Verdict(True, checked=False)
+            return Verdict(True)
         return Verdict(False, note=_ACT_NOTES[c.LINK].format(target=f"`{claim.target}`"))
     done = [a for a in ev.done if _meets(claim, a)]
     if done:
@@ -871,7 +867,7 @@ def _check_act(claim: c.Claim, ev: Evidence) -> Verdict:
             # "Here's the PR: <address>" where a call of the turn returned it.
             return Verdict(True, receipt=_act_receipt(claim, None))
         if ev.recap(claim) and any(_meets(claim, a) for a in ev.before.acts):
-            return Verdict(True, checked=False)
+            return Verdict(True)
     return Verdict(False, note=_ACT_NOTES[claim.kind].format(to=to, target=claim.target))
 
 
@@ -886,7 +882,7 @@ def _tried(claim: c.Claim, ev: Evidence) -> bool:
 def check(claim: c.Claim, ev: Evidence) -> Verdict:
     """Whether ``claim`` holds, by the rules in the module notes."""
     if not claim.firm and not _tried(claim, ev):
-        return Verdict(True, checked=False)
+        return Verdict(True)
     if claim.kind in (c.FILE, c.FOLDER, c.REMOVED):
         return _check_path(claim, ev)
     if claim.kind == c.ARTIFACT:

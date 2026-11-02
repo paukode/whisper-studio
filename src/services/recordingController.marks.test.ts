@@ -63,7 +63,7 @@ function chunk(samples: number, value: number): string {
 beforeEach(() => {
   sockets = [];
   __resetNativeAudioForTests();
-  window.__WHISPER_NATIVE_AUDIO = { platform: 'macos', available: true };
+  window.__WHISPER_NATIVE_AUDIO = { available: true };
   window.webkit = {
     messageHandlers: {
       nativeAudio: {

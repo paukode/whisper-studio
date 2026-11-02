@@ -18,6 +18,7 @@ vi.mock('@/api/client', () => ({
 }));
 
 import { ModelModePanel } from './ModelModePanel';
+import { get } from '@/api/client';
 import { useSettingsStore } from '@/stores/settingsStore';
 
 function renderPanel() {
@@ -46,7 +47,7 @@ describe('ModelModePanel', () => {
   it('reveals the four per-capability pickers in hybrid mode', async () => {
     setMode('hybrid');
     renderPanel();
-    expect(screen.getByLabelText('Embeddings (search index)')).toBeTruthy();
+    expect(await screen.findByLabelText('Embeddings (search index)')).toBeTruthy();
     expect(screen.getByLabelText('Reranker')).toBeTruthy();
     expect(screen.getByLabelText('Entity extraction')).toBeTruthy();
     expect(screen.getByLabelText('One-shot writer (summaries)')).toBeTruthy();
@@ -65,6 +66,16 @@ describe('ModelModePanel', () => {
     const texts = Array.from(ner.options).map((o) => o.text);
     expect(texts).toContain('GLiNER (on-device extractor)');
     expect(texts).toContain('Claude Haiku (Bedrock)');
+  });
+
+  it('offers no made-up engine when the catalog fails: it says why instead', async () => {
+    vi.mocked(get).mockRejectedValueOnce(new Error('index engines unavailable'));
+    setMode('hybrid');
+    renderPanel();
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      'Could not load the model list: index engines unavailable',
+    );
+    expect(screen.queryByLabelText('Entity extraction')).toBeNull();
   });
 
   it('hides the capability pickers in local mode', () => {

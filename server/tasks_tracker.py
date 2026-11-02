@@ -11,7 +11,7 @@ import sqlite3
 import time
 import uuid
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
 from server.infrastructure.paths import storage_root
 
@@ -50,35 +50,30 @@ def _get_conn():
 
 
 def _load_from_db(session_id: str) -> list[dict]:
-    try:
-        with _get_conn() as conn:
-            rows = conn.execute(
-                "SELECT * FROM tasks WHERE session_id = ? ORDER BY created_at ASC", (session_id,)
-            ).fetchall()
-        return [dict(r) for r in rows]
-    except Exception as e:
-        log.error("Failed to load tasks from DB: %s", e)
-        return []
+    """A read error raises (and nothing is cached), never an empty list."""
+    with _get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM tasks WHERE session_id = ? ORDER BY created_at ASC", (session_id,)
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def _save_task_to_db(task: dict, session_id: str):
-    try:
-        with _get_conn() as conn:
-            conn.execute(
-                """
-                INSERT INTO tasks (id, session_id, subject, description, status, created_at, updated_at)
-                VALUES (:id, :session_id, :subject, :description, :status, :created_at, :updated_at)
-                ON CONFLICT(id, session_id) DO UPDATE SET
-                    subject = excluded.subject,
-                    description = excluded.description,
-                    status = excluded.status,
-                    updated_at = excluded.updated_at
-            """,
-                {**task, "session_id": session_id},
-            )
-            conn.commit()
-    except Exception as e:
-        log.error("Failed to save task to DB: %s", e)
+    """A write error raises, so no caller reports a task it did not save."""
+    with _get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO tasks (id, session_id, subject, description, status, created_at, updated_at)
+            VALUES (:id, :session_id, :subject, :description, :status, :created_at, :updated_at)
+            ON CONFLICT(id, session_id) DO UPDATE SET
+                subject = excluded.subject,
+                description = excluded.description,
+                status = excluded.status,
+                updated_at = excluded.updated_at
+        """,
+            {**task, "session_id": session_id},
+        )
+        conn.commit()
 
 
 def _reconcile_in_progress(session_id: str, prefer_id: str | None = None) -> bool:
@@ -119,7 +114,7 @@ def get_session_tasks(session_id: str) -> list[dict]:
     if session_id not in _task_store:
         _task_store[session_id] = _load_from_db(session_id)
     # Self-heal: never expose more than one in_progress task. This runs on every
-    # read (live SSE broadcast, restore-on-resume, prompt build), so a session
+    # read (live todo_update broadcast and restore on resume), so a session
     # left with a zombie in_progress from an interrupted turn is repaired the
     # next time its tasks are loaded.
     _reconcile_in_progress(session_id)
@@ -171,12 +166,9 @@ def update_task(
 
 def clear_session_tasks(session_id: str):
     _task_store.pop(session_id, None)
-    try:
-        with _get_conn() as conn:
-            conn.execute("DELETE FROM tasks WHERE session_id = ?", (session_id,))
-            conn.commit()
-    except Exception as e:
-        log.error("Failed to clear tasks from DB: %s", e)
+    with _get_conn() as conn:
+        conn.execute("DELETE FROM tasks WHERE session_id = ?", (session_id,))
+        conn.commit()
 
 
 # Tools exposed to Claude
@@ -198,12 +190,8 @@ TASK_TOOLS = [
                     "type": "string",
                     "description": "Detailed description of what needs to be done",
                 },
-                "session_id": {
-                    "type": "string",
-                    "description": "Current session ID for task scoping",
-                },
             },
-            "required": ["subject", "session_id"],
+            "required": ["subject"],
         },
     },
     {
@@ -218,9 +206,8 @@ TASK_TOOLS = [
                     "description": "New status",
                     "enum": ["pending", "in_progress", "completed"],
                 },
-                "session_id": {"type": "string", "description": "Current session ID"},
             },
-            "required": ["task_id", "status", "session_id"],
+            "required": ["task_id", "status"],
         },
     },
     {
@@ -228,10 +215,8 @@ TASK_TOOLS = [
         "description": "List all tasks in the current session to review progress.",
         "input_schema": {
             "type": "object",
-            "properties": {
-                "session_id": {"type": "string", "description": "Current session ID"},
-            },
-            "required": ["session_id"],
+            "properties": {},
+            "required": [],
         },
     },
     {
@@ -241,9 +226,8 @@ TASK_TOOLS = [
             "type": "object",
             "properties": {
                 "task_id": {"type": "string", "description": "The task ID to retrieve"},
-                "session_id": {"type": "string", "description": "Current session ID"},
             },
-            "required": ["task_id", "session_id"],
+            "required": ["task_id"],
         },
     },
     {
@@ -253,16 +237,14 @@ TASK_TOOLS = [
             "type": "object",
             "properties": {
                 "task_id": {"type": "string", "description": "The task ID to cancel"},
-                "session_id": {"type": "string", "description": "Current session ID"},
             },
-            "required": ["task_id", "session_id"],
+            "required": ["task_id"],
         },
     },
 ]
 
 
-def execute_task_tool(tool_name: str, tool_input: dict) -> str:
-    session_id = tool_input.get("session_id", "default")
+def execute_task_tool(tool_name: str, tool_input: dict, session_id: str) -> str:
     if tool_name == "task_create":
         task = create_task(
             session_id, tool_input.get("subject", ""), tool_input.get("description", "")
@@ -308,19 +290,3 @@ def execute_task_tool(tool_name: str, tool_input: dict) -> str:
 @router.get("/{session_id}")
 async def get_tasks(session_id: str):
     return {"tasks": get_session_tasks(session_id)}
-
-
-@router.delete("/{session_id}")
-async def api_clear_tasks(session_id: str, confirm: bool = False):
-    """Clear all tasks for a session. Requires explicit ``confirm=true``
-    in the query string — without it, an auto-retry from a stale tab
-    could silently wipe out an active session's task list. No frontend
-    code calls this today; it exists for deliberate, manual clears.
-    """
-    if not confirm:
-        raise HTTPException(
-            status_code=400,
-            detail="confirm=true required to clear session tasks",
-        )
-    clear_session_tasks(session_id)
-    return {"cleared": True}

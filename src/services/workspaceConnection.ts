@@ -25,7 +25,17 @@ import { useWorkspaceStore } from '@/stores/workspaceStore';
 
 /** Budget for the disconnect request. The server answers in about a
  *  millisecond; this long means the request never reached it. */
-export const DISCONNECT_TIMEOUT_MS = 10_000;
+const DISCONNECT_TIMEOUT_MS = 10_000;
+
+/** Show the notes a successful connect came back with (the server replaced
+ *  a damaged workspace config file). The connect held; each note is a
+ *  warning toast, never dropped. */
+export function reportConnectWarnings(warnings: string[] | undefined): void {
+  for (const warning of warnings ?? []) {
+    console.warn('Workspace connect warning:', warning);
+    useUIStore.getState().addToast({ type: 'warning', message: warning, duration: 6000 });
+  }
+}
 
 interface DisconnectResponse {
   disconnected?: boolean;

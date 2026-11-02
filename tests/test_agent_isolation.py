@@ -101,15 +101,39 @@ def test_broadcast_scoped_to_sender_session():
     bus.create_mailbox("a1", session_id="sess-1")
     bus.create_mailbox("a2", session_id="sess-1")
     bus.create_mailbox("b1", session_id="sess-2")
-    bus.create_mailbox("legacy")  # untagged
 
-    n = bus.broadcast("a1", "hello team")
-    assert n == 1  # only a2 — never sess-2's agent, never untagged
+    n = bus.broadcast("a1", "hello team", "sess-1")
+    assert n == 1  # only a2, never sess-2's agent
     assert len(bus.receive("a2")) == 1
     assert bus.receive("b1") == []
-    assert bus.receive("legacy") == []
 
-    # Explicit agent_ids still work cross-session (deliberate addressing).
-    n2 = bus.broadcast("a1", "direct", agent_ids=["b1"])
-    assert n2 == 1
-    assert len(bus.receive("b1")) == 1
+
+def test_chat_broadcast_reaches_the_sessions_agents():
+    import json
+
+    from server.agent_tools.spawn import execute_send_message
+    from server.agents.messaging import message_bus
+
+    message_bus.create_mailbox("bc-agent", session_id="bc-sess")
+    message_bus.create_mailbox("bc-other", session_id="bc-elsewhere")
+    try:
+        out = json.loads(
+            execute_send_message({"broadcast": True, "content": "stop and report"}, "bc-sess")
+        )
+        assert out["recipients"] == 1
+        assert [m.content for m in message_bus.receive("bc-agent")] == ["stop and report"]
+        assert message_bus.receive("bc-other") == []
+    finally:
+        message_bus.delete_mailbox("bc-agent")
+        message_bus.delete_mailbox("bc-other")
+
+
+def test_send_message_to_an_unknown_agent_is_an_error():
+    import json
+
+    from server.agent_tools.spawn import execute_send_message
+    from server.agents.messaging import message_bus
+
+    out = json.loads(execute_send_message({"to_agent_id": "typo123", "content": "x"}, "s1"))
+    assert "no agent typo123" in out["error"]
+    assert "typo123" not in message_bus._mailboxes

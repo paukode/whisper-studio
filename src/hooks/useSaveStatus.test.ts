@@ -13,7 +13,7 @@ describe('useSaveStatus', () => {
   });
 
   it('drives saving → saved on success, then auto-clears', async () => {
-    const { result } = renderHook(() => useSaveStatus(3000));
+    const { result } = renderHook(() => useSaveStatus());
 
     let resolveFn: () => void = () => {};
     const pending = new Promise<void>((r) => { resolveFn = r; });
@@ -53,12 +53,4 @@ describe('useSaveStatus', () => {
     expect(result.current.message).toBe('Rule saved');
   });
 
-  it('reset() clears immediately', async () => {
-    const { result } = renderHook(() => useSaveStatus());
-    await act(async () => { await result.current.run(() => Promise.resolve()); });
-    expect(result.current.state).toBe('saved');
-    act(() => { result.current.reset(); });
-    expect(result.current.state).toBe('idle');
-    expect(result.current.message).toBe('');
-  });
 });

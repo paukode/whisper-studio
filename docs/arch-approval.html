@@ -38,46 +38,55 @@
     </figure>
 
     <h2 id="permission-modes">The six permission modes</h2>
-    <p>The current mode lives in <code class="path">data/permissions.json</code> and is read by
+    <p>The current mode lives in <code class="path">~/.whisper/data/permissions.json</code> and is read by
       <code class="path">server/security/permissions.py</code>. It is a single dial that sets the
       baseline for every tool call in a turn. Read-only tools (reading files, listing directories,
       searching) run without approval in every mode - custom rules only apply to approval-gated
-      tools, so a rule cannot gate a read. The one exception is a read of a credential store (see
+      tools, so a rule cannot gate a read. A <code>ws_run_command</code> that the read-only
+      classifier accepts also runs with no card, inside the read-only sandbox, so a write the
+      classifier missed is refused by the OS. The one exception is a read of a credential store (see
       <a href="#secret-reads">Reads of credential stores</a>). The modes differ in how they treat
-      <em>write</em> and <em>command</em> tools.</p>
+      <em>write</em> and <em>command</em> tools. You set the mode in the composer Mode menu or in
+      Settings &gt; Keys and permissions &gt; Permissions; the label column shows the name the UI
+      uses.</p>
 
     <div class="table-wrap"><table>
-      <thead><tr><th>Mode</th><th>Reads</th><th>Writes &amp; commands</th></tr></thead>
+      <thead><tr><th>Mode</th><th>UI label</th><th>Reads</th><th>Writes &amp; commands</th></tr></thead>
       <tbody>
         <tr>
           <td><code>default</code></td>
+          <td>Asks first</td>
           <td>Auto-allow</td>
           <td>Ask. Every write, delete, or command raises an approval card.</td>
         </tr>
         <tr>
           <td><code>auto</code></td>
+          <td>Auto</td>
           <td>Auto-allow</td>
           <td>Classified. Every approval-gated tool, whatever its category, defers to a Haiku call that returns allow or ask (see below).</td>
         </tr>
         <tr>
           <td><code>plan</code></td>
+          <td>Plan</td>
           <td>Auto-allow</td>
           <td>Hard-blocked pre-dispatch for a fixed set (see below); other action tools still ask.</td>
         </tr>
         <tr>
           <td><code>acceptEdits</code></td>
+          <td>Accept edits</td>
           <td>Auto-allow</td>
           <td>The whole <code>write</code> category auto-allows (<code>ws_write_file</code>, <code>ws_create_file</code>, and <code>create_document</code>); delete and commands still ask. The only genuinely write-scoped mode.</td>
         </tr>
         <tr>
           <td><code>bypassPermissions</code></td>
+          <td>Bypass</td>
           <td>Auto-allow</td>
-          <td>Everything allowed, no prompts. The absolute override.</td>
+          <td>Every action inside the workspace runs with no card. The hard floors still ask, and a save outside the workspace or a reach into an ungranted folder still asks unless that category's own row is set to bypass.</td>
         </tr>
         <tr>
           <td><code>dontAsk</code></td>
-          <td>Auto-allow</td>
-          <td>Every approval-gated tool, whatever its category, auto-denies silently. No card, no action.</td>
+          <td>Don't ask</td>
+          <td>Approval-gated tools are denied silently, with no card. The exceptions: the hard floors still raise a card, a write to the app's own folder runs, and an approved named <code class="path">launch.json</code> preview starts.</td>
         </tr>
       </tbody>
     </table></div>
@@ -91,8 +100,9 @@
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
       <div class="callout__body"><p><b>Two of these modes are irreversible by design.</b>
-        <code>bypassPermissions</code> runs every action with no prompt, and <code>dontAsk</code>
-        silently drops every gated action. Both are deliberate opt-ins for trusted or hands-off sessions;
+        <code>bypassPermissions</code> runs every action inside the workspace with no prompt (only
+        the hard floors and actions outside the workspace still ask), and <code>dontAsk</code>
+        silently drops almost every gated action. Both are deliberate opt-ins for trusted or hands-off sessions;
         neither should be the default for exploratory work. The sandbox still applies under
         <code>bypassPermissions</code> - it removes the <em>prompt</em>, not the OS boundary. In
         bypass, the sandbox lets commands read the credential stores, but it still denies writes to
@@ -105,19 +115,21 @@
       <code class="path">~/.ssh</code>, <code class="path">~/.aws</code>, <code class="path">~/.gnupg</code>,
       git credentials, browser profiles and cookies, shell histories, password managers,
       <code class="path">/etc/shadow</code>, and more. The policy for reads of these paths is in
-      <code class="path">server/security/secret_reads.py</code>. It applies to every read tool and to
+      <code class="path">server/security/secret_reads.py</code>. It applies to the two read tools
+      (<code>ws_read_file</code> and <code>ws_list_directory</code>) and to
       <code>run_python</code>, <code>terminal_run</code>, and <code>ws_run_command</code>:</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Mode</th><th>Read of a credential store</th></tr></thead>
       <tbody>
         <tr><td><code>bypassPermissions</code></td><td>Allowed with no card. Writes to the stores stay denied by the sandbox.</td></tr>
         <tr><td><code>dontAsk</code></td><td>Refused.</td></tr>
-        <tr><td><code>default</code>, <code>acceptEdits</code>, <code>plan</code>, <code>auto</code></td><td>A person approves each read, every time. The classifier never decides it, and a remembered "Yes for all" for commands never covers it.</td></tr>
+        <tr><td><code>default</code>, <code>acceptEdits</code>, <code>plan</code>, <code>auto</code></td><td>A person approves each read, every time. The classifier never decides it, and a remembered "Yes, all cli" never covers it.</td></tr>
         <tr><td>Unattended runs (subagents, cron jobs), outside bypass</td><td>Refused, because no person can answer. Agents and cron run in default mode, so in practice they never read secrets.</td></tr>
       </tbody>
     </table></div>
     <p>A file read of a credential store raises a <code>secret_read</code> card (category
-      <code>secret-read</code>, preview "Read &lt;path&gt;, a credential store ..."). A command asks
+      <code>secret-read</code>, card summary "Read &lt;path&gt;, a credential store ..." or "List
+      &lt;path&gt;, ..." for a listing). A command asks
       with the tool input <code>secret_access: true</code>. Its card summary starts with "READS THE
       KEYCHAIN AND CREDENTIAL STORES:" and never offers to remember the choice for the session. On
       Yes, the command runs with the stores readable, and writes to them stay denied.</p>
@@ -146,7 +158,9 @@
     <ol class="steps">
       <li><h4>github-destructive</h4><p>A destructive GitHub mutation (repo or ref delete, PR merge,
         archive or rename, API DELETE) always returns ask. No mode, session approval, trusted skill,
-        or category override can cover it, given the irreversibility and remote blast radius.</p></li>
+        or category override can cover it, given the irreversibility and remote blast radius. In
+        <code>dontAsk</code> (the global mode or the category's own row) it returns deny instead,
+        because that mode never shows a card.</p></li>
       <li><h4>An rm-class command reaching outside the workspace</h4><p>A command that deletes
         anything beyond the connected workspace and the app's own folder always returns ask,
         whatever the mode; a delete that stays inside them is an ordinary command and follows the
@@ -200,6 +214,19 @@
         <code>approval_mode: "approve"</code> in <code>mcp_servers.json</code> always returns ask.
         Like the previous check, this is a hard floor: the user explicitly marked that server as one
         they do not fully trust, so nothing downstream may skip it.</p></li>
+      <li><h4>The app's own grant and config files</h4><p>A write, save, or delete of one of the
+        app's grant or config files (<code>permissions.json</code>, <code>mcp_servers.json</code>,
+        <code>hooks.json</code>, <code>hooks_trust.json</code>, <code>folder_grants.json</code>,
+        <code>cron_jobs.json</code>, <code>launch_trust.json</code>, <code>config.user.json</code>
+        and the others in <code>APP_CONFIG_FILES</code>), or of the plugins and custom agents
+        folders, follows the mode table: <code>bypassPermissions</code> allows,
+        <code>dontAsk</code> denies, <code>auto</code> asks the classifier, and every other mode
+        asks. A session "Yes, all write" never covers these files. An unattended run is refused,
+        because no person can approve the change.</p></li>
+      <li><h4>The app's own storage</h4><p>A write under <code class="path">~/.whisper</code>
+        (rules, profile, scratch, memory, data) runs with no card in every mode. A delete there is
+        silent only in <code>bypassPermissions</code>; other modes apply their normal delete
+        rule.</p></li>
       <li><h4>Per-category mode override</h4><p>A <code>category_modes</code> entry in
         <code>permissions.json</code> replaces the global mode for everything that follows,
         including the <code>bypassPermissions</code> check right below. That is the point: "always
@@ -212,7 +239,7 @@
         <code class="path">~/.whisper</code> was already allowed above.</p></li>
       <li><h4>Trusted skill script</h4><p>If the call comes from a trusted skill script
         (<code>auto_allow_trusted</code>), allow.</p></li>
-      <li><h4>Session approvals</h4><p>If you clicked "Yes for all writes" (or "No for all") earlier
+      <li><h4>Session approvals</h4><p>If you clicked "Yes, all write" (or "Block write") earlier
         this session, the stored decision for that <em>category</em> applies. This is the
         <code>session_approvals</code> map keyed by category.</p></li>
       <li><h4>Custom rules</h4><p><code>evaluate_rules()</code> walks your
@@ -228,8 +255,8 @@
         recorded only by a person's answer to the card (<code>execute_approved_by_human</code> in
         <code class="path">server/approval/spec.py</code>, used by the Yes button and a spoken yes);
         a config nobody approved, or one whose command changed, skips this step and follows the
-        mode. It sits below the checks above on purpose: outside bypass a deny rule or a session "No
-        for all" on <code>preview</code> still refuses it, and the rm-class floor is checked against
+        mode. It sits below the checks above on purpose: outside bypass a deny rule or a session "Block
+        preview" still refuses it, and the rm-class floor is checked against
         the command the config resolves to. It also requires the config pinned into the call at
         dispatch to match the file, and the executor runs that pin, so what was decided and shown is
         what runs. An ad-hoc preview command skips this step. The predicates live in
@@ -248,9 +275,9 @@
       <code>VALID_MODES</code> per key on <code>PUT /api/permissions</code>, and the override is
       applied before the mode checks run, so it holds even over a global
       <code>bypassPermissions</code>. The one category it can never touch is
-      <code>github-destructive</code>, which ignores overrides entirely. A legacy
-      <code>permissions.json</code> with no <code>category_modes</code> key behaves exactly as
-      before: every category follows the global mode.</p>
+      <code>github-destructive</code>: an override never lets it run with no card, and only a
+      <code>dontAsk</code> row changes it, to deny. A category with no entry
+      follows the global mode.</p>
     <p>One key in that map is not an approval category at all. <code>workflow</code> is read outside
       this resolver by <code class="path">server/workflows/launch_policy.py</code>, which gates
       launching a new <a href="arch-ultracode.html">ultracode workflow</a> script rather than a tool
@@ -287,7 +314,11 @@
       edits (say, appending to a scratch file) run without a card while still surfacing anything that
       looks consequential. Alongside the single tool call, the classifier receives a bounded slice of
       the turn's recent messages (the last 3, about 900 characters) so it can catch multi-step
-      patterns a call in isolation would miss. The classifier only ever <em>relaxes</em> to allow or
+      patterns a call in isolation would miss. The classifier reads a built-in list of allow and
+      soft-deny rules (<code class="path">server/auto_mode.py</code>) plus your own lists in the
+      config keys <code>auto_mode_allow</code>, <code>auto_mode_soft_deny</code>, and
+      <code>auto_mode_environment</code>. You set them in <code class="path">config.user.json</code>
+      or with <code>config_set</code> in chat, never from project settings. The classifier only ever <em>relaxes</em> to allow or
       <em>escalates</em> to ask - it can never turn a deny into an allow, because deny is resolved
       statically before the classifier is ever consulted. If the classifier is unavailable or errors,
       the safe fallback is to ask. The offline local-model path never calls the classifier at all and
@@ -305,6 +336,17 @@
       one-click resume; the breaker is turn-scoped, in-memory state that never touches the persisted
       mode and resets at the start of each new turn.</p>
 
+    <h3 id="folder-grants">Folder grants</h3>
+    <p>A tool that reaches into a folder outside the connected workspace raises a
+      <code>folder-access</code> card. A Yes on that card is stored in
+      <code class="path">~/.whisper/data/folder_grants.json</code>
+      (<code class="path">server/security/folder_grants.py</code>), so the app asks once per folder.
+      A grant is stored by its real path and covers the folder and everything below it, never a
+      parent or a sibling. A credential store (see <a href="#secret-reads">Reads of credential
+      stores</a>) can never be granted. Settings &gt; Keys and permissions &gt; Permissions &gt;
+      Folder Access lists the grants and lets you revoke each one
+      (<code>GET</code> and <code>DELETE /api/permissions/folder-grants</code>).</p>
+
     <h2 id="pause-flow">The pause-and-execute flow</h2>
     <p>An <em>ask</em> decision does not block the server thread waiting on a person. Instead the turn
       is suspended and handed to the client, and only an explicit confirmation from the client can
@@ -315,11 +357,13 @@
         (<code class="path">server/chat/engine/pause.py</code>), one process-wide map shared by every
         provider path. The stream ends instead of running the tool.</p></li>
       <li><h4>Emit the approval card</h4><p>An <code>approval_request</code> SSE event carries
-        <code>{tool_use_id, action, category, preview, summary, payload, risk_hint, explanation}</code>.
-        The SPA reads <code>preview</code> and renders one of the four card renderers in the chat.</p></li>
-      <li><h4>User decides</h4><p>You read the diff or command and click Yes (optionally "Yes for all"
-        for that category, which writes into <code>session_approvals</code>). Until then the paused
-        turn just sits there; nothing executes.</p></li>
+        <code>{tool_use_id, action, category, preview, summary, payload, risk_hint, explanation, always_asks}</code>.
+        The SPA reads <code>preview</code> and renders one of the three card renderers in the chat.</p></li>
+      <li><h4>User decides</h4><p>You read the diff or command and click Yes, "Yes, all
+        &lt;category&gt;", No, or "Block &lt;category&gt;". The two session buttons write into
+        <code>session_approvals</code>. A card that a hard floor raised (<code>always_asks</code>)
+        offers only Yes and No and says "This action always asks." Until you answer, the paused turn
+        just sits there; nothing executes.</p></li>
       <li><h4>Execute the action</h4><p>The client calls
         <code>POST /api/approval/execute</code> with <code>{action, payload}</code>. The server looks
         the action up in the approval registry, runs that spec's executor, and returns
@@ -348,7 +392,8 @@
       <code>explanation</code>. It runs only on the <em>ask</em> branch, and only when the turn has a
       cloud model to ask, so an offline local-model turn simply shows the card without one. The
       config key <code>permission_explainer_enabled</code> (default <code>true</code>) turns it off;
-      there is no toggle in Settings, it is a <code class="path">config.json</code> key. The separate
+      there is no toggle in Settings, it is a <code class="path">config.user.json</code> key that
+      <code>config_set</code> in chat can also change. The separate
       <code>risk_hint</code> badge on the card comes from the spec, not from this call, so it is
       always present.
       And <b>unattended turns never pause</b>: subagent, cron, and headless runs dispatch with
@@ -374,8 +419,8 @@
       and in unattended runs. The folder picker (<code>workspace_prompt</code>) and the preview image
       (<code>preview_image</code>) use the same rule.</p>
     <div class="spec">
-      <dt><code class="path">category</code></dt><dd>The session-memory bucket - <code>write</code>, <code>delete</code>, <code>cli</code>, <code>save</code>, <code>folder-access</code>, <code>worktree</code>, <code>preview</code>, <code>office-script</code>, <code>mcp</code>, <code>mcp-elicit</code>, <code>github</code>, or <code>github-destructive</code>. "Yes for all commands" stores <code>allow</code> here so it also covers commits, pushes and pulls, which all share the <code>cli</code> category.</dd>
-      <dt><code class="path">preview</code></dt><dd>Which of the four frontend renderers shows the action: <code>diff</code> (file changes), <code>command</code> (shell), <code>list</code> (multi-file), or <code>text</code> (free-form).</dd>
+      <dt><code class="path">category</code></dt><dd>The session-memory bucket - <code>write</code>, <code>delete</code>, <code>cli</code>, <code>save</code>, <code>folder-access</code>, <code>worktree</code>, <code>preview</code>, <code>office-script</code>, <code>mcp</code>, <code>mcp-elicit</code>, <code>github</code>, <code>github-destructive</code>, <code>config</code> (sensitive <code>config_set</code> keys), <code>cron</code> (scheduled-job tools), or <code>secret-read</code>. "Yes, all cli" stores <code>allow</code> here so it also covers commits, pushes and pulls, which all share the <code>cli</code> category.</dd>
+      <dt><code class="path">preview</code></dt><dd>Which of the three frontend renderers shows the action: <code>diff</code> (file changes), <code>command</code> (shell), or <code>text</code> (free-form).</dd>
       <dt><code class="path">summary</code></dt><dd>A one-line label - a constant string or a callable over the tool input (for example <code>Commit 3 files: fix parser</code>).</dd>
       <dt><code class="path">executor</code></dt><dd>The async function that runs on Yes. Sync functions are wrapped at registration so the registry always exposes an awaitable.</dd>
       <dt><code class="path">risk_hint</code></dt><dd>An advisory <code>low</code> / <code>medium</code> / <code>high</code> tint. For example <code>preview_eval</code> (arbitrary JS in a live page) is <code>high</code>.</dd>
@@ -403,17 +448,17 @@
       tools) build their <em>full content at tool-call time</em> and stage the finished bytes in the
       app sandbox via <code>stage_file_bytes</code>
       (<code class="path">server/workspace/paths.py</code>, under
-      <code class="path">data/scratch/_staging</code>). By the time the approval card appears, the
+      <code class="path">~/.whisper/data/scratch/_staging</code>). By the time the approval card appears, the
       file already exists and cannot fail to build; approving just <b>moves</b> the staged file to
       the destination path.</p>
     <p>The executor, <code>_do_save_to_path</code> in
-      <code class="path">server/approval/bootstrap.py</code>, re-validates everything at execute time
+      <code class="path">server/approval/executors.py</code>, re-validates everything at execute time
       because the hub could in principle be POSTed directly: the destination must be an absolute,
       non-sensitive path, and <code>staged_path</code> must pass the <code>is_staged_path</code>
       containment check - it has to resolve inside the staging root. Without that gate a forged
       payload could "move" any readable file on disk into a user-visible folder. Declined approvals
       leave their staged file behind, so every staging call also garbage-collects entries older than
-      24 hours. The <code>save</code> category means a "Yes for all" on ordinary workspace writes
+      24 hours. The <code>save</code> category means a "Yes, all write" on ordinary workspace writes
       never covers saves, and vice versa.</p>
 
     <h2 id="write-stats">Diff stats and stored edits</h2>
@@ -434,6 +479,15 @@
       <code>GET /api/workspace/edits/{tool_use_id}</code>. The record does not keep the text of a
       file over 2 MB, or of a dotenv or credential file. The app deletes records after 30 days. When
       all records use more than 200 MB, the app deletes the oldest records first.</p>
+    <p>The same write keeps an undo copy in memory
+      (<code class="path">server/workspace/write_undo.py</code>), keyed by the
+      <code>tool_use_id</code>: the exact bytes of the file before the write (none for a created
+      file) and a hash of the file after the write and the ruff fix. The record route returns
+      <code>undoable</code>, and the diff dialog shows <b>Undo</b> only then.
+      <code>POST /api/workspace/undo</code> with the <code>tool_use_id</code> puts back the bytes,
+      or removes the created file. It refuses with 409 when the file is not as that write left it
+      (a later write, an edit by the user, a move), so two writes to one file undo in order. A
+      restart, a workspace change, or more than 64 MB of copies (oldest first) drops them.</p>
 
     <h2 id="git-pull">A worked spec: git_pull</h2>
     <p><code>git_pull</code> is a good example of what a spec buys you, because a pull is the one git
@@ -463,25 +517,28 @@
     <p>Two tool families get categories with extra teeth. For <b>MCP</b>, the <code>mcp</code>
       category carries the per-server hard floor described in the decision order: a server or tool
       marked <code>approval_mode: "approve"</code> always asks. The companion
-      <code>mcp-elicit</code> category (action <code>mcp_elicit_respond</code>) routes a server's
-      mid-call <em>elicitation</em> - an MCP server asking the user a question part-way through a
-      tool call - through this same approval pipeline, so the answer is a real user decision rather
-      than something the model invents. Its spec is marked <code>refuse_if_agent</code>, so an
+      <code>mcp-elicit</code> category (action <code>mcp_elicit_respond</code>) answers a server's
+      mid-call <em>elicitation</em> (an MCP server asking the user a question part-way through a
+      tool call). You answer it in Settings &gt; MCP servers, which posts
+      <code>mcp_elicit_respond</code> to <code>POST /api/approval/execute</code>. There is no chat
+      card, and no mode or rule applies, so the answer is always your own decision and never
+      something the model invents. Its spec is marked <code>refuse_if_agent</code>, so an
       unattended agent can never answer an elicitation on your behalf.</p>
     <p>For <b>GitHub</b>, ordinary mutations live in the <code>github</code> category and follow the
       normal mode and rule pipeline, while <code>github-destructive</code> (deletes, merges,
-      archive or rename, raw API DELETE) always asks, as the very first check in the decision order.
+      archive or rename, raw API DELETE) always asks, as the very first check in the decision order
+      (in <code>dontAsk</code> it is denied).
       <code>refuse_if_agent</code> (<code class="path">server/approval/spec.py</code>) additionally
       refuses agent-originated executions of the high-blast-radius actions outright.</p>
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
       <div class="callout__body"><p><b>Session-memory categories are seeded on the frontend.</b>
-        The client seeds its "Yes for all X" session-memory state from a small hardcoded default
+        The client seeds its "Yes, all &lt;category&gt;" session-memory state from a small hardcoded default
         (<code>write</code>, <code>delete</code>, <code>cli</code>) and treats any category it has
         not seen as <code>ask</code> lazily. That seeding has no dynamic fetch, so a brand-new
         backend category needs a matching frontend default before it surfaces as a remembered
-        "Yes for all" toggle. Separately, <code>GET /api/permissions</code> does return a computed
+        "Yes, all" choice. Separately, <code>GET /api/permissions</code> does return a computed
         <code>categories</code> list (from <code>registry.all_categories()</code>, plus the
         policy-only <code>workflow</code> entry appended for the settings UI) - that one exists
         so Settings can render a <code>category_modes</code> row per category, not to drive the
@@ -492,19 +549,20 @@
     <p>Approval decides <em>whether</em> a command runs; it does not vet <em>what</em> the command is.
       That is the job of <code class="path">server/security/command_validator.py</code>, a regex and
       heuristic deny-list that runs before a shell command reaches the sandbox. Its
-      <code>validate_command()</code> splits a compound command on <code>;</code>, <code>&amp;&amp;</code>,
-      and <code>||</code> (respecting quotes), strips heredoc bodies so a Markdown table full of
+      <code>validate_command()</code> splits a compound command on every unquoted <code>;</code>,
+      <code>&amp;</code>, and <code>|</code> and their doubles, pipes included, strips heredoc bodies so a Markdown table full of
       <code>|</code> is not mistaken for a pipeline, and runs each subcommand through an ordered set of
       checks. Any single failure returns a warning and the command is refused.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Check</th><th>Blocks</th></tr></thead>
       <tbody>
-        <tr><td>Dangerous patterns</td><td><code>rm -rf /</code>, <code>mkfs</code>, <code>dd of=/dev/</code>, redirects into <code>/etc/</code>, <code>/proc/*/environ</code> reads.</td></tr>
+        <tr><td>Dangerous patterns</td><td><code>rm -rf /</code>, <code>mkfs</code>, <code>dd of=/dev/</code>, redirects into <code>/etc/</code>.</td></tr>
         <tr><td>Command substitution</td><td>Backticks, process substitution <code>&lt;(...)</code> / <code>&gt;(...)</code>, and a <code>$(...)</code> that can contain a command the checks do not see. A <code>$(...)</code> can run a read-only command that passes all the checks, for example <code>test "$(git branch --show-current)" = main</code>. Its output cannot be the program name, or the argument of <code>eval</code>, <code>source</code>, or <code>sh -c</code>.</td></tr>
         <tr><td>Env injection</td><td>References or assignments to <code>LD_PRELOAD</code>, <code>BASH_ENV</code>, <code>IFS</code>, <code>PROMPT_COMMAND</code>, and friends. <code>IFS= read</code> is permitted, because it sets <code>IFS</code> for that one <code>read</code> only.</td></tr>
         <tr><td>Obfuscation</td><td>Hex/octal escapes, ANSI-C quoting, control characters, zero-width or NBSP-style unicode whitespace, and a backslash in a word outside quotes (<code>r\m</code> runs <code>rm</code>). A backslash in quotes stays in the word. Thus, a regex in <code>node -e "..."</code> is permitted.</td></tr>
         <tr><td>Sensitive paths</td><td>Access to credential files and key types - <code>.pem</code>, <code>id_rsa</code>, <code>.env.production</code>, <code>credentials.json</code>, and the shared sensitive-path list.</td></tr>
         <tr><td>In-place edits</td><td><code>sed -i</code> in any form, nudging edits toward <code>ws_write_file</code> where they can be previewed and reverted.</td></tr>
+        <tr><td>GitHub CLI</td><td><code>gh</code> in any form. The sandbox has no GitHub auth, so the message points to the <code>github</code>, <code>github_api</code>, and <code>github_api_write</code> tools.</td></tr>
         <tr><td>Chain cap</td><td>More than <code>MAX_SUBCOMMANDS</code> (50) chained segments, to prevent CPU-starvation via deeply nested pipelines.</td></tr>
       </tbody>
     </table></div>
@@ -515,7 +573,7 @@
         not a replacement for it. It catches known-bad shapes early with helpful messages, but a
         regex deny-list can never be exhaustive. The real containment - filesystem and network limits
         on the running process - lives in the <a href="arch-sandbox.html">sandbox</a>. The approved
-        command path in <code>bootstrap.py</code> runs this same
+        command path in <code class="path">server/approval/executors.py</code> runs this same
         <code>_validate_command</code> gate before sandboxing, so an approved command still cannot,
         for example, read <code>~/.ssh</code>, unless the run is allowed to
         <a href="#secret-reads">read the credential stores</a>. For such a run, the validator skips
@@ -529,9 +587,11 @@
       <dt><code class="path">server/tool_approvals.py</code></dt><dd>Applies the decision per tool and emits the <code>approval_request</code> pause.</dd>
       <dt><code class="path">server/tool_meta.py</code></dt><dd>The <code>meta</code> of each <code>skill_result</code> frame: the duration, the output size, the lines of a read, and the counts of a write.</dd>
       <dt><code class="path">server/workspace/edits.py</code></dt><dd>The counts of a write, and the stored edits for the diff dialog.</dd>
+      <dt><code class="path">server/workspace/write_undo.py</code></dt><dd>The undo copy of each write, keyed by its tool_use_id, and the checks before an undo.</dd>
       <dt><code class="path">server/chat/engine/pause.py</code></dt><dd>The process-wide <code>paused_sessions</code> store every provider path shares.</dd>
       <dt><code class="path">server/approval/spec.py</code></dt><dd>The <code>ApprovalSpec</code> and <code>ApprovalOutcome</code> dataclasses, including <code>refuse_if_agent</code>.</dd>
-      <dt><code class="path">server/approval/bootstrap.py</code></dt><dd>Declares and registers specs for every built-in workspace tool, including <code>_do_save_to_path</code>.</dd>
+      <dt><code class="path">server/approval/bootstrap.py</code></dt><dd>Declares and registers specs for every built-in workspace tool.</dd>
+      <dt><code class="path">server/approval/executors.py</code></dt><dd>The executors the specs run, including <code>_do_save_to_path</code> and the approved-command path with its <code>_validate_command</code> gate.</dd>
       <dt><code class="path">server/approval/registry.py</code></dt><dd>The action-keyed registry and category walk.</dd>
       <dt><code class="path">server/approval/markers.py</code></dt><dd>The app markers, <code>AppRequest</code>, and the functions that make a request.</dd>
       <dt><code class="path">server/approval/router.py</code></dt><dd>The single <code>POST /api/approval/execute</code> endpoint. (The categories list is served by <code>GET /api/permissions</code>.)</dd>

@@ -1,10 +1,12 @@
-"""GLiNER entity extraction — chunk text → knowledge-graph nodes/edges.
+"""Entity extraction: chunk text to knowledge-graph nodes.
 
-Zero-shot NER: GLiNER is asked for the entity types in ``ENTITY_LABELS`` and
-returns spans it believes match. Each distinct entity becomes a graph node;
-entities that co-occur in the same chunk get an edge (weight = co-occurrence
-count). That's the lightweight, fully-local GraphRAG graph for v1 — no LLM call
-per chunk. Lazy-loaded and ``unload()``-able like the embedder.
+Routes to the active NER backend: zero-shot GLiNER (or GLiNER2) on-device,
+Haiku on Bedrock, or an on-device chat model. The entity types come from the
+file's entity profile (``labels_for_profile(profile_for_ext(ext))``). Each
+distinct entity becomes a graph node linked to the chunks that mention it;
+file-to-file edges are derived at read time (graph_views). GLiNER2 also
+extracts typed relations natively. The models load lazily and can be freed
+with ``unload()`` like the embedder.
 """
 
 from __future__ import annotations
@@ -23,7 +25,6 @@ from .config import (
     GLINER_MODEL_DIR,
     GLINER_SENTINEL,
     LABEL_THRESHOLDS,
-    labels_for_profile,
 )
 from .relations_vocab import PREDICATES, canonicalize_predicate
 from .salience import is_hard_junk
@@ -55,12 +56,9 @@ def _accept(name: str, label: str, score: float) -> bool:
 
 
 def _ner_backend() -> str:
-    try:
-        from server.infrastructure.model_mode import resolve_backend
+    from server.infrastructure.model_mode import resolve_backend
 
-        return resolve_backend("ner")
-    except Exception:
-        return "gliner"
+    return resolve_backend("ner")
 
 
 def _llm_ner_system(labels: list[str]) -> str:
@@ -162,7 +160,7 @@ def _extract_via_local_llm(snippet: str, labels: list[str], model_key: str) -> l
 
 
 def ensure_gliner_model() -> str:
-    """Download the GLiNER model into ./models if absent (idempotent).
+    """Download the GLiNER model into models_root() if absent (idempotent).
 
     GLiNER loads its transformer backbone's tokenizer/config by HF repo id (the
     snapshot bundles the backbone *weights* but not the tokenizer), so we also
@@ -177,9 +175,7 @@ def ensure_gliner_model() -> str:
         from huggingface_hub import snapshot_download
 
         log.info("Downloading GLiNER model %s ...", GLINER_MODEL)
-        snapshot_download(
-            repo_id=GLINER_MODEL, local_dir=GLINER_MODEL_DIR, local_dir_use_symlinks=False
-        )
+        snapshot_download(repo_id=GLINER_MODEL, local_dir=GLINER_MODEL_DIR)
         # Pre-cache the backbone tokenizer/config (not its weights) so the load
         # is offline-clean. Best-effort — _load falls back to an online fetch if
         # this is skipped or the backbone changes.
@@ -290,17 +286,15 @@ def _load():
 
 
 def ensure_gliner2_model() -> str:
-    """Download the GLiNER2 model into ./models if absent (idempotent). Mirrors
-    ensure_gliner_model so setup.sh can pre-pull it like the other weights."""
+    """Download the GLiNER2 model into models_root() if absent (idempotent).
+    Called on first use and from Settings > Models."""
     import os
 
     if not os.path.exists(GLINER2_SENTINEL):
         from huggingface_hub import snapshot_download
 
         log.info("Downloading GLiNER2 model %s ...", GLINER2_MODEL)
-        snapshot_download(
-            repo_id=GLINER2_MODEL, local_dir=GLINER2_MODEL_DIR, local_dir_use_symlinks=False
-        )
+        snapshot_download(repo_id=GLINER2_MODEL, local_dir=GLINER2_MODEL_DIR)
         log.info("GLiNER2 model download complete.")
     return GLINER2_MODEL_DIR
 
@@ -328,10 +322,6 @@ def unload() -> None:
 
         gc.collect()
         log.info("NER model(s) unloaded.")
-
-
-def is_loaded() -> bool:
-    return _model is not None or _gliner2_model is not None
 
 
 def _windows(text: str) -> list[str]:
@@ -375,16 +365,14 @@ def _extract_via_gliner2(text: str, labels: list[str]) -> list[dict]:
 
 def extract_entities(
     text: str,
-    labels: list[str] | None = None,
-    backend: str | None = None,
+    labels: list[str],
     ner_model: str = "gliner",
 ) -> list[dict]:
     """Return distinct entities in ``text`` as ``[{name, label, score}]``.
 
     Routes to the active NER backend: on-device GLiNER/GLiNER2, Claude Haiku on
     Bedrock, or any on-device chat model (LLM NER with the same prompt as the
-    Haiku path). ``labels`` is the workspace's entity profile (defaults
-    to the business set); ``ner_model`` picks the on-device family ("gliner" default,
+    Haiku path). ``labels`` is the file's entity label set; ``ner_model`` picks the on-device family ("gliner" default,
     or "gliner2"). Spans are kept only if they clear their label's confidence floor
     and pass the hard-junk gate; ``score`` is the model's span confidence (used
     downstream to weight salience). Names are deduped case-insensitively, keeping
@@ -392,16 +380,19 @@ def extract_entities(
     """
     if not text.strip():
         return []
-    labels = labels or labels_for_profile(None)
-    eng = backend or _ner_backend()
+    eng = _ner_backend()
     if eng == "haiku":
         return _extract_via_haiku(text[:_HAIKU_MAX_CHARS], labels)
-    if eng not in ("gliner", "gliner2"):
+    if eng != "gliner":
         from . import engines as _engines
 
         _llm_key = _engines.resolve_local_model(eng)
-        if _llm_key:
-            return _extract_via_local_llm(text[:_HAIKU_MAX_CHARS], labels, _llm_key)
+        if not _llm_key:
+            raise RuntimeError(
+                f"The entity extraction engine {eng!r} is not an installed on-device "
+                "model. Pick another engine in Settings > Models."
+            )
+        return _extract_via_local_llm(text[:_HAIKU_MAX_CHARS], labels, _llm_key)
     if ner_model == "gliner2":
         return _extract_via_gliner2(text, labels)
     best: dict[str, dict] = {}  # name.lower() -> best-scoring accepted span
@@ -434,7 +425,7 @@ def extract_entities(
 
 
 def extract_relations_gliner2(
-    text: str, entity_names: list[str], labels: list[str] | None = None
+    text: str, entity_names: list[str], labels: list[str]
 ) -> list[tuple[str, str, str, float]]:
     """Native GLiNER2 relation extraction — the local, LLM-free replacement for the
     per-file LLM relations pass. One schema pass (entities + the closed predicate
@@ -448,7 +439,6 @@ def extract_relations_gliner2(
     by_lower = {n.lower(): n for n in names}
     # Pass predicates in a readable form; canonicalize the returned label back.
     rel_labels = [p.replace("_", " ") for p in PREDICATES]
-    labels = labels or labels_for_profile(None)
     # GLiNER2 over-generates: it scores many predicates for the same pair. Keep one
     # best-scoring predicate per directed (source, target) pair, above a confidence
     # floor, so the graph gets clean single edges instead of a fan of noisy guesses.

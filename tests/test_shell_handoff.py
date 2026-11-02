@@ -81,7 +81,7 @@ def test_handed_off_task_stoppable_via_esc_path(tmp_path):
     cmd = "sleep 30"
     result = handoff.run_with_handoff(cmd, cmd, cwd=str(tmp_path), session_id="s3", timeout=0.2)
     assert result.background is True
-    stopped = shell.stop_session_tasks("s3")
+    stopped = handoff.stop_turn_work("s3", 0)["stopped"]
     assert result.task_id in stopped
     assert _wait_status(result.task_id, "stopped")
 
@@ -116,7 +116,7 @@ def test_stop_session_covers_adopted_tasks(tmp_path):
     proc = subprocess.Popen(["sleep", "30"], preexec_fn=os.setpgrp)
     tid = registry.create_task("shell", session_id="s-esc2", title="sleep 30")
     registry.attach_pid(tid, proc.pid)
-    stopped = shell.stop_session_tasks("s-esc2")
+    stopped = handoff.stop_turn_work("s-esc2", 0)["stopped"]
     proc.wait()
     assert tid in stopped
     assert registry.get_task(tid)["status"] == "stopped"

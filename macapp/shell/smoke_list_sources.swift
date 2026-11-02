@@ -15,8 +15,8 @@
 // The normal shell build (build_shell.sh) compiles this file too, but without
 // SMOKE_CLI the whole file is empty, so no duplicate entry point exists.
 //
-// Enumerating audio processes does NOT trigger the TCC prompt — only starting
-// a tap does — so this is safe to run headlessly. An empty app list (just the
+// Enumerating audio processes does NOT trigger the TCC prompt, only starting
+// a tap does, so this is safe to run headlessly. An empty app list (just the
 // System audio entry) is normal when nothing is playing audio.
 
 #if SMOKE_CLI
@@ -74,7 +74,7 @@ struct SmokeListSources {
                 == "/Applications/zoom.us.app",
             "plain app binary resolves to its own bundle")
 
-        // 2. Framework XPC services (WebKit helpers) have NO .app ancestor —
+        // 2. Framework XPC services (WebKit helpers) have NO .app ancestor,
         //    they group via the responsible pid instead.
         let webkitGPU =
             "/System/Library/Frameworks/WebKit.framework/Versions/A/XPCServices/"
@@ -90,7 +90,7 @@ struct SmokeListSources {
             "afplay has no .app ancestor")
 
         // 3b. Chrome's translocated main binary ("code_sign_clone") has no
-        //     .app ancestor either — the shared bundle id is what merges it
+        //     .app ancestor either, the shared bundle id is what merges it
         //     with the helper rows into one "Google Chrome" entry.
         let chromeClone =
             "/private/var/folders/xx/T/com.google.Chrome.code_sign_clone/"

@@ -1,12 +1,14 @@
-import { get, post, put, del, patch } from './client';
+import { get, post, put, del, patch, readErrorBody } from './client';
 import type { Session } from '@/types/session';
 import {
   SessionSearchResponseSchema,
   type SessionSearchResponse,
 } from '@/types/schemas/session.schema';
 
-export function getSessions(): Promise<Session[]> {
-  return get<Session[]>('/api/sessions');
+/** The session list as summary rows (server list_session_summaries). The
+ *  caller validates the shape. */
+export function getSessions(): Promise<unknown> {
+  return get<unknown>('/api/sessions');
 }
 
 /** Content search behind the sidebar's "Search message content" toggle. */
@@ -60,17 +62,6 @@ export function exportSessionUrl(id: string): string {
   return `/api/sessions/${encodeURIComponent(id)}/export`;
 }
 
-/** Reads a JSON error body ({error} or {detail}) from a failed response,
- *  falling back to the status text. Mirrors ImportSkillsDialog's readError. */
-async function readImportError(resp: Response): Promise<string> {
-  try {
-    const body = (await resp.json()) as { error?: string; detail?: string };
-    return body.error || body.detail || `HTTP ${resp.status}`;
-  } catch {
-    return `HTTP ${resp.status}`;
-  }
-}
-
 /** Create a new session from a file exported by GET .../export. Multipart
  *  upload via raw fetch, not the shared post() helper — that always
  *  JSON-encodes its body, which can't carry a File. */
@@ -78,7 +69,7 @@ export function importSession(file: File): Promise<{ new_session_id: string; tit
   const fd = new FormData();
   fd.append('file', file);
   return fetch('/api/sessions/import-transcript', { method: 'POST', body: fd }).then(async (resp) => {
-    if (!resp.ok) throw new Error(await readImportError(resp));
+    if (!resp.ok) throw new Error(await readErrorBody(resp));
     return resp.json() as Promise<{ new_session_id: string; title: string }>;
   });
 }
@@ -95,7 +86,7 @@ export function importSessions(files: File[]): Promise<BulkImportResult> {
   const fd = new FormData();
   for (const f of files) fd.append('files', f);
   return fetch('/api/sessions/bulk-import', { method: 'POST', body: fd }).then(async (resp) => {
-    if (!resp.ok) throw new Error(await readImportError(resp));
+    if (!resp.ok) throw new Error(await readErrorBody(resp));
     return resp.json() as Promise<BulkImportResult>;
   });
 }
@@ -111,7 +102,7 @@ export async function bulkExportSessions(ids: string[]): Promise<{ blob: Blob; f
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ids }),
   });
-  if (!resp.ok) throw new Error(await readImportError(resp));
+  if (!resp.ok) throw new Error(await readErrorBody(resp));
   const disposition = resp.headers.get('Content-Disposition') || '';
   const match = /filename="([^"]+)"/.exec(disposition);
   const filename = match?.[1] || `sessions-export-${new Date().toISOString().slice(0, 10)}.zip`;
@@ -155,4 +146,9 @@ export function openSessionWorkspace(id: string, app: WorkspaceApp): Promise<{ o
   return post<{ ok: boolean }>(
     `/api/sessions/${encodeURIComponent(id)}/open-workspace`, { app },
   );
+}
+
+/** Rename a session (a user-chosen title). Rejects with the server's reason. */
+export function renameSession(id: string, title: string): Promise<unknown> {
+  return patch(`/api/sessions/${encodeURIComponent(id)}/title`, { title, customTitle: true });
 }

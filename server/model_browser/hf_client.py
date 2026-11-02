@@ -21,7 +21,7 @@ from dataclasses import dataclass
 
 log = logging.getLogger("whisper-studio")
 
-# What the search asks the Hub to hydrate on each hit — enough for the result
+# What the search asks the Hub to hydrate on each hit, enough for the result
 # card and the arch gate without a follow-up call. The MLX variant swaps the
 # GGUF header for the transformers config (model_type lives there).
 _SEARCH_EXPAND = ["downloads", "likes", "trendingScore", "gguf", "pipeline_tag", "baseModels"]
@@ -244,7 +244,7 @@ def repo_mlx_meta(repo_id: str) -> tuple[str | None, bool]:
     """``(model_type, is_mlx_tagged)`` for a repo, from one model_info call.
 
     ``model_type`` (transformers config) is the MLX arch gate; the ``mlx``
-    library tag proves the repo actually carries MLX-format weights — a GGUF
+    library tag proves the repo actually carries MLX-format weights, a GGUF
     repo often has a config.json too, and installing it through the MLX lane
     would snapshot gigabytes mlx_lm cannot load. ``(None, False)`` on failure.
     """
@@ -260,7 +260,7 @@ def repo_mlx_meta(repo_id: str) -> tuple[str | None, bool]:
 
 
 def repo_config_context_length(repo_id: str) -> int | None:
-    """``max_position_embeddings`` from the repo's config.json — the real
+    """``max_position_embeddings`` from the repo's config.json, the real
     context window an MLX model was configured with. The file is a few KB, so
     fetching it at install time is cheap. None on any failure."""
     try:
@@ -296,7 +296,7 @@ def repo_files(repo_id: str) -> list[tuple[str, int]]:
 
 def repo_is_gated(repo_id: str) -> bool:
     """Whether the repo is gated (needs license acceptance + a token). Best
-    effort — an unknown answer is treated as not gated."""
+    effort, an unknown answer is treated as not gated."""
     try:
         info = _api().model_info(repo_id)
     except Exception:

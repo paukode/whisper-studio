@@ -206,12 +206,12 @@ def test_keyword_leg_gated_for_contentless_query(monkeypatch):
 
     # "hey" appears verbatim in the document, but a contentless query must not
     # ride BM25 into grounding.
-    g, meta = pipeline.retrieve_grounding([ws], "hey", return_meta=True)
+    g, meta = pipeline.retrieve_grounding([ws], "hey")
     assert g == ""
     assert meta["passages"] == 0
 
     # A content word still reaches the same chunk through the keyword leg.
-    g = pipeline.retrieve_grounding([ws], "ZZQX")
+    g, _ = pipeline.retrieve_grounding([ws], "ZZQX")
     assert "notes.md" in g
 
 

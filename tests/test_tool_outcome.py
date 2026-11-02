@@ -182,6 +182,30 @@ def _run_batch(monkeypatch, scope, name, tool_input, output):
     async def _go():
         return await te.execute_tool_batch(
             [{"id": "t", "name": name, "input": tool_input}],
+            # These routers only return canned output, with one string argument.
+            tool_schemas={
+                "ws_grep": {
+                    "type": "object",
+                    "properties": {"pattern": {"type": "string"}},
+                    "required": ["pattern"],
+                    "additionalProperties": False,
+                },
+                "ws_read_file": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"],
+                    "additionalProperties": False,
+                },
+                **{
+                    tool: {
+                        "type": "object",
+                        "properties": {"command": {"type": "string"}},
+                        "required": ["command"],
+                        "additionalProperties": False,
+                    }
+                    for tool in ("ws_run_command", "terminal_run")
+                },
+            },
             is_concurrent_safe=lambda n: False,
             loop=asyncio.get_running_loop(),
             executor=executor,
@@ -329,6 +353,24 @@ def test_the_call_a_folder_card_waits_on_says_it_did_not_run():
     # answer replaces on the continuation.
     by_id = {r["tool_use_id"]: r["content"] for r in results}
     assert by_id["tu_p"].startswith("[Not executed]")
+
+
+def test_a_refused_sibling_after_a_pause_keeps_its_own_refusal():
+    # A sibling refused before it ran (plan mode here) is not "canceled, re-issue
+    # it": the model reads its refusal and the UI gets its plan_blocked frame.
+    prompt = _State("tu_p", "ws_write_file", workspace_prompt('{"path": "a.txt"}'))
+    blocked = _State(
+        "tu_b",
+        "ws_write_file",
+        "[Plan Mode] Tool 'ws_write_file' is blocked while plan mode is active.",
+        side_effects=[{"plan_blocked": {"tool_name": "ws_write_file"}}],
+    )
+    blocked.status = "skipped"
+    results, sse_events, pending, _question = _run([prompt, blocked])
+    assert pending is True
+    by_id = {r["tool_use_id"]: r["content"] for r in results}
+    assert by_id["tu_b"].startswith("[Plan Mode]")
+    assert _frames(sse_events, "plan_blocked") == [{"plan_blocked": {"tool_name": "ws_write_file"}}]
 
 
 def _approval_state(tool_id: str, path: str) -> _State:

@@ -1,5 +1,4 @@
 import type { ToolUseEvent } from '@/types/chat';
-import { friendlyToolName } from '@/components/chat/AgentCard';
 
 /**
  * The words on an activity row, computed from the ToolUseEvent rows alone:
@@ -138,7 +137,7 @@ const RULE_TARGETS: Record<string, string> = {
 
 /** The synthetic cards sseEventCards.ts drops into the transcript. */
 export const CARD_TOOLS: ReadonlySet<string> = new Set([
-  'hook_blocked', 'stop_hook_feedback', 'stop_hook_block', 'security_blocked',
+  'hook_blocked', 'stop_hook_block', 'security_blocked',
   'goal_eval', 'goal_cap_reached', 'plan_blocked',
 ]);
 
@@ -147,7 +146,6 @@ const DISPLAY_NAMES: Record<string, string> = {
   security_blocked: 'Blocked (security)',
   hook_blocked: 'Blocked by hook',
   plan_blocked: 'Blocked in plan mode',
-  stop_hook_feedback: 'Continuing (Stop hook)',
   stop_hook_block: 'Continuing (Stop hook)',
   goal_eval: 'Goal check',
   goal_cap_reached: 'Goal check paused (cap reached)',
@@ -176,7 +174,7 @@ export function isCommandTool(name: string): boolean {
 
 // ── Small helpers ─────────────────────────────────────────────────────
 
-export function str(v: unknown): string | null {
+function str(v: unknown): string | null {
   return typeof v === 'string' && v.trim() ? v : null;
 }
 
@@ -198,7 +196,7 @@ function capitalize(s: string): string {
   return s ? s[0].toUpperCase() + s.slice(1) : s;
 }
 
-export function plural(n: number, noun: string, pluralForm = `${noun}s`): string {
+function plural(n: number, noun: string, pluralForm = `${noun}s`): string {
   return `${n} ${n === 1 ? noun : pluralForm}`;
 }
 
@@ -236,7 +234,7 @@ export function isRunning(tool: ToolUseEvent): boolean {
 
 /** A goal check whose judge could not run or could not be understood: neither
  *  a pass nor a failure, so it renders neutral and opens to show the reason. */
-export function isUncheckedGoal(tool: ToolUseEvent): boolean {
+function isUncheckedGoal(tool: ToolUseEvent): boolean {
   return tool.toolName === 'goal_eval' && (tool.input ?? {}).verdict === 'not_checked';
 }
 
@@ -541,7 +539,7 @@ export function describeCall(tool: ToolUseEvent): CallDesc {
     const subject = target ? RULE_TARGETS[target] ?? target.replace(/_/g, ' ') : null;
     return make({ kind: 'memory', verb: 'saved', base: 'save', subject, line: subject ?? '', noun: 'rule', nounPlural: 'rules' });
   }
-  const friendly = friendlyToolName(name).replace(/_/g, ' ');
+  const friendly = name.replace(/_/g, ' ');
   return make({ kind: 'other', verb: 'ran', base: 'run', subject: friendly, line: summariseTool(tool) || friendly });
 }
 
@@ -557,7 +555,7 @@ export function callVerb(tool: ToolUseEvent, desc: CallDesc = describeCall(tool)
 /** Aggregate state for the collapsed row. 'stopped' (the user cut the turn
  *  short) is terminal and never reads as running. 'unchecked' (a goal the
  *  judge could not check) is neither a pass nor a failure. */
-export function groupState(tools: ToolUseEvent[]): GroupState {
+function groupState(tools: ToolUseEvent[]): GroupState {
   if (tools.some((t) => t.status === 'error')) return 'error';
   if (tools.some(isRunning)) return 'running';
   if (tools.some((t) => t.status === 'stopped')) return 'stopped';

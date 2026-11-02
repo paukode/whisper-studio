@@ -18,14 +18,17 @@ export function makeApi(rpcCall, notify, meta, args) {
 
   // Programmatic tool calling: `tool(name, args)` (or the ergonomic
   // `tools.<name>(args)` proxy) runs ONE read-only host tool via RPC and
-  // resolves to its string output. Non-read-only tools are refused server-side
-  // — the program orchestrates reads/searches, keeping every intermediate
+  // resolves to its string output. Non-read-only tools are refused server-side.
+  // The program orchestrates reads/searches, keeping every intermediate
   // result in its own variables instead of the model's context.
   async function tool(name, toolArgs = {}) {
     if (typeof name !== "string" || !name.trim()) {
       throw new Error("tool(name, args): name must be a non-empty string");
     }
-    const r = await rpcCall("tool", { name, args: toolArgs || {} });
+    if (toolArgs === null || typeof toolArgs !== "object" || Array.isArray(toolArgs)) {
+      throw new Error("tool args must be an object");
+    }
+    const r = await rpcCall("tool", { name, args: toolArgs });
     return r?.output ?? "";
   }
   const tools = new Proxy(Object.create(null), {
@@ -35,7 +38,20 @@ export function makeApi(rpcCall, notify, meta, args) {
     },
   });
 
-  // Each item runs through ALL stages independently — NO barrier between
+  // Errors that end the whole run, not one item: the budget or agent cap is
+  // spent, or the run was cancelled. pipeline() and parallel() rethrow them so
+  // the script can catch them; any other item error becomes null and is
+  // logged to the run log.
+  const RUN_ERRORS = new Set(["BudgetExceededError", "AgentCapError", "CancelledError"]);
+
+  function itemFailed(fn, index, e) {
+    if (e && (RUN_ERRORS.has(e.type) || e.message === "CancelledError")) throw e;
+    const message = e && e.message ? e.message : String(e);
+    notify("log", { message: `[error] ${fn} item ${index}: ${message}` });
+    return null;
+  }
+
+  // Each item runs through ALL stages independently, with NO barrier between
   // stages. A stage that throws drops that item to null and skips its rest.
   async function pipeline(items, ...stages) {
     if (!Array.isArray(items)) throw new Error("pipeline(items, ...stages): items must be an array");
@@ -47,19 +63,23 @@ export function makeApi(rpcCall, notify, meta, args) {
             prev = await stage(prev, item, index);
           }
           return prev;
-        } catch {
-          return null;
+        } catch (e) {
+          return itemFailed("pipeline", index, e);
         }
       }),
     );
   }
 
-  // Barrier: awaits all thunks. A thunk that throws resolves to null (never
-  // rejects the whole call) so callers can filter(Boolean).
+  // Barrier: awaits all thunks. A thunk that throws resolves to null so
+  // callers can filter(Boolean).
   async function parallel(thunks) {
     if (!Array.isArray(thunks)) throw new Error("parallel(thunks): thunks must be an array");
     return Promise.all(
-      thunks.map((t) => Promise.resolve().then(() => t()).catch(() => null)),
+      thunks.map((t, index) =>
+        Promise.resolve()
+          .then(() => t())
+          .catch((e) => itemFailed("parallel", index, e)),
+      ),
     );
   }
 
@@ -85,7 +105,7 @@ export function makeApi(rpcCall, notify, meta, args) {
 
   // budget.total is the run's output-token cap (default 600k, set server-side);
   // spent()/remaining() are live RPC reads of the run's output-token ledger.
-  const budgetTotal = args?.__budget_total__ ?? null;
+  const budgetTotal = args.__budget_total__;
   const budget = {
     total: budgetTotal,
     async spent() {
@@ -93,7 +113,6 @@ export function makeApi(rpcCall, notify, meta, args) {
       return r?.spent ?? 0;
     },
     async remaining() {
-      if (budgetTotal == null) return Infinity;
       const r = await rpcCall("budget_spent", {});
       return Math.max(0, budgetTotal - (r?.spent ?? 0));
     },

@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from server.agents import extensions as budget_extensions
 from server.agents.config import (
     AgentConfig,
+    UnknownAgentType,
     get_agent_config,
     with_run_limits,
 )
@@ -29,13 +30,11 @@ from server.agents.providers.base import AGENT_CALL_CONCURRENCY
 from server.agents.registry import agent_registry
 from server.agents.runtime_support import (  # noqa: F401 - re-exported for callers/tests
     _agent_finished,
-    _distill_structured,
     _enter_agent_worktree,
     _git_executor,
     _harvest_worktree,
     _resolve_agent_model,
     _spawned_by_released_turn,
-    _with_session_id,
     budget_readout,
     distill_run_output,
     no_agent_model_reason,
@@ -50,8 +49,7 @@ log = logging.getLogger("whisper-studio")
 # the chat/engine path, so a smaller number here silently capped the
 # workflow runtime's 16-way fan-out no matter what the scheduler admitted.
 _agent_executor = ThreadPoolExecutor(max_workers=AGENT_CALL_CONCURRENCY)
-# Separate small pool for git/worktree harvesting so a burst of finishing
-# agents doing git ops can't head-of-line-block model calls on _agent_executor.
+# Ambient nesting context for a spawn_agent/send_message/receive_messages/
 # complete_coordination tool call dispatched from INSIDE this unattended
 # loop, as opposed to interactive chat. server.tool_router.route_tool reads
 # this so a nested call threads the CALLING agent's real id/depth/team/event-
@@ -152,7 +150,16 @@ async def run_agent(
 
     # Resolve config; a config passed in takes the limits it leaves unset from
     # Settings too (with_run_limits).
-    config = get_agent_config(agent_type) if config is None else with_run_limits(config)
+    try:
+        config = get_agent_config(agent_type) if config is None else with_run_limits(config)
+    except UnknownAgentType as e:
+        return AgentResult(
+            agent_id="",
+            agent_type=agent_type,
+            output=f"[Agent Error] {e}",
+            status="failed",
+            stop_reason="error",
+        )
     # Agents approve their own writes, so an agent may only read when it is
     # started from a plan-mode turn or by a read-only agent (a resume through
     # send_message included; server.agents.tool_access.read_only_scope), the
@@ -488,15 +495,15 @@ async def run_agent(
                 from server.workspace.state import reset_workspace_override
 
                 reset_workspace_override(_ws_token)
-            except Exception:  # noqa: BLE001 — teardown hygiene only
-                pass
+            except Exception as e:  # noqa: BLE001 - teardown continues
+                log.warning("agent %s teardown: workspace override reset failed: %s", agent_id, e)
         if _override_path:
             try:
                 from server.cwd_tracker import clear_override
 
                 clear_override(session_id, _override_path)
-            except Exception:  # noqa: BLE001 — teardown hygiene only
-                pass
+            except Exception as e:  # noqa: BLE001 - teardown continues
+                log.warning("agent %s teardown: cwd override clear failed: %s", agent_id, e)
         try:
             from server.cwd_tracker import clear_scope, reset_cwd_scope
 
@@ -504,8 +511,8 @@ async def run_agent(
             # Drop this agent's own cwd entries so a long-lived server does
             # not accumulate one per agent forever.
             clear_scope(session_id, agent_id)
-        except Exception:  # noqa: BLE001 — teardown hygiene only
-            pass
+        except Exception as e:  # noqa: BLE001 - teardown continues
+            log.warning("agent %s teardown: cwd scope clear failed: %s", agent_id, e)
         if _wt_session is not None:
             # Non-success exit (cancel / unexpected exception): never apply, but
             # tidy a pristine worktree and keep a dirty one for inspection —
@@ -526,8 +533,8 @@ async def run_agent(
                             "text": f"[worktree] {note}",
                         },
                     )
-            except BaseException:  # noqa: BLE001 — incl. CancelledError mid-teardown
-                pass
+            except BaseException as e:  # noqa: BLE001 - incl. CancelledError mid-teardown
+                log.warning("agent %s teardown: worktree tidy failed: %r", agent_id, e)
         message_bus.delete_mailbox(agent_id)
         budget_extensions.unregister(agent_id)
         # The run's own tool_search activations end with it.
@@ -574,16 +581,10 @@ async def _run_agent_loop(
     """Internal agent loop — the shared chat/engine turn loop
     (server.chat.engine.runner.run_turn) instead of a hand-rolled round loop.
 
-    Ports agents onto the exact engine interactive chat uses: round budgets,
-    the salvage round, the shared tool-execution safety gate (execute_tool_batch
-    + process_tool_results — every tool call flows through server.tool_router,
-    same as chat), and unattended resolution of approval/pause-inducing tools
-    (TurnContext.unattended). completion_gate is forced OFF — an agent must
-    never trigger the PARENT chat turn's goal-gate evaluator — and
-    turn_scope_id keys this run's goal-store/auto-mode-breaker/paused-turn
-    state so it can never collide with a concurrently running parent turn
-    that shares the same session_id (e.g. the chat turn whose spawn_agent
-    call is still awaiting this very run).
+    Shares chat's round budgets, fail-closed compaction and tool safety gate.
+    Unattended runs resolve approvals through that gate. completion_gate is
+    off: an agent must never trigger its parent's goal judge. turn_scope_id
+    isolates this run's goal, breaker and pause state from its parent.
 
     Not migrated, by design: _distill_structured (a one-shot structured-output
     call over the finished transcript; chat/engine's adapters have no
@@ -666,7 +667,6 @@ async def _run_agent_loop(
         agent_id=agent_id,
         depth=depth,
         session_id=session_id,
-        ws_connected=bool(ws_path),
         budget=extension,
     )
     activate_from_history(access.scope.activation_key, messages)
@@ -736,9 +736,8 @@ async def _run_agent_loop(
             model_key=model_key,
             model_id=model_id,
             system_prompt=system,
-            # Agents don't use prompt-cache checkpoints (the pre-migration
-            # loop never did either) — system_static/system_dynamic only
-            # matter when caching_on is True.
+            # Agents do not use prompt-cache checkpoints; system_static and
+            # system_dynamic only matter when caching_on is True.
             system_static="",
             system_dynamic="",
             caching_on=False,
@@ -756,10 +755,8 @@ async def _run_agent_loop(
     # subagent that "delivers" via notify_user has that content (and its links)
     # silently dropped before the parent ever sees it.
     notifications: list[str] = []
-    # complete_coordination is now a normal tool call (server/tool_router.py)
-    # rather than a hard mid-round stop — capture its summary so it becomes
-    # the coordinator's definitive output, same as the pre-migration inline
-    # handler's immediate return did.
+    # complete_coordination is a normal tool call (server/tool_router.py):
+    # capture its summary so it becomes the coordinator's output.
     coordination_summary: str | None = None
 
     def _finalize(text: str) -> str:
@@ -869,7 +866,6 @@ async def _run_agent_loop(
             # Agents must never trigger the parent chat turn's goal-gate
             # evaluator.
             completion_gate=False,
-            salvage_round=True,
         ),
         loop=loop,
         executor=_agent_executor,
@@ -878,9 +874,8 @@ async def _run_agent_loop(
         # Offline invariant for local runs: no permission-explainer model.
         tool_exec_model_id=("" if _is_local_agent else model_id),
         effort_label=effort_label,
-        # Agents don't run interactive chat's post-turn memory hooks (auto
-        # memory / session memory / dream consolidation) — the pre-migration
-        # loop never fired them either.
+        # Agents do not run interactive chat's post-turn memory hooks (auto
+        # memory, session memory, dream consolidation).
         memory_hooks=lambda msgs: None,
         unattended=True,
         turn_scope_id=f"agent:{agent_id}",
@@ -903,8 +898,8 @@ async def _run_agent_loop(
     # VOCABULARY (see its own module docstring on golden-fixture pinning) —
     # a future frame rename/reshape needs a matching update here. Kept
     # deliberately minimal: text (buffered per round, flushed on the round's
-    # usage frame — mirroring the pre-migration loop's one "text" event per
-    # turn, not one per streamed delta), the running usage total, tool call/
+    # usage frame, so one "text" event per round, not one per streamed
+    # delta), the running usage total, tool call/
     # result previews for progress events, and notify_user/complete_coordination
     # payloads folded into the returned output.
     turn_start = time.monotonic()
@@ -1075,12 +1070,11 @@ async def _run_agent_loop(
     elapsed = time.monotonic() - turn_start
     # run_turn's own last-round handling (the max_rounds cap, or a deadline
     # hit — both force tools off for that round, see server/chat/engine/
-    # runner.py) already produces a genuine best-effort final answer; there is
-    # no separate "out of budget, finalize now" call to make here, unlike the
-    # pre-migration loop. stopped_early can't be read directly off the drained
-    # frames (no frame says "this was the capped round"), so it is inferred
-    # exactly the way the pre-migration loop's own limit detection worked:
-    # the round budget was exhausted, or the wall-clock deadline passed.
+    # runner.py) already produces a best-effort final answer; there is no
+    # separate "out of budget, finalize now" call to make here. stopped_early
+    # cannot be read off the drained frames (no frame says "this was the
+    # capped round"), so it is inferred: the round budget was exhausted, or
+    # the wall-clock deadline passed.
     _ext = extension or {}
     _cap = config.max_turns + int(_ext.get("rounds") or 0)
     _deadline_total = (
@@ -1106,9 +1100,11 @@ async def _run_agent_loop(
             earlier = "\u2026" + earlier[-2500:]
         report_text = (report_text.strip() + "\n\nEarlier notes:\n" + earlier).strip()
     body_text = _finalize(report_text or collected_text)
+    # Every error frame ends the turn (runner.py): the run failed.
+    failed = error_text is not None
 
     structured = None
-    if structured_schema is not None:
+    if structured_schema is not None and not failed:
         # One-shot structured-output calls on the old provider adapters
         # (server.agents.providers): the chat/engine adapters have no
         # equivalent. See distill_run_output.
@@ -1126,7 +1122,10 @@ async def _run_agent_loop(
             source=cost_source,
         )
 
-    if stopped_early:
+    if failed:
+        # Keep every partial note, without another model request or success.
+        body_text = _finalize(f"[Agent Error] {error_text}\n\n{collected_text}".strip())
+    if stopped_early and not failed:
         if cost_capped:
             stop_reason, reason_text = "cost_cap", "reached the session cost cap"
         elif _time_up:
@@ -1171,16 +1170,12 @@ async def _run_agent_loop(
             stopped_early=True,
         )
 
-    if error_text and not body_text.strip():
-        # A terminal round error with nothing else produced — surface it
-        # plainly instead of an empty result.
-        body_text = f"[Agent Error] {error_text}"
-
-    _emit("completed", turn=rounds_used, turns_used=rounds_used, status="completed")
+    status, reason = ("failed", "error") if failed else ("completed", "completed")
+    _emit(status, turn=rounds_used, turns_used=rounds_used, status=status)
     _close_journal(
         journal,
-        "completed",
-        "completed",
+        status,
+        reason,
         body_text,
         turns_used=rounds_used,
         usage=final_usage,
@@ -1190,8 +1185,8 @@ async def _run_agent_loop(
         agent_id=agent_id,
         agent_type=config.agent_type,
         output=body_text,
-        status="completed",
-        stop_reason="completed",
+        status=status,
+        stop_reason=reason,
         turns_used=rounds_used,
         tools_called=tools_called,
         usage=final_usage,

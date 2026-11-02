@@ -10,35 +10,14 @@ import type { ModelMode } from '@/types/settings';
  * place to change the mode), and it states the mode the config ACTUALLY has:
  * an upgrader who never dismissed it may be in Cloud or Hybrid mode (the
  * notice renders only after the loaded config, so the mode is the real one).
- * The dismissed flag is CONFIG-backed
- * (config.modeNoticeSeen, persisted via PUT /api/config): localStorage is
- * origin-keyed, and the Mac app shell serves the SPA from a fresh localhost
- * port when the old one is taken, which wiped the flag and re-showed the
- * notice on every launch. localStorage remains a secondary suppressor so a
- * dev profile that already dismissed it never sees it again either.
+ * The dismissed flag lives only in the config (config.modeNoticeSeen,
+ * persisted via PUT /api/config), not in localStorage: localStorage is keyed
+ * by origin, so a page served from a different localhost port would lose it.
  * The notice only appears AFTER the loaded config reports it unseen (the
  * pre-load default is seen), so it can never flash. Deliberately no
  * ESC/backdrop dismiss: two explicit buttons, and no interference with the
  * global ESC kill switch.
  */
-const SEEN_KEY = 'whisper_mode_notice_v1';
-
-function seen(): boolean {
-  try {
-    return localStorage.getItem(SEEN_KEY) === '1';
-  } catch {
-    return false; // storage unavailable — the config flag still gates below
-  }
-}
-
-function markSeen(): void {
-  try {
-    localStorage.setItem(SEEN_KEY, '1');
-  } catch {
-    /* storage unavailable */
-  }
-}
-
 const MODES: { mode: ModelMode; name: string; desc: string }[] = [
   {
     mode: 'local',
@@ -68,17 +47,15 @@ export const ModelModeNotice: React.FC = () => {
   const currentMode = useSettingsStore((s) => s.config.modelMode);
   const currentName = MODES.find((m) => m.mode === currentMode)?.name ?? currentMode;
   const markModeNoticeSeen = useSettingsStore((s) => s.markModeNoticeSeen);
-  const [dismissed, setDismissed] = useState(seen);
+  const [dismissed, setDismissed] = useState(false);
   const openSettings = useUIStore((s) => s.openSettings);
 
   const dismiss = useCallback(() => {
-    markSeen();
     markModeNoticeSeen();
     setDismissed(true);
   }, [markModeNoticeSeen]);
 
   const goToSettings = useCallback(() => {
-    markSeen();
     markModeNoticeSeen();
     setDismissed(true);
     openSettings('model-mode');

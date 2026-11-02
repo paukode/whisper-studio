@@ -16,6 +16,7 @@ import os
 import shutil
 import tempfile
 import uuid
+from contextlib import asynccontextmanager
 
 from server.approval.markers import approval_request
 from server.infrastructure.async_tasks import spawn
@@ -30,13 +31,11 @@ MCP_CONFIG_PATH = os.path.join(DATA_DIR, "mcp_servers.json")
 
 # How long an MCP elicitation (a server asking the human for input mid-call)
 # waits for an answer before the callback declines on the human's behalf. This
-# bounds TWO things at once: the specific in-flight `call_tool()` invocation
-# (and, transitively, whatever awaited it — e.g. a live chat turn's tool
-# batch, which will sit idle but connected), and the server's single shared
-# receive loop (see `_build_elicitation_callback`'s docstring for why one
-# elicitation blocks that server's other traffic until it resolves). A few
-# minutes is long enough for a human to notice and answer, short enough that
-# a forgotten prompt doesn't wedge either of those indefinitely.
+# bounds the in-flight `call_tool()` invocation that is waiting on it (and,
+# transitively, whatever awaited it, e.g. a live chat turn's tool batch, which
+# sits idle but connected). A few minutes is long enough for a human to notice
+# and answer, short enough that a forgotten prompt does not wedge the call
+# indefinitely.
 ELICITATION_TIMEOUT_S = 300
 
 # How long one MCP tool call may run before it is abandoned with an error
@@ -59,26 +58,13 @@ def _call_timeout_s(server_config: dict) -> float:
     return value if value > 0 else CALL_TIMEOUT_S
 
 
-async def _send_cancelled(session, request_id, reason: str) -> bool:
-    """Tell the server to stop a request this client has given up on (the
-    protocol's notifications/cancelled), so an abandoned tool call does not
-    keep working, and its side effects keep landing, after the model has
-    been told it failed. False when the server could not be told."""
-    if request_id is None:
-        return False
-    from mcp import types
-
-    note = types.ClientNotification(
-        types.CancelledNotification(
-            params=types.CancelledNotificationParams(requestId=request_id, reason=reason)
-        )
-    )
-    try:
-        await asyncio.wait_for(session.send_notification(note), timeout=5)
-        return True
-    except Exception as e:  # noqa: BLE001 - the error result says what happened
-        log.warning("MCP cancel notification for request %s failed: %s", request_id, e)
-        return False
+@asynccontextmanager
+async def _owned_http_transport(http_client, transport_cm):
+    """Enter a streamable-HTTP transport and close the HTTP client it was
+    given when it exits; the transport never closes a client it was given."""
+    async with http_client:
+        async with transport_cm as streams:
+            yield streams
 
 
 # How long a server gets to finish its handshake and first listing. Every
@@ -97,20 +83,38 @@ CONFIG_POLL_S = 1.0
 _LAUNCH_KEYS = ("command", "args", "env", "url", "bearer_token_env_var")
 
 # Per-server/tool approval tiers (see MCPManager.get_tool_approval_tier).
-#   auto    — no approval needed; the tool executes immediately. Default —
-#             an unconfigured server behaves exactly as before this feature.
-#   prompt  — every call goes through the normal approval pipeline (category
-#             "mcp" in resolve_static_decision): subject to the user's
-#             permission mode, session approvals, and custom rules, same as
-#             any other approval-gated tool.
-#   writes  — tool calls that look read-only (name starts with get_/list_/
-#             search_/etc.) auto-execute; anything else goes through the
-#             normal approval pipeline like "prompt".
-#   approve — every call always asks, and — like the "github-destructive"
-#             category — this floor cannot be bypassed by bypassPermissions,
-#             a blanket session "yes for all MCP tools", or any other global
-#             setting. For a server the user does not fully trust.
+#   auto:    no approval needed; the tool executes immediately. The
+#            default for a server with no approval_mode.
+#   prompt:  every call goes through the normal approval pipeline (category
+#            "mcp" in resolve_static_decision): subject to the user's
+#            permission mode, session approvals, and custom rules, same as
+#            any other approval-gated tool.
+#   writes:  tool calls that look read-only (name starts with get_/list_/
+#            search_/etc.) auto-execute; anything else goes through the
+#            normal approval pipeline like "prompt".
+#   approve: every call always asks, and (like the "github-destructive"
+#            category) this floor cannot be bypassed by bypassPermissions,
+#            a blanket session "yes for all MCP tools", or any other global
+#            setting. For a server the user does not fully trust. An
+#            unknown tier gates as approve (effective_approval_mode).
 _VALID_APPROVAL_MODES = {"auto", "prompt", "writes", "approve"}
+
+
+def effective_approval_mode(value) -> str:
+    """The tier a configured approval value gates with: "auto" when unset, the
+    value itself when valid, and "approve" (fail closed) for anything else, so
+    a typo in mcp_servers.json never removes the approval gate."""
+    if value is None:
+        return "auto"
+    if value in _VALID_APPROVAL_MODES:
+        return value
+    log.warning(
+        "MCP approval value %r is not one of %s; gating as approve",
+        value,
+        sorted(_VALID_APPROVAL_MODES),
+    )
+    return "approve"
+
 
 # Heuristic used only by the "writes" tier: MCP tools carry no structured
 # read/write annotation today, so this is a best-effort name-based guess, not
@@ -145,9 +149,8 @@ def _unwrap_exc(e: BaseException) -> str:
     Recurse into the group's first child (groups can nest) until we reach a
     non-group leaf, and return ITS message so the UI shows something actionable
     (e.g. the underlying FileNotFoundError / connection-reset text). A plain
-    (non-group) exception is returned verbatim, preserving prior behavior.
-    Detection is via the ``exceptions`` attribute so it works on both the 3.11+
-    builtin ``ExceptionGroup`` and anyio's backport without a version import.
+    (non-group) exception is returned verbatim. Detection is via the
+    ``exceptions`` attribute (the builtin ``ExceptionGroup``).
     """
     seen: set[int] = set()
     cur: BaseException = e
@@ -178,7 +181,7 @@ def _file_signature(path: str) -> tuple[int, int, int] | None:
 
 async def _list_all(fetch, field: str) -> list:
     """Every item of a paginated MCP listing (tools/list, resources/list).
-    Follows nextCursor until the server stops returning one; a cursor seen
+    Follows next_cursor until the server stops returning one; a cursor seen
     twice ends the walk so a buggy server cannot loop it forever."""
     import mcp.types as types
 
@@ -188,7 +191,7 @@ async def _list_all(fetch, field: str) -> list:
     while True:
         result = await fetch(params=types.PaginatedRequestParams(cursor=cursor) if cursor else None)
         items.extend(getattr(result, field))
-        cursor = result.nextCursor
+        cursor = result.next_cursor
         if not cursor or cursor in seen:
             return items
         seen.add(cursor)
@@ -255,10 +258,8 @@ class MCPManager:
     def read_config(self) -> dict | None:
         """Read mcp_servers.json: {} when the file does not exist, None when
         it exists but is not a valid server list (a half-typed hand edit).
-
-        Backfills `enabled: true` for any server missing the flag: a
-        configured server is ON unless the user turned it off, and the file
-        is rewritten so the flag is explicit."""
+        Reading never writes the file; a server missing the `enabled` flag
+        counts as enabled (is_server_enabled)."""
         try:
             with open(MCP_CONFIG_PATH) as f:
                 data = json.load(f)
@@ -269,16 +270,6 @@ class MCPManager:
         servers = data.get("servers", {}) if isinstance(data, dict) else None
         if not isinstance(servers, dict):
             return None
-        changed = False
-        for _name, conf in servers.items():
-            if isinstance(conf, dict) and "enabled" not in conf:
-                conf["enabled"] = True
-                changed = True
-        if changed:
-            try:
-                self.save_config(servers)
-            except OSError as e:
-                log.warning("MCP backfill save failed: %s", e)
         return servers
 
     def load_config(self) -> dict:
@@ -307,9 +298,8 @@ class MCPManager:
 
     def is_server_enabled(self, name: str) -> bool:
         """Whether a server should be running and its tools advertised.
-        A configured server missing the flag counts as enabled (the
-        backfill makes it explicit on next save); an unknown server is
-        not enabled."""
+        A configured server missing the flag counts as enabled; an unknown
+        server is not enabled."""
         config = self.load_config()
         entry = config.get(name)
         if not isinstance(entry, dict):
@@ -371,7 +361,7 @@ class MCPManager:
             if resolved is None:
                 msg = (
                     f'Command "{command}" was not found. Install it and make sure it is on '
-                    f"your PATH, or set the full path to the executable in Settings > MCP."
+                    f"your PATH, or set the full path to the executable in Settings > Tools and automation > MCP servers."
                 )
                 log.error("MCP server '%s': %s", name, msg)
                 async with self._get_lock():
@@ -389,9 +379,9 @@ class MCPManager:
         # must be EXITED in that same task. We therefore own each connection's
         # whole lifecycle in one dedicated task (`_serve`): it enters the
         # contexts, publishes the session, waits for a stop signal, then exits
-        # the contexts itself. The old code exited them from stop_server's
-        # (different) task, which raised "cancel scope in a different task",
-        # was swallowed, and leaked the server subprocess.
+        # the contexts itself. Exiting them from stop_server's (different)
+        # task raises "cancel scope in a different task" and leaks the server
+        # subprocess.
         loop = asyncio.get_event_loop()
         ready: asyncio.Future = loop.create_future()
         stop_event = asyncio.Event()
@@ -446,33 +436,44 @@ class MCPManager:
         Transport branches on the server config: a `command` uses the local
         stdio transport (a subprocess); a `url` uses the streamable-HTTP
         transport (a remote/hosted MCP server). Both are async context
-        managers entered/exited HERE, in this same dedicated task, exactly
-        like the stdio-only code before this — the ownership discipline
-        described above does not care which transport it is.
+        managers entered/exited HERE, in this same dedicated task; the
+        ownership discipline described above does not care which transport
+        it is.
         """
         from mcp import ClientSession
 
         url = (config.get("url") or "").strip()
         if url:
-            from mcp.client.streamable_http import streamablehttp_client
+            import httpx2
+            from mcp.client.streamable_http import streamable_http_client
 
             headers = None
             token_env_var = (config.get("bearer_token_env_var") or "").strip()
             if token_env_var:
-                # The token itself is never persisted to mcp_servers.json —
+                # The token itself is never persisted to mcp_servers.json:
                 # only the env var NAME is stored in config. Read the actual
-                # secret from the environment fresh at connect time.
+                # secret fresh at connect time, from this process's own
+                # environment only (never the captured login-shell one).
                 token = os.environ.get(token_env_var, "")
-                if token:
-                    headers = {"Authorization": f"Bearer {token}"}
-                else:
-                    log.warning(
-                        "MCP server '%s': bearer_token_env_var '%s' is not set in the "
-                        "environment; connecting without an Authorization header",
-                        name,
-                        token_env_var,
-                    )
-            transport_cm = streamablehttp_client(url, headers=headers)
+                if not token:
+                    if not ready.done():
+                        ready.set_exception(
+                            RuntimeError(
+                                f"bearer_token_env_var {token_env_var} is not set in the "
+                                "environment, so the server cannot authenticate."
+                            )
+                        )
+                    return
+                headers = {"Authorization": f"Bearer {token}"}
+            # Headers and timeouts live on the HTTP client the transport is
+            # given. A bare client times out reads after 5 s, too short for
+            # the long-lived event stream, so reads get the SDK's own 300 s.
+            # Redirects stay off: the transport follows same-origin ones
+            # itself, so the bearer token never leaves the server's origin.
+            http_client = httpx2.AsyncClient(headers=headers, timeout=httpx2.Timeout(30, read=300))
+            transport_cm = _owned_http_transport(
+                http_client, streamable_http_client(url, http_client=http_client)
+            )
         else:
             from mcp.client.stdio import stdio_client
 
@@ -481,41 +482,35 @@ class MCPManager:
         elicitation_callback = self._build_elicitation_callback(name)
 
         async def on_message(message) -> None:
-            # Runs on the session's receive loop, which must keep pumping to
-            # deliver the listing's own response, so the re-list runs in a
-            # task of its own.
+            # The SDK hands over each server notification as the notification
+            # model itself. The re-list runs in a task of its own (spawn) so
+            # its errors are logged there and it outlives this handler.
             import mcp.types as types
 
-            root = getattr(message, "root", None)
-            if isinstance(root, types.ToolListChangedNotification):
+            if isinstance(message, types.ToolListChangedNotification):
                 spawn(self._relist(name, ready, "tools"), name=f"mcp-relist-tools:{name}")
-            elif isinstance(root, types.ResourceListChangedNotification):
+            elif isinstance(message, types.ResourceListChangedNotification):
                 spawn(self._relist(name, ready, "resources"), name=f"mcp-relist-resources:{name}")
 
         ended = "the server closed the connection"
         try:
-            async with transport_cm as transport_streams:
-                # stdio_client yields (read_stream, write_stream);
-                # streamablehttp_client yields (read_stream, write_stream,
-                # get_session_id). Only the first two are ever needed here.
-                read_stream, write_stream = transport_streams[0], transport_streams[1]
+            async with transport_cm as (read_stream, write_stream):
                 async with ClientSession(
                     read_stream,
                     write_stream,
                     elicitation_callback=elicitation_callback,
                     message_handler=on_message,
                 ) as session:
-                    await session.initialize()
+                    init = await session.initialize()
                     tools = await _list_all(session.list_tools, "tools")
                     server_tools, tool_registrations = self._tool_entries(name, tools)
 
-                    # Feature 19: Also discover MCP resources
+                    # Resources, from servers that advertise the capability. A
+                    # listing error fails the connect like the tools listing.
                     server_resources: dict = {}
-                    try:
+                    if getattr(init.capabilities, "resources", None):
                         for resource in await _list_all(session.list_resources, "resources"):
                             server_resources[str(resource.uri)] = resource
-                    except Exception as e:
-                        log.debug("MCP server '%s' has no resources: %s", name, e)
 
                     # Publish (start_server holds the lock while awaiting `ready`,
                     # so no other mutator interleaves with this).
@@ -642,7 +637,7 @@ class MCPManager:
         if task is not None:
             try:
                 await asyncio.wait_for(task, timeout=10)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 log.warning("MCP server '%s' did not shut down in 10s; cancelling", name)
                 task.cancel()
                 try:
@@ -747,20 +742,17 @@ class MCPManager:
     def get_tool_approval_tier(self, server_name: str, tool_name: str) -> str:
         """Effective approval tier for one MCP tool: `tool_overrides
         [tool_name]` (per-server config) wins over the server's own
-        `approval_mode`, which wins over the default "auto" — an
-        unconfigured server behaves exactly as it did before this feature
-        (no gating, immediate execution)."""
+        `approval_mode`, which wins over the default "auto" (no gating,
+        immediate execution). An unknown value gates as "approve"."""
         config = self.load_config()
         entry = config.get(server_name)
         if not isinstance(entry, dict):
             return "auto"
         overrides = entry.get("tool_overrides")
-        tier = overrides.get(tool_name) if isinstance(overrides, dict) else None
-        if tier not in _VALID_APPROVAL_MODES:
-            tier = entry.get("approval_mode", "auto")
-        if tier not in _VALID_APPROVAL_MODES:
-            tier = "auto"
-        return tier
+        override = overrides.get(tool_name) if isinstance(overrides, dict) else None
+        if override is not None:
+            return effective_approval_mode(override)
+        return effective_approval_mode(entry.get("approval_mode"))
 
     def get_tool_approval_tier_for_tool_name(self, tool_name: str) -> str | None:
         """Like get_tool_approval_tier, but looks the (server, original
@@ -786,14 +778,14 @@ class MCPManager:
         if not self.is_server_enabled(server_name):
             return (
                 f"[MCP] Server '{server_name}' is disabled. Enable it in "
-                "Settings → MCP to use this tool."
+                "Settings > Tools and automation > MCP servers to use this tool."
             )
         original_name = tool_info["original_name"]
         if not self._tool_is_permitted(server_name, original_name):
             return (
                 f"[MCP] Tool '{original_name}' is not enabled for server "
                 f"'{server_name}'. Adjust enabled_tools/disabled_tools in "
-                "Settings → MCP to use it."
+                "Settings > Tools and automation > MCP servers to use it."
             )
 
         # Per-server/tool approval gate. "auto" (the default for any server
@@ -837,7 +829,7 @@ class MCPManager:
         if not self.is_server_enabled(server_name):
             return (
                 f"[MCP] Server '{server_name}' is disabled. Enable it in "
-                "Settings → MCP to use this tool."
+                "Settings > Tools and automation > MCP servers to use this tool."
             )
         original_name = tool_info["original_name"]
         if not self._tool_is_permitted(server_name, original_name):
@@ -857,17 +849,12 @@ class MCPManager:
         is_agent = bool(arguments.get("__agent__"))
 
         session = session_info["session"]
-        self._active_calls.setdefault(server_name, []).append(
-            {"session_id": session_id, "agent": is_agent}
-        )
+        call_entry = {"session_id": session_id, "agent": is_agent}
+        self._active_calls.setdefault(server_name, []).append(call_entry)
         timeout_s = _call_timeout_s(session_info.get("config") or {})
         stop_event = session_info.get("stop_event")
-        request: dict = {}
 
         async def _call():
-            # The SDK's send_request takes this id and bumps it before its
-            # first await, so it is the id of this call's tools/call request.
-            request["id"] = getattr(session, "_request_id", None)
             return await session.call_tool(original_name, arguments=call_arguments)
 
         async def _call_until_stopped():
@@ -906,28 +893,20 @@ class MCPManager:
                 else:
                     parts.append(str(content))
             output = "\n".join(parts)
-            if result.isError:
+            if result.is_error:
                 output = f"[MCP Error] {output}"
             return output
         except TimeoutError:
             log.warning(
                 "MCP tool call timed out after %.0fs (%s/%s)", timeout_s, server_name, original_name
             )
-            told = await _send_cancelled(
-                session, request.get("id"), f"no answer within {timeout_s:.0f} seconds"
-            )
-            if not told:
-                log.warning(
-                    "MCP server %s could not be asked to cancel %s", server_name, original_name
-                )
-            stop = (
-                "the server was asked to cancel it"
-                if told
-                else "the server could not be told to stop, so it may still be running it"
-            )
+            # Abandoning the call cancels its request task, and the SDK sends
+            # the server notifications/cancelled for that request id before
+            # the cancellation completes (a blocked write is logged by the SDK).
             return (
                 f"[MCP Error] {original_name} on server '{server_name}' did not answer "
-                f"within {timeout_s:.0f} seconds. The call was abandoned and {stop}. It "
+                f"within {timeout_s:.0f} seconds. The call was abandoned and the server "
+                "was asked to cancel it. It "
                 "may already have done part or all of its work: check the result before "
                 "calling it again, since a retry can repeat its effects. A tool that "
                 "legitimately runs longer needs a higher call_timeout_seconds for this "
@@ -937,34 +916,31 @@ class MCPManager:
             log.error("MCP tool call error (%s/%s): %s", server_name, original_name, e)
             return f"[MCP Error] {e}"
         finally:
+            # Remove THIS call's entry: with overlapping calls the one that
+            # finishes first is not necessarily the newest.
             stack = self._active_calls.get(server_name)
-            if stack:
-                stack.pop()
+            if stack is not None:
+                stack.remove(call_entry)
+                if not stack:
+                    self._active_calls.pop(server_name, None)
 
     def _build_elicitation_callback(self, server_name: str):
         """Build the `elicitation_callback` bound into `ClientSession` for
         one server's connection.
 
-        Task/cancel-scope note: the MCP SDK invokes this callback from
-        `ClientSession._received_request`, which runs on the SAME task as
-        the session's own receive loop — a task the SDK spawns (via its
-        internal task group's `start_soon`) when `ClientSession.__aenter__`
-        runs, i.e. inside `_serve`'s already-owned context. We never enter or
-        exit a context manager here, and we never touch that task group's
-        cancel scope directly — we only `await` a plain `asyncio.Future`
-        (resolved later by a completely different task, `resolve_elicitation`,
-        via ordinary cross-task asyncio; this app runs one event loop, so no
-        thread-hop or extra scope is involved). That keeps this callback
-        fully inside the ownership `_serve` already holds: if `_serve`'s own
-        contexts get torn down (stop_server, or the whole task cancelled),
-        the cancellation reaches this `await` exactly as it would any other
-        code running on that task tree, and our `finally` still runs.
-
-        One consequence of running on the shared receive-loop task: while
-        this callback is waiting, that server's connection cannot process
-        any OTHER incoming message (further elicitations, notifications,
-        the response to this very call) until it returns — which is exactly
-        why the timeout below is bounded rather than open-ended.
+        Task/cancel-scope note: the MCP SDK runs each inbound server request,
+        this callback included, in a task of its own inside the session's
+        task group, i.e. inside `_serve`'s already-owned context. We never
+        enter or exit a context manager here, and we never touch that task
+        group's cancel scope directly: we only `await` a plain
+        `asyncio.Future` (resolved later by a completely different task,
+        `resolve_elicitation`, via ordinary cross-task asyncio; this app runs
+        one event loop, so no thread-hop or extra scope is involved). If
+        `_serve`'s own contexts get torn down (stop_server, or the whole task
+        cancelled), the cancellation reaches this `await` exactly as it would
+        any other code running on that task tree, and our `finally` still
+        runs. The connection keeps processing other messages while this
+        waits; the timeout below bounds the call that is waiting on it.
         """
 
         async def _callback(context, params):
@@ -988,7 +964,7 @@ class MCPManager:
             elicitation_id = uuid.uuid4().hex
             message = getattr(params, "message", "") or ""
             mode = getattr(params, "mode", "form")
-            requested_schema = getattr(params, "requestedSchema", None)
+            requested_schema = getattr(params, "requested_schema", None)
             url = getattr(params, "url", None)
 
             loop = asyncio.get_running_loop()
@@ -1002,7 +978,7 @@ class MCPManager:
                 "url": url,
                 "future": future,
             }
-            # Settings > MCP renders pending elicitations from the same list,
+            # Settings > Tools and automation > MCP servers renders pending elicitations from the same list,
             # so a new one (and its answer, below) is a list change.
             self._bump()
             log.info(
@@ -1014,7 +990,7 @@ class MCPManager:
             )
             try:
                 answer = await asyncio.wait_for(future, timeout=ELICITATION_TIMEOUT_S)
-            except (TimeoutError, asyncio.TimeoutError):
+            except TimeoutError:
                 log.warning(
                     "MCP elicitation %s from '%s' timed out after %ss; declining",
                     elicitation_id,
@@ -1061,7 +1037,7 @@ class MCPManager:
     def get_pending_elicitations(self) -> list[dict]:
         """Snapshot of every elicitation currently awaiting a human answer,
         across every connected server. Surfaced via GET /api/mcp/servers so
-        Settings → MCP can render a form for each and answer it."""
+        Settings > Tools and automation > MCP servers can render a form for each and answer it."""
         return [
             {
                 "elicitation_id": eid,
@@ -1086,7 +1062,7 @@ class MCPManager:
         matches what call_tool() will accept at execution time (it enforces
         the same flag via is_server_enabled).
 
-        Disabling now also STOPS the server at runtime (its tools leave
+        Disabling also STOPS the server at runtime (its tools leave
         _tools when the connection unwinds), so this flag check is defense
         in depth: it keeps the pool correct in the window before a slow
         disconnect finishes, or if a stop failed and left the connection up.
@@ -1121,7 +1097,7 @@ class MCPManager:
                 continue
             seen.add(safe_name)
             mcp_tool = tool_info["mcp_tool"]
-            schema = dict(mcp_tool.inputSchema)
+            schema = dict(mcp_tool.input_schema)
             schema.pop("$schema", None)
             schema.pop("additionalProperties", None)
             if "type" not in schema:
@@ -1141,7 +1117,7 @@ class MCPManager:
         )
 
     def get_all_resources(self) -> list[dict]:
-        """Feature 19: Return all MCP resources for @ mention autocomplete."""
+        """Every resource of every connected server (list_mcp_resources)."""
         resources = []
         for server_name, info in self._sessions.items():
             if info.get("status") != "connected":
@@ -1153,13 +1129,12 @@ class MCPManager:
                         "name": getattr(resource, "name", str(uri)),
                         "description": getattr(resource, "description", ""),
                         "server": server_name,
-                        "mention": f"@mcp:{server_name}/{getattr(resource, 'name', str(uri))}",
                     }
                 )
         return resources
 
     async def read_resource(self, server_name: str, uri: str) -> str:
-        """Feature 19: Read a specific MCP resource by URI."""
+        """Read one MCP resource by URI (read_mcp_resource)."""
         info = self._sessions.get(server_name)
         if not info or info.get("status") != "connected":
             return f"[MCP server '{server_name}' not connected]"

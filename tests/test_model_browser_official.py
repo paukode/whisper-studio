@@ -11,7 +11,6 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -43,8 +42,7 @@ def stub_llama_server(tmp_path, monkeypatch):
     src = tmp_path / "stub.c"
     src.write_text(_STUB_LIBLLAMA)
     lib = tmp_path / "libllama.dylib"
-    shared = ["-dynamiclib"] if sys.platform == "darwin" else ["-shared", "-fPIC"]
-    subprocess.run([cc, *shared, "-o", str(lib), str(src)], check=True)
+    subprocess.run([cc, "-dynamiclib", "-o", str(lib), str(src)], check=True)
     exe = tmp_path / "llama-server"
     exe.write_text("#!/bin/sh\n")
     exe.chmod(0o755)

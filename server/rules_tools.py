@@ -82,8 +82,6 @@ RULES_TOOLS: list[dict] = [
     }
 ]
 
-RULES_TOOL_NAMES = frozenset(t["name"] for t in RULES_TOOLS)
-
 
 def _target_path(target: str) -> tuple[str, str]:
     """(absolute path, error). Project targets need a connected workspace."""
@@ -111,11 +109,11 @@ def _target_path(target: str) -> tuple[str, str]:
 
 
 def _display(path: str) -> str:
-    from server.infrastructure.paths import user_root
-
-    root = user_root()
-    if path.startswith(root + os.sep):
-        return "~/.whisper/" + os.path.relpath(path, root)
+    """The real path, with the home folder shown as ``~`` (a source install
+    keeps its rules in the checkout, not in ~/.whisper)."""
+    home = os.path.expanduser("~")
+    if path.startswith(home + os.sep):
+        return "~" + path[len(home) :]
     return path
 
 
@@ -150,7 +148,7 @@ def _prepare(tool_input: dict) -> tuple[dict | None, str]:
 
     from server.memory.secret_scanner import check_and_block
 
-    clean, _redacted, findings = check_and_block(content)
+    clean, findings = check_and_block(content)
     if not clean:
         labels = ", ".join(f["label"] for f in findings)
         return (

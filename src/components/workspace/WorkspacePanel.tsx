@@ -2,7 +2,7 @@ import React, { useCallback, useRef, useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { eventPath, inConnectedRoot, useWorkspaceStore } from '@/stores/workspaceStore';
 import { useUIStore } from '@/stores/uiStore';
-import { indexStatus, queryFile, type BinaryFileInfo } from '@/api/workspace';
+import { indexStatus, openInDefaultApp, queryFile, type BinaryFileInfo } from '@/api/workspace';
 import { getLangForPath } from '@/utils/languageDetection';
 import { FileTree } from './FileTree';
 import { EditorTabs } from './EditorTabs';
@@ -21,6 +21,7 @@ import { WorkspaceContextMenu, type ContextMenuState } from './WorkspaceContextM
 import { GitChangesPanel } from '@/components/git/GitChangesPanel';
 import { disconnectWorkspace } from '@/services/workspaceConnection';
 import { toError } from '@/utils/toError';
+import { get } from '@/api/client';
 
 /** Extensions handled as CSV/TSV table view */
 const CSV_EXTS = new Set(['.csv', '.tsv']);
@@ -42,7 +43,7 @@ export interface WorkspacePanelProps {
 }
 
 /**
- * Full workspace panel matching the original ws-ide-layout structure.
+ * Full workspace panel (ws-ide-layout).
  * Routes files to appropriate viewers based on backend binary detection
  * and extension-based detection for CSV/TSV, markdown, and notebooks.
  */
@@ -122,13 +123,13 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({ onCollapse }) =>
 
   // File search via react-query, keyed on the debounced query. Disabled (and so
   // not run) while the query is empty.
-  const { data: searchData } = useQuery({
+  const { data: searchData, error: searchError } = useQuery({
     queryKey: ['file-search', debouncedQuery],
     queryFn: async (): Promise<Array<{ path: string }>> => {
-      const r = await fetch(`/api/workspace/search-files?q=${encodeURIComponent(debouncedQuery)}&limit=100`);
-      if (!r.ok) return [];
-      const data = await r.json();
-      return data?.results ?? data?.files ?? [];
+      const data = await get<{ results: Array<{ path: string }> }>(
+        `/api/workspace/search-files?q=${encodeURIComponent(debouncedQuery)}&limit=100`,
+      );
+      return data.results;
     },
     enabled: debouncedQuery.length > 0,
   });
@@ -151,7 +152,7 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({ onCollapse }) =>
   const wsIndexed = !!wsIndexStatus?.indexed;
 
   /**
-   * File open handler matching the original openFileViewer flow:
+   * File open handler:
    * 1. Query backend for file metadata (binary detection)
    * 2. Route to appropriate viewer based on type
    */
@@ -243,7 +244,7 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({ onCollapse }) =>
   );
 
   // Close handler passed to Monaco as onClose — fires from the editor's
-  // Cmd/Ctrl+W keybinding. Prompts to discard first when the tab is dirty.
+  // Cmd+W keybinding. Prompts to discard first when the tab is dirty.
   const handleClose = useCallback(
     (path: string) => {
       void confirmCloseTab(path);
@@ -263,6 +264,19 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({ onCollapse }) =>
     },
     [setViewerType],
   );
+
+  /** Open an Office document in its default app (Word or Pages): the app
+   *  views it but does not edit it. */
+  const openTabInDefaultApp = useCallback(async (path: string) => {
+    try {
+      await openInDefaultApp(path);
+    } catch (err) {
+      useUIStore.getState().addToast({
+        type: 'error',
+        message: `Could not open ${path.split('/').pop() || path}: ${toError(err).message}`,
+      });
+    }
+  }, []);
 
   /** Switch from Monaco back to Markdown preview. */
   const handleSwitchToMarkdown = useCallback(
@@ -327,7 +341,7 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({ onCollapse }) =>
     if (vt === 'image') return <ImageViewer key={activeTab.path} filePath={activeTab.path} />;
     if (vt === 'pdf') return <PDFViewer key={activeTab.path} filePath={activeTab.path} />;
     if (vt === 'spreadsheet') return <SpreadsheetViewer key={activeTab.path} filePath={activeTab.path} />;
-    if (vt === 'word') return <WordViewer key={activeTab.path} filePath={activeTab.path} onEdit={() => handleSwitchToEditor(activeTab.path)} />;
+    if (vt === 'word') return <WordViewer key={activeTab.path} filePath={activeTab.path} onOpenInDefaultApp={() => void openTabInDefaultApp(activeTab.path)} />;
 
     if (vt === 'diff') {
       return (
@@ -511,7 +525,11 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({ onCollapse }) =>
             />
           </div>
           <div className="panel-body ws-file-tree">
-            {searchResults !== null ? (
+            {debouncedQuery && searchError ? (
+              <div className="ws-tree-file" role="alert" style={{ color: 'var(--text-muted)', cursor: 'default' }}>
+                Search failed: {toError(searchError).message}
+              </div>
+            ) : searchResults !== null ? (
               searchResults.length === 0 ? (
                 <div className="ws-tree-file" style={{ color: 'var(--text-muted)', cursor: 'default' }}>No results</div>
               ) : (
@@ -536,7 +554,7 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({ onCollapse }) =>
             )}
           </div>
 
-          {/* Git changes panel — below file tree, matching vanilla ws-git-changes */}
+          {/* Git changes panel, below the file tree */}
           <GitChangesPanel onFileOpen={handleFileSelect} />
         </div>
 

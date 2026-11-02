@@ -1,4 +1,4 @@
-"""Memory REST API — browse, edit, delete, and promote memory files.
+"""Memory REST API: browse, edit, delete, and promote memory files.
 
 Backs the Memory viewer UI. Mounted at /api/memory in main.py.
 Same guards as the LLM tools: path-traversal check on every filename,
@@ -8,7 +8,7 @@ and the index is rebuilt after every mutation.
 
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Request
 
@@ -69,7 +69,7 @@ def _list_tier(scope: str, memory_dir: str) -> dict:
             "description": m.description,
             "type": m.type,
             "scope": scope,
-            "mtime": datetime.fromtimestamp(m.mtime, tz=timezone.utc).isoformat(),
+            "mtime": datetime.fromtimestamp(m.mtime, tz=UTC).isoformat(),
             "size": m.size,
         }
         for m in scan_memory_files(memory_dir)
@@ -101,6 +101,23 @@ async def read_memory_file(scope: str, filename: str):
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
+def _rebuild_after_change(change: str, *memory_dirs: str) -> None:
+    """Rebuild each tier index after a file change that already happened.
+    Tries every tier; a failure is a 500 whose detail says the change was
+    made and which index is stale."""
+    errors = []
+    for memory_dir in memory_dirs:
+        try:
+            rebuild_index(memory_dir)
+        except OSError as e:
+            errors.append(str(e))
+    if errors:
+        raise HTTPException(
+            status_code=500,
+            detail=f"{change}, but the index is stale: {'; '.join(errors)}",
+        )
+
+
 @memory_router.put("/file")
 async def save_memory_file(request: Request):
     """Save raw file content (frontmatter included). Secret-scanned like every
@@ -121,19 +138,19 @@ async def save_memory_file(request: Request):
     memory_dir = _tier_dir(scope)
     abs_path = _safe_path(memory_dir, filename)
 
-    is_clean, _redacted, findings = check_and_block(content)
+    is_clean, findings = check_and_block(content)
     if not is_clean:
         rules = ", ".join(f["label"] for f in findings)
         raise HTTPException(status_code=400, detail=f"Content contains potential secrets ({rules})")
 
     os.makedirs(os.path.dirname(abs_path), exist_ok=True)
-    try:
-        with _WRITE_LOCK:
+    with _WRITE_LOCK:
+        try:
             _atomic_write(abs_path, content)
-            rebuild_index(memory_dir)
-    except OSError as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
-    log.info("Memory file saved via API: %s (scope=%s)", filename, scope)
+        except OSError as e:
+            raise HTTPException(status_code=500, detail=str(e)) from e
+        log.info("Memory file saved via API: %s (scope=%s)", filename, scope)
+        _rebuild_after_change(f"{filename} was saved", memory_dir)
     return {"saved": True, "scope": scope, "filename": filename}
 
 
@@ -144,13 +161,13 @@ async def delete_memory_file(scope: str, filename: str):
     abs_path = _safe_path(memory_dir, filename)
     if not os.path.isfile(abs_path):
         raise HTTPException(status_code=404, detail=f"Not found: {filename}")
-    try:
-        with _WRITE_LOCK:
+    with _WRITE_LOCK:
+        try:
             os.remove(abs_path)
-            rebuild_index(memory_dir)
-    except OSError as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
-    log.info("Memory file deleted via API: %s (scope=%s)", filename, scope)
+        except OSError as e:
+            raise HTTPException(status_code=500, detail=str(e)) from e
+        log.info("Memory file deleted via API: %s (scope=%s)", filename, scope)
+        _rebuild_after_change(f"{filename} was deleted", memory_dir)
     return {"deleted": True, "scope": scope, "filename": filename}
 
 
@@ -178,13 +195,12 @@ async def promote_memory_file(request: Request):
             detail=f"{filename} already exists in global memory; delete or rename it first",
         )
 
-    try:
-        with _WRITE_LOCK:
+    with _WRITE_LOCK:
+        try:
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             os.replace(src, dst)
-            rebuild_index(project_dir)
-            rebuild_index(global_dir)
-    except OSError as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
-    log.info("Memory file promoted to global: %s", filename)
+        except OSError as e:
+            raise HTTPException(status_code=500, detail=str(e)) from e
+        log.info("Memory file promoted to global: %s", filename)
+        _rebuild_after_change(f"{filename} was moved to global memory", project_dir, global_dir)
     return {"promoted": True, "filename": filename}

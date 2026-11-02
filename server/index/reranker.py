@@ -29,12 +29,9 @@ log = logging.getLogger("whisper-studio")
 
 
 def _rerank_backend() -> str:
-    try:
-        from server.infrastructure.model_mode import resolve_backend
+    from server.infrastructure.model_mode import resolve_backend
 
-        return resolve_backend("rerank")
-    except Exception:
-        return "qwen3"
+    return resolve_backend("rerank")
 
 
 def _rerank_cohere(query: str, passages: list[str]) -> list[float]:
@@ -91,25 +88,17 @@ _SUFFIX = "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
 
 
 def ensure_rerank_model() -> str:
-    """Download Qwen3-Reranker into ./models if absent (idempotent, download-only).
-    Called from setup.sh alongside the other model pulls."""
+    """Download Qwen3-Reranker into models_root() if absent (idempotent,
+    download-only). Called on first use and from Settings > Models."""
     import os
 
     if not os.path.exists(RERANK_SENTINEL):
         from huggingface_hub import snapshot_download
 
         log.info("Downloading reranker model %s ...", RERANK_MODEL)
-        snapshot_download(
-            repo_id=RERANK_MODEL, local_dir=RERANK_MODEL_DIR, local_dir_use_symlinks=False
-        )
+        snapshot_download(repo_id=RERANK_MODEL, local_dir=RERANK_MODEL_DIR)
         log.info("Reranker model download complete.")
     return RERANK_MODEL_DIR
-
-
-def is_downloaded() -> bool:
-    import os
-
-    return os.path.exists(RERANK_SENTINEL)
 
 
 def is_loaded() -> bool:
@@ -124,7 +113,9 @@ def _load():
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     ensure_rerank_model()
-    _device = "mps" if torch.backends.mps.is_available() else "cpu"
+    if not torch.backends.mps.is_available():
+        raise RuntimeError("The on-device reranker needs the Apple silicon GPU (MPS)")
+    _device = "mps"
     log.info("Loading reranker model on %s ...", _device)
     # Left padding so the final-token logits line up at index -1 for every row.
     _tokenizer = AutoTokenizer.from_pretrained(RERANK_MODEL_DIR, padding_side="left")
@@ -179,14 +170,14 @@ def _middle_ids(query: str, doc: str, budget: int) -> list[int]:
 _mps_oom_disabled = False
 
 
-def rerank(query: str, passages: list[str], backend: str | None = None) -> list[float]:
+def rerank(query: str, passages: list[str]) -> list[float]:
     """Relevance score for each passage given the query, aligned to input order.
     Routes to the active rerank backend (on-device Qwen3-Reranker, or Cohere
     Rerank 3.5 on Bedrock in cloud mode). Returns [] on any failure so the
     caller keeps its existing fused order."""
     if not passages:
         return []
-    if (backend or _rerank_backend()) == "cohere":
+    if _rerank_backend() == "cohere":
         return _rerank_cohere(query, passages)
     global _mps_oom_disabled
     if _mps_oom_disabled:

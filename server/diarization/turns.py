@@ -1,14 +1,13 @@
 """Split one VAD utterance at speaker turn boundaries.
 
 The VAD buffer flushes on silence, not on speaker change, so a turn
-handover with little or no gap ("...that's my point." / "Right, but—")
-lands inside a single utterance and used to get a single speaker label.
-Every word after the handover was then attributed to whoever spoke first.
+handover with little or no gap ("...that's my point." / "Right, but...")
+lands inside a single utterance; one label for it would attribute every
+word after the handover to whoever spoke first.
 
 This module finds the handover point inside the utterance and returns one
-span per speaker, so the rest of the pipeline (speaker assignment,
-re-clustering, the transcript UI) keeps working exactly as before and
-simply sees two chunks where it used to see one.
+span per speaker turn, so speaker assignment, re-clustering and the
+transcript UI see one chunk per turn.
 
 How the boundary is found:
 

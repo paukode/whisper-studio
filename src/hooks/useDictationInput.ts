@@ -128,8 +128,8 @@ export function useDictationInput({
   const mic = useChatInputMic({
     onTranscript: handleMicTranscript,
     // Pass through the active session so reconnects share speaker
-    // profiles via the backend's per-session bucket. Safe when null
-    // (no session yet) — the hook falls back to the no-query URL.
+    // profiles via the backend's per-session bucket. With no session yet
+    // the URL leaves session_id out.
     sessionId,
   });
 

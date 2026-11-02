@@ -70,16 +70,21 @@ class ServiceUnavailableError(WhisperAPIError):
 
 
 class ModelNotAvailableError(WhisperAPIError):
-    """Requested model is not available in the region or account."""
+    """Bedrock denied access (AccessDeniedException): no model access in the
+    region, or a missing IAM permission. The user message carries Bedrock's
+    own reason."""
 
-    def __init__(self, message: str, *, model_id: str = ""):
+    def __init__(self, message: str):
+        reason = message.split("operation:", 1)[1].strip() if "operation:" in message else message
         super().__init__(
             message,
             error_code="MODEL_NOT_AVAILABLE",
-            user_message=f"Model '{model_id}' is not available. Check region and model access.",
+            user_message=(
+                f"Access denied by Amazon Bedrock: {reason[:300]} "
+                "Check model access and IAM permissions for this region."
+            ),
             is_retryable=False,
         )
-        self.model_id = model_id
 
 
 class NoCredentialsFoundError(WhisperAPIError):

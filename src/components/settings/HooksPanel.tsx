@@ -2,6 +2,7 @@ import React, { useCallback, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { get, post, put, del } from '@/api/client';
 import { useUIStore } from '@/stores/uiStore';
+import { toError } from '@/utils/toError';
 
 interface HookRow {
   id: string;
@@ -33,15 +34,6 @@ interface TestResult {
   reason: string;
 }
 
-const FALLBACK_EVENTS = [
-  'PreToolUse',
-  'PostToolUse',
-  'PostToolUseFailure',
-  'UserPromptSubmit',
-  'SessionStart',
-  'Stop',
-];
-
 const EVENT_HELP: Record<string, string> = {
   PreToolUse: 'Before a tool runs. Exit 2 (or JSON deny) blocks it; JSON rewrite edits its input.',
   PostToolUse: 'After a tool succeeds. stdout is fed back to the model as context.',
@@ -61,7 +53,9 @@ export const HooksPanel: React.FC = () => {
     staleTime: 5 * 60_000,
   });
   const data = hooksQuery.data;
-  const events = data?.available_events ?? FALLBACK_EVENTS;
+  // The event list is the server's (server/hooks/schema.py); nothing can be
+  // added until it has loaded.
+  const events = useMemo(() => data?.available_events ?? [], [data]);
 
   const rows = useMemo<HookRow[]>(() => {
     if (!data?.hooks) return [];
@@ -79,13 +73,16 @@ export const HooksPanel: React.FC = () => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(BLANK);
   const [test, setTest] = useState<TestResult | null>(null);
+  // A test request that never reached the hook (not the hook's own result).
+  const [testError, setTestError] = useState<string | null>(null);
 
-  const displayError = error ?? (hooksQuery.isError ? 'Could not load hooks. The hooks API may not be available.' : null);
+  const displayError = error ?? (hooksQuery.isError ? `Could not load hooks: ${toError(hooksQuery.error).message}` : null);
 
   const startAdd = useCallback(() => {
     setEditingId(null);
     setForm(BLANK);
     setTest(null);
+    setTestError(null);
     setError(null);
     setIsEditorOpen(true);
   }, []);
@@ -94,6 +91,7 @@ export const HooksPanel: React.FC = () => {
     setEditingId(h.id);
     setForm({ event: h.event, matcher: h.matcher, command: h.command, timeout: h.timeout, on_error: h.on_error, enabled: h.enabled });
     setTest(null);
+    setTestError(null);
     setError(null);
     setIsEditorOpen(true);
   }, []);
@@ -102,6 +100,7 @@ export const HooksPanel: React.FC = () => {
     setIsEditorOpen(false);
     setEditingId(null);
     setTest(null);
+    setTestError(null);
   }, []);
 
   const handleSave = useCallback(async () => {
@@ -116,8 +115,10 @@ export const HooksPanel: React.FC = () => {
       closeEditor();
       void queryClient.invalidateQueries({ queryKey: ['hooks'] });
       addToast({ type: 'success', message: editingId !== null ? 'Hook updated' : 'Hook added' });
-    } catch {
-      setError(editingId !== null ? 'Failed to update hook.' : 'Failed to add hook.');
+    } catch (e) {
+      // The server says why (an old hooks.json it will not overwrite, say).
+      const why = e instanceof Error && e.message ? ` ${e.message}` : '';
+      setError((editingId !== null ? 'Failed to update hook.' : 'Failed to add hook.') + why);
     }
   }, [form, editingId, queryClient, closeEditor, addToast]);
 
@@ -136,13 +137,16 @@ export const HooksPanel: React.FC = () => {
       await put(`/api/hooks/${encodeURIComponent(h.id)}`, { ...h, enabled: !h.enabled });
       void queryClient.invalidateQueries({ queryKey: ['hooks'] });
       addToast({ type: 'success', message: h.enabled ? 'Hook disabled' : 'Hook enabled' });
-    } catch {
-      setError('Failed to update hook.');
+    } catch (e) {
+      const why = e instanceof Error && e.message ? ` ${e.message}` : '';
+      setError(`Failed to update hook.${why}`);
     }
   }, [queryClient, addToast]);
 
   const runTest = useCallback(async () => {
     if (!form.command.trim()) return;
+    setTest(null);
+    setTestError(null);
     try {
       const res = await post<TestResult>('/api/hooks/test', {
         command: form.command,
@@ -150,8 +154,8 @@ export const HooksPanel: React.FC = () => {
         timeout: form.timeout,
       });
       setTest(res);
-    } catch {
-      setTest({ exit_code: -1, stdout: '', stderr: 'Test failed to run.', decision: 'error', reason: '' });
+    } catch (e) {
+      setTestError(`The test could not run: ${toError(e).message}`);
     }
   }, [form]);
 
@@ -244,7 +248,7 @@ export const HooksPanel: React.FC = () => {
       )}
 
       <div className="settings-toolbar">
-        <button className="btn btn-sm" id="addHookBtn" onClick={startAdd} type="button" disabled={isEditorOpen}>
+        <button className="btn btn-sm" id="addHookBtn" onClick={startAdd} type="button" disabled={isEditorOpen || !data}>
           + Add Hook
         </button>
       </div>
@@ -357,6 +361,7 @@ export const HooksPanel: React.FC = () => {
               Enabled
             </label>
 
+            {testError && <p className="settings-empty" role="alert">{testError}</p>}
             {test && (
               <div className="settings-item" style={{ marginTop: 8, flexDirection: 'column', alignItems: 'stretch' }}>
                 <div className="settings-item-name">

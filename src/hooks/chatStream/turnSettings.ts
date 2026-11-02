@@ -16,7 +16,8 @@ import type { ChatMessage, TurnModelSettings } from '@/types/chat';
 export function turnModelSettings(): TurnModelSettings {
   const s = useSettingsStore.getState();
   // Response length (Brief/Normal/Detailed) is stored as verbosity and applied
-  // per model: GPT-5.x uses text.verbosity natively, so it gets the value as-is
+  // per model: a model with native verbosity (supports_verbosity, the OpenAI
+  // models) gets the value as-is via text.verbosity
   // and no brief instruction; models without native verbosity get a
   // concise-instruction (brief_mode) only at the Brief end, with verbosity
   // ignored server-side.

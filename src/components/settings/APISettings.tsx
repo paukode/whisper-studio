@@ -101,13 +101,7 @@ export const APISettings: React.FC = () => {
         }),
       );
       setSaveStatus('Saved!');
-
-      // Update hint if a new key was provided
-      if (tavilyKey.length > 8) {
-        setTavilyHint(`${tavilyKey.slice(0, 4)}..${tavilyKey.slice(-4)}`);
-      } else if (tavilyKey.length > 0) {
-        setTavilyHint('••••');
-      }
+      // The config refetch reseeds the hint with the server's own mask.
       setTavilyKey('');
 
       // Clear status after a few seconds

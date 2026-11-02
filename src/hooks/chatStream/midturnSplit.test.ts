@@ -148,7 +148,7 @@ describe('a round stopped to read a message', () => {
     const result = await readSSEStream(
       sseResponse([
         { thinking: 'round one thought' },
-        { usage: { input_tokens: 1, output_tokens: 1 } },
+        { usage: { input_tokens: 1, output_tokens: 1, total_prompt: 1, total_output: 1, estimated_cost_usd: 0 } },
         { thinking: ' round two thought' },
         { round_discarded: { reason: 'midturn' } },
       ]),

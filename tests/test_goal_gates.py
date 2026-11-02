@@ -65,6 +65,56 @@ def test_run_gate_reports_exit_code_and_tail(tmp_path):
     assert fb.startswith("[gate]") and "exit code 3" in fb and "boom" in fb
 
 
+def test_run_gate_is_confined_to_the_workspace(tmp_path, monkeypatch):
+    """A gate runs like a confined terminal_run command: workspace writes,
+    nothing widened (no secret reads, no extra write paths)."""
+    import subprocess
+
+    seen = {}
+
+    def fake_run(command, **kw):
+        seen.update(kw, command=command)
+        return subprocess.CompletedProcess(command, 0, "ok", "")
+
+    monkeypatch.setattr(g, "run_sandboxed", fake_run)
+    res = g.run_gate("make test", str(tmp_path), scratch_dir="/scratch/s1")
+    assert res.passed
+    assert seen["command"] == "make test"
+    assert seen["write_mode"] == "workspace"
+    assert seen["cwd"] == str(tmp_path) and seen["write_root"] == str(tmp_path)
+    assert seen["scratch_dir"] == "/scratch/s1"
+    assert not seen.get("secret_reads") and not seen.get("write_paths")
+    assert not seen.get("allow_paths")
+
+    # Without a workspace the gate writes no tree.
+    seen.clear()
+    g.run_gate("make test", None)
+    assert seen["write_root"] is None and seen["cwd"] == os.path.expanduser("~")
+
+
+def test_run_gate_fails_when_the_workspace_is_gone(tmp_path, monkeypatch):
+    """A set workspace that is no longer a directory fails the gate; it never
+    runs in $HOME instead."""
+    calls = []
+    monkeypatch.setattr(g, "run_sandboxed", lambda command, **kw: calls.append(kw))
+    gone = str(tmp_path / "deleted")
+    res = g.run_gate("make test", gone)
+    assert not res.passed and res.exit_code is None
+    assert res.tail == f"workspace not found: {gone}"
+    assert calls == []
+
+
+def test_run_gate_refused_without_the_sandbox(tmp_path, monkeypatch):
+    from server import sandbox
+
+    monkeypatch.setattr(sandbox, "_is_sandbox_exec_available", lambda: False)
+    marker = tmp_path / "ran"
+    res = g.run_gate(f"touch {marker}", str(tmp_path))
+    assert not res.passed and res.exit_code is None
+    assert res.tail == sandbox.SANDBOX_UNAVAILABLE_MESSAGE
+    assert not marker.exists()
+
+
 @pytest.fixture
 def _gate_env(monkeypatch):
     from server import hooks
@@ -92,7 +142,9 @@ def test_failing_gate_blocks_without_calling_the_evaluator(_gate_env, monkeypatc
     store.set_goal("s1", "green", set_at="2026-01-01T00:00:00Z")
     store.add_gate("s1", "false-cmd")
     monkeypatch.setattr(
-        g, "run_gates", lambda cmds, ws: [g.GateResult(cmds[0], False, 1, "assertion failed")]
+        g,
+        "run_gates",
+        lambda cmds, ws, scratch=None: [g.GateResult(cmds[0], False, 1, "assertion failed")],
     )
     called = []
     monkeypatch.setattr(evaluator, "evaluate", lambda *a, **k: called.append(1))
@@ -106,7 +158,9 @@ def test_failing_gate_blocks_without_calling_the_evaluator(_gate_env, monkeypatc
 def test_gate_exhaustion_pauses_the_goal(_gate_env, monkeypatch):
     store.set_goal("s1", "green", set_at="2026-01-01T00:00:00Z")
     store.add_gate("s1", "false-cmd")
-    monkeypatch.setattr(g, "run_gates", lambda cmds, ws: [g.GateResult(cmds[0], False, 1, "no")])
+    monkeypatch.setattr(
+        g, "run_gates", lambda cmds, ws, scratch=None: [g.GateResult(cmds[0], False, 1, "no")]
+    )
     for _ in range(g.GATE_MAX_RETRIES - 1):
         d = asyncio.run(_gate_env.run_completion_gate(_ctx()))
         assert d.block is True
@@ -121,7 +175,9 @@ def test_passing_gates_fall_through_to_the_evaluator(_gate_env, monkeypatch):
 
     store.set_goal("s1", "green", set_at="2026-01-01T00:00:00Z")
     store.add_gate("s1", "true-cmd")
-    monkeypatch.setattr(g, "run_gates", lambda cmds, ws: [g.GateResult(cmds[0], True, 0, "ok")])
+    monkeypatch.setattr(
+        g, "run_gates", lambda cmds, ws, scratch=None: [g.GateResult(cmds[0], True, 0, "ok")]
+    )
     monkeypatch.setattr(evaluator, "evaluate", lambda *a, **k: Verdict("achieved", "all done", 0.9))
     d = asyncio.run(_gate_env.run_completion_gate(_ctx()))
     assert d.block is False and d.goal_achieved is True

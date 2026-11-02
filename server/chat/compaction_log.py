@@ -9,9 +9,11 @@ Layout: data_root()/compactions/<session_id>.jsonl, one JSON object per line:
   {ts, event: "start", trigger, before_chars}
   {ts, event: "end", outcome, after_chars, detail?}
 
-Outcomes: "pruned-only" (the prune rung freed enough, no summary was paid
-for), "session-memory", "summary", "truncation", "unchanged", "error",
-"orphaned" (synthesized at boot for a crashed bracket).
+Current outcomes: "pruned-only" (pure pruning freed enough), "summary",
+"unchanged", "error" (including cancellation), and "orphaned" (synthesized
+at boot for a crashed bracket). Historical "session-memory" and "truncation"
+records remain readable but are no longer produced. Diagnostics are
+best-effort; an error never authorizes a partial replacement of caller history.
 
 Read-back: GET /api/sessions/{session_id}/compactions
 """
@@ -22,7 +24,7 @@ import json
 import logging
 import os
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter
 
@@ -50,7 +52,7 @@ def _append(session_id: str, record: dict) -> None:
         return
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        record = {"ts": datetime.now(timezone.utc).isoformat(), **record}
+        record = {"ts": datetime.now(UTC).isoformat(), **record}
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
         _trim(path)

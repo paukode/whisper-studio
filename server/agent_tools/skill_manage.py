@@ -19,7 +19,7 @@ import json
 import os
 import re
 import shutil
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import server.skills as _sk
 from server import folder_skills
@@ -41,12 +41,9 @@ def _ok(**payload) -> str:
 
 
 def _enabled() -> bool:
-    try:
-        from server.infrastructure.feature_flags import is_enabled
+    from server.infrastructure.feature_flags import is_enabled
 
-        return is_enabled("skill_self_improvement")
-    except Exception:  # noqa: BLE001
-        return True
+    return is_enabled("skill_self_improvement")
 
 
 def _reload() -> None:
@@ -85,13 +82,10 @@ def _validate_name(name: str) -> str | None:
         return (
             "name must be 2-64 chars: lowercase letters, digits, '_' or '-', starting with a letter"
         )
-    try:
-        from server.skills_import import _is_reserved
+    from server.skills_import import _is_reserved
 
-        if _is_reserved(name.replace("-", "_")):
-            return f"'{name}' collides with a built-in tool name; pick another"
-    except Exception:  # noqa: BLE001
-        pass
+    if _is_reserved(name.replace("-", "_")):
+        return f"'{name}' collides with a built-in tool name; pick another"
     root = os.path.realpath(_sk.SKILLS_DIR)
     real = os.path.realpath(os.path.join(_sk.SKILLS_DIR, name))
     if not real.startswith(root + os.sep):
@@ -134,7 +128,7 @@ def _render_skill_md(name: str, description: str, body: str, triggers: list[str]
         lines.append("triggers: " + ", ".join(triggers))
     lines += [
         "created_by: agent",
-        f"created_at: {datetime.now(timezone.utc).date().isoformat()}",
+        f"created_at: {datetime.now(UTC).date().isoformat()}",
         "---",
         "",
         body.strip(),
@@ -189,8 +183,11 @@ def _create(name: str, tool_input: dict) -> str:
         return _err(
             f"description must be at most {MAX_DESCRIPTION_CHARS} characters; it is the index line"
         )
-    if _skill_dir_for(name) or _flat_skill_file(name) or name in _sk.SKILLS:
-        return _err(f"a skill named '{name}' already exists; use patch or append to change it")
+    taken = _sk.skill_name_taken(name)
+    if taken or _skill_dir_for(name) or _flat_skill_file(name):
+        return _err(
+            f"a skill named '{taken or name}' already exists; use patch or append to change it"
+        )
     triggers_raw = tool_input.get("triggers") or []
     if isinstance(triggers_raw, str):
         triggers_raw = [t for t in triggers_raw.split(",")]

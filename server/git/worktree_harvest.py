@@ -2,7 +2,7 @@
 
 Worktree-isolated agents may leave their work COMMITTED (they have git tools),
 UNCOMMITTED, or a mix. A branch merge is a no-op when nothing was committed,
-and a HEAD-relative diff misses whatever the agent committed — either way the
+and a HEAD-relative diff misses whatever the agent committed, either way the
 work stranded in ``.whisper/worktrees/agent-*``.
 
 Harvest materializes the worktree's full delta SINCE THE BRANCH POINT (base
@@ -10,7 +10,7 @@ commit) into the ORIGINATING working tree, UNCOMMITTED, so ``git status`` shows
 the agent's new/modified/deleted files for normal review. It works file by file
 off the git object database (blob SHAs are shared between a repo and its
 worktrees), which is robust for committed work, binary files, deletions, and
-executable bits — and lets non-conflicting files land even when one file
+executable bits, and lets non-conflicting files land even when one file
 collides. A file is a CONFLICT only when the main tree changed it away from the
 base AND differently from the agent; those files are left in the worktree,
 which is kept, and the note says exactly where. Nothing is ever committed or
@@ -34,14 +34,11 @@ log = logging.getLogger("whisper-studio")
 
 _APPLY_LOCK = threading.Lock()
 _GIT_TIMEOUT = 60
-# git's well-known empty-tree object id (sha1). Used only as a last-resort base
-# when the branch point is unknown AND git can't report the repo's empty tree.
-_EMPTY_TREE_SHA1 = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
 
 class _PathConflict(Exception):
     """The main tree holds something (a non-empty directory) at the agent's
-    target path that we must not clobber — treated as a per-file conflict, not a
+    target path that we must not clobber, treated as a per-file conflict, not a
     hard error, so the rest of the harvest still applies."""
 
 
@@ -107,12 +104,12 @@ def _remove_worktree(
                 worktree_path,
                 (r.stderr or b"").decode(errors="replace").strip(),
             )
-    except Exception as e:  # noqa: BLE001 — cleanup must never raise
+    except Exception as e:  # noqa: BLE001 (cleanup must never raise)
         log.warning("worktree cleanup error for %s: %s", worktree_path, e)
     try:
         set_session(session_key, None)
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as e:  # noqa: BLE001 (cleanup must never raise)
+        log.warning("worktree session clear failed for %s: %s", session_key, e)
     return removed, branch_deleted
 
 
@@ -162,7 +159,7 @@ def _hash_worktree_file(repo_root: str, path: str) -> str | None:
     """Blob SHA of the main tree's CURRENT file at path, or None if absent.
 
     A symlink must be hashed as git stores it (blob = the link-target string),
-    NOT by following it — `git hash-object <path>` dereferences the link and
+    NOT by following it, `git hash-object <path>` dereferences the link and
     hashes the target's content, which would defeat conflict detection and let
     a user's local symlink be silently clobbered."""
     abspath = os.path.join(repo_root, path)
@@ -191,7 +188,7 @@ def _materialize(repo_root: str, path: str, blob_sha: str, dmode: str) -> None:
     replaced so a type change (file <-> symlink) is honored."""
     is_symlink = dmode == "120000"
     # For regular files, run the blob through the repo's smudge filters
-    # (--filters --path) so gitattributes are honored — EOL normalization and
+    # (--filters --path) so gitattributes are honored, EOL normalization and
     # Git-LFS pointers resolve to what a real checkout would write. Symlinks
     # take the raw blob (its content is the literal link target).
     cat_args = (
@@ -199,14 +196,20 @@ def _materialize(repo_root: str, path: str, blob_sha: str, dmode: str) -> None:
         if is_symlink
         else ["git", "cat-file", "--filters", "--path", path, blob_sha]
     )
-    content = subprocess.run(
+    blob = subprocess.run(
         cat_args,
         cwd=repo_root,
         capture_output=True,
         timeout=_GIT_TIMEOUT,
         stdin=subprocess.DEVNULL,
         env=_git_env(),
-    ).stdout
+    )
+    if blob.returncode != 0:
+        # A failed read (a missing object, a required smudge filter such as
+        # git-lfs not installed) must not write an empty file over the user's.
+        err = (blob.stderr or b"").decode(errors="replace").strip()
+        raise RuntimeError(f"git cat-file failed for {path}: {err}")
+    content = blob.stdout
     abspath = os.path.join(repo_root, path)
     _rm_path(abspath)  # replace cleanly (file <-> symlink <-> directory type change)
     os.makedirs(os.path.dirname(abspath) or ".", exist_ok=True)
@@ -230,7 +233,7 @@ def _classify(repo_root: str, e: dict) -> str:
 
     main_matches_base = (main_sha == base_sha) if base_present else (main_sha is None)
     if main_matches_base:
-        return "apply"  # main untouched since the branch point — safe to write
+        return "apply"  # main untouched since the branch point, safe to write
     if e["status"] == "D":
         return "noop" if main_sha is None else "conflict"
     if main_sha == e["target_sha"]:
@@ -250,8 +253,8 @@ def harvest_agent_worktree(
 
     Returns ``{"status", "files", "conflicts", "note"}``. status is:
     ``applied`` (all changes landed uncommitted, worktree removed), ``partial``
-    (some landed, some conflicted — worktree kept), ``clean`` (nothing to bring
-    back, worktree removed), ``kept`` (not applied — agent incomplete, or all
+    (some landed, some conflicted, worktree kept), ``clean`` (nothing to bring
+    back, worktree removed), ``kept`` (not applied, agent incomplete, or all
     files conflict; worktree kept), or ``error``. The note is written for the
     user/model and always states where the files ARE.
     """
@@ -262,12 +265,23 @@ def harvest_agent_worktree(
 
         # Diff against the BRANCH POINT so committed agent work is included. If
         # the base is unknown (repo had no commit when the worktree was made),
-        # fall back to the empty tree so everything reads as new — never the
-        # worktree's own HEAD, which would hide whatever the agent committed.
+        # diff against the repo's empty tree so everything reads as new, never
+        # the worktree's own HEAD, which would hide whatever the agent committed.
         base = base_commit
         if not base:
             empty = _run(["git", "hash-object", "-t", "tree", "/dev/null"], cwd=worktree_path)
-            base = _text(empty).strip() or _EMPTY_TREE_SHA1
+            base = _text(empty).strip()
+            if empty.returncode != 0 or not base:
+                err = (empty.stderr or b"").decode(errors="replace").strip()
+                return {
+                    "status": "error",
+                    "files": 0,
+                    "conflicts": 0,
+                    "note": (
+                        f"could not compute the empty tree to diff the worktree at "
+                        f"{worktree_path} ({err}); it was left in place."
+                    ),
+                }
         entries = _changed_entries(worktree_path, base)
         if entries is None:
             return {
@@ -323,10 +337,10 @@ def harvest_agent_worktree(
                         done += 1
                     except _PathConflict:
                         # A non-empty directory holds the user's untracked files
-                        # at this path — never destroy it; record a conflict and
+                        # at this path, never destroy it; record a conflict and
                         # keep going with the other files.
                         conflicts.append(e["path"])
-            except Exception as we:  # noqa: BLE001 — report partial state honestly
+            except Exception as we:  # noqa: BLE001 (report partial state honestly)
                 log.warning("worktree harvest write error for %s: %s", worktree_path, we)
                 return {
                     "status": "error",
@@ -334,7 +348,7 @@ def harvest_agent_worktree(
                     "conflicts": len(conflicts),
                     "note": (
                         f"applied {done} file(s) before a write error ({we}); the working tree in "
-                        f"{repo_root} is PARTIALLY modified — review git status. The worktree "
+                        f"{repo_root} is PARTIALLY modified, review git status. The worktree "
                         f"remains at {worktree_path} (branch {branch})."
                     ),
                 }
@@ -357,11 +371,11 @@ def harvest_agent_worktree(
                 tail = f"Worktree and branch {branch} removed."
             elif removed:
                 tail = (
-                    f"Worktree removed; branch {branch} could not be deleted — remove it manually."
+                    f"Worktree removed; branch {branch} could not be deleted, remove it manually."
                 )
             else:
                 tail = (
-                    f"NOTE: could not remove the worktree at {worktree_path} (branch {branch}) — "
+                    f"NOTE: could not remove the worktree at {worktree_path} (branch {branch}), "
                     "remove it manually."
                 )
             return {
@@ -369,7 +383,7 @@ def harvest_agent_worktree(
                 "files": applied_n,
                 "conflicts": 0,
                 "note": (
-                    f"{applied_n} file(s) applied UNCOMMITTED to '{cur_branch}' in {repo_root} — "
+                    f"{applied_n} file(s) applied UNCOMMITTED to '{cur_branch}' in {repo_root}, "
                     f"{commit_hint}. {tail}"
                 ),
             }
@@ -384,7 +398,7 @@ def harvest_agent_worktree(
                 "note": (
                     f"{applied_n} file(s) applied UNCOMMITTED to '{cur_branch}'; {commit_hint}. "
                     f"{len(conflicts)} file(s) CONFLICT with the current working tree (local "
-                    f"edits or another agent's changes) and were NOT applied ({clist}) — resolve "
+                    f"edits or another agent's changes) and were NOT applied ({clist}), resolve "
                     f"them from the retained worktree at {worktree_path} (branch {branch})."
                 ),
             }
@@ -398,7 +412,7 @@ def harvest_agent_worktree(
                 f"remain in the worktree at {worktree_path} (branch {branch})."
             ),
         }
-    except Exception as e:  # noqa: BLE001 — harvesting must never break the agent result
+    except Exception as e:  # noqa: BLE001 (harvesting must never break the agent result)
         log.warning("worktree harvest failed for %s: %s", worktree_path, e)
         return {
             "status": "error",

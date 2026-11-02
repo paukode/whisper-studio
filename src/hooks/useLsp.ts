@@ -213,8 +213,11 @@ export function useLsp(params: UseLspParams): UseLspReturn {
           });
           setConnStatus('connected');
         })
-        .catch(() => {
-          if (!disposed) setConnStatus('error');
+        .catch((err: unknown) => {
+          // A close already set its own state (and its reason); otherwise
+          // the initialize timeout or error reply is the reason.
+          if (failure !== null || socket.readyState !== WebSocket.OPEN) return;
+          fail(`The language server did not start: ${err instanceof Error ? err.message : String(err)}`);
         });
     };
 

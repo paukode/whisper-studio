@@ -17,19 +17,19 @@ from server.approval.markers import workspace_prompt
 from .paths import (
     RECENT_WORKSPACES_PATH,
     SAVE_LOCATIONS_PATH,
-    WORKSPACE_BACKUPS,
     WORKSPACE_CONFIG_PATH,
     _is_system_path,
     _ws_path_allowed,
     _ws_validate_path,
     in_other_scratch,
 )
+from .write_undo import clear_write_backups
 
 log = logging.getLogger("whisper-studio")
 
 # Serializes every read-modify-write of workspace_config.json: the REST
-# connect/disconnect handlers on the event loop, and connect_workspace /
-# open_folder_now called from tool threads. Held only around the small file
+# connect/disconnect handlers on the event loop, and connect_workspace called
+# from tool threads (git_clone, ws_open_folder). Held only around the small file
 # read and the atomic replace, never across anything a turn does, so taking
 # it on the loop costs microseconds.
 CONFIG_LOCK = threading.Lock()
@@ -57,12 +57,35 @@ def _write_json_atomically(path: str, data) -> None:
         raise
 
 
-def load_workspace_config() -> dict:
+def _read_json_state(path: str, kind: type, missing):
+    """Read one of the small workspace state files.
+
+    A missing file is the only expected case and gives ``missing``. A file
+    that cannot be read, does not parse, or holds the wrong JSON type raises
+    ValueError naming the file, so a damaged file never reads as "nothing
+    connected" and is never overwritten with that default by the next save.
+    """
     try:
-        with open(WORKSPACE_CONFIG_PATH) as f:
-            return json.load(f)
-    except Exception:
-        return {"path": None}
+        with open(path) as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        return missing
+    except (OSError, ValueError) as e:
+        raise ValueError(f"Could not read {path}: {e}") from e
+    if not isinstance(data, kind):
+        raise ValueError(f"Could not read {path}: expected a JSON {kind.__name__}")
+    return data
+
+
+def _read_path_list(path: str) -> list[str]:
+    data = _read_json_state(path, list, [])
+    if not all(isinstance(p, str) for p in data):
+        raise ValueError(f"Could not read {path}: expected a list of folder paths")
+    return data
+
+
+def load_workspace_config() -> dict:
+    return _read_json_state(WORKSPACE_CONFIG_PATH, dict, {"path": None})
 
 
 def save_workspace_config(config: dict):
@@ -176,16 +199,35 @@ def workspace_lost_message() -> str | None:
     )
 
 
-def _set_connected_path(path: str | None) -> str | None:
-    """Persist ``path`` as the connected workspace; returns the previous one.
-    Raises when the config cannot be written (the old file stays whole)."""
+# The previous workspace of a damaged config file is unknown: callers treat
+# it as a switch away from some workspace (release it, drop scoped state).
+_UNKNOWN_PREVIOUS = object()
+
+
+def _set_connected_path(path: str | None, *, replace_damaged: bool = False):
+    """Persist ``path`` as the connected workspace; returns (previous, damage).
+
+    ``previous`` is the path that was connected, or _UNKNOWN_PREVIOUS when
+    the file was damaged and replaced. ``damage`` is None, or the read error
+    of the damaged file. Only the user's explicit connect or disconnect
+    passes ``replace_damaged``: it writes a fresh file over the damaged one
+    (logged at warning, and returned so the UI says so). Any other caller
+    raises the read error. Raises when the config cannot be written (the old
+    file stays whole).
+    """
     with CONFIG_LOCK:
-        config = load_workspace_config()
+        try:
+            config = load_workspace_config()
+        except ValueError as e:
+            if not replace_damaged:
+                raise
+            log.warning("workspace config damaged, replaced on the user's request: %s", e)
+            save_workspace_config({"path": path})
+            return _UNKNOWN_PREVIOUS, f"The damaged workspace config was replaced ({e})."
         previous = config.get("path")
         config["path"] = path
-        config.pop("mode", None)  # retired field; scrub it from old configs
         save_workspace_config(config)
-    return previous
+    return previous, None
 
 
 def _release_workspace() -> None:
@@ -216,7 +258,7 @@ def get_workspace_override() -> str | None:
     """The raw per-task override, or None outside worktree isolation.
 
     Distinct from get_workspace_path(), which falls back to the globally
-    connected workspace when no override is set — callers that need to know
+    connected workspace when no override is set, callers that need to know
     specifically whether isolation is active (e.g. cwd_tracker) want this one.
     """
     return _WS_OVERRIDE.get()
@@ -243,11 +285,11 @@ def get_workspace_path() -> str | None:
 
 
 def load_recent_workspaces() -> list[str]:
-    try:
-        with open(RECENT_WORKSPACES_PATH) as f:
-            return json.load(f)
-    except Exception:
-        return []
+    return _read_path_list(RECENT_WORKSPACES_PATH)
+
+
+def save_recent_workspaces(recent: list[str]) -> None:
+    _write_json_atomically(RECENT_WORKSPACES_PATH, recent)
 
 
 def save_recent_workspace(path: str):
@@ -256,7 +298,7 @@ def save_recent_workspace(path: str):
         recent.remove(path)
     recent.insert(0, path)
     recent = recent[:10]
-    _write_json_atomically(RECENT_WORKSPACES_PATH, recent)
+    save_recent_workspaces(recent)
 
 
 def _workspace_prompt_payload(tool_name: str, tool_input: dict) -> str:
@@ -308,7 +350,7 @@ def _workspace_prompt_payload(tool_name: str, tool_input: dict) -> str:
 # strews 'v2'/'final'/'clean' copies across the user's folder.
 REVISION_HINT = (
     "If a follow-up produces a revised version of this file, write it to this "
-    "exact same destination — the write replaces the file — do NOT save it under "
+    "exact same destination (the write replaces the file); do NOT save it under "
     "a new name unless the user asks for a separate copy."
 )
 
@@ -334,7 +376,7 @@ def resolve_write_destination(tool_name: str, tool_input: dict) -> tuple[str, st
       destination like destination_path: the save approval card shows the
       full path and the user decides there. It never raises the folder
       picker; the workspace was fine, and switching roots cannot fix a path.
-    - Neither: default to ~/Documents/<filename> — the approval card shows
+    - Neither: default to ~/Documents/<filename>, the approval card shows
       the full path and is the single human gate; the model's reply tells
       the user where the file went.
 
@@ -386,14 +428,10 @@ def resolve_write_destination(tool_name: str, tool_input: dict) -> tuple[str, st
 
 def load_save_locations() -> list[str]:
     """Directories written to via the one-shot save_file flow. Small, capped
-    list — never 'connected' or 'indexed' — that lets a file saved this way
+    list, never 'connected' or 'indexed', that lets a file saved this way
     stay clickable/revealable via /open-with and /reveal afterward without
     the heavyweight persistent-workspace machinery."""
-    try:
-        with open(SAVE_LOCATIONS_PATH) as f:
-            return json.load(f)
-    except Exception:
-        return []
+    return _read_path_list(SAVE_LOCATIONS_PATH)
 
 
 def record_save_location(path: str) -> None:
@@ -415,7 +453,7 @@ def clear_workspace_scoped_state() -> None:
     Without this, per-session shell cwds keep running read-only commands in
     the old folder and the worktree registry resolves stale branch names.
     Called both on an actual workspace switch (connect_workspace) and on
-    disconnect — disconnecting represents "no workspace connected" regardless
+    disconnect, disconnecting represents "no workspace connected" regardless
     of what gets connected next, so it must not defer this to whatever
     connect happens to follow. A disconnect immediately followed by
     reconnecting to a DIFFERENT path used to skip this entirely: connect's own
@@ -465,12 +503,12 @@ def disconnect_workspace() -> list[str]:
     A turn that is still running finds out at its next workspace tool call,
     which is refused (workspace_lost_message).
     """
-    previous = _set_connected_path(None)
+    previous, damage = _set_connected_path(None, replace_damaged=True)
     if previous:
         _release_workspace()
-    warnings: list[str] = []
+    warnings: list[str] = [damage] if damage else []
     for label, step in (
-        ("undo backups", WORKSPACE_BACKUPS.clear),
+        ("undo copies", clear_write_backups),
         ("session shell state", clear_workspace_scoped_state),
         ("git watcher", lambda: _point_git_watcher_at(None)),
         ("workspace watcher", lambda: _point_workspace_watcher_at(None)),
@@ -483,7 +521,9 @@ def disconnect_workspace() -> list[str]:
     return warnings
 
 
-def connect_workspace(path: str, *, by_user: bool = False) -> str:
+def connect_workspace(
+    path: str, *, by_user: bool = False, warnings: list[str] | None = None
+) -> str:
     """Mark `path` as the active workspace, persist it, refresh recents, and
     re-point the git file watcher. Returns the canonicalised realpath that
     was stored. Raises ValueError if the directory does not exist.
@@ -500,6 +540,10 @@ def connect_workspace(path: str, *, by_user: bool = False) -> str:
     A tool in a turn whose workspace the user let go of may not connect one
     (ValueError with the reason): it would bring back the folder the user
     just disconnected, or replace the one they connected instead.
+
+    The user's connect also replaces a damaged workspace config file (a
+    tool's connect raises its read error); the note about it is appended to
+    ``warnings`` when the caller passes a list.
     """
     if not by_user:
         lost = workspace_lost_message()
@@ -508,12 +552,23 @@ def connect_workspace(path: str, *, by_user: bool = False) -> str:
     real = os.path.realpath(path)
     if not os.path.isdir(real):
         raise ValueError(f"Directory not found: {real}")
-    previous = _set_connected_path(real)
-    switched = bool(previous) and os.path.realpath(previous) != real
+    try:
+        os.listdir(real)
+    except PermissionError as e:
+        # macOS refused the read (Files and Folders access): connecting would
+        # show an empty tree with no reason.
+        raise ValueError(f"Cannot read {real}: {e.strerror}") from e
+    previous, damage = _set_connected_path(real, replace_damaged=by_user)
+    if damage and warnings is not None:
+        warnings.append(damage)
+    if previous is _UNKNOWN_PREVIOUS:
+        switched = True
+    else:
+        switched = bool(previous) and os.path.realpath(previous) != real
     if switched and by_user:
         _release_workspace()
     save_recent_workspace(real)
-    WORKSPACE_BACKUPS.clear()
+    clear_write_backups()
     # On an ACTUAL workspace change, drop state scoped to the old workspace so
     # it can't bleed into the new one. Without this, per-session shell cwds keep
     # running read-only commands in the old folder, and the worktree registry
@@ -531,7 +586,7 @@ def _check_writable(path: str) -> bool:
 
     Returns False only when we have a clear signal the folder cannot be
     written to (not a directory, OSError, or os.access denies W_OK).
-    Returns True otherwise — including ambiguous cases where os.access
+    Returns True otherwise, including ambiguous cases where os.access
     is unreliable (network mounts, root user, macOS extended ACLs). The
     frontend treats False as a soft warning ("note: this folder appears
     read-only, writes will be confirmed on first attempt"), never as a

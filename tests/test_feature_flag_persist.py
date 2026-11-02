@@ -29,11 +29,9 @@ RICH_CONFIG = {
 
 
 def test_toggling_flag_preserves_rich_chat_models(tmp_path, monkeypatch):
-    cfg = tmp_path / "config.json"
+    cfg = tmp_path / "config.user.json"
     cfg.write_text(json.dumps(RICH_CONFIG))
-    monkeypatch.setattr(config_mod, "CONFIG_PATH", str(cfg))
-    # Pin the user layer to this throwaway file (config.json is still a valid
-    # active user layer) so the path resolver never falls through to the repo.
+    # Pin the user layer to this throwaway file so the repo's is never touched.
     monkeypatch.setattr(config_mod, "USER_CONFIG_PATH", str(cfg))
     config_mod._invalidate_cache()
 
@@ -54,7 +52,7 @@ def test_toggling_flag_preserves_rich_chat_models(tmp_path, monkeypatch):
     config_mod._invalidate_cache()
 
 
-# A config.json with deliberate, non-json.dump formatting: aligned one-line
+# A config.user.json with deliberate, non-json.dump formatting: aligned one-line
 # model entries, specific indentation. A toggle must not disturb any of it.
 HAND_FORMATTED = (
     "{\n"
@@ -72,11 +70,9 @@ HAND_FORMATTED = (
 
 
 def test_toggle_changes_only_the_one_boolean(tmp_path, monkeypatch):
-    cfg = tmp_path / "config.json"
+    cfg = tmp_path / "config.user.json"
     cfg.write_text(HAND_FORMATTED)
-    monkeypatch.setattr(config_mod, "CONFIG_PATH", str(cfg))
-    # Pin the user layer to this throwaway file (config.json is still a valid
-    # active user layer) so the path resolver never falls through to the repo.
+    # Pin the user layer to this throwaway file so the repo's is never touched.
     monkeypatch.setattr(config_mod, "USER_CONFIG_PATH", str(cfg))
     config_mod._invalidate_cache()
 
@@ -89,11 +85,9 @@ def test_toggle_changes_only_the_one_boolean(tmp_path, monkeypatch):
 
 
 def test_toggle_other_flag_leaves_companion_and_formatting(tmp_path, monkeypatch):
-    cfg = tmp_path / "config.json"
+    cfg = tmp_path / "config.user.json"
     cfg.write_text(HAND_FORMATTED)
-    monkeypatch.setattr(config_mod, "CONFIG_PATH", str(cfg))
-    # Pin the user layer to this throwaway file (config.json is still a valid
-    # active user layer) so the path resolver never falls through to the repo.
+    # Pin the user layer to this throwaway file so the repo's is never touched.
     monkeypatch.setattr(config_mod, "USER_CONFIG_PATH", str(cfg))
     config_mod._invalidate_cache()
 
@@ -105,11 +99,9 @@ def test_toggle_other_flag_leaves_companion_and_formatting(tmp_path, monkeypatch
 
 
 def test_toggle_inserts_absent_flag_without_reflowing_rest(tmp_path, monkeypatch):
-    cfg = tmp_path / "config.json"
+    cfg = tmp_path / "config.user.json"
     cfg.write_text(HAND_FORMATTED)
-    monkeypatch.setattr(config_mod, "CONFIG_PATH", str(cfg))
-    # Pin the user layer to this throwaway file (config.json is still a valid
-    # active user layer) so the path resolver never falls through to the repo.
+    # Pin the user layer to this throwaway file so the repo's is never touched.
     monkeypatch.setattr(config_mod, "USER_CONFIG_PATH", str(cfg))
     config_mod._invalidate_cache()
 

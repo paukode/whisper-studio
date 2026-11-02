@@ -15,11 +15,11 @@ WSDiagram.mount("home-diagram", {
   ],
   nodes: [
     { id: "spa", group: "browser", x: 40, y: 168, w: 158, h: 64, label: "React SPA", sub: "chat · transcript · IDE", desc: "The single-page app: chat, live transcript, and the full workspace IDE." },
-    { id: "wire", group: "transport", x: 248, y: 172, w: 158, h: 56, label: "HTTP · SSE · WS", sub: "one port", desc: "REST + Server-Sent Events + WebSocket, all on http://127.0.0.1:8000." },
+    { id: "wire", group: "transport", x: 248, y: 172, w: 158, h: 56, label: "HTTP · SSE · WS", sub: "one port", desc: "REST + Server-Sent Events + WebSocket, all on one local port (41410 for the Mac app, 41430 for a source install)." },
     { id: "api", group: "server", x: 468, y: 102, w: 168, h: 58, label: "FastAPI server", sub: "server/main.py", desc: "Serves the SPA and the API from one process; dispatches every request." },
     { id: "exec", group: "tools", x: 468, y: 248, w: 168, h: 58, label: "Tool executors", sub: "executors/", desc: "Runs the assistant's tool calls: files, git, web, code, memory." },
     { id: "asr", group: "local", x: 698, y: 54, w: 172, h: 60, label: "On-device ASR", sub: "2 engines + Canary translate", desc: "Whisper or Parakeet transcribes locally, with optional live translation (Canary or Apple). Audio never leaves the machine." },
-    { id: "bedrock", group: "external", kind: "external", x: 698, y: 128, w: 172, h: 60, label: "Amazon Bedrock", sub: "Claude · GPT-5", desc: "Used only for a cloud chat model, and only when you submit a message. Bedrock hosts both the Claude and the GPT-5.x models offered in the picker." },
+    { id: "bedrock", group: "external", kind: "external", x: 698, y: 128, w: 172, h: 60, label: "Amazon Bedrock", sub: "Claude · GPT", desc: "Used only in Hybrid and Cloud modes: for a cloud chat model, and for background work such as session titles, memory, and the index. Local mode makes no Bedrock calls. Bedrock hosts both the Claude and the GPT models offered in the picker." },
     { id: "localchat", group: "local", x: 698, y: 202, w: 172, h: 60, label: "On-device chat model", sub: "local mode", desc: "In local mode, chat runs entirely on your machine instead of calling Bedrock at all. Same tool loop, same UI." },
     { id: "store", group: "persist", kind: "store", x: 698, y: 276, w: 172, h: 60, label: "Workspace + SQLite", sub: "files · sessions", desc: "Your files plus the WAL-mode SQLite session database." }
   ],
@@ -28,7 +28,7 @@ WSDiagram.mount("home-diagram", {
     { from: "wire", to: "api" },
     { from: "api", to: "exec" },
     { from: "api", to: "asr", label: "audio" },
-    { from: "api", to: "bedrock", label: "chat, cloud mode" },
+    { from: "api", to: "bedrock", label: "hybrid / cloud mode" },
     { from: "api", to: "localchat", label: "chat, local mode" },
     { from: "exec", to: "store" }
   ]

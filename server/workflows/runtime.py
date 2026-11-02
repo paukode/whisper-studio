@@ -30,15 +30,28 @@ WORKFLOW_MAX_AGENTS = 1000
 # Every run gets a hard budget in agent OUTPUT tokens (the work measure —
 # input is dominated by cheap cache reads, and output is the number a user
 # can read off any provider's pricing page). Callers that set no budget get
-# this default; None is only possible for pre-migration rows.
+# this default.
 DEFAULT_WORKFLOW_BUDGET_TOKENS = 600_000
 _LINE_LIMIT = 10 * 1024 * 1024
 
 _HARNESS = os.path.join(os.path.dirname(__file__), "harness", "harness.mjs")
 
 
+class NodeNotFoundError(RuntimeError):
+    """No node executable to run the workflow harness."""
+
+
 def _node_bin() -> str:
-    return resolve("node", "WHISPER_NODE_PATH") or "/usr/local/bin/node"
+    """The node that runs the harness: WHISPER_NODE_PATH when it names an
+    executable, else the first node on PATH. Raises NodeNotFoundError when
+    there is neither, so a run never starts on a guessed path."""
+    node = resolve("node", "WHISPER_NODE_PATH")
+    if not node:
+        raise NodeNotFoundError(
+            "Node.js was not found, so workflows cannot run. Install Node.js "
+            "or set WHISPER_NODE_PATH to a node executable."
+        )
+    return node
 
 
 # --disallow-code-generation-from-strings makes eval()/new Function() throw in
@@ -69,7 +82,8 @@ def _scrubbed_env() -> dict:
 def parse_workflow(source: str, *, timeout: float = 10) -> dict:
     """Synchronously run the harness in PARSE mode: syntax-check the script and
     extract+validate its ``meta`` literal WITHOUT executing it. Returns
-    {name, description, phases}. Raises ValueError on any problem. Safe to call
+    {name, description, phases}. Raises ValueError on a problem with the
+    script and NodeNotFoundError when there is no node to run it. Safe to call
     from a worker thread (used by the workflow_run tool for the approval
     preview)."""
     import json
@@ -87,6 +101,10 @@ def parse_workflow(source: str, *, timeout: float = 10) -> dict:
         )
     except subprocess.TimeoutExpired as e:
         raise ValueError("workflow parse timed out") from e
+    except OSError as e:
+        # The node that resolved cannot start (not executable, wrong CPU
+        # type, removed since). Not a problem with the script.
+        raise NodeNotFoundError(f"Node.js could not start: {e}") from e
     for line in (proc.stdout or "").splitlines():
         line = line.strip()
         if not line:
@@ -113,7 +131,7 @@ class WorkflowRun:
         model_id: str = "",
         effort_label: str | None = None,
         workspace_path: str | None = None,
-        budget_tokens: int | None = None,
+        budget_tokens: int = DEFAULT_WORKFLOW_BUDGET_TOKENS,
         depth: int = 0,
         journal: Journal | None = None,
         resume_cache: dict | None = None,
@@ -129,9 +147,8 @@ class WorkflowRun:
         self.effort_label = effort_label
         # The canonical workspace root every agent this run spawns resolves
         # against, frozen at launch (server.workflows.manager.
-        # resolve_workflow_workspace) — None only for a pre-migration row or a
-        # launch with nothing connected and no explicit path, matching the
-        # fully-unpinned legacy behavior.
+        # resolve_workflow_workspace); None for a launch with nothing
+        # connected and no explicit path.
         self.workspace_path = workspace_path
         self.budget_tokens = budget_tokens
         self.depth = depth
@@ -203,8 +220,8 @@ class WorkflowRun:
         if self.proc and self.proc.returncode is None:
             try:
                 await self._send(rpc.control("cancel"))
-            except Exception:
-                pass
+            except Exception as e:  # noqa: BLE001 - the kill below ends it anyway
+                log.debug("workflow %s: cancel message not sent: %s", self.run_id, e)
             await asyncio.sleep(2)
             self._kill()
 
@@ -295,11 +312,18 @@ class WorkflowRun:
         full result is returned to the program.
         """
         name = str(params.get("name") or "")
-        args = params.get("args") or {}
+        args = params.get("args")
         if self._cancelled:
             return await self._error(mid, rpc.ERR_CANCELLED, "run cancelled")
         if not isinstance(args, dict):
             return await self._error(mid, rpc.ERR_INTERNAL, "tool args must be an object")
+        from server.chat.tool_pool import assemble_full_catalog
+        from server.tool_inputs import ToolInputError, schemas_for_tools, validate_tool_input
+
+        try:
+            validate_tool_input(name, args, schemas_for_tools(assemble_full_catalog()))
+        except ToolInputError as exc:
+            return await self._error(mid, rpc.ERR_INTERNAL, str(exc))
 
         from server.executors import is_read_only
         from server.mcp_read_only import is_mcp_tool, is_read_only_mcp_tool
@@ -339,7 +363,15 @@ class WorkflowRun:
                 mid, rpc.ERR_INTERNAL, f"tool-call cap {self._TOOL_CALL_CAP} reached"
             )
 
+        from server.security.secret_reads import SECRET_READS_KEY
         from server.skills import execute_mcp_tool, execute_tool
+
+        # A script's arguments are untrusted, including authorization stamps.
+        # Script subcalls cannot prompt for credentials or impersonate a session.
+        call_input = dict(args)
+        call_input["__session_id__"] = self.session_id
+        call_input["__agent__"] = True
+        call_input[SECRET_READS_KEY] = False
 
         # Copy the current context into the worker thread: get_workspace_path()
         # and other tool state read ContextVars (e.g. the workspace override)
@@ -349,10 +381,10 @@ class WorkflowRun:
         loop = asyncio.get_event_loop()
         try:
             if mcp:
-                result = await execute_mcp_tool(name, dict(args))
+                result = await execute_mcp_tool(name, call_input)
             else:
                 result = await loop.run_in_executor(
-                    None, lambda: ctx.run(execute_tool, name, dict(args))
+                    None, lambda: ctx.run(execute_tool, name, call_input)
                 )
         except Exception as e:  # noqa: BLE001 — surface as a JS throw, not a crash
             self.journal.tool_call({"seq": seq, "name": name, "status": "error", "error": str(e)})
@@ -365,7 +397,8 @@ class WorkflowRun:
                 from server.infrastructure import result_cache
 
                 cache_file = result_cache.write(f"toolscript_{name}", result)
-            except Exception:
+            except Exception as e:  # noqa: BLE001 - the preview is still journaled
+                log.warning("workflow %s: tool result %s not cached: %s", self.run_id, name, e)
                 cache_file = ""
             preview = result[: self._TOOL_LOG_PREVIEW]
             self.journal.tool_call(
@@ -398,7 +431,7 @@ class WorkflowRun:
             return await self._error(
                 mid, rpc.ERR_AGENT_CAP, f"agent cap {WORKFLOW_MAX_AGENTS} reached"
             )
-        if self.budget_tokens is not None and self.tokens_out >= self.budget_tokens:
+        if self.tokens_out >= self.budget_tokens:
             return await self._error(
                 mid, rpc.ERR_BUDGET, f"budget {self.budget_tokens} output tokens exhausted"
             )
@@ -438,7 +471,7 @@ class WorkflowRun:
             # at a time, and this re-check sees the tokens accrued by earlier
             # completions — bounding overshoot to the concurrency limit instead
             # of the whole 1000-agent cap.
-            if self.budget_tokens is not None and self.tokens_out >= self.budget_tokens:
+            if self.tokens_out >= self.budget_tokens:
                 return await self._error(
                     mid, rpc.ERR_BUDGET, f"budget {self.budget_tokens} output tokens exhausted"
                 )
@@ -537,8 +570,8 @@ class WorkflowRun:
     def _emit(self, ev: dict) -> None:
         try:
             self._on_event({"run_id": self.run_id, **ev})
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001 - a listener failure must not end the run
+            log.warning("workflow %s: event listener failed: %s", self.run_id, e)
 
     def _result(self, status: str, *, result=None, error: str = "") -> dict:
         return {
@@ -573,5 +606,5 @@ class WorkflowRun:
         if self.proc.returncode is None:
             try:
                 await asyncio.wait_for(self.proc.wait(), timeout=3)
-            except (asyncio.TimeoutError, Exception):
+            except (TimeoutError, Exception):
                 self._kill()

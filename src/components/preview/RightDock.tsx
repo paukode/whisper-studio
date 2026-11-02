@@ -12,8 +12,8 @@ const MIN_FRAC = 0.12;
 
 const KIND_COLOR: Record<DockKind, string> = {
   live: 'var(--accent-live)',
-  plan: 'var(--text-warning)',
-  tasks: 'var(--text-success)',
+  plan: 'var(--warning)',
+  tasks: 'var(--success)',
   file: 'var(--text-secondary)',
   docs: 'var(--accent)',
   agent: 'var(--accent-live)',
@@ -159,4 +159,3 @@ export const RightDock: React.FC = () => {
   );
 };
 
-export default RightDock;

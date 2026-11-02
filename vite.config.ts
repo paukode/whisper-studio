@@ -3,13 +3,11 @@ import react from '@vitejs/plugin-react';
 import { resolve } from 'path';
 
 export default defineConfig(({ command }) => {
-  // The backend port is dynamic: setup.sh starts at 8000 and increments
-  // until it finds a free port, then exports BACKEND_PORT for vite. We
-  // fall back to 8000 so plain ``npm run dev`` still works without the
-  // setup script. Bind everything to 127.0.0.1 (not ``localhost``) so
-  // we never go through the OS resolver — guest/captive Wi-Fi, IPv6
+  // setup.sh picks the backend port (41430, or the nearest free one) and
+  // exports BACKEND_PORT for vite. Plain ``npm run dev`` uses 41430. Bind everything to 127.0.0.1 (not ``localhost``) so
+  // we never go through the OS resolver, guest/captive Wi-Fi, IPv6
   // ``::1`` mismatches, and stale /etc/hosts entries all stop mattering.
-  const backendPort = process.env.BACKEND_PORT || '8000';
+  const backendPort = process.env.BACKEND_PORT || '41430';
   const backendHttp = `http://127.0.0.1:${backendPort}`;
   const backendWs = `ws://127.0.0.1:${backendPort}`;
 
@@ -17,24 +15,20 @@ export default defineConfig(({ command }) => {
   plugins: [react()],
   resolve: {
     alias: {
-      '@': resolve(__dirname, 'src'),
-      '@components': resolve(__dirname, 'src/components'),
-      '@hooks': resolve(__dirname, 'src/hooks'),
-      '@stores': resolve(__dirname, 'src/stores'),
-      '@types': resolve(__dirname, 'src/types'),
-      '@utils': resolve(__dirname, 'src/utils'),
+      '@': resolve(import.meta.dirname, 'src'),
     },
   },
   server: {
     host: '127.0.0.1',
-    // Honor PORT when a harness (e.g. preview tooling) assigns one; fall
-    // back to vite's default 5173 for plain ``npm run dev``.
-    port: Number(process.env.PORT) || 5173,
+    // Honor PORT when a harness (e.g. preview tooling) assigns one; plain
+    // ``npm run dev`` uses the source install's fixed UI port.
+    port: Number(process.env.PORT) || 41460,
     proxy: {
       '/api': backendHttp,
       '/static/modules': backendHttp,
       '/static/style.css': backendHttp,
       '/static/fonts': backendHttp,
+      '/docs-site': backendHttp,
       '/ws': {
         target: backendWs,
         ws: true,
@@ -43,19 +37,16 @@ export default defineConfig(({ command }) => {
     // Stop the dev server from watching worktree directories. When the
     // assistant runs `git worktree add` (via the enter_worktree tool or
     // any other path), the new directory appears inside the workspace
-    // and chokidar would otherwise stream every file in as a change —
+    // and chokidar would otherwise stream every file in as a change,
     // triggering an HMR cascade that ends with a full page reload (e.g.
     // tsconfig detection) and severs the live chat stream.
     //
     // We ignore these in-tree worktree locations:
-    //  - `.whisper/worktrees/**` — where the enter_worktree tool puts them.
-    //  - `.claude/worktrees/**` — where worktrees are created in this env.
-    //  - `.worktrees/**` — the historical/manual location some flows use.
-    //  - any worktree placed sibling-style at the repo root via
-    //    `<repo>-<branch>` (legacy `addGitWorktree` default path); we
-    //    can't pattern-match that from inside vite, so prefer the
-    //    in-tree patterns and steer the assistant toward them via the
-    //    git instructions prompt.
+    //  - `.whisper/worktrees/**`: where the enter_worktree tool puts them.
+    //  - `.claude/worktrees/**`: where worktrees are created in this env.
+    //  - `.worktrees/**`: where the ws_create_worktree tool puts them.
+    // A sibling `<repo>-<branch>` worktree (the terminal panel's default)
+    // is outside the vite root, so it is never watched.
     watch: {
       ignored: [
         '**/.whisper/worktrees/**',
@@ -64,7 +55,7 @@ export default defineConfig(({ command }) => {
       ],
     },
   },
-  // Only set base for production builds — dev server serves from /
+  // Only set base for production builds, dev server serves from /
   base: command === 'build' ? '/static/dist/' : '/',
   build: {
     outDir: 'static/dist',
@@ -92,17 +83,6 @@ export default defineConfig(({ command }) => {
     setupFiles: ['./src/test/setup.ts'],
     include: ['src/**/*.test.{ts,tsx}'],
     css: true,
-    coverage: {
-      provider: 'v8',
-      reporter: ['text', 'lcov', 'html'],
-      include: ['src/**/*.{ts,tsx}'],
-      exclude: [
-        'src/**/*.test.{ts,tsx}',
-        'src/test/**',
-        'src/main.tsx',
-        'src/**/*.d.ts',
-      ],
-    },
   },
   };
 });

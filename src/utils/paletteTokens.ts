@@ -51,7 +51,7 @@ export interface Palette {
 
 type RGB = [number, number, number];
 
-export function hexToRgb(hex: string): RGB {
+function hexToRgb(hex: string): RGB {
   const h = hex.replace('#', '');
   const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
   return [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16)) as RGB;

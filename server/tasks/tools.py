@@ -1,8 +1,7 @@
 """Model-facing tools for the unified background-task registry.
 
-``task_status`` and ``task_output`` resurrect what the dead ``get_task`` never
-delivered: a structured way for the model to check on background work instead
-of cat-ing an output file on faith. ``task_cancel`` stops a running task.
+``task_status`` and ``task_output`` give the model a structured way to check
+on background work instead of reading an output file directly. ``task_cancel`` stops a running task.
 
 Named ``task_cancel`` (not ``task_stop``) because ``task_stop`` belongs to the
 unrelated in-conversation todo tracker (server/tasks_tracker.py); descriptions
@@ -105,7 +104,7 @@ def _public_view(task: dict) -> dict:
 
 @register_executor("task_status", read_only=True, concurrent_safe=True)
 def _exec_task_status(tool_input, transcript, current_attachments):
-    session_id = tool_input.pop("__session_id__", "") or tool_input.get("session_id", "")
+    session_id = tool_input.pop("__session_id__", "")
     task_id = (tool_input.get("task_id") or "").strip()
     if task_id:
         task = registry.get_task(task_id)
@@ -186,14 +185,9 @@ def _exec_task_cancel(tool_input, transcript, current_attachments):
         return denied
     if task["status"] != "running":
         return f"Task {task_id} is not running (status: {task['status']})."
-    if task["kind"] == "shell":
-        from server.tasks import shell
+    from server.tasks.stop import stop_row_from_thread
 
-        ok = shell.stop_task(task_id)
-    else:
-        from server.tasks import agents
-
-        ok = agents.cancel_task(task_id)
+    ok = stop_row_from_thread(task)
     if ok:
         return f"Stop signal sent to {task['kind']} task {task_id}."
     return f"Task {task_id} could not be stopped (it may have just finished)."

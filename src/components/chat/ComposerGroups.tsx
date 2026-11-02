@@ -16,7 +16,7 @@ import { TokenCounter } from './TokenCounter';
  * open, so opening one closes the others and the More menu.
  */
 
-// Stored as GPT-5.x's native `verbosity` (low/medium/high); how each model
+// Stored as the OpenAI models' native `verbosity` (low/medium/high); how each model
 // applies it is resolved at send time (useChatStream).
 const VERBOSITY_LEVELS = ['low', 'medium', 'high'] as const;
 const VERBOSITY_LABEL: Record<string, string> = { low: 'Brief', medium: 'Normal', high: 'Detailed' };

@@ -1,9 +1,9 @@
-"""Raw config.json editing (/api/config/raw): GET returns the literal file,
+"""Raw config.user.json editing (/api/config/raw): GET returns the literal file,
 PUT validates — JSON syntax with line/column, then structure (every problem
 reported at once, mirroring server/local/registry.py's local-model rules) —
 writes atomically through the config module, and reports the post-save
 local-model registry. The first save of a session snapshots a timestamped
-backup next to the file (setup.sh's config.json.bak.<ts> convention).
+backup next to the file (the <file>.bak.<ts> convention).
 """
 
 from __future__ import annotations
@@ -33,13 +33,10 @@ VALID_LOCAL_MODEL = {
 @pytest.fixture()
 def cfg_path(tmp_path, monkeypatch):
     """Point the config module at a throwaway config.user.json (the editor's
-    target since the config split) and reset the per-session backup latch so each
-    test starts fresh. CONFIG_PATH (legacy) is aimed at a nonexistent file so the
-    path resolver deterministically uses the user layer."""
+    target) and reset the per-session backup latch so each test starts fresh."""
     path = tmp_path / "config.user.json"
     path.write_text(json.dumps({"model_mode": "cloud"}, indent=2) + "\n")
     monkeypatch.setattr(config_mod, "USER_CONFIG_PATH", str(path))
-    monkeypatch.setattr(config_mod, "CONFIG_PATH", str(tmp_path / "config.json"))
     monkeypatch.setattr(config_raw_routes, "_backup_done", False)
     config_mod._invalidate_cache()
     yield path
@@ -159,9 +156,7 @@ def test_put_local_model_id_must_have_local_prefix(client):
 def test_put_recommended_local_key_may_omit_weight_fields(client, monkeypatch):
     """A config entry for a RECOMMENDED local model (the recommendation fills
     repo_id/filename/dir) may carry just an override like ctx. It validates on its
-    own and becomes loadable once the weights are on disk."""
-    # Pin the recommendation as downloaded so it enters the effective registry.
-    monkeypatch.setattr("server.local.registry._recommended_downloaded_on_disk", lambda entry: True)
+    own and enters the registry over the recommendation."""
     text = json.dumps(
         {
             "chat_models": {

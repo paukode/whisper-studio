@@ -1,10 +1,8 @@
 """Two MCP contracts around the persisted `enabled` flag:
 
 (A) PUT /api/mcp/servers/{name} (mcp_update_server) preserves the persisted
-    `enabled` flag when it rewrites a server entry. A rewrite that reduced the
-    entry to {command, args, env} would drop the flag, and load_config()'s
-    backfill would then persist enabled=false — unticking an enabled server on
-    every edit or rename.
+    `enabled` flag when it rewrites a server entry, so an edit or rename never
+    flips a disabled server on or an enabled one off.
 
 (B) get_bedrock_tools advertises exactly the servers whose persisted `enabled`
     flag is on. That is the same set call_tool will run, since call_tool
@@ -41,7 +39,7 @@ def _stub_tool(name: str):
     t = MagicMock()
     t.name = name
     t.description = f"stub tool {name}"
-    t.inputSchema = {"type": "object", "properties": {}}
+    t.input_schema = {"type": "object", "properties": {}}
     return t
 
 
@@ -91,8 +89,6 @@ def test_put_edit_preserves_enabled_flag(isolated_mcp, monkeypatch):
     assert on_disk["alpha"]["command"] == "new"
     assert on_disk["alpha"]["enabled"] is True
 
-    # And a subsequent load_config must not backfill it to false (the exact
-    # chain the finding describes: dropped flag -> backfill persists false).
     assert mgr.load_config()["alpha"]["enabled"] is True
 
 
@@ -131,6 +127,58 @@ def test_put_edit_keeps_disabled_disabled(isolated_mcp, monkeypatch):
     with open(isolated_mcp) as f:
         on_disk = json.load(f)["servers"]
     assert on_disk["alpha"]["enabled"] is False
+
+
+@pytest.mark.parametrize("body", [{"command": "new"}, {"new_name": "renamed"}])
+def test_put_keeps_the_read_only_marks_the_form_does_not_own(isolated_mcp, monkeypatch, body):
+    with open(isolated_mcp, "w") as f:
+        json.dump(
+            {
+                "servers": {
+                    "alpha": {
+                        "command": "c",
+                        "args": [],
+                        "env": {},
+                        "enabled": True,
+                        "read_only": True,
+                        "read_only_tools": ["search"],
+                    }
+                }
+            },
+            f,
+        )
+    _bind_fresh_manager(monkeypatch)
+    asyncio.run(mcp_update_server("alpha", _FakeRequest(body)))
+    with open(isolated_mcp) as f:
+        entry = json.load(f)["servers"][body.get("new_name", "alpha")]
+    assert entry["read_only"] is True
+    assert entry["read_only_tools"] == ["search"]
+
+
+def test_put_with_cleared_fields_removes_them(isolated_mcp, monkeypatch):
+    with open(isolated_mcp, "w") as f:
+        json.dump(
+            {
+                "servers": {
+                    "alpha": {
+                        "command": "c",
+                        "args": [],
+                        "env": {"TOKEN_X": "secret"},
+                        "enabled": True,
+                        "url": "https://example.com/mcp",
+                        "enabled_tools": ["a"],
+                    }
+                }
+            },
+            f,
+        )
+    _bind_fresh_manager(monkeypatch)
+    cleared = {"command": "c", "env": {}, "url": "", "enabled_tools": []}
+    asyncio.run(mcp_update_server("alpha", _FakeRequest(cleared)))
+    with open(isolated_mcp) as f:
+        entry = json.load(f)["servers"]["alpha"]
+    assert entry["env"] == {}
+    assert "url" not in entry and "enabled_tools" not in entry
 
 
 # --- (B) advertisement matches what call_tool will run ------------------

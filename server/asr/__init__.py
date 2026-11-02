@@ -1,9 +1,8 @@
 """ASR backend registry.
 
 Backends are resolved lazily by name so an unused backend's module (and
-its model stack) is never imported. The config value ``streaming`` is a
-historical alias for the Parakeet backend, kept so existing config files
-and the frontend enum keep working.
+its model stack) is never imported. The config and UI value ``streaming``
+names the Parakeet backend; ``parakeet`` is the internal module key.
 
 To remove a backend permanently: delete its module file and its BACKENDS
 entry (and the alias, if any). Nothing else in the codebase imports

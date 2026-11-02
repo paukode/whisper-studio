@@ -303,8 +303,7 @@ export async function readSSEStream(
           const validated = SSEEventDataSchema.safeParse(raw);
           // When validation fails we still pass the raw payload through (some
           // SSE event types are intentionally loose Record<string, unknown>),
-          // but we log loudly. The old silent fallback hid malformed
-          // approval_request events that then crashed the banner.
+          // but we log loudly.
           if (!validated.success) {
             console.warn('SSE: payload failed Zod validation', { issues: validated.error.issues, raw });
           }
@@ -337,10 +336,6 @@ export async function readSSEStream(
             // saved now." in a single message. Tool-only segments are left
             // to accumulate (no text = nothing to separate).
             if (fullResponse) flushSegment();
-            // Remove empty thinking element if no thinking content
-            if (!thinkingText) {
-              store().appendThinkingToken(''); // signal no thinking
-            }
             skillsUsed.push(parsed.skill);
             // The provider's tool_use id pairs the call's later frames with
             // this trace; '' when the provider could not tag the frame, in
@@ -519,20 +514,23 @@ export async function readSSEStream(
 
           // ── ws_workspace_prompt ──
           if (parsed.ws_workspace_prompt) {
-            hasPendingApprovals = true;
             // server/tool_executor.py merges the real tool_use_id into this
             // payload before emitting it (see prompt_parsed = {**prompt_parsed,
             // "tool_use_id": state.tool_id}). Use it as the toolId so the
             // resume flow (WorkspacePromptCard) can answer the ACTUAL paused
             // tool_use block via the answers-array continuation path instead
             // of a hardcoded id that never matches anything server-side.
-            // Fall back to the old hardcoded string only if some older/odd
-            // payload shape omits the field.
             const wp = parsed.ws_workspace_prompt as Record<string, unknown>;
-            const toolUseId =
-              typeof wp.tool_use_id === 'string' && wp.tool_use_id
-                ? wp.tool_use_id
-                : 'ws_workspace_prompt';
+            const toolUseId = typeof wp.tool_use_id === 'string' ? wp.tool_use_id : '';
+            if (!toolUseId) {
+              // A card without its id could never resume the paused turn.
+              useUIStore.getState().addToast({
+                type: 'error',
+                message: 'The workspace folder prompt arrived without its tool call id, so it cannot resume the turn.',
+              });
+              continue;
+            }
+            hasPendingApprovals = true;
             // Same ordering rule as the event cards: commit the prose that led
             // up to the picker first, so the folder buttons sit at the bottom
             // of the conversation where the user is already looking.
@@ -743,26 +741,12 @@ export async function readSSEStream(
           // off a narrowed view. Surface a persistent error toast — the plain
           // "[Budget exceeded] …" text frame alone is easy to miss. Do NOT
           // break: the stream still needs to drain the trailing text/[DONE].
-          const budget = parsed as SSEEventData & {
-            budget_warning?: string;
-            budget_kind?: string;
-            budget_limit?: number;
-            budget_current?: number;
-          };
+          // The backend message spells out the kind, limit and current spend.
+          const budget = parsed as SSEEventData & { budget_warning?: string };
           if (budget.budget_warning) {
-            const kind = budget.budget_kind ?? 'cost';
-            const limit = budget.budget_limit;
-            const current = budget.budget_current;
-            // The backend message already spells out kind/limit/current; keep a
-            // composed fallback that also carries all three so the toast is
-            // meaningful even if the message string is ever empty.
-            const fallback =
-              typeof current === 'number' && typeof limit === 'number'
-                ? `${kind} cost $${current.toFixed(4)} reached the $${limit.toFixed(2)} limit.`
-                : `${kind} budget limit reached.`;
             useUIStore.getState().addToast({
               type: 'error',
-              message: budget.budget_warning || fallback,
+              message: budget.budget_warning,
               // Persistent (0 = no auto-dismiss): the run stopped, so the user
               // must see it and act (new session / raise the limit).
               duration: 0,
@@ -837,9 +821,7 @@ export async function readSSEStream(
           // The final structured payload from execute_team_create. Fold it
           // into the same turn-local report; it reaches the conversation on
           // the committed assistant message alongside the team_create trace,
-          // where the agent rows render it. (The old fallback that created a
-          // standalone JSON message here is gone — that was the ghost
-          // "Agent activity" card.)
+          // where the agent rows render it.
           if (parsed.team_results) {
             store().foldTeamResults(parsed.team_results);
           }
@@ -885,7 +867,7 @@ export async function readSSEStream(
           }
 
           // ── tool_result_truncated ──
-          // Backend persists oversize tool outputs to data/result_cache/ and
+          // Backend persists oversize tool outputs to the result cache and
           // emits this event so the UI can tell the user the model saw a
           // trimmed head+tail slice. Toast links to the full output via
           // /api/result-cache/{filename}.
@@ -895,7 +877,6 @@ export async function readSSEStream(
               full_size?: number;
               kept_bytes?: number;
               cache_filename?: string | null;
-              cache_path?: string | null;
             };
             const tool = t.tool_name ?? 'tool';
             const sizeKb = t.full_size ? Math.round(t.full_size / 1024) : null;
@@ -947,28 +928,18 @@ export async function readSSEStream(
           }
 
           // ── usage ──
-          // The backend (server/chat/engine/runner.py) sends BOTH per-round
-          // counts (`input_tokens`/`output_tokens`) and cumulative running
-          // totals (`total_prompt`/`total_input`/`total_output`) on every usage
-          // frame, and its `estimated_cost_usd` is cumulative too. Prefer the
-          // totals so the counter reflects the whole turn instead of collapsing
-          // to the last round; fall back to per-round for any emitter that
-          // omits totals.
+          // The backend (server/chat/engine/runner.py) sends cumulative running
+          // totals on every usage frame, and its `estimated_cost_usd` is
+          // cumulative too, so the counter reflects the whole turn.
           //
           // `total_prompt` is the input side: it counts every prompt token sent,
           // where `total_input` counts only the portion that missed the prompt
-          // cache — a few tokens on a warm turn, which is what made the counter
-          // read "4 in / 4,012 out". Older emitters that predate total_prompt
-          // fall back to total_input.
+          // cache (a few tokens on a warm turn).
           if (parsed.usage) {
-            inputTokens =
-              parsed.usage.total_prompt ??
-              parsed.usage.total_input ??
-              parsed.usage.input_tokens ??
-              inputTokens;
-            outputTokens = parsed.usage.total_output ?? parsed.usage.output_tokens ?? outputTokens;
-            const cost = parsed.usage.estimated_cost_usd ?? 0;
-            // context_used/context_max are real per-round token counts (WS-F);
+            inputTokens = parsed.usage.total_prompt;
+            outputTokens = parsed.usage.total_output;
+            const cost = parsed.usage.estimated_cost_usd;
+            // context_used/context_max are real per-round token counts;
             // feed them to the status bar's context meter.
             const ctxUsed = parsed.usage.context_used;
             const ctxMax = parsed.usage.context_max;

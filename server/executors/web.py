@@ -2,6 +2,8 @@ import logging
 import urllib.request
 from html.parser import HTMLParser
 
+from tavily import TavilyClient
+
 from server.executors import register_executor
 from server.infrastructure.config import get as config_get
 
@@ -16,8 +18,10 @@ class _HTMLToText(HTMLParser):
     def __init__(self):
         super().__init__()
         self._parts = []
-        self._skip = False
-        self._in_pre = False
+        # Depths, not flags: a nested end tag (</code> inside <pre>) must not
+        # end the outer element early.
+        self._skip = 0
+        self._in_pre = 0
         self._block_tags = {
             "p",
             "div",
@@ -37,16 +41,16 @@ class _HTMLToText(HTMLParser):
             "footer",
         }
         self._heading_tags = {"h1", "h2", "h3", "h4", "h5", "h6"}
-        self._skip_tags = {"script", "style", "noscript", "svg", "path"}
+        self._skip_tags = {"script", "style", "noscript", "svg"}
         self._current_heading = None
         self._link_hrefs = []
 
     def handle_starttag(self, tag, attrs):
         tag = tag.lower()
         if tag in self._skip_tags:
-            self._skip = True
+            self._skip += 1
         if tag == "pre" or tag == "code":
-            self._in_pre = True
+            self._in_pre += 1
         if tag in self._heading_tags:
             level = int(tag[1])
             self._current_heading = "#" * level + " "
@@ -71,9 +75,9 @@ class _HTMLToText(HTMLParser):
     def handle_endtag(self, tag):
         tag = tag.lower()
         if tag in self._skip_tags:
-            self._skip = False
+            self._skip = max(0, self._skip - 1)
         if tag == "pre" or tag == "code":
-            self._in_pre = False
+            self._in_pre = max(0, self._in_pre - 1)
         if tag in self._heading_tags:
             self._current_heading = None
             self._parts.append("\n")
@@ -131,14 +135,9 @@ def _is_safe_public_url(url: str) -> tuple[bool, str]:
             addr = ipaddress.ip_address(info[4][0])
         except ValueError:
             return False, "host resolved to an invalid address"
-        if (
-            addr.is_private
-            or addr.is_loopback
-            or addr.is_link_local
-            or addr.is_reserved
-            or addr.is_multicast
-            or addr.is_unspecified
-        ):
+        # Allow-list, not a deny-list: anything not globally routable
+        # (shared 100.64/10 space, IPv4-mapped loopback, ...) is refused.
+        if not addr.is_global or addr.is_multicast:
             return False, "refusing to fetch a private or internal address"
     return True, ""
 
@@ -191,8 +190,6 @@ def exec_web_search(tool_input, transcript, current_attachments):
     # Tier 1: Tavily, if a key is configured (fast, one-shot results).
     if api_key:
         try:
-            from tavily import TavilyClient
-
             client = TavilyClient(api_key=api_key)
             log.info("Tavily search: %s", query)
             results = client.search(query, max_results=5)
@@ -201,9 +198,6 @@ def exec_web_search(tool_input, transcript, current_attachments):
             for r in results.get("results", []):
                 parts.append(f"Title: {r['title']}\nURL: {r['url']}\n{r['content']}")
             return "\n\n".join(parts) if parts else "No results found."
-        except ImportError:
-            log.error("tavily-python not installed")
-            return "Web search unavailable: tavily-python package not installed."
         except Exception as e:
             log.error("Tavily search error: %s", e, exc_info=True)
             return f"Search error: {e}"

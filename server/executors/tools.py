@@ -1,15 +1,9 @@
 """Native tool schemas for the executor-backed core tools.
 
-Pure data — no imports, no side effects (mirrors server/agent_tools/schemas.py).
-The implementations live in sibling modules (code.py, web.py, terminal_run.py)
-and are dispatched by name through the bare-executor fallthrough in
-server/skills.execute_tool.
-
-These tools used to be defined as executor-backed skill files under /skills/,
-which made core product capabilities editable and deletable from the Skills
-panel while the permission, sandbox, and approval layers referenced their
-names in code. Their model-facing schemas now ship here, next to their
-executors; /skills/ holds only user-authored prompt skills.
+Pure data: no imports, no side effects (mirrors server/agent_tools/schemas.py).
+The implementations live in sibling modules (code.py, content.py, web.py,
+terminal_run.py, tool_script.py) and are dispatched by name through the
+bare-executor fallthrough in server/skills.execute_tool.
 """
 
 # The ``secret_access`` property of the command tools (run_python,
@@ -283,10 +277,8 @@ TERMINAL_SEND_TOOL = {
         "database shell, an installer that asks yes/no), where terminal_run's "
         "one-shot model does not fit. The terminal opens automatically on first use "
         "and keeps its state (variables, cwd, shell history) between calls. The "
-        "result starts with wait_reason: stdin_read (the program is blocked reading "
-        "input, so send the next line), inferred_idle (output went quiet and it "
-        "appears to be waiting; on macOS stdin_read cannot be proven and shows here "
-        "instead), timeout (still producing output past the budget; call again to "
+        "result starts with wait_reason: inferred_idle (output went quiet and the "
+        "program appears to be waiting for input, so send the next line), timeout (still producing output past the budget; call again to "
         "keep reading), or session_exit (the shell exited). Send an empty string to "
         "just read pending output without typing. Every call is approval-gated and "
         "the first command line is validated. Default read budget 10s, max 300s. "

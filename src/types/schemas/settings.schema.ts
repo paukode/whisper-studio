@@ -4,7 +4,6 @@ import { z } from 'zod';
 export const AppConfigResponseSchema = z.object({
   chat_models: z.record(z.string(), z.string()).optional().default({}),
   effort_level: z.string().optional().default('high'),
-  brief_mode: z.boolean().optional().default(false),
   permission_mode: z.string().optional().default('default'),
   transcription_backend: z.enum(['whisper', 'streaming']).optional().default('streaming'),
   // Where indexing/RAG capabilities run: cloud (Bedrock) | hybrid (per-capability) | local (on-device).

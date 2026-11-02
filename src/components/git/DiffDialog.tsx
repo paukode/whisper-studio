@@ -29,6 +29,8 @@ export interface DiffDialogProps {
   truncated?: boolean;
   body: DiffBody;
   onClose: () => void;
+  /** More header buttons, before Split (the stored edit's Undo). */
+  actions?: React.ReactNode;
 }
 
 /** What Tab moves through inside the dialog. */
@@ -57,6 +59,7 @@ export const DiffDialog: React.FC<DiffDialogProps> = ({
   truncated = false,
   body,
   onClose,
+  actions,
 }) => {
   const { dialogRef, style, onMoveStart, onResizeStart, reset } = useResizableDialog(
     STORAGE_KEYS.GIT_DIFF_GEOMETRY,
@@ -139,6 +142,7 @@ export const DiffDialog: React.FC<DiffDialogProps> = ({
             </span>
           )}
           <div className="git-diff-actions" onPointerDown={(e) => e.stopPropagation()}>
+            {actions}
             <button
               type="button"
               className={`git-diff-toggle${layout === 'split' ? ' active' : ''}`}

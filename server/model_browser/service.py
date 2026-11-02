@@ -1,7 +1,7 @@
 """Orchestration for the model browser: search, repo detail, install, uninstall.
 
 Pure-ish glue over :mod:`hf_client` (network) and :mod:`compat` (rules), plus the
-existing models-manager download queue and config machinery. No FastAPI here —
+existing models-manager download queue and config machinery. No FastAPI here,
 routes.py is the thin HTTP shell.
 """
 
@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 import os
-import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 
@@ -30,24 +29,11 @@ class InstallError(Exception):
 
 
 @lru_cache(maxsize=1)
-def _total_memory_bytes() -> int | None:
+def _total_memory_bytes() -> int:
     """Physical RAM of the machine THIS process is running on, measured at
-    call time — never a constant for any particular machine. Works on macOS
-    and Linux via ``os.sysconf``; falls back to ``sysctl`` for a Python build
-    that doesn't expose those keys. ``None`` if neither path succeeds, so
-    callers omit the fit verdict rather than guess."""
-    try:
-        return int(os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE"))
-    except (ValueError, OSError, AttributeError):
-        pass
-    try:
-        out = subprocess.run(
-            ["sysctl", "-n", "hw.memsize"], capture_output=True, text=True, timeout=5
-        )
-        return int(out.stdout.strip())
-    except Exception as e:  # pragma: no cover - environment dependent
-        log.debug("Could not determine total memory: %s", e)
-        return None
+    call time, never a constant for any particular machine (``os.sysconf``,
+    which macOS Python always provides)."""
+    return int(os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE"))
 
 
 def _dir_size_bytes(path: str) -> int:
@@ -64,7 +50,6 @@ def _dir_size_bytes(path: str) -> int:
     return total
 
 
-@lru_cache(maxsize=1)
 def _reserved_companion_bytes() -> int:
     """On-disk size of the companion models that plausibly stay resident in
     memory ALONGSIDE a chat session on THIS machine: whichever single ASR
@@ -76,38 +61,34 @@ def _reserved_companion_bytes() -> int:
     are explicitly unloaded the moment it finishes (see pipeline.build's
     ``finally`` block), so they are not steady-state competitors for a chat
     model's memory. Reserving their full on-disk size (which can exceed 10 GB
-    across all four) as if permanently resident was the original bug — it
+    across all four) as if permanently resident was the original bug, it
     could shrink the usable budget so far that even a 2-3 GB quant, or an
     already-installed and working local model, was graded "won't fit".
 
     Only ONE ASR backend is ever loaded (``transcription_backend`` picks one),
-    so only that one's directory is measured — never both. Imports lazily so
-    this stays cheap to call from the read-only /browse endpoints."""
+    so only that one's directory is measured, never both. Measured on every
+    call (a walk of two or three folders), so a model downloaded or a backend
+    switched since the last call counts at once. Imports lazily so this stays
+    cheap to call from the read-only /browse endpoints."""
     dirs: list[str] = []
-    try:
-        from server.asr import resolve_name
-        from server.infrastructure.config import load_config
+    from server.asr import resolve_name
+    from server.infrastructure.config import load_config
 
-        backend = resolve_name(load_config().get("transcription_backend"))
-        if backend == "parakeet":
-            from server.asr.parakeet_backend import PARAKEET_MODEL_DIR
+    backend = resolve_name(load_config().get("transcription_backend"))
+    if backend == "parakeet":
+        from server.asr.parakeet_backend import PARAKEET_MODEL_DIR
 
-            dirs.append(PARAKEET_MODEL_DIR)
-        else:
-            from server.asr.whisper_backend import WHISPER_MODEL_DIR
+        dirs.append(PARAKEET_MODEL_DIR)
+    else:
+        from server.asr.whisper_backend import WHISPER_MODEL_DIR
 
-            dirs.append(WHISPER_MODEL_DIR)
-    except Exception as e:  # pragma: no cover - defensive
-        log.debug("Could not resolve the active ASR model dir: %s", e)
-    try:
-        # Whichever speaker encoder is configured, only one of these two
-        # directories exists on disk; the missing one contributes zero.
-        from server.diarization import embedder
+        dirs.append(WHISPER_MODEL_DIR)
+    # Whichever speaker encoder is configured, only one of these two
+    # directories exists on disk; the missing one contributes zero.
+    from server.diarization import embedder
 
-        dirs.append(embedder.ECAPA_MODEL_DIR)
-        dirs.append(embedder.REDIMNET_CACHE_DIR)
-    except Exception as e:  # pragma: no cover - defensive
-        log.debug("Could not resolve speaker model dir: %s", e)
+    dirs.append(embedder.ECAPA_MODEL_DIR)
+    dirs.append(embedder.REDIMNET_CACHE_DIR)
 
     return sum(_dir_size_bytes(d) for d in dirs)
 
@@ -169,21 +150,17 @@ def _norm_fmt(fmt: str | None) -> str:
 def _downloading_keys() -> set[str]:
     """Registry keys whose download is running or queued right now. Lets the
     Recommended section disable its button mid-download instead of only after
-    the weights land. Never raises."""
-    try:
-        from server.models_manager import catalog, manager
+    the weights land."""
+    from server.models_manager import catalog, manager
 
-        keys: set[str] = set()
-        for e in catalog.entries():
-            if e.group != catalog.GROUP_LOCAL_CHAT:
-                continue
-            state, _err = manager.state_of(e)
-            if state in ("downloading", "queued"):
-                keys.add(e.key)
-        return keys
-    except Exception as e:  # pragma: no cover - defensive
-        log.debug("Could not read downloading keys: %s", e)
-        return set()
+    keys: set[str] = set()
+    for e in catalog.entries():
+        if e.group != catalog.GROUP_LOCAL_CHAT:
+            continue
+        state, _err = manager.state_of(e)
+        if state in ("downloading", "queued"):
+            keys.add(e.key)
+    return keys
 
 
 def repo_detail(repo_id: str, fmt: str = "gguf") -> dict:
@@ -323,7 +300,7 @@ def _install_mlx_model(repo_id: str, label: str | None = None, n_ctx: int | None
     model_type, mlx_tagged = hf_client.repo_mlx_meta(repo_id)
     if not mlx_tagged:
         # A GGUF repo usually carries a config.json too, so the arch gate alone
-        # would happily accept it — and snapshot gigabytes mlx_lm cannot load.
+        # would happily accept it, and snapshot gigabytes mlx_lm cannot load.
         raise InstallError(
             f"{repo_id} does not carry MLX-format weights (no mlx tag on the "
             "repo). It was not installed."
@@ -348,7 +325,7 @@ def _install_mlx_model(repo_id: str, label: str | None = None, n_ctx: int | None
 
 def install_recommended(key: str) -> dict:
     """Install a curated Discover recommendation by its canonical key. Writes the
-    shipped definition into the user config and enqueues the download — same tail
+    shipped definition into the user config and enqueues the download, same tail
     as a searched install, but the metadata comes from the recommendation, not a
     live HF header read."""
     from server.local.registry import RECOMMENDED_LOCAL_MODELS
@@ -380,7 +357,7 @@ def _finalize_install(key: str, entry: dict) -> dict:
     try:
         start = manager.start_download(catalog_entry)
     except manager.Conflict as e:
-        # Already installed on disk — the config entry is still what we want.
+        # Already installed on disk, the config entry is still what we want.
         start = "already_installed"
         log.info("Install %s: %s", key, e)
 
@@ -454,8 +431,8 @@ def _delete_weights(key: str) -> tuple[bool, bool]:
     """Cancel any running/queued download and delete this model's weights.
 
     Returns ``(stopped_llama_server, weights_deleted)``. Missing files are not
-    an error — a model with a config entry but nothing on disk just deletes
-    nothing. Shared by uninstall (user entry) and remove-from-list (either)."""
+    an error, a model with a config entry but nothing on disk just deletes
+    nothing. Used by remove-from-list."""
     from server.models_manager import manager
     from server.models_manager.catalog import get_entry
 
@@ -470,31 +447,18 @@ def _delete_weights(key: str) -> tuple[bool, bool]:
     try:
         result = manager.delete(entry)
         return bool(result.get("stopped_llama_server")), bool(result.get("deleted"))
-    except manager.ModelBusy:
-        # Answering in a chat: refuse the whole removal, config entry included.
-        raise
-    except manager.Conflict:
-        # Nothing on disk to delete — fine.
+    except manager.NotOnDisk:
         return False, False
-
-
-def uninstall_model(key: str) -> dict:
-    """Stop/cancel any activity, delete files, and remove the user-config entry.
-
-    Only browser-installed (user-layer) keys are removable here; a built-in or
-    shipped model is not touched."""
-    if not install.is_browser_entry(key):
-        raise InstallError(f"{key} is not a browser-installed model.")
-    stopped, _ = _delete_weights(key)
-    removed = install.remove_entry(key)
-    return {"key": key, "removed": removed, "stopped_llama_server": stopped}
+    # Any other Conflict (answering in a chat, a folder shared with another
+    # entry, a download that would not cancel) refuses the whole removal,
+    # config entry included, so no weights are left without an entry.
 
 
 def remove_from_list(key: str) -> dict:
     """Remove a chat model from the Models list and the composer picker.
 
     A LOCAL model (installed or a downloaded recommendation) is DELETED outright
-    — its weights and its config entry both go — because it is always
+    its weights and its config entry both go, because it is always
     re-downloadable from the Discover tab, so there is nothing to preserve.
     A BEDROCK model has no weights and lives in the app-owned catalog, so it is
     hidden via the recoverable ``chat_models_disabled`` list instead.

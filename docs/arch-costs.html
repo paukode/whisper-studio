@@ -17,7 +17,7 @@
     <h1>Cost tracking &amp; budgets</h1>
     <p class="subtitle">Every billed model call is logged once, with the token counts the provider
       itself reported. The log is priced when it is read, reported over UTC days, and gates the next
-      round against your spend caps - all locally, in SQLite.</p>
+      round against your spend caps, all locally, in SQLite.</p>
 
     <p>Cost tracking lives in <code class="path">server/costs/</code>:</p>
     <div class="table-wrap"><table>
@@ -30,7 +30,6 @@
         <tr><td><code class="path">usage.py</code></td><td>The log read back: the ranged report, the export, and the daily spend the cap uses.</td></tr>
         <tr><td><code class="path">routes.py</code></td><td>The <code>/api/costs</code> endpoints.</td></tr>
         <tr><td><code class="path">budget.py</code></td><td>Cap enforcement.</td></tr>
-        <tr><td><code class="path">pricing_history.py</code></td><td>Every rate a release shipped, so a stale seeded <code class="path">pricing.json</code> never shadows a correction.</td></tr>
       </tbody>
     </table></div>
     <p>Remaining-capacity tracking lives outside this package, in the token-based context meter in
@@ -84,11 +83,8 @@
       in the config dir (<code class="path">~/.whisper</code> for the Mac app, the repo root for a
       source install) overrides them per key. Rates are USD <em>per 1M tokens</em>: input, output,
       cache read and cache write, plus a <code>cached_in_input</code> flag on the OpenAI entries.</p>
-    <p><code class="path">pricing.json</code> holds only the keys a user changes. Neither install path
-      seeds it any more: a full copy of the template froze every rate at install time and shadowed
-      each later correction. An existing copy is still read, but an entry equal to a rate some release
-      shipped for that key (<code class="path">pricing_history.py</code>) is ignored and logged, so
-      only genuine overrides apply.</p>
+    <p><code class="path">pricing.json</code> holds only the keys a user changes. No install step
+      creates it. Every entry in it replaces the default rate for that key.</p>
     <p>There is deliberately <b>no fallback bucket</b>. An unknown model key bills $0 and logs an error
       (once per key) rather than silently inheriting another model's rate, and the Costs tab says so
       on that row. On-device (<code>local_*</code>) models are expected to be free and log at debug.</p>
@@ -184,7 +180,7 @@
     <p>There is no dollar column. Every reader prices the stored counts with the current rate table,
       so a rate correction re-rates history the same way in the Costs tab, the export, the composer
       readout and the budget caps. Deleting a session keeps its rows: those calls were billed, and the
-      Costs tab shows them as "Deleted session". Migrations 021 and 022 built this shape; see
+      Costs tab shows them as "Deleted session". For the table schema, see
       <a href="arch-persistence.html">Persistence</a>.</p>
 
     <h3 id="sources">Sources</h3>
@@ -193,7 +189,7 @@
       <tbody>
         <tr><td><code>chat</code>, <code>agent</code>, <code>workflow</code>, <code>cron</code>, <code>voice</code>, <code>headless</code>, <code>wake</code></td><td>Turn-engine rounds, tagged by the caller through <code>TurnContext.cost_source</code>. A structured-output distillation call bills under its run's source. Under <code>voice</code>, Nova Sonic's own speech and text tokens are logged too (<code class="path">server/voice/cost_log.py</code>), from the running totals its <code>usageEvent</code> reports, once per stream at each completion end and when the stream closes.</td></tr>
         <tr><td><code>memory</code></td><td>Memory extraction and consolidation runs, the learning review fork, memory recall.</td></tr>
-        <tr><td><code>compaction</code>, <code>title</code>, <code>query_rewrite</code>, <code>btw</code>, <code>classifier</code>, <code>explainer</code>, <code>evaluator</code>, <code>ci_diagnose</code>, <code>activity_label</code>, <code>condensation</code>, <code>ocr</code>, <code>index</code>, <code>buddy</code>, <code>doctor</code></td><td>Side tasks that call Bedrock directly, logged by <code class="path">calls.py</code> in the thread that made the call (so a call its caller timed out on is still logged). <code>index</code> includes the Cohere Embed v4 and Rerank 3.5 calls of the cloud index backends, counted from Bedrock's input token-count header or, without one, as characters / 4 of the body posted.</td></tr>
+        <tr><td><code>compaction</code>, <code>title</code>, <code>query_rewrite</code>, <code>classifier</code>, <code>explainer</code>, <code>evaluator</code>, <code>ci_diagnose</code>, <code>activity_label</code>, <code>condensation</code>, <code>ocr</code>, <code>index</code>, <code>buddy</code>, <code>doctor</code></td><td>Side tasks that call Bedrock directly, logged by <code class="path">calls.py</code> in the thread that made the call (so a call its caller timed out on is still logged). <code>index</code> includes the Cohere Embed v4 and Rerank 3.5 calls of the cloud index backends, counted from Bedrock's input token-count header or, without one, as characters / 4 of the body posted.</td></tr>
         <tr><td><code>unattributed</code></td><td>Rows written before sources were recorded.</td></tr>
       </tbody>
     </table></div>
@@ -202,7 +198,7 @@
     <p>The <code>auxiliary_models</code> config map names the model per side task
       (<code class="path">server/infrastructure/auxiliary.py</code>). Values are
       <code>chat_models</code> keys, plus <code>"main"</code>, meaning "the session's own model". A
-      task absent from the map keeps its historical default:</p>
+      task absent from the map uses its default:</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Task key</th><th>Default when unset</th></tr></thead>
       <tbody>
@@ -229,7 +225,7 @@
       <code>session_readout</code> the composer readout:
       that session's prompt tokens, output tokens, rounds and cost, priced now.</p>
 
-    <h2 id="forecast">Tracking remaining context</h2>
+    <h2 id="remaining-context">Tracking remaining context</h2>
     <p>Remaining-capacity tracking answers "how much room is left in this conversation before it has
       to compact", not "how much have you spent". The context meter in
       <code class="path">server/chat/loop_hints.py</code> records each round's real prompt size with
@@ -253,7 +249,15 @@
         (<code>usage.today_spend_usd</code>); it resets at 00:00 UTC. <code>0</code> means unlimited.</dd>
     </dl>
     <p>Both price the log at read time, so they agree with the Costs tab. There is no manual reset:
-      the rows are the history, and the daily window moves on its own.</p>
+      the rows are the history, and the daily window moves on its own. If the cost log cannot be
+      read, a configured cap counts as reached: the run stops and the message gives the reason.</p>
+    <p>The same Budgets card also sets the <b>Round limit</b> (<code>round_limit</code>, default 120)
+      that every run gets (chat, voice, agents, cron and headless; the background memory jobs keep
+      their own small caps) and the <b>Time limit</b>
+      (<code>time_limit_minutes</code>, default 15) for runs nobody watches (agents, cron and
+      unattended headless runs), and the <b>Enable model fallback</b> switch
+      (<code>model_fallback_enabled</code>, off by default); see
+      <a href="arch-backends.html#model-fallback">Falling back to a cheaper model</a>.</p>
 
     <h3 id="soft-limit">The soft limit: one round to answer</h3>
     <p>A hard stop at 100 percent of a cap throws away everything the turn had gathered, mid-sentence.
@@ -281,7 +285,7 @@
       request-only injection would fork the token prefix and break the moving cache checkpoint,
       which would cost more than the cap was trying to save.</p>
 
-    <h3 id="agent-bars">Agent budget bars</h3>
+    <h3 id="agent-readout">Agent budget readout</h3>
     <p>Every <code>turn_start</code> event an agent emits is stamped with its round cap (live
       extensions included), seconds elapsed and allowed, the estimated spend so far as
       <code>cost_usd</code> (the engine's running total: each round priced with
@@ -291,7 +295,8 @@
       line; see <a href="arch-agent-recorder.html">The agent flight recorder</a>.</p>
 
     <h2 id="settings-panel">Settings and the Costs tab</h2>
-    <p>The two caps are set in the Settings UI (and persisted to <code>config.json</code>); see
+    <p>The two caps are set in Settings &gt; Usage and advanced &gt; Costs, in the Budgets card
+      (and saved to <code>config.user.json</code>); see
       <a href="configuration.html">Configuration</a> and <a href="ref-settings.html">Settings &amp;
       config keys</a>. Live spend is surfaced in two places in the SPA:</p>
     <div class="card-grid">
@@ -319,7 +324,8 @@
 
     <h2 id="endpoints">API endpoints</h2>
     <p>The router is mounted under <code>/api/costs</code> in
-      <code class="path">server/costs/routes.py</code>; every read runs off the event loop:</p>
+      <code class="path">server/costs/routes.py</code>; every read runs off the event loop. If the
+      cost log cannot be read, every endpoint answers 503 with the reason:</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Endpoint</th><th>Returns</th></tr></thead>
       <tbody>

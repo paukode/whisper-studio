@@ -4,7 +4,7 @@
  * when it is busy, once a slot frees when the active-session ceiling is
  * reached, and never for a session it has no hydrated runtime for.
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({
   busy: new Set<string>(),
@@ -22,8 +22,14 @@ vi.mock('../useChatStream', () => ({ MAX_ACTIVE_SESSIONS: 3, sendChatTurn }));
 
 import { _resetPendingWakes, flushPendingWakes, requestWake } from './backgroundWake';
 
-/** Let the lazy load of useChatStream (and its .then) run. */
-const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+/** Let the lazy load of useChatStream (and its .then) run. A bare timer is
+ *  not enough on a loaded machine: the import can resolve after the test,
+ *  even after the environment is torn down. */
+const settle = async () => {
+  await import('../useChatStream');
+  await vi.dynamicImportSettled();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+};
 
 const wakeOf = (sid: string, ids: string[]) => [
   '',
@@ -37,6 +43,9 @@ beforeEach(() => {
   state.hydrated = new Set(['s1']);
   state.active = 0;
 });
+
+// No lazy import may outlive its test.
+afterEach(settle);
 
 describe('background wake', () => {
   it('starts a turn at once for an idle session', async () => {

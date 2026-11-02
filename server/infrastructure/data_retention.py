@@ -114,20 +114,14 @@ def model_requires_data_retention(model_id: str) -> bool:
     ``requires_data_retention`` (Mythos-class models like Fable 5).
 
     load_config() NORMALIZES chat_models to a flat ``{key: id_string}`` map and
-    parks the rich per-model dicts under ``chat_model_meta`` — so the flag must
-    be read by joining the two. (The original implementation iterated
-    chat_models looking for dicts and therefore never matched anything in
-    production: the gate was dead code and Fable agents still hit the raw
-    ValidationException.)
+    parks the rich per-model dicts under ``chat_model_meta``, so the flag is
+    read by joining the two.
     """
     if not model_id:
         return False
-    try:
-        cfg = load_config()
-        models = cfg.get("chat_models", {}) or {}
-        meta = cfg.get("chat_model_meta", {}) or {}
-    except Exception:
-        return False
+    cfg = load_config()
+    models = cfg.get("chat_models", {}) or {}
+    meta = cfg.get("chat_model_meta", {}) or {}
     for key, m in models.items():
         # load_config always normalizes chat_models to id strings; the
         # requires_data_retention flag lives in chat_model_meta.
@@ -157,13 +151,6 @@ def retention_block_reason(model_id: str) -> str | None:
         "the model in the UI to enable retention, or set the account "
         "data-retention mode to 'provider_data_share'."
     )
-
-
-def _reset_mode_cache() -> None:
-    """Test hook."""
-    with _mode_lock:
-        _mode_cache["mode"] = None
-        _mode_cache["ts"] = 0.0
 
 
 def set_enabled(enabled: bool) -> str:
@@ -257,7 +244,7 @@ async def get_data_retention():
 
 @router.put("")
 async def put_data_retention(request: Request):
-    """Enable (provider_data_share) or disable (restore prior mode) retention."""
+    """Enable (provider_data_share) or disable (none) retention."""
     body = await request.json()
     enabled = bool(body.get("enabled", False))
     if current_mode() == "local":

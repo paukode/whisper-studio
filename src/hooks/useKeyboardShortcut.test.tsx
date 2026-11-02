@@ -57,4 +57,15 @@ describe('useKeyboardShortcut', () => {
     fireEvent.keyDown(document, { key: 'k' }); // no modifier — no match
     expect(handler).toHaveBeenCalledTimes(1);
   });
+
+  it('treats mod as Cmd only: Ctrl+K and Cmd+Ctrl+K do not fire mod+k', () => {
+    const handler = vi.fn();
+    renderHook(() => useKeyboardShortcut('mod+k', handler));
+    fireEvent.keyDown(document, { key: 'k', ctrlKey: true });
+    expect(handler).not.toHaveBeenCalled();
+    fireEvent.keyDown(document, { key: 'k', metaKey: true, ctrlKey: true });
+    expect(handler).not.toHaveBeenCalled();
+    fireEvent.keyDown(document, { key: 'k', metaKey: true });
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
 });

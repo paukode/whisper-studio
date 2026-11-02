@@ -8,7 +8,7 @@ import pytest
 
 import server.executors.content  # noqa: F401 — registers the prompt executors
 import server.skills as skills_mod
-from server.chat import (
+from server.chat.budget import (
     TOOL_RESULT_BUDGET_BYTES,
     make_budget_tool_result,
 )
@@ -36,15 +36,15 @@ def test_oversize_output_records_event():
     big = "x" * (TOOL_RESULT_BUDGET_BYTES + 1000)
     out = budget("big_tool", big)
     assert "truncated" in out.lower()
-    # The note points at the REAL cache location and the retrieval tool.
-    assert "data/result_cache/" in out
+    # The note names the cached file and the retrieval tool.
+    assert f"'{events[0]['tool_result_truncated']['cache_filename']}'" in out
     assert "read_cached_result" in out
     assert ".whisper_cache" not in out
     assert len(events) == 1
     payload = events[0]["tool_result_truncated"]
     assert payload["tool_name"] == "big_tool"
     assert payload["full_size"] == len(big)
-    assert payload["cache_path"] == f"data/result_cache/{payload['cache_filename']}"
+    assert "cache_path" not in payload
     # Head+tail keep: nearly the whole budget survives, not a 2KB stub.
     assert payload["kept_bytes"] > TOOL_RESULT_BUDGET_BYTES // 2
 

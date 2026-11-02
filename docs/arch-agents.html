@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Sub-agents &amp; the event bus - Whisper Studio Docs</title>
-  <meta name="description" content="The agent runtime, agent types, teams, the inter-agent mailbox, the budget readout on every progress event, and the per-session event bus that streams live agent progress to the chat as team_progress frames.">
+  <meta name="description" content="The agent runtime, agent types, teams, the inter-agent mailbox, the budget readout on every turn_start event, and the per-session event bus that streams live agent progress to the chat as team_progress frames.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -27,8 +27,8 @@
       it feel live is the <b>event bus</b>: a per-session queue the runtime publishes to, which the
       turn engine drains and forwards as <code>team_progress</code> frames.</p>
 
-    <p>Everything a run leaves behind - its journal on disk, its report, the budget that reserves the
-      reporting round, and how a report reaches you when the turn that launched it is gone - lives on
+    <p>Everything a run leaves behind (its journal on disk, its report, the budget that reserves the
+      reporting round, and how a report reaches you when the turn that launched it is gone) is on
       its own page: <a href="arch-agent-recorder.html">Agent flight recorder</a>. This page is the
       runtime that produces those records.</p>
 
@@ -46,16 +46,18 @@
     <h2 id="the-runtime">The agent runtime</h2>
     <p><code>run_agent()</code> is the entry point. The agent loop <em>is</em> the unified turn
       engine: <code>_run_agent_loop</code> runs <code>run_turn</code>
-      (<code class="path">server/chat/engine/runner.py</code>) under a per-type
-      <code>TurnPolicy</code> (a turn cap plus a wall-clock deadline,
+      (<code class="path">server/chat/engine/runner.py</code>) under a per-run
+      <code>TurnPolicy</code> (the Settings round and time limits, with the memory presets keeping
+      their own round caps,
       <code>completion_gate=False</code> so a child can never trip the parent turn's goal gate,
       <code>unattended=True</code>, and a <code>turn_scope_id</code> of
       <code>agent:&lt;id&gt;</code>), and drains the engine's SSE frames into progress events.
       Provider adapters are the chat engine's own (<code>AnthropicAdapter</code> or
       <code>OpenAIResponsesAdapter</code>, chosen by the model's provider), so agents run on both
       Anthropic-on-Bedrock and OpenAI GPT-on-Bedrock (the Responses API via bedrock-mantle).
-      <code class="path">server/agents/providers/</code> survives only for
-      <code>_distill_structured</code>, the one-shot structured-output distillation. On calling
+      <code class="path">server/agents/providers/</code> holds the one-shot structured-output
+      adapters (<code>_distill_structured</code>), <code>AGENT_CALL_CONCURRENCY</code> and
+      <code>model_key_for_id</code>. On calling
       <code>run_agent</code>, the runtime:</p>
     <ol class="steps">
       <li><h4>Guards recursion</h4><p>Depth is capped. An agent that spawns an agent that spawns an
@@ -108,7 +110,7 @@
         cap. The mailbox is drained once at run start into the initial
         user message; each round invokes the model, executes any <code>tool_use</code> blocks,
         checkpoints the message list into the journal, and emits progress events. It ends on any stop
-        reason other than <code>tool_use</code>, at the round cap, at the deadline, or at the cost cap -
+        reason other than <code>tool_use</code>, at the round cap, at the deadline, or at the cost cap,
         and each of those limits reserves one final no-tools round for the agent's report rather than
         truncating mid-plan. The completion gate is deliberately off for agents. Whichever limit ended
         the run is named in the result's <code>stop_reason</code>. See
@@ -117,11 +119,11 @@
 
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg></span>
-      <div class="callout__body"><p>Bedrock calls for agents run on a shared 16-worker
-        <code>ThreadPoolExecutor</code>, off the request's event loop. Its size is taken from the single
-        <code>AGENT_CALL_CONCURRENCY</code> knob rather than a literal of its own, because that pool is
-        what actually gates how many agent model calls can be in flight. Running the calls off-loop is
-        why publishing progress must be thread-safe (see <a href="#event-bus">the event bus</a>).</p></div>
+      <div class="callout__body"><p>The Claude calls of agents (and on-device serving) run on a shared
+        16-worker <code>ThreadPoolExecutor</code>, off the request's event loop. Its size is taken from
+        the single <code>AGENT_CALL_CONCURRENCY</code> knob. GPT agent calls use an async client, so
+        this pool does not limit them. Running calls off-loop is why publishing progress must be
+        thread-safe (see <a href="#event-bus">the event bus</a>).</p></div>
     </div>
 
     <h3 id="fan-out-limits">Bounding the fan-out</h3>
@@ -133,16 +135,14 @@
         run at once in one session. The slot is reserved with a deliberately <code>await</code>-free
         check-then-increment, so a whole <code>asyncio.gather</code> of siblings cannot race past it,
         and released in a <code>finally</code>. Over the cap, the agent is refused with a message
-        telling the model to wait or shrink the team. The number is locked to
-        <code>AGENT_CALL_CONCURRENCY</code> on purpose: a second, independently chosen number is how 16
-        agents once got dispatched against a 4-wide pool, leaving 12 blocked.</li>
-      <li><b>A pre-flight cost check.</b> The session cost cap is checked <em>before</em> dispatching
-        each agent, not only reactively inside its own round loop, so agent N+1 never starts once the
-        combined spend of agents 1 through N has already cleared the cap. Without it each sibling found
-        out only after starting, having already paid for its system prompt and tool catalog.</li>
+        telling the model to wait or shrink the team. The number equals
+        <code>AGENT_CALL_CONCURRENCY</code>, the size of the agent model-call pool.</li>
+      <li><b>A pre-flight cost check.</b> The session and daily cost caps are checked
+        <em>before</em> dispatching each agent, not only inside its own round loop, so agent N+1 never
+        starts once the combined spend of agents 1 through N has already cleared a cap.</li>
     </ul>
-    <p>Every agent runs on the one round limit and time limit in Settings &gt; Costs &gt; Budget
-      (<code>round_limit</code>, <code>time_limit_minutes</code>); see <a href="#agent-types">Agent
+    <p>Every agent runs on the one round limit and time limit in Settings &gt; Usage and advanced
+      &gt; Costs, in the Budgets card (<code>round_limit</code>, <code>time_limit_minutes</code>); see <a href="#agent-types">Agent
       types</a>.</p>
 
     <div class="callout">
@@ -157,9 +157,9 @@
         git worktree to write into. Its result is folded into a later turn by
         <code class="path">server/agents/completion_inject.py</code> (<code>inject_completions</code>);
         the model polls with <code>task_status</code> / <code>task_output</code> and cancels with
-        <code>task_cancel</code>. Two separate limits apply: at most
-        <code>DETACHED_PER_SESSION_CAP = 8</code> detached agents are accepted per session, and a
-        server-wide semaphore, <code>DETACHED_CONCURRENCY = 2</code>, decides how many of those actually
+        <code>task_cancel</code>. Two separate limits apply: a detached spawn is refused while
+        <code>DETACHED_PER_SESSION_CAP = 8</code> agent runs of any kind are running in the session,
+        and a server-wide semaphore, <code>DETACHED_CONCURRENCY = 2</code>, decides how many of those actually
         run at a time, so fire-and-forget spawns cannot starve the shared model-call pool that blocking
         spawns use. When the run finishes after its launching turn has ended, its report is delivered
         into the session as an agent report row rather than lost (see
@@ -170,7 +170,7 @@
         The harvest diffs against the branch-point base commit, so work the agent committed inside
         its worktree is included, and it reports one of five statuses: <code>applied</code> (all
         changes landed, worktree removed), <code>partial</code> (some landed, conflicts kept the
-        worktree), <code>clean</code> (nothing to bring back), <code>kept</code> (not applied - the
+        worktree), <code>clean</code> (nothing to bring back), <code>kept</code> (not applied: the
         agent did not finish, or every file conflicts; worktree kept), or <code>error</code>.
         Nothing is ever committed on your behalf; the changes show up in <code>git status</code>.</p></div>
     </div>
@@ -217,12 +217,13 @@
       A config sets the token budget per response and how the shared tool pool is filtered (a
       whitelist and a read-only flag that strips the write tools). No type carries a round or time
       limit of its own: <code>get_agent_config</code> fills both from the one round limit and time
-      limit in Settings &gt; Costs &gt; Budget (<code>round_limit</code>, default 120, and
+      limit in Settings &gt; Usage and advanced &gt; Costs, Budgets card (<code>round_limit</code>, default 120, and
       <code>time_limit_minutes</code>, default 15; <code class="path">server/infrastructure/run_limits.py</code>),
       the way every model call takes its region from Settings. The time limit covers the agent's own
       work: a call that waits on agents it started (<code>spawn_agent</code>, <code>team_create</code>,
       <code>skill_invoke</code>) adds its duration to the run's <code>waited</code> total, the runner
-      moves the deadline by it, and the card's time bar shows only the agent's own time. Each of
+      moves the deadline by it. The agent pane's clock shows wall time since the start, waits
+      included. Each of
       those agents runs on its own limits, so a coordinator needs no larger one. The types the
       assistant can spawn:</p>
     <div class="table-wrap"><table>
@@ -237,8 +238,8 @@
     </table></div>
     <p>The coordinator's whitelist is exactly <code>spawn_agent</code>, <code>send_message</code>,
       <code>list_agents</code>, and <code>complete_coordination</code>. It cannot touch files by design.
-      Three further types back the memory subsystem - <code>memory_extractor</code>,
-      <code>memory_consolidator</code>, and <code>session_summarizer</code> - and are not ones
+      Three further types back the memory subsystem (<code>memory_extractor</code>,
+      <code>memory_consolidator</code>, and <code>session_summarizer</code>) and are not ones
       you spawn directly. They are marked <code>internal</code>: each keeps its own small round cap
       (5, 8 and 5 rounds) instead of the Settings round limit, since a background job that finishes
       in a few rounds must not get the budget of the agents you spawn, and each takes the Settings
@@ -249,7 +250,7 @@
 
     <h3 id="read-only-filter">How read-only is enforced</h3>
     <p><code>filter_tools_for_agent()</code> applies two rules in order: an <code>allowed_tools</code>
-      whitelist first, then the <code>read_only</code> flag - applied <em>even when a whitelist is
+      whitelist first, then the <code>read_only</code> flag, applied <em>even when a whitelist is
       set</em>, so a custom type cannot whitelist a write tool past its own read-only flag. With
       <code>read_only</code> set, every tool in the <code>WRITE_TOOLS</code> set is removed. That set
       covers the obvious writers (<code>ws_write_file</code>, <code>ws_edit_file</code>,
@@ -276,7 +277,7 @@
       server, <code>"read_only_tools"</code> for some of its tools, <code>"read_only": false</code> to
       ignore the server's hints). Three refused calls in a row end a run: its next round is the last,
       with no tools, and its report says it stopped after repeated refused calls (a worktree agent's
-      changes are then kept for inspection, not applied). Extend on its card lets it go on.</p>
+      changes are then kept for inspection, not applied). Extend in the agent pane lets it go on.</p>
 
     <h3 id="custom-types">Custom and ephemeral agent types</h3>
     <p>The built-in table is not the whole story
@@ -284,15 +285,16 @@
     <ul>
       <li><b>Custom types</b> are persistent presets stored as
         <code>.whisper/agents/&lt;name&gt;.md</code> files: YAML frontmatter over a markdown system
-        prompt. They load from two scopes - project
+        prompt. They load from two scopes, project
         (<code>&lt;workspace&gt;/.whisper/agents/</code>) and user
-        (<code class="path">~/.whisper/agents/</code> in an installed app, the checkout's own
-        <code>.whisper/agents/</code> in a source install) - with project winning name collisions,
+        (<code class="path">~/.whisper/agents/</code> in the Mac app, the checkout's own
+        <code>.whisper/agents/</code> in a source install), with project winning name collisions,
         and they resolve before the built-in <code>AGENT_TYPES</code>, so a custom type can shadow a
         built-in name. The frontmatter keys that are read are <code>name</code>, <code>tools</code>,
         <code>read_only</code> and <code>model</code>; the markdown body is the system prompt. The
-        round and time limits come from Settings, so a <code>max_turns</code> line in an older file
-        sets nothing.</li>
+        <code>model</code> key is stored but has no effect: the agent runs on the session model
+        unless the <code>spawn_agent</code> call passes <code>model</code>. The round and time limits
+        come from Settings.</li>
       <li><b>Ephemeral types</b> are built in-memory at spawn time from an inline
         <code>agent_definition</code> object passed to <code>spawn_agent</code> instead of a
         registered type name; they are never written to disk.</li>
@@ -321,10 +323,11 @@
         member's <b>full report</b> (bounded at 6,000 characters), never just a trailing slice, headed
         by its status in words, its round count, and a <code>task_output &lt;agent_id&gt;</code> pointer.
         Ahead of the members sits the relay note, which states outright that the user has not seen any
-        of this. A manifest of the team's members is written to disk at the same time, so a restart can
-        find every member's record from the team id alone.</p></li>
+        of this.</p></li>
     </ol>
-    <p>A running team can be stopped mid-flight: <code>POST /api/teams/{team_id}/stop</code> sets a stop
+    <p>A running team can be stopped mid-flight: Stop in the task list or agent pane sends
+      <code>POST /api/background-tasks/{task_id}/stop</code>, which reaches <code>stop_team</code>
+      through <code>cancel_task</code>. That sets a stop
       flag and cancels the gather task, and each member publishes a <code>stopped</code> event as its
       loop is cancelled. The flag is what distinguishes the two ways a gather can be cancelled. With it
       set, the model gets each member's salvage report in place of a bare "stopped by user". Without it
@@ -341,12 +344,12 @@
       message lists. It offers a small, deliberate API:</p>
     <dl class="spec">
       <dt><code>send(from_id, to_id, content)</code></dt><dd>Enqueue one message into a specific agent's mailbox.</dd>
-      <dt><code>broadcast(from_id, content)</code></dt><dd>Enqueue to every other mailbox <b>in the sender's own session</b>; returns the recipient count. Mailboxes are session-scoped: the bus records each <code>agent_id</code>'s owning session via <code>create_mailbox(agent_id, session_id=...)</code>, so a broadcast never crosses into another session.</dd>
+      <dt><code>broadcast(from_id, content, session_id)</code></dt><dd>Enqueue to every other mailbox <b>in the sender's own session</b>; returns the recipient count. Mailboxes are session-scoped: the bus records each <code>agent_id</code>'s owning session via <code>create_mailbox(agent_id, session_id=...)</code>, so a broadcast never crosses into another session.</dd>
       <dt><code>receive(agent_id)</code></dt><dd>Drain and return all pending messages (clears the mailbox by default).</dd>
     </dl>
     <p>The <code>send_message</code> tool wraps <code>send</code> and <code>broadcast</code>: pass a
       <code>to_agent_id</code> for a direct message, or set <code>broadcast=true</code> to reach every
-      other agent in the same session. Delivery is pull-based. Mail waiting when a run starts is
+      other agent of the calling session (from the main chat too). Delivery is pull-based. Mail waiting when a run starts is
       drained into the agent's initial user message; after that, a recipient sees a message only
       when it calls the <code>receive_messages</code> tool, at which point the messages are injected
       as a user turn. When an agent finishes, its mailbox is deleted in the runtime's
@@ -372,8 +375,8 @@
         <code>publish</code> must work off the subscriber's event loop. Each subscriber records the
         loop it lives on; a cross-thread publish hops into that loop via
         <code>loop.call_soon_threadsafe</code>, while a same-loop publish does a direct
-        <code>put_nowait</code>. (<a href="arch-cron.html">Cron</a> no longer needs the cross-thread
-        path: it runs as a native asyncio task on the same loop as its subscribers.)</li>
+        <code>put_nowait</code>. (<a href="arch-cron.html">Cron</a> runs as an asyncio task on the
+        same loop as its subscribers, so it takes the same-loop path.)</li>
       <li><b>Bounded and lossy on purpose.</b> If a subscriber falls behind and its queue is full, the
         event is dropped with a log warning rather than blocking the producer. Progress is
         best-effort; the aggregated result the tool returns is the source of truth.</li>
@@ -405,38 +408,40 @@
     <h3 id="budget-readout">The budget readout on turn_start</h3>
     <p>Every <code>turn_start</code> is stamped by <code>budget_readout</code>
       (<code class="path">server/agents/runtime_support.py</code>), a pure function whose every input is
-      passed in, so a reloaded history renders identical bars:</p>
+      passed in, so a reloaded history gives the same readout:</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Field</th><th>Value</th></tr></thead>
       <tbody>
         <tr><td><code>max_turns</code></td><td>The round cap including any live extension granted by the Extend button.</td></tr>
-        <tr><td><code>elapsed_s</code></td><td>Seconds since the run started, to one decimal.</td></tr>
-        <tr><td><code>deadline_s</code></td><td>The wall-clock budget plus any extension; <code>null</code> for a type with no time limit.</td></tr>
-        <tr><td><code>cost_usd</code></td><td>Estimated spend so far from the run's own usage totals. <code>null</code>, rather than zero, when the model has no price entry.</td></tr>
-        <tr><td><code>budget_state</code></td><td><code>finishing</code> once the coming round is the last one (the cap, 90 percent of the time budget, or a cost cap already tripped), else <code>working</code>.</td></tr>
+        <tr><td><code>elapsed_s</code></td><td>The run's own seconds, to one decimal, without the time spent waiting on agents it started.</td></tr>
+        <tr><td><code>deadline_s</code></td><td>The Settings time limit plus any extension. Always set.</td></tr>
+        <tr><td><code>cost_usd</code></td><td>Estimated spend so far from the run's own usage totals. Always a number ($0 for a model with no price entry).</td></tr>
+        <tr><td><code>budget_state</code></td><td><code>finishing</code> once the coming round is the last one (the cap, 90 percent of the time budget, a cost cap already tripped, or three refused calls in a row), else <code>working</code>.</td></tr>
       </tbody>
     </table></div>
     <p>The SPA reads exactly these fields for the agent pane's status line (rounds against the cap,
       estimated cost, whether the run is finishing up) in
-      <code class="path">src/stores/agentFeedStore.ts</code>; only the elapsed time ticks on the
-      browser's clock.</p>
+      <code class="path">src/stores/agentFeedStore.ts</code>. The pane's elapsed time is wall time
+      from the browser's clock, not <code>elapsed_s</code>.</p>
 
     <h2 id="to-the-client">Getting to the client</h2>
     <p>The event bus does not talk to the browser directly. While the chat turn runs the tool batch, the
-      engine (<code class="path">server/chat/engine/runner.py</code>) subscribes to the session channel
-      and drains it in a tight loop, re-emitting each event as a <code>team_progress</code> SSE frame.
+      engine (<code>run_tool_round</code> in <code class="path">server/chat/engine/tool_rounds.py</code>)
+      subscribes to the session channel and drains it in a tight loop, re-emitting each event as a <code>team_progress</code> SSE frame.
       Draining happens <em>during</em> the batch, so a long-running <code>team_create</code> streams
       activity in real time instead of arriving in one burst when the tool finally returns.</p>
-    <p>Eight event types are filtered out here: <code>cron_event</code>, <code>memory_event</code>,
+    <p>Eight event types are filtered out here (<code>_route_event</code>): <code>cron_event</code>, <code>memory_event</code>,
       <code>task_event</code>, <code>cron_progress</code>, <code>ci_progress</code>,
       <code>ci_result</code>, <code>session_message</code>, and <code>workflow_event</code> are skipped,
-      because a separate long-lived stream, <code>/api/sessions/{id}/events</code>, delivers those
+      because a separate long-lived stream, <code>/api/sessions/events</code> (one multiplexed stream
+      that carries every session's frames with a <code>session_id</code> field), delivers those
       (<code>task_event</code> is the unified background-task lifecycle frame, and a workflow run also has
       its own per-run stream). The session stream also forwards agent runtime progress as
       <code>agent_progress</code> for the dock's agent pane; the chat stream still folds the same events
-      into the turn's agent rows, and the client routes the two frames to those two consumers. Skipping them prevents double-rendering: without the
-      <code>workflow_event</code> entry a detached workflow rendered mid-batch as if it were this turn's
-      own subagent team. On the client, the SPA groups
+      into the turn's agent rows, and the client routes the two frames to those two consumers.
+      Skipping them prevents double delivery: a workflow's own events reach the UI through the run
+      card's stream and a <code>task_event</code>, never as this turn's agent team. On the client,
+      the SPA groups
       <code>team_progress</code> frames by <code>team_id</code> and <code>agent_id</code> into the live
       report card, badging spawned children under their parent. See
       <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a> for the wider SSE frame set
@@ -452,7 +457,7 @@
       <dt><code class="path">server/agents/messaging.py</code></dt><dd>The inter-agent mailbox (<code>MessageBus</code>).</dd>
       <dt><code class="path">server/agents/event_bus.py</code></dt><dd>The per-session, thread-safe progress queue (<code>AgentEventBus</code>).</dd>
       <dt><code class="path">server/agents/registry.py</code></dt><dd>Tracks active agents, their hierarchy, and status for <code>list_agents</code> and the UI.</dd>
-      <dt><code class="path">server/agents/providers/</code></dt><dd>Legacy adapters kept only for <code>_distill_structured</code>, the one-shot structured-output call; the main loop uses the chat engine's adapters.</dd>
+      <dt><code class="path">server/agents/providers/</code></dt><dd>The one-shot structured-output adapters (<code>_distill_structured</code>), <code>AGENT_CALL_CONCURRENCY</code> and <code>model_key_for_id</code>; the main loop uses the chat engine's adapters.</dd>
       <dt><code class="path">server/git/worktree_harvest.py</code></dt><dd><code>harvest_agent_worktree</code>: applies a worktree-isolated agent's changes uncommitted onto the spawning branch.</dd>
       <dt><code class="path">server/agents/completion_inject.py</code></dt><dd><code>inject_completions</code>: folds a detached agent's result into a later turn.</dd>
       <dt><code class="path">server/tasks/</code></dt><dd>The unified background-task package (<code>registry.py</code>, <code>agents.py</code>, <code>tools.py</code>, <code>events.py</code>) that backs detached agents.</dd>
@@ -466,7 +471,7 @@
         <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a>,
         <a href="arch-tools.html">Tool dispatch &amp; executors</a>,
         <a href="arch-cron.html">Cron / scheduled tasks</a>, the
-        <a href="arch-ultracode.html">Ultracode workflow runtime</a> that backs detached and workflow tasks,
+        <a href="arch-ultracode.html">Ultracode workflow runtime</a> that backs workflow runs,
         and the hands-on <a href="tut-subagents.html">Sub-agents &amp; teams</a> tutorial.</p></div>
     </div>
   </main>

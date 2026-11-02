@@ -70,9 +70,19 @@ def test_gate_refuses_a_write_tool():
     assert "not read-only" in cap["error"][1]
 
 
-def test_gate_refuses_an_unknown_tool():
+def test_gate_refuses_an_unknown_tool(monkeypatch):
+    called = []
+
+    def execute(*args, **kwargs):
+        called.append(args)
+        raise AssertionError("unknown tool must not execute")
+
+    monkeypatch.setattr("server.skills.execute_tool", execute)
+    monkeypatch.setattr("server.skills.execute_mcp_tool", execute)
     cap = _drive_handle_tool("totally_made_up", {})
-    assert "error" in cap and "not read-only" in cap["error"][1]
+    assert "ok" not in cap
+    assert "error" in cap and "Unknown tool" in cap["error"][1]
+    assert called == []
 
 
 def test_gate_rejects_non_object_args():

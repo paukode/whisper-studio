@@ -9,6 +9,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from server.hooks import config_loader as hooks_cfg
 from server.infrastructure import plugin_hooks
 
 
@@ -106,7 +107,7 @@ def test_project_approve_flow(client, monkeypatch):
     (ws / ".whisper" / "settings.json").write_text(
         json.dumps({"hooks": {"PreToolUse": [{"command": "exit 2", "matcher": "*"}]}})
     )
-    monkeypatch.setattr("server.hooks.routes._workspace", lambda: str(ws))
+    monkeypatch.setattr("server.hooks.routes._current_workspace", lambda: str(ws))
 
     body = c.get("/api/hooks").json()
     assert body["project"]["status"] == "pending_approval"
@@ -125,18 +126,100 @@ def test_project_approve_flow(client, monkeypatch):
     assert c.get("/api/hooks").json()["project"]["status"] == "pending_approval"
 
 
-def test_v1_legacy_file_is_migrated_to_v2_on_first_load(client):
+@pytest.fixture
+def notices(monkeypatch):
+    import server.notifications as N
+
+    seen = []
+    monkeypatch.setattr(N, "old_format_notice", lambda **kw: seen.append(kw))
+    return seen
+
+
+def test_a_v1_file_is_not_read_or_overwritten(client, notices):
     c, tmp_path = client
-    # A pre-existing v1 flat hooks.json loads once and is rewritten as v2.
-    (tmp_path / "data").mkdir(exist_ok=True)
     hooks_file = tmp_path / "data" / "hooks.json"
     hooks_file.write_text(
         json.dumps({"hooks": [{"event": "PostToolUse", "tool": "*", "command": "echo hi"}]})
     )
-    rows = c.get("/api/hooks").json()["hooks"]["PostToolUse"]
-    assert len(rows) == 1 and rows[0]["command"] == "echo hi"
-    # The on-disk file is now v2; the v1 shape never loads again.
+    before = hooks_file.read_bytes()
+
+    assert c.get("/api/hooks").json()["hooks"]["PostToolUse"] == []
+    assert notices and {n["title"] for n in notices} == {hooks_cfg.V1_NOTICE_TITLE}
+    # Saving a hook would replace the file, so it is refused.
+    r = c.post("/api/hooks", json={"event": "Stop", "command": "exit 0"})
+    assert r.status_code == 409
+    assert "old v1 format" in r.json()["error"]
+    assert hooks_file.read_bytes() == before
+
+
+def test_an_invalid_on_error_or_regex_matcher_is_refused(client):
+    c, _ = client
+    r = c.post("/api/hooks", json={"event": "PreToolUse", "command": "exit 2", "on_error": "Block"})
+    assert r.status_code == 400 and "on_error" in r.json()["error"]
+    r = c.post("/api/hooks", json={"event": "PreToolUse", "command": "exit 2", "matcher": "/[/"})
+    assert r.status_code == 400 and "regular expression" in r.json()["error"]
+    assert all(len(v) == 0 for v in c.get("/api/hooks").json()["hooks"].values())
+
+
+def test_an_unreadable_file_is_not_overwritten(client):
+    c, tmp_path = client
+    hooks_file = tmp_path / "data" / "hooks.json"
+    # A trailing comma: the guard in it cannot be read, so it is not run.
+    hooks_file.write_text(
+        '{"version": 2, "hooks": {"PreToolUse": [{"command": "exit 2", "on_error": "block"},]}}'
+    )
+    before = hooks_file.read_bytes()
+
+    assert c.get("/api/hooks").json()["hooks"]["PreToolUse"] == []
+    # Saving would replace the file and drop the guard, so it is refused.
+    r = c.post("/api/hooks", json={"event": "Stop", "command": "exit 0"})
+    assert r.status_code == 409
+    assert "cannot be read" in r.json()["error"]
+    assert hooks_file.read_bytes() == before
+
+
+def test_turn_end_hooks_are_not_run_and_are_kept_on_save(client, notices):
+    c, tmp_path = client
+    hooks_file = tmp_path / "data" / "hooks.json"
+    turn_end = [{"command": "echo done", "matcher": "*"}]
+    hooks_file.write_text(json.dumps({"version": 2, "hooks": {"TurnEnd": turn_end}}))
+
+    body = c.get("/api/hooks").json()
+    assert all(len(v) == 0 for v in body["hooks"].values())
+    assert {n["title"] for n in notices} == {hooks_cfg.TURN_END_NOTICE_TITLE}
+    # TurnEnd is no longer an event name the API takes.
+    assert c.post("/api/hooks", json={"event": "TurnEnd", "command": "x"}).status_code == 400
+
+    r = c.post("/api/hooks", json={"event": "Stop", "command": "exit 0"})
+    assert r.status_code == 200
     on_disk = json.loads(hooks_file.read_text())
-    assert on_disk["version"] == 2
-    assert isinstance(on_disk["hooks"], dict)
-    assert on_disk["hooks"]["PostToolUse"][0]["command"] == "echo hi"
+    assert on_disk["hooks"]["TurnEnd"] == turn_end  # left as the user wrote it
+    assert len(on_disk["hooks"]["Stop"]) == 1
+
+
+def test_a_hook_with_the_old_tool_key_still_guards_that_tool(client):
+    c, tmp_path = client
+    hooks_file = tmp_path / "data" / "hooks.json"
+    old = {"tool": "ws_write_file", "command": "exit 2", "on_error": "block"}
+    hooks_file.write_text(json.dumps({"version": 2, "hooks": {"PreToolUse": [old]}}))
+
+    # The guard keeps running for the tool it names, and only for that tool.
+    guards = hooks_cfg.merged_for_event("PreToolUse", None)
+    assert [(h.matcher, h.on_error) for h in guards] == [("ws_write_file", "block")]
+
+    r = c.post("/api/hooks", json={"event": "PreToolUse", "tool": "Bash", "command": "exit 2"})
+    assert r.status_code == 200 and r.json()["hook"]["matcher"] == "Bash"
+
+
+def test_test_endpoint_does_not_run_a_command_with_an_old_variable(client):
+    c, _ = client
+    body = c.post("/api/hooks/test", json={"command": 'test "$WHISPER_TOOL" = x'}).json()
+    assert body["exit_code"] == -1
+    assert body["decision"] == "error"
+    assert "WHISPER_TOOL" in body["reason"] and "tool_name" in body["reason"]
+
+
+def test_test_endpoint_rejects_an_unknown_event(client):
+    c, _ = client
+    r = c.post("/api/hooks/test", json={"command": "exit 0", "event": "TurnEnd"})
+    assert r.status_code == 400

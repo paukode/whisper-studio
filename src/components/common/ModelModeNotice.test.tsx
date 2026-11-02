@@ -61,10 +61,10 @@ describe('ModelModeNotice', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it('the legacy localStorage flag still suppresses it', () => {
+  it('a leftover localStorage flag from an old build does not hide it', () => {
     markUnseen();
     localStorage.setItem('whisper_mode_notice_v1', '1');
     render(<ModelModeNotice />);
-    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 });

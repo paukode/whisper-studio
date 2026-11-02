@@ -4,27 +4,23 @@ import os
 import threading
 from contextlib import asynccontextmanager
 
+# Stop on anything but macOS on Apple silicon BEFORE any third-party or server
+# module loads, so an unsupported machine gets one clear message (fail closed).
+from server.infrastructure.platform_guard import require_macos_arm64
+
+require_macos_arm64()
+
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
-
-# Move legacy user data out of Application Support BEFORE any server module
-# imports: most modules freeze their path constants at import time, and the
-# constants must freeze onto files that are already in their new home.
-from server.infrastructure.paths import relocate_legacy_home
-
-relocate_legacy_home()
 
 from server.agents.routes import router as agents_router
 from server.approval.bootstrap import register_defaults as register_approval_defaults
 from server.approval.router import router as approval_router
 from server.attachments import cleanup_loop
 from server.attachments import router as attachments_router
-
-# server.ask_user is a tool-descriptor module only — it has no HTTP
-# handlers, so there's nothing to mount. Import elsewhere only when
-# the tool descriptors themselves are needed.
 from server.buddy import router as buddy_router
+from server.capture_helper import router as capture_helper_router
 from server.chat import router as chat_router
 from server.chat.compaction_log import router as compaction_log_router
 from server.chat.request_snapshots import router as request_snapshots_router
@@ -41,7 +37,6 @@ from server.hooks.routes import router as hooks_router
 from server.index import init_index_scheduler
 from server.index import router as index_router
 from server.infrastructure.async_tasks import spawn
-from server.infrastructure.boot_status import health_payload, record_boot_error
 from server.infrastructure.config import router as config_router
 from server.infrastructure.config_raw_routes import router as config_raw_router
 from server.infrastructure.data_retention import router as data_retention_router
@@ -81,17 +76,13 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("whisper-studio")
 
 # ── Packaged-app bootstrap ───────────────────────────────────────────────────
-# Runs at import, before anything reads config.json or spawns a subprocess:
+# Runs at import, before anything reads the config or spawns a subprocess:
 #  * bootstrap_home() seeds $WHISPER_HOME (config/pricing/rules/skills + the
 #    directory tree) on first run; a no-op in a dev checkout (env unset).
-#  * WHISPER_BIN_DIR (the bundle's binary dir) is prepended to PATH so
-#    library-internal spawns that we can't route through
-#    server/infrastructure/binaries.py — e.g. mlx_whisper's bare "ffmpeg"
-#    call — resolve under launchd's minimal PATH.
+#    The Mac shell already puts WHISPER_BIN_DIR (the bundle's binary dir)
+#    first on PATH, so library-internal spawns (e.g. mlx_whisper's bare
+#    "ffmpeg" call) resolve to the bundled binaries.
 bootstrap_home()
-_BIN_DIR = os.environ.get("WHISPER_BIN_DIR", "").strip()
-if _BIN_DIR and _BIN_DIR not in os.environ.get("PATH", "").split(os.pathsep):
-    os.environ["PATH"] = _BIN_DIR + os.pathsep + os.environ.get("PATH", "")
 # Adopt the user's login-shell environment: PATH is widened with their real
 # tool locations (Homebrew, pipx, nvm, …) so spawned commands resolve under the
 # minimal environment a GUI-launched .app inherits, and the full environment
@@ -107,22 +98,25 @@ class _QuietPollAccessLog(logging.Filter):
     terminal. Only these pure-polling GETs are hidden; every other request —
     builds, connects, removes, errors — still logs normally."""
 
-    # Status-qualified so a failing poll (non-200) still logs. The preview
-    # poll alone was 75% of a 221K-line backend.log before it was quieted
-    # here and slowed in useDockLiveWatcher.
+    # GET paths, with or without a query string. Status-qualified so a
+    # failing poll (non-200) still logs. The preview poll alone was 75% of a
+    # 221K-line backend.log before it was quieted here and slowed in
+    # useDockLiveWatcher.
     _NOISY = (
         "/api/workspace/index/status",
-        'GET /api/preview/sessions HTTP/1.1" 200',
-        'GET /api/workspace/status HTTP/1.1" 200',
-        'GET /api/notifications/unread-count HTTP/1.1" 200',
+        "/api/preview/sessions",
+        "/api/workspace/status",
+        "/api/notifications/unread-count",
     )
 
     def filter(self, record: logging.LogRecord) -> bool:
         try:
             msg = record.getMessage()
         except Exception:
+            return True  # keep a line this filter cannot read
+        if 'HTTP/1.1" 200' not in msg:
             return True
-        return not any(p in msg for p in self._NOISY)
+        return not any(f'"GET {p} ' in msg or f'"GET {p}?' in msg for p in self._NOISY)
 
 
 def _raise_fd_soft_limit() -> None:
@@ -167,37 +161,31 @@ def _trust_system_certs() -> None:
 
     The packaged runtime is python-build-standalone, which knows nothing of the
     keychain, so behind a TLS-intercepting corporate proxy every HTTPS fetch
-    failed CERTIFICATE_VERIFY_FAILED ("self-signed certificate in chain" on
-    gov.pl and zus.pl, "unable to get local issuer" on ec.europa.eu and
-    stat.gov.pl; 85 in one log) while the same sites opened fine in the
+    failed CERTIFICATE_VERIFY_FAILED while the same sites opened fine in the
     browser. truststore swaps ssl.SSLContext for one that also consults the
     system store, so urllib (WebFetch), requests (Tavily) and httpx (the OpenAI
     SDK) all pick it up without per-call changes. Must run before any of them
-    build a context, hence module import time. Fails open to the old
-    certifi-only behavior.
+    build a context, hence module import time. A failure stops the boot with
+    its reason.
 
     The injection alone broke every Bedrock call: botocore builds the ORIGINAL
     ssl.SSLContext, whose property setters recursed once the module global
     named truststore's subclass ("maximum recursion depth exceeded" on every
     chat turn). server.infrastructure.tls repairs those setters right after
-    injecting, and undoes the injection if the repair cannot be proven.
+    injecting, and undoes the injection (then raises) if the repair cannot be
+    proven.
     """
-    try:
-        from server.infrastructure.tls import install_system_trust
+    from server.infrastructure.tls import install_system_trust
 
-        install_system_trust()
-    except Exception as exc:  # noqa: BLE001 - never block boot on TLS setup
-        log.warning("system trust store unavailable, using the bundled CA list: %s", exc)
+    install_system_trust()
 
 
 _trust_system_certs()
 
-# Import executor modules to trigger registration. Each module
-# registers tool executors as a side-effect of being imported. We do
-# this in a guarded loop so a single broken executor (e.g. a missing
-# optional dep) doesn't take down the whole app at boot — the rest of
-# the registry still loads, and the failing executor logs an error.
-import importlib  # noqa: E402 — must come after logging.basicConfig
+# Import executor modules to trigger registration. Each module registers
+# tool executors as a side effect of being imported. A module that fails to
+# import stops the boot with its traceback (every dependency is pinned).
+import importlib  # noqa: E402 (must come after logging.basicConfig)
 
 _EXECUTOR_MODULES = (
     "server.executors.web",
@@ -212,17 +200,14 @@ _EXECUTOR_MODULES = (
     "server.search",  # ws_grep / ws_glob
     "server.index",  # workspace_semantic_search
     "server.git.executor",
+    "server.git.gh_executor",  # github / github_api / github_api_write
     "server.memory.executor",
     "server.rules_tools",  # rules_write (the user's rules under ~/.whisper)
     "server.agent_tools.skill_tools",  # skill_list, for tool scripts (chat uses tool_router.py)
 )
 
 for _modname in _EXECUTOR_MODULES:
-    try:
-        importlib.import_module(_modname)
-    except Exception as _exc:  # noqa: BLE001 — boot-time best-effort
-        log.error("Executor module %s failed to register: %s", _modname, _exc)
-        record_boot_error(_modname, str(_exc))
+    importlib.import_module(_modname)
 
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 
@@ -306,7 +291,8 @@ def _start_parent_watchdog() -> None:
 
             serving.stop()
         except Exception:
-            pass
+            # The process exits next either way; the log keeps the reason.
+            log.exception("Stopping the on-device model server failed")
         os._exit(0)
 
     threading.Thread(target=_watch, name="parent-watchdog", daemon=True).start()
@@ -320,8 +306,9 @@ def _seed_bundled_models() -> None:
     is missing from the live models root is copied over, so those models are
     present before the first recording without a download. A dir that already
     exists is left alone (the per-model ensure functions heal partial copies).
-    Source checkouts have no models-bundled dir — setup.sh downloads the same
-    two models instead — so this is a silent no-op there."""
+    A copy that fails is removed and stops the boot with its reason. Source
+    checkouts have no models-bundled dir (setup.sh downloads the language-ID,
+    speaker-encoder and ReDimNet2 models instead), so this does nothing there."""
     import shutil
 
     from server.infrastructure.paths import models_root
@@ -338,26 +325,46 @@ def _seed_bundled_models() -> None:
             continue
         try:
             shutil.copytree(src, dst)
-            logging.getLogger("whisper-studio").info("Seeded bundled model %s", name)
-        except Exception as e:  # noqa: BLE001 — the ensure funcs can still download
-            logging.getLogger("whisper-studio").warning(
-                "Could not seed bundled model %s: %s", name, e
-            )
+        except BaseException:
             shutil.rmtree(dst, ignore_errors=True)  # never leave a half copy
+            raise
+        log.info("Seeded bundled model %s", name)
 
 
-def _retire_config_keys() -> None:
-    """Drop the config keys the app no longer reads (RETIRED_USER_KEYS) from
-    the user layer, at startup in a packaged install and a source checkout
-    alike. Not at import: bootstrap_home() runs only for a packaged install,
-    and an import-time write would reach a checkout's live config whenever a
-    test collects this module."""
+def _old_config_notice_list() -> list[tuple[str, str]]:
+    """Every startup notice about old settings, from the config layer and from
+    the on-device model entries. A check that fails is logged and skipped."""
+    notices: list[tuple[str, str]] = []
     try:
-        from server.infrastructure.config import retire_user_config_keys
+        from server.infrastructure.config import old_config_notices
 
-        retire_user_config_keys()
-    except Exception as e:  # never block boot on a config tidy-up
-        log.warning("Retiring old config keys skipped: %s", e)
+        notices += old_config_notices()
+    except Exception as e:
+        log.warning("Checking for old config settings failed: %s", e)
+    try:
+        from server.model_browser.install import small_model_tool_notices
+
+        notices += small_model_tool_notices()
+    except Exception as e:
+        log.warning("Checking small on-device models for tool calling failed: %s", e)
+    return notices
+
+
+def _report_old_config() -> None:
+    """Say at startup that an old config file, key or value is ignored, instead
+    of skipping it quietly: a log line on every start, and a bell notification
+    the first time only (record_notification_once). Startup never writes the
+    user's config.user.json; the user decides what to change."""
+    from server.notifications import record_notification_once
+
+    for title, message in _old_config_notice_list():
+        log.warning("%s: %s", title, message)
+        try:
+            record_notification_once(
+                source="config", title=title, message=message, status="warning"
+            )
+        except Exception as e:  # the log line above already carries the notice
+            log.warning("Could not show the notice %r in the app: %s", title, e)
 
 
 @asynccontextmanager
@@ -374,24 +381,13 @@ async def lifespan(app):
     _seed_bundled_models()
     # Close any compaction bracket a crash left open, so the per-session
     # compaction logs never claim an in-flight compaction that died silently.
-    try:
-        from server.chat.compaction_log import reconcile_orphans
+    from server.chat.compaction_log import reconcile_orphans
 
-        reconcile_orphans()
-    except Exception as e:
-        log.warning("compaction bracket reconcile failed: %s", e)
-    # Config-side one-shot: on-device models installed before the agentic-size
-    # gate existed all carry supports_tools True, which is what makes a 1-3B
-    # model answer "hey" with a raw JSON tool call. Correct those entries once,
-    # then never again (the sweep marks the user layer), so a deliberate
-    # re-enable afterwards sticks.
-    try:
-        from server.model_browser.install import disable_tools_on_small_models
-
-        disable_tools_on_small_models()
-    except Exception as e:
-        logging.getLogger("whisper-studio").warning("Small-model tool sweep skipped: %s", e)
-    _retire_config_keys()
+    reconcile_orphans()
+    # Old settings (an old config.json, retired keys and values, small on-device
+    # models still set to call tools) are reported, never rewritten: startup
+    # leaves config.user.json exactly as the user saved it.
+    _report_old_config()
     init_skills()
     init_plugins(app)
     init_memory()
@@ -413,12 +409,9 @@ async def lifespan(app):
     # A previous run killed with SIGKILL (force quit / OOM) never ran the
     # shutdown hook below, leaving its on-device model server alive and holding
     # gigabytes. Reap those before anything else needs the memory.
-    try:
-        from server.local import serving
+    from server.local import serving
 
-        await asyncio.to_thread(serving.reap_orphans)
-    except Exception as e:
-        logging.getLogger("whisper-studio").debug("model server orphan reap failed: %s", e)
+    await asyncio.to_thread(serving.reap_orphans)
     cleanup_task = asyncio.create_task(cleanup_loop())
     # Starts the configured MCP servers, then keeps them matched to
     # mcp_servers.json (edits from any source apply without a restart).
@@ -441,12 +434,9 @@ async def lifespan(app):
 
     # Flip orphaned workflow runs (server died mid-run) to 'stale'; journals
     # stay resumable.
-    try:
-        from server.workflows.manager import reconcile_stale as _wf_reconcile
+    from server.workflows.manager import reconcile_stale as _wf_reconcile
 
-        _wf_reconcile()
-    except Exception as _exc:
-        log.warning("workflow reconcile failed: %s", _exc)
+    _wf_reconcile()
     # Prune notifications past the retention window (30 days).
     from server.notifications import gc_old as _notifications_gc
 
@@ -468,11 +458,9 @@ async def lifespan(app):
     # Stop the on-device model server before the loop tears down; an orphaned
     # one would keep holding its port and gigabytes of weights.
     try:
-        from server.local import serving
-
         serving.stop()
-    except Exception as e:  # never block shutdown on this
-        logging.getLogger("whisper-studio").debug("model server stop failed: %s", e)
+    except Exception:  # shutdown goes on; the log keeps the reason
+        log.exception("Stopping the on-device model server failed")
     # Stop the config watcher first so it cannot start a server while the
     # rest are being shut down.
     mcp_task.cancel()
@@ -518,6 +506,7 @@ app.include_router(chat_router)
 app.include_router(sessions_router)
 app.include_router(ws_router)
 app.include_router(voice_router)
+app.include_router(capture_helper_router)
 app.include_router(speakers_router)
 app.include_router(permissions_router)
 app.include_router(hooks_router)
@@ -579,12 +568,15 @@ app.mount("/static", _CachedStatic(directory=os.path.join(BASE_DIR, "static")), 
 
 # The bundled documentation site (docs/ in the repo, staged next to server/ in
 # the packaged app). Served for the in-app docs panel and the @docs references;
-# absent in stripped builds, then the panel simply has nothing to mount.
+# every install ships it, so a missing site stops the boot.
 from server.docs_qa import docs_dir as _docs_dir  # noqa: E402
 
 _docs = _docs_dir()
-if _docs:
-    app.mount("/docs-site", StaticFiles(directory=_docs, html=True), name="docs-site")
+if not _docs:
+    raise RuntimeError(
+        "The documentation site (docs/index.html) is missing: the install is incomplete."
+    )
+app.mount("/docs-site", StaticFiles(directory=_docs, html=True), name="docs-site")
 
 
 def _spa_index_response() -> Response:
@@ -612,35 +604,21 @@ async def favicon():
 
 @app.get("/health")
 async def health():
-    return health_payload()
-
-
-# SPA fallback: any GET that wasn't matched by an /api, /ws, or /static route
-# above gets the index.html so client-side navigation survives a hard reload.
-# The matcher excludes prefixes that the routers already own, so this stays a
-# safe net rather than shadowing real handlers.
-_SPA_RESERVED_PREFIXES = ("api/", "ws/", "static/", "health", "favicon.ico")
-
-
-@app.get("/{full_path:path}")
-async def spa_fallback(full_path: str):
-    if any(full_path == p.rstrip("/") or full_path.startswith(p) for p in _SPA_RESERVED_PREFIXES):
-        # Let FastAPI return the real 404 from the matched router rather than
-        # masking it with the SPA shell.
-        return Response(status_code=404)
-    return _spa_index_response()
+    return {"status": "ok"}
 
 
 if __name__ == "__main__":
     import uvicorn
 
     os.chdir(BASE_DIR)
-    port = int(os.environ.get("PORT", 8000))
+    port = int(os.environ.get("PORT", 41430))
     # Bind to localhost by default so the dev server isn't exposed on
     # every coffee-shop / hotel / conference Wi-Fi the laptop joins.
-    # Power users wanting LAN access set HOST=0.0.0.0 explicitly:
+    # Power users wanting LAN access set HOST=0.0.0.0 explicitly, and list the
+    # LAN origin in WHISPER_TRUSTED_ORIGINS (the origin guard refuses it
+    # otherwise):
     #
-    #   HOST=0.0.0.0 bash setup.sh --prod
+    #   HOST=0.0.0.0 WHISPER_TRUSTED_ORIGINS=... bash setup.sh --prod
     host = os.environ.get("HOST", "127.0.0.1")
     # uvicorn closes idle keep-alive sockets after 5s by default, which is
     # shorter than most of the UI's poll intervals (4s, 5s, 10s, 15s, 30s,

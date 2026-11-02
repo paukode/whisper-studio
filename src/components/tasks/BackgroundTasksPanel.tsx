@@ -5,6 +5,8 @@ import type { BackgroundTaskInfo } from '@/types/backgroundTasks';
 import { CheckIcon, ChevronIcon, CloseIcon } from '@/components/common/icons';
 import { useNow } from '@/hooks/useNow';
 import { formatMessageTimestamp } from '@/utils/formatTimestamp';
+import { useUIStore } from '@/stores/uiStore';
+import { toError } from '@/utils/toError';
 
 /** How often an unfolded running row refreshes its output tail. */
 const OUTPUT_POLL_MS = 2000;
@@ -117,7 +119,15 @@ const TaskRow: React.FC<{ task: BackgroundTaskInfo; now: number }> = ({ task, no
           <button
             type="button"
             className="bg-tasks-btn bg-tasks-stop"
-            onClick={() => void stopTask(task.task_id)}
+            onClick={() => {
+              stopTask(task.task_id)
+                .then((stopped) => {
+                  if (!stopped) useUIStore.getState().addToast({ type: 'info', message: 'The task had already finished.' });
+                })
+                .catch((err: unknown) => {
+                  useUIStore.getState().addToast({ type: 'error', message: `Could not stop the task: ${toError(err).message}` });
+                });
+            }}
             title="Stop this task"
           >
             Stop

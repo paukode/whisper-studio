@@ -2,7 +2,7 @@
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 from fastapi import FastAPI
@@ -46,6 +46,28 @@ def test_empty_message_and_bad_source_handled():
     assert notif.list_notifications()[0]["source"] == "app"  # garbage → app
 
 
+def test_record_once_skips_a_notice_already_recorded_even_when_hidden():
+    first = notif.record_notification_once(
+        source="config", title="Old", message="m", status="warning"
+    )
+    assert first["deduped"] is False
+    again = notif.record_notification_once(
+        source="config", title="Old", message="m", status="warning"
+    )
+    assert again == {"id": first["id"], "deduped": True}
+    [row] = notif.list_notifications()
+    assert row["count"] == 1 and row["status"] == "warning"
+
+    # Hidden in the bell, it is still "already shown": nothing comes back.
+    notif.hide([first["id"]])
+    assert notif.record_notification_once(source="config", title="Old", message="m")["deduped"]
+    assert notif.list_notifications() == []
+
+    # A different message is a different notice; an empty one is refused.
+    assert not notif.record_notification_once(source="config", title="Old", message="m2")["deduped"]
+    assert notif.record_notification_once(source="config", message="") is None
+
+
 def test_unread_count_and_mark_read():
     for i in range(3):
         notif.record_notification(message=f"n{i}", source="chat")
@@ -59,13 +81,70 @@ def test_unread_count_and_mark_read():
 
 def test_gc_drops_old_rows():
     notif.record_notification(message="old", source="chat")
-    old = (datetime.now(timezone.utc) - timedelta(days=45)).isoformat().replace("+00:00", "Z")
+    old = (datetime.now(UTC) - timedelta(days=45)).isoformat().replace("+00:00", "Z")
     with notif._get_conn() as conn:
         conn.execute("UPDATE notifications SET created_at=?", (old,))
     notif.record_notification(message="fresh", source="chat")
     assert notif.gc_old() == 1
     remaining = notif.list_notifications()
     assert [r["message"] for r in remaining] == ["fresh"]
+
+
+def test_gc_keeps_the_rows_that_remember_a_notice_was_shown():
+    for source in notif.ONCE_SOURCES:
+        notif.record_notification_once(source=source, title="Old", message="m")
+    notif.record_notification(message="old", source="chat")
+    old = (datetime.now(UTC) - timedelta(days=45)).isoformat().replace("+00:00", "Z")
+    with notif._get_conn() as conn:
+        conn.execute("UPDATE notifications SET created_at=?", (old,))
+
+    assert notif.gc_old() == 1
+    assert sorted(r["source"] for r in notif.list_notifications()) == sorted(notif.ONCE_SOURCES)
+    # So the notice is still "already shown" after the retention window.
+    assert notif.record_notification_once(source="config", title="Old", message="m")["deduped"]
+
+
+class _Log:
+    def __init__(self):
+        self.lines = []
+
+    def warning(self, fmt, *args):
+        self.lines.append(fmt % args)
+
+
+def test_old_format_notice_logs_once_per_process_and_shows_once(monkeypatch):
+    log = _Log()
+    monkeypatch.setattr(notif, "log", log)
+    monkeypatch.setattr(notif, "_old_format_seen", set())
+    notif.old_format_notice(title="Old hooks", message="m")
+    notif.old_format_notice(title="Old hooks", message="m")
+    assert log.lines == ["Old hooks: m"]
+    [row] = notif.list_notifications()
+    assert row["source"] == notif.OLD_FORMAT_SOURCE == "old-format"
+    assert row["status"] == "warning" and row["count"] == 1
+    assert notif.OLD_FORMAT_SOURCE in notif.ONCE_SOURCES
+
+    # The next start (a new process) logs it again but does not show it again,
+    # even after the user cleared it.
+    notif.clear_all()
+    monkeypatch.setattr(notif, "_old_format_seen", set())
+    notif.old_format_notice(title="Old hooks", message="m")
+    assert log.lines == ["Old hooks: m", "Old hooks: m"]
+    assert notif.list_notifications() == []
+
+
+def test_old_format_notice_never_raises(monkeypatch):
+    log = _Log()
+    monkeypatch.setattr(notif, "log", log)
+    monkeypatch.setattr(notif, "_old_format_seen", set())
+
+    def broken(**kw):
+        raise RuntimeError("no database")
+
+    monkeypatch.setattr(notif, "record_notification_once", broken)
+    notif.old_format_notice(title="T", message="m")
+    assert log.lines[0] == "T: m"
+    assert "no database" in log.lines[1]
 
 
 def test_http_surface(client):
@@ -192,7 +271,7 @@ def test_dedupe_merges_identical_within_window():
 def test_dedupe_window_expires():
     notif.record_notification(message="boom", source="app", status="error")
     stale = (
-        (datetime.now(timezone.utc) - timedelta(seconds=notif.DEDUPE_WINDOW_SECONDS + 1))
+        (datetime.now(UTC) - timedelta(seconds=notif.DEDUPE_WINDOW_SECONDS + 1))
         .isoformat()
         .replace("+00:00", "Z")
     )
@@ -286,3 +365,24 @@ def test_hide_and_clear_http_surface(client):
     assert client.post("/api/notifications/hide", json={"ids": ["x"]}).status_code == 400
     assert client.post("/api/notifications/clear", json={}).json() == {"cleared": 1}
     assert client.get("/api/notifications").json()["notifications"] == []
+
+
+def test_a_database_error_reaches_the_bell_instead_of_an_empty_list(monkeypatch):
+    import contextlib
+    import sqlite3
+
+    import pytest
+
+    from server import notifications as N
+
+    N._ensure_table()
+
+    @contextlib.contextmanager
+    def _locked():
+        raise sqlite3.OperationalError("database is locked")
+        yield
+
+    monkeypatch.setattr(N, "_get_conn", _locked)
+    for call in (N.list_notifications, N.unread_count, N.clear_all, N.gc_old):
+        with pytest.raises(sqlite3.OperationalError):
+            call()

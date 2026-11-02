@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Whisper Studio — macOS app bundle assembler.
+# Whisper Studio: macOS app bundle assembler.
 #
 # Builds dist-app/Whisper Studio.app: frontend, standalone Python runtime,
 # Playwright Chromium (Live Preview), llama-server, ffmpeg/ffprobe, node, the
@@ -31,20 +31,20 @@ PYTHON_SHA256="aa2a054f5e04bde63ae199e3bb6bbb634e457423efd294842deeb1299e7e5932"
 LLAMA_ASSET="llama-${LLAMA_TAG}-bin-macos-arm64.tar.gz"
 LLAMA_URL="https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_TAG}/${LLAMA_ASSET}"
 
-# ffmpeg/ffprobe static arm64 release builds (ffmpeg 8.1.2) from
-# https://ffmpeg.martin-riedl.de (per-binary zips).
-FFMPEG_BUILD_ID="1783011502_8.1.2"
-FFMPEG_BASE_URL="https://ffmpeg.martin-riedl.de/download/macos/arm64/${FFMPEG_BUILD_ID}"
+# ffmpeg/ffprobe: the build in macapp/ffmpeg_pin.env, which setup.sh installs
+# for a source checkout too.
+# shellcheck source=ffmpeg_pin.env
+. "$(dirname "${BASH_SOURCE[0]}")/ffmpeg_pin.env"
 FFMPEG_ZIP_URL="${FFMPEG_BASE_URL}/ffmpeg.zip"
 FFPROBE_ZIP_URL="${FFMPEG_BASE_URL}/ffprobe.zip"
-FFMPEG_ZIP_SHA256="ef1aa60006c7b77ce170c1608c08d8e4ba1c30c5746f2ac986ded932d0ac2c3c"
-FFPROBE_ZIP_SHA256="c39787f4af7a3932502d2d48db6f6feaaa836b48a73ef78c32cc3285df61dfaf"
 
-# Node.js official arm64 macOS build (only bin/node is bundled).
-NODE_VERSION="v22.16.0"
+# Node.js official arm64 macOS build (only bin/node is bundled). The version is
+# the one in .nvmrc, which setup.sh installs into the venv too; NODE_SHA256 is
+# for that version, so a .nvmrc bump without a new checksum stops the build.
+NODE_VERSION="v$(tr -d ' \n' < "$(dirname "${BASH_SOURCE[0]}")/../.nvmrc")"
 NODE_TARBALL="node-${NODE_VERSION}-darwin-arm64.tar.gz"
 NODE_URL="https://nodejs.org/dist/${NODE_VERSION}/${NODE_TARBALL}"
-NODE_SHA256="1d7f34ec4c03e12d8b33481e5c4560432d7dc31a0ef3ff5a4d9a8ada7cf6ecc9"
+NODE_SHA256="d38bd5e5a2ddce6bbb5ce45e46e208337da4d51fffe611e567fd32073d6439f6"
 
 # Signing: "-" = ad-hoc (default). Set SIGN_IDENTITY to a Developer ID
 # Application identity for a distributable build.
@@ -114,13 +114,17 @@ command -v curl >/dev/null || die "curl not found"
 command -v rsync >/dev/null || die "rsync not found"
 command -v codesign >/dev/null || die "codesign not found (install Command Line Tools)"
 
-# Version, same rule as make_dmg.sh: git describe, else 0.1.0.
-VERSION="$(git -C "$REPO_ROOT" describe --tags --always 2>/dev/null || echo "0.1.0")"
-VERSION="${VERSION#v}"
-[[ -n "$VERSION" ]] || VERSION="0.1.0"
+# Version, same rule as make_dmg.sh: git describe. Outside a git checkout
+# there is no version to derive, so the build stops (APP_VERSION still wins).
+if [[ -n "${APP_VERSION:-}" ]]; then
+    VERSION="$APP_VERSION"
+else
+    VERSION="$(git -C "$REPO_ROOT" describe --tags --always)" \
+        || die "cannot derive a version (not a git checkout); set APP_VERSION"
+    VERSION="${VERSION#v}"
+fi
 # APP_VERSION overrides the derived version verbatim (e.g. a feature build
 # labelled 2.6.0-sonic); VERSION_SUFFIX appends to whatever was derived.
-if [[ -n "${APP_VERSION:-}" ]]; then VERSION="$APP_VERSION"; fi
 VERSION="${VERSION}${VERSION_SUFFIX:-}"
 
 log "Building Whisper Studio.app (version $VERSION, identity: $SIGN_IDENTITY)"
@@ -131,13 +135,13 @@ log "Building Whisper Studio.app (version $VERSION, identity: $SIGN_IDENTITY)"
 
 log "[a] Frontend build (npm run build)"
 [[ -d "$REPO_ROOT/node_modules" ]] \
-    || die "node_modules missing at $REPO_ROOT — run 'npm ci' (or npm install) first"
+    || die "node_modules missing at $REPO_ROOT, run 'npm ci' (or npm install) first"
 # vite build occasionally finishes writing static/dist but then the process
 # hangs at 0% CPU instead of exiting (a known rollup/esbuild worker-teardown
 # flake), which would stall the whole packaging build forever. So run it in the
 # background, wait for vite's "built in" completion line, then reap the process
-# if it lingers. A genuine build failure (no completion line, early exit) still
-# surfaces via the missing-index.html check below.
+# if it lingers. A build that exits on its own must exit 0: a tsc error stops
+# before vite, and the old static/dist it leaves behind must never ship.
 FE_LOG="$BUILD_DIR/frontend-build.log"
 mkdir -p "$BUILD_DIR"
 (cd "$REPO_ROOT" && npm run build) > "$FE_LOG" 2>&1 &
@@ -162,7 +166,7 @@ else
     # No completion line within the window. The observed second flake mode is
     # vite hanging at 0% CPU with NOTHING in the log (not even the tsc step's
     # errors), where an unbounded wait stalled packaging for hours. Reap and
-    # fail loudly instead — the log tail below says what (if anything) ran.
+    # fail loudly instead, the log tail below says what (if anything) ran.
     if kill -0 "$FE_PID" 2>/dev/null; then
         substep "frontend build produced no completion within 10 min; reaping"
         pkill -P "$FE_PID" 2>/dev/null || true
@@ -171,9 +175,9 @@ else
         pkill -9 -P "$FE_PID" 2>/dev/null || true
         kill -9 "$FE_PID" 2>/dev/null || true
         tail -5 "$FE_LOG" 2>/dev/null || true
-        die "frontend build hung (no output for 10 min) — see $FE_LOG"
+        die "frontend build hung (no output for 10 min), see $FE_LOG"
     fi
-    wait "$FE_PID" || true         # exited on its own; the check below is the gate
+    wait "$FE_PID" || { tail -20 "$FE_LOG"; die "frontend build failed, see $FE_LOG"; }
 fi
 tail -3 "$FE_LOG" 2>/dev/null || true
 [[ -f "$REPO_ROOT/static/dist/index.html" ]] \
@@ -187,12 +191,15 @@ log "[b] Python runtime ($PYTHON_TARBALL)"
 PY_DIR="$BUILD_DIR/python"
 PY_BIN="$PY_DIR/bin/python3"
 download "$PYTHON_URL" "$DL_DIR/$PYTHON_TARBALL" "$PYTHON_SHA256"
-if [[ -x "$PY_BIN" ]]; then
+# The stamp names the extracted tarball, so a new pin re-extracts instead of
+# reusing the previous runtime.
+if [[ -x "$PY_BIN" && "$(cat "$PY_DIR/.tag" 2>/dev/null)" == "$PYTHON_TARBALL" ]]; then
     substep "runtime already extracted: $PY_DIR"
 else
     rm -rf "$PY_DIR"
     tar -xzf "$DL_DIR/$PYTHON_TARBALL" -C "$BUILD_DIR"   # tarball root is python/
     [[ -x "$PY_BIN" ]] || die "python3 missing after extracting $PYTHON_TARBALL"
+    echo "$PYTHON_TARBALL" > "$PY_DIR/.tag"
 fi
 
 REQ_STAMP="$PY_DIR/.requirements.sha256"
@@ -306,6 +313,11 @@ fi
 
 log "[d] ffmpeg + ffprobe ($FFMPEG_BUILD_ID)"
 FFMPEG_DIR="$BUILD_DIR/ffmpeg"
+# The stamp names the build, so a new pin unzips again instead of reusing the
+# previous binaries.
+if [[ "$(cat "$FFMPEG_DIR/.tag" 2>/dev/null)" != "$FFMPEG_BUILD_ID" ]]; then
+    rm -rf "$FFMPEG_DIR"
+fi
 mkdir -p "$FFMPEG_DIR"
 download "$FFMPEG_ZIP_URL" "$DL_DIR/ffmpeg-$FFMPEG_BUILD_ID.zip" "$FFMPEG_ZIP_SHA256"
 download "$FFPROBE_ZIP_URL" "$DL_DIR/ffprobe-$FFMPEG_BUILD_ID.zip" "$FFPROBE_ZIP_SHA256"
@@ -321,6 +333,7 @@ for tool in ffmpeg ffprobe; do
         || die "$tool failed to run ($tool -version)"
     substep "$tool ok ($("$FFMPEG_DIR/$tool" -version 2>/dev/null | head -1 | cut -d' ' -f1-3))"
 done
+echo "$FFMPEG_BUILD_ID" > "$FFMPEG_DIR/.tag"
 
 # ---------------------------------------------------------------------------
 # Stage e: node (bin/node only)
@@ -329,7 +342,9 @@ done
 log "[e] node ($NODE_VERSION)"
 NODE_DIR="$BUILD_DIR/node"
 download "$NODE_URL" "$DL_DIR/$NODE_TARBALL" "$NODE_SHA256"
-if [[ -x "$NODE_DIR/node" ]]; then
+# The stamp names the version, so a new .nvmrc pin re-extracts instead of
+# reusing the previous node.
+if [[ -x "$NODE_DIR/node" && "$(cat "$NODE_DIR/.tag" 2>/dev/null)" == "$NODE_VERSION" ]]; then
     substep "already extracted: $NODE_DIR/node"
 else
     rm -rf "$NODE_DIR"
@@ -337,6 +352,7 @@ else
     tar -xzf "$DL_DIR/$NODE_TARBALL" -C "$NODE_DIR" --strip-components=2 \
         "node-${NODE_VERSION}-darwin-arm64/bin/node"
     [[ -x "$NODE_DIR/node" ]] || die "node missing after extraction"
+    echo "$NODE_VERSION" > "$NODE_DIR/.tag"
 fi
 
 # ---------------------------------------------------------------------------
@@ -359,48 +375,15 @@ plutil -lint -s "$CONTENTS_DIR/Info.plist" || die "generated Info.plist is inval
 # f.2: shell binary.
 cp "$BUILD_DIR/shell/WhisperStudio" "$CONTENTS_DIR/MacOS/WhisperStudio"
 
-# f.3: app icon. The real icon lives in the repo (macapp/icon/AppIcon.icns,
-# built from icon.svg: the "W." monogram on deep indigo); the generated solid-colour
-# placeholder below is only the fallback if it is ever removed.
-if [[ -f "$MACAPP_DIR/icon/AppIcon.icns" ]]; then
-    cp "$MACAPP_DIR/icon/AppIcon.icns" "$RES_DIR/AppIcon.icns"
-else
-ICON_DIR="$BUILD_DIR/icon"
-if [[ ! -f "$ICON_DIR/AppIcon.icns" ]]; then
-    substep "generating placeholder AppIcon.icns"
-    rm -rf "$ICON_DIR"
-    mkdir -p "$ICON_DIR/AppIcon.iconset"
-    "$PY_BIN" - "$ICON_DIR/base.png" <<'PYEOF'
-import struct, sys, zlib
-size = 1024
-r, g, b = 0x4B, 0x3F, 0x8F  # muted violet placeholder
-row = bytes([0]) + bytes([r, g, b, 255]) * size
-raw = row * size
-def chunk(tag, data):
-    out = struct.pack(">I", len(data)) + tag + data
-    return out + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
-png = b"\x89PNG\r\n\x1a\n"
-png += chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 6, 0, 0, 0))
-png += chunk(b"IDAT", zlib.compress(raw))
-png += chunk(b"IEND", b"")
-open(sys.argv[1], "wb").write(png)
-PYEOF
-    for s in 16 32 128 256 512; do
-        sips -z "$s" "$s" "$ICON_DIR/base.png" \
-            --out "$ICON_DIR/AppIcon.iconset/icon_${s}x${s}.png" >/dev/null
-        d=$((s * 2))
-        sips -z "$d" "$d" "$ICON_DIR/base.png" \
-            --out "$ICON_DIR/AppIcon.iconset/icon_${s}x${s}@2x.png" >/dev/null
-    done
-    iconutil -c icns "$ICON_DIR/AppIcon.iconset" -o "$ICON_DIR/AppIcon.icns"
-fi
-cp "$ICON_DIR/AppIcon.icns" "$RES_DIR/AppIcon.icns"
-fi
+# f.3: app icon (macapp/icon/AppIcon.icns, built from icon.svg: the "W."
+# monogram on deep indigo).
+[[ -f "$MACAPP_DIR/icon/AppIcon.icns" ]] || die "macapp/icon/AppIcon.icns missing"
+cp "$MACAPP_DIR/icon/AppIcon.icns" "$RES_DIR/AppIcon.icns"
 
 # f.4: Python runtime. Bytecode caches are excluded: the shell redirects
 # runtime .pyc writes to WHISPER_HOME via PYTHONPYCACHEPREFIX (a post-signing
 # write inside Resources/ would break the bundle seal), and with that prefix
-# set Python ignores in-tree __pycache__ anyway — they'd be dead weight.
+# set Python ignores in-tree __pycache__ anyway, they'd be dead weight.
 substep "copying python runtime"
 rsync -a --delete --exclude '__pycache__/' --exclude '*.pyc' \
     "$PY_DIR/" "$RES_DIR/python/"
@@ -447,24 +430,12 @@ cp "$REPO_ROOT/rules/global/rules.md" "$RES_DIR/backend/rules/global/"
 # Always-on speech models (language ID + speaker encoder, ~170MB): shipped
 # inside the bundle and seeded into the user's models dir on first launch
 # (server/main.py::_seed_bundled_models), so transcription needs no download.
-# Cached in build-app/downloads like every other stage; the repo venv provides
-# huggingface_hub (run setup.sh once on the build machine if it is missing).
+# Cached in build-app/downloads like every other stage; fetched with the
+# bundled interpreter, whose pinned huggingface_hub stage b installed.
 substep "bundled speech models (language ID + speaker encoder)"
 BUNDLED_MODELS_CACHE="$BUILD_DIR/downloads/bundled-models"
 mkdir -p "$BUNDLED_MODELS_CACHE"
-# Prefer the repo venv; on a bare builder (CI) make a tiny throwaway venv with
-# just huggingface_hub, cached in build-app/ like every other stage.
-if [[ -x "$REPO_ROOT/venv/bin/python" ]]; then
-    HF_PY="$REPO_ROOT/venv/bin/python"
-else
-    HF_VENV="$BUILD_DIR/hf-venv"
-    if [[ ! -x "$HF_VENV/bin/python" ]]; then
-        python3 -m venv "$HF_VENV"
-        "$HF_VENV/bin/pip" install --quiet "huggingface_hub>=0.24"
-    fi
-    HF_PY="$HF_VENV/bin/python"
-fi
-"$HF_PY" - "$BUNDLED_MODELS_CACHE" <<'PYEOF'
+"$PY_BIN" - "$BUNDLED_MODELS_CACHE" <<'PYEOF'
 import os
 import sys
 
@@ -478,7 +449,7 @@ for repo, dirname in (
     dest = os.path.join(cache, dirname)
     if not os.path.exists(os.path.join(dest, "hyperparams.yaml")):
         print(f"    downloading {repo} ...")
-        snapshot_download(repo_id=repo, local_dir=dest, local_dir_use_symlinks=False)
+        snapshot_download(repo_id=repo, local_dir=dest)
 print("    bundled speech models cached")
 PYEOF
 mkdir -p "$RES_DIR/backend/models-bundled"

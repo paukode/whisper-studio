@@ -163,3 +163,33 @@ def test_protected_plugin_cannot_be_toggled(client):
     (pdir / "security_checks.py").write_bytes(GOOD_PLUGIN)
     r = c.patch("/api/plugins/security_checks/toggle")
     assert r.status_code == 409 and "safety" in r.json()["detail"].lower()
+
+
+def test_a_config_without_an_enabled_list_loads_no_user_plugin(tmp_path, monkeypatch):
+    """The old opt-out shape (or an empty object) enables nothing: only the
+    protected plugins load, never every discovered file."""
+    from server import plugins as P
+
+    cfg = tmp_path / "plugins_config.json"
+    cfg.write_text("{}")
+    monkeypatch.setattr(P, "PLUGINS_CONFIG_PATH", str(cfg))
+    assert P.load_plugins_config()["enabled"] == []
+    cfg.write_text('{"disabled": ["x"]}')
+    assert P.load_plugins_config()["enabled"] == []
+
+
+def test_a_corrupt_plugins_config_is_refused_and_left_alone(tmp_path, monkeypatch):
+    import pytest
+    from fastapi import HTTPException
+
+    from server import plugins as P
+
+    cfg = tmp_path / "plugins_config.json"
+    cfg.write_text('{"enabled": ["a",]}')
+    monkeypatch.setattr(P, "PLUGINS_CONFIG_PATH", str(cfg))
+    with pytest.raises(P.PluginsConfigError, match="line 1"):
+        P.load_plugins_config()
+    with pytest.raises(HTTPException) as exc:
+        P._readable_plugins_config()
+    assert exc.value.status_code == 409
+    assert cfg.read_text() == '{"enabled": ["a",]}'

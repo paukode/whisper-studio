@@ -1,4 +1,3 @@
-export type { ThemeKey } from './theme';
 
 export type ModelMode = 'cloud' | 'hybrid' | 'local';
 export type IndexCapability = 'embed' | 'rerank' | 'ner' | 'index_llm';
@@ -6,12 +5,12 @@ export type IndexCapability = 'embed' | 'rerank' | 'ner' | 'index_llm';
 export interface AppConfig {
   chatModels: Record<string, string>;
   effortLevel: string;
-  briefMode: boolean;
   permissionMode: string;
   /** Live ASR engine: 'whisper' (utterance) or 'streaming' (Parakeet). */
   transcriptionBackend: string;
-  /** Translate dropdown: 'off' | 'canary' | 'apple' (legacy stored
-   *  'auto'/'model' values are normalized to 'canary' on load). */
+  /** Speaker encoder diarization runs on: 'redimnet' (ReDimNet2) or 'ecapa'. */
+  speakerEmbedder: string;
+  /** Translate dropdown: 'off' | 'canary' | 'apple'. */
   translateMode: string;
   /** Target language for translation lines (ISO 639-1, default 'en'). */
   translateTarget: string;

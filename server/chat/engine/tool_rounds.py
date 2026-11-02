@@ -84,6 +84,7 @@ async def run_tool_round(
     tool_uses: list,
     outcome: ToolRound,
     *,
+    tool_schemas: dict,
     scope_id: str,
     round_num: int,
 ):
@@ -115,6 +116,7 @@ async def run_tool_round(
     _batch_task = asyncio.create_task(
         execute_tool_batch(
             tool_uses,
+            tool_schemas=tool_schemas,
             is_concurrent_safe=_is_tool_concurrent_safe,
             loop=ctx.loop,
             executor=ctx.executor,
@@ -143,7 +145,7 @@ async def run_tool_round(
                     _payload = _route_event(_ev)
                     if _payload is not None:
                         yield f"data: {ndjson_dumps(_payload)}\n\n"
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     pass
             while not _event_queue.empty():
                 _ev = _event_queue.get_nowait()
@@ -213,7 +215,7 @@ async def run_tool_round(
             inject_reminder(messages, f"[completion gate] {_claim_note}")
 
         # Proactive compaction: char estimate, supplemented by TOKEN truth
-        # (the per-round usage crossed 80% of the window).
+        # (the per-round usage crossed COMPACT_NUDGE_FRACTION of the window).
         from server.chat.loop_hints import should_nudge_compaction
 
         if estimate_message_size(messages) > thresholds_for(ctx.model_key)[
@@ -222,9 +224,13 @@ async def run_tool_round(
             # An LLM summarization call sits between rounds here; without a
             # frame the wait reads as a mid-turn hang.
             yield f"data: {ndjson_dumps({'status': 'Compacting conversation context...'})}\n\n"
-            messages = await compact_messages_with_claude(
+            # CompactionError propagates to runner's terminal handler. Do not
+            # clear outcome.tool_results or replace history on failure: both
+            # the result frames and the complete tool pair must survive.
+            compacted = await compact_messages_with_claude(
                 messages, ctx.model_id, session_id=session_id, model_key=ctx.model_key
             )
+            messages = compacted
             # Restore any attachment the summary swallowed. The REACTIVE
             # path (the prompt-too-long rescue in runner.py) deliberately
             # does not re-inject (it must shrink; analyze_document has

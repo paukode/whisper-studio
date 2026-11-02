@@ -29,9 +29,9 @@ export interface StreamingMarkdownProps {
  * During streaming, updates DOM directly via ref to avoid full React re-renders.
  * Handles unclosed code fences during streaming by closing them before parsing.
  *
- * Security: Content comes from the AI model (trusted source via server SSE), not
- * user input. The marked library handles HTML escaping for code blocks and inline code.
- * HTML preview is rendered in sandboxed iframes only.
+ * Security: the content can carry untrusted text (web_fetch, MCP or file
+ * output the model quotes), so the HTML is sanitized by DOMPurify before it
+ * reaches the DOM. HTML preview is rendered in sandboxed iframes only.
  */
 export const StreamingMarkdown: React.FC<StreamingMarkdownProps> = ({
   content,

@@ -37,13 +37,10 @@ from server.goals import store as goal_store
 log = logging.getLogger("whisper-studio")
 
 
-def _flag_on(name: str, default: bool = True) -> bool:
-    try:
-        from server.infrastructure.feature_flags import is_enabled
+def _flag_on(name: str) -> bool:
+    from server.infrastructure.feature_flags import is_enabled
 
-        return is_enabled(name)
-    except Exception:
-        return default
+    return is_enabled(name)
 
 
 def _task_running(task_id: str) -> bool:
@@ -57,15 +54,6 @@ def _task_running(task_id: str) -> bool:
     return bool(task) and task.get("status") == "running"
 
 
-def _max_blocks(ctx: GateContext) -> int:
-    try:
-        from server.infrastructure import config
-
-        return int(config.get("goal_max_consecutive_blocks", ctx.max_consecutive_blocks))
-    except Exception:
-        return ctx.max_consecutive_blocks
-
-
 def goal_in_play(session_id: str) -> bool:
     """Whether the gate's goal phases run for ``session_id``: the goal_loop
     flag is on and the session has an active goal."""
@@ -75,7 +63,7 @@ def goal_in_play(session_id: str) -> bool:
 def last_round_not_checked(
     session_id: str,
     *,
-    salvage: bool = False,
+    context_failure: bool = False,
     budget: bool = False,
     deadline: bool = False,
     attempt: int,
@@ -86,17 +74,13 @@ def last_round_not_checked(
 
     The gate does not run there: a block would need a round the turn does not
     have. So an active goal is recorded as not checked, with the reason the
-    round was the last (a salvage round after a context overflow, the cost
-    budget, the time budget, else the round cap), instead of the turn ending
-    with no verdict at all. The goal stays set and is checked when the next
-    turn ends."""
+    turn stopped (failed context compaction, the cost budget, the time budget,
+    else the round cap), instead of the turn ending with no verdict at all.
+    The goal stays set and is checked when the next turn ends."""
     if not goal_in_play(session_id):
         return None
-    if salvage:
-        why = (
-            "the conversation no longer fit the model's context window, so the "
-            "final answer was written from what fit"
-        )
+    if context_failure:
+        why = "context compaction failed, so the turn stopped without completing the answer"
     elif budget:
         why = "the cost budget made this the turn's final round"
     elif deadline:
@@ -165,7 +149,7 @@ async def run_completion_gate(ctx: GateContext) -> GateDecision:
     The goal_loop flag gates ONLY the goal phases: Stop hooks are WS-I's
     contract and must keep firing even when the goal loop is disabled (the gate
     replaced the loops' direct check_stop_hooks calls)."""
-    cap = _max_blocks(ctx)
+    cap = ctx.max_consecutive_blocks
 
     # ── Phase 1: Stop hooks (WS-I engine) ────────────────────────────────────
     from server.hooks import check_stop_hooks
@@ -333,8 +317,14 @@ async def run_completion_gate(ctx: GateContext) -> GateDecision:
     gates = goal_store.get_gates(ctx.session_id)
     if gates:
         from server.goals.gates import GATE_MAX_RETRIES, format_failure, run_gates
+        from server.workspace.paths import own_scratch_dir
 
-        results = await asyncio.to_thread(run_gates, [g["command"] for g in gates], ctx.workspace)
+        results = await asyncio.to_thread(
+            run_gates,
+            [g["command"] for g in gates],
+            ctx.workspace,
+            own_scratch_dir(ctx.session_id),
+        )
         updated = goal_store.record_gate_results(
             ctx.session_id, {r.command: r.passed for r in results}
         )

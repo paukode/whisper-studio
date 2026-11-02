@@ -11,7 +11,7 @@ import json
 
 import pytest
 
-from server.chat import _get_chat_models
+from server.chat.infra import _get_chat_models
 from server.costs import tracker
 from server.costs.tracker import estimate_cost, get_model_pricing
 
@@ -190,10 +190,10 @@ def test_anthropic_cache_buckets_are_additive():
 
 
 def test_claude_cache_write_is_the_rate_of_the_ttl_the_app_sends():
-    # Chat and cron checkpoints carry cache_ttl_for(model id), and Bedrock bills
-    # 1-hour writes at 2x input and 5-minute writes at 1.25x. A 1-hour row priced
-    # at the 5-minute rate under-counts every write by 37.5%.
-    from server.chat.caching import cache_ttl_for
+    # Chat and cron checkpoints carry CACHE_TTL, and Bedrock bills 1-hour
+    # writes at 2x input and 5-minute writes at 1.25x. A 1-hour row priced at
+    # the 5-minute rate under-counts every write by 37.5%.
+    from server.chat.caching import CACHE_TTL
     from server.openai_bedrock.runtime import is_openai_model
 
     write_multiplier = {"1h": 2.0, "5m": 1.25}
@@ -202,7 +202,7 @@ def test_claude_cache_write_is_the_rate_of_the_ttl_the_app_sends():
         if "anthropic.claude" not in str(model_id):
             continue
         rates = get_model_pricing(key)
-        ttl = cache_ttl_for(model_id)
+        ttl = CACHE_TTL
         assert rates["cache_write"] == pytest.approx(write_multiplier[ttl] * rates["input"]), (
             f"{key} gets a {ttl} TTL but cache_write is {rates['cache_write']}"
         )
@@ -302,23 +302,39 @@ def test_missing_override_file_falls_back_to_example(tmp_path, monkeypatch):
     assert set(table) == {"haiku"}
 
 
-def test_malformed_entry_skipped_others_survive(tmp_path, monkeypatch):
+def test_malformed_shipped_entry_fails_the_load(tmp_path, monkeypatch):
     example = _write(
         tmp_path / "pricing.example.json",
         {
             "good": {"input": 1, "output": 2},
-            "bad": {"input": 1},  # missing output → skipped
+            "bad": {"input": 1},  # missing output
         },
     )
     monkeypatch.setattr(tracker, "PRICING_EXAMPLE_PATH", example)
     monkeypatch.setattr(tracker, "PRICING_PATH", str(tmp_path / "none.json"))
-    table = tracker._load_pricing()
-    assert "good" in table and "bad" not in table
+    with pytest.raises(ValueError, match="'bad'"):
+        tracker._load_pricing()
 
 
-def test_unreadable_file_degrades_to_empty(tmp_path, monkeypatch):
+def test_malformed_override_entry_is_left_out(tmp_path, monkeypatch):
+    example = _write(tmp_path / "pricing.example.json", {"haiku": {"input": 1, "output": 5}})
+    override = _write(tmp_path / "pricing.json", {"haiku": {"input": 2}})
+    monkeypatch.setattr(tracker, "PRICING_EXAMPLE_PATH", example)
+    monkeypatch.setattr(tracker, "PRICING_PATH", override)
+    assert tracker._load_pricing()["haiku"]["input"] == 1.0
+
+
+def test_unreadable_shipped_table_fails_the_load(tmp_path, monkeypatch):
     broken = tmp_path / "pricing.example.json"
     broken.write_text("{ not valid json ")
     monkeypatch.setattr(tracker, "PRICING_EXAMPLE_PATH", str(broken))
     monkeypatch.setattr(tracker, "PRICING_PATH", str(tmp_path / "none.json"))
-    assert tracker._load_pricing() == {}  # no crash, empty table
+    with pytest.raises(ValueError, match="cannot be read"):
+        tracker._load_pricing()
+
+
+def test_missing_shipped_table_fails_the_load(tmp_path, monkeypatch):
+    monkeypatch.setattr(tracker, "PRICING_EXAMPLE_PATH", str(tmp_path / "gone.json"))
+    monkeypatch.setattr(tracker, "PRICING_PATH", str(tmp_path / "none.json"))
+    with pytest.raises(ValueError, match="missing"):
+        tracker._load_pricing()

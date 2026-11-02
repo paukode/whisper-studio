@@ -104,6 +104,29 @@ def test_store_search_ranks_by_cosine():
     assert res[0]["score"] > res[1]["score"]
 
 
+def test_a_zero_vector_from_an_older_build_asks_for_a_reindex():
+    """An older build stored zero vectors for bad embeddings; sqlite-vec gives
+    them a NULL cosine distance. Search names the fix instead of a TypeError."""
+    ws = "/fake/ws-zero-vec"
+    store.replace_file(
+        ws,
+        "a.py",
+        {"hash": "h1", "size": 1, "mtime": 1.0},
+        [
+            {"start_line": 1, "end_line": 2, "text": "alpha", "vec": _unit(1), "entities": []},
+            {
+                "start_line": 3,
+                "end_line": 4,
+                "text": "blank",
+                "vec": np.zeros(EMBED_DIM, dtype=np.float32),
+                "entities": [],
+            },
+        ],
+    )
+    with pytest.raises(RuntimeError, match="Re-index this folder"):
+        store.search(ws, _unit(1), k=5)
+
+
 def test_store_graph_expand_via_shared_entity():
     ws = "/fake/ws-graph"
     ent = [{"name": "PaymentService", "label": "service"}]
@@ -408,22 +431,21 @@ def test_entity_leg_matches_names_with_internal_punctuation():
     assert salience.entity_leg(ws, "the S&P 500 index", k=5), "S&P 500 should match"
 
 
-def test_node_salience_migration_is_idempotent():
-    ws = "/fake/ws-migrate"
+def test_index_schema_has_the_salience_columns():
+    ws = "/fake/ws-schema"
     store.replace_file(
         ws,
         "a.md",
         {"hash": "h", "size": 1, "mtime": 1.0},
         [{"start_line": 1, "end_line": 1, "text": "a", "vec": _unit(1), "entities": []}],
     )
-    # _connect runs the idempotent ALTERs every time; a second open must not raise
-    # and the new columns must be present.
+    # _connect runs the schema script on every open; a second open must not raise.
     for _ in range(2):
         conn = store._connect(ws)
         cols = {r[1] for r in conn.execute("PRAGMA table_info(nodes)").fetchall()}
         nc_cols = {r[1] for r in conn.execute("PRAGMA table_info(node_chunks)").fetchall()}
         conn.close()
-    assert {"salience", "df", "canonical_id", "llm_verdict", "judged_gen"} <= cols
+    assert {"description", "salience", "df"} <= cols
     assert "score" in nc_cols
 
 
@@ -585,7 +607,7 @@ def test_dedupe_entities_semantic_merge_catches_spelling_variants(monkeypatch):
 def test_file_graph_assigns_communities(monkeypatch):
     """file_graph nodes carry a `community` index and edge `degree`: two
     entity-disjoint file clusters land in different communities, and nodes within
-    a cluster share one. (Leiden when available, networkx Louvain otherwise.)"""
+    a cluster share one (Leiden)."""
     monkeypatch.setattr("server.index.store.entities.ENTITY_SEMANTIC_MERGE", False)
     ws = "/fake/ws-comm"
     clusters = {
@@ -1240,7 +1262,7 @@ def test_retrieve_grounding_includes_graph_hop_and_full_chunks(monkeypatch):
     monkeypatch.setattr(embedder, "embed_query", lambda q: _unit(1))  # ranks a.py first
 
     # k=1 so only a.py is a vector match; b.py must come in via the entity hop.
-    g = pipeline.retrieve_grounding([ws], "how is the card payment authorized", k=1)
+    g, _ = pipeline.retrieve_grounding([ws], "how is the card payment authorized", k=1)
 
     # (3) steering: treat the index as the answer, don't crawl files
     assert "source of truth" in g and "do not re-read files" in g
@@ -1257,7 +1279,7 @@ def test_retrieve_grounding_includes_graph_hop_and_full_chunks(monkeypatch):
 
 
 def test_retrieve_grounding_sources_meta(monkeypatch):
-    """return_meta carries per-passage provenance ("Answer sources"): dense
+    """The grounding meta carries per-passage provenance ("Answer sources"): dense
     matches labeled semantic, keyword-only hits labeled keyword, and graph-hop
     passages labeled related with the shared entity NAMES for chips — each with
     the workspace root so entity chips can deep-link into the index explorer."""
@@ -1311,7 +1333,7 @@ def test_retrieve_grounding_sources_meta(monkeypatch):
 
     # No lexical overlap with a.py and no entity name in the query, so a.py is a
     # pure dense match, and ZZQX reaches c.py only through the keyword leg.
-    _, meta = pipeline.retrieve_grounding([ws], "financial flow ZZQX", k=4, return_meta=True)
+    _, meta = pipeline.retrieve_grounding([ws], "financial flow ZZQX", k=4)
     by_path = {s["path"]: s for s in meta["sources"]}
     assert by_path["a.py"]["kind"] == "semantic"
     assert by_path["c.py"]["kind"] == "keyword"
@@ -1327,7 +1349,7 @@ def test_retrieve_grounding_sources_meta(monkeypatch):
     # k=1: only a.py is a vector match, so b.py (sharing the PaymentService
     # entity) comes in via the graph hop — labeled related, WITH the entity
     # names for the chips.
-    _, meta1 = pipeline.retrieve_grounding([ws], "financial flow", k=1, return_meta=True)
+    _, meta1 = pipeline.retrieve_grounding([ws], "financial flow", k=1)
     by_path1 = {s["path"]: s for s in meta1["sources"]}
     assert by_path1["a.py"]["kind"] == "semantic"
     assert by_path1["b.py"]["kind"] == "related"
@@ -1435,7 +1457,7 @@ def test_retrieve_grounding_auto_merges_small_doc_but_not_book(monkeypatch):
     ]
     store.replace_file(ws, "book.md", {"hash": "h", "size": 1, "mtime": 1.0}, book)
 
-    g = pipeline.retrieve_grounding([ws], "tell me about the cv", k=12)
+    g, _ = pipeline.retrieve_grounding([ws], "tell me about the cv", k=12)
 
     # Small doc fully merged — all five line-ranges present exactly once (no dup).
     for lr in ("cv.md:1-5", "cv.md:6-10", "cv.md:11-15", "cv.md:16-20", "cv.md:21-25"):
@@ -1483,7 +1505,7 @@ def test_fts_keyword_surfaces_filename_match(monkeypatch):
             }
         ],
     )
-    g = pipeline.retrieve_grounding([ws], "what was buddy name?")
+    g, _ = pipeline.retrieve_grounding([ws], "what was buddy name?")
     assert "buddy.json:1-4" in g  # surfaced by the filename keyword hit
     assert "Prickle" in g  # so the answer is in the grounding
 
@@ -1582,7 +1604,7 @@ def test_retrieve_grounding_applies_reranker(monkeypatch):
         "rerank",
         lambda query, passages: [1.0 if "chunk 3" in p else 0.1 for p in passages],
     )
-    g = pipeline.retrieve_grounding([ws], "anything", k=12)
+    g, _ = pipeline.retrieve_grounding([ws], "anything", k=12)
     passage_lines = [ln for ln in g.splitlines() if "doc.md:" in ln]
     assert passage_lines and "doc.md:3-3" in passage_lines[0]  # reranker put chunk 3 first
 

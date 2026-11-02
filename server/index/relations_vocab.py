@@ -3,7 +3,7 @@
 Free-form predicates fragmented badly (49 distinct types for 98 relations in one
 live DB, 113 for 323 in another — most singletons), which makes typed relations
 useless for filtering or graph queries. This module pins a small, business-doc
-vocabulary and normalizes the LLM's output (and legacy rows) onto it: an exact
+vocabulary and normalizes the extractor's output onto it: an exact
 hit is kept, a known synonym is remapped (with a direction swap where the synonym
 inverts the relation), and anything else is dropped rather than kept as a vague
 catch-all.

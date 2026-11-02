@@ -34,8 +34,10 @@ _BUDGETS = {SMALL: 30_000, BIG: 872_000}
 def _clean(monkeypatch):
     mr._cache.clear()
     # Patch where _input_budget reads it (a lazy import of the windows module).
+    # Keys outside _BUDGETS (the chat turn's own model) keep the real budget.
     monkeypatch.setattr(
-        "server.chat.engine.windows.input_budget", lambda key, meta=None: _BUDGETS.get(key)
+        "server.chat.engine.windows.input_budget",
+        lambda key, meta=None: _BUDGETS[key] if key in _BUDGETS else _real_input_budget(key, meta),
     )
     monkeypatch.setattr("server.local.runtime.is_local_model", lambda k: k == "local_gemma")
     yield
@@ -109,6 +111,26 @@ def test_output_cap_follows_the_reader_not_the_map_engine(monkeypatch, map_engin
         assert len(body) > cfg["local_max_output_chars"]
 
 
+@pytest.mark.parametrize("reader", [BIG, "local_gemma"])
+def test_local_writer_is_not_given_a_cloud_reader_as_an_explicit_model(monkeypatch, reader):
+    from server.infrastructure import oneshot
+    from server.local import runtime
+
+    used = []
+    monkeypatch.setattr(runtime, "loaded_key", lambda: "local_gemma")
+    monkeypatch.setattr(runtime, "is_downloaded", lambda key: key == "local_gemma")
+
+    def complete(key, system, user, *, max_tokens):
+        used.append(key)
+        return "Extracted notes"
+
+    monkeypatch.setattr(oneshot, "_local_one_shot", complete)
+    assert mr._map_model("local", reader) == "local_gemma"
+    result = mr._map_chunk("Transcript", 1, 1, "local", mr._cfg(_cfg()), chat_model_key=reader)
+    assert result == "Extracted notes"
+    assert used == ["local_gemma"]
+
+
 def test_specific_local_key_maps_serially_in_local_sized_chunks(monkeypatch):
     cfg = mr._cfg(_cfg())
     active = {"now": 0, "peak": 0}
@@ -160,7 +182,12 @@ def test_partial_failure_is_not_cached(monkeypatch):
         return "x"
 
     monkeypatch.setattr(mr, "one_shot", flaky)
-    mr.maybe_condense_transcript(text, config=cfg)
+    first = mr.maybe_condense_transcript(text, config=cfg)
+    # One failed segment keeps the other extracts and marks the missing part
+    # with the reason, never a silent hole and never the whole notes lost.
+    assert first.startswith(mr.NOTE_PREFIX) and "truncated here" not in first
+    assert first.count("failed: throttled. Its part is missing.]") == 1
+    assert "\n\nx" in first or first.startswith(mr.NOTE_PREFIX + "x")
     after_first = n["calls"]
     mr.maybe_condense_transcript(text, config=cfg)
     assert n["calls"] > after_first  # the hole is filled on the next turn

@@ -53,14 +53,14 @@ def _save_many(event: str, hooks: list[dict]):
     return defs
 
 
-# ── env-var handling (compound-construct commands must not syntax-error) ──────
+# ── compound-construct commands must not syntax-error ─────────────────────────
 
 
 def test_compound_construct_command_evaluated_not_syntax_errored():
-    # A `case` statement that denies writes and allows reads. Before the fix the
-    # WHISPER_* env prefix turned this into a /bin/sh syntax error (exit 2 = deny
-    # for EVERY tool). It must now evaluate correctly.
-    cmd = 'case "$WHISPER_TOOL" in ws_write_file) exit 2 ;; *) exit 0 ;; esac'
+    # A `case` statement on the JSON from stdin that denies writes and allows
+    # reads. A `VAR=val` command prefix would turn this into a /bin/sh syntax
+    # error (exit 2 = deny for EVERY tool). It must evaluate correctly.
+    cmd = 'case "$(cat)" in *ws_write_file*) exit 2 ;; *) exit 0 ;; esac'
     _save("PreToolUse", command=cmd, matcher="*")
     blocked = _run(
         engine.run_hooks("PreToolUse", {"tool_name": "ws_write_file"}, tool_name="ws_write_file")
@@ -73,7 +73,7 @@ def test_compound_construct_command_evaluated_not_syntax_errored():
 
 
 def test_if_construct_command_works():
-    cmd = 'if [ "$WHISPER_TOOL" = ws_bash ]; then exit 2; fi'
+    cmd = "if grep -q ws_bash; then exit 2; fi"
     _save("PreToolUse", command=cmd, matcher="*")
     assert _run(
         engine.run_hooks("PreToolUse", {"tool_name": "ws_bash"}, tool_name="ws_bash")
@@ -83,13 +83,106 @@ def test_if_construct_command_works():
     ).blocked
 
 
-def test_legacy_env_var_referenced_inline():
-    # The WHISPER_* vars must be visible to the command (via env), not empty.
-    cmd = 'test "$WHISPER_TOOL" = ws_delete_file && exit 2 || exit 0'
-    _save("PreToolUse", command=cmd, matcher="*")
-    assert _run(
+# ── the old WHISPER_* variables are gone ─────────────────────────────────────
+
+
+@pytest.fixture
+def notices(monkeypatch):
+    import server.notifications as N
+
+    seen = []
+    monkeypatch.setattr(N, "old_format_notice", lambda **kw: seen.append(kw))
+    return seen
+
+
+@pytest.fixture
+def no_spawn(monkeypatch):
+    def refuse(*a, **k):
+        raise AssertionError("a hook that uses an old variable must not run")
+
+    monkeypatch.setattr("server.sandbox.run_sandboxed", refuse)
+
+
+def test_old_hook_vars_finds_each_old_variable_once():
+    from server.hooks.config_loader import old_hook_vars
+
+    cmd = 'echo "$WHISPER_TOOL ${WHISPER_INPUT} $WHISPER_TOOL"'
+    assert old_hook_vars(cmd) == ["WHISPER_TOOL", "WHISPER_INPUT"]
+    # Read without a $ too: printenv, or a Python one-liner's os.environ.
+    assert old_hook_vars("printenv WHISPER_SESSION") == ["WHISPER_SESSION"]
+    py = "python3 -c 'import os; exit(2 if os.environ.get(\"WHISPER_TOOL\") else 0)'"
+    assert old_hook_vars(py) == ["WHISPER_TOOL"]
+    assert old_hook_vars("echo $WHISPER_TOOLS $WHISPER_DATA_DIR MY_WHISPER_TOOL") == []
+
+
+def test_a_hook_with_an_old_variable_is_not_run_and_is_reported(no_spawn, notices, caplog):
+    from server.hooks.config_loader import OLD_VARS_NOTICE_TITLE
+
+    _save("PreToolUse", command='test "$WHISPER_TOOL" = ws_delete_file && exit 2', matcher="*")
+    out = _run(
         engine.run_hooks("PreToolUse", {"tool_name": "ws_delete_file"}, tool_name="ws_delete_file")
-    ).blocked
+    )
+    # on_error "ignore" (the default): skipped like any hook that cannot run.
+    assert not out.blocked
+    assert "WHISPER_TOOL" in caplog.text and "tool_name" in caplog.text
+    [notice] = notices
+    assert notice["title"] == OLD_VARS_NOTICE_TITLE
+    assert "WHISPER_TOOL" in notice["message"] and "stdin" in notice["message"]
+
+
+def test_a_fail_closed_hook_with_an_old_variable_blocks(no_spawn, notices):
+    _save(
+        "PreToolUse",
+        command='[ "${WHISPER_TOOL}" = ws_bash ] && exit 2',
+        matcher="*",
+        on_error="block",
+    )
+    out = _run(
+        engine.run_hooks("PreToolUse", {"tool_name": "ws_read_file"}, tool_name="ws_read_file")
+    )
+    assert out.blocked
+    assert "fail-closed" in out.reason and "WHISPER_TOOL" in out.reason
+
+
+def test_turn_end_hooks_do_not_run_at_the_end_of_a_turn(_isolate, no_spawn, notices):
+    from server.hooks.config_loader import TURN_END_NOTICE_TITLE
+
+    hooks_file = _isolate / "data" / "hooks.json"
+    hooks_file.write_text(
+        json.dumps({"version": 2, "hooks": {"TurnEnd": [{"command": "exit 2", "matcher": "*"}]}})
+    )
+    out = _run(engine.check_stop_hooks("sess", None))
+    assert not out.blocked
+    assert {n["title"] for n in notices} == {TURN_END_NOTICE_TITLE}
+
+
+def _project(tmp_path, hooks) -> str:
+    ws = tmp_path / "proj"
+    (ws / ".whisper").mkdir(parents=True)
+    (ws / ".whisper" / "settings.json").write_text(json.dumps({"hooks": hooks}))
+    return str(ws)
+
+
+def test_trusted_project_turn_end_hooks_are_reported(tmp_path, notices):
+    from server.hooks.config_loader import TURN_END_NOTICE_TITLE, load_project_hooks
+
+    ws = _project(tmp_path, {"TurnEnd": [{"command": "exit 2", "matcher": "*"}]})
+    assert all(v == [] for v in load_project_hooks(ws).values())
+    assert notices == []  # not trusted: inert, and nothing to say yet
+    approve_project_hooks(ws)
+    assert all(v == [] for v in load_project_hooks(ws).values())
+    [notice] = notices
+    assert notice["title"] == TURN_END_NOTICE_TITLE
+    assert os.path.join(ws, ".whisper", "settings.json") in notice["message"]
+
+
+def test_a_trusted_project_v1_hooks_list_is_reported(tmp_path, notices):
+    from server.hooks.config_loader import PROJECT_V1_NOTICE_TITLE, load_project_hooks
+
+    ws = _project(tmp_path, [{"event": "Stop", "command": "exit 2"}])
+    approve_project_hooks(ws)
+    assert all(v == [] for v in load_project_hooks(ws).values())
+    assert [n["title"] for n in notices] == [PROJECT_V1_NOTICE_TITLE]
 
 
 def test_rewrite_chains_to_subsequent_hook():
@@ -142,6 +235,30 @@ def test_inprocess_context_accumulates():
     assert "remember the style guide" in out.contexts
 
 
+def test_a_crashing_pre_tool_hook_blocks_the_call():
+    async def crash(payload):
+        raise TypeError("expected string or bytes-like object")
+
+    plugin_hooks.register_hook("PreToolUse", crash)
+    out = _run(
+        engine.run_hooks("PreToolUse", {"tool_name": "ws_write_file"}, tool_name="ws_write_file")
+    )
+    assert out.blocked
+    assert "crash" in out.reason and "bytes-like" in out.reason
+
+
+def test_a_crashing_hook_on_another_event_is_reported_as_an_error(caplog):
+    async def crash(payload):
+        raise RuntimeError("boom")
+
+    plugin_hooks.register_hook("PostToolUse", crash)
+    out = _run(
+        engine.run_hooks("PostToolUse", {"tool_name": "ws_read_file"}, tool_name="ws_read_file")
+    )
+    assert not out.blocked
+    assert "boom" in caplog.text
+
+
 def test_pre_tool_backcompat_adapter():
     async def legacy(tool_name, tool_input):
         if tool_name == "ws_bash":
@@ -177,13 +294,13 @@ def test_shell_exit_0_passes():
     assert not out.blocked
 
 
-def test_shell_other_exit_ignored_by_default():
+def test_shell_other_exit_ignored_by_default(caplog):
     _save("PreToolUse", command="exit 7", matcher="*", on_error="ignore")
     out = _run(
         engine.run_hooks("PreToolUse", {"tool_name": "ws_write_file"}, tool_name="ws_write_file")
     )
     assert not out.blocked
-    assert any("exit 7" in e for e in out.errors)
+    assert "exited 7" in caplog.text
 
 
 def test_shell_other_exit_blocks_when_fail_closed():
@@ -202,13 +319,13 @@ def test_shell_timeout_fail_closed_blocks():
     assert out.blocked
 
 
-def test_shell_timeout_ignored_by_default():
+def test_shell_timeout_ignored_by_default(caplog):
     _save("PreToolUse", command="sleep 5", matcher="*", timeout=1, on_error="ignore")
     out = _run(
         engine.run_hooks("PreToolUse", {"tool_name": "ws_write_file"}, tool_name="ws_write_file")
     )
     assert not out.blocked
-    assert out.errors
+    assert "could not run and was skipped" in caplog.text
 
 
 # ── structured stdout control ────────────────────────────────────────────────
@@ -216,6 +333,15 @@ def test_shell_timeout_ignored_by_default():
 
 def test_shell_stdout_json_deny():
     payload = json.dumps({"decision": "deny", "reason": "blocked via json"})
+    _save("PreToolUse", command=f"echo '{payload}'", matcher="*")
+    out = _run(
+        engine.run_hooks("PreToolUse", {"tool_name": "ws_write_file"}, tool_name="ws_write_file")
+    )
+    assert out.blocked and out.reason == "blocked via json"
+
+
+def test_shell_stdout_json_deny_with_an_error_key_still_denies():
+    payload = json.dumps({"decision": "deny", "reason": "blocked via json", "_error": "x"})
     _save("PreToolUse", command=f"echo '{payload}'", matcher="*")
     out = _run(
         engine.run_hooks("PreToolUse", {"tool_name": "ws_write_file"}, tool_name="ws_write_file")
@@ -306,7 +432,7 @@ def test_check_stop_hooks_passes_when_no_hooks():
 
 def test_inprocess_stop_gate_can_block():
     async def gate(payload):
-        # WS-E's orchestrator gate lives here: refuse to stop mid-workflow.
+        # An in-process Stop hook: refuse to stop mid-workflow.
         return {"decision": "deny", "reason": "workflow step 2/5 pending"}
 
     plugin_hooks.register_hook("Stop", gate)

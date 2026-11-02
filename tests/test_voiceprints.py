@@ -82,11 +82,19 @@ def test_disabled_gallery_neither_reads_nor_writes(monkeypatch):
     assert voiceprints.match(ANNA) is None
 
 
-def test_corrupt_store_is_survivable(tmp_path):
-    (tmp_path / voiceprints.STORE_NAME).write_text("{ not json")
-    assert voiceprints.match(ANNA) is None
-    assert voiceprints.enroll("Anna", [ANNA, ANNA]) is True
-    assert voiceprints.match(ANNA) == "Anna"
+def test_corrupt_store_raises_and_is_never_overwritten(tmp_path):
+    """An unreadable gallery fails the call instead of reading as empty, so an
+    enroll never replaces every stored identity with one new entry."""
+    import json
+
+    store = tmp_path / voiceprints.STORE_NAME
+    store.write_text("{ not json")
+    with pytest.raises(json.JSONDecodeError):
+        voiceprints.enroll("Anna", [ANNA, ANNA])
+    store.write_text('{"version": 1, "encoders": []}')
+    with pytest.raises(ValueError, match="unexpected shape"):
+        voiceprints.match(ANNA)
+    assert store.read_text() == '{"version": 1, "encoders": []}'
 
 
 def test_gallery_is_off_by_default():

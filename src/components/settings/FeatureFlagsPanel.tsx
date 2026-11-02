@@ -56,7 +56,7 @@ export const FeatureFlagsPanel: React.FC = () => {
   return (
     <div className="settings-form" style={{ maxWidth: 600 }}>
       <p className="settings-hint">
-        Toggle features without editing config.json. Changes persist immediately.
+        Toggle features without editing config.user.json. Changes persist immediately.
       </p>
       {displayError && <p className="settings-empty">{displayError}</p>}
 

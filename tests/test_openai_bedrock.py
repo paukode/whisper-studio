@@ -41,37 +41,22 @@ async def _collect(agen):
 # ── pure mapping helpers ────────────────────────────────────────────────────
 
 
-def test_reasoning_effort_mapping(monkeypatch):
-    # Decouple from the live config catalog: fake metas for one model whose
-    # ladder tops at xhigh (5.5) and one whose ladder includes max (5.6).
-    ids = {"g55": "openai.gpt-5.5", "g56": "openai.gpt-5.6-sol", "g6": "openai.gpt-6-astra"}
-    monkeypatch.setattr(oai, "_model_meta", lambda k: {"id": ids.get(k, "")})
-    assert oai.reasoning_effort_for("g55", "none") == "none"
-    assert oai.reasoning_effort_for("g55", "low") == "low"
-    assert oai.reasoning_effort_for("g55", "medium") == "medium"
-    assert oai.reasoning_effort_for("g55", "high") == "high"
-    assert oai.reasoning_effort_for("g55", "extra") == "xhigh"
-    assert oai.reasoning_effort_for("g55", "max") == "xhigh"
-    assert oai.reasoning_effort_for("g55", "ultracode") == "xhigh"
-    assert oai.reasoning_effort_for("g55", None) == "medium"
-    assert oai.reasoning_effort_for("g55", "bogus") == "medium"
-    # GPT-5.6 sends the real "max" tier for the app's top labels only.
-    assert oai.reasoning_effort_for("g56", "max") == "max"
-    assert oai.reasoning_effort_for("g56", "ultracode") == "max"
-    assert oai.reasoning_effort_for("g56", "high") == "high"
-    assert oai.reasoning_effort_for("g56", "extra") == "xhigh"
-    assert oai.reasoning_effort_for("g56", None) == "medium"
-    assert oai.reasoning_effort_for("g56", "none") == "none"
-    # GPT-6 (no minor in the id) rides the max ladder too, and has no "none"
-    # rung: the endpoint rejects it, so the label degrades to "low".
-    assert oai.reasoning_effort_for("g6", "max") == "max"
-    assert oai.reasoning_effort_for("g6", "ultracode") == "max"
-    assert oai.reasoning_effort_for("g6", "extra") == "xhigh"
-    assert oai.reasoning_effort_for("g6", "high") == "high"
-    assert oai.reasoning_effort_for("g6", "none") == "low"
-    # Unknown model meta degrades to the xhigh-capped map.
-    assert oai.reasoning_effort_for("nope", "max") == "xhigh"
-    assert oai.reasoning_effort_for("nope", "none") == "none"
+def test_reasoning_effort_mapping():
+    # The GPT-6 ladder: the app's top labels send the real "max" tier, and
+    # "none" (no such rung on GPT-6) runs as "low".
+    expected = {
+        "none": "low",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "extra": "xhigh",
+        "max": "max",
+        "ultracode": "max",
+        None: "medium",
+        "bogus": "medium",
+    }
+    for label, effort in expected.items():
+        assert oai.reasoning_effort_for("gpt6-astra", label) == effort, label
 
 
 def test_translate_tools_flat_function_shape():
@@ -243,13 +228,11 @@ def test_provider_inferred_from_openai_id():
     # all inferred, and no region is pinned so it follows bedrock_region.
     from server.infrastructure.config import _normalize_chat_models
 
-    _ids, meta = _normalize_chat_models(
-        {"gpt5.6": {"id": "openai.gpt-5.6-sol", "label": "GPT-5.6"}}
-    )
-    m = meta["gpt5.6"]
-    # provider is what is_openai_model() keys off — inference alone makes it route.
+    _ids, meta = _normalize_chat_models({"gpt6": {"id": "openai.gpt-6-sol", "label": "GPT-6"}})
+    m = meta["gpt6"]
+    # provider is what is_openai_model() keys off: inference alone makes it route.
     assert m["provider"] == "openai_bedrock"
-    assert m["effort_tier"] == "openai"
+    assert m["effort_tier"] == "openai6"
     assert m["verbosity"] == "medium"
     assert m["openai_region"] is None
 
@@ -260,7 +243,7 @@ def test_explicit_provider_overrides_id_inference():
     _ids, meta = _normalize_chat_models({"weird": {"id": "openai.custom", "provider": "anthropic"}})
     assert meta["weird"]["provider"] == "anthropic"
     # Non-OpenAI provider => effort tier inferred from the key, not the openai ladder.
-    assert meta["weird"]["effort_tier"] != "openai"
+    assert meta["weird"]["effort_tier"] != "openai6"
 
 
 def test_anthropic_id_stays_anthropic():
@@ -273,20 +256,6 @@ def test_anthropic_id_stays_anthropic():
 
 
 # --- Transcript threading through tool_ctx (PR #135 follow-up) ---
-
-
-def test_gpt_version_parses_with_and_without_minor():
-    from server.infrastructure.effort import gpt_version, openai_effort_tier_for
-
-    assert gpt_version("openai.gpt-5.6-sol") == (5, 6)
-    assert gpt_version("openai.gpt-5.5") == (5, 5)
-    assert gpt_version("openai.gpt-6-astra") == (6, 0)
-    assert gpt_version("bedrock-mantle.openai.gpt-6-astra") == (6, 0)
-    assert gpt_version("openai.gpt-oss-120b-1:0") is None
-    assert gpt_version("global.anthropic.claude-opus-5") is None
-    assert gpt_version("") is None
-    assert openai_effort_tier_for("openai.gpt-5.6-sol") == "openai"
-    assert openai_effort_tier_for("openai.gpt-6-astra") == "openai6"
 
 
 def test_gpt6_defaults_to_the_ladder_without_none():
@@ -305,7 +274,3 @@ def test_gpt6_defaults_to_the_ladder_without_none():
     assert levels[-1] == "ultracode"
     # A session parked on "none" clamps to the lowest rung Astra accepts.
     assert clamp_effort("none", levels) == "low"
-    # GPT-5.x keeps its "none" rung.
-    _ids, meta = _normalize_chat_models({"sol": {"id": "openai.gpt-5.6-sol"}})
-    assert meta["sol"]["effort_tier"] == "openai"
-    assert "none" in effort_levels_for(meta["sol"], "sol")

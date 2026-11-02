@@ -20,9 +20,7 @@ separate on purpose:
 * **orchestration support** (``supports_ultracode``) — whether the model is
   capable of authoring and driving a workflow script.
 
-Welding the two together is what used to keep Sonnet 5 off ultracode: its
-ladder has no ``xhigh`` rung, and ultracode was hardcoded to send ``xhigh``.
-Ultracode now rides whatever the model's own top rung is, so a model can
+Ultracode rides whatever the model's own top rung is, so a model can
 orchestrate without pretending to accept a reasoning value it does not have.
 """
 
@@ -39,26 +37,21 @@ EFFORT_ORDER = ["none", "low", "medium", "high", "extra", "max", "ultracode"]
 EFFORT_TIERS = {
     "full": ["low", "medium", "high", "extra", "max"],
     "standard": ["low", "medium", "high", "max"],
-    # OpenAI-on-Bedrock (GPT-5.x). The label "max" maps to the model's top
-    # reasoning tier in openai_bedrock.runtime: "xhigh" for GPT-5.5/5.4 (their
-    # ladder tops there; "minimal" rejected — verified live), the real "max"
-    # tier for GPT-5.6 (verified live 2026-07-15).
-    "openai": ["none", "low", "medium", "high", "max"],
-    # GPT-6 Astra drops the "none" rung: bedrock-mantle rejects
-    # reasoning.effort "none" for it with unsupported_value (verified live
-    # 2026-09-09; accepted values are low/medium/high/xhigh/max). Every GPT-6
-    # id gets this ladder, but only Astra's rejection is verified: OpenAI
-    # documents a "none" rung for GPT-6 Sol and Luna. TODO: once a live mantle
-    # probe shows Sol and Luna accept "none", narrow openai_effort_tier_for
-    # and openai_bedrock.runtime._rejects_none_effort to Astra.
+    # OpenAI-on-Bedrock (GPT-6). GPT-6 Astra has no "none" rung:
+    # bedrock-mantle rejects reasoning.effort "none" for it with
+    # unsupported_value (verified live 2026-09-09; accepted values are
+    # low/medium/high/xhigh/max). Every GPT id gets this ladder, but only
+    # Astra's rejection is verified: OpenAI documents a "none" rung for GPT-6
+    # Sol and Luna. TODO: once a live mantle probe shows Sol and Luna accept
+    # "none", give them a ladder with it (and openai_bedrock.runtime's map).
     "openai6": ["low", "medium", "high", "max"],
     "none": [],
 }
 
 # Tiers whose models can orchestrate a workflow unless config says otherwise.
 # A model outside these can still opt in with an explicit ``supports_ultracode``
-# in its config entry — that is how Sonnet 5 gets ultracode on a standard ladder.
-_ULTRACODE_TIERS = {"full", "openai", "openai6"}
+# in its config entry.
+_ULTRACODE_TIERS = {"full", "openai6"}
 
 # Friendly label → Bedrock output_config.effort value. "ultracode" has no fixed
 # entry: it resolves per model to that model's top rung (see api_effort_for).
@@ -69,9 +62,6 @@ _LABEL_TO_API = {
     "high": "high",
     "extra": "xhigh",
     "max": "max",
-    # Kept for callers with no model in hand. Model-aware callers should use
-    # api_effort_for, which sends the model's real top rung instead.
-    "ultracode": "xhigh",
 }
 
 # Aliases accepted from places that speak the raw wire vocabulary rather than
@@ -84,11 +74,6 @@ DEFAULT_EFFORT = "high"
 
 _OPUS_RE = re.compile(r"opus(\d+)\.(\d+)$", re.IGNORECASE)
 _SONNET_RE = re.compile(r"sonnet(\d+)\.(\d+)$", re.IGNORECASE)
-# Both the config key ("sonnet5", "sonnet5.0") and the Bedrock model id
-# ("global.anthropic.claude-sonnet-5") name their version; either is enough.
-_SONNET_KEY_RE = re.compile(r"sonnet(\d+)", re.IGNORECASE)
-_SONNET_ID_RE = re.compile(r"claude-sonnet-(\d+)", re.IGNORECASE)
-_OPUS_ID_RE = re.compile(r"claude-opus-(\d+)", re.IGNORECASE)
 # The Bedrock id's own version, for a key that doesn't carry one. Opus and
 # Sonnet ids spell the minor separately ("claude-opus-4-8",
 # "claude-sonnet-5-5"), so capture both parts.
@@ -97,27 +82,6 @@ _SONNET_ID_VER_RE = re.compile(r"claude-sonnet-(\d+)(?:-(\d+))?", re.IGNORECASE)
 # The first Sonnet this app offers the xhigh rung on; the app keeps Sonnet 5
 # on the standard ladder.
 _SONNET_FULL_FROM = (5, 5)
-# OpenAI-on-Bedrock ids carry their version right after "gpt-": "openai.gpt-5.6-sol",
-# "openai.gpt-6-astra" (no minor). The gpt-oss ids ("openai.gpt-oss-120b") don't match.
-_GPT_ID_VER_RE = re.compile(r"openai\.gpt-(\d+)(?:\.(\d+))?", re.IGNORECASE)
-
-
-def gpt_version(model_id: str) -> tuple[int, int] | None:
-    """(major, minor) of an OpenAI-on-Bedrock model id, or None when the id is
-    not a versioned GPT id. A missing minor reads as 0 ("gpt-6" is 6.0), and a
-    wire prefix ("bedrock-mantle.openai.gpt-6-astra") is tolerated."""
-    m = _GPT_ID_VER_RE.search((model_id or "").strip())
-    if not m:
-        return None
-    return int(m.group(1)), int(m.group(2) or 0)
-
-
-def openai_effort_tier_for(model_id: str) -> str:
-    """The reasoning ladder an OpenAI-on-Bedrock model exposes when its config
-    entry does not declare one: GPT-6 and up get no "none" rung (verified for
-    Astra only; see the "openai6" tier)."""
-    ver = gpt_version(model_id)
-    return "openai6" if ver is not None and ver >= (6, 0) else "openai"
 
 
 def infer_effort_tier(key: str, model_id: str = "") -> str:
@@ -169,29 +133,8 @@ def effort_tier_for(meta: dict | None, key: str) -> str:
 
 def infer_supports_ultracode(meta: dict | None, key: str) -> bool:
     """Whether a model can drive workflow orchestration, when its config entry
-    does not say.
-
-    Every model on an orchestration-capable ladder qualifies, plus Sonnet 5 and
-    up, whose reasoning ladder is narrower but which orchestrates perfectly
-    well. Version is read from the config key OR the Bedrock model id, so a
-    renamed entry ("my-sonnet5", "claude-sonnet-5") keeps its capability instead
-    of quietly losing it to key-spelling.
-    """
-    tier = effort_tier_for(meta, key)
-    if not EFFORT_TIERS.get(tier, EFFORT_TIERS["standard"]):
-        return False  # no effort at all (Haiku) ⇒ nothing to orchestrate with
-    if tier in _ULTRACODE_TIERS:
-        return True
-    model_id = str((meta or {}).get("id") or "")
-    for pattern, text in (
-        (_SONNET_KEY_RE, key),
-        (_SONNET_ID_RE, model_id),
-        (_OPUS_ID_RE, model_id),
-    ):
-        m = pattern.search(text or "")
-        if m and int(m.group(1)) >= 5:
-            return True
-    return False
+    does not say: every model on an orchestration-capable ladder."""
+    return effort_tier_for(meta, key) in _ULTRACODE_TIERS
 
 
 def supports_ultracode(meta: dict | None, key: str) -> bool:
@@ -269,27 +212,16 @@ def default_effort_for(meta: dict | None, key: str) -> str:
     return clamp_effort(DEFAULT_EFFORT, allowed) or DEFAULT_EFFORT
 
 
-def api_effort(level: str) -> str:
-    """Map a friendly label to the Bedrock ``output_config.effort`` value.
-
-    Model-unaware: ``ultracode`` sends the ``xhigh`` rung. Callers that know
-    which model they are talking to should use :func:`api_effort_for`, which
-    sends that model's real top rung instead.
-    """
-    return _LABEL_TO_API.get(level, "high")
-
-
 def api_effort_for(level: str, meta: dict | None, key: str) -> str:
-    """Model-aware :func:`api_effort`.
+    """Map a friendly label to this model's Bedrock ``output_config.effort``.
 
     ``ultracode`` is an orchestration mode, not a wire value, so it rides the
     deepest reasoning rung the model actually has: ``xhigh`` where the ladder
-    includes it (Opus 4.8+, Fable), otherwise the ladder's own top — ``max`` for
-    Sonnet 5. Sending ``xhigh`` to a model without that rung is exactly the
-    error this avoids.
+    includes it, otherwise the ladder's own top. Sending ``xhigh`` to a model
+    without that rung is exactly the error this avoids.
     """
     if level != "ultracode":
-        return api_effort(level)
+        return _LABEL_TO_API.get(level, "high")
     # Fall back to the SAME ladder effort_levels_for uses for an unrecognised
     # tier. Falling back to an empty ladder here instead sent the model-unaware
     # xhigh to a model whose config offered ultracode off the standard ladder —
@@ -297,8 +229,6 @@ def api_effort_for(level: str, meta: dict | None, key: str) -> str:
     # rejects.
     tier = EFFORT_TIERS.get(effort_tier_for(meta, key), EFFORT_TIERS["standard"])
     ladder = [lv for lv in tier if lv != "none"]
-    if not ladder:
-        return api_effort(level)
     top = "extra" if "extra" in ladder else ladder[-1]
     return _LABEL_TO_API.get(top, "high")
 
@@ -322,9 +252,9 @@ def known_effort_label(value: str | None) -> str | None:
 
 
 def normalize_effort(level: str | None) -> str:
-    """Map legacy/unknown values (e.g. the retired ``'auto'``) and raw wire
-    aliases (``'xhigh'``) onto a known app label so downstream code never sees
-    a stale or provider-specific value."""
+    """Map a raw wire alias (``'xhigh'``) onto its app label and any unknown
+    value onto DEFAULT_EFFORT, so downstream code never sees a provider-specific
+    or unknown value."""
     if level in EFFORT_ORDER:
         return level
     return _LABEL_ALIASES.get(str(level or "").lower(), DEFAULT_EFFORT)

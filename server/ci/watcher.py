@@ -4,6 +4,11 @@ Pure and injectable: it calls the :mod:`server.ci.provider` functions (which
 tests monkeypatch) and an ``on_event`` sink for live ticks. Each poll runs the
 blocking ``gh`` calls off the event loop via ``asyncio.to_thread``. Bounded by
 ``max_polls`` so a hung run can't watch forever; cancellable via ``cancel_event``.
+
+A gh failure on one poll (network blip, rate limit, timeout) is logged and the
+watch keeps polling; ``_MAX_GH_FAILURES`` failures in a row end the watch by
+raising the last :class:`provider.GhError`, which the manager records as a
+failed watch with gh's message on the card.
 """
 
 from __future__ import annotations
@@ -18,6 +23,28 @@ log = logging.getLogger("whisper-studio")
 DEFAULT_POLL_INTERVAL = 20
 DEFAULT_MAX_POLLS = 90  # 20s * 90 = 30 min ceiling
 _RESOLVE_RETRIES = 6  # a just-pushed branch may have no run for a few seconds
+_MAX_GH_FAILURES = 3  # gh failures in a row before the watch fails
+
+
+class _GhFailures:
+    """Counts gh failures in a row; the next success resets the count."""
+
+    def __init__(self) -> None:
+        self.count = 0
+
+    async def call(self, fn, *args):
+        """``fn(*args)`` off the loop. A GhError returns None until it is the
+        ``_MAX_GH_FAILURES``-th in a row, which re-raises it."""
+        try:
+            result = await asyncio.to_thread(fn, *args)
+        except provider.GhError as e:
+            self.count += 1
+            if self.count >= _MAX_GH_FAILURES:
+                raise
+            log.warning("ci watch: gh failed (%d in a row): %s", self.count, e)
+            return None
+        self.count = 0
+        return result
 
 
 async def watch_branch(
@@ -36,17 +63,21 @@ async def watch_branch(
     failing (bool), timed_out (bool), cancelled (bool), polls.
     """
     emit = on_event or (lambda ev: None)
+    gh = _GhFailures()
 
     run = None
     for attempt in range(_RESOLVE_RETRIES):
         if _is_cancelled(cancel_event):
             return _outcome(None, cancelled=True)
-        run = await asyncio.to_thread(provider.latest_run, branch, cwd)
+        run = await gh.call(provider.latest_run, branch, cwd)
         if run and run.get("run_id") is not None:
             break
-        # Don't sleep after the final attempt — we're about to give up.
+        # Don't sleep after the final attempt, we're about to give up.
         if attempt < _RESOLVE_RETRIES - 1:
             await sleep(poll_interval)
+    if gh.count:
+        # The last lookup failed: the branch's runs are unknown, not absent.
+        raise provider.GhError(f"gh could not list the runs for {branch}")
     if not run or run.get("run_id") is None:
         emit({"type": "ci_progress", "status": "no_run", "branch": branch})
         return _outcome(None, found=False)
@@ -55,8 +86,12 @@ async def watch_branch(
     for poll in range(max_polls):
         if _is_cancelled(cancel_event):
             return _outcome(run, cancelled=True, polls=poll)
-        full = await asyncio.to_thread(provider.get_run, run_id, cwd)
-        run = full or run
+        full = await gh.call(provider.get_run, run_id, cwd)
+        if full is None:
+            # This poll's gh call failed; keep the last known run and try again.
+            await sleep(poll_interval)
+            continue
+        run = full
         emit(
             {
                 "type": "ci_progress",

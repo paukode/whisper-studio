@@ -1,16 +1,16 @@
 """Connection, caches, schema, and low-level vector primitives shared by every
 store submodule.
 
-The SQLite connection factory (``_connect``), the in-process caches
-(``_VEC_CACHE`` / ``_DERIVED_CACHE``), the sqlite-vec probe (``_vec_loadable``),
-and the brute-force matrix builder (``_matrix``) all live here so the topical
-modules (files, entities, meta, search, graph) share one cache and one write-gen
-protocol. Everything else imports these from here rather than duplicating state.
+The SQLite connection factory (``_connect``), the derived-view cache
+(``_DERIVED_CACHE``) and the sqlite-vec KNN search (``_vec_search``) all live
+here so the topical modules (files, entities, meta, search, graph) share one
+cache and one write-gen protocol. Everything else imports these from here rather than duplicating state.
 """
 
 from __future__ import annotations
 
 import logging
+import math
 import os
 import sqlite3
 import threading
@@ -18,7 +18,6 @@ import threading
 import numpy as np
 
 from ..config import (
-    EMBED_DIM,
     dim_for_backend,
 )
 from ..paths import db_path, workspace_index_dir
@@ -28,30 +27,19 @@ def _active_dim() -> int:
     """Embedding width for the active embed backend. Each per-backend index DB
     holds vectors of exactly one width, and db_path routes to that backend's DB,
     so the dim used for the matrix / sqlite-vec table must match it."""
-    try:
-        from server.infrastructure.model_mode import resolve_backend
+    from server.infrastructure.model_mode import resolve_backend
 
-        return dim_for_backend(resolve_backend("embed"))
-    except Exception:
-        return EMBED_DIM
+    return dim_for_backend(resolve_backend("embed"))
 
 
 log = logging.getLogger("whisper-studio")
 
-# Cached (chunk_ids, matrix) per workspace db path; invalidated on write.
-_VEC_CACHE: dict[str, tuple[list[int], np.ndarray]] = {}
 # Recomputable derived views (search hits + graph/projection/community layouts)
-# memoized per (db_path, key). Purged alongside _VEC_CACHE on any index write
+# memoized per (db_path, key). Purged on any index write
 # (see _invalidate), so a stale view is never returned; capped to bound memory.
 _DERIVED_CACHE: dict[tuple, object] = {}
 _DERIVED_CACHE_MAX = 256
 _cache_lock = threading.Lock()
-
-# Vector search backend: sqlite-vec (indexed KNN) when the interpreter can load
-# SQLite extensions — true on a Homebrew-Python venv, which setup.sh builds; the
-# python.org framework build cannot, so we fall back to a brute-force numpy
-# matrix. Probed once per process.
-_VEC_OK: bool | None = None
 
 # Entities appearing in more chunks than this are treated as boilerplate and
 # excluded from file_graph edges (they'd blow up the self-join and aren't a
@@ -61,10 +49,6 @@ _MAX_NODE_FANOUT = 60
 # How many of an edge's shared entity names to surface for display (the "why
 # are these two files linked" detail). The full count is still the edge weight.
 _EDGE_ENTITY_SAMPLE = 8
-
-# For the unified (all-workspaces) graph: an entity appearing in more files than
-# this across the whole corpus is boilerplate and excluded from edges.
-_MAX_FILE_FANOUT = 25
 
 # Salience filter: generic category words ("function", "service", "concept", …)
 # that GLiNER faithfully tags as entities but that carry no relationship signal.
@@ -147,17 +131,22 @@ CREATE TABLE IF NOT EXISTS chunks (
     end_line INTEGER, text TEXT, vec BLOB
 );
 CREATE INDEX IF NOT EXISTS idx_chunks_path ON chunks(path);
+-- salience NULL means "not computed yet" (a cancelled build skips the pass);
+-- readers COALESCE it to a neutral 0.5. node_chunks.score is the extractor's
+-- span confidence per mention, averaged into salience.
 CREATE TABLE IF NOT EXISTS nodes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, label TEXT, UNIQUE(name, label)
+    id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, label TEXT, description TEXT,
+    salience REAL, df INTEGER, UNIQUE(name, label)
 );
 CREATE TABLE IF NOT EXISTS node_chunks (
-    node_id INTEGER, chunk_id INTEGER, PRIMARY KEY(node_id, chunk_id)
+    node_id INTEGER, chunk_id INTEGER, score REAL, PRIMARY KEY(node_id, chunk_id)
 );
 CREATE INDEX IF NOT EXISTS idx_nc_chunk ON node_chunks(chunk_id);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 -- Typed entity↔entity relations: keyed by NODE ID (survives entity merges via repointing),
--- carrying verbatim evidence + line provenance so a fact is citable, with
--- evidence_hash collapsing the same fact re-stated across duplicate files.
+-- carrying verbatim evidence + line provenance so a fact is citable. evidence_hash
+-- keys on the source path, so each file keeps its own row for a fact and reads
+-- aggregate them.
 CREATE TABLE IF NOT EXISTS relations2 (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     src_node_id INTEGER NOT NULL, tgt_node_id INTEGER NOT NULL,
@@ -186,35 +175,12 @@ def _connect(ws_path: str) -> sqlite3.Connection:
         "ulower", 1, lambda s: s.lower() if isinstance(s, str) else s, deterministic=True
     )
     conn.executescript(_SCHEMA)
-    # Columns added after the original schema. ALTER on an already-present column
-    # raises OperationalError, which we ignore — keeps this idempotent and lets
-    # older index DBs upgrade in place without a rebuild.
-    for _stmt in (
-        "ALTER TABLE nodes ADD COLUMN description TEXT",
-        # Entity salience layer (statistical noise defense). salience NULL means
-        # "not yet computed" — readers COALESCE it to a neutral 0.5 so old index
-        # DBs behave as before until the next build backfills. canonical_id NULL
-        # means self-canonical; it is reserved for the LLM canonicalization pass
-        # and is unset in the statistical-only path.
-        "ALTER TABLE nodes ADD COLUMN salience REAL",
-        "ALTER TABLE nodes ADD COLUMN df INTEGER",
-        "ALTER TABLE nodes ADD COLUMN canonical_id INTEGER",
-        "ALTER TABLE nodes ADD COLUMN llm_verdict TEXT",
-        "ALTER TABLE nodes ADD COLUMN judged_gen INTEGER",
-        # GLiNER span confidence per (node, chunk) mention — averaged into salience.
-        "ALTER TABLE node_chunks ADD COLUMN score REAL",
-    ):
-        try:
-            conn.execute(_stmt)
-        except sqlite3.OperationalError:
-            pass
     return conn
 
 
 def _invalidate(ws_path: str) -> None:
     with _cache_lock:
         dp = db_path(ws_path)
-        _VEC_CACHE.pop(dp, None)
         for k in [k for k in _DERIVED_CACHE if k[0] == dp]:
             _DERIVED_CACHE.pop(k, None)
 
@@ -247,12 +213,7 @@ def _delete_file_rows(cur: sqlite3.Cursor, path: str) -> None:
 
 
 def _clean_orphan_nodes(cur: sqlite3.Cursor) -> None:
-    # Keep canonical targets alive even if they hold no direct mentions: an alias
-    # node's canonical_id may point at them (LLM canonicalization pass).
-    cur.execute(
-        "DELETE FROM nodes WHERE id NOT IN (SELECT DISTINCT node_id FROM node_chunks) "
-        "AND id NOT IN (SELECT canonical_id FROM nodes WHERE canonical_id IS NOT NULL)"
-    )
+    cur.execute("DELETE FROM nodes WHERE id NOT IN (SELECT DISTINCT node_id FROM node_chunks)")
 
 
 def _bump_write_gen(cur: sqlite3.Cursor) -> None:
@@ -263,46 +224,6 @@ def _bump_write_gen(cur: sqlite3.Cursor) -> None:
         "INSERT INTO meta(key, value) VALUES('write_gen', '1') "
         "ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1"
     )
-
-
-def _matrix(ws_path: str) -> tuple[list[int], np.ndarray]:
-    key = db_path(ws_path)
-    with _cache_lock:
-        cached = _VEC_CACHE.get(key)
-        if cached is not None:
-            return cached
-    conn = _connect(ws_path)
-    try:
-        rows = conn.execute("SELECT id, vec FROM chunks ORDER BY id").fetchall()
-    finally:
-        conn.close()
-    ids = [r[0] for r in rows]
-    if rows:
-        mat = np.vstack([np.frombuffer(r[1], dtype=np.float32) for r in rows])
-    else:
-        mat = np.zeros((0, _active_dim()), dtype=np.float32)
-    with _cache_lock:
-        _VEC_CACHE[key] = (ids, mat)
-    return ids, mat
-
-
-def _vec_loadable() -> bool:
-    """Whether this interpreter can load the sqlite-vec extension (probed once)."""
-    global _VEC_OK
-    if _VEC_OK is None:
-        try:
-            import sqlite_vec
-
-            c = sqlite3.connect(":memory:")
-            c.enable_load_extension(True)
-            c.load_extension(sqlite_vec.loadable_path())
-            c.execute("SELECT vec_version()").fetchone()
-            c.close()
-            _VEC_OK = True
-        except Exception as e:
-            log.info("sqlite-vec unavailable (%s); using numpy vector search", e)
-            _VEC_OK = False
-    return _VEC_OK
 
 
 def _vec_search(ws_path: str, query_vec: np.ndarray, k: int) -> list[tuple[int, float]]:
@@ -326,10 +247,6 @@ def _vec_search(ws_path: str, query_vec: np.ndarray, k: int) -> list[tuple[int, 
             conn.execute("BEGIN")
             conn.execute("DELETE FROM vchunks")
             for cid, blob in conn.execute("SELECT id, vec FROM chunks").fetchall():
-                # Skip non-finite vectors (a transient NaN from a past index run):
-                # vec0 MATCH chokes on them, and they can't match anything anyway.
-                if blob is None or not np.isfinite(np.frombuffer(blob, dtype=np.float32)).all():
-                    continue
                 conn.execute("INSERT INTO vchunks(chunk_id, emb) VALUES (?,?)", (cid, blob))
             conn.execute(
                 "INSERT OR REPLACE INTO meta(key, value) VALUES('vec_built_gen', ?)", (write_gen,)
@@ -343,6 +260,14 @@ def _vec_search(ws_path: str, query_vec: np.ndarray, k: int) -> list[tuple[int, 
             "SELECT chunk_id, distance FROM vchunks WHERE emb MATCH ? AND k=? ORDER BY distance",
             (q, min(k, n)),
         ).fetchall()
+        bad = [c for c, d in rows if d is None or not math.isfinite(d)]
+        if bad:
+            # A zero or NaN vector stored by an older build has no cosine
+            # distance (sqlite-vec returns NULL). Only a rebuild re-embeds it.
+            raise RuntimeError(
+                f"The search index for {ws_path} holds {len(bad)} unusable vector(s) "
+                f"(chunk {bad[0]}) from an older build. Re-index this folder to fix it."
+            )
         return [(int(c), float(d)) for c, d in rows]
     finally:
         conn.close()

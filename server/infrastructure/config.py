@@ -1,18 +1,19 @@
 """Configuration management with a layered merge and session-latching support.
 
 Config layers (lowest to highest priority):
-  1. DEFAULTS — built-in fallbacks (code)
-  2. SYSTEM — the bundle's config.example.json at repo_root() (read-only; ships
+  1. DEFAULTS: built-in defaults (code)
+  2. SYSTEM: the bundle's config.example.json at repo_root() (read-only; ships
      inside the .app and updates with every app version). The app-owned model
      catalog + shipped defaults.
-  3. USER — config.user.json in the app home (the user owns it; survives app
+  3. USER: config.user.json in the user root (the user owns it; survives app
      updates; the in-settings editor writes here). Holds only the user's deltas:
      added local models, region/keys/flags, per-field overrides, and a hide-list.
-     Back-compat: when config.user.json is absent but a legacy config.json exists
-     (a dev checkout, or a packaged install that hasn't migrated yet), the legacy
-     config.json IS the user layer until migrate_user_config() runs.
-  4. PROJECT — .whisper/settings.json in the workspace root (per-project)
-  5. ENV — sensitive secrets from environment variables
+     Startup never writes it: the only write the user did not ask for is the
+     first-run seed of a home that has no config.user.json. The old
+     single-file config.json is never read or changed: while one exists,
+     startup shows a notice (old_config_notices).
+  4. PROJECT: .whisper/settings.json in the workspace root (per-project)
+  5. ENV: sensitive secrets from environment variables
 
 ``chat_models`` is an ADDITIVE per-key deep-merge across SYSTEM and USER: the
 shipped catalog always appears, and a user entry adds a new key or overrides
@@ -27,8 +28,8 @@ The latching system caches config snapshots per session so that mid-session
 settings changes don't disrupt an active conversation or invalidate prompt caches.
 
 Latching fields: bedrock_region, chat_models, default_chat_model, effort_level,
-brief_mode, permission_mode. These are frozen at session start and
-only refresh when a new session begins.
+permission_mode. These are frozen at session start and only refresh when a
+new session begins.
 """
 
 import functools
@@ -36,7 +37,6 @@ import json
 import logging
 import os
 import re
-import shutil
 import tempfile
 import threading
 import time
@@ -47,7 +47,6 @@ from server.infrastructure.effort import (
     infer_effort_tier,
     infer_supports_ultracode,
     normalize_effort,
-    openai_effort_tier_for,
 )
 from server.infrastructure.paths import config_dir, repo_root
 
@@ -59,11 +58,11 @@ router = APIRouter(prefix="/api/config", tags=["config"])
 # install, the repo root in a dev checkout); the committed template always
 # stays with the code.
 #
-# USER_CONFIG_PATH (config.user.json) is the user layer the app writes to going
-# forward. CONFIG_PATH (config.json) is the legacy monolith: it acts as the user
-# layer only until migrate_user_config() splits it (see _active_user_config_path).
+# USER_CONFIG_PATH (config.user.json) is the user layer. LEGACY_CONFIG_PATH
+# (config.json) is the old single-file format: never read or changed, only
+# checked for so startup can tell the user it is ignored.
 USER_CONFIG_PATH = os.path.join(config_dir(), "config.user.json")
-CONFIG_PATH = os.path.join(config_dir(), "config.json")
+LEGACY_CONFIG_PATH = os.path.join(config_dir(), "config.json")
 EXAMPLE_CONFIG_PATH = os.path.join(repo_root(), "config.example.json")
 
 # The SYSTEM layer is the full config.example.json (the app-owned catalog +
@@ -74,48 +73,60 @@ _system_cache: dict | None = None
 _system_cache_key: tuple | None = None
 
 
+class ConfigFileError(ValueError):
+    """A config file exists but cannot be used (not JSON, or not an object).
+    The message names the file and where it breaks, so the user can fix it."""
+
+
+def _read_json_object(path: str) -> dict:
+    """Parse ``path`` as a JSON object. FileNotFoundError propagates (the
+    caller decides what a missing file means); anything unusable raises
+    ConfigFileError instead of reading as an empty config, because a later
+    save would then overwrite the file with only the changed keys."""
+    with open(path) as f:
+        text = f.read()
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise ConfigFileError(
+            f"{path} is not valid JSON (line {e.lineno}, column {e.colno}: {e.msg}). "
+            "Fix the file, then restart Whisper Studio."
+        ) from None
+    if not isinstance(data, dict):
+        raise ConfigFileError(f"{path} must hold a JSON object.")
+    return data
+
+
 def _system_config() -> dict:
     """The full SYSTEM layer: config.example.json parsed as a config dict.
-    Returns {} (degraded, not a crash) if the template is missing or unreadable.
+    A missing or broken template is a broken install and raises.
     Cached on (path, mtime) so tests that swap EXAMPLE_CONFIG_PATH still work."""
     global _system_cache, _system_cache_key
     path = EXAMPLE_CONFIG_PATH
     try:
         key = (path, os.path.getmtime(path))
-    except OSError:
-        key = (path, None)
+    except FileNotFoundError:
+        raise ConfigFileError(
+            f"{path} is missing: the install is incomplete. Reinstall Whisper Studio."
+        ) from None
     if _system_cache is not None and _system_cache_key == key:
         return _system_cache
-    try:
-        with open(path) as f:
-            data = json.load(f)
-        if not isinstance(data, dict):
-            data = {}
-    except Exception:
-        data = {}
+    data = _read_json_object(path)
     _system_cache = data
     _system_cache_key = key
     return data
 
 
-def _seed_chat_models() -> dict:
-    """The chat-model catalog from the SYSTEM layer (config.example.json), used
-    as the ultimate fallback for DEFAULTS when no layer defines chat_models.
-    Returns {} (degraded, not a crash) if the template is missing/unreadable."""
-    return _system_config().get("chat_models") or {}
-
-
 DEFAULTS = {
     # Where app data (result cache, JSON stores, DBs) lives. Empty = the
-    # default <repo>/data. Overridable so a packaged/worktree install can pin
+    # default <user_root>/data (~/.whisper/data in the app). Overridable so a packaged/worktree install can pin
     # a stable location; see server/infrastructure/paths.py.
     "data_dir": "",
     "tavily_api_key": "",
     # The transcript panel's Translate dropdown: "off", "canary" (Canary's
     # native translation, any engine's audio, 25 languages with English on
     # one side of the pair), or "apple" (macOS on-device translator via the
-    # app shell, any pair among its ~20 languages). Legacy values from the
-    # earlier design ("auto"/"model") are read as "canary".
+    # app shell, any pair among its ~20 languages).
     "translate_mode": "off",
     # Target language for the translation line (ISO 639-1).
     "translate_target": "en",
@@ -134,7 +145,7 @@ DEFAULTS = {
     # Which speaker encoder produces the embeddings behind "Speaker N":
     #   "redimnet" — ReDimNet2-B2, 0.57% EER on VoxCeleb1-O (default)
     #   "ecapa"    — ECAPA-VoxCeleb, the previous encoder, ~1% EER
-    # ReDimNet2 downloads on first use and falls back to ECAPA if it can't.
+    # ReDimNet2 downloads on first use; a failed load is an error, never ECAPA.
     # Changing this invalidates stored voiceprints (vectors from different
     # encoders are not comparable), which the gallery files per encoder.
     "speaker_embedder": "redimnet",
@@ -160,28 +171,20 @@ DEFAULTS = {
         "endpointing": "MEDIUM",
     },
     # Chat-model catalog. The app-owned catalog lives in config.example.json (the
-    # SYSTEM layer); this DEFAULTS copy is sourced from it so the two can't drift,
-    # and serves only as the ultimate fallback when no layer defines chat_models.
-    # SYSTEM and USER deep-merge ADDITIVELY per key (see load_config): the shipped
+    # SYSTEM layer); the empty entry here only marks chat_models as a settable
+    # key (PUT /api/config and config_set write DEFAULTS keys). SYSTEM and USER deep-merge ADDITIVELY per key (see load_config): the shipped
     # catalog always appears and a USER entry adds a key or overrides fields of a
     # shipped one. To add/change a shipped model, edit config.example.json; users
-    # add their own via config.user.json. Rich shape {key:{id,label,thinking,...}};
-    # legacy flat {key:"id"} is still accepted (see _normalize_chat_models).
-    "chat_models": _seed_chat_models(),
+    # add their own via config.user.json. Shape {key: {id, label, ...}}.
+    "chat_models": {},
     # Model keys to HIDE from the effective catalog after the SYSTEM+USER merge.
     # Lets a user drop a shipped model they don't want without deleting it from
     # the app-owned catalog. Honored in the USER and PROJECT layers (unioned);
     # unknown names are ignored. Default [] = show system models + the user's own.
     "chat_models_disabled": [],
     "default_chat_model": "gpt6-luna",
-    "brief_mode": False,
     "permission_mode": "default",  # default | auto | plan | acceptEdits | bypassPermissions | dontAsk
     "permission_explainer_enabled": True,
-    # Local mode (the `local` branch's on-device build). When on: transcription
-    # models load into memory lazily on first use and unload when the user
-    # switches engines (one resident at a time), and on-device LLMs are
-    # available. Default False so main behaves exactly as before.
-    "local_mode": False,
     # Where indexing/RAG capabilities run. "cloud" (default) = all Amazon
     # Bedrock; "local" = all on-device; "hybrid" = per-capability via "backends"
     # below. Resolved in server/infrastructure/model_mode.py. Also drives which
@@ -200,7 +203,7 @@ DEFAULTS = {
     # Cost management
     "max_session_cost_usd": 0.0,  # 0 = unlimited
     "max_daily_cost_usd": 0.0,  # 0 = unlimited
-    "model_fallback_enabled": False,  # Enable opus→sonnet→haiku fallback chain
+    "model_fallback_enabled": False,  # Downgrade to a cheaper model near a cost limit
     # The one round limit and time limit every run takes (Settings > Costs >
     # Budget); who gets which, and the exceptions: server/infrastructure/run_limits.py.
     "round_limit": 120,
@@ -227,7 +230,7 @@ DEFAULTS = {
     # team, a background or resumed agent), start a synthesis turn on the
     # session's model that answers from them (server/agents/wake.py).
     "wake_parent_on_reports": True,
-    # Feature flags namespace — see server/feature_flags.py
+    # Feature flags namespace: see server/infrastructure/feature_flags.py
     "feature_flags": {},
 }
 
@@ -240,7 +243,6 @@ LATCHED_FIELDS = frozenset(
         "chat_model_meta",
         "default_chat_model",
         "effort_level",
-        "brief_mode",
         "permission_mode",
     }
 )
@@ -263,7 +265,6 @@ PROJECT_SETTINGS_KEYS = frozenset(
         "chat_models_disabled",
         "default_chat_model",
         "effort_level",
-        "brief_mode",
         "permission_explainer_enabled",
         "max_session_cost_usd",
         "max_daily_cost_usd",
@@ -302,22 +303,6 @@ def edits_user_config(fn):
     return _locked
 
 
-_OPUS_VERSION_RE = re.compile(r"opus(\d+)\.(\d+)$", re.IGNORECASE)
-
-
-def _infer_thinking_default(key: str) -> str:
-    """Pick the thinking mode for a legacy flat-string entry that doesn't
-    declare one. Opus 4.7+ supports adaptive thinking (no fixed budget);
-    everything else uses an explicit budget. Pattern-matched so a future
-    Opus 4.9 / 5.0 in old-shape config.json also resolves correctly."""
-    m = _OPUS_VERSION_RE.match(key)
-    if m:
-        major, minor = int(m.group(1)), int(m.group(2))
-        if (major, minor) >= (4, 7):
-            return "adaptive"
-    return "budget"
-
-
 def _as_int(v) -> int | None:
     """Coerce a config-supplied number to int, or None if absent/malformed."""
     try:
@@ -328,10 +313,7 @@ def _as_int(v) -> int | None:
 
 # Model-id markers of the 1M-context Claude family (Fable 5, Mythos, Opus 5
 # and 4.6/4.7/4.8, Sonnet 5 and 4.6). Anything unrecognized keeps the safe
-# 200K family default. Defined HERE, not in chat.engine.windows: load_config()
-# runs during server.mcp's module init, and importing anything through the
-# server.chat package from there is circular (server.chat imports server.mcp).
-# chat.engine.windows re-exports this tuple for its callers.
+# 200K family default (server/chat/engine/windows.py reads this tuple).
 ANTHROPIC_1M_MARKERS = (
     "fable-5",
     "mythos",
@@ -383,114 +365,95 @@ def _drop_retired_pin(region: str | None, model_id: str) -> str | None:
 def _normalize_chat_models(chat_models: dict) -> tuple[dict, dict]:
     """Split a chat_models map into (ids, meta).
 
-    Accepts BOTH shapes side-by-side:
-      - Legacy flat:  {"opus4.6": "global.anthropic.claude-opus-4-6-v1"}
-      - Rich:         {"opus4.6": {"id": "...", "label": "Opus 4.6", "thinking": "budget"}}
+    Each entry is an object: {"opus5.5": {"id": "...", "label": "Opus 5.5"}}.
+    An entry without an "id" string raises ConfigFileError.
 
     Returns:
-        ids:  {key: bedrock_model_id}      — what every existing callsite uses
-        meta: {key: {label, thinking}}     — new, for /api/models and chat.py
+        ids:  {key: bedrock_model_id}
+        meta: {key: {id, label, provider, ...}} for /api/models and the engine
     """
     ids: dict[str, str] = {}
     meta: dict[str, dict] = {}
     for key, val in chat_models.items():
-        if isinstance(val, str):
-            ids[key] = val
-            meta[key] = {
-                "id": val,
-                "label": key.capitalize(),
-                "thinking": _infer_thinking_default(key),
-                "requires_data_retention": False,
-                "effort_tier": infer_effort_tier(key, val),
-                "context_window": None,
-                "max_output": None,
-            }
-        elif isinstance(val, dict) and isinstance(val.get("id"), str):
-            model_id = val["id"]
-            ids[key] = model_id
-            # Inference provider. "anthropic" (default) goes through the
-            # bedrock-runtime Converse path; "openai_bedrock" routes to the
-            # OpenAI Responses API on bedrock-mantle (server/openai_bedrock).
-            # Explicit wins; otherwise inferred from the model id so an OpenAI
-            # model added to config is as turnkey as a Claude one — just give it
-            # an ``openai.`` id and it routes correctly.
-            provider = val.get("provider") or (
-                "openai_bedrock" if model_id.startswith("openai.") else "anthropic"
-            )
-            meta[key] = {
-                # The Bedrock id, alongside the ids map. Capability inference
-                # reads it so a renamed config key ("my-sonnet5") keeps the
-                # capabilities of the model it actually points at.
-                "id": model_id,
-                "label": val.get("label") or key.capitalize(),
-                "thinking": val.get("thinking") or _infer_thinking_default(key),
-                # Mythos-class models (e.g. Fable 5) require the AWS account's
-                # Bedrock data-retention mode to be provider_data_share. The UI
-                # uses this flag to gate model selection behind a consent screen.
-                "requires_data_retention": bool(val.get("requires_data_retention", False)),
-                # On-device model (local branch) — runs via the local runtime,
-                # not Bedrock. Surfaced on /api/models for the picker badge.
-                "is_local": bool(val.get("is_local", False)),
-                # Whether this local model can use tools (local agentic loop).
-                "supports_tools": bool(val.get("supports_tools", False)),
-                # Which effort levels this model exposes (full/standard/none/
-                # openai/openai6). Explicit wins; OpenAI models default to their
-                # generation's ladder (GPT-6 has no "none" rung), everything else
-                # infers from the key. Drives the per-model effort picker and the
-                # Bedrock output_config.effort.
-                "effort_tier": val.get("effort_tier")
-                or (
-                    openai_effort_tier_for(model_id)
-                    if provider == "openai_bedrock"
-                    else infer_effort_tier(key, model_id)
-                ),
-                # Whether this model can drive workflow orchestration. Kept
-                # SEPARATE from effort_tier: the tier says which raw reasoning
-                # values the provider accepts, this says whether the model can
-                # author and run a workflow. Sonnet 5 orchestrates on a standard
-                # ladder. None ⇒ inferred (see effort.supports_ultracode).
-                "supports_ultracode": val.get("supports_ultracode"),
-                "provider": provider,
-                # OpenAI-on-Bedrock only: an optional per-model region override
-                # (absent ⇒ the account-wide bedrock_region is used, same as the
-                # Anthropic path) and the GPT-5.x verbosity (text.verbosity).
-                # Ignored by other providers.
-                "openai_region": _drop_retired_pin(val.get("openai_region"), model_id),
-                "verbosity": val.get("verbosity") or "medium",
-                # On-device weights, for is_local entries only. Carrying these on
-                # the SAME entry is what makes a new local model a one-place
-                # config change: the picker metadata above and the loader info
-                # here live together, so dropping a model into chat_models is
-                # enough for the registry to download and serve it. Absent for
-                # cloud models (and for local entries that rely on a built-in
-                # default). See server/local/registry.py.
-                "repo_id": val.get("repo_id"),
-                "filename": val.get("filename"),
-                "dir": val.get("dir"),
-                "ctx": val.get("ctx"),
-                # Which on-device engine serves the weights: absent/None ⇒ GGUF
-                # via llama-server; "mlx" ⇒ a whole-repo snapshot via mlx_lm
-                # (no filename). Dropping this here would silently reject every
-                # MLX entry downstream (the registry would demand a filename).
-                "engine": val.get("engine"),
-                # Context accounting (turn engine): the model's total input
-                # window and max output tokens. Absent ⇒ per-family defaults
-                # (see server/chat/engine/windows.py); local models resolve
-                # from the live n_ctx instead.
-                "context_window": _lift_stale_context_window(
-                    _as_int(val.get("context_window")), model_id
-                ),
-                "max_output": _as_int(val.get("max_output")),
-            }
-        # Silently skip malformed entries — a typo in config.json shouldn't
-        # take the server down. The model just won't appear in the picker.
-        # When the entry does not declare orchestration capability (legacy
-        # flat strings never do, rich entries may omit it), infer it from the
-        # actual model id via effort.infer_supports_ultracode so raw
+        if not (isinstance(val, dict) and isinstance(val.get("id"), str)):
+            raise ConfigFileError(f'chat_models.{key} must be an object with an "id" string.')
+        model_id = val["id"]
+        ids[key] = model_id
+        # Inference provider. "anthropic" (default) goes through the
+        # bedrock-runtime Converse path; "openai_bedrock" routes to the
+        # OpenAI Responses API on bedrock-mantle (server/openai_bedrock).
+        # Explicit wins; otherwise inferred from the model id so an OpenAI
+        # model added to config is as turnkey as a Claude one: just give it
+        # an ``openai.`` id and it routes correctly.
+        provider = val.get("provider") or (
+            "openai_bedrock" if model_id.startswith("openai.") else "anthropic"
+        )
+        meta[key] = {
+            # The Bedrock id, alongside the ids map. Capability inference
+            # reads it so a renamed config key ("my-sonnet5") keeps the
+            # capabilities of the model it actually points at.
+            "id": model_id,
+            "label": val.get("label") or key.capitalize(),
+            # Mythos-class models (e.g. Fable 5) require the AWS account's
+            # Bedrock data-retention mode to be provider_data_share. The UI
+            # uses this flag to gate model selection behind a consent screen.
+            "requires_data_retention": bool(val.get("requires_data_retention", False)),
+            # On-device model: runs via the local runtime,
+            # not Bedrock. Surfaced on /api/models for the picker badge.
+            "is_local": bool(val.get("is_local", False)),
+            # Whether this local model can use tools (local agentic loop).
+            "supports_tools": bool(val.get("supports_tools", False)),
+            # Which effort levels this model exposes (full/standard/none/
+            # openai6). Explicit wins; OpenAI models default to the GPT-6
+            # ladder (no "none" rung), everything else infers from the key.
+            # Drives the per-model effort picker and the Bedrock
+            # output_config.effort.
+            "effort_tier": val.get("effort_tier")
+            or ("openai6" if provider == "openai_bedrock" else infer_effort_tier(key, model_id)),
+            # Whether this model can drive workflow orchestration. Kept
+            # SEPARATE from effort_tier: the tier says which raw reasoning
+            # values the provider accepts, this says whether the model can
+            # author and run a workflow. None means inferred from the tier
+            # (see effort.supports_ultracode).
+            "supports_ultracode": val.get("supports_ultracode"),
+            "provider": provider,
+            # OpenAI-on-Bedrock only: an optional per-model region override
+            # (absent ⇒ the account-wide bedrock_region is used, same as the
+            # Anthropic path) and the GPT verbosity (text.verbosity).
+            # Ignored by other providers.
+            "openai_region": _drop_retired_pin(val.get("openai_region"), model_id),
+            "verbosity": val.get("verbosity") or "medium",
+            # On-device weights, for is_local entries only. Carrying these on
+            # the SAME entry is what makes a new local model a one-place
+            # config change: the picker metadata above and the loader info
+            # here live together, so dropping a model into chat_models is
+            # enough for the registry to download and serve it. Absent for
+            # cloud models (and for local entries that rely on a built-in
+            # default). See server/local/registry.py.
+            "repo_id": val.get("repo_id"),
+            "filename": val.get("filename"),
+            "dir": val.get("dir"),
+            "ctx": val.get("ctx"),
+            # Which on-device engine serves the weights: absent/None ⇒ GGUF
+            # via llama-server; "mlx" ⇒ a whole-repo snapshot via mlx_lm
+            # (no filename). Dropping this here would silently reject every
+            # MLX entry downstream (the registry would demand a filename).
+            "engine": val.get("engine"),
+            # Context accounting (turn engine): the model's total input
+            # window and max output tokens. Absent ⇒ per-family defaults
+            # (see server/chat/engine/windows.py); local models resolve
+            # from the live n_ctx instead.
+            "context_window": _lift_stale_context_window(
+                _as_int(val.get("context_window")), model_id
+            ),
+            "max_output": _as_int(val.get("max_output")),
+        }
+        # When the entry does not declare orchestration capability, infer it
+        # from the actual model id via effort.infer_supports_ultracode so raw
         # load_config() consumers match startup behavior. Explicit true/false
         # values pass through untouched.
-        entry = meta.get(key)
-        if entry is not None and entry.get("supports_ultracode") is None:
+        entry = meta[key]
+        if entry.get("supports_ultracode") is None:
             entry["supports_ultracode"] = infer_supports_ultracode(entry, key)
     return ids, meta
 
@@ -510,29 +473,18 @@ def _deep_merge(base: dict, overlay: dict) -> dict:
     return result
 
 
-def _active_user_config_path() -> str:
-    """The file that IS the user layer right now.
-
-    config.user.json once it exists (post-migration, or a packaged install whose
-    boot created it); otherwise the legacy config.json when only that exists (a
-    dev checkout, or a packaged install that hasn't migrated yet); otherwise
-    config.user.json — the canonical target for a first write on a clean home.
-    Reading the module attributes each call keeps it monkeypatch-friendly."""
-    if os.path.exists(USER_CONFIG_PATH):
-        return USER_CONFIG_PATH
-    if os.path.exists(CONFIG_PATH):
-        return CONFIG_PATH
+def _user_config_path() -> str:
+    """The user layer file, config.user.json. Reads the module attribute on each
+    call so tests can point it elsewhere."""
     return USER_CONFIG_PATH
 
 
 def _load_user_config() -> dict:
-    """Load the USER layer from disk (config.user.json, or the legacy config.json
-    while that is still the active user layer)."""
+    """Load the USER layer (config.user.json) from disk: {} when there is no
+    file. A file that is not a JSON object raises ConfigFileError."""
     try:
-        with open(_active_user_config_path()) as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except Exception:
+        return _read_json_object(_user_config_path())
+    except FileNotFoundError:
         return {}
 
 
@@ -562,20 +514,19 @@ def _load_project_config(workspace_path: str | None = None) -> dict:
         return {}
     settings_path = os.path.join(workspace_path, ".whisper", "settings.json")
     try:
-        with open(settings_path) as f:
-            stored = json.load(f)
-        # Only allow project-safe keys
-        return {k: v for k, v in stored.items() if k in PROJECT_SETTINGS_KEYS}
-    except Exception:
+        stored = _read_json_object(settings_path)
+    except FileNotFoundError:
         return {}
+    # Only allow project-safe keys
+    return {k: v for k, v in stored.items() if k in PROJECT_SETTINGS_KEYS}
 
 
 def _env_overlay() -> dict:
     """Read sensitive secrets from environment variables. These override
-    anything stored in config.json so users can keep keys out of disk
+    anything stored in config.user.json so users can keep keys out of disk
     (e.g. export TAVILY_API_KEY=... in their shell rc, rotate via env
-    without re-editing config). Empty env values are ignored — config
-    falls back to whatever's in DEFAULTS or config.json.
+    without re-editing config). Empty env values are ignored: config keeps
+    whatever DEFAULTS or config.user.json hold.
     """
     overlay: dict = {}
     tavily = os.environ.get("TAVILY_API_KEY", "").strip()
@@ -595,8 +546,8 @@ def load_config(workspace_path: str | None = None) -> dict:
 
     now = time.monotonic()
 
-    # Layers 1-3: DEFAULTS + SYSTEM (config.example.json) + USER (config.user.json
-    # or the legacy config.json). Cached together.
+    # Layers 1-3: DEFAULTS + SYSTEM (config.example.json) + USER
+    # (config.user.json). Cached together.
     with _config_cache_lock:
         if _config_cache is not None and (now - _config_cache_mtime) < _CONFIG_CACHE_TTL:
             user_merged = _config_cache
@@ -609,28 +560,20 @@ def load_config(workspace_path: str | None = None) -> dict:
         # DEFAULTS → SYSTEM → USER. Because _deep_merge recurses into nested
         # dicts, chat_models merges ADDITIVELY per key/field with no special
         # case: SYSTEM's shipped catalog stays, and a USER entry adds a key or
-        # overrides individual fields of a shipped one. (DEFAULTS' catalog is
-        # sourced from SYSTEM, so merging it first is a harmless no-op and only
-        # matters as the fallback when SYSTEM has none.)
+        # overrides individual fields of a shipped one.
         user_merged = _deep_merge(DEFAULTS, system_stored)
         user_merged = _deep_merge(user_merged, user_stored)
         # Hide-list: drop the models the USER asked to hide from the merged
         # catalog. (Project adds its own below.)
         _apply_disabled(user_merged, _disabled_keys(user_stored))
-        # Backward compat: local_mode predates model_mode. If the user runs an
-        # on-device config (local_mode on) but never set model_mode, follow
-        # local_mode so their on-device models stay visible/usable instead of
-        # being hidden by the cloud default. Keyed on the USER layer (SYSTEM
-        # always ships model_mode, so the merged value is never "absent");
-        # an explicit user model_mode always wins.
-        if "model_mode" not in user_stored and user_merged.get("local_mode"):
-            user_merged["model_mode"] = "local"
         with _config_cache_lock:
             _config_cache = user_merged
             _config_cache_mtime = now
 
     # Layer 4: project config (not cached — workspace can change)
     project_stored = _load_project_config(workspace_path)
+    if project_stored:
+        _project_retired_value_notices(workspace_path, project_stored)
     merged = _deep_merge(user_merged, project_stored) if project_stored else dict(user_merged)
     # Project config keeps its historical wholesale-replace semantics for the
     # catalog: a project that lists chat_models replaces the merged SYSTEM+USER
@@ -653,16 +596,24 @@ def load_config(workspace_path: str | None = None) -> dict:
     # the config single-source-of-truth: every callsite reads the same flat
     # {key: id} map, while /api/models and chat.py read meta from the parallel
     # chat_model_meta key. The on-disk rich shape is never re-flattened back
-    # to config.json — see update_config below for the save path.
+    # to config.user.json; see update_config below for the save path.
     if "chat_models" in merged:
         ids, meta = _normalize_chat_models(merged["chat_models"])
         merged["chat_models"] = ids
         merged["chat_model_meta"] = meta
 
-    # Coerce legacy/unknown effort values (e.g. the retired "auto") to a known
-    # label so downstream code and the per-model clamp never see a stale value.
+    # An unknown effort value (the retired "auto" included) runs as the default
+    # level, so downstream code and the per-model clamp never see it. The saved
+    # value stays in the user's file; old_config_notices names it.
     if "effort_level" in merged:
         merged["effort_level"] = normalize_effort(merged.get("effort_level"))
+
+    # A value the app no longer offers runs as its replacement, in memory only:
+    # the user's file keeps what they saved, and old_config_notices says so.
+    for key, replacements in RETIRED_USER_VALUES.items():
+        value = merged.get(key)
+        if isinstance(value, str) and value in replacements:
+            merged[key] = replacements[value][0]
 
     # bedrock_region must never be empty. An empty/blank string defeats both the
     # _deep_merge default above (a present "" overwrites DEFAULTS) and dict.get's
@@ -725,21 +676,18 @@ def _atomic_write(path: str, text: str) -> None:
 
 
 def save_config(config: dict):
-    """Persist the USER layer (config.user.json, or the legacy config.json while
-    that is still the active user layer). A caller that read the layer to build
-    ``config`` holds USER_CONFIG_LOCK across that read and this save."""
+    """Persist the USER layer (config.user.json). A caller that read the layer
+    to build ``config`` holds USER_CONFIG_LOCK across that read and this save."""
     with USER_CONFIG_LOCK:
-        _atomic_write(_active_user_config_path(), json.dumps(config, indent=2))
+        _atomic_write(_user_config_path(), json.dumps(config, indent=2))
         _invalidate_cache()
 
 
 def _write_config_text(text: str) -> None:
     """Persist raw USER-layer text ATOMICALLY, then drop the in-memory cache so
-    the next load_config() sees the new contents. Targets the active user layer
-    file (config.user.json going forward, or the legacy config.json until the
-    split runs)."""
+    the next load_config() sees the new contents. Targets config.user.json."""
     with USER_CONFIG_LOCK:
-        _atomic_write(_active_user_config_path(), text)
+        _atomic_write(_user_config_path(), text)
         _invalidate_cache()
 
 
@@ -768,141 +716,187 @@ FIRST_RUN_USER_CONFIG = {
 }
 
 
-def migrate_user_config() -> bool:
-    """One-time, idempotent split of a monolithic config.json into a
-    config.user.json that holds only the user's deltas.
+def seed_user_config() -> bool:
+    """Write FIRST_RUN_USER_CONFIG into a new config.user.json on a fresh home.
 
-    - If config.user.json already exists: no-op (already migrated / user layer
-      present). Never overwritten.
-    - If only a legacy config.json exists: back it up to config.json.bak.<ts>,
-      write config.user.json with the user's deltas (chat_models entries that are
-      genuinely new or that differ from the SYSTEM catalog, plus ALL non-catalog
-      keys verbatim, including chat_models_disabled), then rename the legacy file
-      to config.json.pre-split so it can't be double-read as a stale layer.
-    - If neither exists (fresh install): create config.user.json as {} — the
-      shipped catalog comes from the SYSTEM layer, so nothing is copied down.
-
-    Returns True only when it performed an actual legacy→user migration.
+    Does nothing when config.user.json already exists: the user's file is never
+    overwritten. A home with only an old config.json counts as fresh: that file
+    mixed shipped values with the user's own, so nothing is carried over from
+    it, and it stays as it is (old_config_notices tells the user). Returns True
+    only when it wrote the file; a failed write raises.
     """
     # Resolve the home at CALL time (not the import-frozen module constants) so a
-    # packaged boot always migrates within the live WHISPER_HOME even if the
-    # module was imported before the env was set.
-    home = config_dir()
-    user_path = os.path.join(home, "config.user.json")
-    legacy_path = os.path.join(home, "config.json")
-
+    # packaged boot seeds within the live WHISPER_HOME even if the module was
+    # imported before the env was set.
+    user_path = os.path.join(config_dir(), "config.user.json")
     if os.path.exists(user_path):
         return False
-
-    if not os.path.exists(legacy_path):
-        # Fresh install: seed the first-run defaults (Local mode, with the dormant
-        # hybrid backends map), then never touch the file again so the user's
-        # settings win afterward. SYSTEM still supplies the chat-model catalog.
-        try:
-            _atomic_write(user_path, json.dumps(FIRST_RUN_USER_CONFIG, indent=2) + "\n")
-            _invalidate_cache()
-        except OSError as e:
-            log.warning("Could not create %s: %s", user_path, e)
-        return False
-
-    try:
-        with open(legacy_path) as f:
-            legacy = json.load(f)
-    except Exception as e:
-        log.warning("Could not read legacy config.json for migration: %s", e)
-        return False
-    if not isinstance(legacy, dict):
-        legacy = {}
-
-    # Timestamped backup (setup.sh's config.json.bak.<YYYYmmddHHMMSS> convention).
-    backup = f"{legacy_path}.bak.{time.strftime('%Y%m%d%H%M%S')}"
-    try:
-        shutil.copyfile(legacy_path, backup)
-        log.info("Backed up %s to %s before the config split.", legacy_path, backup)
-    except OSError as e:
-        log.warning("Could not back up %s before migration: %s", legacy_path, e)
-
-    system_catalog = _system_config().get("chat_models")
-    if not isinstance(system_catalog, dict):
-        system_catalog = {}
-
-    user_cfg: dict = {}
-    for key, value in legacy.items():
-        if key == "chat_models":
-            continue
-        # Every non-catalog key is user-owned — carried over verbatim (region,
-        # api keys, model_mode, flags, data_dir, chat_models_disabled, …).
-        user_cfg[key] = value
-
-    legacy_cm = legacy.get("chat_models")
-    if isinstance(legacy_cm, dict):
-        # Keep only genuine additions (key absent from SYSTEM) and real overrides
-        # (value differs deeply from the SYSTEM entry). Redundant copies of a
-        # shipped entry are dropped so future SYSTEM updates flow through.
-        delta = {
-            k: v for k, v in legacy_cm.items() if k not in system_catalog or v != system_catalog[k]
-        }
-        if delta:
-            user_cfg["chat_models"] = delta
-
-    try:
-        _atomic_write(user_path, json.dumps(user_cfg, indent=2) + "\n")
-    except OSError as e:
-        log.warning("Could not write %s during migration: %s", user_path, e)
-        return False
-
-    # Rename the legacy file out of the way so it is not read as a stale layer.
-    # The .bak already preserves the original contents.
-    try:
-        os.replace(legacy_path, f"{legacy_path}.pre-split")
-    except OSError as e:
-        log.warning("Could not rename %s after migration: %s", legacy_path, e)
-
+    _atomic_write(user_path, json.dumps(FIRST_RUN_USER_CONFIG, indent=2) + "\n")
     _invalidate_cache()
-    log.info(
-        "Migrated config.json -> config.user.json (%d top-level key(s), %d chat_models delta).",
-        len(user_cfg),
-        len(user_cfg.get("chat_models", {})),
-    )
     return True
 
 
-# Keys the app no longer reads: the per-type agent budgets (agent_limits) and
-# the scheduled-run round cap (cron_max_rounds) gave way to the one round limit
-# and time limit every run takes (round_limit, time_limit_minutes); the
-# transcription languages (whisper_language) gave way to each engine's own
-# detection.
-RETIRED_USER_KEYS = ("agent_limits", "cron_max_rounds", "whisper_language")
+def _value_checks() -> dict[str, tuple[set[str], str]]:
+    """Settings with a fixed set of values: {key: (known values, what runs when
+    the saved value is not one of them)}. The readers fall back on their own
+    (server/asr resolve_name, model_mode.current_mode, the translator pick,
+    effort.normalize_effort);
+    this only lets startup say so. Imported here, not at module level, to keep
+    config importable first."""
+    from server.asr import _ALIASES, BACKENDS, DEFAULT_BACKEND
+    from server.infrastructure.effort import _LABEL_ALIASES, DEFAULT_EFFORT, EFFORT_ORDER
+    from server.infrastructure.model_mode import DEFAULT_MODE, MODES
 
-# Values the app no longer offers, and what replaces them: Canary only
-# translates now, so a saved Canary transcription model becomes Parakeet.
-RETIRED_USER_VALUES = {"transcription_backend": {"canary": "streaming"}}
+    return {
+        "transcription_backend": (
+            {*BACKENDS, *_ALIASES},
+            f"{DEFAULT_BACKEND.capitalize()} transcribes",
+        ),
+        "translate_mode": ({"off", "canary", "apple"}, "no translation line is shown"),
+        "model_mode": (set(MODES), f"the app runs in {DEFAULT_MODE} mode"),
+        "effort_level": ({*EFFORT_ORDER, *_LABEL_ALIASES}, f"{DEFAULT_EFFORT} effort is used"),
+    }
 
 
-def retire_user_config_keys() -> list[str]:
-    """One-time upgrade of the USER layer: drop the RETIRED_USER_KEYS a saved
-    config still carries and replace its RETIRED_USER_VALUES, so none
-    lingers as a setting that does nothing. Returns the keys it changed."""
-    with USER_CONFIG_LOCK:
-        raw = _load_user_config()
-        removed = [key for key in RETIRED_USER_KEYS if key in raw]
-        replaced = [
-            key
-            for key, values in RETIRED_USER_VALUES.items()
-            if isinstance(raw.get(key), str) and raw[key] in values
-        ]
-        if not removed and not replaced:
-            return []
-        for key in removed:
-            raw.pop(key)
-        for key in replaced:
-            raw[key] = RETIRED_USER_VALUES[key][raw[key]]
-        save_config(raw)
-    if removed:
-        log.info("Removed retired config key(s) %s: the app no longer reads them.", removed)
-    for key in replaced:
-        log.info("Config %s now %r: the old value is no longer offered.", key, raw[key])
-    return removed + replaced
+def old_config_notices() -> list[tuple[str, str]]:
+    """(title, message) for each old or unknown setting the app does not use, so
+    startup says so instead of ignoring it quietly. Reads only; nothing on disk
+    changes. Each message stays the same while its cause does, so the bell shows
+    it once (record_notification_once).
+
+    - An old single-file config.json next to config.user.json.
+    - local_mode set in config.user.json with no model_mode: local_mode used to
+      switch the app to Local mode, so the user would otherwise get the shipped
+      mode without being told.
+    - RETIRED_USER_KEYS still in config.user.json: they have no effect.
+    - A RETIRED_USER_VALUES value in config.user.json: load_config runs its
+      replacement instead.
+    - A value outside the known set of a _value_checks() setting.
+    """
+    shipped_mode = str(_system_config().get("model_mode") or DEFAULTS["model_mode"])
+    notices: list[tuple[str, str]] = []
+    if os.path.exists(LEGACY_CONFIG_PATH):
+        notices.append(
+            (
+                "config.json is no longer read",
+                f"Whisper Studio ignores {LEGACY_CONFIG_PATH} and leaves it as it is. "
+                f"Settings are read from {USER_CONFIG_PATH} only. Copy what you still "
+                "need from config.json into config.user.json, or set it again in "
+                "Settings, then delete or rename config.json.",
+            )
+        )
+    user = _load_user_config()
+    if user.get("local_mode") and "model_mode" not in user:
+        notices.append(
+            (
+                "local_mode is no longer read",
+                f"{USER_CONFIG_PATH} sets local_mode, which the app no longer reads, and "
+                f"no model_mode, so the app runs in {shipped_mode} mode. If you want Local "
+                "mode, choose it in Settings; otherwise remove local_mode from that file.",
+            )
+        )
+    old_keys = [key for key in RETIRED_USER_KEYS if key in user]
+    if old_keys:
+        reasons = "; ".join(f"{key} ({RETIRED_USER_KEYS[key]})" for key in old_keys)
+        notices.append(
+            (
+                "Old settings have no effect",
+                f"{USER_CONFIG_PATH} still has settings the app no longer reads: "
+                f"{reasons}. The app leaves your file as it is; remove them from it "
+                "when you like.",
+            )
+        )
+    for key, replacements in RETIRED_USER_VALUES.items():
+        value = user.get(key)
+        if isinstance(value, str) and value in replacements:
+            notices.append(
+                (
+                    f'{key} "{value}" is no longer offered',
+                    f'{USER_CONFIG_PATH} sets {key} to "{value}": '
+                    f"{replacements[value][1]}. The app leaves your file as it is. "
+                    f"Choose again in Settings, or change {key} in that file, to save "
+                    "your own choice.",
+                )
+            )
+    unknown = []
+    for key, (known, fallback) in _value_checks().items():
+        if key not in user:
+            continue
+        value = user[key]
+        if isinstance(value, str) and value in RETIRED_USER_VALUES.get(key, {}):
+            continue  # named above, with its replacement
+        name = None
+        if isinstance(value, str):
+            # resolve_name lowercases and strips the engine name; the others
+            # compare the saved text as it is.
+            name = value.strip().lower() if key == "transcription_backend" else value
+        if name not in known:
+            unknown.append(f"{key} {json.dumps(value)} ({fallback})")
+    if unknown:
+        notices.append(
+            (
+                "Unknown setting values",
+                f"{USER_CONFIG_PATH} has values the app does not know: "
+                f"{'; '.join(unknown)}. The app leaves your file as it is. Choose "
+                "again in Settings, or fix them in that file.",
+            )
+        )
+    return notices
+
+
+# Keys the app no longer reads, with what replaced each: the per-type agent
+# budgets and the scheduled-run round cap gave way to the one round limit and
+# time limit every run takes; the transcription languages gave way to each
+# engine's own detection; brief replies are chosen per message. A saved one
+# stays in config.user.json (startup never edits the user's file) and
+# old_config_notices names it.
+RETIRED_USER_KEYS = {
+    "agent_limits": "the round limit and time limit in Settings replace it",
+    "cron_max_rounds": "the round limit and time limit in Settings replace it",
+    "whisper_language": "each transcription engine detects the language itself",
+    "brief_mode": "brief replies are chosen for each message in the chat",
+}
+
+# Values the app no longer offers: {key: {old value: (what runs instead, why)}}.
+# load_config applies the replacement in memory; the saved value stays in
+# config.user.json and old_config_notices names it.
+_OLD_TRANSLATE = (
+    "off",
+    "the old automatic translation is gone, so no translation line is shown; "
+    "choose Canary or Apple in the Translate menu",
+)
+RETIRED_USER_VALUES = {
+    "transcription_backend": {
+        "canary": ("streaming", "Canary only translates now, so Parakeet transcribes instead"),
+    },
+    "translate_mode": {"auto": _OLD_TRANSLATE, "model": _OLD_TRANSLATE},
+    "effort_level": {
+        "auto": ("high", "the automatic effort level is gone, so high effort is used"),
+    },
+}
+
+
+def _project_retired_value_notices(workspace_path: str | None, project: dict) -> None:
+    """Say so, once, when a project's .whisper/settings.json sets a value the
+    app no longer offers (effort_level "auto"): load_config runs the same
+    replacement as for the user's file, which old_config_notices names at
+    startup. The project file is read on every load, so the notice goes
+    through old_format_notice (once per process, once in the bell). Nothing
+    on disk changes."""
+    from server.notifications import old_format_notice
+
+    settings_path = os.path.join(workspace_path or "", ".whisper", "settings.json")
+    for key, replacements in RETIRED_USER_VALUES.items():
+        value = project.get(key)
+        if isinstance(value, str) and value in replacements:
+            old_format_notice(
+                title=f'{key} "{value}" is no longer offered',
+                message=(
+                    f'{settings_path} sets {key} to "{value}": '
+                    f"{replacements[value][1]}. The app leaves your file as it is. "
+                    f"Change {key} in that file to save your own choice."
+                ),
+            )
 
 
 def unfiltered_chat_models() -> tuple[dict, dict]:
@@ -914,9 +908,7 @@ def unfiltered_chat_models() -> tuple[dict, dict]:
     serving a disabled model so its weights stay manageable — disabling only
     hides a model from the composer picker, it never strands gigabytes on disk.
     The picker path (/api/models via load_config) keeps the filtered view."""
-    system_cm = _system_config().get("chat_models")
-    if not isinstance(system_cm, dict) or not system_cm:
-        system_cm = DEFAULTS.get("chat_models") or {}
+    system_cm = _system_config().get("chat_models") or {}
     user_cm = _load_user_config().get("chat_models")
     merged = _deep_merge(system_cm, user_cm) if isinstance(user_cm, dict) else dict(system_cm)
     return _normalize_chat_models(merged)
@@ -928,9 +920,7 @@ def _merged_rich_chat_models(workspace_path: str | None = None) -> dict:
     logic exactly — additive SYSTEM+USER deep-merge, user hide-list, project
     wholesale-replace, project hide-list — so the editor's effective view shows
     entries the user can copy down verbatim to override."""
-    system_cm = _system_config().get("chat_models")
-    if not isinstance(system_cm, dict) or not system_cm:
-        system_cm = DEFAULTS.get("chat_models") or {}
+    system_cm = _system_config().get("chat_models") or {}
 
     user_stored = _load_user_config()
     user_cm = user_stored.get("chat_models")
@@ -1000,15 +990,12 @@ def set_feature_flag(flag_name: str, enabled: bool) -> None:
 
     A flag toggle should be surgical. Re-serializing the whole file via
     save_config()/json.dump reflows formatting (e.g. collapses aligned
-    chat_models one-liners) and flattens the rich chat_models
-    shape, silently dropping fields like requires_data_retention. This patches
-    the flag's value in place inside the feature_flags object; it only falls
+    chat_models one-liners). This patches the flag's value in place inside the feature_flags object; it only falls
     back to a structured write when the file has no feature_flags block at
-    all (rare/first-run). Targets the active user layer (config.user.json, or the
-    legacy config.json until the split runs)."""
+    all (rare/first-run). Targets the user layer (config.user.json)."""
     literal = "true" if enabled else "false"
     try:
-        with open(_active_user_config_path()) as f:
+        with open(_user_config_path()) as f:
             text = f.read()
     except FileNotFoundError:
         text = ""
@@ -1106,15 +1093,6 @@ async def get_config_endpoint():
     # Never expose the raw secret over the API — the UI only needs the masked
     # hint, and only sends a new key when the user types one.
     safe.pop("tavily_api_key", None)
-    # Include feature flag states
-    try:
-        from server.infrastructure.feature_flags import get_flag_states
-
-        safe["_feature_flag_states"] = get_flag_states()
-    except Exception:
-        pass
-    # Include config layer info
-    safe["_has_project_config"] = bool(_load_project_config(ws))
     return safe
 
 

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Scheduled tasks (cron) - Whisper Studio Docs</title>
-  <meta name="description" content="Schedule recurring prompts in plain language. Each run posts a result card back into the conversation that created it, without touching Claude's context window.">
+  <meta name="description" content="Schedule prompts in usual words. Each run writes a result card into the conversation that made the job, and past cards add no tokens to your next turns. Scheduled runs work only in Hybrid or Cloud mode.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -15,224 +15,238 @@
 <body>
   <main class="doc" data-page="tut-cron">
     <h1>Scheduled tasks (cron)</h1>
-    <p class="subtitle">Ask Whisper Studio to run a prompt on a schedule and its results come back to
-      you inside the same conversation. No dashboard to check, no calendar reminder to ignore, and no
-      hit to your token bill.</p>
+    <p class="subtitle">Ask Whisper Studio to run a prompt on a schedule. The result of each run
+      comes into the conversation that made the job. Past result cards do not go into the prompts
+      of your next messages.</p>
 
-    <p>A cron job is just a prompt plus a schedule. You describe both in plain language, Claude sets it
-      up with the <code>cron_create</code> tool, and from then on the job fires on its own. Every run
-      posts a small card into the chat that created it, so the whole history reads top to bottom like
-      any other conversation. This tutorial covers creating a job, reading its result cards, managing
-      jobs from the panel, and stopping them.</p>
+    <p>A cron job is a prompt and a schedule. You describe both in usual words. Claude makes the
+      job with the <code>cron_create</code> tool, and the job then runs on its schedule. Each run
+      writes a small card into the chat that made the job. Thus, the history shows from top to
+      bottom, as in a usual conversation. This tutorial shows how to make a job, read the result
+      cards, control jobs from the panel, and stop jobs.</p>
+
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+      <div class="callout__body"><p><b>Scheduled runs work only in Hybrid or Cloud mode.</b> A new
+        install starts in Local mode. In Local mode, the app refuses each scheduled run, and the run
+        history shows the reason. The app keeps the job. To run the jobs, open "Settings", then
+        "Model mode", and select Hybrid or Cloud.</p></div>
+    </div>
 
     <figure class="diagram-figure wide">
       <div id="cron-flow-diagram" class="diagram"></div>
-      <figcaption>You ask once; the scheduler fires on its own. The <em>repeat</em> loop back into
-        <em>Fires on time</em> is the recurring cadence, and the last hop lands the result inline in
+      <figcaption>You ask one time, and the scheduler runs the job on its schedule. The
+        <em>repeat</em> loop is the schedule. The last step writes the result into the
         chat.</figcaption>
     </figure>
 
     <figure class="shot">
       <img src="assets/img/cron-panel.png" alt="The scheduled tasks panel with three jobs and one job's run history">
-      <figcaption><strong>Scheduled tasks with run history open.</strong> Each job shows its schedule, a countdown to the next fire, and its last run. The expanded history includes a failed run with the assertion that broke, failures are kept, not just successes.</figcaption>
+      <figcaption><strong>Scheduled tasks with the run history open.</strong> Each job shows its
+        schedule, the time to the next run, and its last run. The history also contains a failed
+        run with the assertion that failed. The app keeps failed runs and successful
+        runs.</figcaption>
     </figure>
 
-    <h2 id="create-a-job">Create a job in plain language</h2>
-    <p>You do not fill in a form to start. Just say what you want and how often, right in the composer.
-      Claude picks the right schedule shape and calls <code>cron_create</code> for you.</p>
-    <div class="code-block"><pre><code>Every 10 minutes, check our SageMaker endpoints and flag any that aren't InService.</code></pre></div>
-    <p>A small pill appears inline confirming the job was scheduled, something like <em>Cron
-      <b>sagemaker-check</b> scheduled &middot; every 10 min</em>. That pill is the
-      <code>cron_created</code> event, and it stays in the transcript as a marker of when the job began.</p>
+    <h2 id="create-a-job">Make a job in usual words</h2>
+    <p>You do not complete a form. Type the task and the schedule in the chat box. Claude selects
+      the schedule type and calls <code>cron_create</code>.</p>
+    <div class="code-block"><pre><code>Every 10 minutes, check our SageMaker endpoints and flag any that are not InService.</code></pre></div>
     <ol class="steps">
       <li>
-        <h4>Describe the task and the cadence</h4>
-        <p>Say the instruction and the timing together, for example <em>every 30 minutes</em>,
-          <em>daily at 9am</em>, <em>weekdays at noon</em>, or <em>once tomorrow at 08:00</em>. Claude
-          maps your words onto a schedule (see <a href="#schedule-types">Schedule types</a> below).</p>
+        <h4>Describe the task and the schedule</h4>
+        <p>Give the instruction and the time together. Examples are <em>every 30 minutes</em>,
+          <em>daily at 9am</em>, <em>weekdays at noon</em>, and <em>once tomorrow at 08:00</em>.
+          Claude changes your words into a schedule. Refer to <a href="#schedule-types">Schedule
+          types</a>.</p>
       </li>
       <li>
-        <h4>Claude calls cron_create</h4>
-        <p>Behind the scenes the model invokes the <code>cron_create</code> tool with a
-          <code>name</code>, the <code>prompt</code> to run, and a <code>schedule</code>. The job is
-          written to disk so it survives a restart, and the scheduler arms it immediately.</p>
+        <h4>Let Claude call cron_create</h4>
+        <p>The model calls the <code>cron_create</code> tool with a <code>name</code>, the
+          <code>prompt</code> to run, and a <code>schedule</code>. The app writes the job to disk,
+          so the job stays after a restart. The scheduler starts the schedule immediately.</p>
       </li>
       <li>
-        <h4>The scheduled pill appears</h4>
-        <p>You get an inline confirmation with the job name and a human-readable schedule label. Nothing
-          else happens until the first trigger comes due.</p>
+        <h4>Read the confirmation</h4>
+        <p>A small pill shows the job name and the schedule, for example "Cron
+          <b>sagemaker-check</b> scheduled · every 10 min". The pill is the
+          <code>cron_created</code> event. It stays in the conversation as the start of the job.
+          Nothing more occurs until the first run time.</p>
       </li>
     </ol>
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
-      <div class="callout__body"><p>Give the job a memorable name when you ask (<em>"call it
-        sagemaker-check"</em>). Names must be unique, and you will use the name later to edit, run, or
+      <div class="callout__body"><p>Give the job a name that is easy to remember, for example
+        "call it sagemaker-check". Each name must be unique. You use the name to edit, run, or
         delete the job.</p></div>
     </div>
 
-    <h2 id="results-in-chat">Results land back in the chat</h2>
-    <p>When a job fires, its prompt runs and the output posts as a <b>result card</b> in the
-      conversation that created the job. The card header tells you at a glance what happened, and the
-      body renders the run's output as Markdown so it is readable without clicking anything.</p>
-    <p>A finished run shows:</p>
+    <h2 id="results-in-chat">Results in the chat</h2>
+    <p>When a job runs, its prompt runs, and the output shows as a <b>result card</b> in the
+      conversation that made the job. The card header shows the result, and the body shows the
+      output as Markdown. A complete run shows:</p>
     <ul>
-      <li>The job name and whether it <b>fired</b> or <b>failed</b>.</li>
-      <li>A status chip, <code>&#10003; ok</code> or <code>&#9888; failed</code>, plus how long the
-        run took (for example <code>820ms</code> or <code>8.2s</code>).</li>
-      <li>The full run output, rendered inline.</li>
-      <li>A small <em>Next run</em> line at the bottom so you know when it will fire again.</li>
+      <li>The job name and "fired" or "failed".</li>
+      <li>A status chip, "ok" or "failed", and the duration of the run, for example
+        <code>820ms</code> or <code>8.2s</code>.</li>
+      <li>The full output of the run.</li>
+      <li>A "Next run" line at the bottom, with the time of the next run.</li>
     </ul>
-    <p>The most useful part: a result card appears in its originating conversation <b>even if you are
-      looking at a different session at the time</b>. You do not have to have that chat open, and you do
-      not have to be watching. Come back to the conversation later and every past run is still there,
-      in chronological order, interleaved with the rest of the thread.</p>
-    <p>A run that has something urgent to say does not have to wait for you to open that chat. If the
-      prompt tells Claude to flag a problem, it can call <code>notify_user</code>, and that message
-      is both folded into the result card and written to the notification log, so it is waiting behind
-      the header bell when you come back. That is the pattern for a monitoring job: check, and only
-      raise your voice when something is wrong.</p>
+    <p>The result card goes into its conversation <b>also when you look at a different session</b>.
+      You do not keep that chat open. When you open the conversation again, all the past runs are
+      there, in the sequence of time, between the other messages.</p>
+    <p>A run with an urgent message can call <code>notify_user</code>, if the prompt tells Claude
+      to report a problem. The app adds that message to the result card and writes it to the
+      notification log. Thus, the bell in the header shows it. This is the pattern for a
+      monitoring job: examine the system, and send a notice only when a problem occurs.</p>
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
-      <div class="callout__body"><p>If you delete or archive the conversation a job belonged to, its
-        future runs are not lost. They redirect to a pinned <b>Scheduled Reports</b> inbox session, so a
-        job never fires into a void.</p></div>
+      <div class="callout__body"><p>If you delete or archive the conversation of a job, the
+        next runs are not lost. They go to a pinned <b>Scheduled Reports</b> session.</p></div>
     </div>
 
-    <h2 id="flat-token-costs">Cron cards do not cost you tokens</h2>
-    <p>Cron result cards are UI-only. They render in the transcript, but they never enter Claude's
-      prompt on your next message. The backend filters cron event rows out of the visible history
-      before it builds a turn, so a busy schedule with dozens of past runs adds nothing to your context
-      window and nothing to your token bill.</p>
-    <p>In practice that means you can leave a chatty monitoring job running for weeks without it slowly
-      inflating the cost of every reply you send in the same conversation. The runs themselves get the
-      same tool pool an interactive turn gets; what stays flat is the cost of your own turns. When a
-      single run produces a lot of output, the card keeps it readable rather than sprawling.</p>
-    <p>Under the hood a cron run is a normal turn on the same unified engine as chat, with the same
-      round budgets and tool safety gate. It does not inherit the model your chat is using: a job can
-      pin its own <code>model</code> as long as that names a configured Anthropic chat model, and
-      otherwise the run falls back to Haiku, then Sonnet, then whatever model is configured first. A
-      job pinned to an on-device model fails loudly rather than half-working, because scheduled runs
-      cannot cold-start a local model yet.</p>
-    <p>By default a quick verification pass checks that a run actually achieved its prompt before the
-      card reports <code>ok</code>, which is why a failed run's history shows the assertion that
-      broke.</p>
+    <h2 id="flat-token-costs">Costs of runs and cards</h2>
+    <p>Each run is a model turn, and the app records its cost. The result cards are only for the
+      UI. The backend removes the cron event rows from the history before it makes a turn. Thus, a
+      job with many past runs adds no tokens to your own turns in the same conversation. The runs
+      get the same tool pool as a usual turn.</p>
+    <p>A cron run is a usual turn on the same turn engine as the chat. It uses the same round
+      limits and the same tool safety gate. It does not use the model of your chat. The run uses
+      one of these models:</p>
+    <ul>
+      <li>The <code>model</code> of the job, if you set one. It must be a configured Anthropic chat
+        model. <code>cron_create</code> refuses a different model.</li>
+      <li>Else, the first available model of: <code>haiku</code>, <code>sonnet5.5</code>, and then
+        the first configured chat model.</li>
+    </ul>
+    <p>A scheduled run cannot use an on-device model. If the selected model is on-device, the run
+      fails with an error.</p>
+    <p>By default, a quick check examines if the run did its prompt before the card shows "ok".
+      The <code>cron_verify</code> feature flag controls this check. Thus, the history of a failed
+      run shows the assertion that failed.</p>
 
     <h2 id="schedule-types">Schedule types</h2>
-    <p>Every job has one of three schedule shapes. You express them in plain language and Claude picks
-      the right one; the table shows what each maps to and when it fires.</p>
+    <p>Each job has one of three schedule types. You describe the schedule in usual words, and
+      Claude selects the type.</p>
     <div class="table-wrap"><table>
-      <thead><tr><th>Type</th><th>Fires</th><th>You might say</th></tr></thead>
+      <thead><tr><th>Type</th><th>Runs</th><th>Example request</th></tr></thead>
       <tbody>
-        <tr><td><code>interval</code></td><td>Every N minutes, anchored to when it was created.</td><td><em>every 10 minutes</em>, <em>every 2 hours</em></td></tr>
-        <tr><td><code>cron</code></td><td>At a wall-clock time, timezone-aware and correct across DST.</td><td><em>daily at 9am</em>, <em>weekdays at noon</em>, <em>every Monday 8am</em></td></tr>
-        <tr><td><code>at</code></td><td>Once, at a specific instant, then it disables itself.</td><td><em>tomorrow at 08:00</em>, <em>on 2026-07-06 at 9am</em></td></tr>
+        <tr><td><code>interval</code></td><td>Every N minutes, from the time of creation.</td><td><em>every 10 minutes</em>, <em>every 2 hours</em></td></tr>
+        <tr><td><code>cron</code></td><td>At a clock time, in a time zone, also correct when daylight saving time changes.</td><td><em>daily at 9am</em>, <em>weekdays at noon</em>, <em>every Monday 8am</em></td></tr>
+        <tr><td><code>at</code></td><td>One time, at a specified time. Then the job disables itself.</td><td><em>tomorrow at 08:00</em>, <em>on 2026-07-06 at 9am</em></td></tr>
       </tbody>
     </table></div>
-    <p>Wall-clock schedules use your host system timezone by default, so <em>daily at 09:00</em> fires
-      at 9am your local time and stays correct when the clocks change. You can pin a different timezone
-      by naming one (an IANA name like <code>America/New_York</code>), or set
-      <code>cron_timezone</code> in settings to change the default for every job that does not name
-      one. Wall-clock times also accept
-      several values at once, so <em>at 9 and 4</em> becomes two firings a day, and a day-of-week can be
-      a single day (<code>mon</code>), a range (<code>mon-fri</code>), or a list (<code>mon,thu</code>).
-      For how these triggers are built and stored, see <a href="arch-cron.html">Cron / scheduled
-      tasks</a>.</p>
+    <p>Clock schedules use the time zone of this Mac by default. Thus, <em>daily at 09:00</em> runs
+      at 09:00 local time, also after a clock change. To use a different time zone, name an IANA
+      time zone, for example <code>America/New_York</code>. To change the default for all jobs,
+      set <code>cron_timezone</code> in the settings.</p>
+    <p>A clock schedule can have more than one time. For example, <em>at 9 and 4</em> gives two
+      runs each day. A day of the week can be one day (<code>mon</code>), a range
+      (<code>mon-fri</code>), or a list (<code>mon,thu</code>). Refer to
+      <a href="arch-cron.html">Cron / scheduled tasks</a>.</p>
 
-    <h3 id="missed-runs">If the app was closed when a job was due</h3>
-    <p>A wall-clock job whose time passed while Whisper Studio was not running is replayed once at the
-      next launch, rather than silently skipped. There is a grace window on that catch-up, one hour by
-      default (<code>cron_misfire_grace_sec</code>), so a laptop that was shut for a week does not wake
-      up and fire a backlog at you. Set it to a smaller number if you would rather miss a stale run
-      than see a late one, or a larger one if the run matters more than its timing. A job that has
-      never fired is not caught up, it just waits for its next scheduled time, and interval jobs need
-      no catch-up at all: they simply fire once the interval has elapsed since their last run.</p>
+    <h3 id="missed-runs">If the app was closed at the run time</h3>
+    <p>If the time of a clock job passed while Whisper Studio was closed, the app runs the job
+      one time at the next start. A time limit applies to this late run. The default is 1 hour
+      (<code>cron_misfire_grace_sec</code>, 3600 s). Thus, a Mac that was off for a week does not
+      run many old jobs.</p>
+    <p>Set a lower value to skip old runs. Set a higher value if the run is more
+      important than its time. A job that did not run before waits for its next time. An interval
+      job runs when its interval is complete after its last run.</p>
 
-    <h2 id="managing-jobs">Manage jobs in the Scheduled Tasks panel</h2>
-    <p>For a bird's-eye view of everything you have scheduled, open the <b>Scheduled Tasks</b> panel.
-      It lists every job with its schedule label and next run, and it is where you go to inspect and
-      tweak jobs without going through chat.</p>
+    <h2 id="managing-jobs">Control jobs in the scheduled tasks panel</h2>
+    <p>To see all your jobs, open "Settings", then "Tasks and hooks", then "Scheduled tasks". The
+      panel lists each job with its schedule, its next run, and a status chip. The chips are
+      "Active", "Paused", "Running…", "Stopped", "Error", and "Orphaned".</p>
     <div class="card-grid">
       <div class="card">
-        <h3>Schedule builder</h3>
-        <p>Create or edit a job's cadence directly, choosing interval, wall-clock, or one-shot. A live
-          preview shows the resulting label and the next fire time before you save.</p>
+        <h3>Schedule form</h3>
+        <p>Click "+ New task" to make a job, or "Edit" to change a job. Select an interval, a clock
+          time, or one time. A preview shows the label and the next run time before you click "Save
+          task".</p>
       </div>
       <div class="card">
         <h3>Run history</h3>
-        <p>Click <b>History</b> on a job to see its recent runs with status and duration, failures
-          included, so you can tell at a glance whether the last few checks passed. The history is
-          capped per job (200 runs by default, <code>cron_max_runs_per_job</code>) and older runs are
-          pruned.</p>
+        <p>Click "History" on a job to see its last runs with the status and the duration. Failed
+          runs are also there. The app keeps maximum 200 runs for each job
+          (<code>cron_max_runs_per_job</code>) and deletes older runs.</p>
       </div>
       <div class="card">
         <h3>Unread badges</h3>
-        <p>New runs surface as unread badges in the sidebar, drawn from the most recent runs across all
-          jobs, so a fresh result gets your attention even when you are elsewhere.</p>
+        <p>New runs show as unread badges in the sidebar. Thus, you see a new result also when you
+          are in a different session.</p>
       </div>
       <div class="card">
-        <h3>Enable, run, delete</h3>
-        <p>Pause a job without deleting it, fire one off-schedule right now to test it, or remove it for
-          good. A paused job keeps its history and can be re-enabled later.</p>
+        <h3>Run, stop, pause, delete</h3>
+        <p>Click "Run now" to run a job immediately. Click "Stop" to stop a run that is in
+          progress. Disable a job to pause it. Enable it again when you continue to use it. A paused job keeps its
+          history. Click "Delete", and then "Confirm", to remove a job.</p>
       </div>
     </div>
 
-    <h2 id="editing-and-stopping">Editing and stopping jobs</h2>
-    <p>You can manage jobs from chat too, in the same plain language you used to create them. Claude has
-      a small set of cron tools it maps your requests onto:</p>
+    <h2 id="editing-and-stopping">Edit and stop jobs from the chat</h2>
+    <p>You can also control jobs from the chat, in usual words. Claude uses these cron
+      tools:</p>
     <div class="table-wrap"><table>
-      <thead><tr><th>Tool</th><th>What it does</th></tr></thead>
+      <thead><tr><th>Tool</th><th>Function</th></tr></thead>
       <tbody>
-        <tr><td><code>cron_create</code></td><td>Schedule a new recurring or one-time job.</td></tr>
-        <tr><td><code>cron_list</code></td><td>List every job with its schedule and next run.</td></tr>
-        <tr><td><code>cron_update</code></td><td>Change a job's prompt, schedule, name, or enabled state.</td></tr>
-        <tr><td><code>cron_run</code></td><td>Run a job once right now, off its schedule.</td></tr>
-        <tr><td><code>cron_delete</code></td><td>Delete a job by name.</td></tr>
+        <tr><td><code>cron_create</code></td><td>Makes a new job that repeats or runs one time.</td></tr>
+        <tr><td><code>cron_list</code></td><td>Lists each job with its schedule and next run.</td></tr>
+        <tr><td><code>cron_update</code></td><td>Changes the prompt, the schedule, the name, or the enabled state of a job.</td></tr>
+        <tr><td><code>cron_run</code></td><td>Runs a job one time now, outside its schedule.</td></tr>
+        <tr><td><code>cron_delete</code></td><td>Deletes a job by its name.</td></tr>
       </tbody>
     </table></div>
-    <p>So you might say <em>"list my cron jobs"</em>, <em>"run cron sagemaker-check now"</em>, or
-      <em>"change sagemaker-check to every 30 minutes"</em>. Stopping a job is one sentence:</p>
+    <p>Examples are <em>"list my cron jobs"</em>, <em>"run cron sagemaker-check now"</em>, and
+      <em>"change sagemaker-check to every 30 minutes"</em>. To stop a job, type one sentence:</p>
     <div class="code-block"><pre><code>delete cron sagemaker-check</code></pre></div>
-    <p>A small <em>Cron <b>sagemaker-check</b> removed</em> pill confirms it, and no further runs will
-      fire. Editing a schedule re-anchors the cadence to now, so the new timing does not fire off a
-      stale last-run.</p>
+    <p>A small pill, "Cron <b>sagemaker-check</b> removed", shows that the job is deleted. No more
+      runs occur. When you change a schedule, the schedule starts again from the current time.
+      Thus, the new schedule does not run immediately because of an old last run.</p>
     <div class="callout callout--warn">
-      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
-      <div class="callout__body"><p>A cron run gets the same tool pool an interactive turn gets:
-        web search, tasks, sub-agents, skills, AWS, MCP and the browser, and, when a workspace folder
-        is open, the workspace and Git tools too. As in chat, the core set is advertised up front and
-        the rest sits in a compact deferred index the run loads on demand via <code>tool_search</code>.
-        Only <code>ask_user_question</code> is removed from the pool, because an unattended run has
-        nobody to answer it. Crucially, an unattended run <b>never stops to ask you anything</b>:
-        tools that would normally show an approval card are auto-approved and executed, and a tool
-        that would pause for input gets a refusal message and the run carries on. There is no human
-        veto mid-run, so scope cron prompts carefully; a handful of high-blast-radius tools refuse to
-        run unattended at all.</p></div>
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+      <div class="callout__body"><p><b>CAUTION:</b> Write cron prompts carefully. A cron run has no
+        person to ask, and the app does not stop to ask you.</p>
+        <p>A cron run gets the same tool pool as a usual turn: web search, tasks, sub-agents,
+        skills, AWS, MCP, and the browser. With an open workspace folder, it also gets the
+        workspace and Git tools. The app gives the core tools first. The other tools are in a
+        short index, and the run loads them with <code>tool_search</code>. The app removes only
+        <code>ask_user_question</code>.</p>
+        <p>A tool that usually shows an approval card runs with no card. These actions are
+        refused:</p>
+        <ul>
+          <li>A write to the configuration files and the permission files of the app.</li>
+          <li>A read of the credential stores.</li>
+          <li>Some high-risk tools that do not run without a person.</li>
+          <li>A tool that waits for an answer. It gets a refusal message, and the run
+            continues.</li>
+        </ul></div>
     </div>
 
-    <h2 id="good-jobs">What makes a good cron job</h2>
-    <p>Cron shines for anything you would otherwise check by hand on a rhythm. A few examples:</p>
+    <h2 id="good-jobs">Good cron jobs</h2>
+    <p>Use cron for a check that you usually do manually on a schedule. Examples:</p>
     <ul>
-      <li>A periodic health check, such as flagging AWS endpoints that are not in service.</li>
-      <li>A morning digest that summarizes something and posts it at 9am on weekdays.</li>
-      <li>A one-shot reminder that runs a prompt once at a specific time and then disables itself.</li>
+      <li>A periodic health check, for example a list of AWS endpoints that are not in service.</li>
+      <li>A summary each morning at 9am on weekdays.</li>
+      <li>A reminder that runs a prompt one time at a specified time and then disables
+        itself.</li>
     </ul>
-    <p>Because the result lands in the conversation that asked for it, a job doubles as a running log:
-      the request, the schedule, and every result read together as one thread you can scroll back
-      through.</p>
+    <p>The result goes into the conversation of the request. Thus, a job is also a log: the
+      request, the schedule, and all the results are in one conversation.</p>
 
-    <h2 id="what-next">What next</h2>
-    <p>You now have the full loop: ask for a schedule, read the inline result cards, manage jobs from
-      the panel or in chat, and stop them with a sentence. From here, two directions are worth a look.</p>
+    <h2 id="what-next">Next steps</h2>
+    <p>You can now make a schedule, read the result cards, control jobs from the panel or the
+      chat, and stop them. Then read these pages:</p>
     <div class="card-grid">
-      <a class="card card--link" href="tut-subagents.html"><h3>Run work in parallel</h3><p>Spawn background sub-agents and coordinate teams that stream progress into cards.</p><span class="card__meta">Sub-agents &amp; teams &rarr;</span></a>
-      <a class="card card--link" href="arch-cron.html"><h3>See the mechanism</h3><p>Wall-clock scheduling, run history, and how cron events render without inflating tokens.</p><span class="card__meta">Architecture: Cron &rarr;</span></a>
+      <a class="card card--link" href="tut-subagents.html"><h3>Run work in parallel</h3><p>Start sub-agents in the background and control teams of agents.</p><span class="card__meta">Sub-agents &amp; teams &rarr;</span></a>
+      <a class="card card--link" href="arch-cron.html"><h3>See the mechanism</h3><p>Clock schedules, run history, and how cron events show without a cost in tokens.</p><span class="card__meta">Architecture: Cron &rarr;</span></a>
     </div>
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
       <div class="callout__body"><p><b>Related:</b> <a href="tut-subagents.html">Sub-agents &amp; teams</a>,
-        <a href="arch-cron.html">Cron / scheduled tasks</a>, and the core
-        <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a> that cron runs plug into.</p></div>
+        <a href="arch-cron.html">Cron / scheduled tasks</a>, and
+        <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a>.</p></div>
     </div>
   </main>
 

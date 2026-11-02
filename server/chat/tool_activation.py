@@ -1,21 +1,18 @@
 """Per-session activation registry for deferred tools.
 
-In-memory and lock-guarded (the `_paused_sessions` pattern): a tool_search
+In-memory and lock-guarded (like engine/pause.paused_sessions): a tool_search
 hit activates tools for the session, and because the chat loop reassembles
 the pool every round, an activation in round N is advertised in round N+1
 with no other plumbing.
 
 Durability without persistence: `activate_from_history` re-derives the set
-from the conversation itself at turn start — any tool the model already
+from the conversation itself at turn start: any tool the model already
 called in visible history re-activates in first-seen order. Restarts and
 approval pauses are self-healing, activation order stays deterministic
 (cache-friendly), and nothing touches the database.
 """
 
-import logging
 import threading
-
-log = logging.getLogger("whisper-studio")
 
 _lock = threading.Lock()
 # session_id -> append-only ordered activations
@@ -84,14 +81,11 @@ def activate_from_history(session_id: str, messages: list[dict]) -> list[str]:
                     seen.add(name)
                     names.append(name)
     # Tool families: using one member advertises the rest.
-    try:
-        from server.artifacts import ARTIFACT_TOOL_FAMILY
+    from server.artifacts import ARTIFACT_TOOL_FAMILY
 
-        if any(n in ARTIFACT_TOOL_FAMILY for n in names):
-            for member in ("read_artifact", "edit_artifact"):
-                if member not in seen:
-                    seen.add(member)
-                    names.append(member)
-    except Exception as e:  # noqa: BLE001
-        log.debug("artifact family activation skipped: %s", e)
+    if any(n in ARTIFACT_TOOL_FAMILY for n in names):
+        for member in ("read_artifact", "edit_artifact"):
+            if member not in seen:
+                seen.add(member)
+                names.append(member)
     return activate(session_id, names)

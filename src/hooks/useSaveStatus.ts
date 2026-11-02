@@ -26,9 +26,10 @@ export interface SaveStatusHandle {
    * success, `false` on failure.
    */
   run: (fn: () => Promise<unknown>, messages?: SaveMessages) => Promise<boolean>;
-  /** Clear back to idle immediately (e.g. when the user edits again). */
-  reset: () => void;
 }
+
+/** How long a saved or failed status stays before it clears back to idle. */
+const CLEAR_AFTER_MS = 3000;
 
 const DEFAULTS: Required<SaveMessages> = {
   saving: 'Saving…',
@@ -36,7 +37,7 @@ const DEFAULTS: Required<SaveMessages> = {
   error: 'Save failed',
 };
 
-export function useSaveStatus(clearAfterMs = 3000): SaveStatusHandle {
+export function useSaveStatus(): SaveStatusHandle {
   const [state, setState] = useState<SaveState>('idle');
   const [message, setMessage] = useState('');
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -48,15 +49,6 @@ export function useSaveStatus(clearAfterMs = 3000): SaveStatusHandle {
       mountedRef.current = false;
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, []);
-
-  const reset = useCallback(() => {
-    if (timerRef.current) {
-      clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
-    setState('idle');
-    setMessage('');
   }, []);
 
   const run = useCallback(
@@ -92,17 +84,15 @@ export function useSaveStatus(clearAfterMs = 3000): SaveStatusHandle {
         setState('saved');
         setMessage(msg.saved);
       }
-      if (clearAfterMs > 0) {
-        timerRef.current = setTimeout(() => {
-          if (!mountedRef.current) return;
-          setState('idle');
-          setMessage('');
-        }, clearAfterMs);
-      }
+      timerRef.current = setTimeout(() => {
+        if (!mountedRef.current) return;
+        setState('idle');
+        setMessage('');
+      }, CLEAR_AFTER_MS);
       return ok;
     },
-    [clearAfterMs],
+    [],
   );
 
-  return { state, message, run, reset };
+  return { state, message, run };
 }

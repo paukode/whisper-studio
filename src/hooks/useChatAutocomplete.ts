@@ -49,14 +49,9 @@ export interface UseChatAutocompleteResult {
 
 /**
  * Slash-command and @-mention autocomplete state machine for the chat
- * composer. Extracted verbatim from ChatInput.tsx — owns the popup state
- * (items, visibility, selection index, mode, submenu, screen rect) and
- * the text-mutation handlers that insert a chosen completion back into
- * the textarea.
- *
- * Inputs are aliased to their original local names (SLASH_COMMANDS, etc.)
- * so the moved function bodies remain byte-for-byte identical to the
- * original component code.
+ * composer: owns the popup state (items, visibility, selection index,
+ * mode, submenu, screen rect) and the text-mutation handlers that insert a
+ * chosen completion back into the textarea.
  */
 export function useChatAutocomplete(opts: UseChatAutocompleteOptions): UseChatAutocompleteResult {
   const {
@@ -155,24 +150,24 @@ export function useChatAutocomplete(opts: UseChatAutocompleteOptions): UseChatAu
   const loadSubmenuItems = useCallback((type: string) => {
     if (type === 'skills') {
       const items: ACItem[] = skills.map((s) => ({
-        icon: '⚡',
+        icon: 'zap',
         name: s.name,
         desc: s.description ?? 'Skill',
         insert: 'skills:' + s.name,
       }));
-      setAcItems(items.length > 0 ? items : [{ icon: '⚡', name: 'No skills', desc: 'No skills loaded', insert: 'skills:' }]);
+      setAcItems(items.length > 0 ? items : [{ icon: 'zap', name: 'No skills', desc: 'No skills loaded', insert: 'skills:' }]);
       setAcIndex(0);
     } else if (type === 'mcp') {
       const items: ACItem[] = mcpServers.map((s) => ({
-        icon: '🔌',
+        icon: 'link',
         name: s.name,
         desc: mcpServerDesc(s),
         insert: 'mcp:' + s.name,
       }));
-      setAcItems(items.length > 0 ? items : [{ icon: '🔌', name: 'No servers', desc: 'No MCP servers', insert: 'mcp:' }]);
+      setAcItems(items.length > 0 ? items : [{ icon: 'link', name: 'No servers', desc: 'No MCP servers', insert: 'mcp:' }]);
       setAcIndex(0);
     } else if (type === 'file') {
-      setAcItems([{ icon: '📂', name: 'Type to search...', desc: `Supported: ${SUPPORTED_ATTACHMENT_SUMMARY}`, insert: 'file:' }]);
+      setAcItems([{ icon: 'folder', name: 'Type to search...', desc: `Supported: ${SUPPORTED_ATTACHMENT_SUMMARY}`, insert: 'file:' }]);
       setAcIndex(0);
     }
   }, [skills, mcpServers]);
@@ -181,35 +176,35 @@ export function useChatAutocomplete(opts: UseChatAutocompleteOptions): UseChatAu
   const loadAtSubmenuItems = useCallback((type: string) => {
     if (type === 'skills') {
       const items: ACItem[] = skills.map((s) => ({
-        icon: '⚡',
+        icon: 'zap',
         name: s.name,
         desc: s.description ?? 'Skill',
         insert: '@skills:' + s.name,
       }));
-      setAcItems(items.length > 0 ? items : [{ icon: '⚡', name: 'No skills', desc: 'No skills loaded', insert: '@skills:' }]);
+      setAcItems(items.length > 0 ? items : [{ icon: 'zap', name: 'No skills', desc: 'No skills loaded', insert: '@skills:' }]);
       setAcIndex(0);
     } else if (type === 'mcp') {
       const items: ACItem[] = mcpServers.map((s) => ({
-        icon: '🔌',
+        icon: 'link',
         name: s.name,
         desc: mcpServerDesc(s),
         insert: '@mcp:' + s.name,
       }));
-      setAcItems(items.length > 0 ? items : [{ icon: '🔌', name: 'No servers', desc: 'No MCP servers', insert: '@mcp:' }]);
+      setAcItems(items.length > 0 ? items : [{ icon: 'link', name: 'No servers', desc: 'No MCP servers', insert: '@mcp:' }]);
       setAcIndex(0);
     } else if (type === 'file') {
-      setAcItems([{ icon: '📂', name: 'Type to search...', desc: `Supported: ${SUPPORTED_ATTACHMENT_SUMMARY}`, insert: '@file:' }]);
+      setAcItems([{ icon: 'folder', name: 'Type to search...', desc: `Supported: ${SUPPORTED_ATTACHMENT_SUMMARY}`, insert: '@file:' }]);
       setAcIndex(0);
     }
   }, [skills, mcpServers]);
 
   /* ── Select an autocomplete item ── */
   const selectAcItem = useCallback((item: ACItem) => {
-    // A real file result from the /file: submenu (icon '📄', as opposed to the
-    // '📂' placeholder/no-result rows): attach it to the composer as a chip
+    // A real file result from the /file: submenu (icon 'file', as opposed to the
+    // 'folder' placeholder/no-result rows): attach it to the composer as a chip
     // and strip the /file: token instead of inserting command text. The chip
     // uploads in the background; the user then types a message and submits.
-    if (acMode === 'slash' && acSubCmd === 'file:' && item.icon === '📄') {
+    if (acMode === 'slash' && acSubCmd === 'file:' && item.icon === 'file') {
       const path = item.insert.startsWith('file:') ? item.insert.slice('file:'.length) : item.name;
       onAttachWorkspaceFile?.(path);
       removeSlashToken();
@@ -222,7 +217,7 @@ export function useChatAutocomplete(opts: UseChatAutocompleteOptions): UseChatAu
       const cmd = SLASH_COMMANDS.find((c) => '/' + c.cmd === item.insert || item.insert === c.cmd);
       if (cmd?.options) {
         // Show options as sub-items. Display the label but insert the value
-        // (they differ for /model: label "Sonnet 4.6" vs value "sonnet").
+        // (they differ for /model: label "Sonnet 5.5" vs value "sonnet5.5").
         const subItems: ACItem[] = cmd.options.map((opt) => ({
           icon: cmd.icon,
           name: optLabel(opt),
@@ -318,19 +313,19 @@ export function useChatAutocomplete(opts: UseChatAutocompleteOptions): UseChatAu
   const searchFiles = useCallback(async (query: string, prefix: string) => {
     const reqId = ++searchReqIdRef.current;
     if (query.length < 1) {
-      setAcItems([{ icon: '📂', name: 'Type to search...', desc: `Supported: ${SUPPORTED_ATTACHMENT_SUMMARY}`, insert: prefix }]);
+      setAcItems([{ icon: 'folder', name: 'Type to search...', desc: `Supported: ${SUPPORTED_ATTACHMENT_SUMMARY}`, insert: prefix }]);
       return;
     }
     try {
-      const data = await get<{ results: Array<{ path: string }>; files?: Array<{ path: string }> }>(`/api/workspace/search-files?q=${encodeURIComponent(query)}`);
+      const data = await get<{ results: Array<{ path: string }> }>(`/api/workspace/search-files?q=${encodeURIComponent(query)}`);
       // Stale: a newer search superseded this one while the fetch was in flight.
       if (reqId !== searchReqIdRef.current) return;
-      const files = data.results ?? data.files ?? [];
+      const files = data.results ?? [];
       if (files.length === 0) {
-        setAcItems([{ icon: '📂', name: 'No results', desc: `No files matching "${query}"`, insert: prefix + query }]);
+        setAcItems([{ icon: 'folder', name: 'No results', desc: `No files matching "${query}"`, insert: prefix + query }]);
       } else {
         setAcItems(files.map((f) => ({
-          icon: '📄',
+          icon: 'file',
           name: f.path,
           desc: 'Workspace file',
           insert: prefix + f.path,
@@ -339,7 +334,7 @@ export function useChatAutocomplete(opts: UseChatAutocompleteOptions): UseChatAu
       setAcIndex(0);
     } catch {
       if (reqId !== searchReqIdRef.current) return;
-      setAcItems([{ icon: '📂', name: 'Search failed', desc: 'Could not search files', insert: prefix + query }]);
+      setAcItems([{ icon: 'folder', name: 'Search failed', desc: 'Could not search files', insert: prefix + query }]);
     }
   }, []);
 
@@ -376,22 +371,22 @@ export function useChatAutocomplete(opts: UseChatAutocompleteOptions): UseChatAu
         } else if (subType === 'skills') {
           const filtered = skills.filter((s) => !subQuery || s.name.toLowerCase().includes(subQuery.toLowerCase()));
           setAcItems(filtered.length > 0 ? filtered.map((s) => ({
-            icon: '⚡',
+            icon: 'zap',
             name: s.name,
             desc: s.description ?? 'Skill',
             insert: 'skills:' + s.name,
-          })) : [{ icon: '⚡', name: 'No matches', desc: 'No skills found', insert: 'skills:' }]);
+          })) : [{ icon: 'zap', name: 'No matches', desc: 'No skills found', insert: 'skills:' }]);
           setAcIndex(0);
           setAcVisible(true);
           return;
         } else if (subType === 'mcp') {
           const filtered = mcpServers.filter((s) => !subQuery || s.name.toLowerCase().includes(subQuery.toLowerCase()));
           setAcItems(filtered.length > 0 ? filtered.map((s) => ({
-            icon: '🔌',
+            icon: 'link',
             name: s.name,
             desc: mcpServerDesc(s),
             insert: 'mcp:' + s.name,
-          })) : [{ icon: '🔌', name: 'No matches', desc: 'No MCP servers found', insert: 'mcp:' }]);
+          })) : [{ icon: 'link', name: 'No matches', desc: 'No MCP servers found', insert: 'mcp:' }]);
           setAcIndex(0);
           setAcVisible(true);
           return;
@@ -451,7 +446,7 @@ export function useChatAutocomplete(opts: UseChatAutocompleteOptions): UseChatAu
         setAcMode('slash');
         setAcSubCmd(cmd.cmd);
         // Match either the shown label or the inserted value so typing "son"
-        // (or "sonnet") both surface "Sonnet 4.6".
+        // (or "sonnet5") both surface "Sonnet 5.5".
         const filtered = cmd.options.filter(
           (o) =>
             optLabel(o).toLowerCase().startsWith(optQuery) ||
@@ -486,7 +481,7 @@ export function useChatAutocomplete(opts: UseChatAutocompleteOptions): UseChatAu
         if (subType === 'skills') {
           const filtered = skills.filter((s) => s.name.toLowerCase().startsWith(optQuery));
           setAcItems(filtered.map((s) => ({
-            icon: '⚡',
+            icon: 'zap',
             name: s.name,
             desc: s.description ?? 'Skill',
             insert: 'skills:' + s.name,
@@ -497,7 +492,7 @@ export function useChatAutocomplete(opts: UseChatAutocompleteOptions): UseChatAu
         } else if (subType === 'mcp') {
           const filtered = mcpServers.filter((s) => s.name.toLowerCase().startsWith(optQuery));
           setAcItems(filtered.map((s) => ({
-            icon: '🔌',
+            icon: 'link',
             name: s.name,
             desc: mcpServerDesc(s),
             insert: 'mcp:' + s.name,
@@ -536,22 +531,22 @@ export function useChatAutocomplete(opts: UseChatAutocompleteOptions): UseChatAu
         } else if (subType === 'skills') {
           const filtered = skills.filter((s) => s.name.toLowerCase().includes(subQuery));
           setAcItems(filtered.length > 0 ? filtered.map((s) => ({
-            icon: '⚡',
+            icon: 'zap',
             name: s.name,
             desc: s.description ?? 'Skill',
             insert: '@skills:' + s.name,
-          })) : [{ icon: '⚡', name: 'No matches', desc: 'No skills found', insert: '@skills:' }]);
+          })) : [{ icon: 'zap', name: 'No matches', desc: 'No skills found', insert: '@skills:' }]);
           setAcIndex(0);
           setAcVisible(true);
           return;
         } else if (subType === 'mcp') {
           const filtered = mcpServers.filter((s) => s.name.toLowerCase().includes(subQuery));
           setAcItems(filtered.length > 0 ? filtered.map((s) => ({
-            icon: '🔌',
+            icon: 'link',
             name: s.name,
             desc: mcpServerDesc(s),
             insert: '@mcp:' + s.name,
-          })) : [{ icon: '🔌', name: 'No matches', desc: 'No MCP servers found', insert: '@mcp:' }]);
+          })) : [{ icon: 'link', name: 'No matches', desc: 'No MCP servers found', insert: '@mcp:' }]);
           setAcIndex(0);
           setAcVisible(true);
           return;
@@ -564,7 +559,7 @@ export function useChatAutocomplete(opts: UseChatAutocompleteOptions): UseChatAu
       const skillItems: ACItem[] = skills
         .filter((s) => !query || s.name.toLowerCase().includes(query))
         .map((s) => ({
-          icon: '⚡',
+          icon: 'zap',
           name: '@' + s.name,
           desc: s.description ?? 'Skill',
           insert: '@' + s.name,
@@ -578,7 +573,7 @@ export function useChatAutocomplete(opts: UseChatAutocompleteOptions): UseChatAu
           return s.title.toLowerCase().includes(q) || slugifySessionTitle(s.title).includes(q);
         })
         .map((s) => ({
-          icon: '💬',
+          icon: 'message',
           name: '@' + s.title,
           desc: "Pull this session's recent conversation in as context",
           insert: '@' + slugifySessionTitle(s.title),

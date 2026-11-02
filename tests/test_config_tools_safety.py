@@ -1,6 +1,6 @@
 """Safety guards for the config_get / config_set agent tools.
 
-(A) execute_config_set must write the RAW on-disk config, not load_config()'s
+(A) the config_set write (_apply_config_updates) must write the RAW on-disk config, not load_config()'s
     fully merged view. Persisting the merged view flattened chat_models to
     {key: id} (dropping label/thinking/provider/effort_tier/is_local/
     requires_data_retention — the Fable 5 consent gate), baked in the derived
@@ -17,7 +17,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import server.infrastructure.config as config_mod
-from server.agent_tools import execute_config_get, execute_config_set
+from server.agent_tools import execute_config_get
+from server.agent_tools.config_tools import _apply_config_updates
 
 RICH_CONFIG = {
     "chat_models": {
@@ -39,20 +40,17 @@ RICH_CONFIG = {
 
 
 def test_config_set_preserves_rich_shape_and_no_secret_on_disk(tmp_path, monkeypatch):
-    cfg = tmp_path / "config.json"
+    cfg = tmp_path / "config.user.json"
     cfg.write_text(json.dumps(RICH_CONFIG))
-    monkeypatch.setattr(config_mod, "CONFIG_PATH", str(cfg))
-    # The user layer is this throwaway file (the tests predate the config.user.json
-    # split; config.json is still a valid active user layer). Pin USER_CONFIG_PATH
-    # to it too so the path resolver never falls through to the real repo.
+    # The user layer is this throwaway file, so the repo's is never touched.
     monkeypatch.setattr(config_mod, "USER_CONFIG_PATH", str(cfg))
-    # An env secret must NOT be baked into config.json by a config_set. It only
+    # An env secret must NOT be baked into config.user.json by a config_set. It only
     # lives in the merged view load_config() produces; the raw-config write path
     # never sees it.
     monkeypatch.setenv("TAVILY_API_KEY", "tvly-SECRET-1234567890")
     config_mod._invalidate_cache()
 
-    out = json.loads(execute_config_set({"updates": {"effort_level": "medium"}}))
+    out = json.loads(_apply_config_updates({"effort_level": "medium"}))
     assert out["updated"] == ["effort_level"]
 
     on_disk = json.loads(cfg.read_text())
@@ -73,16 +71,13 @@ def test_config_set_preserves_rich_shape_and_no_secret_on_disk(tmp_path, monkeyp
 
 
 def test_config_set_ignores_unknown_keys(tmp_path, monkeypatch):
-    cfg = tmp_path / "config.json"
+    cfg = tmp_path / "config.user.json"
     cfg.write_text(json.dumps(RICH_CONFIG))
-    monkeypatch.setattr(config_mod, "CONFIG_PATH", str(cfg))
-    # The user layer is this throwaway file (the tests predate the config.user.json
-    # split; config.json is still a valid active user layer). Pin USER_CONFIG_PATH
-    # to it too so the path resolver never falls through to the real repo.
+    # The user layer is this throwaway file, so the repo's is never touched.
     monkeypatch.setattr(config_mod, "USER_CONFIG_PATH", str(cfg))
     config_mod._invalidate_cache()
 
-    out = json.loads(execute_config_set({"updates": {"not_a_real_key": 1}}))
+    out = json.loads(_apply_config_updates({"not_a_real_key": 1}))
     assert out["updated"] == []
     assert out["ignored"] == ["not_a_real_key"]
     assert "not_a_real_key" not in json.loads(cfg.read_text())
@@ -90,12 +85,9 @@ def test_config_set_ignores_unknown_keys(tmp_path, monkeypatch):
 
 
 def test_config_get_masks_tavily_on_explicit_keys(tmp_path, monkeypatch):
-    cfg = tmp_path / "config.json"
+    cfg = tmp_path / "config.user.json"
     cfg.write_text(json.dumps(RICH_CONFIG))
-    monkeypatch.setattr(config_mod, "CONFIG_PATH", str(cfg))
-    # The user layer is this throwaway file (the tests predate the config.user.json
-    # split; config.json is still a valid active user layer). Pin USER_CONFIG_PATH
-    # to it too so the path resolver never falls through to the real repo.
+    # The user layer is this throwaway file, so the repo's is never touched.
     monkeypatch.setattr(config_mod, "USER_CONFIG_PATH", str(cfg))
     monkeypatch.setenv("TAVILY_API_KEY", "tvly-SECRET-1234567890")
     config_mod._invalidate_cache()
@@ -110,12 +102,9 @@ def test_config_get_masks_tavily_on_explicit_keys(tmp_path, monkeypatch):
 
 
 def test_config_get_masks_tavily_on_list_all(tmp_path, monkeypatch):
-    cfg = tmp_path / "config.json"
+    cfg = tmp_path / "config.user.json"
     cfg.write_text(json.dumps(RICH_CONFIG))
-    monkeypatch.setattr(config_mod, "CONFIG_PATH", str(cfg))
-    # The user layer is this throwaway file (the tests predate the config.user.json
-    # split; config.json is still a valid active user layer). Pin USER_CONFIG_PATH
-    # to it too so the path resolver never falls through to the real repo.
+    # The user layer is this throwaway file, so the repo's is never touched.
     monkeypatch.setattr(config_mod, "USER_CONFIG_PATH", str(cfg))
     monkeypatch.setenv("TAVILY_API_KEY", "tvly-SECRET-1234567890")
     config_mod._invalidate_cache()

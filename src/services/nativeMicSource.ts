@@ -11,7 +11,7 @@
  * the system audio tap. A plain browser has no shell and keeps getUserMedia.
  *
  * Bridge contract (pinned; the shell mirrors it):
- *  - marker at documentStart: window.__WHISPER_NATIVE_MIC = { platform, available }
+ *  - marker at documentStart: window.__WHISPER_NATIVE_MIC = { available }
  *  - page -> shell: window.webkit.messageHandlers.nativeMic.postMessage
  *      {cmd:"start"} | {cmd:"stop"}
  *  - shell -> page on window.__whisperNativeMic:
@@ -22,7 +22,7 @@ import { decodeNativeAudioChunk } from '@/services/nativeAudioSource';
 
 export interface NativeMicHandlers {
   /** Decoded 16 kHz mono Float32 samples in [-1, 1], with the chunk's RMS. */
-  onAudio: (samples: Float32Array, rms?: number) => void;
+  onAudio: (samples: Float32Array, rms: number) => void;
   /** The mic failed after it started (the shell has already closed it). */
   onError: (message: string) => void;
   onStopped?: () => void;
@@ -37,7 +37,7 @@ interface NativeMicCallbacks {
 
 declare global {
   interface Window {
-    __WHISPER_NATIVE_MIC?: { platform: string; available: boolean };
+    __WHISPER_NATIVE_MIC?: { available: boolean };
     __whisperNativeMic?: NativeMicCallbacks;
   }
 }
@@ -78,7 +78,7 @@ function ensureCallbacksInstalled(): void {
       const handlers = activeHandlers;
       if (!handlers) return;
       try {
-        const level = typeof rms === 'number' && Number.isFinite(rms) ? rms : undefined;
+        const level = typeof rms === 'number' && Number.isFinite(rms) ? rms : 0;
         handlers.onAudio(decodeNativeAudioChunk(base64, sampleCount), level);
       } catch (err) {
         console.error('[native-mic] failed to decode chunk:', err);

@@ -10,7 +10,6 @@ user's own terminal and keeps their environment.
 
 import asyncio
 import os
-import platform
 import subprocess
 
 import pytest
@@ -19,10 +18,6 @@ import server.sandbox as sandbox
 from server import terminal as t
 from server.security import egress_policy
 from server.security.sensitive_env import GITHUB_ENV_VARS
-
-pytestmark = pytest.mark.skipif(
-    platform.system() not in ("Darwin", "Linux"), reason="needs a POSIX PTY"
-)
 
 _PROXY = "http://127.0.0.1:54321"
 _PROXY_KEYS = ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy")
@@ -147,3 +142,32 @@ def test_terminal_send_interactive_shell_cannot_read_a_github_token(server_env, 
 
     assert "tok=none" in output, output
     assert "secret-" not in output, output
+
+
+def test_a_failed_spawn_closes_both_pty_ends(server_env, monkeypatch, tmp_path):
+    """A spawn that fails (no controlling tty, say) leaks no file descriptor."""
+    opened = []
+    real_openpty = t.pty.openpty
+
+    def recording_openpty():
+        fds = real_openpty()
+        opened.extend(fds)
+        return fds
+
+    def failing_popen(argv, **kwargs):
+        raise OSError("TIOCSCTTY failed")
+
+    monkeypatch.setattr(t.pty, "openpty", recording_openpty)
+    monkeypatch.setattr(t.subprocess, "Popen", failing_popen)
+
+    with pytest.raises(OSError, match="TIOCSCTTY"):
+        asyncio.run(_spawn(t, str(tmp_path)))
+
+    assert len(opened) == 2
+    for fd in opened:
+        with pytest.raises(OSError):
+            os.fstat(fd)
+
+
+async def _spawn(t, cwd):
+    return t._create_pty_session(cwd)

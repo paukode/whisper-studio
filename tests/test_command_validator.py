@@ -105,11 +105,11 @@ def test_command_after_heredoc_still_validated():
 
 # ── `gh` block: the advice has to match what is actually in the tool pool ──
 #
-# github / github_api / github_api_write only enter the catalog when a
-# workspace is connected AND it is a git repo (server/chat/tool_pool.py). They
-# are deferred, so with that gate closed tool_search cannot reach them either.
-# Naming them anyway sent a real session into ~13 shell retries before it gave
-# up and handed the user a link to open the PR by hand.
+# github / github_api / github_api_write are always in the catalog
+# (server/chat/tool_pool.py), but their executors refuse until a workspace
+# that is a git repo is connected. Naming them with no such workspace sent a
+# real session into ~13 shell retries before it gave up and handed the user a
+# link to open the PR by hand.
 
 
 @pytest.fixture
@@ -132,24 +132,14 @@ def test_gh_block_names_the_tools_when_they_are_reachable(git_workspace):
 def test_gh_block_says_connect_a_workspace_when_the_tools_are_absent(monkeypatch):
     monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: None)
     msg = check_gh_command("gh pr create --base main")
-    assert "not in this session's tool pool" in msg
+    assert "refuse to run until a workspace" in msg
     assert "connect the repository as the workspace" in msg
 
 
 def test_gh_block_says_connect_when_the_workspace_is_not_a_git_repo(tmp_path, monkeypatch):
     monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: str(tmp_path))
     msg = check_gh_command("gh pr create --base main")
-    assert "not in this session's tool pool" in msg
-
-
-def test_gh_block_survives_a_broken_workspace_lookup(monkeypatch):
-    """Advice quality must never turn a validator call into an exception."""
-
-    def _boom():
-        raise RuntimeError("workspace state unreadable")
-
-    monkeypatch.setattr("server.workspace.state.get_workspace_path", _boom)
-    assert check_gh_command("gh pr view 1") is not None
+    assert "refuse to run until a workspace" in msg
 
 
 def test_non_gh_commands_are_untouched(git_workspace):

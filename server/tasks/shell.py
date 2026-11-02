@@ -64,6 +64,11 @@ def start_shell_task(
 ) -> dict:
     """Start ``command`` in the background; returns {task_id, output_path, status}.
 
+    A command that could not start (no OS sandbox, a spawn error) comes back
+    with status "failed" and an ``error`` text, and its row is failed too,
+    with the reason as its result text. Its output file is removed: nothing
+    ran, so there is no output to keep.
+
     ``exec_command`` is the possibly-wrapped form actually executed (cwd
     tracking, snapshot wrapping); ``command`` is what the user asked for and
     becomes the task title. ``write_mode``, ``write_root``, ``scratch_dir``
@@ -109,12 +114,16 @@ def start_shell_task(
         )
     except Exception as e:
         out_file.close()
+        try:
+            os.unlink(out_path)
+        except OSError as unlink_err:
+            log.warning("tasks.shell: could not remove %s: %s", out_path, unlink_err)
         finished = registry.finish_task(
             task_id, status="failed", exit_code=-1, result_text=f"[Error: {e}]"
         )
         if finished:
             emit_task_event(session_id, "task_failed", finished)
-        return {"task_id": task_id, "output_path": out_path, "status": "failed"}
+        return {"task_id": task_id, "output_path": out_path, "status": "failed", "error": str(e)}
     finally:
         # The child holds its own descriptor; the parent copy must not leak.
         if not out_file.closed:
@@ -275,19 +284,3 @@ def stop_task(task_id: str) -> bool:
     if finished:
         emit_task_event(finished.get("session_id") or "", "task_stopped", finished)
     return True
-
-
-def stop_session_tasks(session_id: str) -> list[str]:
-    """Stop every running background task started by the given session (ESC).
-
-    Candidates come from the REGISTRY, not the in-memory handle map, so
-    re-adopted tasks (which have no Popen after a server restart) are
-    covered too.
-    """
-    if not session_id:
-        return []
-    stopped = []
-    for task in registry.list_tasks(session_id=session_id, status="running", kind="shell"):
-        if stop_task(task["task_id"]):
-            stopped.append(task["task_id"])
-    return stopped

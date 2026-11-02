@@ -1,19 +1,19 @@
-"""Install flow for the live-preview feature's Playwright dependency.
+"""Install flow for the live-preview feature's Chromium download.
 
 Mirrors server/index/routes.py's background-thread + polling-status pattern
-rather than inventing a streaming mechanism — there's only ever one
+rather than inventing a streaming mechanism, there's only ever one
 Playwright/Chromium install for the whole app, unlike per-workspace index
 builds.
 
 This is a deliberate, explicit Settings-panel action, not routed through the
 chat approval system: the user navigates to Settings and clicks a labeled
-button — there's no LLM in the loop deciding to install anything, the same
+button, there's no LLM in the loop deciding to install anything, the same
 contract every other feature flag in this app already has.
 
 Packaged installs (the macOS .app) never run this install: the bundle ships
 playwright and its Chromium builds in Resources/ (PLAYWRIGHT_BROWSERS_PATH is
-set by the shell), the code tree is signed and read-only, and a pip install or
-browser download into it would fail — or break the bundle seal if it didn't.
+set by the shell), the code tree is signed and read-only, and a browser
+download into it would fail, or break the bundle seal if it didn't.
 There, "Enable" just flips the feature flag when the bundled browser is
 present, and a missing browser is reported as a broken install to fix by
 reinstalling the app, not by downloading.
@@ -39,10 +39,10 @@ log = logging.getLogger("whisper-studio")
 router = APIRouter(prefix="/api/preview", tags=["preview"])
 
 # Shown when a packaged .app lacks its bundled browser (corrupted/tampered
-# install) — downloading into the signed bundle is not an option.
-_BUNDLE_MISSING_MSG = "Preview browser missing from the app bundle — reinstall the app."
+# install), downloading into the signed bundle is not an option.
+_BUNDLE_MISSING_MSG = "Preview browser missing from the app bundle, reinstall the app."
 
-# Single global install job — there's only ever one Playwright/Chromium
+# Single global install job, there's only ever one Playwright/Chromium
 # install for the whole app.
 _INSTALL: dict = {"installing": False, "stage": None, "error": None, "log_tail": []}
 _lock = threading.Lock()
@@ -66,23 +66,15 @@ def _run_step(args: list[str]) -> bool:
 
 def _run_install() -> None:
     try:
+        # playwright itself is pinned in requirements.txt (setup.sh installs
+        # it); only its Chromium builds are downloaded here.
         with _lock:
-            _INSTALL.update(stage="pip install playwright", error=None)
-        if not _run_step([sys.executable, "-m", "pip", "install", "playwright"]):
-            with _lock:
-                _INSTALL.update(
-                    installing=False,
-                    error="pip install playwright failed — check network/PyPI access",
-                )
-            return
-
-        with _lock:
-            _INSTALL.update(stage="playwright install chromium")
+            _INSTALL.update(stage="playwright install chromium", error=None)
         if not _run_step([sys.executable, "-m", "playwright", "install", "chromium"]):
             with _lock:
                 _INSTALL.update(
                     installing=False,
-                    error="chromium download failed — check disk space and network connectivity",
+                    error="chromium download failed, check disk space and network connectivity",
                 )
             return
 
@@ -99,8 +91,8 @@ def _run_install() -> None:
         set_feature_flag("preview_tools", True)
         with _lock:
             _INSTALL.update(installing=False, stage="done", error=None)
-        log.info("Live preview: Playwright + Chromium install complete; preview_tools enabled")
-    except Exception as e:  # noqa: BLE001 — surface to the UI, don't crash the thread
+        log.info("Live preview: Chromium install complete; preview_tools enabled")
+    except Exception as e:  # noqa: BLE001 (surface to the UI, don't crash the thread)
         log.exception("Live preview install failed")
         with _lock:
             _INSTALL.update(installing=False, error=str(e))
@@ -156,7 +148,7 @@ async def preview_install():
 
 @router.post("/disable")
 async def preview_disable():
-    """Off-switch — flips the flag without uninstalling Chromium, so
+    """Off-switch, flips the flag without uninstalling Chromium, so
     re-enabling later is instant (no re-download)."""
     from server.infrastructure.config import set_feature_flag
 

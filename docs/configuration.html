@@ -21,8 +21,8 @@
       keep your secrets safe.</p>
 
     <p>Almost everything is optional. A fresh install runs out of the box with sensible defaults, and
-      you tune it either through the in-app Settings panel (the gear icon) or, for secrets and
-      deployment overrides, through shell environment variables. Nothing here needs a code change.</p>
+      you tune it either through the in-app Settings panel (the gear icon) or, for the Tavily key,
+      through a shell environment variable. Nothing here needs a code change.</p>
 
     <figure class="diagram-figure">
       <div id="config-layers-diagram" class="diagram"></div>
@@ -34,7 +34,7 @@
     <figure class="shot">
       <img src="assets/img/settings-api-keys.png" alt="The Settings dialog on the API Keys tab">
       <figcaption><strong>The Settings dialog.</strong> These fields write to the user layer; the
-        grouped left rail (Chat and models, Tools and automation, Access and usage) holds the full
+        grouped left rail (Chat and models, Tools and automation, Access and usage, Look and feel) holds the full
         set of configurable surfaces, each with its own sub-tabs.</figcaption>
     </figure>
 
@@ -49,28 +49,31 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Layer</th><th>Source</th><th>Priority</th><th>Use for</th></tr></thead>
       <tbody>
-        <tr><td>Environment</td><td><code>TAVILY_API_KEY</code>, <code>HOST</code>, <code>PORT</code></td><td>Highest</td><td>Secrets and deployment overrides</td></tr>
-        <tr><td>Project</td><td><code class="path">&lt;workspace&gt;/.whisper/settings.json</code></td><td>High</td><td>Per-project model, region, permission mode</td></tr>
-        <tr><td>User</td><td><code class="path">config.user.json</code>, under <code class="path">~/.whisper</code> for the Mac app and at the repo root for a source install; an older checkout that still has a legacy <code class="path">config.json</code> keeps that as its user layer until migrated</td><td>Middle</td><td>Your deltas: keys, region, added models, per-field overrides, a hide-list</td></tr>
+        <tr><td>Environment</td><td><code>TAVILY_API_KEY</code></td><td>Highest</td><td>Keeping the Tavily key off disk</td></tr>
+        <tr><td>Project</td><td><code class="path">&lt;workspace&gt;/.whisper/settings.json</code></td><td>High</td><td>Per-project model, region, effort, cost caps, feature flags</td></tr>
+        <tr><td>User</td><td><code class="path">config.user.json</code>, under <code class="path">~/.whisper</code> for the Mac app and in the checkout for a source install</td><td>Middle</td><td>Your deltas: keys, region, added models, per-field overrides, a hide-list</td></tr>
         <tr><td>System</td><td><code class="path">config.example.json</code> (read-only, ships with the app, read live)</td><td>Low</td><td>The app-owned model catalog and shipped defaults</td></tr>
         <tr><td>Code defaults</td><td><code>DEFAULTS</code> in <code class="path">server/infrastructure/config.py</code></td><td>Lowest</td><td>Built-in fallbacks you never edit</td></tr>
       </tbody>
     </table></div>
-    <p>The Settings UI edits the user layer. The project layer is a hand-authored file you can check
-      into the repo; the server reads it but never writes it. The environment layer is shell-only:
-      there is no UI field for it, and it exists so a machine (or a CI runner, or a LAN-exposed
-      deployment) can override without touching disk.</p>
+    <p>The Settings UI edits the user layer, and startup never changes it. The project layer is a
+      hand-authored file you can check into the repo; the server reads it but never writes it. The
+      environment layer is shell-only: there is no UI field for it, and it exists so the Tavily key
+      can stay off disk. (<code>HOST</code> and <code>PORT</code> are launch settings for
+      <code>python -m server.main</code>, not config keys; see
+      <a href="#environment-variables">Environment variables</a>.)</p>
     <p>The project layer is deliberately narrow. Only a safe subset of keys is honored from
       <code class="path">.whisper/settings.json</code> (model and catalog overrides including
-      <code>chat_models_disabled</code>, region, effort, brief mode, permission mode and explainer,
-      cost caps, auto-mode rules, model fallback, and feature flags), so a checked-in project file
-      can never smuggle in, say, a global API key. See
+      <code>chat_models_disabled</code>, the default model, region, effort, the permission explainer,
+      cost caps, model fallback, and feature flags), so a checked-in project file can never smuggle
+      in, say, a global API key. The permission mode and the auto-mode rules are never read from a
+      project file, because a workspace is untrusted input: they are user-level only. See
       <a href="ref-settings.html">Settings &amp; config keys</a> for the exact per-key breakdown.</p>
 
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
       <div class="callout__body"><p><b>Latched per session.</b> A small set of fields (region, model
-        catalog, default model, effort level, brief mode, permission mode) is snapshotted at the first
+        catalog, default model, effort level, permission mode) is snapshotted at the first
         turn of a session and frozen for its lifetime. Changing them mid-conversation in Settings takes
         effect on your next new session, not the one already running. This keeps a live turn stable and
         avoids invalidating prompt caches. See <a href="arch-chat-pipeline.html">Chat &amp; tool
@@ -78,11 +81,12 @@
     </div>
 
     <h2 id="first-run-config">First-run user config</h2>
-    <p>Your user config (<code class="path">config.user.json</code>, or a legacy
-      <code class="path">config.json</code> on older installs) is gitignored, because it holds your
+    <p>Your user config (<code class="path">config.user.json</code>) is gitignored, because it holds your
       Tavily key and any other per-machine settings. It is never a copy of the template:
       <code class="path">config.example.json</code> is the read-only SYSTEM layer, and the user file
-      holds only your deltas.</p>
+      holds only your deltas. An old single-file <code class="path">config.json</code> is not read;
+      when one is present the app shows a notice, and you copy what you still need into
+      <code class="path">config.user.json</code>.</p>
     <p>On a fresh install, <code>setup.sh</code> and the packaged app run the same seeding code and
       write the same two keys:</p>
     <div class="code-block"><pre><code>{
@@ -103,12 +107,12 @@
       once and never overwritten: from the second launch on, your own settings win. After that, change
       values either through the Settings panel (gear icon) or by editing the file directly.</p>
     <p>Because the app ships no on-device chat model, a fresh local-mode install has nothing to chat
-      with locally. The picker handles that by never leaving itself empty: when the mode filter would
-      hide every model it shows them all, so you can talk to Bedrock straight away and install an
-      on-device model from <b>Settings &rarr; Models &rarr; Discover</b> whenever you want.</p>
+      with. Local mode offers and runs only on-device models, so the picker shows an install hint
+      until you install one from <b>Settings &rarr; Models &rarr; Discover</b>. To chat on Bedrock,
+      switch <b>Settings &rarr; Model mode</b> to Hybrid or Cloud.</p>
     <p>A fresh install has no <code>tavily_api_key</code>. Without a key,
-      <code>web_search</code> falls back to an Amazon Bedrock AgentCore browser MCP server if you
-      have enabled one; <code>web_fetch</code> and everything else (chat, transcription, and the
+      <code>web_search</code> uses an Amazon Bedrock AgentCore browser MCP server if you have
+      enabled one; <code>web_fetch</code> and everything else (chat, transcription, and the
       workspace tools) work with no further setup.</p>
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
@@ -146,19 +150,21 @@
     </table></div>
 
     <h2 id="environment-variables">Environment variables</h2>
-    <p>Environment variables are the highest-priority layer and the only place to put secrets you would
-      rather keep off disk. The <code>TAVILY_API_KEY</code> overlay is re-read on every request, so a
-      rotated key applies immediately without a server restart.</p>
+    <p><code>TAVILY_API_KEY</code> is the only environment variable that is a config layer: it is the
+      highest-priority layer and the place for the Tavily key when you would rather keep it off disk.
+      It is re-read on every request, so a rotated key applies immediately without a server restart.
+      The other variables below are launch settings read by the server process or the dev
+      server.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Name</th><th>Default</th><th>Effect</th></tr></thead>
       <tbody>
         <tr><td><code>HOST</code></td><td><code>127.0.0.1</code></td><td>Bind address. Set <code>HOST=0.0.0.0</code> to expose the app on your LAN. Localhost-only is the default for a reason (see <a href="ref-security.html">Security model</a>).</td></tr>
-        <tr><td><code>PORT</code></td><td><code>8000</code></td><td>Backend port. Auto-incremented to the next free port if 8000 is in use, so read the URL the script actually prints.</td></tr>
-        <tr><td><code>BACKEND_PORT</code></td><td><code>8000</code></td><td>Read by <code class="path">vite.config.ts</code> so the dev proxy targets the real backend port. <code>setup.sh</code> sets it from <code>$PORT</code> automatically, so the dev server and backend stay in sync even when the port shifted.</td></tr>
+        <tr><td><code>PORT</code></td><td>set by the launcher</td><td>The port <code>python -m server.main</code> listens on. <code>setup.sh</code> sets it itself (41430, or the nearest free port) and ignores an exported value, so read the URL the script actually prints. The Mac app uses 41410 the same way.</td></tr>
+        <tr><td><code>BACKEND_PORT</code></td><td><code>41430</code></td><td>Read by <code class="path">vite.config.ts</code> so the dev proxy targets the real backend port. <code>setup.sh</code> sets it from <code>$PORT</code> automatically, so the dev server and backend stay in sync even when the port shifted.</td></tr>
         <tr><td><code>TAVILY_API_KEY</code></td><td><em>(unset)</em></td><td>Overrides <code>tavily_api_key</code> in the user config. An empty value is ignored, so the config falls back to whatever is stored. If both are set, the env var wins.</td></tr>
-        <tr><td><code>WHISPER_HOME</code></td><td><em>(unset)</em></td><td>The app home for a packaged install: when set, the app keeps only <code class="path">storage/</code> (the session history) and <code class="path">logs/</code> under it, everything user-editable (<code class="path">config.user.json</code>, <code class="path">pricing.json</code>, <code class="path">WHISPER.md</code>, <code class="path">rules/</code>, <code class="path">models/</code>, <code class="path">skills/</code>, <code class="path">plugins/</code>, <code class="path">agents/</code>, <code class="path">data/</code> with memory and workflows) lives at <code class="path">~/.whisper</code>, and the code tree stays read-only. Unset means a dev checkout, with everything at the repo root as before.</td></tr>
+        <tr><td><code>WHISPER_HOME</code></td><td><em>(unset)</em></td><td>The app home for a packaged install: when set, the app keeps only <code class="path">storage/</code> (the session history) and <code class="path">logs/</code> under it, everything user-editable (<code class="path">config.user.json</code>, <code class="path">pricing.json</code>, <code class="path">WHISPER.md</code>, <code class="path">rules/</code>, <code class="path">models/</code>, <code class="path">skills/</code>, <code class="path">plugins/</code>, <code class="path">agents/</code>, <code class="path">data/</code> with memory and workflows) lives at <code class="path">~/.whisper</code>, and the code tree stays read-only. Unset means a source install, with everything in the checkout. <code>setup.sh</code> stops when it is exported.</td></tr>
         <tr><td><code>WHISPER_USER_DIR</code></td><td><em>(unset)</em></td><td>Overrides the user-data root (<code class="path">~/.whisper</code> in a packaged install). Rarely needed; tests use it for isolation.</td></tr>
-        <tr><td><code>WHISPER_DATA_DIR</code></td><td><em>(unset)</em></td><td>Relocates app data (result cache, config stores, DBs) on its own; beats the <code>data_dir</code> config key and the app-home default.</td></tr>
+        <tr><td><code>WHISPER_DATA_DIR</code></td><td><em>(unset)</em></td><td>Relocates app data (result cache, config stores, DBs) on its own; beats the <code>data_dir</code> config key and the default, <code class="path">data/</code> under the user-data root.</td></tr>
       </tbody>
     </table></div>
     <p>To set the Tavily key the recommended way, export it in your shell profile so rotation is a
@@ -168,7 +174,7 @@ source ~/.zshrc</code></pre></div>
     <p>The full lookup table lives in <a href="ref-env.html">Environment variables</a>.</p>
 
     <h2 id="settings-ui-fields">The Settings panel</h2>
-    <p>Click the gear icon to open Settings. A left rail groups the panels into three sections, and
+    <p>Click the gear icon to open Settings. A left rail groups the panels into four sections, and
       most panels have their own sub-tabs. Everything here writes to the user layer, so you never need
       to touch the config file by hand. (A per-project override goes in a hand-authored
       <code class="path">.whisper/settings.json</code> instead; the UI never writes that file.)</p>
@@ -184,6 +190,7 @@ source ~/.zshrc</code></pre></div>
         <tr><td>Tasks and hooks</td><td>Scheduled tasks, Hooks</td><td>Cron jobs and the Pre/Post/Stop tool hooks.</td></tr>
         <tr><td rowspan="2"><b>Access and usage</b></td><td>Keys and permissions</td><td>API keys, Permissions</td><td>The fields listed below, plus permission rules, per-category defaults, and the sandbox network policy.</td></tr>
         <tr><td>Usage and advanced</td><td>Costs, Feature flags, Live preview</td><td>Usage and estimated cost over a chosen range of UTC days, spend caps, gated features, and the preview browser.</td></tr>
+        <tr><td><b>Look and feel</b></td><td>Appearance</td><td>-</td><td>The theme and its color palette.</td></tr>
       </tbody>
     </table></div>
 
@@ -203,23 +210,27 @@ source ~/.zshrc</code></pre></div>
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
       <div class="callout__body"><p><b>There is no "default model" field in Settings.</b> The chat model
         is chosen from the <b>model chip</b> in the composer toolbar (or with <code>/model</code>), and
-        the choice sticks for new sessions. Settings &rarr; Models &rarr; Chat is where you hide models
-        from that chip or add your own; Discover is where you install on-device ones. The stored key is
-        <code>default_chat_model</code>, whose shipped value is <code>gpt6-luna</code> (GPT-6 Luna).</p></div>
+        the app keeps the choice in its browser storage, so it survives a reload. Settings &rarr;
+        Models &rarr; Chat is where you hide models from that chip or add your own; Discover is where
+        you install on-device ones. The <code>default_chat_model</code> config key is only the
+        starting default when nothing is stored yet; its shipped value is <code>gpt6-luna</code>
+        (GPT-6 Luna).</p></div>
     </div>
 
     <h3 id="session-controls">Controls that live in the composer, not in Settings</h3>
-    <p>Three per-session dials sit under the chat input rather than in the Settings panel, because you
-      change them mid-conversation. All three persist as config keys.</p>
+    <p>Three dials sit in the <b>How it thinks</b> capsule under the chat input rather than in the
+      Settings panel, because you change them mid-conversation. The model and the answer length are
+      kept in the app's browser storage; the thinking level starts from <code>effort_level</code>
+      and returns to it on reload.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Control</th><th>Values</th><th>What it does</th></tr></thead>
       <tbody>
-        <tr><td>Model chip</td><td>the models your mode exposes</td><td>The model that answers. Rows carry a <b>Local</b> badge for on-device models and a <b>Mythos</b> badge for models that need the data-retention consent flow (Fable 5.1). Key: <code>default_chat_model</code>.</td></tr>
-        <tr><td>Effort</td><td><code>none</code> / <code>low</code> / <code>medium</code> / <code>high</code> / <code>extra</code> (alias <code>xhigh</code>) / <code>max</code> / <code>ultracode</code></td><td>The reasoning budget for a turn (<code>effort_level</code>, default <code>high</code>). Levels are per-model and the value is clamped to the nearest supported one when you switch. See the table below.</td></tr>
-        <tr><td>Response length</td><td><code>brief</code> / <code>normal</code> / <code>detailed</code></td><td>How long the answer runs. Mirrors <code>/verbosity</code>.</td></tr>
+        <tr><td>Model</td><td>the models your mode exposes</td><td>The model that answers. Rows carry a <b>Local</b> badge for on-device models and a <b>Mythos</b> badge for models that need the data-retention consent flow (Fable 5.1). Starting default: <code>default_chat_model</code>.</td></tr>
+        <tr><td>Thinking</td><td><code>none</code> / <code>low</code> / <code>medium</code> / <code>high</code> / <code>extra</code> (alias <code>xhigh</code>) / <code>max</code> / <code>ultracode</code></td><td>The reasoning budget for a turn (<code>effort_level</code>, shipped default <code>max</code>). Levels are per-model and the value is clamped to the nearest supported one when you switch. See the table below.</td></tr>
+        <tr><td>Answers</td><td>Brief / Normal / Detailed</td><td>How long the answer runs. Mirrors <code>/verbosity</code>. Not shown for on-device models.</td></tr>
       </tbody>
     </table></div>
-    <p>Which effort levels a model offers comes from two independent properties: the reasoning ladder
+    <p>Which thinking levels a cloud model offers comes from two independent properties: the reasoning ladder
       the provider accepts, and whether the model can drive workflow orchestration
       (<code>ultracode</code>). As shipped:</p>
     <div class="table-wrap"><table>
@@ -227,7 +238,8 @@ source ~/.zshrc</code></pre></div>
       <tbody>
         <tr><td>Opus 5.5, Sonnet 5.5, Fable 5.1</td><td>low, medium, high, extra, max, ultracode</td></tr>
         <tr><td>GPT-6 Astra / Luna, GPT-6.1 Sol</td><td>low, medium, high, max, ultracode</td></tr>
-        <tr><td>Haiku 4.5 and every on-device model</td><td>none offered; the Effort and Response-length chips are hidden</td></tr>
+        <tr><td>Haiku 4.5</td><td>none offered (the panel says it has no thinking levels); Answers is still shown</td></tr>
+        <tr><td>On-device models that can think</td><td>Off to Max, default Max (their own level, kept apart from the cloud one); no Answers row</td></tr>
       </tbody>
     </table></div>
 
@@ -239,7 +251,7 @@ source ~/.zshrc</code></pre></div>
         <tr><td>Permissions panel</td><td>Keys and permissions &rarr; Permissions</td><td>Per-rule justification notes, a dry-run tester, per-category approval defaults (<code>category_modes</code>), and the sandbox network egress policy (<code>network_policy</code>, tiers <code>restrictive</code> / <code>curated</code> / <code>permissive</code>; <code>permissive</code> is the default, meaning no restriction).</td></tr>
         <tr><td>Feature Flags</td><td>Usage and advanced &rarr; Feature flags</td><td>Turn gated features on or off (<code>feature_flags</code>) without editing the file. <code>progressive_tools</code> (progressive tool disclosure) is one example, with companion <code>progressive_tools_core_extra</code> / <code>progressive_tools_defer_extra</code> keys for tuning the split.</td></tr>
         <tr><td>Cost Limits</td><td>Usage and advanced &rarr; Costs</td><td>Per-session (<code>max_session_cost_usd</code>) and per-day (<code>max_daily_cost_usd</code>, the UTC day) Bedrock spend caps. <code>0</code> means unlimited. Reaching a cap leaves the turn one final round to answer. The same section sets the round limit (<code>round_limit</code>, 120) and time limit (<code>time_limit_minutes</code>, 15) every run uses. See <a href="arch-costs.html">Cost tracking &amp; budgets</a>.</td></tr>
-        <tr><td>Import project</td><td>Tools and automation &rarr; Import project</td><td>Migrates CLAUDE.md or AGENTS.md to the project's WHISPER.md under <code class="path">~/.whisper/rules/</code>, copies skills, and translates <code>.mcp.json</code>. Source files are never modified. See <a href="installation.html#import-project">Installation</a>.</td></tr>
+        <tr><td>Import project</td><td>Tools and automation &rarr; Import project</td><td>Migrates CLAUDE.md or AGENTS.md to the project's WHISPER.md under <code class="path">~/.whisper/rules/</code>, copies skills, and translates <code>.mcp.json</code> (Claude Code) or <code>config.toml</code> (Codex) MCP servers. Source files are never modified. See <a href="installation.html#import-project">Installation</a>.</td></tr>
       </tbody>
     </table></div>
 
@@ -293,10 +305,9 @@ source ~/.zshrc</code></pre></div>
     <h2 id="editing-safely">Editing the user config by hand</h2>
     <p>You can edit <code class="path">config.user.json</code> directly, but a few habits keep it healthy:</p>
     <ol class="steps">
-      <li><h4>Keep it valid JSON</h4><p>If the file fails to parse, the loader treats the user layer
-        as empty rather than crashing, so the effective config falls back to the shipped defaults
-        (code <code>DEFAULTS</code> plus the live <code class="path">config.example.json</code>
-        layer) and a stray comma silently reverts your settings. Validate before you save.</p></li>
+      <li><h4>Keep it valid JSON</h4><p>If the file is not a valid JSON object, the app does not run
+        on other settings: config reads fail with an error that names the file and where it breaks,
+        until you fix it. Validate before you save.</p></li>
       <li><h4>Never blank a required key</h4><p><code>bedrock_region</code> and
         <code>default_chat_model</code> must not be empty strings. A blank value is dropped on save and
         coerced back to a working default on load, so a partial edit will not brick chat.</p></li>

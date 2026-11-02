@@ -34,7 +34,7 @@ export function normalizeTasks(raw: unknown): SessionTask[] {
     .map((t) => {
       const o = (t ?? {}) as Record<string, unknown>;
       return {
-        id: String(o.id ?? o.task_id ?? ''),
+        id: String(o.id ?? ''),
         subject: typeof o.subject === 'string' && o.subject ? o.subject : '(task)',
         status: typeof o.status === 'string' && o.status ? o.status : 'pending',
       };

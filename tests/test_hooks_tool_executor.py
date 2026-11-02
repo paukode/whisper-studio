@@ -37,6 +37,15 @@ def _batch(tool_name="ws_write_file", tool_input=None, monkeypatch=None, route=N
     async def _go():
         return await te.execute_tool_batch(
             [{"id": "t1", "name": tool_name, "input": tool_input or {"path": "/orig.txt"}}],
+            # Stub schema for the echo router, including hook rewrites.
+            tool_schemas={
+                tool_name: {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"],
+                    "additionalProperties": False,
+                }
+            },
             is_concurrent_safe=lambda n: False,
             loop=asyncio.get_running_loop(),
             executor=executor,

@@ -1,7 +1,6 @@
 """Provider-neutral transcript-tail renderer for the goal evaluator.
 
-The evaluator judges a rendered TEXT tail, never the raw messages array, so the
-same code handles Anthropic content blocks and OpenAI Responses input items and
+The evaluator judges a rendered TEXT tail, never the raw messages array, so
 the input stays token-bounded. Tool results are head+tail sliced (same
 philosophy as server/chat/budget.py) so a giant file dump can't blow the cap.
 """
@@ -24,8 +23,8 @@ def _slice(text: str, budget: int = _TOOL_RESULT_SLICE) -> str:
 
 
 def _render_blocks(content) -> str:
-    """Flatten one message's content (string, Anthropic blocks, or Responses
-    items) to a readable line."""
+    """Flatten one message's content (a string or content blocks) to a
+    readable line."""
     if isinstance(content, str):
         return content
     if not isinstance(content, list):
@@ -36,14 +35,12 @@ def _render_blocks(content) -> str:
             parts.append(str(b))
             continue
         btype = b.get("type", "")
-        if btype in ("text", "input_text", "output_text"):
+        if btype == "text":
             parts.append(b.get("text", ""))
         elif btype == "tool_use":
             parts.append(f"[tool_use {b.get('name', '?')}]")
-        elif btype == "function_call":
-            parts.append(f"[tool_use {b.get('name', '?')}]")
-        elif btype in ("tool_result", "function_call_output"):
-            raw = b.get("content", b.get("output", ""))
+        elif btype == "tool_result":
+            raw = b.get("content", "")
             if isinstance(raw, list):
                 raw = " ".join(x.get("text", "") if isinstance(x, dict) else str(x) for x in raw)
             parts.append(f"[tool_result] {_slice(str(raw))}")
@@ -65,19 +62,6 @@ def render_tail(
     lines: list[str] = []
     for m in messages[-max_messages:]:
         if not isinstance(m, dict):
-            continue
-        # OpenAI Responses input lists carry tool activity as TOP-LEVEL items
-        # ({"type": "function_call", ...} with no role/content) — render them
-        # so GPT sessions' tool calls/results are visible to the evaluator.
-        mtype = m.get("type", "")
-        if mtype == "function_call":
-            lines.append(f"ASSISTANT: [tool_use {m.get('name', '?')}]")
-            continue
-        if mtype == "function_call_output":
-            out = m.get("output", m.get("content", ""))
-            if isinstance(out, list):
-                out = " ".join(x.get("text", "") if isinstance(x, dict) else str(x) for x in out)
-            lines.append(f"TOOL: [tool_result] {_slice(str(out))}")
             continue
         role = m.get("role", "?")
         body = _render_blocks(m.get("content", ""))

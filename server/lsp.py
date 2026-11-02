@@ -32,8 +32,8 @@ LSP_TOOLS = [
     {
         "name": "lsp_hover",
         "description": (
-            "[LSP] Get hover info (type annotations, documentation) for a symbol "
-            "at a specific line and column in a file."
+            "[LSP] Show the identifier at a line and column in a file, with the "
+            "surrounding lines. No type information or documentation."
         ),
         "input_schema": {
             "type": "object",
@@ -47,7 +47,10 @@ LSP_TOOLS = [
     },
     {
         "name": "lsp_references",
-        "description": "[LSP] Find all usages/references of a symbol at a specific location.",
+        "description": (
+            "[LSP] Find whole-word text matches of the symbol at a location across the "
+            "workspace's source files (a text search, capped at 100 matches)."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -159,9 +162,7 @@ def execute_lsp_tool(tool_name: str, tool_input: dict) -> str:
             if tool_name == "lsp_hover":
                 return (
                     f"File: {path}  Line: {line_no}  Column: {column}\n"
-                    f"Symbol: {symbol!r}\n\nContext:\n{context}\n\n"
-                    f"[Full hover docs require a running language server. "
-                    f"For Python: pip install python-lsp-server]"
+                    f"Symbol: {symbol!r}\n\nContext:\n{context}"
                 )
             else:
                 refs = _grep_references(symbol, ws)

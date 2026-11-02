@@ -211,7 +211,7 @@ def test_anthropic_adapter_structured_call_lets_the_model_call_emit_result(anthr
 def test_openai_tier_offers_ultracode():
     from server.infrastructure.effort import clamp_effort, effort_levels_for, is_ultracode
 
-    levels = effort_levels_for({"effort_tier": "openai"}, "gpt5.5")
+    levels = effort_levels_for({"effort_tier": "openai6"}, "gpt6-astra")
     assert "ultracode" in levels
     assert clamp_effort("ultracode", levels) == "ultracode"
     assert is_ultracode(clamp_effort("ultracode", levels))
@@ -263,7 +263,7 @@ def test_run_agent_structured_schema_end_to_end(monkeypatch):
             },
         ]
     )
-    monkeypatch.setattr("server.chat._get_bedrock_client", lambda: fake_old)
+    monkeypatch.setattr("server.chat.infra._get_bedrock_client", lambda: fake_old)
 
     schema = {
         "type": "object",

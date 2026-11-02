@@ -1,15 +1,9 @@
-"""Shell-execution helpers shared by both executors and HTTP routes.
-
-These were extracted because both `run_workspace_command` (in executors.py)
-and `ws_shell_endpoint` (in routes.py) — plus `server/approval/bootstrap.py` —
-need the same validation, redirection, truncation, and exit-code interpretation
-logic. Living in their own module avoids circular imports between executors
-and routes.
+"""Shell-execution helpers for ws_run_command (server/workspace/executors.py)
+and the approved command executor (server/approval/executors.py): command
+validation, stdin redirection, output truncation and exit-code meanings.
 """
 
-import base64
 import os
-import re
 import time
 
 from .paths import DATA_DIR
@@ -31,9 +25,24 @@ _EXIT_CODE_MEANINGS = {
 
 
 def _needs_stdin_redirect(command: str) -> bool:
-    """Check if command needs < /dev/null to prevent stdin hangs."""
-    if "< " in command or "<<" in command:
-        return False
+    """Check if command needs < /dev/null to prevent stdin hangs: True unless
+    it already redirects input somewhere. Any unquoted, unescaped ``<``
+    counts (``<file``, ``< file``, ``<<EOF``, ``<<<word``), so ``wc -l
+    <data.csv`` keeps reading its file."""
+    in_single = in_double = False
+    i = 0
+    while i < len(command):
+        ch = command[i]
+        if ch == "\\" and not in_single:
+            i += 2
+            continue
+        if ch == "'" and not in_double:
+            in_single = not in_single
+        elif ch == '"' and not in_single:
+            in_double = not in_double
+        elif ch == "<" and not in_single and not in_double:
+            return False
+        i += 1
     return True
 
 
@@ -71,36 +80,6 @@ def _interpret_exit_code(command: str, exit_code: int) -> str | None:
     meanings = _EXIT_CODE_MEANINGS.get(base)
     if meanings and exit_code in meanings:
         return meanings[exit_code]
-    return None
-
-
-_IMAGE_SIGNATURES = {
-    b"\x89PNG": "image/png",
-    b"\xff\xd8\xff": "image/jpeg",
-    b"GIF87a": "image/gif",
-    b"GIF89a": "image/gif",
-}
-
-# Matches a chunk of base64 (at least 100 chars, typical for images)
-_BASE64_PATTERN = re.compile(r"[A-Za-z0-9+/]{100,}={0,2}")
-
-
-def _detect_image_output(output: str) -> dict | None:
-    """Detect base64-encoded image data in command output.
-
-    Returns {"mime_type": ..., "data": ...} if found, else None.
-    """
-    match = _BASE64_PATTERN.search(output)
-    if not match:
-        return None
-    b64_str = match.group(0)
-    try:
-        raw = base64.b64decode(b64_str)
-    except Exception:
-        return None
-    for sig, mime in _IMAGE_SIGNATURES.items():
-        if raw.startswith(sig):
-            return {"mime_type": mime, "data": b64_str}
     return None
 
 

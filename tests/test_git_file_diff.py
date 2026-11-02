@@ -125,6 +125,21 @@ def test_path_escaping_the_workspace_is_rejected(client):
     assert data["error"] == "Invalid path."
 
 
+def test_sibling_folder_with_the_same_name_prefix_is_rejected(client):
+    """``work-old`` starts with ``work``; a bare prefix check let it through
+    and returned the sibling file's whole text."""
+    c, work = client
+    sibling = work.parent / f"{work.name}-old"
+    sibling.mkdir()
+    (sibling / ".env").write_text("TOKEN=secret\n")
+
+    data = c.get("/api/git/file-diff", params={"path": f"../{work.name}-old/.env"}).json()
+
+    assert data["mode"] == "error"
+    assert data["error"] == "Invalid path."
+    assert "secret" not in str(data)
+
+
 def test_large_file_falls_back_to_hunks(client, monkeypatch):
     """Past the client's alignment budget git does the diff instead, and
     the payload carries hunks rather than whole blobs."""
@@ -230,3 +245,104 @@ def test_numstat_is_read_once_per_diff(client, monkeypatch):
 
     assert data["added"] == 1 and data["removed"] == 1
     assert len(numstat_calls) == 1, f"expected one numstat call, got {numstat_calls}"
+
+
+def test_a_git_timeout_is_an_error_not_a_new_file(client, monkeypatch):
+    """A timed-out ls-files used to make a tracked file 'untracked' and
+    return its whole text as added."""
+    import subprocess
+
+    c, work = client
+    (work / "a.txt").write_text("one\nTWO\nthree\n")
+
+    def slow(args, cwd, timeout=None, **_kw):
+        raise subprocess.TimeoutExpired(args, timeout)
+
+    monkeypatch.setattr(file_diff, "_run_git", slow)
+    data = c.get("/api/git/file-diff", params={"path": "a.txt"}).json()
+
+    assert data["mode"] == "error"
+    assert data["error"].startswith("git ls-files failed:")
+
+
+def test_a_staged_file_in_a_repository_with_no_commit_is_added(tmp_path, monkeypatch):
+    work = tmp_path / "fresh"
+    work.mkdir()
+    _git(["init", "-q"], work)
+    (work / "n.txt").write_text("new\n")
+    _git(["add", "n.txt"], work)
+
+    data = file_diff.build_file_diff(str(work), "n.txt")
+
+    assert data["mode"] == "full"
+    assert data["status"] == "added"
+    assert data["new"] == "new\n"
+
+
+def test_git_diff_tool_reports_a_git_failure(tmp_path, monkeypatch):
+    import subprocess
+
+    from server.git import diff as git_diff
+
+    _git(["init", "-q"], tmp_path)
+    (tmp_path / "a.txt").write_text("x\n")
+
+    def broken(args, cwd, timeout=None, **_kw):
+        return subprocess.CompletedProcess(args, 128, "", "fatal: index file corrupt")
+
+    monkeypatch.setattr(git_diff, "_run_git", broken)
+    with pytest.raises(RuntimeError, match="index file corrupt"):
+        git_diff.fetch_single_file_git_diff(str(tmp_path), str(tmp_path / "a.txt"))
+
+
+def _localized(real_run_git):
+    """A git that answers every failure in another language: the diff must
+    decide 'new file' by exit code, never by English message text."""
+
+    def run(args, **kwargs):
+        result = real_run_git(args, **kwargs)
+        if result.returncode != 0:
+            result.stderr = "Schwerwiegend: Pfad befindet sich nicht in 'HEAD'\n"
+        return result
+
+    return run
+
+
+def test_a_staged_new_file_is_added_with_a_localized_git(client, monkeypatch):
+    c, work = client
+    (work / "new.txt").write_text("fresh\n")
+    _git(["add", "new.txt"], work)
+    monkeypatch.setattr(file_diff, "_run_git", _localized(file_diff._run_git))
+
+    data = file_diff.build_file_diff(str(work), "new.txt")
+
+    assert data["mode"] == "full"
+    assert data["status"] == "added"
+    assert data["new"] == "fresh\n"
+
+
+def test_a_file_in_a_repository_with_no_commit_is_added_with_a_localized_git(tmp_path, monkeypatch):
+    work = tmp_path / "fresh"
+    work.mkdir()
+    _git(["init", "-q"], work)
+    (work / "n.txt").write_text("new\n")
+    _git(["add", "n.txt"], work)
+    monkeypatch.setattr(file_diff, "_run_git", _localized(file_diff._run_git))
+
+    data = file_diff.build_file_diff(str(work), "n.txt")
+
+    assert data["mode"] == "full"
+    assert data["status"] == "added"
+
+
+def test_the_git_prompt_skips_commits_in_an_empty_repository_with_a_localized_git(
+    tmp_path, monkeypatch
+):
+    from server.git import prompts
+
+    _git(["init", "-q"], tmp_path)
+    monkeypatch.setattr(prompts, "_run_git", _localized(prompts._run_git))
+
+    text = prompts.build_git_status_prompt(str(tmp_path))
+
+    assert "Recent commits" not in text

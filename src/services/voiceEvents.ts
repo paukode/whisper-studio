@@ -54,7 +54,7 @@ export function stepsToToolUse(steps: VoiceStep[]): ToolUseEvent[] {
 /** Sonic hands over speech in pieces: several USER transcripts per turn, and a
  *  FINAL assistant block per sentence. Consecutive spoken pieces of the same
  *  role within this window are one turn, shown as one bubble. */
-export const SPOKEN_MERGE_WINDOW_MS = 180_000;
+const SPOKEN_MERGE_WINDOW_MS = 180_000;
 
 /** The delegated assistant's own calls are the bubble, not its activity. */
 const DELEGATE_TOOLS = new Set(['ask_assistant', 'resolve_request']);
@@ -163,7 +163,7 @@ export function applyVoiceEvent(ev: VoiceServerEvent, deps: VoiceEventDeps): voi
           if (reports) deps.commitAssistant('*(Stopped)*', tools, false, reports);
           else deps.commitAssistant('*(Stopped)*', tools, false);
         }
-      } else if (!ev.output.startsWith('Error:')) {
+      } else {
         if (reports) deps.commitAssistant(ev.output, stepsToToolUse(inner), false, reports);
         else deps.commitAssistant(ev.output, stepsToToolUse(inner), false);
       }

@@ -9,7 +9,7 @@ import sqlite3
 
 from .. import paths
 from ..config import EMBED_MODEL
-from ..paths import db_path, workspace_index_dir
+from ..paths import workspace_index_dir
 from .base import _connect, _invalidate
 
 
@@ -32,22 +32,11 @@ def get_meta(ws_path: str) -> dict:
     return {k: json.loads(v) for k, v in rows}
 
 
-def has_index(ws_path: str, embed_backend: str | None = None) -> bool:
-    """Whether an index DB exists for the active (or given) embed backend, WITHOUT
-    creating one. Read paths MUST gate on this before calling _connect-backed
-    helpers (stats / graph views): _connect() unconditionally creates the db file
-    (and workspace dir) on open, so an unguarded read of a folder that was indexed
-    under the OTHER embed backend (indexes are per-backend — index.db for qwen3,
-    index-<backend>.db for the rest) fabricates an empty active-backend index and
-    silently reports it as empty."""
-    return os.path.exists(db_path(ws_path, embed_backend))
-
-
 def stats(ws_path: str) -> dict:
     # No index for the active backend: report empty WITHOUT touching disk. Opening
-    # a missing db path would create an empty file (see has_index), fabricating a
-    # zeroed index for a folder indexed under a different embed backend.
-    if not has_index(ws_path):
+    # a missing db path would create an empty file (see paths.is_indexed),
+    # fabricating a zeroed index for a folder indexed under another embed backend.
+    if not paths.is_indexed(ws_path):
         return {
             "files": 0,
             "chunks": 0,

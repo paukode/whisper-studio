@@ -1,8 +1,8 @@
 """Contract for the ESC kill switch's background-task half.
 
 killSessionStream (frontend) fires POST /api/workspace/shell/tasks/stop with
-its session_id; stop_session_tasks must kill every RUNNING task that session
-started and leave other sessions' tasks alone. Since the unified registry,
+its session_id; handoff.stop_turn_work must kill every RUNNING task that
+session started and leave other sessions' tasks alone. Since the unified registry,
 an ESC-killed task records the honest status 'stopped' (previously the
 in-memory registry marked it 'completed').
 """
@@ -11,7 +11,7 @@ import time
 
 import pytest
 
-from server.tasks import registry, shell
+from server.tasks import handoff, registry, shell
 
 
 @pytest.fixture(autouse=True)
@@ -32,24 +32,23 @@ def _wait_status(task_id: str, status: str, timeout: float = 3.0) -> bool:
     return False
 
 
-def test_stop_session_tasks_kills_only_that_sessions_running_tasks(tmp_path):
+def test_stop_turn_work_kills_only_that_sessions_running_tasks(tmp_path):
     mine = shell.start_shell_task("sleep 30", cwd=str(tmp_path), session_id="sess-a")
     other = shell.start_shell_task("sleep 30", cwd=str(tmp_path), session_id="sess-b")
     time.sleep(0.3)
 
-    stopped = shell.stop_session_tasks("sess-a")
+    stopped = handoff.stop_turn_work("sess-a", 0)["stopped"]
 
     assert mine["task_id"] in stopped
     assert other["task_id"] not in stopped
     # The waiter observes the kill and records the honest terminal status.
     assert _wait_status(mine["task_id"], "stopped")
     assert registry.get_task(other["task_id"])["status"] == "running"
-    shell.stop_session_tasks("sess-b")
+    shell.stop_task(other["task_id"])
 
 
-def test_stop_session_tasks_handles_unknown_or_empty_session(tmp_path):
-    assert shell.stop_session_tasks("no-such-session") == []
-    assert shell.stop_session_tasks("") == []
+def test_stop_turn_work_handles_an_unknown_session(tmp_path):
+    assert handoff.stop_turn_work("no-such-session", 0)["stopped"] == []
 
 
 def test_natural_exit_records_exit_code_and_output_tail(tmp_path):

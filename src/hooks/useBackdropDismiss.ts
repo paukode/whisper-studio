@@ -20,7 +20,7 @@ import { useCallback, useRef } from 'react';
  *
  * This is an opt-in convenience for true modal dialogs that WANT a
  * click-outside-to-cancel affordance. Modals that must never dismiss on the
- * backdrop (e.g. the Settings modal and the config.json editor) simply do not
+ * backdrop (e.g. the Settings modal and the config editor) simply do not
  * attach a backdrop handler at all.
  */
 export function useBackdropDismiss(onDismiss: () => void) {

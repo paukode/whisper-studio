@@ -9,12 +9,12 @@ that matter here:
     availability is an import check, not a PATH lookup;
   * weights are a snapshot DIRECTORY (safetensors + config.json), not one file;
   * the server loads weights lazily on the first request, so ``ensure_serving``
-    fires a one-token warmup — otherwise "loaded" would lie until the first
+    fires a one-token warmup, otherwise "loaded" would lie until the first
     chat turn paid the multi-GB load;
   * there is no ``--ctx-size``: the context window is whatever the model's
     config carries. The requested n_ctx is recorded only so the context meter
     has a number to show;
-  * the request ``model`` field must be ``default_model`` — mlx_lm maps that
+  * the request ``model`` field must be ``default_model``, mlx_lm maps that
     sentinel to the ``--model`` path; any other name is treated as a NEW model
     to load (see serving.wire_model).
 
@@ -64,7 +64,7 @@ WARMUP_MESSAGE = (
 
 
 class MlxServerUnavailable(RuntimeError):
-    """mlx-lm is not importable — carries the actionable fix."""
+    """mlx-lm is not importable, carries the actionable fix."""
 
 
 def is_available() -> bool:
@@ -76,9 +76,8 @@ def is_available() -> bool:
 def ensure_available() -> None:
     if not is_available():
         raise MlxServerUnavailable(
-            "mlx-lm is not installed, so MLX-format models cannot run. "
-            "Install it with 'venv/bin/pip install mlx-lm' or rerun "
-            "'bash setup.sh --local'."
+            "mlx-lm is missing from this install, so MLX-format models cannot run. "
+            "Run 'bash setup.sh' (a source checkout) or reinstall the app."
         )
 
 
@@ -196,7 +195,7 @@ def _warmup(port: int, deadline: float) -> str | None:
 def ensure_serving(key: str, n_ctx: int | None = None) -> str:
     """Guarantee ``key`` is being served and return its base URL.
 
-    Blocking — the warmup loads gigabytes of weights on a cold start, so call
+    Blocking, the warmup loads gigabytes of weights on a cold start, so call
     it off the event loop. Raises MlxServerUnavailable with the fix, or
     RuntimeError with the subprocess log tail when the model fails to load.
     """
@@ -323,14 +322,3 @@ def reap_orphans() -> int:
         except (ProcessLookupError, PermissionError) as e:
             log.debug("Could not reap mlx_lm server pid %d: %s", pid, e)
     return killed
-
-
-def status() -> dict:
-    """Snapshot for /api diagnostics."""
-    return {
-        "installed": is_available(),
-        "running": is_running(),
-        "model": resident_key(),
-        "base_url": base_url(),
-        "n_ctx": _state.get("n_ctx"),
-    }

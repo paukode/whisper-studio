@@ -12,7 +12,8 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, renderHook } from '@testing-library/react';
-import { killSessionStream, useChatStream } from './useChatStream';
+import { useChatStream } from './useChatStream';
+import { killSessionStream } from './chatStream/streamControl';
 import { dropRuntime, getActiveChatStore, getChatStore, useRuntimeIndex } from '@/stores/sessionRuntimes';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useSubagentStore } from '@/stores/subagentStore';

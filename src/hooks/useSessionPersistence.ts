@@ -1,11 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { sessionSaveBody, useSessionStore } from '@/stores/sessionStore';
 import { useRuntimeIndex } from '@/stores/sessionRuntimes';
-
-export interface UseSessionPersistenceReturn {
-  save: () => void;
-  isSaving: boolean;
-}
 
 /**
  * Background durability for EVERY live session, not just the visible one.
@@ -22,18 +17,7 @@ export interface UseSessionPersistenceReturn {
  * nothing; a failed save is not acknowledged and goes out again on the next
  * tick or in the beacon.
  */
-export function useSessionPersistence(): UseSessionPersistenceReturn {
-  const [isSaving, setIsSaving] = useState(false);
-
-  const save = useCallback(() => {
-    setIsSaving(true);
-    try {
-      const { liveSessions, saveSession } = useSessionStore.getState();
-      for (const id of Object.keys(liveSessions)) saveSession(id);
-    } finally {
-      setIsSaving(false);
-    }
-  }, []);
+export function useSessionPersistence(): void {
 
   useEffect(() => {
     const handleBeforeUnload = () => {
@@ -59,9 +43,11 @@ export function useSessionPersistence(): UseSessionPersistenceReturn {
 
   // Periodic save every 30s across all live sessions.
   useEffect(() => {
+    const save = () => {
+      const { liveSessions, saveSession } = useSessionStore.getState();
+      for (const id of Object.keys(liveSessions)) saveSession(id);
+    };
     const interval = setInterval(save, 30_000);
     return () => clearInterval(interval);
-  }, [save]);
-
-  return { save, isSaving };
+  }, []);
 }

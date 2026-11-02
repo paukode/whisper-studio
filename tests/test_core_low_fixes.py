@@ -122,18 +122,19 @@ def test_kill_defers_fd_close_to_reader(monkeypatch):
     assert 4242 not in closed
 
 
-def test_kill_closes_fd_when_no_reader(monkeypatch):
+def test_a_second_kill_never_closes_the_fd(monkeypatch):
+    # The reader owns the close; a repeated kill() must not close a number
+    # that may already belong to another session or socket.
     sent, closed = [], []
     monkeypatch.setattr(T.os, "kill", lambda pid, sig: sent.append((pid, sig)))
     monkeypatch.setattr(T.os, "close", lambda fd: closed.append(fd))
 
     sess = _mk_session(7777)
-    sess._reader_task = None  # no reader was ever started
+    sess._reader_task = object()
+    sess.kill()
     sess.kill()
 
-    assert sess._closing is True
-    # With no reader to own the close, kill() closes the fd itself.
-    assert 7777 in closed
+    assert 7777 not in closed
 
 
 def test_reader_closes_fd_on_shutdown_flag():
@@ -201,12 +202,22 @@ def test_execute_task_tool_reports_invalid_status(monkeypatch, tmp_path):
     task = tt.create_task(sid, "task Z")
 
     out = json.loads(
-        tt.execute_task_tool(
-            "task_update",
-            {"session_id": sid, "task_id": task["id"], "status": "bogus"},
-        )
+        tt.execute_task_tool("task_update", {"task_id": task["id"], "status": "bogus"}, sid)
     )
 
     assert "error" in out
     assert out.get("updated") is None
     assert "bogus" in out["error"]
+
+
+def test_a_task_db_read_error_raises_and_caches_nothing(monkeypatch):
+    import sqlite3
+
+    def broken():
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(tt, "_get_conn", broken)
+    tt._task_store.pop("sess-db-error", None)
+    with pytest.raises(sqlite3.OperationalError):
+        tt.get_session_tasks("sess-db-error")
+    assert "sess-db-error" not in tt._task_store

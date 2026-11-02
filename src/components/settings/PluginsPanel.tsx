@@ -1,7 +1,8 @@
 import React, { useCallback, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { get } from '@/api/client';
+import { get, readErrorBody } from '@/api/client';
 import { useUIStore } from '@/stores/uiStore';
+import { toError } from '@/utils/toError';
 
 interface Plugin {
   name: string;
@@ -24,9 +25,8 @@ interface PluginsPayload {
 }
 
 async function fetchPlugins(): Promise<PluginsPayload> {
-  const data = await get<{ plugins?: Plugin[]; plugins_dir?: string } | Plugin[]>('/api/plugins');
-  if (Array.isArray(data)) return { plugins: data, pluginsDir: '' };
-  return { plugins: data.plugins ?? [], pluginsDir: data.plugins_dir ?? '' };
+  const data = await get<{ plugins: Plugin[]; plugins_dir: string }>('/api/plugins');
+  return { plugins: data.plugins, pluginsDir: data.plugins_dir };
 }
 
 // A minimal, correct plugin the loader accepts. Mirrors the shape the backend
@@ -102,18 +102,8 @@ export const PluginsPanel: React.FC = () => {
           `/api/plugins/${encodeURIComponent(name)}/toggle`,
           { method: 'PATCH' },
         );
-        if (!resp.ok) {
-          // Pull out the FastAPI `detail` so the protected-plugin
-          // message surfaces verbatim instead of a generic "HTTP 409".
-          let detail = `HTTP ${resp.status}`;
-          try {
-            const body = (await resp.json()) as { detail?: string };
-            if (body.detail) detail = body.detail;
-          } catch {
-            /* not JSON, keep the HTTP code */
-          }
-          throw new Error(detail);
-        }
+        // The FastAPI `detail` (e.g. the protected-plugin message) verbatim.
+        if (!resp.ok) throw new Error(await readErrorBody(resp));
         const body = (await resp.json()) as { note?: string; restartRequired?: boolean };
         await refetch();
         // Enabling loads the plugin live (its tools are available next message);
@@ -145,15 +135,13 @@ export const PluginsPanel: React.FC = () => {
         fd.append('overwrite', overwrite ? 'true' : 'false');
         const resp = await fetch('/api/plugins/upload', { method: 'POST', body: fd });
         if (resp.status === 409 && !overwrite) {
-          const body = (await resp.json().catch(() => ({}))) as { detail?: string };
-          if (window.confirm(`${body.detail ?? 'That plugin already exists.'} Replace it?`)) {
+          if (window.confirm(`${await readErrorBody(resp)} Replace it?`)) {
             return send(true);
           }
           return;
         }
         if (!resp.ok) {
-          const body = (await resp.json().catch(() => ({}))) as { detail?: string };
-          addToast({ type: 'error', message: body.detail ?? `Upload failed (HTTP ${resp.status})` });
+          addToast({ type: 'error', message: `Upload failed: ${await readErrorBody(resp)}` });
           return;
         }
         const body = (await resp.json()) as { name?: string };
@@ -267,7 +255,7 @@ export const PluginsPanel: React.FC = () => {
 
       {error && (
         <p className="settings-empty" role="alert">
-          Could not load plugins. The plugins API may not be available.
+          Could not load plugins: {toError(error).message}
         </p>
       )}
 

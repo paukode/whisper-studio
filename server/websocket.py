@@ -12,6 +12,7 @@ Message protocol to the client:
     {"type": "interim",  "text": str}   ("" withdraws the draft on screen)
     {"type": "transcript", "text": str, "speaker": str, "chunk_id": int}
     {"type": "speaker_update", "updates": [{"chunk_id": int, "speaker": str}]}
+    {"type": "speaker_error", "message": str}   (labelling failed; labels stay provisional)
     {"type": "pong"} / {"type": "session_ended"}
 
 ``speaker_update`` carries re-clustering corrections: diarization assigns
@@ -59,10 +60,8 @@ def resolve_translator(
       source Canary cannot read (Whisper heard ja or ar) gets no line.
     - Apple: any pair among its ~20 languages, on the client via the shell
       bridge; auto-detects an unknown source.
-    Legacy stored modes from the earlier design ("auto"/"model") map to
-    Canary. Pure so it is unit-testable.
+    Any other mode gets no line. Pure so it is unit-testable.
     """
-    mode = {"auto": "canary", "model": "canary"}.get(mode, mode)
     if mode == "off":
         return None
     if language is not None and language == target:
@@ -330,9 +329,9 @@ async def websocket_endpoint(
     # Reject cross-site WebSocket handshakes (the HTTP Origin middleware does
     # not see WS upgrades). Prevents a malicious page from opening this audio
     # channel against the local app.
-    from server.infrastructure.security import is_ws_origin_allowed
+    from server.infrastructure.security import is_ws_origin_present_and_allowed
 
-    if not is_ws_origin_allowed(websocket.headers.get("origin")):
+    if not is_ws_origin_present_and_allowed(websocket.headers.get("origin")):
         await websocket.close(code=1008)
         return
     await websocket.accept()
@@ -403,8 +402,8 @@ async def websocket_endpoint(
         async with send_lock:
             try:
                 await websocket.send_json(payload)
-            except Exception:
-                pass  # client closed mid-send — benign disconnect race
+            except (WebSocketDisconnect, RuntimeError, OSError):
+                pass  # client closed mid-send: benign disconnect race
 
     async def emit_events(events: list[dict]) -> None:
         """Relay ordered backend events; label finals via diarization."""
@@ -575,7 +574,7 @@ async def websocket_endpoint(
             # a silent multi-second stall on the first sentence reads as
             # "nothing transcribes" (large-v3 loads for seconds).
             load_s = None
-            if hasattr(backend_mod, "is_loaded") and not backend_mod.is_loaded():
+            if not backend_mod.is_loaded():
                 loading_since = time.monotonic()
                 await load_model_into_memory()
                 load_s = time.monotonic() - loading_since
@@ -596,8 +595,9 @@ async def websocket_endpoint(
         try:
             events = await loop.run_in_executor(backend_mod.executor, asr_session.finish)
             await emit_events(events)
-        except Exception as e:
-            log.debug("ASR finish failed: %s", e)
+        except Exception:
+            # The last sentence of the take is lost: say so in the log.
+            log.error("ASR finish failed: the final utterance was not transcribed", exc_info=True)
 
     async def replay_carryover() -> None:
         """Emit what earlier connections of this take still had in flight
@@ -621,14 +621,10 @@ async def websocket_endpoint(
                 log.info("Relaying %d event(s) a dropped connection left in flight", len(events))
             await emit_events(events)
 
-    async def switch_backend(requested: str, variant: str | None = None) -> None:
+    async def switch_backend(requested: str) -> None:
         """Live model switch from the transcript panel header (or Settings).
         Flushes the outgoing pipeline first so the seam isn't clipped, then
-        routes subsequent audio to the new model. No-op when unchanged.
-
-        ``variant`` is accepted for wire compatibility with older clients
-        and ignored."""
-        del variant
+        routes subsequent audio to the new model. No-op when unchanged."""
         nonlocal backend_mod, backend_name, asr_session
         new_name = resolve_name(requested)
         if new_name == backend_name:
@@ -644,11 +640,7 @@ async def websocket_endpoint(
         # 3.1 GB and stacks up fast on small machines.
         # Parakeet (0.6B) stays resident: it is the dictation mic's always-on
         # engine and may be serving another connection.
-        if (
-            resolve_name(backend_name) != "parakeet"
-            and hasattr(backend_mod, "unload")
-            and backend_mod.is_loaded()
-        ):
+        if resolve_name(backend_name) != "parakeet" and backend_mod.is_loaded():
             old_label = _backend_label(backend_name)
             try:
                 await loop.run_in_executor(backend_mod.executor, backend_mod.unload)
@@ -720,11 +712,6 @@ async def websocket_endpoint(
                     continue
 
                 if msg.get("type") == "set_model":
-                    await switch_backend(msg.get("backend") or "", msg.get("variant"))
-                    continue
-
-                if msg.get("type") == "set_backend":
-                    # Legacy client message (pre unified-model-selector).
                     await switch_backend(msg.get("backend") or "")
                     continue
 
@@ -853,6 +840,10 @@ async def websocket_endpoint(
                 _end_take(session_id, slot)
             if asr_session is not None:
                 try:
-                    await loop.run_in_executor(backend_mod.executor, asr_session.close)
-                except Exception:
-                    pass
+                    # Cancellation of the socket must not cancel a close that
+                    # is still queued behind another decode on the ASR worker.
+                    close_job = loop.run_in_executor(backend_mod.executor, asr_session.close)
+                    close_job.add_done_callback(lambda job: job.cancelled() or job.exception())
+                    await asyncio.shield(close_job)
+                except Exception as e:
+                    log.warning("ASR session close failed: %s", e)

@@ -112,6 +112,15 @@ def _run(monkeypatch, tool: str, *, plan_mode: bool):
     async def _go():
         return await te.execute_tool_batch(
             [{"id": "t1", "name": tool, "input": {"content": "x"}}],
+            # The permission-plumbing router is a content-only stub.
+            tool_schemas={
+                tool: {
+                    "type": "object",
+                    "properties": {"content": {"type": "string"}},
+                    "required": ["content"],
+                    "additionalProperties": False,
+                }
+            },
             is_concurrent_safe=lambda n: False,
             loop=asyncio.get_running_loop(),
             executor=executor,

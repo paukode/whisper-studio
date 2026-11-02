@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderHook } from '@testing-library/react';
+import { renderHook, waitFor } from '@testing-library/react';
 
 // /goal follows Claude Code semantics: the goal text is BOTH the completion
 // gate and the first message. Arming the gate alone left the composer empty
@@ -35,13 +35,15 @@ function makeOpts(overrides: Partial<UseSlashCommandsOptions> = {}): UseSlashCom
 
 describe('useSlashCommands – /goal', () => {
   beforeEach(() => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      new Response('{"ok":true}', { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    );
     useGoalStore.getState().clearGoal('goal-sess');
     getChatStore('goal-sess').getState().setStreaming(false);
   });
   afterEach(() => vi.restoreAllMocks());
 
-  it('sets the goal, persists it, and sends the text as the first message', () => {
+  it('sets the goal, persists it, and sends the text as the first message', async () => {
     const chatStream = { send: vi.fn(), sendMidTurn: vi.fn(), abort: vi.fn() };
     const { result } = renderHook(() =>
       useSlashCommands(makeOpts({ chatStream: chatStream as unknown as UseSlashCommandsOptions['chatStream'] })),
@@ -49,16 +51,16 @@ describe('useSlashCommands – /goal', () => {
 
     expect(result.current.handleSlashCommand('/goal fix the red CI pipeline')).toBe(true);
 
+    await waitFor(() => expect(chatStream.send).toHaveBeenCalledWith('fix the red CI pipeline'));
     expect(useGoalStore.getState().byId['goal-sess']?.goal).toBe('fix the red CI pipeline');
     expect(fetch).toHaveBeenCalledWith(
       '/api/sessions/goal-sess/goal',
       expect.objectContaining({ method: 'POST' }),
     );
-    expect(chatStream.send).toHaveBeenCalledWith('fix the red CI pipeline');
     expect(chatStream.sendMidTurn).not.toHaveBeenCalled();
   });
 
-  it('while a turn is streaming, steers that turn instead of starting a second one', () => {
+  it('while a turn is streaming, steers that turn instead of starting a second one', async () => {
     getChatStore('goal-sess').getState().setStreaming(true);
     const chatStream = { send: vi.fn(), sendMidTurn: vi.fn(), abort: vi.fn() };
     const { result } = renderHook(() =>
@@ -67,11 +69,11 @@ describe('useSlashCommands – /goal', () => {
 
     result.current.handleSlashCommand('/goal make it green');
 
-    expect(chatStream.sendMidTurn).toHaveBeenCalledWith('make it green');
+    await waitFor(() => expect(chatStream.sendMidTurn).toHaveBeenCalledWith('make it green'));
     expect(chatStream.send).not.toHaveBeenCalled();
   });
 
-  it('/goal clear clears without sending anything', () => {
+  it('/goal clear clears without sending anything', async () => {
     useGoalStore.getState().setGoal('goal-sess', 'old', true);
     const chatStream = { send: vi.fn(), sendMidTurn: vi.fn(), abort: vi.fn() };
     const { result } = renderHook(() =>
@@ -80,10 +82,45 @@ describe('useSlashCommands – /goal', () => {
 
     result.current.handleSlashCommand('/goal clear');
 
-    expect(useGoalStore.getState().byId['goal-sess']).toBeUndefined();
-    expect(fetch).toHaveBeenCalledWith('/api/sessions/goal-sess/goal', { method: 'DELETE' });
+    await waitFor(() => expect(useGoalStore.getState().byId['goal-sess']).toBeUndefined());
+    expect(fetch).toHaveBeenCalledWith('/api/sessions/goal-sess/goal', expect.objectContaining({ method: 'DELETE' }));
     expect(chatStream.send).not.toHaveBeenCalled();
     expect(chatStream.sendMidTurn).not.toHaveBeenCalled();
+  });
+
+  it('a refused goal says why and sends nothing', async () => {
+    vi.mocked(fetch).mockImplementation(async () =>
+      new Response('{"error":"goal is required"}', { status: 400, headers: { 'Content-Type': 'application/json' } }),
+    );
+    const addToast = vi.fn();
+    const chatStream = { send: vi.fn(), sendMidTurn: vi.fn(), abort: vi.fn() };
+    const { result } = renderHook(() =>
+      useSlashCommands(makeOpts({ addToast, chatStream: chatStream as unknown as UseSlashCommandsOptions['chatStream'] })),
+    );
+
+    result.current.handleSlashCommand('/goal ship it');
+
+    await waitFor(() =>
+      expect(addToast).toHaveBeenCalledWith({ type: 'error', message: 'Could not set the goal: goal is required' }),
+    );
+    expect(useGoalStore.getState().byId['goal-sess']).toBeUndefined();
+    expect(chatStream.send).not.toHaveBeenCalled();
+  });
+
+  it('a failed clear keeps the goal and says why', async () => {
+    useGoalStore.getState().setGoal('goal-sess', 'old', true);
+    vi.mocked(fetch).mockImplementation(async () =>
+      new Response('{"error":"database is locked"}', { status: 500, headers: { 'Content-Type': 'application/json' } }),
+    );
+    const addToast = vi.fn();
+    const { result } = renderHook(() => useSlashCommands(makeOpts({ addToast })));
+
+    result.current.handleSlashCommand('/goal clear');
+
+    await waitFor(() =>
+      expect(addToast).toHaveBeenCalledWith({ type: 'error', message: 'Could not clear the goal: database is locked' }),
+    );
+    expect(useGoalStore.getState().byId['goal-sess']?.goal).toBe('old');
   });
 });
 

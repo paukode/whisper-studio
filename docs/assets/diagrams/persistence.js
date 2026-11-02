@@ -1,4 +1,4 @@
-/* Architecture - persistence: startup migrations, the SQLite database, and the session latch */
+/* Architecture: persistence: startup migrations, the SQLite database, and the session latch */
 WSDiagram.mount("persistence-diagram", {
   title: "Persistence: startup, schema, and the session latch",
   grid: { nodeW: 172, nodeH: 62, gapX: 56, gapY: 40 },
@@ -12,7 +12,7 @@ WSDiagram.mount("persistence-diagram", {
     { id: "sess", group: "persist", kind: "store", col: 3, row: 0, label: "sessions", sub: "chat_history · segments", desc: "The main table: id, title flags, timestamps, JSON transcript segments, JSON chat_history, speaker_names, workspace_path, pinned, archived, goal, goal_state." },
     { id: "cost", group: "persist", kind: "store", col: 3, row: 1, label: "session_costs", sub: "per-call token counts", desc: "One row per billed model call: token counts, cache reads and writes, source and count provenance, and API duration; priced at read time. Backs the Costs tab and the spend caps." },
     { id: "cron", group: "persist", kind: "store", col: 3, row: 2, label: "cron_runs", sub: "run history", desc: "Per-job scheduled-task run history with a status lease (running / ok / failed) so a fire interrupted by a restart can be reconciled." },
-    { id: "latch", group: "server", col: 4, row: 0, label: "Session latch", sub: "freeze config", desc: "On a session's first turn, model / effort / chat_models are snapshotted in memory and reused for the rest of the session. A restart drops the snapshot." }
+    { id: "latch", group: "server", col: 4, row: 0, label: "Session latch", sub: "freeze config", desc: "On a session's first turn, model, chat_models, effort, permission mode and region are snapshotted in memory and reused for the rest of the session. A restart drops the snapshot." }
   ],
   edges: [
     { from: "app", to: "mig", label: "boot" },

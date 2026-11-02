@@ -9,6 +9,9 @@ import { useSessionStore } from '@/stores/sessionStore';
 import { useGoalStore } from '@/stores/goalStore';
 import { launchRun } from '@/api/workflows';
 import { startWatch, planAutofix } from '@/api/ci';
+import { clearSessionGoal, setSessionGoal } from '@/api/goals';
+import { renameSession } from '@/api/sessions';
+import { toError } from '@/utils/toError';
 import { activeEffortLevel, noChatModelHint, useSettingsStore } from '@/stores/settingsStore';
 import type { SettingsState } from '@/stores/settingsStore';
 import type { UseChatStreamReturn } from '@/hooks/useChatStream';
@@ -16,6 +19,7 @@ import { requestModelChange } from '@/components/chat/dataRetentionConsent';
 import { ContextReportPanel, type ContextReport } from '@/components/chat/ContextReportPanel';
 import { clampEffort, effortLabel, EFFORT_ORDER, thinkingLabel } from '@/utils/effort';
 import { downloadFile } from '@/utils/downloadFile';
+import { ICON } from '@/components/chat/activityIcons';
 import { useTheme } from '@/providers/ThemeProvider';
 import type { ThemeKey } from '@/types/theme';
 import {
@@ -45,7 +49,7 @@ export interface UseSlashCommandsOptions {
   attachWorkspaceFileAsChip: (path: string) => Promise<void> | void;
   /** Fetch + upload a workspace file and return its attachment record (no
    *  chip) — used by the non-blocking `/file:path question` auto-send. */
-  uploadWorkspaceFile: (path: string) => Promise<{ id: string; filename: string } | null>;
+  uploadWorkspaceFile: (path: string) => Promise<{ id: string; filename: string }>;
 }
 
 export interface UseSlashCommandsResult {
@@ -55,14 +59,10 @@ export interface UseSlashCommandsResult {
 }
 
 /**
- * Slash-command dispatcher for the chat composer. Extracted verbatim from
- * ChatInput.tsx — interprets `/effort`, `/model`, `/doctor`, `/help`,
- * `/btw`, `/rename`, `/subagent`, `/file:…`, and the rest. Side effects go
- * through the same store actions and SSE stream the component used; this
- * hook just owns the (large) switch so the component body stays readable.
- *
- * Dependencies are passed in and aliased to their original local names
- * (SLASH_COMMANDS) so the moved switch body is byte-for-byte identical.
+ * Slash-command dispatcher for the chat composer: interprets `/effort`,
+ * `/model`, `/doctor`, `/help`, `/rename`, `/subagent`, `/file:…`,
+ * and the rest. Side effects go through the store actions and the chat
+ * stream; this hook owns the (large) switch so ChatInput stays readable.
  */
 export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommandsResult {
   const {
@@ -100,8 +100,11 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
     // non-blocking: the message + working indicator appear immediately while
     // the file is fetched/converted/uploaded in the background.
     if (cmd?.startsWith('file:')) {
-      const filePath = cmd.slice(5);
-      const question = parts.slice(1).join(' ').trim();
+      // Read the path and question from the raw input: the path keeps its
+      // case (case-sensitive volumes) and the question its line breaks.
+      const fileMatch = /^\/file:(\S*)(?:\s+([\s\S]*))?$/i.exec(input);
+      const filePath = fileMatch?.[1] ?? '';
+      const question = (fileMatch?.[2] ?? '').trim();
       if (!filePath) {
         addToast({ type: 'info', message: 'Usage: /file:path [question]', duration: 3000, persist: false });
         return true;
@@ -132,11 +135,14 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
       };
 
       void (async () => {
-        const att = await uploadWorkspaceFile(filePath);
-        if (!att) {
+        let att: { id: string; filename: string };
+        try {
+          att = await uploadWorkspaceFile(filePath);
+        } catch (e) {
+          const why = toError(e).message;
           chat().setStreaming(false);
-          patchMessage({ content: `${question}\n\n_[Could not attach ${fileName}]_` });
-          addToast({ type: 'error', message: `Could not attach ${fileName}`, duration: 3000 });
+          patchMessage({ content: `${question}\n\n_[Could not attach ${fileName}: ${why}]_` });
+          addToast({ type: 'error', message: `Could not attach ${fileName}: ${why}` });
           return;
         }
         // Record the real id on the already-shown message so a later
@@ -188,8 +194,8 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
           // (Fable 5) must show the consent screen on EVERY switch, no
           // matter which surface initiates it. Only toast if the switch
           // actually happened (the user may cancel the consent dialog).
-          // Confirm with the version label ("Sonnet 4.6"), matching the model
-          // box and the autocomplete — not the raw key ("sonnet").
+          // Confirm with the version label ("Sonnet 5.5"), matching the model
+          // box and the autocomplete, not the raw key ("sonnet5.5").
           const pickedLabel = models.find((m) => m.key === arg)?.name ?? arg;
           void requestModelChange(arg).then((switched) => {
             if (switched) {
@@ -207,8 +213,8 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
         return true;
       }
       case 'verbosity': {
-        // Verbosity is the unified Response length control (stored as GPT-5.x's
-        // native verbosity low/medium/high; shown as Brief/Normal/Detailed).
+        // Verbosity is the unified Response length control (stored as the
+        // OpenAI models' native verbosity low/medium/high; shown as Brief/Normal/Detailed).
         // Accept either the visible labels or the raw stored levels.
         const alias: Record<string, 'low' | 'medium' | 'high'> = {
           brief: 'low', low: 'low',
@@ -252,55 +258,44 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
               useUIStore.getState().pushDialog({
                 kind: 'open', title: false, size: 'lg', body: <ContextReportPanel report={r} />,
               });
-            } catch {
-              addToast({ type: 'error', message: 'Context report failed.', duration: 3000 });
+            } catch (e) {
+              addToast({
+                type: 'error',
+                message: e instanceof Error ? e.message : 'Context report failed.',
+                duration: 3000,
+              });
             }
           })();
           return true;
         }
         void (async () => {
           try {
-            const result = await get<Record<string, unknown>>('/api/doctor');
-            const status = String(result.status ?? 'ok');
-            const checks = Array.isArray(result.checks)
-              ? (result.checks as Array<{ check: string; status: string; detail?: string }>)
-              : [];
+            // server/doctor.py always answers {status, checks}.
+            const result = await get<{
+              status: 'ok' | 'warn' | 'error';
+              checks: Array<{ check: string; status: string; detail?: string }>;
+            }>('/api/doctor');
+            const { status, checks } = result;
 
-            const sIcon = status === 'ok' ? '✓' : status === 'warn' ? '⚠' : '✗';
+            const sIcon = status === 'ok' ? ICON.check : status === 'warn' ? ICON.alert : ICON.x;
             const sColor = status === 'ok' ? 'var(--success)' : status === 'warn' ? 'var(--warning)' : 'var(--danger)';
 
             const dotColor = (s: string) => s === 'ok' ? 'var(--success)' : s === 'warn' ? 'var(--warning)' : 'var(--danger)';
             const rowStyle: React.CSSProperties = { display: 'flex', alignItems: 'flex-start', gap: 10, padding: '7px 12px', borderBottom: '1px solid var(--border)' };
             const dotStyle = (c: string): React.CSSProperties => ({ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, marginTop: 3, background: c });
 
-            let rows: React.ReactNode[];
-            if (checks.length > 0) {
-              rows = checks.map((c, i) => (
-                <div key={i} style={rowStyle}>
-                  <span style={dotStyle(dotColor(c.status))} />
-                  <span style={{ fontWeight: 500, minWidth: 120, flexShrink: 0 }}>{c.check}</span>
-                  <span style={{ color: 'var(--text-muted)', wordBreak: 'break-all' }}>{c.detail ?? ''}</span>
-                </div>
-              ));
-            } else {
-              rows = Object.entries(result)
-                .filter(([k]) => k !== 'status' && k !== 'checks')
-                .map(([k, v]) => {
-                  const detail = typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v);
-                  return (
-                    <div key={k} style={rowStyle}>
-                      <span style={dotStyle('var(--success)')} />
-                      <span style={{ fontWeight: 500, minWidth: 120, flexShrink: 0 }}>{k}</span>
-                      <span style={{ color: 'var(--text-muted)', wordBreak: 'break-all' }}>{detail}</span>
-                    </div>
-                  );
-                });
-            }
+            const rows = checks.map((c, i) => (
+              <div key={i} style={rowStyle}>
+                <span style={dotStyle(dotColor(c.status))} />
+                <span style={{ fontWeight: 500, minWidth: 120, flexShrink: 0 }}>{c.check}</span>
+                <span style={{ color: 'var(--text-muted)', wordBreak: 'break-all' }}>{c.detail ?? ''}</span>
+              </div>
+            ));
 
             const body = (
               <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden', fontSize: 13 }}>
                 <div style={{ padding: '8px 12px', background: 'var(--bg-elevated)', borderBottom: '1px solid var(--border)', fontWeight: 600, fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ color: sColor }}>{sIcon}</span> Diagnostics: {status}
+                  <span style={{ color: sColor, display: 'inline-flex' }}>{sIcon}</span> Diagnostics: {status}
                 </div>
                 {rows}
               </div>
@@ -324,72 +319,17 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
         openSettings('skills');
         return true;
       }
-      case 'btw': {
-        if (!arg) {
-          addToast({ type: 'info', message: 'Usage: /btw <question>', duration: 3000, persist: false });
-          return true;
-        }
-        const fullQuestion = input.slice(5).trim();
-        addToast({ type: 'info', message: `Asking: ${fullQuestion}…`, duration: 3000, persist: false });
-        void (async () => {
-          try {
-            const response = await fetch('/api/chat/btw', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                question: fullQuestion,
-                model: selectedModel,
-                // Attributes the side question's cost to this session.
-                session_id: sessionId,
-                recent_history: getChatStore(sessionId).getState().messages.slice(-4).map(m => ({ role: m.role, content: m.content })),
-              }),
-            });
-            if (!response.ok || !response.body) throw new Error('BTW request failed');
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder();
-            let buffer = '';
-            let btwContent = '';
-            let btwError = '';
-            for (;;) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              buffer += decoder.decode(value, { stream: true });
-              const lines = buffer.split('\n');
-              buffer = lines.pop() ?? '';
-              for (const line of lines) {
-                const trimmedLine = line.trim();
-                if (!trimmedLine.startsWith('data: ')) continue;
-                const payload = trimmedLine.slice(6);
-                if (payload === '[DONE]') continue;
-                try {
-                  const evt: Record<string, unknown> = JSON.parse(payload);
-                  if (typeof evt.text === 'string') btwContent += evt.text;
-                  else if (typeof evt.error === 'string') btwError = evt.error;
-                } catch { /* skip malformed JSON */ }
-              }
-            }
-            if (btwContent) {
-              useUIStore.getState().setBtwPopup({ question: fullQuestion, answer: btwContent });
-            } else if (btwError) {
-              // A refusal (for example Local mode) says why instead of going silent.
-              addToast({ type: 'error', message: btwError, duration: 6000 });
-            }
-          } catch {
-            addToast({ type: 'error', message: 'BTW request failed.', duration: 3000 });
-          }
-        })();
-        return true;
-      }
       case 'rename': {
         const newTitle = input.slice(8).trim(); // everything after "/rename "
         if (newTitle && sessionId) {
-          useSessionStore.getState().updateSessionTitle(sessionId, newTitle, true);
-          fetch(`/api/sessions/${sessionId}/title`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ title: newTitle, customTitle: true }),
-          }).catch(() => {});
-          addToast({ type: 'success', message: `Session renamed to "${newTitle}"`, duration: 2000, persist: false });
+          renameSession(sessionId, newTitle)
+            .then(() => {
+              useSessionStore.getState().updateSessionTitle(sessionId, newTitle, true);
+              addToast({ type: 'success', message: `Session renamed to "${newTitle}"`, duration: 2000, persist: false });
+            })
+            .catch((e: unknown) => {
+              addToast({ type: 'error', message: `Could not rename the session: ${toError(e).message}` });
+            });
         } else {
           addToast({ type: 'info', message: 'Usage: /rename <new title>', duration: 3000, persist: false });
         }
@@ -406,10 +346,8 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
           return true;
         }
         void (async () => {
-          // Launch on the composer's CURRENT model and effort. Sending neither
-          // used to drop the run onto the configured default model at the
-          // provider's default reasoning, so the same saved workflow behaved
-          // differently depending on how it was started.
+          // Launch on the composer's CURRENT model and effort, so a saved
+          // workflow behaves the same however it was started.
           const settings = useSettingsStore.getState();
           const { selectedModel } = settings;
           const effortLevel = activeEffortLevel(settings);
@@ -435,7 +373,7 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
               type: 'error',
               message: untrusted
                 ? `Workflow '${wfName}' needs one approval first: run it from chat and approve its preview card.`
-                : `Could not run workflow '${wfName}'. Is it saved?`,
+                : `Could not run workflow '${wfName}': ${toError(e).message}`,
               duration: 4000,
             });
           }
@@ -485,8 +423,9 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
                 standalone: true,
               });
             }
-          } catch {
-            addToast({ type: 'error', message: 'CI unavailable — is the GitHub CLI (gh) installed and authed?', duration: 3500 });
+          } catch (e) {
+            const reason = e instanceof Error ? e.message : String(e);
+            addToast({ type: 'error', message: `CI failed: ${reason}`, duration: 6000 });
           }
         })();
         return true;
@@ -542,29 +481,40 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
             }
           })();
         } else if (goalText.toLowerCase() === 'clear') {
-          useGoalStore.getState().clearGoal(sessionId);
-          void fetch(`/api/sessions/${sessionId}/goal`, { method: 'DELETE' }).catch(() => {});
-          addToast({ type: 'success', message: 'Goal cleared.', duration: 2000, persist: false });
+          void (async () => {
+            try {
+              await clearSessionGoal(sessionId);
+            } catch (e) {
+              addToast({ type: 'error', message: `Could not clear the goal: ${toError(e).message}` });
+              return;
+            }
+            useGoalStore.getState().clearGoal(sessionId);
+            addToast({ type: 'success', message: 'Goal cleared.', duration: 2000, persist: false });
+          })();
         } else if (!goalText) {
           addToast({ type: 'info', message: 'Usage: /goal <text>  ·  /goal clear  ·  /goal gate add <command>', duration: 3000, persist: false });
         } else {
-          useGoalStore.getState().setGoal(sessionId, goalText, true);
-          void fetch(`/api/sessions/${sessionId}/goal`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ goal: goalText }),
-          }).catch(() => {});
-          // Claude Code semantics: the goal text IS the first message. Arming
-          // the completion gate alone left the composer empty and nothing
-          // running, which read as a swallowed message. If a turn is already
-          // streaming, fold it into that turn instead of starting a second.
-          if (getChatStore(sessionId).getState().isStreaming) {
-            void chatStream.sendMidTurn(goalText);
-            addToast({ type: 'success', message: 'Goal set. Steering the running turn toward it.', duration: 2500, persist: false });
-          } else {
-            void chatStream.send(goalText);
-            addToast({ type: 'success', message: 'Goal set. Working toward it now.', duration: 2500, persist: false });
-          }
+          // The goal is armed on the server first: a refused or failed write
+          // says why and sends nothing, so no turn runs without its gate.
+          void (async () => {
+            try {
+              await setSessionGoal(sessionId, goalText);
+            } catch (e) {
+              addToast({ type: 'error', message: `Could not set the goal: ${toError(e).message}` });
+              return;
+            }
+            useGoalStore.getState().setGoal(sessionId, goalText, true);
+            // Claude Code semantics: the goal text IS the first message, so
+            // arming the gate also starts the work. If a turn is already
+            // streaming, fold it into that turn instead of starting a second.
+            if (getChatStore(sessionId).getState().isStreaming) {
+              void chatStream.sendMidTurn(goalText);
+              addToast({ type: 'success', message: 'Goal set. Steering the running turn toward it.', duration: 2500, persist: false });
+            } else {
+              void chatStream.send(goalText);
+              addToast({ type: 'success', message: 'Goal set. Working toward it now.', duration: 2500, persist: false });
+            }
+          })();
         }
         return true;
       }
@@ -595,7 +545,7 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
           for (const c of cmds) {
             helpSections.push(
               <div key={`cmd-${c.cmd}`} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '5px 0', fontSize: '0.88em' }}>
-                <span style={{ flexShrink: 0, width: 24, textAlign: 'center' }}>{c.icon}</span>
+                <span style={{ flexShrink: 0, width: 24, display: 'inline-flex', justifyContent: 'center', color: 'var(--text-muted)' }}>{ICON[c.icon]}</span>
                 <span style={{ fontWeight: 500, color: 'var(--accent)', minWidth: 80 }}>/{c.cmd.trim()}</span>
                 <span style={{ color: 'var(--text-secondary)' }}>{c.desc}</span>
               </div>,
@@ -658,7 +608,7 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
         // that hosts the live progress card and (later) the final answer. The
         // assistant message opens with an intro so the user knows work is
         // happening in the background and that they can keep chatting.
-        const INTRO = '🤖 **Subagent started**: working on this in the background. '
+        const INTRO = '**Subagent started**: working on this in the background. '
           + 'Keep chatting; **Open** on its row below shows everything it does, and it will post '
           + 'the result here when done. Stop it from the tasks pill in the header.';
         // Distinct timestamps: two synchronous toISOString() calls land on the
@@ -737,7 +687,7 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
               // agent rows to "stopped" so they don't spin forever, and note it.
               patch((m) => {
                 const tr = m.teamReports?.[teamId];
-                if (!tr) return { ...m, content: '⏹ Subagent stopped.' };
+                if (!tr) return { ...m, content: 'Subagent stopped.' };
                 const agents: Record<string, TeamAgentReport> = {};
                 for (const [k, a] of Object.entries(tr.agents)) {
                   agents[k] = (a.status === 'running' || a.status === 'pending')
@@ -746,7 +696,7 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
                 }
                 return {
                   ...m,
-                  content: '⏹ Subagent stopped.',
+                  content: 'Subagent stopped.',
                   teamReports: { ...m.teamReports, [teamId]: { ...tr, status: 'completed', agents } },
                 };
               });

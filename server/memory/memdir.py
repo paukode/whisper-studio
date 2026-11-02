@@ -1,15 +1,16 @@
-"""Memory directory management — MEMORY.md loading, truncation, path resolution.
+"""Memory directory management: MEMORY.md loading, truncation, path resolution.
 
 Two-tier layout:
-    data/global_memory/            — global tier: cross-workspace facts, alive
+    data/global_memory/              global tier: cross-workspace facts, alive
         MEMORY.md                    even in plain chat with no workspace open
-        *.md                       — topic files with YAML frontmatter
-        .cursor.json               — extraction cursor + throttle state
-    data/memory/<workspace_slug>/  — project tier: scoped to one workspace
-        MEMORY.md                  — index file (max 200 lines, 25 KB)
+        *.md                         topic files with YAML frontmatter
+        .cursor.json                 extraction cursor + throttle state (this
+                                     tier only)
+        .dream_meta.json             dream consolidation metadata
+    data/memory/<workspace_slug>/    project tier: scoped to one workspace
+        MEMORY.md                    index file (max 200 lines, 25 KB)
         *.md
-        .cursor.json
-        .dream_meta.json           — dream consolidation metadata
+        .dream_meta.json
 
 data/global_memory/ deliberately lives OUTSIDE data/memory/ so it can never
 collide with a workspace slug (slugs sanitize to [a-zA-Z0-9._-], so a marker
@@ -61,27 +62,28 @@ def get_workspace_slug(ws_path: str) -> str:
     return f"{base}-{digest}"
 
 
-def _migrate_legacy_slug_dir(ws_path: str, new_dir: str) -> None:
-    """One-time rename of a pre-disambiguation (basename-only) memory dir to the
-    new realpath-hashed slug.
+OLD_FOLDER_NOTICE_TITLE = "Old memory folder is not read"
 
-    Only runs when unambiguous: the legacy dir exists AND the new dir does not.
-    The old scheme kept exactly one dir per basename, so the first workspace
-    with that basename to access memory after the upgrade adopts it, keeping a
-    single-occupant workspace's memories intact. Refusing to act when the new
-    dir already exists means we never clobber an already-migrated (or freshly
-    created) store. Best-effort: a failed rename must not break memory access.
-    """
-    legacy_slug = _sanitize_basename(ws_path)
-    legacy_dir = os.path.join(MEMORY_BASE, legacy_slug)
-    if legacy_dir == new_dir:
-        return  # the hash suffix makes these differ; guard against edge cases
-    if os.path.isdir(legacy_dir) and not os.path.exists(new_dir):
-        try:
-            os.replace(legacy_dir, new_dir)
-            log.info("Migrated legacy memory dir %s -> %s", legacy_slug, os.path.basename(new_dir))
-        except OSError as e:
-            log.warning("Failed to migrate legacy memory dir %s: %s", legacy_slug, e)
+
+def _report_old_slug_dir(ws_path: str, mem_dir: str) -> None:
+    """Notice for a folder from the old basename-only naming (before the path
+    hash). It is not read, moved or deleted."""
+    name = _sanitize_basename(ws_path)
+    old_dir = os.path.join(MEMORY_BASE, name)
+    # "default" is the folder for memory with no workspace, not an old one.
+    if name == "default" or old_dir == mem_dir or not os.path.isdir(old_dir):
+        return
+    from server.notifications import old_format_notice
+
+    old_format_notice(
+        title=OLD_FOLDER_NOTICE_TITLE,
+        message=(
+            f"Project memory for {ws_path} is kept in {mem_dir}. The folder {old_dir} "
+            "uses the old naming, so the app does not read it and leaves it as it is. "
+            "If its memories belong to this workspace, move the files you want into the "
+            "new folder, then delete the old folder."
+        ),
+    )
 
 
 def get_memory_dir(ws_path: str | None = None) -> str:
@@ -89,8 +91,7 @@ def get_memory_dir(ws_path: str | None = None) -> str:
     slug = get_workspace_slug(ws_path) if ws_path else "default"
     mem_dir = os.path.join(MEMORY_BASE, slug)
     if ws_path:
-        os.makedirs(MEMORY_BASE, exist_ok=True)
-        _migrate_legacy_slug_dir(ws_path, mem_dir)
+        _report_old_slug_dir(ws_path, mem_dir)
     os.makedirs(mem_dir, exist_ok=True)
     return mem_dir
 
@@ -113,7 +114,7 @@ def ensure_memory_dir(ws_path: str | None) -> str | None:
 def ensure_global_memory_dir() -> str | None:
     """Guard: return the global memory dir if auto_memory is enabled.
 
-    Unlike the project tier, this needs no workspace — global memory is alive
+    Unlike the project tier, this needs no workspace, global memory is alive
     in plain chat mode too.
     """
     from server.infrastructure.feature_flags import is_enabled
@@ -213,8 +214,9 @@ def normalize_memory_filename(filename: str) -> tuple[str, str]:
     ``scan_memory_files`` only surfaces non-dot files ending in ``.md``; a
     filename that misses either rule creates a memory that can never be
     recalled or listed. So here we:
-      - append ``.md`` when it is missing (case-insensitive, so ``FOO.MD`` and
-        cased ``MEMORY.MD`` variants are left for the entrypoint guard), and
+      - append ``.md`` when it is missing, and write any other case of the
+        suffix as ``.md`` (``Notes.MD`` becomes ``Notes.md``; a cased
+        ``MEMORY.MD`` is left for the case-insensitive entrypoint guard), and
       - reject a basename that starts with ``.`` (a dotfile the scanner skips).
 
     Returns ``(normalized_filename, error)``. On rejection the error is
@@ -224,7 +226,9 @@ def normalize_memory_filename(filename: str) -> tuple[str, str]:
         return "", "filename is required."
     if os.path.basename(filename).startswith("."):
         return "", "memory filenames must not start with '.' (dotfiles are not recallable)."
-    if not filename.lower().endswith(".md"):
+    if filename.lower().endswith(".md"):
+        filename = filename[:-3] + ".md"
+    else:
         filename = f"{filename}.md"
     return filename, ""
 
@@ -236,7 +240,8 @@ def rebuild_index(memory_dir: str) -> None:
     capped at the entrypoint line limit. Called after every memory write or
     delete, so the index can never drift from the store. Direct writes to
     MEMORY.md stay blocked in the executor; this is the only writer.
-    Best-effort: an unwritable index must never fail the memory operation.
+    Raises OSError when the index cannot be written or removed, so the
+    caller reports that the index is stale.
     """
     from server.memory.scan import scan_memory_files
 
@@ -264,7 +269,7 @@ def rebuild_index(memory_dir: str) -> None:
         except FileNotFoundError:
             pass
         except OSError as e:
-            log.warning("Failed to remove empty memory index %s: %s", path, e)
+            raise OSError(f"the memory index {path} was not removed: {e}") from e
         return
 
     content = (
@@ -279,8 +284,8 @@ def rebuild_index(memory_dir: str) -> None:
             f.write(content)
         os.replace(tmp_path, path)
     except OSError as e:
-        log.warning("Failed to rebuild memory index %s: %s", path, e)
         try:
             os.remove(tmp_path)
-        except OSError:
+        except FileNotFoundError:
             pass
+        raise OSError(f"the memory index {path} was not rebuilt: {e}") from e

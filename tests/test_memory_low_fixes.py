@@ -105,7 +105,7 @@ def test_dream_consolidate_runs_under_consolidator_agent(tmp_path, monkeypatch):
 
     mem_dir = tmp_path / "mem"
     mem_dir.mkdir()
-    asyncio.run(dream.dream_consolidate(str(mem_dir), scope="global", model_id="m"))
+    asyncio.run(dream.dream_consolidate(str(mem_dir), scope="global"))
 
     assert captured["agent_type"] == "memory_consolidator"
     assert captured["agent_type"] != "memory_extractor"

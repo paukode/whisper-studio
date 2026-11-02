@@ -10,7 +10,7 @@ Local mode promises that nothing leaves this Mac. The contracts pinned here:
 * A model the live catalog gained after the session latched (a Discover
   install mid-session, or weights on disk with no config entry) runs in that
   session instead of being swapped for the latched cloud default.
-* Side paths that would reach Bedrock (/btw, /subagent) stay local.
+* /subagent, a side path that would reach Bedrock, stays local.
 
 The user layer and the on-device registry are patched where production reads
 them (``config._load_user_config`` and ``server.local.registry.local_models``),
@@ -195,7 +195,7 @@ def test_a_downloaded_model_stays_offered_when_the_project_replaces_the_catalog(
     cloud_key = cfg.load_config()["default_chat_model"]
     cloud_id = cfg.load_config()["chat_models"][cloud_key]
 
-    workspace({"chat_models": {cloud_key: cloud_id}})
+    workspace({"chat_models": {cloud_key: {"id": cloud_id}}})
     data = client.get("/api/models").json()
     assert [m["key"] for m in data["models"]] == ["local_gemma"]
     assert data["default"] == "local_gemma"
@@ -277,14 +277,6 @@ def test_hybrid_mode_lets_a_cloud_model_through_the_gate(
 # ── side paths ───────────────────────────────────────────────────────────────
 
 
-def test_local_mode_btw_is_refused_without_calling_bedrock(user_layer, no_cloud, client):
-    user_layer["model_mode"] = "local"
-    with client.stream("POST", "/api/chat/btw", json={"question": "what time is it"}) as r:
-        raw = b"".join(r.iter_raw()).decode()
-    frames = [json.loads(ln[6:]) for ln in raw.splitlines() if ln.startswith("data: {")]
-    assert frames and "Local mode" in frames[0]["error"]
-
-
 def test_local_mode_subagent_refuses_a_cloud_model(user_layer, registry, monkeypatch, client):
     user_layer["model_mode"] = "local"
 
@@ -298,3 +290,25 @@ def test_local_mode_subagent_refuses_a_cloud_model(user_layer, registry, monkeyp
         raw = b"".join(r.iter_raw()).decode()
     frames = [json.loads(ln[6:]) for ln in raw.splitlines() if ln.startswith("data: {")]
     assert frames and "Local mode" in frames[0]["error"]
+
+
+def test_a_transcript_reader_with_no_context_size_fails_the_turn_visibly(
+    user_layer, registry, no_cloud, local_path, client, monkeypatch
+):
+    """Condensation sizes the transcript by the reader's context window. When
+    that window is unknown (windows.context_window raises ValueError), the
+    turn fails with a visible setup error instead of guessing a size."""
+    from server.chat.engine import windows
+
+    user_layer["model_mode"] = "local"
+    registry["local_gemma"] = GEMMA
+
+    def unknown(model_key, meta=None):
+        raise ValueError(f"On-device model {model_key!r} is not installed")
+
+    monkeypatch.setattr(windows, "input_budget", unknown)
+    frames = _turn(client, "lm-condense-ctx", model="local_gemma", transcript="Speaker 1: hi")
+    errors = _errors(frames)
+    assert [e.get("error_code") for e in errors] == ["TURN_SETUP_FAILED"]
+    assert "is not installed" in errors[0]["error"]
+    assert local_path == []

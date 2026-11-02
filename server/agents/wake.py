@@ -40,7 +40,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from server.agents.journal import REPORT_CHARS
 from server.infrastructure.async_tasks import spawn
@@ -75,14 +75,11 @@ _late: dict[str, list[dict]] = {}
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def enabled() -> bool:
-    try:
-        return bool(load_config().get("wake_parent_on_reports", True))
-    except Exception:  # noqa: BLE001 - config trouble must not block delivery
-        return True
+    return bool(load_config().get("wake_parent_on_reports", True))
 
 
 def turn_is_live(session_id: str) -> bool:
@@ -247,22 +244,11 @@ def _model_key_for(model_ids: list[str]) -> str | None:
     None falls back to the default chat model."""
     if not model_ids:
         return None
-    try:
-        from server.chat.infra import _get_chat_models
+    from server.chat.infra import _get_chat_models
 
-        for key, entry in _get_chat_models().items():
-            if isinstance(entry, str):
-                if entry == model_ids[0]:
-                    return str(key)
-                continue
-            if isinstance(entry, dict) and model_ids[0] in (
-                entry.get("id"),
-                entry.get("model_id"),
-                entry.get("model"),
-            ):
-                return str(key)
-    except Exception:  # noqa: BLE001
-        return None
+    for key, model_id in _get_chat_models().items():
+        if model_id == model_ids[0]:
+            return str(key)
     return None
 
 

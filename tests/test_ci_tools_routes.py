@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -22,6 +23,7 @@ def _run(coro):
 # ── executors ────────────────────────────────────────────────────────────
 def test_ci_status_executor(monkeypatch):
     monkeypatch.setattr(provider, "gh_available", lambda: True)
+    monkeypatch.setattr(manager, "resolve_target", lambda b: (b, "/repo"))
     monkeypatch.setattr(
         manager, "status_snapshot", lambda b, c: {"available": True, "branch": b, "run": None}
     )
@@ -37,7 +39,7 @@ def test_ci_status_no_gh(monkeypatch):
 
 def test_ci_watch_executor(monkeypatch):
     monkeypatch.setattr(provider, "gh_available", lambda: True)
-    monkeypatch.setattr(tools, "_resolve", lambda ti: ("feat/x", "/repo"))
+    monkeypatch.setattr(manager, "resolve_target", lambda b: ("feat/x", "/repo"))
     monkeypatch.setattr(manager, "start_watch", lambda b, c, s: "task123")
     out, side = _run(tools.execute_ci_watch({}, "s1"))
     assert '"task_id": "task123"' in out
@@ -46,7 +48,7 @@ def test_ci_watch_executor(monkeypatch):
 
 def test_ci_autofix_emits_workflow_preview(monkeypatch):
     monkeypatch.setattr(provider, "gh_available", lambda: True)
-    monkeypatch.setattr(tools, "_resolve", lambda ti: ("feat/x", "/repo"))
+    monkeypatch.setattr(manager, "resolve_target", lambda b: ("feat/x", "/repo"))
     run = {"run_id": 9, "status": "completed", "conclusion": "failure", "branch": "feat/x"}
     monkeypatch.setattr(provider, "latest_run", lambda *a, **k: run)
     monkeypatch.setattr(provider, "get_run", lambda *a, **k: run)
@@ -73,7 +75,7 @@ def test_ci_autofix_emits_workflow_preview(monkeypatch):
 
 def test_ci_autofix_skips_when_not_failing(monkeypatch):
     monkeypatch.setattr(provider, "gh_available", lambda: True)
-    monkeypatch.setattr(tools, "_resolve", lambda ti: ("feat/x", "/repo"))
+    monkeypatch.setattr(manager, "resolve_target", lambda b: ("feat/x", "/repo"))
     run = {"run_id": 9, "status": "completed", "conclusion": "success"}
     monkeypatch.setattr(provider, "latest_run", lambda *a, **k: run)
     monkeypatch.setattr(provider, "is_terminal", lambda r: True)
@@ -93,13 +95,14 @@ def _client():
 
 def test_route_status_no_gh(monkeypatch):
     monkeypatch.setattr(provider, "gh_available", lambda: False)
+    monkeypatch.setattr(manager, "resolve_target", lambda b: (b, "/repo"))
     r = _client().get("/api/ci/status?branch=b")
     assert r.status_code == 200 and r.json()["available"] is False
 
 
 def test_route_watch_starts(monkeypatch):
     monkeypatch.setattr(provider, "gh_available", lambda: True)
-    monkeypatch.setattr("server.ci.routes._resolve", lambda b, c: ("feat/x", "/repo"))
+    monkeypatch.setattr(manager, "resolve_target", lambda b: ("feat/x", "/repo"))
     monkeypatch.setattr(manager, "start_watch", lambda b, c, s: "t9")
     r = _client().post("/api/ci/watch", json={"branch": "feat/x", "session_id": "s1"})
     assert r.status_code == 200 and r.json()["task_id"] == "t9"
@@ -107,7 +110,7 @@ def test_route_watch_starts(monkeypatch):
 
 def test_route_autofix_not_failing(monkeypatch):
     monkeypatch.setattr(provider, "gh_available", lambda: True)
-    monkeypatch.setattr("server.ci.routes._resolve", lambda b, c: ("feat/x", "/repo"))
+    monkeypatch.setattr(manager, "resolve_target", lambda b: ("feat/x", "/repo"))
     monkeypatch.setattr(provider, "latest_run", lambda *a, **k: {"run_id": 1})
     monkeypatch.setattr(provider, "is_failing", lambda r: False)
     r = _client().post("/api/ci/autofix", json={"branch": "feat/x"})
@@ -136,3 +139,40 @@ def test_tool_router_dispatches_ci(monkeypatch):
         body = f.read()
     for name in ("ci_watch", "ci_status", "ci_autofix"):
         assert f'tool_name == "{name}"' in body
+
+
+# ── no repository to ask about, or gh failing ─────────────────────────────
+def test_no_workspace_is_an_error_not_the_server_folder(monkeypatch):
+    """CI used to run gh in the server process's own folder when no
+    workspace was connected and report that repo's runs."""
+    monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: None)
+    monkeypatch.setattr(provider, "gh_available", lambda: True)
+    with pytest.raises(manager.CITargetError, match="No workspace connected"):
+        manager.resolve_target("")
+    out = _run(tools.execute_ci_status({}, "s1"))
+    assert out.startswith("Error: No workspace connected")
+    r = _client().get("/api/ci/status")
+    assert r.status_code == 400 and "No workspace connected" in r.json()["error"]
+
+
+def test_a_detached_head_needs_a_branch(monkeypatch, tmp_path):
+    monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: str(tmp_path))
+    monkeypatch.setattr("server.git.core.find_git_root", lambda p: p)
+    monkeypatch.setattr("server.git.core.get_branch", lambda p: "HEAD")
+    with pytest.raises(manager.CITargetError, match="detached"):
+        manager.resolve_target("")
+    assert manager.resolve_target("main") == ("main", str(tmp_path))
+
+
+def test_a_gh_failure_reaches_the_tool_and_the_route(monkeypatch):
+    monkeypatch.setattr(provider, "gh_available", lambda: True)
+    monkeypatch.setattr(manager, "resolve_target", lambda b: ("feat/x", "/repo"))
+
+    def fail(*a, **k):
+        raise provider.GhError("gh run list failed (exit 4): gh auth login")
+
+    monkeypatch.setattr(provider, "latest_run", fail)
+    out, side = _run(tools.execute_ci_autofix({}, "s1", "m"))
+    assert out == "Error: gh run list failed (exit 4): gh auth login" and side == []
+    r = _client().post("/api/ci/autofix", json={})
+    assert r.status_code == 502 and "gh auth login" in r.json()["error"]

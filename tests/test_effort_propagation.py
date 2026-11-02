@@ -4,8 +4,9 @@ One requirement, checked in the places it used to break: a turn's effort is the
 same effort its subagents, its nested agents, its workflows and every agent
 inside those workflows run at — clamped per model where a model cannot honour
 it, never silently dropped. Plus the capability half: ultracode is orchestration
-support, decoupled from the raw reasoning ladder, which is what lets Sonnet 5
-offer it without pretending to accept Opus's ``xhigh`` rung.
+support, decoupled from the raw reasoning ladder, which is what lets a model on
+the standard ladder offer it without pretending to accept Opus's ``xhigh``
+rung.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-NODE = shutil.which("node") or "/usr/local/bin/node"
+NODE = shutil.which("node") or ""
 HARNESS_OK = os.path.exists(NODE) and os.path.exists(
     os.path.join(
         os.path.dirname(os.path.dirname(__file__)), "server", "workflows", "harness", "harness.mjs"
@@ -27,7 +28,12 @@ HARNESS_OK = os.path.exists(NODE) and os.path.exists(
 
 _NOOP = "export const meta = { name: 'noop', description: 'no agents', phases: ['a'] }\nphase('a')\nreturn { ok: 1 }\n"
 
-_SONNET5 = {"id": "global.anthropic.claude-sonnet-5", "label": "Sonnet 5"}
+# A standard-ladder model whose entry declares orchestration support.
+_SONNET5 = {
+    "id": "global.anthropic.claude-sonnet-5",
+    "label": "Sonnet 5",
+    "supports_ultracode": True,
+}
 _OPUS5 = {"id": "global.anthropic.claude-opus-5", "label": "Opus 5", "effort_tier": "full"}
 _HAIKU = {"id": "global.anthropic.claude-haiku-4-5", "label": "Haiku", "effort_tier": "none"}
 
@@ -63,14 +69,6 @@ def test_pre_5_models_and_haiku_still_have_no_ultracode():
         {"id": "global.anthropic.claude-opus-4-7"}, "opus4.7"
     )
     assert effort_levels_for(_HAIKU, "haiku") == []
-
-
-def test_capability_survives_a_renamed_config_key():
-    """Capability is read from the model id too, so an entry renamed by the user
-    does not quietly lose ultracode to key-spelling."""
-    from server.infrastructure.effort import effort_levels_for
-
-    assert "ultracode" in effort_levels_for({"id": "global.anthropic.claude-sonnet-5"}, "my-sonnet")
 
 
 def test_explicit_config_flag_wins_both_ways():
@@ -211,6 +209,9 @@ class TestWorkflowLaunchEffort:
         yield
         manager._live.clear()
         manager._task_ids.clear()
+        # A grant left behind auto-approves the next file's launch of the
+        # same script in session "s1".
+        launch_policy._session_grants.clear()
 
     def _client(self):
         from server.workflows.routes import router
@@ -393,7 +394,11 @@ def test_malformed_effort_tier_cannot_put_a_bad_rung_on_the_wire():
     offered ultracode off the standard ladder."""
     from server.infrastructure.effort import api_effort_for, effort_levels_for, resolve_effort
 
-    typo = {"id": "global.anthropic.claude-sonnet-5", "effort_tier": "standrd"}
+    typo = {
+        "id": "global.anthropic.claude-sonnet-5",
+        "effort_tier": "standrd",
+        "supports_ultracode": True,
+    }
     assert "ultracode" in effort_levels_for(typo, "sonnet5")
     assert resolve_effort(typo, "sonnet5", "ultracode") == "ultracode"
     # The wire value follows the SAME fallback ladder the picker was built from.

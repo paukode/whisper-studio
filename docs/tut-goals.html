@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Goals &amp; autopilot - Whisper Studio Docs</title>
-  <meta name="description" content="When to just prompt, when to set a goal that runs until it's done, and when to run a parallel workflow. How /goal sets the goal and starts the work, how to add a must-pass check with /goal gate add, and how the completion gate keeps it going until achieved.">
+  <meta name="description" content="Use a prompt for a quick task, a goal for a task that must run until it is complete, and a workflow for work in parallel. Set a goal with /goal, add a check with /goal gate add, and let the completion gate continue the work.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg fill='none' stroke='white' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='16' cy='16' r='9'/%3E%3Ccircle cx='16' cy='16' r='4.5'/%3E%3Cpath d='M16 4v3M16 25v3M4 16h3M25 16h3'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -15,167 +15,185 @@
 <body>
   <main class="doc" data-page="tut-goals">
     <h1>Goals &amp; autopilot</h1>
-    <p class="subtitle">Most of the time you just type a message. But when a task has many steps and you
-      want Whisper Studio to keep going until it's <em>genuinely done</em>, not stop halfway, you give it
-      a goal. This page shows you which to reach for, and how to set a goal so it runs to completion.</p>
+    <p class="subtitle">Usually, you type a message. For a task with many steps, give Whisper Studio
+      a goal. The app then continues the work until the task is complete, and does not stop at the
+      halfway point. This page shows which method to use, and how to set a goal.</p>
 
-    <p>There is no mode to switch and nothing to configure. You decide how much autopilot a task deserves
-      by <em>how you ask</em>: a plain prompt for something quick, <code>/goal</code> for something that
-      should run until it's finished, or a <a href="arch-ultracode.html">workflow</a> for wide, parallel
-      work. <b>Click a box</b> in the diagram to see when each fits.</p>
+    <p>There is no mode to change, and there are no settings. The method of your request sets
+      the level of autopilot:</p>
+    <ul>
+      <li>A usual prompt, for a quick task.</li>
+      <li><code>/goal</code>, for a task that must run until it is complete.</li>
+      <li>A <a href="arch-ultracode.html">workflow</a>, for wide work that runs in parallel.</li>
+    </ul>
+    <p><b>Click a box</b> in the diagram to see when to use each method.</p>
 
     <figure class="diagram-figure wide">
       <div id="goals-tut-diagram" class="diagram"></div>
-      <figcaption>The same task, three ways to ask. A goal loops through the completion gate: the model
-        keeps working and re-checking until the goal is achieved (or a cap stops it).</figcaption>
+      <figcaption>The same task, three methods. A goal goes through the completion gate. The
+        model continues the work and examines it again until the goal is achieved, or until a limit
+        stops it.</figcaption>
     </figure>
 
-    <h2 id="three-ways">Three ways to ask</h2>
-    <p>They are not different products; they are how much you want Whisper to push on its own before it
-      stops and hands back to you.</p>
+    <h2 id="three-ways">Three methods</h2>
+    <p>The three methods are not different products. They set how much work Whisper Studio does
+      before it stops and gives control back to you.</p>
     <div class="table-wrap"><table>
-      <thead><tr><th>Reach for</th><th>When</th><th>How</th></tr></thead>
+      <thead><tr><th>Method</th><th>When</th><th>How</th></tr></thead>
       <tbody>
         <tr>
-          <td><b>A plain prompt</b></td>
-          <td>A question, or a small, well-scoped change. One turn or a short tool loop is enough. This is
-            the default; don't over-reach.</td>
-          <td>Just type and press <kbd>Enter</kbd>. See <a href="tut-first-chat.html">Your first chat</a>.</td>
+          <td><b>A usual prompt</b></td>
+          <td>A question, or a small change. One turn or a short tool loop is sufficient. This is
+            the default.</td>
+          <td>Type the prompt and press <kbd>Enter</kbd>. Refer to <a href="tut-first-chat.html">Your
+            first chat</a>.</td>
         </tr>
         <tr>
           <td><b>A goal</b></td>
-          <td>A multi-step task you want run to completion ("keep going until this actually works") where
-            the model might otherwise stop as soon as it has done <em>something</em>.</td>
-          <td><code>/goal &lt;text&gt;</code> sets the goal and starts the work in one step. A completion
-            gate checks each turn and continues until the goal is met (capped). See below.</td>
+          <td>A task with many steps that must run until it is complete. Without a goal, the model
+            can stop after it does one part.</td>
+          <td><code>/goal &lt;text&gt;</code> sets the goal and starts the work. A completion gate
+            examines each turn and continues until the goal is met. A limit applies. Refer to the
+            steps below.</td>
         </tr>
         <tr>
           <td><b>A workflow</b></td>
-          <td>Wide, parallel, or adversarially-verified work: audit twenty files, generate five designs and
-            judge them, migrate a whole directory.</td>
-          <td>Ask in ultracode mode, or <code>/workflow &lt;saved-name&gt;</code>. The model writes a script
-            that fans out subagents; you approve the preview. See <a href="arch-ultracode.html">the workflow
-            runtime</a>.</td>
+          <td>Wide work, work in parallel, or work that a second agent must examine. Examples are an
+            audit of 20 files, five designs with a judge, or the migration of a full folder.</td>
+          <td>Ask in ultracode mode, or type <code>/workflow &lt;saved-name&gt;</code>. The model
+            writes a script that starts subagents. You approve the preview. Refer to
+            <a href="arch-ultracode.html">the workflow runtime</a>.</td>
         </tr>
       </tbody>
     </table></div>
 
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
-      <div class="callout__body"><p>A rule of thumb: if you'd normally have to nudge with "keep going" or
-        "you're not done yet", set a goal instead and let the completion gate do the nudging. If you'd want
-        several independent things done at once, that's a workflow.</p></div>
+      <div class="callout__body"><p>A simple rule: if you usually type "keep going" or "you are not
+        done yet", set a goal. The completion gate then sends these reminders. If you have more than
+        one independent task to do at the same time, use a workflow.</p></div>
     </div>
 
-    <h2 id="set-a-goal">Give it a goal</h2>
-    <p>A goal is a one-line description of what "done" means for this stretch of work. Whisper keeps it in
-      view and, at the end of every turn, asks itself whether the goal is met yet.</p>
+    <h2 id="set-a-goal">Set a goal</h2>
+    <p>A goal is one line that tells what "done" is for this work. Whisper Studio keeps the goal
+      in the prompt. At the end of each turn, it examines if the goal is met.</p>
     <ol class="steps">
       <li>
-        <h4>Set the goal, and the work starts</h4>
-        <p>Type <code>/goal</code> followed by the objective, for example
-          <code>/goal make the login page pass tsc, eslint, and its tests</code>. That one command does
-          both halves: it arms the gate with your text as the goal, <b>and</b> sends the same text as your
-          first message, so the work begins immediately. A goal banner appears above the composer so you
-          always see what it's working toward, with a chip reading <b>working…</b>, <b>achieved</b>,
-          <b>blocked</b> or <b>not checked</b>. <b>Not checked</b> is neutral: the goal could not be judged
-          this time (the reason is on the chip's hover and in the <b>Goal check</b> row), and it stays set
-          and is checked again when the next turn ends. If a turn is already running when you type it, the
-          goal text is folded into that turn rather than starting a second one.</p>
+        <h4>Set the goal</h4>
+        <p>Type <code>/goal</code> and the objective, for example <code>/goal make the login page
+          pass tsc, eslint, and its tests</code>. The command sets the goal of the gate. It also sends the same text as your first message, so the work starts immediately. If a turn
+          runs at that time, the app adds the goal text to that turn, and does not start a second
+          turn.</p>
       </li>
       <li>
-        <h4>Optional: name a check it must pass</h4>
-        <p><code>/goal gate add &lt;command&gt;</code> attaches a shell command that must exit 0 before the
-          goal can count as done, for example <code>/goal gate add npm test</code>. A red gate is proof,
-          not opinion: its output is handed straight back as the reason to keep working, and the evaluator
-          is not even consulted. <code>/goal gate</code> lists them,
-          <code>/goal gate remove &lt;N&gt;</code> drops one by its number, and
-          <code>/goal gate clear</code> removes them all.</p>
+        <h4>Read the goal banner</h4>
+        <p>A goal banner shows above the chat box. Its chip shows "working…", "achieved",
+          "blocked", or "not checked". "Not checked" tells you that the app did not judge the goal this time. Put the pointer on the chip to see the reason. The goal stays set, and the app
+          examines it again after the next turn.</p>
       </li>
       <li>
-        <h4>It keeps going until it's done</h4>
-        <p>When the model stops, the <a href="arch-goals.html">completion gate</a> runs a set of checks
-          instead of ending the turn: any <a href="arch-hooks.html">Stop hooks</a>, then whether the files
-          the reply claims to have written actually exist, then whether anything green ran after the last
-          code edit, then your gate commands, and only then a judge (a cheap cloud evaluator, or an
-          on-device session's own model). If something is missing it feeds back what, and the turn
-          continues, so you don't have to keep typing "keep going". On an on-device model, add a gate with
-          <code>/goal gate add &lt;test command&gt;</code>: a small model judging its own work is a weaker
-          signal than a test that has to pass.</p>
+        <h4>Optional: add a check that must pass</h4>
+        <p>Type <code>/goal gate add &lt;command&gt;</code>, for example <code>/goal gate add npm
+          test</code>. The command must exit with code 0 before the goal is done. If the command
+          fails, the app gives its output to the model as the reason to continue. The evaluator does
+          not run.</p>
       </li>
       <li>
-        <h4>Clear it when you're done</h4>
-        <p><code>/goal clear</code> ends the goal, and so does an achieved verdict. The consecutive-block
-          cap (default 8) and a confident "can't do this" verdict stop the loop from forcing more turns
-          right now, but the goal itself stays set and resumes gating on your very next message. A gate
-          command that has failed three times in a row pauses the goal instead of looping, and tells you to
-          fix it, remove the gate, or set the goal again.</p>
+        <h4>Optional: change the checks</h4>
+        <p>Type <code>/goal gate</code> to list the checks. Type <code>/goal gate remove
+          &lt;N&gt;</code> to remove a check by its number. Type <code>/goal gate clear</code> to
+          remove all the checks.</p>
+      </li>
+      <li>
+        <h4>Let the work continue</h4>
+        <p>When the model stops, the <a href="arch-goals.html">completion gate</a> runs these checks, in this sequence:</p>
+        <ol>
+          <li>The <a href="arch-hooks.html">Stop hooks</a>.</li>
+          <li>The files that the reply says it wrote must be on disk.</li>
+          <li>A test, lint, typecheck, or build must pass after the last code change.</li>
+          <li>Your gate commands.</li>
+          <li>A judge: a cheap cloud evaluator, or the own model of an on-device session.</li>
+        </ol>
+        <p>If an item is missing, the gate tells the model what is missing, and the turn
+          continues. You do not type "keep going".</p>
+      </li>
+      <li>
+        <h4>Clear the goal</h4>
+        <p>Type <code>/goal clear</code> to end the goal. An "achieved" result also ends it.</p>
       </li>
     </ol>
+    <p>On an on-device model, add a check with <code>/goal gate add &lt;test command&gt;</code>. A
+      test that must pass is a better signal than the judgment of a small model on its own
+      work.</p>
+    <p>Some limits stop the loop for the current message, but the goal stays set:</p>
+    <ul>
+      <li>The limit of blocks in sequence. The default is 8.</li>
+      <li>A clear "cannot do this" result from the judge.</li>
+    </ul>
+    <p>On your next message, the gate starts again. If a gate command fails 3 times in sequence,
+      the app pauses the goal. It then tells you to correct the command, remove the check, or set
+      the goal again.</p>
 
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
-      <div class="callout__body"><p><b>Two of those checks run whether or not you set a goal.</b> If a reply
-        tells you a file was saved or points at an artifact card, the file has to be there and non-empty,
-        and the artifact call has to have happened in that turn; and if code was edited with no test, lint,
-        typecheck or build run green afterwards, the assistant is asked to run one or say plainly what
-        stops it. That is why you sometimes see a turn continue itself with no goal set.</p></div>
+      <div class="callout__body"><p><b>Two of the checks run also without a goal.</b> If a reply
+        says that it saved a file or made an artifact card, the file must be on disk and not empty.
+        The artifact call must also be in that turn. If the model changed code and no test, lint,
+        typecheck, or build passed after the change, the assistant must run one. If it cannot, it
+        must tell you why. Thus, a turn can continue without a goal.</p></div>
     </div>
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
-      <div class="callout__body"><p>Goals shine when "done" is <em>checkable</em>. "Make the build pass" or
-        "all tests green" gives the evaluator a real signal: the built-in <code>verify_change</code> tool
-        runs the actual gate and reports <code>VERIFY PASS</code> / <code>VERIFY FAIL</code>, which the evaluator
-        weighs above any confident-sounding summary. Phrase your goal as an outcome it can verify, and when
-        you can name the exact command, add it with <code>/goal gate add</code> so nothing is left to
-        judgement at all.</p></div>
+      <div class="callout__body"><p>A goal works best when you can examine "done". Examples are
+        "make the build pass" and "all tests green". The built-in <code>verify_change</code> tool
+        runs the real check and returns <code>VERIFY PASS</code> or <code>VERIFY FAIL</code>. The
+        evaluator gives this result more weight than a summary. Write your goal as a result that
+        the app can examine. If you know the exact command, add it with <code>/goal gate
+        add</code>.</p></div>
     </div>
 
-    <h2 id="full-stack">Full-stack &amp; UI work</h2>
-    <p>This is where a goal earns its keep. For a change that touches the interface, "verify" isn't just
-      running tests. Whisper <b>drives a live browser preview</b> on its own: it starts your dev server,
-      loads the changed page, reads the console for errors, clicks through the changed flow, and takes a
-      screenshot, then decides pass or fail. And because a goal isn't "done" until that passes, it keeps
-      re-checking the page and fixing until the UI actually renders and behaves, so you never have to say
-      "now check it in the browser".</p>
-    <p>So phrase a UI goal as something it can see: <em>"the login form submits and shows the dashboard"</em>
-      or <em>"the settings toggle persists after a reload"</em>, not "make the form nicer". You'll want the
-      <a href="tut-permissions.html">permission mode</a> set the way you like first, since a goal may run for
-      several turns editing and reloading. The mechanics, plus the two caveats (the browser tooling has to be
-      installed, and parallel UI checks each spin their own dev server), are in
-      <a href="arch-preview.html#verify-loop">Verifying the UI in the loop</a>.</p>
+    <h2 id="full-stack">Full-stack and UI work</h2>
+    <p>For a change to the interface, the check is more than the tests. Whisper Studio uses a
+      live browser preview. It starts your development server, loads the changed page, and reads the console errors. Then it clicks through the changed flow and makes a screenshot. Then it gives a pass
+      or fail result.</p>
+    <p>A goal is not done until the page passes. Thus, the app examines and corrects the page
+      until it works.</p>
+    <p>Write a UI goal as a result that the app can see. For example, write "the login form
+      submits and shows the dashboard", not "make the form nicer". Set the
+      <a href="tut-permissions.html">permission mode</a> first, because a goal can run for many
+      turns. For the details and the two limits, refer to
+      <a href="arch-preview.html#verify-loop">Verifying the UI in the loop</a>. Install the browser tools first. Each UI examination in parallel starts its own development server.</p>
 
-    <h2 id="when-not">When a goal is overkill</h2>
-    <p>Don't set a goal for a plain question or a one-line edit. A goal adds a judge check at the end of each
-      turn (on-device, one more answer from the session's own model), which is wasted effort when there was never any doubt the task was done. Keep goals
-      for genuinely multi-step, "run until it holds up" work. And you can always steer mid-goal: your next
-      message is still just a message; the goal is the backdrop, not a cage.</p>
+    <h2 id="when-not">When not to use a goal</h2>
+    <p>Do not set a goal for a simple question or a change of one line. A goal adds a judge check
+      at the end of each turn. On an on-device model, this is one more answer from the model of the
+      session. Use goals for work with many steps. You can also change the direction during a
+      goal. Your next message is a usual message, and the goal stays in the background.</p>
 
-    <h2 id="scale-up">Scaling past one worker</h2>
-    <p>A goal keeps <em>one</em> line of work going. When the work is naturally parallel, two other tools
-      take over:</p>
+    <h2 id="scale-up">More than one worker</h2>
+    <p>A goal continues <em>one</em> line of work. For work in parallel, use one of these
+      tools:</p>
     <div class="cols-2">
-      <a class="card card--link" href="tut-subagents.html"><h3>Sub-agents &amp; teams</h3><p>Spin off a background helper with <code>/subagent</code>, or let Whisper run a small team, each with its own tool loop.</p></a>
-      <a class="card card--link" href="arch-ultracode.html"><h3>Ultracode workflows</h3><p>For wide or adversarial work, the model writes a deterministic script that fans out many subagents under a budget, and you approve it before it runs.</p></a>
+      <a class="card card--link" href="tut-subagents.html"><h3>Sub-agents &amp; teams</h3><p>Start a helper in the background with <code>/subagent</code>, or let Whisper Studio run a small team. Each agent has its own tool loop.</p></a>
+      <a class="card card--link" href="arch-ultracode.html"><h3>Ultracode workflows</h3><p>For wide work, the model writes a script that starts many subagents in a budget. You approve the script before it runs.</p></a>
     </div>
 
-    <h2 id="what-next">What next</h2>
-    <p>You now know the dial: prompt for quick things, a goal to run something to completion, a workflow for
-      parallel scale. From here:</p>
+    <h2 id="what-next">Next steps</h2>
+    <p>Use a prompt for a quick task and a goal for a task that must be complete. Use a workflow for work in parallel. Then read these pages:</p>
     <div class="card-grid">
-      <a class="card card--link" href="arch-goals.html"><h3>How the gate works</h3><p>The two-phase completion gate, the evaluator, and the cap, in detail.</p><span class="card__meta">The goal loop →</span></a>
-      <a class="card card--link" href="tut-permissions.html"><h3>Control what it can do</h3><p>The Mode dial and approval cards, worth setting before you let a goal run for a while.</p><span class="card__meta">Permissions &amp; approvals →</span></a>
-      <a class="card card--link" href="tut-cron.html"><h3>Put it on a schedule</h3><p>Run a prompt (verified against its own goal) on a wall-clock schedule.</p><span class="card__meta">Scheduled tasks →</span></a>
+      <a class="card card--link" href="arch-goals.html"><h3>How the gate works</h3><p>The two-phase completion gate, the evaluator, and the limit.</p><span class="card__meta">The goal loop →</span></a>
+      <a class="card card--link" href="tut-permissions.html"><h3>Control the actions</h3><p>The mode dial and the approval cards. Set them before a long goal.</p><span class="card__meta">Permissions &amp; approvals →</span></a>
+      <a class="card card--link" href="tut-cron.html"><h3>Run on a schedule</h3><p>Run a prompt on a clock schedule. The app examines each run against its prompt.</p><span class="card__meta">Scheduled tasks →</span></a>
     </div>
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
       <div class="callout__body"><p><b>Related:</b> <a href="arch-goals.html">The goal loop &amp; completion
-        gate</a> and <a href="arch-hooks.html">Blocking hooks</a> are the machinery behind this;
-        <a href="arch-ultracode.html">the ultracode workflow runtime</a> is the parallel scale-up; and
-        <a href="ref-slash-commands.html">Slash commands</a> lists <code>/goal</code>, <code>/workflow</code>,
-        and <code>/ci</code>.</p></div>
+        gate</a>, <a href="arch-hooks.html">Blocking hooks</a>,
+        <a href="arch-ultracode.html">the ultracode workflow runtime</a>, and
+        <a href="ref-slash-commands.html">Slash commands</a> (<code>/goal</code>, <code>/workflow</code>,
+        and <code>/ci</code>).</p></div>
     </div>
   </main>
 

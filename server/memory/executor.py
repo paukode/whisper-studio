@@ -1,4 +1,4 @@
-"""Memory tool executors — implementations for memory_read/write/list/delete.
+"""Memory tool executors: implementations for memory_read/write/list/delete.
 
 Registered via @register_executor so they participate in the standard
 executor metadata system (concurrent_safe, read_only, etc.).
@@ -221,29 +221,32 @@ def execute_memory_write(
     if os.path.basename(abs_path).lower() == ENTRYPOINT_NAME.lower():
         return "Error: Cannot write MEMORY.md directly. It is managed automatically."
 
-    # Secret scanning — always runs
+    # Secret scanning, always runs
     full_content = (
         f"---\nname: {name}\ndescription: {description}\ntype: {mem_type}\n---\n\n{content}"
     )
-    is_clean, redacted, findings = check_and_block(full_content)
+    is_clean, findings = check_and_block(full_content)
     if not is_clean:
         rules = ", ".join(f["label"] for f in findings)
-        return (
-            f"BLOCKED: Content contains potential secrets ({rules}). "
-            f"Secrets were redacted. Please remove sensitive data before saving to memory."
-        )
+        return f"BLOCKED: content contains potential secrets ({rules}). Remove them before saving."
 
     # Ensure parent directory exists (for nested paths like subdir/file.md)
     os.makedirs(os.path.dirname(abs_path), exist_ok=True)
 
-    try:
-        with _WRITE_LOCK:
+    with _WRITE_LOCK:
+        try:
             _atomic_write(abs_path, full_content)
+        except OSError as e:
+            return f"Error writing {filename}: {e}"
+        log.info("Memory written: %s (type=%s, scope=%s)", filename, mem_type, scope)
+        try:
             rebuild_index(memory_dir)
-    except OSError as e:
-        return f"Error writing {filename}: {e}"
+        except OSError as e:
+            return (
+                f"Memory file saved: {filename} [scope: {scope}], "
+                f"but {ENTRYPOINT_NAME} was not rebuilt: {e}"
+            )
 
-    log.info("Memory written: %s (type=%s, scope=%s)", filename, mem_type, scope)
     return f"Memory file saved: {filename} [scope: {scope}]"
 
 
@@ -277,7 +280,7 @@ def execute_memory_list(
     return "\n\n".join(parts)
 
 
-@register_executor("memory_delete", read_only=False, concurrent_safe=False, destructive=True)
+@register_executor("memory_delete", read_only=False, concurrent_safe=False)
 def execute_memory_delete(
     tool_input: dict, transcript: str = "", attachments: dict | None = None
 ) -> str:
@@ -289,7 +292,7 @@ def execute_memory_delete(
         return err
 
     if os.path.basename(os.path.normpath(filename)).lower() == ENTRYPOINT_NAME.lower():
-        return "Error: Cannot delete MEMORY.md. Edit it instead."
+        return "Error: MEMORY.md is regenerated automatically and cannot be deleted."
 
     abs_path, found_scope, err = _locate_existing(filename, scope)
     if err:
@@ -298,15 +301,20 @@ def execute_memory_delete(
         where = scope if scope else _searched_tiers_label()
         return f"Memory file not found in {where}: {filename}"
 
-    try:
-        with _WRITE_LOCK:
+    with _WRITE_LOCK:
+        try:
             os.remove(abs_path)
-            ws_path = get_workspace_path()
-            deleted_dir, _ = resolve_memory_dir(found_scope, ws_path)
-            if deleted_dir:
+        except OSError as e:
+            return f"Error deleting {filename}: {e}"
+        log.info("Memory deleted: %s (scope=%s)", filename, found_scope)
+        deleted_dir, _ = resolve_memory_dir(found_scope, get_workspace_path())
+        if deleted_dir:
+            try:
                 rebuild_index(deleted_dir)
-    except OSError as e:
-        return f"Error deleting {filename}: {e}"
+            except OSError as e:
+                return (
+                    f"Memory file deleted: {filename} [scope: {found_scope}], "
+                    f"but {ENTRYPOINT_NAME} was not rebuilt: {e}"
+                )
 
-    log.info("Memory deleted: %s (scope=%s)", filename, found_scope)
     return f"Memory file deleted: {filename} [scope: {found_scope}]"

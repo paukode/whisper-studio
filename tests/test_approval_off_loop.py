@@ -116,24 +116,6 @@ def test_worktree_executors_run_off_the_loop(
     assert ticks >= 4, f"{executor_name} froze the loop ({ticks} ticks)"
 
 
-class _JsonRequest:
-    def __init__(self, body: dict):
-        self._body = body
-
-    async def json(self) -> dict:
-        return self._body
-
-
-def test_workspace_shell_endpoint_does_not_block_the_loop(tmp_path, monkeypatch):
-    from server.workspace.routes import shell as shell_routes
-
-    monkeypatch.setattr(shell_routes, "get_workspace_path", lambda: str(tmp_path))
-    req = _JsonRequest({"command": "sleep 0.6"})
-    resp, ticks = asyncio.run(_ticks_while(shell_routes.ws_shell_endpoint(req)))
-    assert resp["exit_code"] == 0, resp
-    assert ticks >= 5, f"/api/workspace/shell froze the loop ({ticks} ticks)"
-
-
 def test_approved_delete_of_a_large_tree_does_not_block_the_loop(workspace_dir, monkeypatch):
     from server.approval import executors
 
@@ -153,12 +135,18 @@ def test_approved_delete_of_a_large_tree_does_not_block_the_loop(workspace_dir, 
     assert ticks >= 4, f"the tree delete froze the loop ({ticks} ticks)"
 
 
-def test_approved_delete_of_a_file_keeps_its_text_for_undo(workspace_dir):
-    from server import workspace
-    from server.approval import executors
+def test_a_failed_command_preview_is_shown_not_left_blank():
+    """render_command raising used to leave the card with no command body."""
+    from server.approval.spec import ApprovalSpec
 
-    (workspace_dir / "notes.txt").write_text("keep me")
-    outcome = asyncio.run(executors._do_delete({"path": "notes.txt"}))
-    assert outcome.ok, outcome.error
-    assert not (workspace_dir / "notes.txt").exists()
-    assert workspace.WORKSPACE_BACKUPS.pop("notes.txt") == "keep me"
+    def boom(_ti):
+        raise ValueError("bad input")
+
+    spec = ApprovalSpec(
+        category="cli", preview="command", summary="s", executor=None, render_command=boom
+    )
+    payload = spec.build_payload({"x": 1})
+    assert payload["command_preview_error"] == "Command preview unavailable: bad input"
+    # "command" is the field approved executors run: display text never
+    # goes there, so an executor still refuses with "No command".
+    assert "command" not in payload

@@ -1,19 +1,18 @@
-"""Feature flags — runtime gating for Whisper features.
+"""Feature flags: runtime gating for Whisper features.
 
-Provides a lightweight feature flag system backed by config.json.
-Flags can be checked at runtime to gate features on/off without code changes.
+A lightweight feature flag system backed by the ``feature_flags`` object in
+config.user.json. Flags can be checked at runtime to gate features on/off
+without code changes.
 
 Usage:
-    from server.infrastructure.feature_flags import is_enabled, get_flag
+    from server.infrastructure.feature_flags import get_flag_states, is_enabled
 
     if is_enabled("auto_memory"):
         # memory feature code
         ...
 
-    # Get flag with metadata
-    flag = get_flag("auto_memory")
-    if flag and flag.enabled:
-        ...
+    # Every flag with its metadata and current state
+    states = get_flag_states()
 """
 
 from __future__ import annotations
@@ -45,7 +44,7 @@ class FeatureFlag:
 
 
 # Central registry of all feature flags with their metadata.
-# Adding a flag here automatically makes it available in config.json.
+# Adding a flag here automatically makes it available in config.user.json.
 _FLAG_DEFINITIONS: dict[str, FeatureFlag] = {}
 _lock = threading.Lock()
 
@@ -78,7 +77,7 @@ def is_enabled(name: str) -> bool:
 
     Resolution order:
     0. Off in Local mode for a feature with no on-device path (inactive_reason)
-    1. config.json feature_flags.<name> (user override)
+    1. config.user.json feature_flags.<name> (user override)
     2. Registered default value
     3. False (unknown flags are off)
     """
@@ -188,13 +187,6 @@ register_flag(
 register_flag(
     "progressive_tools",
     description="Progressive tool disclosure: advertise a core tool set plus session-activated tools; everything else is discoverable via tool_search from a compact index (cuts ~60-75% of tool-schema tokens per turn)",
-    default=True,
-    category="chat",
-)
-
-register_flag(
-    "strict_rag",
-    description="When index grounding is injected, withhold the workspace file/search tools (semantic_search, ws_read_file, ws_grep, ws_glob, ws_list_directory) so the model answers from the retrieved passages instead of re-crawling files",
     default=True,
     category="chat",
 )
@@ -406,7 +398,7 @@ async def toggle_flag(flag_name: str, request: Request):
         return {"error": f"Unknown flag: {flag_name}"}
 
     # Surgical, format-preserving toggle — flips only this flag's boolean in
-    # config.json, leaving all other content and formatting byte-for-byte
+    # config.user.json, leaving all other content and formatting byte-for-byte
     # intact (and never flattening the rich chat_models shape).
     from server.infrastructure.config import set_feature_flag
 

@@ -172,8 +172,7 @@
         that stops for an approval gives its dropped claims and the sentences that it still held to its
         continuation. The continuation examines them against the call that the user approved, and
         shows first, in order, the sentences that hold.</p>
-        <p>The guard keeps every call of the turn as it first read it, so compaction or a salvage
-        round cannot make a done act look undone, or a failed one done, and the memory hooks read the
+        <p>The guard keeps every call of the turn as it first read it, so compaction cannot make a done act look undone, or a failed one done, and the memory hooks read the
         turn without the sentences the user was not shown. The memory agents' notes are not replies
         and are not held.</p></li>
       <li><h4>Requested file (always)</h4><p>Behind the <code>requested_file_check</code> flag, and quiet
@@ -219,8 +218,7 @@
       model that is no longer loaded or a context window too small for the check), the verdict is
       <code>not_checked</code> with the reason. It ends the turn, keeps the goal active, is not counted as
       a block, and is never recorded as achieved; the goal is checked again when the next turn ends. A
-      turn that ends on its last round (the round cap, the cost or time budget, or the salvage round after
-      a context overflow) skips the gate, because a block would need a round the turn does not have, and
+      turn that ends on its last round (the round cap, or the cost or time budget) skips the gate, because a block would need a round the turn does not have, and
       an active goal is reported as <code>not_checked</code> with that reason too. The
       whole thing is bounded by one shared consecutive-block cap (<code>goal_max_consecutive_blocks</code>,
       default 8). When the cap is hit the engine calls the gate once more, every phase gives up and emits a
@@ -249,7 +247,12 @@
       <code>GET / POST / DELETE /api/sessions/{session_id}/goal/gates</code>.</p>
     <ul>
       <li>Each gate runs in the workspace with a <b>300 second</b> timeout; a timeout counts as a failure
-        with no exit code.</li>
+        with no exit code. When the session's workspace folder no longer exists, the gate fails with
+        "workspace not found" and nothing runs.</li>
+      <li>Each gate runs under the macOS sandbox, like a confined terminal command: it may write only in
+        the workspace, the session's scratch folder and temp, and it cannot read the credential stores.
+        Without the sandbox the gate is refused, nothing runs, and the gate counts as failed with the
+        reason as its output.</li>
       <li>On failure the feedback embeds the exit code and the last 3,000 characters of output for the
         first two failing gates, then names how many more also failed, and ends by saying the gate re-runs
         at the next turn boundary. So a gate whose input the model just repaired passes next time.</li>
@@ -319,11 +322,12 @@
       limits: it needs the preview tools available, and parallel UI checks each spin their own dev server).</p>
 
     <h2 id="store">Where the goal lives</h2>
-    <p>The goal is stored on the session itself. <code class="path">server/goals/store.py</code> adds two
-      additive columns to the <code>sessions</code> row, <code>goal</code> (the text) and
+    <p>The goal is stored on the session itself. The <code>sessions</code> table carries two
+      additive columns, <code>goal</code> (the text) and
       <code>goal_state</code> (JSON: whether the goal is active, the consecutive-block counter, the total
       evaluation count, the last verdict and feedback, when it was set, and the quality gates with their
-      failure counts). See <a href="arch-persistence.html">Persistence</a>.</p>
+      failure counts). <code class="path">server/goals/store.py</code> reads and writes them. See
+      <a href="arch-persistence.html">Persistence</a>.</p>
     <p>The store keys on whatever id it is handed, and the engine hands it
       <code>turn_scope_id</code> when a caller set one. That is what keeps a sub-agent's inner turn (scoped
       <code>agent:&lt;id&gt;</code>) or a cron run (<code>cron:&lt;job&gt;</code>) from resetting the parent
@@ -346,8 +350,8 @@
 
     <h2 id="ui">Setting a goal</h2>
     <p><code>/goal &lt;text&gt;</code> does two things at once: it arms the gate with that text as the goal,
-      and it <b>sends the same text as the first message</b>. Arming the gate alone left the composer empty
-      with nothing running, which read as a swallowed message. If a turn is already streaming, the text is
+      and it <b>sends the same text as the first message</b>. The goal is saved on the server first:
+      if that save fails, a toast says why and nothing is sent. If a turn is already streaming, the text is
       folded into it as a mid-turn message instead of starting a second one.
       <code>/goal clear</code> ends the goal. The active goal shows in a <code>GoalBanner</code> above the
       composer (hydrated from the session on load) with a verdict chip reading <b>achieved</b>,

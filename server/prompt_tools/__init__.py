@@ -7,8 +7,8 @@ other native tool — schema dict next to the implementation, registered via
 ``@register_executor``, always in the pool — the only difference is that the
 executor emits instructions (``emits_prompt=True``) instead of computed data,
 rendering the same USER REQUEST / SKILL INSTRUCTIONS payload that
-server.skills._tool_run_skill produces for markdown prompt skills, so
-downstream handling (budget bypass, SSE previews) is unchanged.
+server.skills._tool_run_skill produces for prompt skills, so it bypasses the
+budgeter the same way.
 """
 
 # Importing the submodules is what runs @register_executor.

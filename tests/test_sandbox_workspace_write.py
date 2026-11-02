@@ -9,17 +9,13 @@ with the secret denies LAST so a workspace containing the home directory can
 never re-expose ~/.ssh. EVERY sandboxed run is workspace-confined by default
 (consent and confinement are independent knobs); the only way out is the
 per-call sandbox_permissions='danger-full-access' escalation, which always
-forces a real approval. Linux/bwrap already mounted the root read-only, so
-this is macOS catching up.
+forces a real approval.
 """
 
 import asyncio
 import os
-import platform
 import shutil
 import tempfile
-
-import pytest
 
 from server import sandbox
 
@@ -119,10 +115,6 @@ def test_terminal_run_defaults_to_workspace_write(monkeypatch):
     assert seen["write_mode"] == "readonly"
 
 
-@pytest.mark.skipif(
-    platform.system() != "Darwin" or shutil.which("sandbox-exec") is None,
-    reason="needs macOS sandbox-exec",
-)
 def test_workspace_mode_blocks_writes_outside_the_tree_for_real():
     """End-to-end kernel check: in workspace mode a write outside the working
     tree fails and one inside succeeds; open mode still writes anywhere."""
@@ -294,6 +286,3 @@ def test_popen_profile_confines_to_the_write_root(tmp_path):
     profile = sandbox._generate_macos_profile(ws, write_mode="workspace")
     assert f'(allow file-write* (subpath "{ws}"))' in profile
     assert elsewhere not in profile
-    argv = sandbox._bwrap_argv("ls", elsewhere, None, "workspace", write_root=ws)
-    assert argv[argv.index("--bind") + 1] == ws
-    assert elsewhere not in argv[: argv.index("--chdir")]

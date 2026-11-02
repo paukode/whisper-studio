@@ -1,7 +1,4 @@
-"""Type-aware attachment conversion.
-
-Replaces the single ``MarkItDown().convert()`` call in server/attachments.py
-with per-format handling:
+"""Type-aware attachment conversion, per format:
   - MarkItDown stays the default for docx/pptx/html/csv/json/xml/code/epub/etc.
   - PDFs gain an OCR fallback for scans (server/extract/pdf.py).
   - Large spreadsheets become a schema + sample (server/extract/sheet.py).
@@ -27,9 +24,21 @@ def convert_document(content: bytes, ext: str, filename: str) -> str:
     """Blocking: convert an uploaded document to Markdown text.
 
     Runs MarkItDown first (its output is reused by the PDF/spreadsheet
-    specializers), then dispatches by extension. Callers on the event loop must
-    wrap this in ``asyncio.to_thread``.
+    specializers), then dispatches by extension. A failure returns
+    ``[Error extracting <file>: <error>]``, the same marker media extraction
+    uses, so the reader sees why the content is missing. A PDF whose MarkItDown
+    pass fails still goes on to the OCR pass, because MarkItDown often raises
+    on scanned PDFs. Callers on the event loop must wrap this in
+    ``asyncio.to_thread``.
     """
+    try:
+        return _convert(content, ext, filename)
+    except Exception as e:
+        log.warning("document extraction failed for %s: %s", filename, e)
+        return f"[Error extracting {filename}: {e}]"
+
+
+def _convert(content: bytes, ext: str, filename: str) -> str:
     md_text = ""
     tmp_path = None
     try:
@@ -40,9 +49,9 @@ def convert_document(content: bytes, ext: str, filename: str) -> str:
             tmp_path = tmp.name
         md_text = MarkItDown().convert(tmp_path).text_content or ""
     except Exception as e:
-        # MarkItDown often raises (or returns nothing) on scanned PDFs and odd
-        # files. PDFs still get an OCR pass below; others surface the error.
-        log.warning("markitdown failed for %s: %s", filename, e)
+        if ext != ".pdf":
+            raise
+        log.warning("markitdown failed for %s (%s); trying OCR", filename, e)
     finally:
         if tmp_path:
             try:
@@ -54,12 +63,14 @@ def convert_document(content: bytes, ext: str, filename: str) -> str:
         from server.extract.pdf import extract_pdf
 
         return extract_pdf(content, md_text)
-    if ext in (".xlsx", ".xls"):
+    if ext == ".xlsx":
+        # Only .xlsx: openpyxl cannot open the older OLE2 .xls format, so a
+        # .xls keeps MarkItDown's table like any other document.
         from server.extract.sheet import extract_xlsx
 
-        return extract_xlsx(content, md_text)
+        return extract_xlsx(content, md_text) or "[No content extracted]"
     if ext == ".csv":
         from server.extract.sheet import extract_csv
 
-        return extract_csv(content, md_text)
+        return extract_csv(content, md_text) or "[No content extracted]"
     return md_text or "[No content extracted]"

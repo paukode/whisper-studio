@@ -71,7 +71,7 @@ def count_user_prompts(messages: list, since_index: int = 0) -> int:
     return sum(1 for m in messages[max(0, since_index) :] if _is_real_user_prompt(m))
 
 
-async def _dispatch(fork: ReviewFork, tool_use: dict) -> str:
+async def _dispatch(fork: ReviewFork, tool_use: dict, tool_schemas: dict) -> str:
     from server.tool_router import route_tool
 
     name = str(tool_use.get("name") or "")
@@ -81,9 +81,17 @@ async def _dispatch(fork: ReviewFork, tool_use: dict) -> str:
             "memory tools, skill tools and read-only workspace reads are. Save what you learned "
             "or reply 'Nothing to save.'"
         )
-    call_input = dict(tool_use.get("input") or {})
+    from server.security.secret_reads import SECRET_READS_KEY
+    from server.tool_inputs import ToolInputError, validate_tool_input
+
+    try:
+        validate_tool_input(name, tool_use.get("input"), tool_schemas)
+    except ToolInputError as exc:
+        return f"[Refused] {exc}"
+    call_input = dict(tool_use["input"])
     call_input["__session_id__"] = fork.session_id
     call_input["__agent__"] = True
+    call_input[SECRET_READS_KEY] = False
     try:
         output, _effects = await route_tool(
             name,
@@ -103,23 +111,22 @@ async def _dispatch(fork: ReviewFork, tool_use: dict) -> str:
 
 
 def _record_usage(fork: ReviewFork, round_num: int, usage: Any) -> None:
-    try:
-        from server.costs.tracker import record_turn
+    """Record one billed review round. A failure ends the review and reaches
+    the extraction's outer handler, which logs it."""
+    from server.costs.tracker import record_turn
 
-        record_turn(
-            session_id=fork.session_id,
-            turn_number=REVIEW_TURN_BASE + round_num,
-            model=fork.model_key,
-            input_tokens=usage.input_tokens,
-            output_tokens=usage.output_tokens,
-            cache_read_tokens=usage.cache_read_tokens,
-            cache_creation_tokens=usage.cache_write_tokens,
-            source="memory",
-            estimated=usage.estimated,
-            detail=usage.detail,
-        )
-    except Exception as e:  # noqa: BLE001
-        log.debug("review fork usage not recorded: %s", e)
+    record_turn(
+        session_id=fork.session_id,
+        turn_number=REVIEW_TURN_BASE + round_num,
+        model=fork.model_key,
+        input_tokens=usage.input_tokens,
+        output_tokens=usage.output_tokens,
+        cache_read_tokens=usage.cache_read_tokens,
+        cache_creation_tokens=usage.cache_write_tokens,
+        source="memory",
+        estimated=usage.estimated,
+        detail=usage.detail,
+    )
 
 
 async def run_review(
@@ -135,6 +142,12 @@ async def run_review(
     from server.chat.budget import make_budget_tool_result
     from server.chat.engine.events import RoundError, RoundResult
     from server.memory.prompts import build_learning_review_prompt
+    from server.tool_inputs import (
+        ToolInputError,
+        schemas_for_tools,
+        validate_call_ids,
+        validate_tool_input,
+    )
 
     prompt = build_learning_review_prompt(
         recent_user_turns=count_user_prompts(fork.messages, since_index),
@@ -152,6 +165,7 @@ async def run_review(
         "ended": "no_result",
     }
     for round_num in range(max_rounds):
+        tool_schemas = schemas_for_tools(fork.tools)
         result: RoundResult | None = None
         try:
             async for ev in fork.adapter.stream_round(
@@ -174,7 +188,7 @@ async def run_review(
             try:
                 unfinished = probe() if result is None and callable(probe) else None
             except Exception as e:  # noqa: BLE001 - a cost read never breaks the review
-                log.debug("review fork inflight usage unreadable: %s", e)
+                log.warning("review fork inflight usage unreadable, not billed: %s", e)
                 unfinished = None
             if unfinished is not None:
                 _record_usage(fork, round_num, unfinished)
@@ -191,10 +205,21 @@ async def run_review(
         if result.stop_reason != "tool_use" or not tool_uses:
             stats["ended"] = "done"
             return stats
+        # Preflight every executable sibling before even the first memory write.
+        try:
+            validate_call_ids(tool_uses)
+            for tu in tool_uses:
+                if tu["name"] in ALLOWED_TOOLS:
+                    validate_tool_input(tu["name"], tu.get("input"), tool_schemas)
+        except ToolInputError as exc:
+            stats["ended"] = "error"
+            stats["error"] = f"[Refused] No tools from this review round ran. {exc}"
+            log.warning("learning review round %d: %s", round_num, stats["error"])
+            return stats
         messages.append({"role": "assistant", "content": result.content})
         tool_results = []
         for tu in tool_uses:
-            output = await _dispatch(fork, tu)
+            output = await _dispatch(fork, tu, tool_schemas)
             stats["tool_calls"].append(tu.get("name"))
             tool_results.append(
                 {

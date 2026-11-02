@@ -13,7 +13,7 @@ import pytest
 
 from server.ci import autofix, diagnose
 
-NODE = shutil.which("node") or "/usr/local/bin/node"
+NODE = shutil.which("node") or ""
 _HERE = os.path.dirname(os.path.dirname(__file__))
 HARNESS_OK = os.path.exists(NODE) and os.path.exists(
     os.path.join(_HERE, "server", "workflows", "harness", "harness.mjs")
@@ -52,9 +52,19 @@ def test_diagnose_empty_on_bad_reply(monkeypatch):
     assert diagnose.diagnose({}, "log") == []
 
 
-def test_diagnose_empty_when_model_unavailable(monkeypatch):
-    monkeypatch.setattr(diagnose, "_one_shot", lambda *a, **k: None)
-    assert diagnose.diagnose({}, "log") == []
+def test_a_failed_diagnosis_call_is_reported_not_read_as_no_failure(monkeypatch):
+    """Expired credentials used to read as "No actionable failure found"."""
+    from server.ci import autofix, provider
+
+    def boom(*a, **k):
+        raise RuntimeError("ExpiredTokenException")
+
+    monkeypatch.setattr(diagnose, "_one_shot", boom)
+    monkeypatch.setattr(provider, "failing_log", lambda *a, **k: "log")
+    monkeypatch.setattr("server.infrastructure.auxiliary.aux_refusal", lambda *_: "")
+    plan = autofix.plan_autofix({"run_id": 1, "jobs": []}, "/repo")
+    assert plan["script"] is None
+    assert plan["summary"] == "CI diagnosis failed: ExpiredTokenException"
 
 
 # ── autofix script generation ────────────────────────────────────────────

@@ -1,4 +1,4 @@
-"""Memory extraction pipeline — post-query background agent.
+"""Memory extraction pipeline: post-query background agent.
 
 After each chat turn (when stop_reason != tool_use), fires a background
 agent to extract memories from the conversation. The agent is restricted
@@ -7,8 +7,7 @@ to memory tools + read-only workspace tools.
 Runs with or without a workspace: with one, the agent sees both tiers and
 routes writes by scope; without one, everything lands in global memory.
 Cursor/throttle state is keyed by session id (a cursor is an index into one
-session's message list, so keying it by workspace, as the old code did,
-corrupted it whenever two sessions shared a workspace). It is always
+session's message list). It is always
 persisted in the GLOBAL tier dir: a session can connect or disconnect a
 workspace mid-life, so a workspace-dependent anchor would lose the cursor
 on every flip.
@@ -70,12 +69,7 @@ def _load_state(memory_dir: str) -> dict:
 
 
 def _load_cursor(memory_dir: str, session_id: str) -> int:
-    """Load this session's cursor from disk. Returns 0 if not found.
-
-    The legacy format ({"last_message_index": N}, keyed per workspace) is
-    ignored on purpose: those indices pointed into whichever session last
-    wrote them, so they are meaningless for any specific session.
-    """
+    """Load this session's cursor from disk. Returns 0 if not found."""
     try:
         return int(_load_state(memory_dir).get("sessions", {}).get(session_id, 0))
     except (AttributeError, TypeError, ValueError):
@@ -188,7 +182,7 @@ async def maybe_extract_memory(
         # LLM turns; quick successive user turns must not stack a second run
         # over the same message slice.
         if session_id in _inflight:
-            log.info("Skipping extraction — previous run still in flight")
+            log.info("Skipping extraction, previous run still in flight")
             return
 
         # Load cursor
@@ -205,7 +199,7 @@ async def maybe_extract_memory(
         if _has_memory_writes_in_messages(messages, cursor):
             _cursors[session_id] = len(messages)
             _save_state(global_dir, session_id, cursor=len(messages))
-            log.info("Skipping extraction — model already wrote memory")
+            log.info("Skipping extraction, model already wrote memory")
             return
 
         # Get new messages since cursor
@@ -249,33 +243,26 @@ def _fork_route(fork) -> bool:
     on, the provider can be forked, and ``auxiliary_models.learning_review``
     is unset, "main", or the turn's own model. A different configured model
     means the user wants the cheaper excerpt-based agent on that model."""
-    try:
-        from server.infrastructure.auxiliary import MAIN, aux_model_key
-        from server.infrastructure.feature_flags import is_enabled
-        from server.memory.review_fork import supports_fork
+    from server.infrastructure.auxiliary import MAIN, aux_model_key
+    from server.infrastructure.feature_flags import is_enabled
+    from server.memory.review_fork import supports_fork
 
-        if not is_enabled("learning_review_fork") or not supports_fork(fork.adapter):
-            return False
-        key = aux_model_key("learning_review", MAIN)
-        return key in (MAIN, fork.model_key)
-    except Exception as e:  # noqa: BLE001
-        log.debug("review fork routing failed (%s); using the extraction agent", e)
+    if not is_enabled("learning_review_fork") or not supports_fork(fork.adapter):
         return False
+    key = aux_model_key("learning_review", MAIN)
+    return key in (MAIN, fork.model_key)
 
 
 def _review_model_override(model_id: str) -> str | None:
     """Explicit model for the excerpt-based agent when ``learning_review`` names
     a chat_models key other than the session model; None keeps ``model_id``."""
-    try:
-        from server.chat.infra import _get_chat_models
-        from server.infrastructure.auxiliary import MAIN, aux_model_key
+    from server.chat.infra import _get_chat_models
+    from server.infrastructure.auxiliary import MAIN, aux_model_key
 
-        key = aux_model_key("learning_review", MAIN)
-        if key == MAIN:
-            return None
-        return _get_chat_models().get(key) or None
-    except Exception:  # noqa: BLE001
+    key = aux_model_key("learning_review", MAIN)
+    if key == MAIN:
         return None
+    return _get_chat_models().get(key) or None
 
 
 async def _run_review_fork(
@@ -322,25 +309,25 @@ async def _run_review_fork(
 
 def _skills_snapshot() -> dict[str, tuple]:
     """(skill name) -> (mtime, size) of every skill's markdown, for change detection."""
-    out: dict[str, tuple] = {}
-    try:
-        import server.skills as _sk
+    import server.skills as _sk
 
-        for name, skill in (_sk.SKILLS or {}).items():
-            path = None
-            if skill.get("skill_dir"):
-                for fn in ("SKILL.md", "skill.md"):
-                    cand = os.path.join(skill["skill_dir"], fn)
-                    if os.path.isfile(cand):
-                        path = cand
-                        break
-            if path:
+    out: dict[str, tuple] = {}
+    for name, skill in (_sk.SKILLS or {}).items():
+        path = None
+        if skill.get("skill_dir"):
+            for fn in ("SKILL.md", "skill.md"):
+                cand = os.path.join(skill["skill_dir"], fn)
+                if os.path.isfile(cand):
+                    path = cand
+                    break
+        if path:
+            try:
                 st = os.stat(path)
-                out[name] = (st.st_mtime, st.st_size)
-            else:
-                out[name] = (0, len(skill.get("body") or ""))
-    except Exception:  # noqa: BLE001
-        pass
+            except FileNotFoundError:
+                continue  # deleted since the isfile check
+            out[name] = (st.st_mtime, st.st_size)
+        else:
+            out[name] = (0, len(skill.get("body") or ""))
     return out
 
 
@@ -412,7 +399,7 @@ async def _run_extraction(
         f"{scope_note} "
         f"Use memory_write to save new memories or update existing ones. "
         f"Use memory_read to check existing files before overwriting. "
-        f"Be selective — only save what would be valuable in future sessions. "
+        f"Be selective: only save what would be valuable in future sessions. "
         f"If the user corrected a repeatable workflow, encode it with skill_manage "
         f"(view the relevant skill first) rather than as a memory."
     )
@@ -463,13 +450,9 @@ def publish_memory_event(session_id: str, **payload) -> None:
     """Surface memory activity on the session's long-lived event stream.
 
     Extraction finishes after the chat SSE closed, so the per-turn stream
-    cannot carry this; the /api/sessions/{id}/events channel (also used for
-    cron events) outlives the turn. Best-effort: an event bus hiccup must
-    never affect the extraction itself.
+    cannot carry this; the multiplexed /api/sessions/events stream (also used
+    for cron events) outlives the turn. A failure reaches the caller's handler.
     """
-    try:
-        from server.agents.event_bus import event_bus
+    from server.agents.event_bus import event_bus
 
-        event_bus.publish(session_id, {"type": "memory_event", "memoryEvent": payload})
-    except Exception as e:
-        log.debug("memory event publish skipped: %s", e)
+    event_bus.publish(session_id, {"type": "memory_event", "memoryEvent": payload})

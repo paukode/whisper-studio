@@ -30,7 +30,6 @@ FORBIDDEN = "forbidden"
 class Verdict:
     kind: str  # one of DENY / REDIRECT / READ / WRITE / DANGER / FORBIDDEN
     reason: str = ""
-    redirect_to: str = ""
 
     @property
     def is_read(self) -> bool:
@@ -42,17 +41,17 @@ class Verdict:
 
 
 # Catastrophic, irreversible governance actions that NO session, agent, or
-# subagent may ever perform — not even with explicit human approval. The user
+# subagent may ever perform, not even with explicit human approval. The user
 # must do these on GitHub directly. Enforced as FORBIDDEN (never executes, never
 # offered for approval), a strictly harder block than DANGER (which asks).
 _FORBIDDEN_MESSAGE = (
-    "This action ({what}) is never permitted from the assistant — deleting or "
+    "This action ({what}) is never permitted from the assistant, deleting or "
     "transferring a repository, changing its visibility, or adding/removing "
     "people or teams is too risky to automate. Do it yourself on GitHub."
 )
 
 
-# Layer 0 — first-token denylist. Hard reject, never approvable. Each of these
+# Layer 0, first-token denylist. Hard reject, never approvable. Each of these
 # either prints a credential, mutates credentials/config, or installs/rewrites
 # executable behaviour.
 _DENY_FAMILIES = frozenset(
@@ -70,18 +69,20 @@ _DENY_FAMILIES = frozenset(
     }
 )
 
-# Layer 1 — verb tables keyed (family, verb). Anything not listed for a known
+# Layer 1, verb tables keyed (family, verb). Anything not listed for a known
 # family falls through to WRITE (fail-closed). Families not present here at all
 # also fall through to WRITE.
 _READ: dict[str, frozenset[str]] = {
     "pr": frozenset({"list", "view", "diff", "checks", "status"}),
     "issue": frozenset({"list", "view", "status"}),
     "repo": frozenset({"list", "view"}),
-    "release": frozenset({"list", "view", "download"}),
-    "run": frozenset({"list", "view", "watch", "download"}),
+    # download and gist clone write files (any -D/--dir, -O/--output), so they
+    # are not reads and fall through to WRITE (an approval card).
+    "release": frozenset({"list", "view"}),
+    "run": frozenset({"list", "view", "watch"}),
     "workflow": frozenset({"list", "view"}),
     "label": frozenset({"list"}),
-    "gist": frozenset({"list", "view", "clone"}),
+    "gist": frozenset({"list", "view"}),
     "project": frozenset({"list", "view", "item-list", "field-list"}),
     "cache": frozenset({"list"}),
 }
@@ -160,16 +161,14 @@ def classify_github(args: list[str]) -> Verdict:
         return Verdict(
             REDIRECT,
             reason="use the github_api / github_api_write tools for raw REST/GraphQL.",
-            redirect_to="github_api",
         )
     if family == "repo" and verb == "clone":
         return Verdict(
             REDIRECT,
             reason="use the git_clone tool (it validates the URL and connects the workspace).",
-            redirect_to="git_clone",
         )
 
-    # Catastrophic repo governance — FORBIDDEN, never approvable, never executed.
+    # Catastrophic repo governance, FORBIDDEN, never approvable, never executed.
     if family == "repo" and verb in _REPO_FORBIDDEN_VERBS:
         return Verdict(FORBIDDEN, reason=_FORBIDDEN_MESSAGE.format(what=f"gh repo {verb}"))
     if family == "repo" and verb == "edit" and _has_visibility_flag(args):
@@ -183,7 +182,7 @@ def classify_github(args: list[str]) -> Verdict:
 
     # Layer 1: verb table.
     if verb is None:
-        # A family with no verb (e.g. `gh pr`) is a help/listing no-op — treat
+        # A family with no verb (e.g. `gh pr`) is a help/listing no-op, treat
         # as read.
         return Verdict(READ)
     if verb in _DANGER.get(family, frozenset()):

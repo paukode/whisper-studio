@@ -2,13 +2,12 @@
 
 Two long-standing loop gaps close here:
 
-1. The model was never told it was approaching the tool-round cap — round 50
-   simply cut it off mid-plan with "(Reached maximum tool rounds)". Now it
-   gets a wind-down reminder with 5 rounds left and a final-round notice, so
-   it consolidates instead of opening new work.
+1. The model is told it is approaching the tool-round cap (the run limit
+   from Settings): a wind-down reminder with 5 rounds left and a final-round
+   notice, so it consolidates instead of opening new work.
 
-2. Context accounting was character-based guesswork (COMPACT_TRIGGER_CHARS).
-   Every round's message_start usage already reports the TRUE prompt size
+2. Context accounting uses the TRUE prompt size. Every round's
+   message_start usage reports it
    (input + cache_read + cache_creation tokens). The usage frame carries it
    to the composer's context readout (TokenCounter), and recording it per
    session gives an early compaction nudge at COMPACT_NUDGE_FRACTION of the
@@ -25,9 +24,8 @@ import threading
 
 log = logging.getLogger("whisper-studio")
 
-DEFAULT_CONTEXT_MAX = 200_000
 # Nudge when the TRUE prompt size crosses this fraction of the usable input
-# budget — aligned with the char-estimate trigger (95%), the ceiling is 98%.
+# budget: aligned with the char-estimate trigger (95%), the ceiling is 98%.
 COMPACT_NUDGE_FRACTION = 0.95
 
 WIND_DOWN_AT = 5
@@ -41,23 +39,17 @@ _MAX_SESSIONS = 512
 
 def context_window_for(model_key: str) -> int:
     """USABLE input budget for a model key (context window minus the tokens
-    reserved for the answer), via the engine's window accounting — so a
+    reserved for the answer), via the engine's window accounting: a
     1M-window Claude model budgets against ~872K, GPT-on-mantle against its
     real 278,528-token prompt cap, and a local model against its live n_ctx.
     Feeds both the composer's context readout (the usage frame's
     context_max, shown by TokenCounter) and the compaction nudge."""
-    try:
-        from server.chat.engine.windows import input_budget
+    from server.chat.engine.windows import input_budget
 
-        v = input_budget(model_key)
-        if isinstance(v, int) and v > 0:
-            return v
-    except Exception:
-        pass
-    return DEFAULT_CONTEXT_MAX
+    return input_budget(model_key)
 
 
-def note_prompt_tokens(session_id: str, tokens: int, context_max: int | None = None) -> None:
+def note_prompt_tokens(session_id: str, tokens: int, context_max: int) -> None:
     """Record the latest round's true prompt size for a session."""
     if not session_id or tokens <= 0:
         return
@@ -67,21 +59,16 @@ def note_prompt_tokens(session_id: str, tokens: int, context_max: int | None = N
         # Pop+reinsert makes the dict order LRU-by-update, so eviction
         # targets the least-recently-ACTIVE session, never the busy one
         # (plain setdefault would leave order FIFO-by-first-insert).
-        entry = _context.pop(session_id, None) or {
-            "used": 0,
-            "max": DEFAULT_CONTEXT_MAX,
-            "nudged": False,
-        }
+        entry = _context.pop(session_id, None) or {"used": 0, "max": context_max, "nudged": False}
         entry["used"] = tokens
-        if context_max:
-            entry["max"] = context_max
+        entry["max"] = context_max
         _context[session_id] = entry
 
 
 def should_nudge_compaction(session_id: str) -> bool:
     """True ONCE per session when the real prompt size crosses the nudge
-    fraction of the window — lets proactive compaction fire on token truth
-    even when the char estimate is still under COMPACT_TRIGGER_CHARS."""
+    fraction of the window: lets proactive compaction fire on token truth
+    even when the char estimate is still under the compaction trigger."""
     with _lock:
         entry = _context.get(session_id)
         if not entry or entry["nudged"]:

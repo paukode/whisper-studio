@@ -1,8 +1,8 @@
 """Local-mode refusals for the chat side paths that build their own model call.
 
 A chat turn refuses a cloud model in its own model resolution (routes.py,
-through ``model_mode.turn_model_refusal``). ``/subagent`` and ``/btw`` reach a
-model without going through a chat turn, so each asks here first. A refusal is
+through ``model_mode.turn_model_refusal``). ``/subagent`` reaches a
+model without going through a chat turn, so it asks here first. A refusal is
 the existing error frame as a one-frame SSE reply: the client is already reading
 a stream, so an HTTP status alone would never reach the user.
 """
@@ -13,11 +13,6 @@ from fastapi.responses import StreamingResponse
 
 from server.utils import ndjson_dumps
 
-BTW_LOCAL_REFUSAL = (
-    "/btw runs on a cloud model, and Local mode keeps chat on this Mac, so it was "
-    "not sent. Switch Settings > Model mode to Hybrid or Cloud to use /btw."
-)
-
 
 def sse_error(message: str) -> StreamingResponse:
     """A one-frame SSE reply carrying the existing error frame, then [DONE]."""
@@ -27,6 +22,15 @@ def sse_error(message: str) -> StreamingResponse:
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(_frames(), media_type="text/event-stream")
+
+
+def unknown_model_message(model_key: str) -> str:
+    """The reason a request naming a model the catalog does not know is
+    refused (it is never swapped for another model)."""
+    return (
+        f"{model_key} is not an available chat model (it may have been removed). "
+        "Pick one from the model menu."
+    )
 
 
 def subagent_refusal(model_key: str) -> StreamingResponse | None:
@@ -47,11 +51,3 @@ def subagent_refusal(model_key: str) -> StreamingResponse | None:
         mode="local",
     )
     return sse_error(refusal) if refusal else None
-
-
-def btw_refusal() -> StreamingResponse | None:
-    """/btw always runs on Bedrock, so Local mode refuses it rather than sending
-    the recent messages out. None when it may run."""
-    from server.infrastructure.model_mode import current_mode
-
-    return sse_error(BTW_LOCAL_REFUSAL) if current_mode() == "local" else None

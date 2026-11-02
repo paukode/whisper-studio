@@ -543,8 +543,9 @@ def test_gpt_prompt_too_long_salvages(monkeypatch):
         ],
     )
     joined = "\n".join(lines)
-    assert "synthesizing a final answer" in joined
-    assert "Salvaged." in joined
+    assert "Context compaction failed" in joined
+    assert "history is unchanged" in joined
+    assert "Salvaged." not in joined
     assert lines[-1] == "[DONE]"
-    # The salvage round went out without tools.
-    assert "tools" not in fr.captured[-1]
+    assert lines.count("[DONE]") == 1
+    assert len(fr.captured) == 1

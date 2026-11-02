@@ -12,21 +12,17 @@ cycle in practice.
 
 from __future__ import annotations
 
-import logging
 import os
 
 from server.index import store
 from server.index.config import SALIENCE_GRAPH_FLOOR
 
-log = logging.getLogger("whisper-studio")
-
 
 def _detect_communities(edges: list) -> dict:
     """Cluster the file nodes by the weighted co-occurrence edges and return
-    ``{node_id: community_index}``. Uses Leiden (leidenalg + igraph) — which,
-    unlike Louvain, guarantees well-connected communities — and falls back to
-    networkx Louvain, then to a single community, so the overview always gets
-    groups even if the optional deps are missing. Deterministic (fixed seed).
+    ``{node_id: community_index}``. Uses Leiden (leidenalg + igraph), which,
+    unlike Louvain, guarantees well-connected communities. Deterministic (fixed
+    seed).
     Only nodes that appear in an edge are clustered; isolated nodes are omitted
     (the caller marks them -1)."""
     present: list = []
@@ -40,30 +36,15 @@ def _detect_communities(edges: list) -> dict:
         return {}
     idx = {v: i for i, v in enumerate(present)}
     weights = [max(float(e.get("weight_norm") or e.get("weight") or 1.0), 1e-6) for e in edges]
-    try:
-        import igraph as ig
-        import leidenalg
+    import igraph as ig
+    import leidenalg
 
-        g = ig.Graph(n=len(present), edges=[(idx[e["source"]], idx[e["target"]]) for e in edges])
-        g.es["weight"] = weights
-        part = leidenalg.find_partition(
-            g, leidenalg.ModularityVertexPartition, weights="weight", seed=42
-        )
-        return {present[vi]: ci for ci, members in enumerate(part) for vi in members}
-    except Exception as e:  # noqa: BLE001 — optional dep / any failure -> fallback
-        log.debug("Leiden unavailable (%s); falling back to networkx Louvain", e)
-    try:
-        import networkx as nx
-
-        g = nx.Graph()
-        g.add_nodes_from(present)
-        for e, w in zip(edges, weights, strict=False):
-            g.add_edge(e["source"], e["target"], weight=w)
-        parts = nx.community.louvain_communities(g, weight="weight", seed=42)
-        return {v: ci for ci, members in enumerate(parts) for v in members}
-    except Exception as e:  # noqa: BLE001
-        log.debug("Community detection failed (%s); using a single community", e)
-        return {v: 0 for v in present}
+    g = ig.Graph(n=len(present), edges=[(idx[e["source"]], idx[e["target"]]) for e in edges])
+    g.es["weight"] = weights
+    part = leidenalg.find_partition(
+        g, leidenalg.ModularityVertexPartition, weights="weight", seed=42
+    )
+    return {present[vi]: ci for ci, members in enumerate(part) for vi in members}
 
 
 def _annotate_communities(nodes: list, edges: list) -> None:
@@ -101,7 +82,7 @@ def file_graph_impl(ws_path: str, max_edges: int = 300) -> dict:
         # (below the salience floor — the corpus-adaptive filter that also catches
         # Polish generics a static list can't), ultra-common boilerplate (in >
         # _MAX_NODE_FANOUT chunks, kept as an absolute bound), and the generic
-        # category words (a NULL-salience fallback for un-migrated DBs). ``deg`` is
+        # category words (for nodes a cancelled build left without salience). ``deg`` is
         # each file's distinct good-entity count, used to PMI-normalize the edge so
         # a pair sharing entities merely because both files are entity-dense is
         # down-weighted. Edges are ranked by the normalized score, not raw count.

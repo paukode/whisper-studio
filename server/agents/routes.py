@@ -16,10 +16,10 @@ router = APIRouter(prefix="/api/agents", tags=["agents"])
 
 
 @router.get("/{agent_id}/record")
-async def agent_record(agent_id: str, session_id: str | None = None):
+async def agent_record(agent_id: str):
     """The record the pane opens with; live events after it arrive on the
     session event channel as agent_progress frames, merged by ``seq``."""
-    rec = await asyncio.to_thread(journal.load_feed, agent_id, session_id)
+    rec = await asyncio.to_thread(journal.load_feed, agent_id)
     if rec is None:
         return JSONResponse({"error": f"no record for agent {agent_id}"}, status_code=404)
     return rec

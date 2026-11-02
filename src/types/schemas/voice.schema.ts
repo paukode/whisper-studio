@@ -24,7 +24,7 @@ export const VoiceServerEventSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('assistant_step'),
     /** Which delegated run the step belongs to (several may run at once). */
-    run_id: z.string().optional(),
+    run_id: z.string(),
     name: z.string(),
     status: z.enum(['running', 'ok', 'error']),
     detail: z.string(),
@@ -99,7 +99,7 @@ export const VoiceServerEventSchema = z.discriminatedUnion('type', [
 
 export type VoiceServerEvent = z.infer<typeof VoiceServerEventSchema>;
 
-export const VoiceOptionSchema = z.object({
+const VoiceOptionSchema = z.object({
   id: z.string(),
   label: z.string(),
   locale: z.string(),
@@ -117,4 +117,3 @@ export const VoiceStatusSchema = z.object({
   voices: z.array(VoiceOptionSchema),
 });
 
-export type VoiceStatusResponse = z.infer<typeof VoiceStatusSchema>;

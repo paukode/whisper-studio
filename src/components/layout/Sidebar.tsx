@@ -6,6 +6,7 @@ import { useCronUnreadStore, useCronUnreadFor } from '@/stores/cronUnreadStore';
 import { useUIStore, dialogConfirm } from '@/stores/uiStore';
 import { ContextMenu, type MenuItem } from '@/components/common/ContextMenu';
 import * as sessionsApi from '@/api/sessions';
+import { toError } from '@/utils/toError';
 import { fetchRecentRuns } from '@/api/cron';
 import { formatMessageTimestamp, formatSegmentTimestamp } from '@/utils/formatTimestamp';
 import { stripMarkdownTitle } from '@/utils/stripMarkdownTitle';
@@ -138,7 +139,7 @@ const SessionCronBadge: React.FC<{ sessionId: string }> = ({ sessionId }) => {
 };
 
 /**
- * Sidebar matching the vanilla templates/index.html structure exactly.
+ * Sidebar.
  *
  * Structure:
  *   aside.sidebar.collapsed
@@ -241,15 +242,18 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed }) => {
 
   const handleRenameCommit = useCallback(() => {
     if (renamingId && renameValue.trim()) {
+      const id = renamingId;
       const newTitle = renameValue.trim();
-      // Mirror the /rename slash-command path: local update + server PATCH.
-      useSessionStore.getState().updateSessionTitle(renamingId, newTitle, true);
-      fetch(`/api/sessions/${renamingId}/title`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: newTitle, customTitle: true }),
-      }).catch(() => {});
-      addToast({ type: 'success', message: `Session renamed to "${newTitle}"`, duration: 2000, persist: false });
+      // Same path as /rename: the server stores the title first, so a failed
+      // rename never shows a title that reverts on the next load.
+      sessionsApi.renameSession(id, newTitle)
+        .then(() => {
+          useSessionStore.getState().updateSessionTitle(id, newTitle, true);
+          addToast({ type: 'success', message: `Session renamed to "${newTitle}"`, duration: 2000, persist: false });
+        })
+        .catch((err: unknown) => {
+          addToast({ type: 'error', message: `Could not rename the session: ${toError(err).message}` });
+        });
     }
     setRenamingId(null);
   }, [renamingId, renameValue, addToast]);
@@ -257,7 +261,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed }) => {
   // Export this session in one of three formats. Each format mirrors an
   // existing entry point so users get identical output regardless of where
   // they trigger the export from:
-  //   conversation-txt → matches /export slash command + ChatInput export
+  //   conversation-txt → matches the /export slash command
   //   transcript-txt   → matches TranscriptionPanel "Export" button
   //   combined-md      → matches ChatPanel header "Export" button (.md)
   const handleExport = useCallback(

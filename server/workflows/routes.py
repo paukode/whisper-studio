@@ -34,25 +34,19 @@ def _default_model():
     """(key, id) of the model a run with none named uses. Local mode never
     starts one on the cloud default: it takes the on-device default, or no model
     at all (run_agent then says why the agents cannot run)."""
-    try:
-        from server.infrastructure.config import load_config
-        from server.infrastructure.model_mode import current_mode, mode_default_model
+    from server.infrastructure.config import load_config
+    from server.infrastructure.model_mode import current_mode, mode_default_model
 
-        cfg = load_config()
-        models = cfg.get("chat_models", {}) or {}
-        key = cfg.get("default_chat_model")
-        if current_mode(cfg) == "local":
-            meta = cfg.get("chat_model_meta") or {}
-            key = mode_default_model(list(models), meta, "local", key or "")
-            return key, models.get(key, "")
-        model_id = (
-            (models.get(key) if key else None)
-            or models.get("sonnet5.5")
-            or next(iter(models.values()), "")
-        )
-        return key or "sonnet5.5", model_id
-    except Exception:
-        return "sonnet5.5", ""
+    cfg = load_config()
+    models = cfg.get("chat_models", {}) or {}
+    # default_chat_model names a chat_models entry whenever chat_models is not
+    # empty; with every model hidden there is none, and run_agent says why.
+    key = cfg["default_chat_model"]
+    if current_mode(cfg) == "local":
+        meta = cfg.get("chat_model_meta") or {}
+        key = mode_default_model(list(models), meta, "local", key)
+        return key, models.get(key, "")
+    return key, models.get(key, "")
 
 
 @router.get("/runs/{run_id}")
@@ -164,10 +158,12 @@ async def launch_run(request: Request):
 
     # Parse for phases/name (also a final syntax gate before launch). parse_workflow
     # spawns the Node harness (blocking) — keep it off the event loop.
-    from server.workflows.runtime import parse_workflow
+    from server.workflows.runtime import NodeNotFoundError, parse_workflow
 
     try:
         meta = await asyncio.to_thread(parse_workflow, script)
+    except NodeNotFoundError as e:
+        return JSONResponse({"error": str(e)}, status_code=503)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
 
@@ -239,14 +235,9 @@ async def run_events(run_id: str, request: Request):
                     yield f"data: {json.dumps(ev)}\n\n"
                     if _is_run_terminal(ev):
                         break
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     yield ": keepalive\n\n"
         finally:
             event_bus.unsubscribe(f"workflow:{run_id}", queue)
 
     return StreamingResponse(gen(), media_type="text/event-stream")
-
-
-# No /saved REST surface: the Settings library UI is gone. The saved-workflow
-# store is managed from chat (workflow_save / workflow_delete / workflow_list)
-# and trust comes from approving the preview card above.

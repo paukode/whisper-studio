@@ -19,8 +19,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import platform
-import shutil
 
 import pytest
 
@@ -43,10 +41,6 @@ from server.tool_executor import process_tool_results
 
 register_defaults()
 
-needs_sandbox_exec = pytest.mark.skipif(
-    platform.system() != "Darwin" or shutil.which("sandbox-exec") is None,
-    reason="needs macOS sandbox-exec",
-)
 
 ORIGINAL = '{"mode": "default", "rules": []}\n'
 MODES = (MODE_DEFAULT, MODE_ACCEPT_EDITS, MODE_AUTO, MODE_PLAN, MODE_BYPASS, MODE_DONT_ASK)
@@ -103,7 +97,7 @@ def test_app_config_paths_cover_the_files_the_app_reads(home):
         wpaths.WORKSPACE_CONFIG_PATH,
         launch_trust.trust_path(),
         cfg.USER_CONFIG_PATH,
-        cfg.CONFIG_PATH,
+        cfg.LEGACY_CONFIG_PATH,
     ):
         assert os.path.basename(reader) in names, reader
     # The plugin modules and the custom agent types are protected as folders.
@@ -211,15 +205,6 @@ def test_a_confined_command_profile_denies_the_config_files(home):
     assert "permissions.json" not in sandbox._generate_macos_profile(str(home), write_mode="open")
 
 
-def test_the_bwrap_argv_binds_the_config_files_read_only(home):
-    argv = sandbox._bwrap_argv("true", str(home), None, "workspace")
-    config = os.path.realpath(str(home / "data" / "permissions.json"))
-    at = argv.index(config)
-    assert argv[at - 1 : at + 2] == ["--ro-bind", config, config]
-    assert config not in sandbox._bwrap_argv("true", str(home), None, "open")
-
-
-@needs_sandbox_exec
 def test_the_kernel_keeps_a_confined_command_off_the_config_files(home):
     def run(command, write_mode="workspace"):
         return sandbox.run_sandboxed(command, cwd=str(home), timeout=20, write_mode=write_mode)
@@ -238,7 +223,9 @@ def test_the_kernel_keeps_a_confined_command_off_the_config_files(home):
 # ── The tools that write config: config_set and cron ─────────────────────────
 
 
-def test_config_set_gates_only_sensitive_keys(monkeypatch, tmp_path):
+def test_config_set_always_goes_through_the_gate(monkeypatch, tmp_path):
+    """config.user.json is the user's file: every key, sensitive or not, is
+    written only after the permission mode (or a person) allows it."""
     monkeypatch.setenv("WHISPER_DATA_DIR", str(tmp_path))
     monkeypatch.setattr(
         "server.security.permissions.load_permissions", lambda: {"mode": "default", "rules": []}
@@ -249,9 +236,8 @@ def test_config_set_gates_only_sensitive_keys(monkeypatch, tmp_path):
     # The app's own request, not a plain str: the gate acts on it.
     assert is_app_request(sensitive, APPROVAL)
     assert json.loads(sensitive[len("[WS_APPROVAL]") :])["action"] == "config_set"
-    # A harmless key writes straight away (no card).
     plain = execute_config_set({"updates": {"translate_target": "pl"}})
-    assert not plain.startswith("[WS_APPROVAL]")
+    assert is_app_request(plain, APPROVAL)
     for mode in MODES:
         decision = resolve_static_decision("config_set", {"updates": {}}, "config", {}, mode)
         assert decision == TABLE[mode], mode
@@ -315,10 +301,10 @@ def test_project_settings_cannot_carry_the_mode_or_classifier_rules(tmp_path):
             {
                 "permission_mode": "bypassPermissions",
                 "auto_mode_allow": ["everything"],
-                "brief_mode": True,
+                "effort_level": "high",
             }
         )
     )
     loaded = _load_project_config(str(ws))
     assert "permission_mode" not in loaded and "auto_mode_allow" not in loaded
-    assert loaded.get("brief_mode") is True  # harmless keys still pass
+    assert loaded.get("effort_level") == "high"  # harmless keys still pass

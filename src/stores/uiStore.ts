@@ -133,9 +133,6 @@ export interface UIState {
   memoryEditorOpen: boolean;
   memoryViewerOpen: boolean;
 
-  /* /btw popup */
-  btwPopup: { question: string; answer: string } | null;
-
   /* Shared model load/download banner. null when idle. The progress bar
    * fills to `progress` (0..1); stage 'ready' triggers the auto-hide and
    * stage 'error' renders the failure (detail carries the message) with a
@@ -155,7 +152,7 @@ export interface UIState {
   /* Dialog stack */
   dialogStack: DialogEntry[];
 
-  /* Command palette (Cmd/Ctrl+K) */
+  /* Command palette (Cmd+K) */
   commandPaletteOpen: boolean;
 
   /** The edit whose diff the user asked to see from an activity row's diff
@@ -191,8 +188,6 @@ export interface UIState {
   closeMemoryEditor: () => void;
   openMemoryViewer: () => void;
   closeMemoryViewer: () => void;
-
-  setBtwPopup: (popup: { question: string; answer: string } | null) => void;
 
   setModelLoading: (m: UIState['modelLoading']) => void;
 
@@ -266,7 +261,7 @@ export const useUIStore = create<UIState>()((set) => ({
   sidebarCollapsed: loadSidebarCollapsed(),
   sessionGroupsCollapsed: loadSessionGroupsCollapsed(),
   settingsOpen: false,
-  settingsTab: 'general',
+  settingsTab: 'apikeys',
   toasts: [],
   toastQueue: [],
   transcriptVisible: false,
@@ -289,7 +284,6 @@ export const useUIStore = create<UIState>()((set) => ({
   workspacePanelCollapsed: false,
   memoryEditorOpen: false,
   memoryViewerOpen: false,
-  btwPopup: null,
   modelLoading: null,
   dialogStack: [],
   commandPaletteOpen: false,
@@ -468,10 +462,6 @@ export const useUIStore = create<UIState>()((set) => ({
 
   closeMemoryViewer: () => {
     set({ memoryViewerOpen: false });
-  },
-
-  setBtwPopup: (popup) => {
-    set({ btwPopup: popup });
   },
 
   setModelLoading: (m) => {

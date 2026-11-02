@@ -44,7 +44,7 @@ export function writtenLabelFromFrame(frame: NonNullable<SSEEventData['activity_
 }
 
 /** Whether `label` names one of the calls in `toolUse`. */
-export function namesCallIn(label: WrittenLabel, toolUse: readonly ToolUseEvent[] | undefined): boolean {
+function namesCallIn(label: WrittenLabel, toolUse: readonly ToolUseEvent[] | undefined): boolean {
   return !!toolUse && toolUse.some((t) => label.ids.includes(t.toolId));
 }
 

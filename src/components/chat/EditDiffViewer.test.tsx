@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { EditDiffViewer } from './EditDiffViewer';
 import { useUIStore } from '@/stores/uiStore';
@@ -7,6 +7,7 @@ import { ApiError } from '@/types/api';
 import { MAX_DIFF_CELLS } from '@/utils/computeLineDiff';
 import { STORAGE_KEYS } from '@/utils/storageKeys';
 import type { EditRecord } from '@/api/workspace';
+import { CHAT_INSERT_EVENT } from '@/utils/uiEvents';
 
 /**
  * The diff dialog an activity row's diff pill opens: the Git panel's own
@@ -15,8 +16,10 @@ import type { EditRecord } from '@/api/workspace';
  */
 
 const getEdit = vi.fn();
+const undoEdit = vi.fn();
 vi.mock('@/api/workspace', () => ({
   getEdit: (id: string) => getEdit(id),
+  undoEdit: (id: string) => undoEdit(id),
 }));
 
 const record = (r: Partial<EditRecord>): EditRecord => ({
@@ -55,6 +58,8 @@ beforeEach(() => {
 afterEach(() => {
   useUIStore.setState({ editDiff: null, wsPath: '' });
   getEdit.mockReset();
+  undoEdit.mockReset();
+  useUIStore.setState({ toasts: [] });
 });
 
 describe('EditDiffViewer', () => {
@@ -222,5 +227,45 @@ describe('EditDiffViewer', () => {
     expect(screen.getByRole('button', { name: 'Unified' }).getAttribute('aria-pressed')).toBe('true');
     expect(screen.getByRole('button', { name: 'Split' }).getAttribute('aria-pressed')).toBe('false');
     expect(JSON.parse(localStorage.getItem(STORAGE_KEYS.GIT_DIFF_LAYOUT) ?? 'null')).toBe('unified');
+  });
+
+  it('offers no Undo for an edit without an undo copy', async () => {
+    getEdit.mockResolvedValue(record({ undoable: false }));
+
+    openViewer();
+
+    expect(await screen.findByText('Modified')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Undo/ })).toBeNull();
+  });
+
+  it('Undo puts back this one write by its tool call and closes the dialog', async () => {
+    getEdit.mockResolvedValue(record({ undoable: true }));
+    undoEdit.mockResolvedValue({ path: 'src/app.ts', restored: true, removed: false });
+    const inserted: string[] = [];
+    const onInsert = (e: Event) => inserted.push((e as CustomEvent<{ text: string }>).detail.text);
+    window.addEventListener(CHAT_INSERT_EVENT, onInsert);
+
+    openViewer();
+    fireEvent.click(await screen.findByRole('button', { name: /Undo/ }));
+
+    await waitFor(() => expect(useUIStore.getState().editDiff).toBeNull());
+    window.removeEventListener(CHAT_INSERT_EVENT, onInsert);
+    expect(undoEdit).toHaveBeenCalledWith('tu_edit');
+    expect(useUIStore.getState().toasts.some((t) => t.type === 'success')).toBe(true);
+    expect(inserted).toHaveLength(1);
+    expect(inserted[0]).toContain('src/app.ts');
+  });
+
+  it('a refused Undo says why and keeps the dialog open', async () => {
+    getEdit.mockResolvedValue(record({ undoable: true }));
+    undoEdit.mockRejectedValue(new ApiError(409, 'src/app.ts changed after this change was written.', '/api/workspace/undo', 'POST'));
+
+    openViewer();
+    fireEvent.click(await screen.findByRole('button', { name: /Undo/ }));
+
+    await waitFor(() => expect(useUIStore.getState().toasts.some((t) => t.type === 'error')).toBe(true));
+    const toast = useUIStore.getState().toasts.find((t) => t.type === 'error');
+    expect(toast?.message).toContain('changed after');
+    expect(useUIStore.getState().editDiff).not.toBeNull();
   });
 });

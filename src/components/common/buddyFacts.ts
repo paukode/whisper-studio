@@ -5,7 +5,7 @@
  * opt-in "fresh facts (AI)" toggle swaps in /api/buddy/fact instead. Expand
  * freely, keeping each entry to one true, surprising sentence.
  */
-export const BUDDY_FACTS: readonly string[] = [
+const BUDDY_FACTS: readonly string[] = [
   // Science: physics, chemistry, astronomy
   'Light takes about 8 minutes and 20 seconds to travel from the Sun to Earth.',
   'Lightning is roughly five times hotter than the surface of the Sun.',

@@ -1,45 +1,18 @@
-"""Model fallback chain — degrades from expensive to cheaper models.
+"""Budget downgrade: a cheaper model when a cost limit is near.
 
-Fallback triggers:
-  1. Model unavailable (AccessDeniedException, model not found)
-  2. Over budget (session or daily cost limit approaching)
-
-The chain is DERIVED from the authoritative per-model price list
-(``server.costs.tracker._MODEL_PRICING``) rather than hardcoded, so it can't
-drift out of sync with the model catalog: every priced model participates and
-"next cheaper" is computed from list price on the fly. A hardcoded chain is
-kept only as a fallback for the (unexpected) case where the pricing table is
-unavailable.
+When ``model_fallback_enabled`` is on and the session or daily spend reaches
+BUDGET_THRESHOLD_PCT of its limit, a turn runs on the next cheaper model.
+"Next cheaper" is computed from the authoritative per-model price list
+(``server.costs.tracker._MODEL_PRICING``), so it tracks the catalog.
 """
 
 import logging
 
-from server.costs.tracker import CostLogUnreadable, get_session_usage
+from server.costs.tracker import _MODEL_PRICING, CostLogUnreadable, get_session_usage
 from server.costs.usage import today_spend_usd
 from server.infrastructure.config import load_config
 
 log = logging.getLogger("whisper-studio")
-
-# Authoritative price table. Imported lazily-safe: if tracker's private dict is
-# ever renamed/removed we degrade to the static chain below instead of crashing
-# the module at import time.
-try:
-    from server.costs.tracker import _MODEL_PRICING
-except Exception:  # pragma: no cover - defensive
-    _MODEL_PRICING = {}
-
-# Static fallback order (most capable → least capable), used only when the
-# pricing table is empty/unavailable. Kept in real catalog order so the module
-# still works standalone. Two provider chains flattened by capability.
-_STATIC_FALLBACK_CHAIN = [
-    "fable5.1",
-    "gpt6-astra",
-    "opus5.5",
-    "sonnet5.5",
-    "gpt6.1-sol",
-    "haiku",
-    "gpt6-luna",
-]
 
 # Budget threshold: switch to cheaper model when this % of limit is used
 BUDGET_THRESHOLD_PCT = 0.80
@@ -54,26 +27,11 @@ def _model_cost(model_key: str) -> float | None:
     return float(pricing.get("input", 0.0)) + float(pricing.get("output", 0.0))
 
 
-def _derive_chain() -> list[str]:
-    """Catalog ordered most-expensive → cheapest (stable tiebreak on key).
-
-    Derived from the price table so it tracks the live catalog. Falls back to
-    the static chain when no pricing is available."""
-    if not _MODEL_PRICING:
-        return list(_STATIC_FALLBACK_CHAIN)
-    return sorted(_MODEL_PRICING, key=lambda k: (-(_model_cost(k) or 0.0), k))
-
-
-# Most capable → least capable. Consumed by resolve_model_with_fallback to pick
-# the most capable model that is actually present in chat_models.
-FALLBACK_CHAIN = _derive_chain()
-
-
 def get_next_fallback(current_model_key: str) -> str | None:
     """Return the next-cheaper model key for ``current_model_key``.
 
     "Next cheaper" is the most expensive model whose list price is *strictly*
-    below the current model's — the smallest capability drop that still relieves
+    below the current model's: the smallest capability drop that still relieves
     budget pressure. Ranked from ``_MODEL_PRICING`` so it never goes stale.
 
     Robust by construction:
@@ -164,18 +122,11 @@ def resolve_model_with_fallback(
     chat_models: dict,
     session_id: str = "",
 ) -> tuple[str, str]:
-    """Resolve model key to model ID, applying fallback if needed.
-
-    Returns (model_key, model_id) — the model_key may differ from input
-    if a fallback was applied.
-    """
+    """Resolve a model key the caller already checked is in ``chat_models``
+    to (model_key, model_id), applying the budget downgrade when enabled.
+    The key may differ from the input when a downgrade applies."""
     config = load_config()
-    if not config.get("model_fallback_enabled", False):
-        model_id = chat_models.get(model_key) or next(iter(chat_models.values()))
-        return model_key, model_id
-
-    # Budget-based downgrade
-    if session_id:
+    if config.get("model_fallback_enabled", False) and session_id:
         downgrade = should_downgrade_for_budget(session_id, model_key)
         # The recommended next-cheaper key may not exist in this deployment's
         # chat_models. Walk further down the (strictly cheaper) chain until we
@@ -184,19 +135,6 @@ def resolve_model_with_fallback(
         # step is strictly cheaper and the chain is finite (ends at None).
         while downgrade and downgrade not in chat_models:
             downgrade = get_next_fallback(downgrade)
-        if downgrade and downgrade in chat_models:
+        if downgrade:
             model_key = downgrade
-
-    model_id = chat_models.get(model_key)
-    if not model_id:
-        # Model key not in chat_models — try fallback chain
-        for fallback_key in FALLBACK_CHAIN:
-            if fallback_key in chat_models:
-                model_key = fallback_key
-                model_id = chat_models[fallback_key]
-                break
-
-    if not model_id:
-        model_id = next(iter(chat_models.values()))
-
-    return model_key, model_id
+    return model_key, chat_models[model_key]

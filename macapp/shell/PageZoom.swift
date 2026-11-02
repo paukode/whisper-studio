@@ -1,4 +1,4 @@
-// Whisper Studio — page zoom for the app window, as a browser does it.
+// Whisper Studio: page zoom for the app window, as a browser does it.
 //
 // View > Actual Size (Cmd 0), Zoom In (Cmd + or Cmd =) and Zoom Out (Cmd -)
 // step WKWebView.pageZoom through the browser zoom levels. Page zoom reflows

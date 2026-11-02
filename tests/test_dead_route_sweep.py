@@ -28,7 +28,6 @@ def test_flags_registry_holds_only_live_flags():
         "git_context",
         "prompt_caching",
         "progressive_tools",
-        "strict_rag",
         "rag_hybrid_search",
         "rag_reranker",
         "rag_query_rewrite",
@@ -79,9 +78,10 @@ def test_deleted_routes_stay_deleted_and_kept_routes_remain():
     # Plan mode is driven through the permissions API; these dupes are gone.
     assert ("/api/workspace/plan-mode", "POST") not in ws
     assert ("/api/workspace/plan-mode", "GET") not in ws
-    # The one kept-and-rewired route, plus the live shell endpoint.
+    # The one kept-and-rewired route. The unapproved shell runner is gone:
+    # Reveal in Finder, its last caller, uses /reveal.
     assert ("/api/workspace/shell/tasks/stop", "POST") in ws
-    assert ("/api/workspace/shell", "POST") in ws
+    assert ("/api/workspace/shell", "POST") not in ws
 
     # The localStorage-migration import endpoint was dead; it stays deleted.
     assert ("/api/sessions/import", "POST") not in paths(sessions_router)
@@ -107,10 +107,7 @@ def test_deleted_routes_stay_deleted_and_kept_routes_remain():
 def test_esc_stop_flow_end_to_end(tmp_path):
     """Full HTTP round-trip: connect workspace, background a sleep, ESC-stop it.
 
-    Runs with the real shell-profile snapshot: wrap_command re-executes under
-    the snapshot's own shell, so a zsh profile no longer aborts under the
-    /bin/sh that background tasks use. The sleep must actually be running
-    for the stop call to find it.
+    The sleep must actually be running for the stop call to find it.
     """
     from server import workspace
     from server.workspace import routes as _  # noqa: F401
@@ -126,12 +123,9 @@ def test_esc_stop_flow_end_to_end(tmp_path):
     try:
         # The stopped turn's stream began here; the stop carries it as `since`.
         since = time.time()
-        r = c.post(
-            "/api/workspace/shell",
-            json={"command": "sleep 30", "background": True, "session_id": "esc-live"},
-        )
-        assert r.status_code == 200, r.text
-        task_id = r.json()["task_id"]
+        from server.tasks.shell import start_shell_task
+
+        task_id = start_shell_task("sleep 30", cwd=str(ws_dir), session_id="esc-live")["task_id"]
         time.sleep(0.3)
 
         stop_body = {"session_id": "esc-live", "since": since}

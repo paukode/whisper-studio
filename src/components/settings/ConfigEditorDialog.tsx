@@ -7,10 +7,10 @@ import { useSettingsStore } from '@/stores/settingsStore';
 import { useUIStore } from '@/stores/uiStore';
 
 /**
- * In-app config editor (Settings > Models "config.json" link).
+ * In-app config editor (Settings > Models "config.user.json" link).
  *
- * Since the config split the editor edits the USER layer (config.user.json) —
- * only the user's deltas: added local models, region/keys/flags, per-field
+ * The editor edits the USER layer (config.user.json), which holds only the
+ * user's deltas: added local models, region/keys/flags, per-field
  * overrides, and a hide-list. It merges on top of the app's built-in catalog
  * (config.example.json), which updates with each release. A second, read-only
  * "Effective config (merged)" tab shows the fully merged result so the user can
@@ -40,8 +40,8 @@ interface SaveRawConfigResult {
   local_models: string[];
 }
 
-export const fetchRawConfig = () => get<RawConfig>('/api/config/raw');
-export const saveRawConfig = (text: string) =>
+const fetchRawConfig = () => get<RawConfig>('/api/config/raw');
+const saveRawConfig = (text: string) =>
   put<SaveRawConfigResult>('/api/config/raw', { text });
 
 type Tab = 'user' | 'effective';
@@ -100,15 +100,19 @@ export const ConfigEditorDialog: React.FC<{ onClose: () => void }> = ({ onClose 
     }
   }, [text, queryClient, addToast, onClose]);
 
+  // Escape closes only this editor. The capture-phase listener stops the
+  // key before the Settings modal's own Escape (useDismiss, bubble phase)
+  // can close everything under it.
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
+        e.stopPropagation();
         onClose();
       }
     };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
+    document.addEventListener('keydown', handleKeyDown, true);
+    return () => document.removeEventListener('keydown', handleKeyDown, true);
   }, [onClose]);
 
   const tabButton = (id: Tab, label: string) => (
@@ -119,7 +123,7 @@ export const ConfigEditorDialog: React.FC<{ onClose: () => void }> = ({ onClose 
       onClick={() => setTab(id)}
       className="btn btn-sm"
       style={{
-        background: tab === id ? 'var(--surface-2)' : 'transparent',
+        background: tab === id ? 'var(--bg-elevated)' : 'transparent',
         borderBottom: tab === id ? '2px solid var(--accent)' : '2px solid transparent',
         borderRadius: 0,
       }}
@@ -167,7 +171,7 @@ export const ConfigEditorDialog: React.FC<{ onClose: () => void }> = ({ onClose 
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          background: 'var(--surface-1)',
+          background: 'var(--bg-surface)',
           color: 'var(--text-primary)',
           borderRadius: 'var(--radius-lg)',
           width: 'min(680px, 94vw)',
@@ -266,9 +270,8 @@ export const ConfigEditorDialog: React.FC<{ onClose: () => void }> = ({ onClose 
   );
 };
 
-/** Inline "config.json" hyperlink that opens the editor dialog. Drop it into
- *  any helper sentence: "Add models by editing <ConfigJsonLink />." The label
- *  stays "config.json" (the name users know); it opens the user config layer. */
+/** Inline "config.user.json" hyperlink that opens the editor dialog. Drop it
+ *  into any helper sentence: "Add models by editing <ConfigJsonLink />." */
 export const ConfigJsonLink: React.FC = () => {
   const [open, setOpen] = useState(false);
   return (
@@ -286,7 +289,7 @@ export const ConfigJsonLink: React.FC = () => {
           cursor: 'pointer',
         }}
       >
-        config.json
+        config.user.json
       </button>
       {/* Portal: the link often sits inside a <p>, and the dialog is a <div>
           overlay — rendering it in place would be invalid DOM nesting. */}

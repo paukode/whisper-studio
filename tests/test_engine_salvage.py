@@ -1,14 +1,6 @@
-"""The engine's prompt-too-long handling: reactive trim, then the salvage
-round (new in the turn-engine cutover — previously the turn died with
-'Conversation too long even after compaction').
+"""Provider overflow is fail-closed, never a hard-tail salvage request."""
 
-A client whose invoke keeps rejecting with a too-long error exercises:
-  1. history > 4 messages → trim + compact + retry (old behavior preserved)
-  2. history too small to trim → ONE final no-tools salvage round that
-     synthesizes an answer from the trimmed tail
-  3. salvage itself rejected → the terminal error (old message preserved)
-"""
-
+import copy
 import json
 
 from tests.golden_harness import (
@@ -21,88 +13,118 @@ from tests.golden_harness import (
 
 
 class RejectingThenServingClient(FakeBedrockClient):
-    """Rejects the first ``rejections`` invokes with a prompt-too-long error,
-    then serves scripted rounds."""
+    """Reject initial requests, capturing rejected histories as well."""
 
     def __init__(self, rounds, rejections=1):
         super().__init__(rounds)
         self.rejections = rejections
         self.invokes = 0
+        self.rejected = []
 
     def invoke_model_with_response_stream(self, **kw):
         self.invokes += 1
         if self.invokes <= self.rejections:
+            self.rejected.append(json.loads(kw["body"]))
             raise Exception("ValidationException: prompt is too long: 281096 tokens > 278528")
         return super().invoke_model_with_response_stream(**kw)
 
 
-def test_salvage_round_rescues_short_history(monkeypatch):
-    # History is tiny (one user message), so the reactive trim path can't
-    # shrink it — the engine must fall through to the salvage round and still
-    # produce an answer.
-    client = RejectingThenServingClient(
-        [[msg_start(), *text_block("Salvaged summary."), *msg_end()]],
-        rejections=1,
-    )
-    lines = run_chat_turn(monkeypatch, client, {"question": "huge question"})
-    joined = "\n".join(lines)
-    assert "Salvaged summary." in joined
-    assert "synthesizing a final answer" in joined
+def _failed(lines):
+    errors = [json.loads(line)["error"] for line in lines if line.startswith('{"error"')]
+    assert len(errors) == 1
+    assert "Context compaction failed" in errors[0]
+    assert "history is unchanged" in errors[0]
+    assert lines.count("[DONE]") == 1
     assert lines[-1] == "[DONE]"
-    # The salvage request must carry no tools and end with the truncation note.
-    salvage_req = client.requests[-1]
-    assert "tools" not in salvage_req or not salvage_req.get("tools")
-    assert "truncated" in json.dumps(salvage_req["messages"][-1])
+    assert "synthesizing a final answer" not in "\n".join(lines)
 
 
-def test_salvage_failure_surfaces_terminal_error(monkeypatch):
-    # Both the original round and the salvage round reject: the user gets the
-    # terminal too-long error (previous behavior), not a hang.
+def test_short_history_refuses_without_salvage(monkeypatch):
+    client = RejectingThenServingClient(
+        [[msg_start(), *text_block("Must not synthesize."), *msg_end()]], rejections=1
+    )
+    body = {"question": "huge question"}
+    original = copy.deepcopy(body)
+    lines = run_chat_turn(monkeypatch, client, body)
+    _failed(lines)
+    assert client.invokes == 1
+    assert client.requests == []
+    assert "Must not synthesize." not in "\n".join(lines)
+    assert body == original
+
+
+def test_repeated_overflow_stops_after_one_successful_compaction(monkeypatch):
+    from server.chat import compaction
+
+    seen = []
+
+    async def summarize(messages, *args, **kwargs):
+        seen.append(copy.deepcopy(messages))
+        return [{"role": "user", "content": "Summary"}]
+
+    monkeypatch.setattr(compaction, "compact_messages_with_claude", summarize)
+    history = [{"role": "user", "content": "Original context " * 100}]
     client = RejectingThenServingClient([], rejections=99)
-    lines = run_chat_turn(monkeypatch, client, {"question": "huge question"})
-    joined = "\n".join(lines)
-    assert "Conversation too long even after compaction" in joined
-    assert lines[-1] == "[DONE]"
-
-
-def test_reactive_trim_still_retries_long_histories(monkeypatch):
-    # With a long history the engine trims + compacts + retries (parity with
-    # the old loop) instead of jumping straight to salvage.
-    history = []
-    for i in range(4):
-        history.append({"role": "user", "content": f"q{i}"})
-        history.append({"role": "assistant", "content": f"a{i}"})
-    client = RejectingThenServingClient(
-        [[msg_start(), *text_block("Recovered."), *msg_end()]],
-        rejections=1,
-    )
     lines = run_chat_turn(monkeypatch, client, {"question": "next", "history": history})
-    joined = "\n".join(lines)
-    assert "Recovered." in joined
-    assert "Compacting context (prompt too long)" in joined
-    # Salvage was NOT needed.
-    assert "synthesizing a final answer" not in joined
+    _failed(lines)
+    assert len(seen) == 1
+    assert client.invokes == 2
+    assert seen[0] == [*history, {"role": "user", "content": "next"}]
+    retry = client.rejected[1]["messages"]
+    assert len(retry) == 1 and retry[0]["role"] == "user"
+    assert retry[0]["content"][0]["text"] == "Summary"
 
 
-def test_a_salvage_round_with_a_goal_says_the_goal_was_not_checked(monkeypatch):
-    """The salvage round is the turn's last, so the gate cannot run. An active
-    goal is reported as not checked, with the reason, and never judged."""
+def test_reactive_summary_sees_complete_history_and_keeps_recent_suffix(monkeypatch):
+    from server.chat import compaction
+
+    history = []
+    for i in range(8):
+        history.extend(
+            [
+                {"role": "user", "content": f"q{i} " * 100},
+                {"role": "assistant", "content": f"a{i} " * 100},
+            ]
+        )
+    original = copy.deepcopy(history)
+    seen = []
+
+    async def summarize(messages, *args, **kwargs):
+        seen.append(copy.deepcopy(messages))
+        assert kwargs["trigger"] == "context-overflow"
+        return [
+            {"role": "user", "content": "Summary of original prefix"},
+            *copy.deepcopy(messages[-9:]),
+        ]
+
+    monkeypatch.setattr(compaction, "compact_messages_with_claude", summarize)
+    client = RejectingThenServingClient([[msg_start(), *text_block("Recovered."), *msg_end()]])
+    lines = run_chat_turn(monkeypatch, client, {"question": "next", "history": history})
+    assert "Recovered." in "\n".join(lines)
+    assert len(seen) == 1
+    assert seen[0] == [*history, {"role": "user", "content": "next"}]
+    assert client.requests[0]["messages"][-9:] == client.rejected[0]["messages"][-9:]
+    assert client.requests[0]["tools"] == client.rejected[0]["tools"]
+    assert history == original
+    assert lines.count("[DONE]") == 1
+
+
+def test_context_failure_with_goal_reports_not_checked_without_judge(monkeypatch):
     from server.goals import store as goal_store
 
-    def no_judge(*a, **k):
-        raise AssertionError("the judge ran on a salvage round")
+    def no_judge(*args, **kwargs):
+        raise AssertionError("the judge ran after context failure")
 
     monkeypatch.setattr("server.goals.evaluator.evaluate", no_judge)
-    sid = "salvage-with-goal"
+    sid = "context-failure-with-goal"
     goal_store.set_goal(sid, "summarise the huge question")
-    client = RejectingThenServingClient(
-        [[msg_start(), *text_block("Salvaged summary."), *msg_end()]],
-        rejections=1,
-    )
+    client = RejectingThenServingClient([], rejections=1)
     lines = run_chat_turn(monkeypatch, client, {"question": "huge question", "session_id": sid})
-    evals = [json.loads(ln)["goal_eval"] for ln in lines if ln.startswith('{"goal_eval"')]
-    assert [e["verdict"] for e in evals] == ["not_checked"]
-    assert "no longer fit the model's context window" in evals[0]["feedback"]
+    _failed(lines)
+    evals = [json.loads(line)["goal_eval"] for line in lines if line.startswith('{"goal_eval"')]
+    assert [entry["verdict"] for entry in evals] == ["not_checked"]
+    assert "context compaction failed" in evals[0]["feedback"]
+    assert "without completing the answer" in evals[0]["feedback"]
     assert goal_store.is_active(sid)
     assert goal_store.get_goal(sid)["state"]["last_verdict"] == "not_checked"
-    assert lines[-1] == "[DONE]"
+    assert client.invokes == 1

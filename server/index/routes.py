@@ -59,10 +59,7 @@ def _run_build(ws_path: str) -> None:
 @router.get("/status")
 async def index_status(path: str = ""):
     """Index status for a workspace path (defaults to the connected one)."""
-    if not path:
-        from server.workspace import get_workspace_path
-
-        path = get_workspace_path() or ""
+    path = _connected_or(path)
     if not path:
         return {"indexed": False, "building": False}
     key = _abspath(path)
@@ -114,7 +111,7 @@ async def index_list():
         # embed backend; only surface (and read) the ones present under the ACTIVE
         # backend, so a read never fabricates an empty active-backend db for a
         # folder indexed under the other embedder.
-        if not store.has_index(ws):
+        if not paths.is_indexed(ws):
             continue
         s = store.stats(ws)
         out.append(
@@ -213,12 +210,9 @@ async def index_remove(request: Request):
     # Drop this folder's scheduled job and re-sync the background agent — its
     # settings/DB are gone now, so a lingering job would silently re-create it.
     scheduler.apply_workspace(_abspath(path))
-    try:
-        from . import agent
+    from . import agent
 
-        agent.regenerate()
-    except Exception:  # noqa: BLE001 — removal must succeed regardless
-        pass
+    agent.regenerate()
     return {"removed": True}
 
 
@@ -243,11 +237,10 @@ async def get_index_settings(request: Request):
     refresh). Per-folder — falls back to the connected workspace if no path."""
     from . import wssettings
 
-    path = (request.query_params.get("path") or "").strip()
+    path = _connected_or((request.query_params.get("path") or "").strip())
     if not path:
-        from server.workspace import get_workspace_path
-
-        path = get_workspace_path() or ""
+        # Never resolve "" to the server's working directory.
+        return {"error": "path is required"}
     return wssettings.get_settings(_abspath(path))
 
 
@@ -278,12 +271,3 @@ async def put_index_settings(request: Request):
     scheduler.apply_workspace(ws)
     agent.regenerate()
     return settings
-
-
-@router.get("/agent")
-async def get_agent():
-    """Whether the background refresh helper is installed, and whether this
-    platform supports it (macOS). The per-folder on/off lives in /settings."""
-    from . import agent
-
-    return agent.status()

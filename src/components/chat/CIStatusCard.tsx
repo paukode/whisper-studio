@@ -1,11 +1,11 @@
 /**
- * Inline card for a CI watch (WS-J). Renders live from the ciStore (fed by the
+ * Inline card for a CI watch. Renders live from the ciStore (fed by the
  * session event stream); if the store has nothing yet (e.g. after a reload) it
  * fetches a one-shot status snapshot. When the run failed, an Autofix button
  * plans the fix and drops the approvable workflow preview into the chat.
  */
-import React, { useEffect } from 'react';
-import { ciStatus, getWatch, planAutofix, stopWatch } from '@/api/ci';
+import React, { useEffect, useState } from 'react';
+import { getWatch, planAutofix, stopWatch } from '@/api/ci';
 import { useCIStore } from '@/stores/ciStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import { activeEffortLevel, useSettingsStore } from '@/stores/settingsStore';
@@ -21,11 +21,15 @@ const COLOR: Record<string, string> = {
   in_progress: 'var(--risk-warn)',
   queued: 'var(--risk-warn)',
   watching: 'var(--risk-warn)',
+  error: 'var(--accent-record)',
 };
+
+const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export const CIStatusCard: React.FC<{ taskId: string; branch?: string }> = ({ taskId, branch }) => {
   const watch = useCIStore((s) => s.watches[taskId]);
   const sessionId = useSessionStore((s) => s.currentSessionId);
+  const [autofixError, setAutofixError] = useState('');
 
   useEffect(() => {
     if (watch) return;
@@ -46,6 +50,7 @@ export const CIStatusCard: React.FC<{ taskId: string; branch?: string }> = ({ ta
             failing: Boolean(w.run.failing),
             timed_out: Boolean(w.run.timed_out),
             cancelled: Boolean(w.run.cancelled),
+            error: w.run.error || '',
             terminal: true,
           });
         } else {
@@ -53,26 +58,16 @@ export const CIStatusCard: React.FC<{ taskId: string; branch?: string }> = ({ ta
           useCIStore.getState().upsert(taskId, { branch: w.branch || branch || '', status: 'watching' });
         }
       })
-      .catch(() => {
-        // No task row (server restart / pruned): fall back to the branch's
-        // latest-run snapshot, which is approximate but better than nothing.
-        if (!fresh() || !branch) return;
-        void ciStatus(branch)
-          .then((st) => {
-            if (!fresh()) return;
-            const r = st.run;
-            useCIStore.getState().upsert(taskId, {
-              branch,
-              status: r?.status || 'watching',
-              conclusion: r?.conclusion || '',
-              run_id: r?.run_id ?? null,
-              url: r?.url || '',
-              jobs: r?.jobs || [],
-              failing: Boolean(r?.failing),
-              terminal: r?.status === 'completed',
-            });
-          })
-          .catch(() => {});
+      .catch((e: unknown) => {
+        // No task row (server restart / pruned): say so. The branch's latest
+        // run may not be the one this card watched, so it is never shown.
+        if (!fresh()) return;
+        useCIStore.getState().upsert(taskId, {
+          branch: branch || '',
+          status: 'error',
+          error: `This CI watch is no longer tracked: ${message(e)}`,
+          terminal: true,
+        });
       });
     return () => {
       cancelled = true;
@@ -81,7 +76,7 @@ export const CIStatusCard: React.FC<{ taskId: string; branch?: string }> = ({ ta
 
   const w = watch;
   const terminal = Boolean(w?.terminal);
-  const label = w?.cancelled ? 'cancelled' : terminal ? w?.conclusion || 'completed' : w?.status || 'watching';
+  const label = w?.error ? 'error' : w?.cancelled ? 'cancelled' : terminal ? w?.conclusion || 'completed' : w?.status || 'watching';
   const jobs = w?.jobs ?? [];
   const failing = Boolean(w?.failing);
 
@@ -93,8 +88,14 @@ export const CIStatusCard: React.FC<{ taskId: string; branch?: string }> = ({ ta
     const chat = getChatStore(sessionId).getState();
     const s = useSettingsStore.getState();
     const modelId = s.config.chatModels[s.selectedModel];
-    const plan = await planAutofix({ branch: b, session_id: sessionId }).catch(() => null);
-    if (!plan) return;
+    setAutofixError('');
+    let plan;
+    try {
+      plan = await planAutofix({ branch: b, session_id: sessionId });
+    } catch (e) {
+      setAutofixError(`Autofix failed: ${message(e)}`);
+      return;
+    }
     if (plan.findings?.length) {
       chat.addMessage({
         role: 'assistant',
@@ -158,6 +159,8 @@ export const CIStatusCard: React.FC<{ taskId: string; branch?: string }> = ({ ta
         </ul>
       )}
       {w?.timed_out && <div className="workflow-card-meta">Watch timed out before the run finished.</div>}
+      {w?.error && <div className="workflow-card-meta" role="alert">{w.error}</div>}
+      {autofixError && <div className="workflow-card-meta" role="alert">{autofixError}</div>}
       <div className="workflow-card-actions">
         {w && !terminal && (
           <button type="button" className="btn btn-sm" onClick={() => void stopWatch(taskId)}>Stop</button>

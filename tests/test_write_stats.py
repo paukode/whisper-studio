@@ -110,8 +110,6 @@ def test_a_line_ending_rewrite_counts_every_line_it_changed(ws):
     record = edits.read_edit("toolu_eol")
     assert record["original"] == "one\r\ntwo\r\nthree\r\nfour\r\n"
     assert record["modified"] == "one\nTWO\nthree\nfour\n"
-    # The undo backup keeps the text as an editor reads it.
-    assert workspace.WORKSPACE_BACKUPS["notes.txt"] == "one\ntwo\nthree\nfour\n"
 
 
 def test_the_record_tells_a_created_file_from_an_existing_empty_one(ws):
@@ -143,7 +141,7 @@ def test_an_unreadable_file_is_not_counted_as_created(ws, monkeypatch):
 
     def failing_first_read(file, *args, **kwargs):
         # The read before the write fails; the write and the read back work.
-        if str(file).endswith("a.txt") and not args and "errors" in kwargs:
+        if str(file).endswith("a.txt") and args[:1] == ("rb",):
             monkeypatch.setattr("builtins.open", real_open)
             raise PermissionError("denied")
         return real_open(file, *args, **kwargs)
@@ -156,6 +154,10 @@ def test_an_unreadable_file_is_not_counted_as_created(ws, monkeypatch):
     assert outcome.stats["stored"] is False
     # No record: an empty original would make the overwrite look like a create.
     assert edits.read_edit("toolu_04") is None
+    # No undo copy either: the bytes before the write are unknown.
+    from server.workspace.write_undo import has_undo
+
+    assert not has_undo("toolu_04")
 
 
 def test_a_failure_in_the_stats_keeps_the_write_a_success(ws, monkeypatch):

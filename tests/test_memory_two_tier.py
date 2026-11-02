@@ -212,7 +212,7 @@ def test_memory_md_write_and_delete_blocked(mem_dirs, no_workspace):
     r = _write("MEMORY.md", "user")
     assert "Cannot write MEMORY.md" in r
     r2 = EX.execute_memory_delete({"filename": "MEMORY.md"})
-    assert "Cannot delete MEMORY.md" in r2
+    assert "MEMORY.md is regenerated automatically and cannot be deleted" in r2
 
 
 def test_memory_md_guard_is_case_insensitive(mem_dirs, no_workspace):
@@ -222,7 +222,7 @@ def test_memory_md_guard_is_case_insensitive(mem_dirs, no_workspace):
         r = _write(variant, "user")
         assert "Cannot write MEMORY.md" in r, variant
     r2 = EX.execute_memory_delete({"filename": "memory.md"})
-    assert "Cannot delete MEMORY.md" in r2
+    assert "MEMORY.md is regenerated automatically and cannot be deleted" in r2
 
 
 # ── Recall (tier merge) ──────────────────────────────────────────────────────
@@ -671,7 +671,7 @@ def test_dream_triggers_when_due(mem_dirs, monkeypatch, tmp_path):
 
     ws = tmp_path / "myproject"
     ws.mkdir(exist_ok=True)
-    asyncio.run(DR.record_and_maybe_dream(str(ws), model_id="m"))
+    asyncio.run(DR.record_and_maybe_dream(str(ws)))
 
     assert len(ran) == 1
     assert "global" in ran[0]  # consolidation prompt pinned to the due tier
@@ -692,7 +692,7 @@ def test_dream_not_run_below_threshold(mem_dirs, monkeypatch):
 
     monkeypatch.setattr(RT, "run_agent", boom)
 
-    asyncio.run(DR.record_and_maybe_dream(None, model_id="m"))
+    asyncio.run(DR.record_and_maybe_dream(None))
     meta = DR._load_meta(str(mem_dirs["global"]))
     assert meta["session_count"] == 1  # recorded, not consolidated
 
@@ -701,7 +701,7 @@ def test_dream_flag_off_records_nothing(mem_dirs, monkeypatch):
     import server.memory.dream as DR
 
     monkeypatch.setattr(FF, "is_enabled", lambda flag: flag == "auto_memory")
-    asyncio.run(DR.record_and_maybe_dream(None, model_id="m"))
+    asyncio.run(DR.record_and_maybe_dream(None))
     assert not (mem_dirs["global"] / ".dream_meta.json").exists()
 
 

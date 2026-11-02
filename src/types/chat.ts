@@ -62,8 +62,6 @@ export interface CronEventPayload {
   run_id?: string;
   status?: 'ok' | 'failed';
   text?: string;
-  /** Legacy — kept for old persisted rows. New cards use schedule_label. */
-  interval_minutes?: number;
   /** Human-readable schedule, e.g. "every day at 09:00 · Europe/Warsaw". */
   schedule_label?: string;
   /** ISO of the next scheduled fire (absent/irrelevant for deleted). */
@@ -135,7 +133,6 @@ export interface ChatMessage {
    *  regenerate/edit-resend to re-attach the same files. */
   attachmentIds?: string[];
   toolUse?: ToolUseEvent[];
-  approvals?: Approval[];
   skills?: string[];
   traces?: SkillTrace[];
   /** Live + final per-team progress, keyed by team_id. Populated by
@@ -441,22 +438,12 @@ export interface TeamReportData {
   agentOrder: string[];                    // preserves insertion order
 }
 
-export interface Approval {
-  id: string;
-  type: 'file_write' | 'command' | 'file_delete' | 'file_rename';
-  path?: string;
-  content?: string;
-  originalContent?: string;
-  command?: string;
-  status: 'pending' | 'accepted' | 'denied';
-}
-
 /**
  * Generic approval request emitted by the backend. The frontend reads
  * `preview` to pick a renderer. Categories come from the backend's
  * ApprovalSpec registry and are open-ended strings, not a literal union.
  */
-export type PreviewKind = 'diff' | 'command' | 'list' | 'text';
+export type PreviewKind = 'diff' | 'command' | 'text';
 export type RiskHint = 'low' | 'medium' | 'high';
 
 export interface ApprovalRequest {
@@ -591,13 +578,12 @@ export interface SSEEventData {
    *  cron_event. Dispatched as a fresh ChatMessage with role='session_message'. */
   session_message?: SessionMessagePayload;
 
-  // Tool result truncation (oversize tool outputs persisted to .whisper_cache/)
+  // Tool result truncation (oversize tool outputs persisted to the result cache)
   tool_result_truncated?: {
     tool_name?: string;
     full_size?: number;
     kept_bytes?: number;
     cache_filename?: string | null;
-    cache_path?: string | null;
   };
 
   // Usage/tokens
@@ -605,13 +591,13 @@ export interface SSEEventData {
     input_tokens?: number;
     output_tokens?: number;
     total_input?: number;
-    total_output?: number;
+    total_output: number;
     /** Prompt tokens actually sent this turn, cumulative and normalized across
      *  the providers' two cache conventions. The number a reader means by
      *  "tokens in" — unlike total_input, which counts only the uncached
      *  remainder and reads as ~0 whenever prompt caching is working. */
-    total_prompt?: number;
-    estimated_cost_usd?: number;
+    total_prompt: number;
+    estimated_cost_usd: number;
     context_used?: number;
     context_max?: number;
   };

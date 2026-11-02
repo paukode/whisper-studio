@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Web research - Whisper Studio Docs</title>
-  <meta name="description" content="Ask Whisper Studio for current information and get cited answers. How web_search (Tavily) and web_fetch work, when Claude decides to search, and how to read the trace.">
+  <meta name="description" content="Ask for current information and get an answer with sources. Add a Tavily key in Settings, read pasted URLs with web_fetch, limit the network of commands, and examine each search in the activity row.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -15,186 +15,189 @@
 <body>
   <main class="doc" data-page="tut-research">
     <h1>Web research</h1>
-    <p class="subtitle">Ask for current information and get an answer with sources. Claude decides when
-      to reach for the web, runs a search, reads the best pages, and streams back a normal answer with
-      footnoted links. You do not call a tool by hand.</p>
+    <p class="subtitle">Ask for current information and get an answer with sources. The assistant
+      selects when to use the web. It runs a search, reads the best pages, and returns an answer with
+      links. You do not call a tool yourself.</p>
 
-    <p>Claude's own knowledge stops at its training cutoff, so anything that happened recently (a launch,
-      a price, a score, a policy change) is a job for the web. When you ask a question like that, Claude
-      can call two tools: <code>web_search</code> to find current results and <code>web_fetch</code> to
-      read the readable text of specific pages. This tutorial shows how to trigger that, what you see
-      while it runs, and how to check the sources.</p>
+    <p>The knowledge of a model stops at its training cutoff. For recent information, for example a
+      launch, a price, a score, or a policy change, the assistant uses the web. It can call two tools.
+      <code>web_search</code> finds current results. <code>web_fetch</code> reads the text of
+      specified pages. This tutorial shows how to start a web search, what you see during the search,
+      and how to examine the sources.</p>
 
     <figure class="diagram-figure wide">
       <div id="research-flow-diagram" class="diagram"></div>
-      <figcaption>One research turn. Claude decides whether to search: if yes it goes through
-        <em>web_search</em> then <em>web_fetch</em>; if it already knows, it answers directly. Click a
-        box to trace the path.</figcaption>
+      <figcaption>One research turn. If the assistant must search, it uses <em>web_search</em> and
+        then <em>web_fetch</em>. If not, it answers directly. Click a box to see the details of each
+        step.</figcaption>
     </figure>
 
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
-      <div class="callout__body"><p><b>A Tavily API key gives the best web search.</b> Without one,
-        <code>web_search</code> falls back to an Amazon Bedrock AgentCore browser MCP server if you've
-        enabled one; otherwise it's unavailable, and everything else in the app still works. Setting the
-        key takes two minutes. See <a href="installation.html">Installation</a> (step 3) and
-        <a href="configuration.html">Configuration</a>.</p></div>
+      <div class="callout__body"><p><b><code>web_search</code> uses a Tavily API key.</b> Without a
+        key, <code>web_search</code> does not search. If an Amazon Bedrock AgentCore MCP server with
+        browser tools is enabled, the tool tells the assistant to use that browser. If not, the tool
+        returns a message that web search is not configured. All the other functions of the app
+        operate without a key. See <a href="configuration.html">Configuration</a>.</p></div>
     </div>
 
     <h2 id="before-you-start">Before you start</h2>
-    <p>Web search runs through <a href="https://app.tavily.com" rel="noopener">Tavily</a>, a search API
-      whose free tier covers personal use. You supply the key one of two ways:</p>
+    <p>Web search uses <a href="https://app.tavily.com" rel="noopener">Tavily</a>, a search API. The
+      free tier of Tavily is sufficient for personal use. The <code>tavily_api_key</code> setting is
+      empty in a new install. Add the key in one of two ways:</p>
     <ul>
-      <li><b>Environment variable (recommended).</b> Export <code>TAVILY_API_KEY</code> in your shell.
-        The env var overrides any stored value, so rotation is one <code>export</code> away.
-        <div class="code-block"><pre><code>echo 'export TAVILY_API_KEY=tvly-...' &gt;&gt; ~/.zshrc
-source ~/.zshrc</code></pre></div>
+      <li><b>Settings (recommended).</b> Open <b>Settings &gt; Access and usage &gt; Keys and
+        permissions &gt; API keys</b>. Paste the key into the <b>Tavily API Key (for web search)</b>
+        field.</li>
+      <li><b>Environment variable.</b> Start the backend from a shell that exports
+        <code>TAVILY_API_KEY</code>. The environment variable has priority over the stored value. This
+        method applies only to a source install that you start from that shell. The Mac app does not
+        read this variable from your shell profile. After you change the variable, start the backend
+        again.
+        <div class="code-block"><pre><code>export TAVILY_API_KEY=tvly-...</code></pre></div>
       </li>
-      <li><b>Settings UI.</b> Click the gear icon and paste the key into the <b>Tavily API Key</b> field.
-        If both the env var and the Settings value are set, the env var wins.</li>
     </ul>
-    <p>The <code>tavily_api_key</code> setting ships empty, so web
-      search is off until you add a key. <code>web_fetch</code> (reading a specific URL) does not need
-      Tavily, so pasting a link and asking about it works even before you configure a key.</p>
+    <p><code>web_fetch</code> reads one URL and does not use Tavily. Thus you can paste a link and ask
+      about it without a key.</p>
 
     <h2 id="ask-a-question">Ask a question that needs the web</h2>
-    <p>There is nothing to enable in chat. Just ask, and phrase it so it is clear you want current facts
-      (and, if you care, ask for sources).</p>
+    <p>You do not enable a function in the chat. Ask your question. Make it clear that you want
+      current facts. If you want sources, ask for them.</p>
     <ol class="steps">
       <li>
-        <h4>Open a chat and type your question</h4>
-        <p>Anything time-sensitive works. For example:</p>
+        <h4>Type your question</h4>
+        <p>Use a question about recent events. Example:</p>
         <div class="code-block"><pre><code>What did Anthropic announce at their last developer
 conference? Cite sources.</code></pre></div>
       </li>
       <li>
-        <h4>Claude decides whether to search</h4>
-        <p>If the answer is stable and well within its knowledge, Claude answers directly. If it needs
-          fresh facts, it calls <code>web_search</code> on its own. You do not pick the tool.</p>
+        <h4>The assistant selects the tool</h4>
+        <p>If the model has the answer in its training data, the assistant answers directly. If it
+          needs current facts, it calls <code>web_search</code>. You do not select the tool.</p>
       </li>
       <li>
-        <h4>Watch the activity row</h4>
-        <p>Each tool call shows in the activity row of the turn. The row is one line that shows what
-          Claude did, for example <b>Searched 2 times, fetched example.com</b>. Web search and web fetch
-          are read-only. No approval card stops you.</p>
+        <h4>Look at the activity row</h4>
+        <p>Each tool call shows in the activity row of the turn. The row is one line that shows the
+          searches and the fetched pages. Web search and web fetch are read-only, so no approval card
+          shows.</p>
       </li>
       <li>
-        <h4>Read the answer with its links</h4>
-        <p>The answer streams in like any other, with links to the pages Claude relied on. Follow a link
-          to check the source yourself. Asking for sources in the question is what makes those links
-          appear reliably.</p>
+        <h4>Read the answer and its links</h4>
+        <p>The answer contains links to the pages that the assistant used. Open a link to examine the
+          source. If you ask for sources in the question, the answer contains the links more
+          reliably.</p>
       </li>
     </ol>
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
-      <div class="callout__body"><p>Nudge Claude toward the web when it matters: phrases like
-        "as of today", "the latest", or "cite sources" make the current-info intent explicit. If you
-        want a specific page read, paste the URL and say "summarize this".</p></div>
+      <div class="callout__body"><p>To make the assistant use the web, write phrases such as "as of
+        today", "the latest", or "cite sources". To read one page, paste the URL and write "summarize
+        this".</p></div>
     </div>
 
     <h2 id="the-two-tools">The two web tools</h2>
-    <p>Research uses two distinct tools with different jobs. Both are read-only.</p>
+    <p>Research uses two tools with different functions. The two tools are read-only.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Tool</th><th>What it does</th><th>Needs Tavily?</th></tr></thead>
       <tbody>
-        <tr><td><code>web_search</code></td><td>Searches the web through Tavily and returns up to five results, each with a title, a URL, and a short content snippet.</td><td>Yes</td></tr>
-        <tr><td><code>web_fetch</code></td><td>Fetches one public page over HTTP or HTTPS and returns its readable text: a header with the URL, the HTTP status and the page title, then the HTML converted to plain text with heading and list markers. Long pages are cut at 30,000 characters and the request gives up after 15 seconds.</td><td>No</td></tr>
+        <tr><td><code>web_search</code></td><td>Sends the query to Tavily and returns a maximum of 5 results. Each result has a title, a URL, and a short snippet.</td><td>Yes</td></tr>
+        <tr><td><code>web_fetch</code></td><td>Gets one public page over HTTP or HTTPS and returns its text. The output starts with the URL, the HTTP status, and the page title. Then it gives the HTML as plain text with heading and list markers. The tool cuts long pages at 30,000 characters. The request stops after 15 s.</td><td>No</td></tr>
       </tbody>
     </table></div>
-    <p><code>web_fetch</code> only reaches public addresses. Private, loopback, and link-local addresses
-      are refused, including the cloud metadata address, so a page cannot talk the app into fetching
-      something on your own network.</p>
-    <p>A typical research turn chains them: <code>web_search</code> finds candidate pages, then Claude
-      calls <code>web_fetch</code> on the most promising ones to read them in full before it answers.
-      When you paste a URL directly, Claude usually skips straight to <code>web_fetch</code>. For the
-      full tool catalogue, see <a href="ref-tools.html">Agent tools</a>.</p>
+    <p><code>web_fetch</code> connects only to public addresses. It refuses private, loopback, and
+      link-local addresses, and the cloud metadata address. Thus a page cannot make the app read data
+      from your local network.</p>
+    <p>A usual research turn uses the two tools in sequence. <code>web_search</code> finds possible
+      pages. Then the assistant calls <code>web_fetch</code> to read the best pages before it answers.
+      When you paste a URL, the assistant usually calls only <code>web_fetch</code>. For the full list
+      of tools, see <a href="ref-tools.html">Agent tools</a>.</p>
 
-    <h2 id="fetching-a-url">Reading a page you paste</h2>
-    <p>You do not have to ask an open-ended question. Paste a link and ask about it directly, and Claude
-      reads that exact page with <code>web_fetch</code>:</p>
+    <h2 id="fetching-a-url">Read a page that you paste</h2>
+    <p>You can paste a link and ask about it. The assistant reads that page with
+      <code>web_fetch</code>:</p>
     <div class="code-block"><pre><code>Summarize https://example.com/some-long-article and pull
 out the three main claims.</code></pre></div>
-    <p>Because <code>web_fetch</code> does not touch Tavily, this path works even if you have not set a
-      Tavily key yet. Fetched pages are also sanitized before rendering: a prompt-injected page cannot
-      run scripts in the app. See the <a href="ref-security.html">security model</a> for how
-      <code>web_fetch</code> output is treated as untrusted.</p>
+    <p><code>web_fetch</code> does not use Tavily, so this procedure operates without a Tavily key.
+      The app sanitizes the fetched pages before it shows them. Thus a page with a prompt injection
+      cannot run scripts in the app. The <a href="ref-security.html">security model</a> shows how the
+      app handles <code>web_fetch</code> output as untrusted data.</p>
 
-    <h2 id="outbound-domains">Limiting where commands can connect</h2>
-    <p>The two web tools above are separate from the network a <em>shell command</em> gets when Claude
-      runs one. That has its own setting in Settings &gt; Permissions, and it has three tiers:</p>
+    <h2 id="outbound-domains">Limit the network of commands</h2>
+    <p>The network of a <em>shell command</em> is separate from the two web tools. It has its own
+      setting in Settings &gt; Permissions. The setting has three tiers:</p>
     <div class="table-wrap"><table>
-      <thead><tr><th>Tier</th><th>What a sandboxed command can reach</th></tr></thead>
+      <thead><tr><th>Tier</th><th>What a command in the sandbox can connect to</th></tr></thead>
       <tbody>
-        <tr><td><code>permissive</code></td><td>Anything. This is the default.</td></tr>
-        <tr><td><code>curated</code></td><td>A seed list of common package registries, documentation sites, and developer APIs, plus anything you added.</td></tr>
-        <tr><td><code>restrictive</code></td><td>Nothing except the domains you added yourself.</td></tr>
+        <tr><td><code>permissive</code></td><td>All hosts. This is the default.</td></tr>
+        <tr><td><code>curated</code></td><td>A list of frequent package registries, documentation sites, and developer APIs, and the domains that you added.</td></tr>
+        <tr><td><code>restrictive</code></td><td>Only the domains that you added.</td></tr>
       </tbody>
     </table></div>
-    <p>The domains you add are <code>custom_allowed_domains</code>, one per line in that panel. An entry
-      covers its subdomains too, so adding <code>githubusercontent.com</code> also allows
-      <code>objects.githubusercontent.com</code> and you do not have to enumerate them. Changing the
-      tier takes effect on the very next command, with no restart. Enforcement reads the hostname out of
-      the TLS handshake and never decrypts anything, which also means it is a strong default rather than
-      an airtight boundary: see <a href="arch-sandbox.html">Sandbox &amp; security</a> for its limits.</p>
+    <p>The domains that you add are <code>custom_allowed_domains</code>, one domain on each line in
+      that panel. An entry also allows its subdomains. For example, <code>githubusercontent.com</code>
+      also allows <code>objects.githubusercontent.com</code>.</p>
+    <p>A tier change applies to the next
+      command, without a restart. The app reads the hostname from the TLS handshake and does not
+      decrypt data. Thus this control is a strong default, but not a complete boundary. See
+      <a href="arch-sandbox.html">Sandbox &amp; security</a> for its limits.</p>
 
-    <h2 id="related-skills">What else fires alongside</h2>
-    <p>Research often pulls in other capabilities without you asking for them by name. Each one shows
-      as a call in the activity row of the turn:</p>
+    <h2 id="related-skills">Other tools in research</h2>
+    <p>Research can use other functions also when you do not name them. Each call shows in the
+      activity row of the turn:</p>
     <div class="card-grid">
       <div class="card">
         <h3><code>analyze_document</code></h3>
-        <p>When you upload a paper or report instead of (or alongside) searching, it reads the
-          attachment's extracted text back into the turn. See
-          <a href="tut-documents.html">Working with documents</a>.</p>
+        <p>When you upload a paper or a report, this tool reads the extracted text of the
+          attachment into the turn. See <a href="tut-documents.html">Working with documents</a>.</p>
       </div>
       <div class="card">
         <h3>The translate-text skill</h3>
-        <p>When a relevant source is not in English, Claude can translate the passage it quotes so the
-          answer stays readable. See <a href="tut-skills.html">Skills</a>.</p>
+        <p>When a source is not in English, the assistant can translate the quoted text. See
+          <a href="tut-skills.html">Skills</a>.</p>
       </div>
       <div class="card">
         <h3><code>web_search</code> and <code>web_fetch</code></h3>
-        <p>The two tools above. Search needs the Tavily key; fetch reads
-          URLs you paste.</p>
+        <p>The two tools above. Search uses the Tavily key. Fetch reads the URLs that you
+          paste.</p>
       </div>
     </div>
-    <p>For the wider set of built-in tools, and for how to add your own skills as Markdown files, see
+    <p>For the other built-in tools, and to add your own skills as Markdown files, see
       <a href="ref-tools.html#builtin-tools">Agent tools</a> and <a href="tut-skills.html">Skills</a>.</p>
 
-    <h2 id="reading-the-trace">Check what was searched</h2>
-    <p>You can examine the source of each claim. A sequence of tool calls in a turn goes into one
-      activity row, not one card for each call. When you expand the row, it shows one line for each
-      call. Each line opens to show the raw output of the call. That is your audit trail for a claim.</p>
+    <h2 id="reading-the-trace">Examine the searches</h2>
+    <p>You can examine the source of each statement. The app puts the tool calls of a turn into one
+      activity row. When you expand the row, it shows one line for each call. Each line opens to show
+      the raw output of the call. This is your audit trail.</p>
     <ul>
-      <li>Expand the activity row to see the <code>web_search</code> query and the results that the tool returned.</li>
-      <li>Open the output of a <code>web_fetch</code> call to see the page that the tool read and the text that it returned.</li>
-      <li>Follow the links in the answer to read each source directly.</li>
+      <li>Expand the activity row to see the <code>web_search</code> query and its results.</li>
+      <li>Open the output of a <code>web_fetch</code> call to see the page and the returned text.</li>
+      <li>Open the links in the answer to read each source.</li>
     </ul>
-    <p>A step that errored opens the row by default, so a failed search is never hidden behind a
-      chevron.</p>
-    <p>Under the hood, these are ordinary tool calls in the streaming chat loop. The
-      <a href="arch-chat-pipeline.html">chat pipeline</a> streams a tool event as each search or fetch
-      starts, which is exactly what the inline indicator renders.</p>
+    <p>If a step has an error, the row opens automatically. Thus you can see a failed search
+      immediately.</p>
+    <p>These tool calls are usual tool calls in the chat loop. The
+      <a href="arch-chat-pipeline.html">chat pipeline</a> sends a tool event when each search or fetch
+      starts. The activity row shows these events.</p>
 
-    <h2 id="no-approvals">Why research never asks for approval</h2>
-    <p>Web search, web fetch, and document parsing are all read-only. They cannot change your files, run
-      commands, or alter git state, so no <a href="tut-permissions.html">approval card</a> appears no
-      matter which permission mode you are in. The worst case for a research turn is a wrong answer, not
-      a harmful action, which is why this journey stays friction-free. Approvals only enter the picture
-      once Claude can write, run, or commit, as in the <a href="tut-workspace.html">workspace</a>.</p>
+    <h2 id="no-approvals">Why research does not ask for approval</h2>
+    <p>Web search, web fetch, and document extraction are read-only. They cannot change your files,
+      run commands, or change git. Thus no <a href="tut-permissions.html">approval card</a> shows in
+      any permission mode. The worst result of a research turn is an incorrect answer, not a harmful
+      action. Approvals apply when the assistant can write, run, or commit, as in the
+      <a href="tut-workspace.html">workspace</a>.</p>
 
     <h2 id="troubleshooting">Troubleshooting</h2>
     <div class="table-wrap"><table>
-      <thead><tr><th>Symptom</th><th>Likely cause and fix</th></tr></thead>
+      <thead><tr><th>Symptom</th><th>Cause and correction</th></tr></thead>
       <tbody>
-        <tr><td>Claude answers from memory when you wanted fresh facts</td><td>Ask more explicitly ("as of today", "cite sources"), or paste a specific URL so it uses <code>web_fetch</code>.</td></tr>
-        <tr><td>No search happens at all, ever</td><td>Tavily key is missing. Set <code>TAVILY_API_KEY</code> or fill the Settings field, then reload. See <a href="configuration.html">Configuration</a>.</td></tr>
-        <tr><td>Search worked yesterday, fails now</td><td>Rotated or expired key. The env var is the last layer of the config merge, so it overrides the stored value: re-export it and restart your shell.</td></tr>
-        <tr><td>A pasted URL will not load</td><td>The page may block automated fetches or be behind a login. Try a public mirror or paste the relevant text directly.</td></tr>
+        <tr><td>The assistant answers from its training data, but you want current facts</td><td>Ask more clearly ("as of today", "cite sources"). Or paste a URL so that the assistant uses <code>web_fetch</code>.</td></tr>
+        <tr><td>No search occurs</td><td>The Tavily key is missing. Add the key in Settings. See <a href="configuration.html">Configuration</a>.</td></tr>
+        <tr><td>Search operated before, but now fails</td><td>The key is expired or rotated. Put the new key in Settings. If you use <code>TAVILY_API_KEY</code>, it has priority over the stored value. Set the new value and start the backend again.</td></tr>
+        <tr><td>A pasted URL does not load</td><td>The page blocks automated requests, or it needs a login. Use a public copy of the page, or paste the text.</td></tr>
       </tbody>
     </table></div>
-    <p>For a broad health check of dependencies and AWS access, run <code>/doctor</code> in the chat
+    <p>To examine the dependencies and the AWS access, run <code>/doctor</code> in the chat
       input.</p>
 
     <div class="callout callout--tip">

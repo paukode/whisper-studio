@@ -226,8 +226,8 @@ export const MoreMenu: React.FC<MoreMenuProps> = ({
         )}
 
         {/* MCP servers are enabled/disabled in Settings → MCP (with per-server
-         *  status + start/stop). The composer no longer carries a toggle; the
-         *  model still gets every enabled server's tools via the backend. */}
+         *  status + start/stop); the model gets every enabled server's tools
+         *  via the backend. */}
 
         {/* Project instructions (WHISPER.md) — per-project editor. Distinct from
          *  the auto-memory toggle above (which covers the global + project

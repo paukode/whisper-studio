@@ -782,3 +782,168 @@ def test_bundled_infrastructure_models_flagged(client):
     assert by_key["ecapa_speaker"]["bundled"] is True
     assert by_key["whisper_large_v3"]["bundled"] is False
     assert by_key["parakeet"]["bundled"] is False
+
+
+def test_a_server_that_fails_to_stop_refuses_the_delete(client, home, monkeypatch):
+    """A failing stop used to be logged while the weights were deleted from
+    under the running server."""
+    from server.local import serving
+
+    install_fake(home, "local_gemma")
+    monkeypatch.setattr(serving, "resident_key", lambda: "local_gemma")
+
+    def stuck(key, started=None):
+        raise RuntimeError("SIGTERM ignored")
+
+    monkeypatch.setattr(serving, "stop_if_idle", stuck)
+    r = client.delete("/api/models/local_gemma")
+    assert r.status_code == 409
+    assert "SIGTERM ignored" in r.json()["detail"]
+    assert (home / "models" / get_entry("local_gemma").dir_name).exists()
+
+
+# ── sharded GGUF quants that share one repo folder ───────────────────────
+
+
+@pytest.fixture()
+def two_quants(home, monkeypatch):
+    """A 3-shard Q4 and a single-file Q8 of one repo in one folder, the
+    Discover browser's normal layout."""
+    from server.local import registry
+
+    base = {"repo_id": "org/M-GGUF", "dir": "org--M-GGUF", "is_local": True}
+    monkeypatch.setattr(
+        registry,
+        "_config_local_models",
+        lambda: {
+            "local_q4": {
+                **base,
+                "id": "local:m-q4",
+                "label": "M Q4",
+                "filename": "M-Q4_K_M-00001-of-00003.gguf",
+            },
+            "local_q8": {**base, "id": "local:m-q8", "label": "M Q8", "filename": "M-Q8_0.gguf"},
+        },
+    )
+    folder = home / "models" / "org--M-GGUF"
+    folder.mkdir(parents=True)
+    for i in (1, 2, 3):
+        (folder / f"M-Q4_K_M-0000{i}-of-00003.gguf").write_bytes(b"4" * 100)
+    (folder / "M-Q8_0.gguf").write_bytes(b"8" * 500)
+    return folder
+
+
+def test_deleting_a_sharded_quant_removes_every_shard(client, two_quants):
+    """Only the first shard used to go; shards 2..N stayed with no owner."""
+    r = client.delete("/api/models/local_q4")
+    assert r.status_code == 200 and r.json()["deleted"] is True
+    assert sorted(p.name for p in two_quants.iterdir()) == ["M-Q8_0.gguf"]
+
+
+def test_progress_counts_only_the_entrys_own_shards(two_quants):
+    """The whole shared folder used to count, so a second quant started at
+    the first quant's size."""
+    from server.models_manager.catalog import bytes_on_disk
+
+    assert bytes_on_disk(get_entry("local_q4")) == 300
+    assert bytes_on_disk(get_entry("local_q8")) == 500
+
+
+def test_the_size_estimate_sums_every_shard(monkeypatch):
+    import sys
+    import types
+
+    from server.models_manager import sizes as real_sizes
+
+    siblings = [
+        types.SimpleNamespace(rfilename=f"M-Q4_K_M-0000{i}-of-00003.gguf", size=7)
+        for i in (1, 2, 3)
+    ] + [types.SimpleNamespace(rfilename="M-Q8_0.gguf", size=50)]
+
+    class _Api:
+        def model_info(self, repo_id, files_metadata):
+            return types.SimpleNamespace(siblings=siblings)
+
+    monkeypatch.setitem(sys.modules, "huggingface_hub", types.SimpleNamespace(HfApi=_Api))
+    assert real_sizes.fetch_size("org/M-GGUF", "M-Q4_K_M-00001-of-00003.gguf") == 21
+    assert real_sizes.fetch_size("org/M-GGUF", "M-Q8_0.gguf") == 50
+
+
+def test_a_partial_shard_download_counts_and_is_deleted(client, two_quants):
+    """hf's .incomplete partial of an in-flight shard belongs to the entry."""
+    from pathlib import Path
+
+    from huggingface_hub._local_folder import get_local_download_paths
+
+    from server.models_manager.catalog import bytes_on_disk, gguf_paths
+
+    (two_quants / "M-Q4_K_M-00003-of-00003.gguf").unlink()
+    hf = get_local_download_paths(Path(two_quants), "M-Q4_K_M-00003-of-00003.gguf")
+    hf.incomplete_path("etag123").write_bytes(b"p" * 40)
+    entry = get_entry("local_q4")
+    assert bytes_on_disk(entry) == 240
+    assert str(hf.incomplete_path("etag123")) in gguf_paths(entry)
+
+
+def test_a_partial_shard_in_a_repo_subfolder_counts_and_is_deleted(client, home, monkeypatch):
+    """A quant stored in a repo subfolder ("Q4_K_M/x-00001-of-00002.gguf") has
+    its hf partial under download/Q4_K_M/, named from the basename only."""
+    from pathlib import Path
+
+    from huggingface_hub._local_folder import get_local_download_paths
+
+    from server.local import registry
+    from server.models_manager.catalog import bytes_on_disk, gguf_paths
+
+    monkeypatch.setattr(
+        registry,
+        "_config_local_models",
+        lambda: {
+            "local_sub": {
+                "repo_id": "org/S-GGUF",
+                "dir": "org--S-GGUF",
+                "is_local": True,
+                "id": "local:s-q4",
+                "label": "S Q4",
+                "filename": "Q4_K_M/S-Q4_K_M-00001-of-00002.gguf",
+            },
+        },
+    )
+    folder = home / "models" / "org--S-GGUF"
+    (folder / "Q4_K_M").mkdir(parents=True)
+    (folder / "Q4_K_M" / "S-Q4_K_M-00001-of-00002.gguf").write_bytes(b"4" * 100)
+    hf = get_local_download_paths(Path(folder), "Q4_K_M/S-Q4_K_M-00002-of-00002.gguf")
+    partial = hf.incomplete_path("etag9")
+    partial.write_bytes(b"p" * 30)
+
+    entry = get_entry("local_sub")
+    assert str(partial) in gguf_paths(entry)
+    assert bytes_on_disk(entry) == 130
+
+    r = client.delete("/api/models/local_sub")
+    assert r.status_code == 200 and r.json()["deleted"] is True
+    assert not partial.exists()
+
+
+def test_download_failure_reasons_name_the_cause():
+    import errno
+
+    import httpx
+
+    from server.models_manager.worker import _short_reason
+
+    assert _short_reason(OSError(errno.ENOSPC, "No space")) == (
+        "not enough disk space to store the model"
+    )
+    assert _short_reason(httpx.ConnectError("refused")) == "network error reaching Hugging Face"
+    assert _short_reason(ValueError("bad shard")) == "ValueError: bad shard"
+
+
+def test_an_offline_download_is_not_called_a_missing_file():
+    """LocalEntryNotFoundError subclasses EntryNotFoundError, so an offline
+    download used to be reported as 'file not found in the repository'."""
+    from huggingface_hub.errors import LocalEntryNotFoundError
+
+    from server.models_manager.worker import _short_reason
+
+    assert _short_reason(LocalEntryNotFoundError("offline")).startswith("could not reach")

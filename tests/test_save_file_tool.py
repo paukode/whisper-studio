@@ -47,6 +47,14 @@ def test_suggested_location_downloads_changes_the_default():
     assert payload["path"] == os.path.expanduser("~/Downloads/report.pdf")
 
 
+def test_an_unknown_suggested_location_is_refused_not_replaced():
+    """'Desktop' used to be swapped for Documents without a word."""
+    out = _exec_save_file(
+        {"filename": "report.pdf", "content": "hi", "suggested_location": "Desktop"}, [], []
+    )
+    assert out == "Error: suggested_location must be Documents or Downloads (got 'Desktop')."
+
+
 def test_destination_path_from_user_words_wins(tmp_path):
     dest = str(tmp_path / "report.pdf")
     out = _exec_save_file(

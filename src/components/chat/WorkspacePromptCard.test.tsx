@@ -16,6 +16,7 @@
 import { render, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { WorkspacePromptCard } from './WorkspacePromptCard';
+import { useUIStore } from '@/stores/uiStore';
 
 function captureResumeEvents(): Array<{ answer?: string; answers?: Array<{ tool_use_id: string; content: string }> }> {
   const captured: Array<{ answer?: string; answers?: Array<{ tool_use_id: string; content: string }> }> = [];
@@ -41,7 +42,7 @@ describe('WorkspacePromptCard', () => {
   it('workspace-connect flow: dispatches an answers-array with the real tool_use_id, not a bare answer string', async () => {
     (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: true,
-      json: async () => ({ writable: true }),
+      json: async () => ({ path: '/Users/me/Projects/site', writable: true }),
     });
     const captured = captureResumeEvents();
 
@@ -65,6 +66,23 @@ describe('WorkspacePromptCard', () => {
         content: expect.stringContaining('/Users/me/Projects/site'),
       },
     ]);
+  });
+
+  it('stores and names the canonical root the server resolved, not the picked path', async () => {
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      json: async () => ({ path: '/Users/me/Projects/site', writable: true }),
+    });
+    const captured = captureResumeEvents();
+
+    const { getByText } = render(
+      <WorkspacePromptCard suggested="~/Projects/site" recent={[]} toolUseId="tu_canon" />,
+    );
+    fireEvent.click(getByText('~/Projects/site'));
+
+    await waitFor(() => expect(captured.length).toBe(1));
+    expect(useUIStore.getState().wsPath).toBe('/Users/me/Projects/site');
+    expect(captured[0].answers![0].content).toContain('Workspace connected to /Users/me/Projects/site.');
   });
 
   it('no_workspace: "Not now" resolves the pause instead of stranding the turn', async () => {

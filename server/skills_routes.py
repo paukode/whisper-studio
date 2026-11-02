@@ -227,15 +227,19 @@ async def import_preview(request: Request):
 @router.post("/import")
 async def import_skills_endpoint(request: Request):
     """Sparse-fetch selected skill folders from a git URL into /skills/ and
-    hot-reload — no app restart."""
+    hot-reload, no app restart. ``overwrite`` true replaces an installed skill
+    of the same name; false (the default) reports it as a conflict."""
     from server import skills_import
 
     body = await request.json()
+    overwrite = body.get("overwrite", False)
+    if not isinstance(overwrite, bool):
+        return _json_error("overwrite must be true or false", 400)
     try:
         result = skills_import.import_skills(
             body.get("url", ""),
             body.get("subpaths", []),
-            bool(body.get("overwrite", False)),
+            overwrite,
         )
     except skills_import.SkillImportError as e:
         return _json_error(str(e), 400)
@@ -288,8 +292,9 @@ async def import_local_endpoint(
     overwrite: str = Form("false"),
 ):
     """Copy selected skill folders from an uploaded local tree into /skills/ and
-    hot-reload — no app restart. ``subpaths`` is a JSON array of the folders the
-    user selected in the preview; ``overwrite`` is "true"/"false"."""
+    hot-reload, no app restart. ``subpaths`` is a JSON array of the folders the
+    user selected in the preview. ``overwrite`` "true" replaces an installed
+    skill of the same name; "false" (the default) reports it as a conflict."""
     from server import skills_import
 
     try:
@@ -298,10 +303,12 @@ async def import_local_endpoint(
             raise ValueError("subpaths must be a JSON array")
     except (ValueError, TypeError):
         return _json_error("invalid subpaths (expected a JSON array)", 400)
-    overwrite_flag = str(overwrite).strip().lower() in ("1", "true", "yes", "on")
+    flag = overwrite.strip().lower()
+    if flag not in ("true", "false"):
+        return _json_error("overwrite must be true or false", 400)
     try:
         tree = await _read_upload_tree(files)
-        result = skills_import.import_local(tree, selected, overwrite_flag)
+        result = skills_import.import_local(tree, selected, flag == "true")
     except skills_import.SkillImportError as e:
         return _json_error(str(e), 400)
     except Exception as e:
@@ -328,6 +335,21 @@ def _safe_skill_filepath(name: str) -> str | None:
     return None
 
 
+def _name_clash(names: list[str], ignore: str = "") -> Response | None:
+    """409 when any of ``names`` (the requested name and the frontmatter name
+    the file loads under) is already another skill's name. A save never
+    replaces another skill; the user picks a different name."""
+    for candidate in names:
+        taken = _sk.skill_name_taken(candidate, ignore=ignore)
+        if taken:
+            return Response(
+                content=json.dumps({"error": f"A skill named {taken} already exists"}),
+                status_code=409,
+                media_type="application/json",
+            )
+    return None
+
+
 @router.post("")
 async def create_skill(request: Request):
     body = await request.json()
@@ -346,9 +368,12 @@ async def create_skill(request: Request):
             status_code=400,
             media_type="application/json",
         )
+    clash = _name_clash([name, _sk.frontmatter_name(content)])
+    if clash:
+        return clash
     if os.path.exists(filepath):
         return Response(
-            content=json.dumps({"error": "Skill file already exists"}),
+            content=json.dumps({"error": f"A skill named {name} already exists"}),
             status_code=409,
             media_type="application/json",
         )
@@ -385,6 +410,9 @@ async def update_skill(name: str, request: Request):
             status_code=404,
             media_type="application/json",
         )
+    clash = _name_clash([new_name, _sk.frontmatter_name(new_content)], ignore=name)
+    if clash:
+        return clash
     if new_name and new_name != name:
         new_filepath = _safe_skill_filepath(new_name)
         if not new_filepath:
@@ -393,9 +421,20 @@ async def update_skill(name: str, request: Request):
                 status_code=400,
                 media_type="application/json",
             )
+        old_path = os.path.join(_sk.SKILLS_DIR, old_file)
+        # foo_bar -> foo-bar (or a case change on APFS) names the same file:
+        # write it in place, never delete what was just written.
+        same_file = os.path.exists(new_filepath) and os.path.samefile(new_filepath, old_path)
+        if os.path.exists(new_filepath) and not same_file:
+            return Response(
+                content=json.dumps({"error": f"A skill named {new_name} already exists"}),
+                status_code=409,
+                media_type="application/json",
+            )
         with open(new_filepath, "w") as f:
             f.write(new_content)
-        os.remove(os.path.join(_sk.SKILLS_DIR, old_file))
+        if not same_file:
+            os.remove(old_path)
         config = _sk.load_skills_config()
         if name in config.get("disabled", []):
             config["disabled"].remove(name)
@@ -427,8 +466,9 @@ async def toggle_skill(name: str):
 
 @router.patch("/{name}/trust")
 async def trust_skill(name: str):
-    """Toggle a skill's `trusted` flag. Trust gates `allowed-tools`
-    auto-approval for folder skills (see the permissions layer)."""
+    """Toggle a skill's `trusted` flag. A trusted folder skill may run its own
+    bundled scripts without an approval card (command_runs_trusted_skill in
+    server/skills.py); validate_command still applies."""
     config = _sk.load_skills_config()
     trusted = config.get("trusted", [])
     if name in trusted:
@@ -449,7 +489,17 @@ async def delete_skill(name: str):
     if skill_dir:
         import shutil
 
-        shutil.rmtree(skill_dir, ignore_errors=True)
+        try:
+            shutil.rmtree(skill_dir)
+        except OSError as e:
+            # Whatever is left stays loaded as it is on disk; say why.
+            _sk.SKILLS = _sk.load_skills()
+            _sk.rebuild_tools()
+            return Response(
+                content=json.dumps({"error": f"Could not delete {skill_dir}: {e}"}),
+                status_code=500,
+                media_type="application/json",
+            )
     else:
         old_file = _sk._find_skill_file(name)
         if not old_file:
@@ -472,7 +522,7 @@ async def delete_skill(name: str):
     return {"name": name, "deleted": True}
 
 
-# --- WHISPER.md API (Feature 10 + 18) ---
+# --- WHISPER.md API ---
 
 
 @whisper_md_router.get("")
@@ -491,9 +541,15 @@ async def get_whisper_md():
     try:
         with open(path, errors="replace") as f:
             content = f.read()
-        return {"content": content, "exists": True, "path": path}
-    except Exception as e:
-        return {"content": "", "exists": False, "error": str(e)}
+    except OSError as e:
+        # A 200 with empty content would read as "no instructions", and a
+        # Save from that editor would overwrite the unreadable file.
+        return Response(
+            content=json.dumps({"error": f"Could not read {path}: {e}"}),
+            status_code=500,
+            media_type="application/json",
+        )
+    return {"content": content, "exists": True, "path": path}
 
 
 @whisper_md_router.put("")

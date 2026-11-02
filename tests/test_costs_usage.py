@@ -9,7 +9,7 @@ import importlib
 import io
 import json
 import sqlite3
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 
 import pytest
 from fastapi import FastAPI
@@ -244,7 +244,7 @@ def test_a_rate_change_reprices_history_everywhere(monkeypatch):
 def test_every_reader_prices_each_call_at_its_own_long_context_tier():
     # Two GPT-5.6 Sol calls on one day: one over the 272K break, one under.
     # Summed they are far over it; priced per call only the first is long.
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     at = now.strftime("%Y-%m-%d 00:00:01")
     long_call = dict(inp=287_513, out=152, read=286_454)
     short_call = dict(inp=250_001, out=54, read=249_935)
@@ -278,7 +278,7 @@ def test_every_reader_prices_each_call_at_its_own_long_context_tier():
 
 
 def test_the_daily_cap_reads_the_current_utc_day():
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     _row(model="opus5.5", inp=1_000_000, at=now.strftime("%Y-%m-%d 00:00:01"))
     _row(model="opus5.5", inp=1_000_000, at=(now - timedelta(days=1)).strftime("%Y-%m-%d 23:59:59"))
     assert usage.today_spend_usd() == pytest.approx(_cost("opus5.5", inp=1_000_000))
@@ -334,6 +334,8 @@ def test_an_unreadable_log_is_an_error_never_an_empty_report(unreadable_log, cli
         usage.today_spend_usd()
     with pytest.raises(tracker.CostLogUnreadable):
         tracker.get_session_usage("s1")
+    with pytest.raises(tracker.CostLogUnreadable):
+        usage._session_titles(["s1"])  # never every session read as deleted
     for path in (
         "/api/costs/usage?from=2026-09-01&to=2026-09-02",
         "/api/costs/usage",
@@ -423,7 +425,7 @@ def test_usage_endpoint_defaults_to_all_recorded_days(client):
     _row(at="2026-07-01 10:00:00", inp=10)
     data = client.get("/api/costs/usage").json()
     assert data["range"]["from"] == "2026-07-01"
-    assert data["range"]["to"] == datetime.now(timezone.utc).date().isoformat()
+    assert data["range"]["to"] == datetime.now(UTC).date().isoformat()
 
 
 @pytest.mark.parametrize(

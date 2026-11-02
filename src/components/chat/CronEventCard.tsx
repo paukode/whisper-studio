@@ -27,13 +27,7 @@ interface CronEventCardProps {
  */
 export const CronEventCard: React.FC<CronEventCardProps> = ({ event }) => {
   const when = formatMessageTimestamp(event.timestamp);
-  // Prefer the backend's human schedule label; fall back to the legacy
-  // interval for rows persisted before the wall-clock redesign.
-  const scheduleText =
-    event.schedule_label ||
-    (typeof event.interval_minutes === 'number'
-      ? `every ${formatInterval(event.interval_minutes)}`
-      : '');
+  const scheduleText = event.schedule_label || '';
 
   if (event.event_type === 'cron_created' || event.event_type === 'cron_updated') {
     const verb = event.event_type === 'cron_updated' ? 'updated' : 'scheduled';
@@ -97,18 +91,6 @@ export const CronEventCard: React.FC<CronEventCardProps> = ({ event }) => {
     </div>
   );
 };
-
-/**
- * Format a legacy interval (minutes) as a short human-readable string.
- * 0.5 → "30 sec", 1 → "1 min", 60 → "1 hr", 90 → "1.5 hr".
- */
-function formatInterval(minutes: number): string {
-  if (minutes < 1) return `${Math.round(minutes * 60)} sec`;
-  if (minutes < 60) return minutes === 1 ? '1 min' : `${minutes} min`;
-  const hours = minutes / 60;
-  if (Number.isInteger(hours)) return hours === 1 ? '1 hr' : `${hours} hr`;
-  return `${hours.toFixed(1)} hr`;
-}
 
 /** Format a run duration (ms) as "820ms" / "8.2s" / "1m 04s". */
 function formatDuration(ms: number): string {

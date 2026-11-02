@@ -72,17 +72,17 @@ def test_compaction_nudge_fires_once_at_threshold():
 
 def test_store_bounded():
     for i in range(loop_hints._MAX_SESSIONS + 10):
-        loop_hints.note_prompt_tokens(f"s{i}", 100)
+        loop_hints.note_prompt_tokens(f"s{i}", 100, 200_000)
     assert len(loop_hints._context) <= loop_hints._MAX_SESSIONS
 
 
 def test_eviction_is_lru_by_update_not_fifo():
     """An actively-updated session must never be the eviction victim."""
-    loop_hints.note_prompt_tokens("busy", 100)
+    loop_hints.note_prompt_tokens("busy", 100, 200_000)
     for i in range(loop_hints._MAX_SESSIONS - 1):
-        loop_hints.note_prompt_tokens(f"idle{i}", 100)
+        loop_hints.note_prompt_tokens(f"idle{i}", 100, 200_000)
     # Store is full; refresh the oldest-inserted session, then overflow.
-    loop_hints.note_prompt_tokens("busy", 200)
-    loop_hints.note_prompt_tokens("newcomer", 100)
+    loop_hints.note_prompt_tokens("busy", 200, 200_000)
+    loop_hints.note_prompt_tokens("newcomer", 100, 200_000)
     assert _used("busy") == 200  # survived
     assert _used("idle0") is None  # evicted instead

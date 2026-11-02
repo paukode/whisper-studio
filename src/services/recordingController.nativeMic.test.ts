@@ -58,8 +58,8 @@ beforeEach(() => {
   posted = [];
   __resetNativeAudioForTests();
   __resetNativeMicForTests();
-  window.__WHISPER_NATIVE_AUDIO = { platform: 'macos', available: true };
-  window.__WHISPER_NATIVE_MIC = { platform: 'macos', available: true };
+  window.__WHISPER_NATIVE_AUDIO = { available: true };
+  window.__WHISPER_NATIVE_MIC = { available: true };
   (window as unknown as { webkit: unknown }).webkit = {
     messageHandlers: {
       nativeAudio: {

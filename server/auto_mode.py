@@ -168,8 +168,9 @@ async def classify_tool_call(
     """
     Classify a tool call as 'allow' or 'confirm'.
     Returns {"decision": "allow"|"confirm", "reason": str}.
-    Falls back to 'confirm' on any error. Always classifies with the cheap
-    Haiku-tier model from the catalog, never the session model.
+    Falls back to 'confirm' on any error. Classifies with the model set in
+    auxiliary_models.auto_mode_classifier (default haiku), never the session
+    model; when that model is not configured the call is confirmed.
 
     ``recent_messages`` is a bounded slice of this turn's history so far
     (see _build_turn_context) — it lets the classifier catch a multi-step
@@ -183,22 +184,20 @@ async def classify_tool_call(
     rules = get_effective_rules(cfg)
     system = _build_classifier_prompt(rules)
     region = cfg.get("bedrock_region", "us-east-1")
-    from server.infrastructure.config import DEFAULTS
 
-    chat_models = cfg.get("chat_models", DEFAULTS["chat_models"])
+    chat_models = cfg["chat_models"]
     from server.infrastructure.auxiliary import aux_model_id
 
-    haiku = aux_model_id(
-        "auto_mode_classifier",
-        fallback_id=chat_models.get("sonnet5.5") or next(iter(chat_models.values())),
-        models=chat_models,
-        config=cfg,
-    )
+    haiku = aux_model_id("auto_mode_classifier", models=chat_models, config=cfg)
     if not haiku:
-        # No cloud model resolves here (Local mode): ask, and send nothing.
+        # No classifier model resolves (Local mode, or the configured model
+        # is not in the catalog): ask, and send nothing.
         from server.infrastructure.cloud_guard import cloud_refusal
 
-        reason = cloud_refusal("The auto-mode classifier", cfg) or "classifier unavailable"
+        reason = cloud_refusal("The auto-mode classifier", cfg) or (
+            "the auto-mode classifier model (auxiliary_models.auto_mode_classifier, "
+            "default haiku) is not configured"
+        )
         return {"decision": "confirm", "reason": reason}
 
     context = _build_turn_context(recent_messages)

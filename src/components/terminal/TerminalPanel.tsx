@@ -8,6 +8,15 @@ import { useSessionStore } from '@/stores/sessionStore';
 import { TerminalTab, type TerminalTabHandle } from './TerminalTab';
 import { measureCellGrid } from '@/hooks/useTerminal';
 import { useGitChanged } from '@/hooks/useGitChanged';
+import { ApiError } from '@/types/api';
+import { toError } from '@/utils/toError';
+
+/** A 400 from the git routes means no workspace or not a git repository:
+ *  the panel's honest "no git". Anything else is a real failure. */
+const noGitAs = <T,>(value: T) => (err: unknown): T => {
+  if (err instanceof ApiError && err.status === 400) return value;
+  throw err;
+};
 
 let nextLabel = 1;
 
@@ -62,15 +71,13 @@ export const TerminalPanel: React.FC = () => {
   // expanded (`enabled: !collapsed`) and re-keyed on the current session (the
   // worktree-session lookup depends on it). The SSE/refresh listeners and user
   // actions call refreshGit() — which invalidates this key — to refetch.
-  const { data: gitData } = useQuery({
+  const { data: gitData, error: gitError } = useQuery({
     queryKey: ['terminal-git', currentSessionId],
     queryFn: async () => {
       const [b, w, ws] = await Promise.all([
-        getGitBranch().catch(() => null),
-        getGitWorktrees().catch(() => null),
-        currentSessionId
-          ? getWorktreeSession(currentSessionId).catch(() => null)
-          : Promise.resolve(null),
+        getGitBranch().catch(noGitAs(null)),
+        getGitWorktrees().catch(noGitAs(null)),
+        currentSessionId ? getWorktreeSession(currentSessionId) : Promise.resolve(null),
       ]);
       return {
         branch: b?.branch ?? null,
@@ -148,7 +155,12 @@ export const TerminalPanel: React.FC = () => {
 
   const handleCloseTab = useCallback(
     (id: string) => {
-      void deleteTerminalSession(id).catch(() => {});
+      deleteTerminalSession(id).catch((err: unknown) => {
+        useUIStore.getState().addToast({
+          type: 'error',
+          message: `Could not stop the terminal's shell; it may still be running: ${toError(err).message}`,
+        });
+      });
       tabHandles.current.delete(id);
       setSessions((prev) => {
         const updated = prev.filter((s) => s.id !== id);
@@ -431,7 +443,9 @@ export const TerminalPanel: React.FC = () => {
                   <circle cx="6" cy="18" r="3"/>
                   <path d="M18 9a9 9 0 0 1-9 9"/>
                 </svg>
-                <span className="ws-terminal-branch-text">{branch ?? 'no git'}</span>
+                <span className="ws-terminal-branch-text" title={gitError ? toError(gitError).message : undefined}>
+                  {gitError ? 'git error' : branch ?? 'no git'}
+                </span>
                 <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
                   <polyline points="6 9 12 15 18 9"/>
                 </svg>
@@ -439,7 +453,10 @@ export const TerminalPanel: React.FC = () => {
               {worktreeOpen && (
                 <div className="ws-terminal-worktree-menu">
                   <div className="ws-terminal-worktree-header">Worktrees</div>
-                  {worktrees.length === 0 && (
+                  {gitError && (
+                    <div className="ws-terminal-worktree-empty" role="alert">Could not read git: {toError(gitError).message}</div>
+                  )}
+                  {!gitError && worktrees.length === 0 && (
                     <div className="ws-terminal-worktree-empty">No worktrees found</div>
                   )}
                   {worktrees.map((w) => (

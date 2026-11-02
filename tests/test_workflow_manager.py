@@ -11,7 +11,7 @@ import shutil
 
 import pytest
 
-NODE = shutil.which("node") or "/usr/local/bin/node"
+NODE = shutil.which("node") or ""
 HARNESS_OK = os.path.exists(NODE) and os.path.exists(
     os.path.join(
         os.path.dirname(os.path.dirname(__file__)), "server", "workflows", "harness", "harness.mjs"

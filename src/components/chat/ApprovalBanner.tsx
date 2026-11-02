@@ -2,15 +2,13 @@ import { useCallback, useState } from 'react';
 import { getChatStore, useActiveChatStore } from '@/stores/sessionRuntimes';
 import type { PendingApproval } from '@/stores/chatStore';
 import { answerApproval } from '@/hooks/chatStream/approvalLeg';
-import { useUIStore } from '@/stores/uiStore';
 import { DiffPreview } from './previews/DiffPreview';
 import { CommandPreview } from './previews/CommandPreview';
-import { FileListPreview } from './previews/FileListPreview';
 import { TextPreview } from './previews/TextPreview';
 import { ICON } from './activityIcons';
 
 /**
- * Generic approval banner. Renders one of four preview components based on
+ * Generic approval banner. Renders one of three preview components based on
  * `currentApproval.preview`, with no per-action conditionals. Adding a new
  * approval-required tool on the backend requires zero changes here.
  */
@@ -49,37 +47,6 @@ export function ApprovalBanner() {
     }
   }, []);
 
-  const handleUndo = useCallback(async (approval: PendingApproval) => {
-    const path = approval.payload?.path as string | undefined;
-    if (!path) return;
-    try {
-      const resp = await fetch('/api/workspace/undo', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path }),
-      });
-      const data = await resp.json().catch(() => ({} as Record<string, unknown>));
-      const undone = resp.ok && (data.undone === true || data.restored === true);
-      if (undone) {
-        useUIStore.getState().addToast({
-          type: 'success', message: `Undid changes to ${path}`, duration: 3000,
-        });
-        window.dispatchEvent(new CustomEvent('whisper-workspace-refresh'));
-        const note = `> Note: User undid the prior write to \`${path}\`. The file has been restored to its pre-write contents.\n\n`;
-        window.dispatchEvent(new CustomEvent('whisper-chat-insert', { detail: { text: note } }));
-      } else {
-        const reason = (typeof data.error === 'string' && data.error) || `HTTP ${resp.status}`;
-        useUIStore.getState().addToast({ type: 'error', message: `Undo failed: ${reason}`, duration: 5000 });
-      }
-    } catch (err) {
-      useUIStore.getState().addToast({
-        type: 'error',
-        message: `Undo failed: ${err instanceof Error ? err.message : String(err)}`,
-        duration: 5000,
-      });
-    }
-  }, []);
-
   if (!currentApproval) return null;
 
   const isProcessing = answering.has(currentApproval.sessionId);
@@ -104,10 +71,9 @@ export function ApprovalBanner() {
           <CommandPreview
             command={payload.command as string | undefined}
             cwd={payload.cwd as string | undefined}
+            previewError={payload.command_preview_error as string | undefined}
           />
         );
-      case 'list':
-        return <FileListPreview paths={payload.paths as string[] | undefined} />;
       case 'text':
       default:
         return <TextPreview text={currentApproval.summary} />;
@@ -121,7 +87,6 @@ export function ApprovalBanner() {
   // the session's remembered choice, so "Yes, all" and "Block" would do
   // nothing for it. The card offers only this one answer and says why.
   const offerSessionChoice = !currentApproval.alwaysAsks;
-  const showUndo = currentApproval.preview === 'diff' && !!payload.path;
 
   return (
     <div className="chat-msg-wrap assistant-wrap">
@@ -184,13 +149,6 @@ export function ApprovalBanner() {
             <span style={{ fontSize: '0.78em', color: 'var(--text-muted)' }}>
               This action always asks.
             </span>
-          )}
-          {showUndo && (
-            <button onClick={() => void handleUndo(currentApproval)} disabled={isProcessing} type="button"
-              title="Undo this change"
-              style={{ ...btnStyle('var(--border)', 'transparent', 'var(--text-muted)', isProcessing), marginLeft: 'auto' }}>
-              {ICON.undo}Undo
-            </button>
           )}
         </div>
       </div>

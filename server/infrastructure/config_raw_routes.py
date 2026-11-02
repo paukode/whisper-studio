@@ -1,8 +1,7 @@
 """Raw USER-config editing over the API (the Settings config editor).
 
-The editor edits the USER layer — config.user.json (or the legacy config.json
-while that is still the active user layer). ``GET /api/config/raw`` returns the
-user layer text, its path, AND a read-only view of the fully merged effective
+The editor edits the USER layer, config.user.json. ``GET /api/config/raw``
+returns the user layer text, its path, AND a read-only view of the fully merged effective
 config (so the UI can show the shipped models + the user's own side by side).
 ``PUT`` validates the submitted text — JSON syntax first (with line/column), then
 structure (mirroring the local-model rules in server/local/registry.py, a few
@@ -56,12 +55,8 @@ def _validate_chat_model_entry(key: str, val, errors: list[str]) -> None:
     """Structural rules for ONE chat_models entry, mirroring what
     _normalize_chat_models and server/local/registry.py actually require."""
     where = f"chat_models.{key}"
-    if isinstance(val, str):
-        if not val.strip():
-            errors.append(f"{where}: a model id string must not be empty.")
-        return
     if not isinstance(val, dict):
-        errors.append(f'{where}: must be a model id string or an object with an "id" field.')
+        errors.append(f'{where}: must be an object with an "id" field.')
         return
 
     for field in ("id", "label"):
@@ -169,7 +164,7 @@ def _backup_once() -> None:
     global _backup_done
     if _backup_done:
         return
-    path = config_mod._active_user_config_path()
+    path = config_mod._user_config_path()
     if os.path.exists(path):
         backup = f"{path}.bak.{time.strftime('%Y%m%d%H%M%S')}"
         try:
@@ -183,22 +178,21 @@ def _backup_once() -> None:
 
 def _effective_text() -> str:
     """Pretty JSON of the fully merged, read-only effective config (secret
-    masked). Best-effort — an empty object if the merge somehow fails, so the
-    editor's user pane still loads."""
+    masked). When a config file cannot be read, the pane shows why instead, so
+    the editor's user pane still loads for the repair."""
     from server.workspace import get_workspace_path
 
     try:
         return json.dumps(config_mod.effective_config_view(get_workspace_path()), indent=2) + "\n"
-    except Exception as e:  # pragma: no cover - defensive
-        log.warning("Could not build effective config view: %s", e)
-        return "{\n}\n"
+    except config_mod.ConfigFileError as e:
+        return f"{e}\n"
 
 
 @router.get("/raw")
 async def get_raw_config():
     """The USER layer text and path, plus a read-only view of the fully merged
     effective config so the UI can show the shipped models next to the user's."""
-    path = config_mod._active_user_config_path()
+    path = config_mod._user_config_path()
     try:
         with open(path) as f:
             user_text = f.read()
@@ -298,17 +292,15 @@ async def put_raw_config(request: Request):
     _backup_once()
     # Through the config module's own persist path: atomic write + cache
     # invalidation, so the local-model registry and models catalog re-read
-    # the new contents on their next query. Targets the active user layer.
+    # the new contents on their next query. Targets config.user.json.
     config_mod._write_config_text(text if text.endswith("\n") else text + "\n")
-    log.info(
-        "%s saved via the raw editor (%d bytes).", config_mod._active_user_config_path(), len(text)
-    )
+    log.info("%s saved via the raw editor (%d bytes).", config_mod._user_config_path(), len(text))
 
     from server.local.registry import local_models
 
     return {
         "ok": True,
-        "path": config_mod._active_user_config_path(),
+        "path": config_mod._user_config_path(),
         # Post-save registry view, so the UI can confirm a new model landed.
         "local_models": sorted(local_models().keys()),
     }

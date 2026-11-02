@@ -1,4 +1,4 @@
-/* LSP Client — Status indicators and diagnostics styling */
+/* LSP status indicator and the Code tools settings */
 
 /* Status bar LSP indicator */
 .ws-lsp-status {
@@ -23,83 +23,6 @@ button.ws-lsp-status {
 @keyframes lsp-pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.3; }
-}
-
-/* Diagnostics count in status bar */
-.ws-diagnostics-count {
-    display: inline-flex; align-items: center; gap: 6px;
-    font-size: var(--fs-caption); padding: 0 4px; cursor: pointer;
-}
-.ws-diagnostics-count:hover { background: var(--bg-secondary); border-radius: 3px; }
-
-.ws-diag-errors {
-    display: inline-flex; align-items: center; gap: 2px;
-    color: var(--danger);
-}
-.ws-diag-warnings {
-    display: inline-flex; align-items: center; gap: 2px;
-    color: var(--warning);
-}
-.ws-diag-icon {
-    font-size: var(--fs-caption); line-height: 1;
-}
-
-/* Tab diagnostic badge */
-.ws-tab-diag-badge {
-    font-size: var(--fs-caption); font-weight: 700;
-    padding: 0 4px; border-radius: var(--radius-lg);
-    line-height: 14px; margin-left: 2px;
-}
-.ws-tab-diag-badge.errors {
-    background: var(--danger); color: #fff;
-}
-.ws-tab-diag-badge.warnings {
-    background: var(--warning); color: var(--bg-primary);
-}
-
-/* Problems panel (bottom of editor) */
-.ws-problems-panel {
-    border-top: 1px solid var(--border);
-    background: var(--bg-secondary);
-    font-size: var(--fs-small);
-    max-height: 200px;
-    overflow-y: auto;
-}
-.ws-problems-header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 4px 8px;
-    font-weight: 600; font-size: var(--fs-caption); text-transform: uppercase;
-    color: var(--text-muted); letter-spacing: 0.5px;
-    border-bottom: 1px solid var(--border);
-    cursor: pointer;
-    user-select: none;
-}
-.ws-problems-header:hover { background: var(--bg-primary); }
-
-.ws-problem-row {
-    display: flex; align-items: flex-start; gap: 6px;
-    padding: 3px 8px 3px 12px;
-    cursor: pointer;
-    color: var(--text-primary);
-}
-.ws-problem-row:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
-
-.ws-problem-icon {
-    flex-shrink: 0; width: 14px; text-align: center; font-size: var(--fs-caption);
-    line-height: 18px;
-}
-.ws-problem-icon.error { color: var(--danger); }
-.ws-problem-icon.warning { color: var(--warning); }
-.ws-problem-icon.info { color: var(--info); }
-.ws-problem-icon.hint { color: var(--text-muted); }
-
-.ws-problem-message { flex: 1; line-height: 18px; }
-.ws-problem-source {
-    color: var(--text-muted); font-size: var(--fs-caption); margin-left: 4px;
-}
-.ws-problem-location {
-    color: var(--text-muted); font-size: var(--fs-caption); white-space: nowrap;
-    margin-left: auto; padding-left: 8px;
 }
 
 /* Settings > Tools and automation > Code tools (CodeToolsPanel.tsx) */

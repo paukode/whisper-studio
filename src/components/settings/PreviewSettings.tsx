@@ -3,6 +3,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { get, post } from '@/api/client';
 import { stopPreviewSession, type PreviewSession } from '@/api/preview';
 import { useSessionStore } from '@/stores/sessionStore';
+import { useUIStore } from '@/stores/uiStore';
+import { toError } from '@/utils/toError';
 
 interface PreviewStatus {
   playwright_importable: boolean;
@@ -54,12 +56,15 @@ export const PreviewSettings: React.FC = () => {
     return title ? `"${title}"` : 'another chat';
   };
 
+  const report = (what: string, err: unknown) =>
+    useUIStore.getState().addToast({ type: 'error', message: `${what}: ${toError(err).message}` });
+
   const handleEnable = async () => {
     try {
       await post('/api/preview/install');
       await queryClient.invalidateQueries({ queryKey: ['preview-status'] });
     } catch (err) {
-      console.warn('Failed to start preview install:', err);
+      report('Could not enable live preview', err);
     }
   };
 
@@ -68,7 +73,7 @@ export const PreviewSettings: React.FC = () => {
       await post('/api/preview/disable');
       await queryClient.invalidateQueries({ queryKey: ['preview-status'] });
     } catch (err) {
-      console.warn('Failed to disable live preview:', err);
+      report('Could not disable live preview', err);
     }
   };
 
@@ -83,10 +88,17 @@ export const PreviewSettings: React.FC = () => {
       await stopPreviewSession(s.id);
       await queryClient.invalidateQueries({ queryKey: ['preview-sessions'] });
     } catch (err) {
-      console.warn('Failed to stop preview session:', err);
+      report(`Could not stop "${s.id}"`, err);
     }
   };
 
+  if (statusQuery.isError) {
+    return (
+      <p className="settings-empty" role="alert">
+        Could not read the live preview status: {toError(statusQuery.error).message}
+      </p>
+    );
+  }
   if (!status) {
     return <p className="settings-empty">Loading…</p>;
   }
@@ -120,7 +132,7 @@ export const PreviewSettings: React.FC = () => {
                     fontSize: '12px',
                     maxHeight: '120px',
                     overflow: 'auto',
-                    background: 'var(--surface-2)',
+                    background: 'var(--bg-elevated)',
                     padding: '8px',
                     borderRadius: '6px',
                   }}
@@ -138,9 +150,9 @@ export const PreviewSettings: React.FC = () => {
                 style={{
                   fontSize: '13px',
                   padding: '4px 10px',
-                  borderRadius: 'var(--radius)',
-                  background: 'var(--bg-success)',
-                  color: 'var(--text-success)',
+                  borderRadius: 'var(--radius-md)',
+                  background: 'var(--accent-dim)',
+                  color: 'var(--success)',
                 }}
               >
                 Enabled

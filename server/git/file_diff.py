@@ -17,9 +17,11 @@ The server picks the rendering mode so the client never has to guess:
 
 import os
 import re
+import subprocess
 from dataclasses import asdict, dataclass, field
 
 from server.git.core import _run_git
+from server.git.filesystem import path_inside
 
 # --- Constants ---
 
@@ -28,7 +30,7 @@ FILE_DIFF_TIMEOUT_S = 5
 # also bounds the response size.
 FULL_MODE_MAX_BYTES = 512_000
 # The client's LCS table is (old+1) x (new+1) cells. 9M cells is ~70MB of
-# packed JS numbers and a few hundred ms to fill — past that, hand the
+# packed JS numbers and a few hundred ms to fill, past that, hand the
 # work to git rather than freezing the tab.
 FULL_MODE_MAX_CELLS = 9_000_000
 # Context lines around each hunk. Wider than git's default 3 because the
@@ -84,12 +86,19 @@ def build_file_diff(workspace: str, rel_path: str) -> dict:
 
     Always diffs against HEAD, matching the +/- stats the git panel
     already shows (``server.git.diff`` uses ``git diff HEAD --numstat``).
-    Staged and unstaged edits therefore both appear.
+    Staged and unstaged edits therefore both appear. A failing git call is
+    an error payload with git's message.
     """
-    abs_path = os.path.normpath(os.path.join(workspace, rel_path))
-    if not abs_path.startswith(os.path.normpath(workspace)):
+    abs_path = path_inside(workspace, rel_path)
+    if abs_path is None:
         return asdict(_error(rel_path, "Invalid path."))
+    try:
+        return _build(workspace, rel_path, abs_path)
+    except _GitFailed as exc:
+        return asdict(_error(rel_path, str(exc)))
 
+
+def _build(workspace: str, rel_path: str, abs_path: str) -> dict:
     tracked = _is_tracked(workspace, rel_path)
     on_disk = os.path.isfile(abs_path)
 
@@ -100,14 +109,14 @@ def build_file_diff(workspace: str, rel_path: str) -> dict:
         return asdict(_untracked_diff(workspace, rel_path, abs_path))
 
     # One numstat call answers both "is this binary?" and "how many lines
-    # changed?". They used to be two invocations of the identical command.
+    # changed?".
     is_binary, added, removed = _numstat(workspace, rel_path)
     if is_binary:
         return asdict(FileDiff(path=rel_path, mode="binary", status="modified"))
 
     head = _show_head(workspace, rel_path)
     if head is None:
-        # Tracked but absent from HEAD — a newly added (staged) file.
+        # Tracked but absent from HEAD, a newly added (staged) file.
         head = ""
 
     if not on_disk:
@@ -162,7 +171,7 @@ def _fits_full_mode(old: str, new: str) -> bool:
 
 
 def _untracked_diff(workspace: str, rel_path: str, abs_path: str) -> FileDiff:
-    """Untracked files have no HEAD side — every line is an addition."""
+    """Untracked files have no HEAD side, every line is an addition."""
     if _has_nul_bytes(abs_path):
         return FileDiff(path=rel_path, mode="binary", status="added")
 
@@ -305,7 +314,7 @@ def parse_unified_diff(raw: str) -> tuple[list[DiffHunk], int, int, bool]:
                 truncated = True
             old_no += 1
             new_no += 1
-        # Any other marker is diff metadata between hunks — skip it.
+        # Any other marker is diff metadata between hunks, skip it.
 
     # Drop hunks that lost all their lines to the cap.
     hunks = [h for h in hunks if h.lines]
@@ -315,35 +324,48 @@ def parse_unified_diff(raw: str) -> tuple[list[DiffHunk], int, int, bool]:
 # --- Helpers ---
 
 
-def _is_tracked(workspace: str, rel_path: str) -> bool:
+class _GitFailed(Exception):
+    """A git call failed; build_file_diff reports it as an error payload."""
+
+
+def _git(args: list[str], workspace: str):
     try:
-        result = _run_git(
-            ["ls-files", "--error-unmatch", "--", rel_path],
-            cwd=workspace,
-            timeout=FILE_DIFF_TIMEOUT_S,
-        )
-        return result.returncode == 0
-    except Exception:
-        return False
+        return _run_git(args, cwd=workspace, timeout=FILE_DIFF_TIMEOUT_S)
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        raise _GitFailed(f"git {args[0]} failed: {exc}") from exc
+
+
+def _is_tracked(workspace: str, rel_path: str) -> bool:
+    """Exit 0 is tracked and 1 untracked; anything else is a git failure,
+    never a guess that the file is new."""
+    result = _git(["ls-files", "--error-unmatch", "--", rel_path], workspace)
+    if result.returncode not in (0, 1):
+        raise _GitFailed(f"git ls-files failed: {result.stderr.strip()}")
+    return result.returncode == 0
+
+
+def _has_head(workspace: str) -> bool:
+    """Whether the repository has a commit. Decided by exit code (0 yes,
+    1 no), never by git's message text, which a localized git translates."""
+    result = _git(["rev-parse", "--verify", "--quiet", "HEAD^{commit}"], workspace)
+    if result.returncode not in (0, 1):
+        raise _GitFailed(f"git rev-parse failed: {result.stderr.strip()}")
+    return result.returncode == 0
 
 
 def _numstat(workspace: str, rel_path: str) -> tuple[bool, int, int]:
     """Read one file's numstat against HEAD.
 
     Returns (is_binary, added, removed). git writes '-\t-\t<path>' for a
-    binary file, and nothing at all for an unchanged one — both leave the
-    counts at zero.
+    binary file, and nothing at all for an unchanged one, both leave the
+    counts at zero. A repository with no commit yet has no HEAD to compare
+    with and also reads as zero.
     """
-    try:
-        result = _run_git(
-            ["--no-optional-locks", "diff", "HEAD", "--numstat", "--", rel_path],
-            cwd=workspace,
-            timeout=FILE_DIFF_TIMEOUT_S,
-        )
-    except Exception:
+    if not _has_head(workspace):
         return (False, 0, 0)
+    result = _git(["--no-optional-locks", "diff", "HEAD", "--numstat", "--", rel_path], workspace)
     if result.returncode != 0:
-        return (False, 0, 0)
+        raise _GitFailed(f"git diff failed: {result.stderr.strip()}")
     for line in result.stdout.strip().split("\n"):
         if line.startswith("-\t-\t"):
             return (True, 0, 0)
@@ -361,16 +383,27 @@ def _has_nul_bytes(abs_path: str) -> bool:
         return False
 
 
+def _in_head(workspace: str, rel_path: str) -> bool:
+    """Whether HEAD has the path. ls-tree exits 0 either way and prints
+    nothing for an absent path, so no message text is read."""
+    result = _git(
+        ["--literal-pathspecs", "ls-tree", "--full-tree", "-z", "HEAD", "--", rel_path],
+        workspace,
+    )
+    if result.returncode != 0:
+        raise _GitFailed(f"git ls-tree failed: {result.stderr.strip()}")
+    return bool(result.stdout)
+
+
 def _show_head(workspace: str, rel_path: str) -> str | None:
-    try:
-        result = _run_git(
-            ["show", f"HEAD:{rel_path}"],
-            cwd=workspace,
-            timeout=FILE_DIFF_TIMEOUT_S,
-        )
-    except Exception:
+    """The file's text at HEAD, or None when it is not in HEAD (a new file,
+    or a repository with no commit yet)."""
+    if not _has_head(workspace) or not _in_head(workspace, rel_path):
         return None
-    return result.stdout if result.returncode == 0 else None
+    result = _git(["show", f"HEAD:{rel_path}"], workspace)
+    if result.returncode != 0:
+        raise _GitFailed(f"git show failed: {result.stderr.strip()}")
+    return result.stdout
 
 
 def _read_text(abs_path: str) -> str | None:

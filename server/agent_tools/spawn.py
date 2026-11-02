@@ -333,10 +333,8 @@ async def execute_spawn_agent(
         # the parent's own depth + 1 so run_agent's MAX_DEPTH recursion guard
         # actually holds (every OTHER call through this function defaults to
         # depth=0, which would let an agent-spawns-agent chain recurse
-        # forever). Mirrors the pre-migration inline _handle_spawn_agent
-        # exactly: no detach, no ephemeral agent_definition, no isolation — a
-        # nested spawn never supported those, and this preserves that scope
-        # rather than quietly widening it.
+        # forever). A nested spawn has no detach, no ephemeral
+        # agent_definition and no isolation.
         _budget_msg = _budget_exceeded_message(session_id)
         if _budget_msg:
             return _budget_msg
@@ -364,7 +362,7 @@ async def execute_spawn_agent(
             session_id, task, tool_input.get("agent_type", "general"), model_id, result
         )
         warning_line = f"[model override] {model_warning}\n" if model_warning else ""
-        stop_reason = getattr(result, "stop_reason", result.status)
+        stop_reason = result.stop_reason
         return (
             f"{warning_line}"
             f"[Agent {result.agent_id} ({result.agent_type})] "
@@ -421,9 +419,9 @@ async def execute_spawn_agent(
     # detail-less AgentCard summary. Without a team_id the frontend fold drops
     # every per-agent event, so a bare spawn_agent was only ever
     # clickable-when-done and showed no state.
-    # Registering in _teams (with the run wrapped in a named task) is what makes
-    # the card's Stop button real: POST /api/teams/{team_id}/stop cancels the
-    # task exactly like a team_create fan-out.
+    # Registering in _teams (with the run wrapped in a named task) is what lets
+    # Stop in the task list or agent pane cancel it (cancel_task, then
+    # stop_team) exactly like a team_create fan-out.
     import asyncio
 
     from server.agent_tools.teams import _teams
@@ -546,7 +544,7 @@ async def execute_spawn_agent(
         "agent_type": result.agent_type,
         "team_id": team_id,
         "status": result.status,
-        "stop_reason": getattr(result, "stop_reason", result.status),
+        "stop_reason": result.stop_reason,
         "turns_used": result.turns_used,
         "tools_called": result.tools_called,
         "usage": result.usage,
@@ -564,7 +562,7 @@ async def execute_spawn_agent(
     return json.dumps(result_payload)
 
 
-def execute_send_message(tool_input: dict, from_id: str = "main") -> str:
+def execute_send_message(tool_input: dict, session_id: str, from_id: str = "main") -> str:
     """Send inter-agent message.
 
     ``from_id`` defaults to "main" (interactive chat, i.e. no particular
@@ -572,6 +570,7 @@ def execute_send_message(tool_input: dict, from_id: str = "main") -> str:
     calling agent's id here when this call originates from inside an
     agent's own turn (server.agents.runtime.agent_nesting_ctx), so a
     receiving agent's mailbox shows the true sender instead of "main".
+    A broadcast reaches the agents of ``session_id`` (the calling turn's).
     """
     from server.agents.messaging import message_bus
 
@@ -580,7 +579,7 @@ def execute_send_message(tool_input: dict, from_id: str = "main") -> str:
     is_broadcast = tool_input.get("broadcast", False)
 
     if is_broadcast:
-        count = message_bus.broadcast(from_id, content)
+        count = message_bus.broadcast(from_id, content, session_id)
         return json.dumps({"sent": True, "broadcast": True, "recipients": count})
     elif to_id:
         from server.agents.registry import agent_registry
@@ -595,11 +594,12 @@ def execute_send_message(tool_input: dict, from_id: str = "main") -> str:
             if _journal.find_dir(to_id):
                 from server.tasks.agents import resume_agent
 
-                session_id = str(
-                    tool_input.get("__session_id__") or getattr(info, "session_id", "") or ""
-                )
                 try:
-                    resume_agent(to_id, content, session_id=session_id)
+                    resume_agent(
+                        to_id,
+                        content,
+                        session_id=session_id or getattr(info, "session_id", "") or "",
+                    )
                 except Exception as e:  # noqa: BLE001 - report, never raise into the tool
                     return json.dumps({"error": f"could not resume agent {to_id}: {e}"})
                 return json.dumps(
@@ -614,6 +614,8 @@ def execute_send_message(tool_input: dict, from_id: str = "main") -> str:
                         ),
                     }
                 )
+            elif info is None:
+                return json.dumps({"error": f"no agent {to_id} is running or recorded"})
         message_bus.send(from_id, to_id, content)
         return json.dumps({"sent": True, "to": to_id})
     else:

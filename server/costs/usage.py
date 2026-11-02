@@ -23,7 +23,7 @@ import csv
 import io
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 
 from server.costs import tracker
 from server.costs.sources import source_label
@@ -53,7 +53,7 @@ _KEY_COLUMN = {"model": "model", "session": "session_id", "source": "source"}
 
 
 def _utc_today() -> date:
-    return datetime.now(timezone.utc).date()
+    return datetime.now(UTC).date()
 
 
 def _bound(d: date) -> str:
@@ -119,12 +119,9 @@ def _is_gpt(model: str) -> bool:
     catalog no longer carries) priced under the OpenAI cache convention."""
     if tracker.cached_in_input_for(model):
         return True
-    try:
-        from server.openai_bedrock.runtime import is_openai_model
+    from server.openai_bedrock.runtime import is_openai_model
 
-        return is_openai_model(model)
-    except Exception:  # noqa: BLE001 - a config read failure is not a GPT row
-        return False
+    return is_openai_model(model)
 
 
 def _is_unpriced(model: str) -> bool:
@@ -245,12 +242,9 @@ def _buckets(start: date, end: date, granularity: str) -> list[tuple[date, date,
 
 
 def _model_labels() -> dict[str, str]:
-    try:
-        from server.infrastructure.config import load_config
+    from server.infrastructure.config import load_config
 
-        meta = load_config().get("chat_model_meta") or {}
-    except Exception:  # noqa: BLE001 - labels are cosmetic, keys still show
-        return {}
+    meta = load_config().get("chat_model_meta") or {}
     return {k: str(v.get("label") or k) for k, v in meta.items() if isinstance(v, dict)}
 
 
@@ -266,8 +260,9 @@ def _session_titles(ids: list[str]) -> dict[str, str]:
                     f"SELECT id, title FROM sessions WHERE id IN ({marks})", chunk
                 ).fetchall():
                     titles[r["id"]] = r["title"] or "Untitled Session"
-    except Exception:  # noqa: BLE001 - no sessions table: every id reads as deleted
-        pass
+    except Exception as e:  # noqa: BLE001 - never read every session as deleted
+        log.error("Session title read failed: %s", e)
+        raise CostLogUnreadable("the session titles", e) from e
     return titles
 
 
@@ -319,9 +314,7 @@ def usage_report(start: date, end: date, granularity: str, split: str) -> dict:
     for row in _query(start, end, split):
         day = date.fromisoformat(row["day"])
         key = row["k"] or ""
-        i = index.get(_natural_bucket(day, granularity)[0])
-        if i is None:  # outside the range (cannot happen with the WHERE bounds)
-            continue
+        i = index[_natural_bucket(day, granularity)[0]]
         bucket_groups[i].setdefault(key, _Group()).add(row)
         key_groups.setdefault(key, _Group()).add(row)
         totals.add(row)
@@ -469,7 +462,7 @@ def spend_between(start: datetime, end: datetime) -> float:
 def today_spend_usd() -> float:
     """Spend so far on the current UTC day, the window the daily cap uses."""
     day = _utc_today()
-    start = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
+    start = datetime(day.year, day.month, day.day, tzinfo=UTC)
     return spend_between(start, start + timedelta(days=1))
 
 
@@ -539,7 +532,7 @@ def export_document(start: date, end: date) -> dict:
     records = export_records(start, end)
     return {
         "range": {"from": start.isoformat(), "to": end.isoformat(), "timezone": "UTC"},
-        "priced_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "priced_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "total_cost_usd": round(sum(r["cost_usd"] for r in records), 6),
         "total_records": len(records),
         "records": records,

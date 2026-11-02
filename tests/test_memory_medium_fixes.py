@@ -5,8 +5,8 @@
 (2) The secret scanner catches modern OpenAI keys (sk-proj-/sk-svcacct-/
     sk-admin-) and base64url PyPI tokens, without false-positiving on prose.
 (3) Project-memory slugs are disambiguated by a realpath hash, so two
-    workspaces sharing a basename no longer collide; a legacy basename-only
-    dir is migrated to the new slug only when unambiguous.
+    workspaces sharing a basename no longer collide; a folder from the old
+    basename-only naming is left as it is and named in a notice.
 (4) memory_write / the REST save endpoint force a .md suffix and refuse
     dotfiles, so a memory can never be written into a name the scanner skips.
 
@@ -80,8 +80,7 @@ def test_pypi_token_detected():
 
 def test_new_patterns_compile():
     # Every rule (including the two new ones) must have compiled.
-    rules = SS._get_rules()
-    ids = {rule_id for rule_id, _label, _pat in rules}
+    ids = {rule_id for rule_id, _label, _pat in SS._RULES}
     assert "openai-api-key-modern" in ids
     assert "pypi-token-modern" in ids
 
@@ -102,14 +101,13 @@ def test_no_false_positive_on_prose(prose):
     assert "PyPI Token" not in labels
 
 
-def test_check_and_block_redacts_modern_openai_key():
-    clean, redacted, findings = SS.check_and_block(f"token: {_OPENAI_PROJ}")
+def test_check_and_block_blocks_modern_openai_key():
+    clean, findings = SS.check_and_block(f"token: {_OPENAI_PROJ}")
     assert clean is False
-    assert _OPENAI_PROJ not in redacted
-    assert findings
+    assert [f["rule"] for f in findings] == ["openai-api-key-modern"]
 
 
-# ── (3) slug disambiguation + legacy migration ───────────────────────────────
+# ── (3) slug disambiguation + old folders ────────────────────────────────────
 
 
 @pytest.fixture
@@ -141,39 +139,44 @@ def test_same_basename_different_paths_get_distinct_slugs(tmp_path, memory_base)
     assert os.path.isdir(dir_a) and os.path.isdir(dir_b)
 
 
-def test_legacy_basename_dir_migrated_when_unambiguous(tmp_path, memory_base):
+@pytest.fixture
+def notices(monkeypatch):
+    import server.notifications as N
+
+    seen = []
+    monkeypatch.setattr(N, "old_format_notice", lambda **kw: seen.append(kw))
+    return seen
+
+
+def test_an_old_basename_dir_is_left_alone_and_reported(tmp_path, memory_base, notices):
     ws = _make_ws(tmp_path, "a")
-    # Pre-two-tier layout: a basename-only "app" dir with a topic file.
-    legacy_dir = memory_base / "app"
-    legacy_dir.mkdir(parents=True)
-    (legacy_dir / "note.md").write_text("---\nname: N\ndescription: d\ntype: user\n---\n\nbody\n")
+    # The old layout: a basename-only "app" dir with a topic file.
+    old_dir = memory_base / "app"
+    old_dir.mkdir(parents=True)
+    (old_dir / "note.md").write_text("old")
 
     new_dir = MD.get_memory_dir(str(ws))
 
     assert os.path.basename(new_dir) == MD.get_workspace_slug(str(ws))
-    assert not legacy_dir.exists()  # renamed, not copied
-    assert (memory_base / os.path.basename(new_dir) / "note.md").read_text().endswith("body\n")
+    assert (old_dir / "note.md").read_text() == "old"  # not moved
+    assert os.listdir(new_dir) == []  # and not read into the new folder
+    [notice] = notices
+    assert notice["title"] == MD.OLD_FOLDER_NOTICE_TITLE
+    assert str(old_dir) in notice["message"] and new_dir in notice["message"]
 
 
-def test_legacy_migration_skipped_when_target_exists(tmp_path, memory_base):
-    ws = _make_ws(tmp_path, "a")
-    slug = MD.get_workspace_slug(str(ws))
+def test_no_notice_without_an_old_dir(tmp_path, memory_base, notices):
+    MD.get_memory_dir(str(_make_ws(tmp_path, "a")))
+    assert notices == []
 
-    legacy_dir = memory_base / "app"
-    legacy_dir.mkdir(parents=True)
-    (legacy_dir / "legacy.md").write_text("legacy")
 
-    # New slug dir already populated: migration must not clobber it.
-    new_dir = memory_base / slug
-    new_dir.mkdir(parents=True)
-    (new_dir / "current.md").write_text("current")
-
-    returned = MD.get_memory_dir(str(ws))
-
-    assert returned == str(new_dir)
-    assert legacy_dir.exists()  # left untouched — ambiguous, so no rename
-    assert (new_dir / "current.md").read_text() == "current"
-    assert not (new_dir / "legacy.md").exists()
+def test_a_workspace_named_default_is_not_reported(tmp_path, memory_base, notices):
+    MD.get_memory_dir(None)  # the folder for memory with no workspace
+    ws = tmp_path / "x" / "default"
+    ws.mkdir(parents=True)
+    MD.get_memory_dir(str(ws))
+    assert (memory_base / "default").is_dir()
+    assert notices == []
 
 
 # ── (4) filename normalization / dotfile rejection ───────────────────────────
@@ -220,7 +223,51 @@ def test_normalize_helper_direct():
     assert MD.normalize_memory_filename("notes") == ("notes.md", "")
     assert MD.normalize_memory_filename("sub/notes") == ("sub/notes.md", "")
     assert MD.normalize_memory_filename("already.md") == ("already.md", "")
-    # Cased extension is left as-is (the entrypoint guard handles MEMORY.MD).
-    assert MD.normalize_memory_filename("keep.MD") == ("keep.MD", "")
+    # Any case of the suffix is written as .md, the only one the scanner lists.
+    assert MD.normalize_memory_filename("Notes.MD") == ("Notes.md", "")
+    assert MD.normalize_memory_filename("MEMORY.MD") == ("MEMORY.md", "")
     fixed, err = MD.normalize_memory_filename(".env")
     assert fixed == "" and err
+
+
+def test_an_index_that_cannot_be_written_is_an_error(tmp_path):
+    (tmp_path / "notes.md").write_text("---\nname: notes\ndescription: d\ntype: user\n---\n\nx\n")
+    (tmp_path / MD.ENTRYPOINT_NAME).mkdir()  # a directory cannot be replaced by a file
+    with pytest.raises(OSError, match="was not rebuilt"):
+        MD.rebuild_index(str(tmp_path))
+    assert not (tmp_path / (MD.ENTRYPOINT_NAME + ".tmp")).exists()
+
+
+def test_a_write_whose_index_fails_says_the_file_was_saved(write_env):
+    write_env.mkdir(parents=True, exist_ok=True)
+    (write_env / MD.ENTRYPOINT_NAME).mkdir()  # the index cannot be written
+    result = EX.execute_memory_write(
+        {"filename": "notes", "name": "Notes", "type": "user", "content": "c"}
+    )
+    assert (write_env / "notes.md").is_file()
+    assert result.startswith("Memory file saved: notes.md")
+    assert f"but {MD.ENTRYPOINT_NAME} was not rebuilt" in result
+
+
+def test_a_delete_whose_index_fails_says_the_file_was_deleted(write_env):
+    EX.execute_memory_write({"filename": "notes", "name": "Notes", "type": "user", "content": "c"})
+    (write_env / MD.ENTRYPOINT_NAME).unlink()
+    (write_env / MD.ENTRYPOINT_NAME).mkdir()  # the index cannot be written
+    (write_env / "other.md").write_text("---\nname: o\ndescription: d\ntype: user\n---\n\nx\n")
+    result = EX.execute_memory_delete({"filename": "notes.md"})
+    assert not (write_env / "notes.md").exists()
+    assert result.startswith("Memory file deleted: notes.md")
+    assert f"but {MD.ENTRYPOINT_NAME} was not rebuilt" in result
+
+
+def test_a_route_whose_index_fails_says_the_change_happened(tmp_path):
+    from fastapi import HTTPException
+
+    from server.memory.router import _rebuild_after_change
+
+    (tmp_path / "notes.md").write_text("---\nname: notes\ndescription: d\ntype: user\n---\n\nx\n")
+    (tmp_path / MD.ENTRYPOINT_NAME).mkdir()
+    with pytest.raises(HTTPException) as exc:
+        _rebuild_after_change("notes.md was saved", str(tmp_path))
+    assert exc.value.status_code == 500
+    assert exc.value.detail.startswith("notes.md was saved, but the index is stale:")

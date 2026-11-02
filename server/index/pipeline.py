@@ -15,7 +15,7 @@ import os
 import re
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from . import (
     contextualize,
@@ -56,25 +56,15 @@ from .query_gate import has_content_word
 log = logging.getLogger("whisper-studio")
 
 # Directories never worth indexing — VCS, deps, build output, caches.
+# Dot directories are skipped separately (see _iter_files), so none are listed here.
 _IGNORE_DIRS = {
-    ".git",
-    ".svn",
-    ".hg",
     "node_modules",
     "venv",
-    ".venv",
     "__pycache__",
-    ".mypy_cache",
-    ".pytest_cache",
     "dist",
     "build",
-    ".next",
-    ".cache",
     "target",
-    ".idea",
-    ".vscode",
     "models",
-    ".DS_Store",
 }
 
 # Everything we know how to turn into text: plain text/code, spreadsheets
@@ -178,8 +168,12 @@ _SHEET_SAMPLE_ROWS = 20  # rows kept when sampling a large spreadsheet
 
 def _finish(text: str | None) -> str | None:
     """Normalize extractor output: strip + drop empty / 'nothing here' sentinels
-    (server/extract emits '[No content extracted]' / '[No text recognized]')."""
+    (server/extract emits '[No content extracted]' / '[No text recognized]').
+    An '[Error extracting ...]' marker raises, so the error text is never
+    indexed as the file's content."""
     text = (text or "").strip()
+    if text.startswith("[Error extracting "):
+        raise RuntimeError(text)
     if not text or text in {"[No content extracted]", "[No text recognized]"}:
         return None
     return text
@@ -366,7 +360,7 @@ def _build_locked(ws_path: str, ws_root: str, progress) -> dict:
     changed = 0
     cancelled = False
     # Read this workspace's typed-relations setting once per build (enabled +
-    # which engine: cloud Haiku or on-device Gemma). Local mode skips the Haiku
+    # which engine: cloud Haiku or an on-device model). Local mode skips the Haiku
     # passes here, once, for every pass below.
     _ws_settings = wssettings.settings_for_build(ws_path)
     _tr = _ws_settings["typed_relations"]
@@ -383,10 +377,8 @@ def _build_locked(ws_path: str, ws_root: str, progress) -> dict:
     # set (business docs vs source code) is picked per file from its extension
     # inside the loop below, so mixed folders tag each file with the right labels.
     ner_model = _ws_settings.get("ner_model", "gliner")
-    # Treat a pre-feature index (no stamp) as "off": its chunks were embedded
-    # header-less, so explicitly choosing filename/llm MUST re-embed. (The earlier
-    # "grandfather None → never force" logic silently skipped a user's explicit
-    # switch, stamping the new mode while leaving the old header-less vectors.)
+    # No context_mode stamp counts as "off": those chunks were embedded
+    # header-less, so choosing filename/llm must re-embed them.
     _prev_meta = store.get_meta(ws_path)
     _prev_cc = _prev_meta.get("context_mode") or "off"
     force_ctx_reembed = _prev_cc != cc_mode
@@ -502,8 +494,6 @@ def _build_locked(ws_path: str, ws_root: str, progress) -> dict:
                 # Node-id-keyed store (survives entity merges, assistant-queryable
                 # via workspace_graph_query). Attach a verbatim evidence line so
                 # each fact cites the exact lines via the #wsfile &L anchor.
-                # (The legacy name-keyed `relations` table is no longer written;
-                # graph_views still reads it for pre-relations2 DBs.)
                 facts = []
                 for s, t, ty, sc in rels:
                     sl, el, ev = relstore.evidence_line(text, s, t)
@@ -553,9 +543,8 @@ def _build_locked(ws_path: str, ws_root: str, progress) -> dict:
             embed_model = COHERE_EMBED_MODEL_ID if _embed_backend == "cohere" else EMBED_MODEL
             store.set_meta(
                 ws_path,
-                last_indexed_at=datetime.now(timezone.utc).isoformat(),
+                last_indexed_at=datetime.now(UTC).isoformat(),
                 embed_model=embed_model,
-                embed_backend=_embed_backend,
                 workspace=ws_root,
                 context_mode=cc_mode,
             )
@@ -612,18 +601,28 @@ def query(ws_path: str, text: str, k: int = 8, graph_hop: bool = True) -> dict:
     """Retrieve for a question: dense vector top-k, the BM25 keyword top-k, and
     one GraphRAG hop — returned SEPARATELY so the caller fuses them.
 
-    Returns ``{matches, keyword, related}``: ``matches`` are dense (cosine-
+    Returns ``{matches, keyword, related, dense_error}``: ``matches`` are dense (cosine-
     ranked) chunks, ``keyword`` are BM25 chunks (each with ``_bm25``; gated by
     the ``rag_hybrid_search`` flag) catching exact terms — filenames, ids, codes
     — that dense embeddings miss, and ``related`` are the entity-graph hop off
     the dense matches. They're kept apart so a multi-index caller can fuse the
     dense lists globally (cosine is comparable) rather than per-index by rank.
+    ``dense_error`` is the reason the dense leg could not run, or "".
     """
     from server.infrastructure.feature_flags import is_enabled
 
     t0 = time.time()
     qv = embedder.embed_query(text)
-    matches = store.search(ws_path, qv, k=k)
+    dense_error = ""
+    try:
+        matches = store.search(ws_path, qv, k=k)
+    except RuntimeError as e:
+        # An index from an older build can hold unusable vectors (see
+        # store.base). The keyword and entity legs still work, so the folder
+        # keeps grounding on them; the caller reports the dense failure.
+        matches = []
+        dense_error = str(e)
+        log.warning("Dense search failed for %s: %s", ws_path, e)
     keyword: list[dict] = []
     if is_enabled("rag_hybrid_search"):
         try:
@@ -641,7 +640,7 @@ def query(ws_path: str, text: str, k: int = 8, graph_hop: bool = True) -> dict:
         len(related),
         time.time() - t0,
     )
-    return {"matches": matches, "keyword": keyword, "related": related}
+    return {"matches": matches, "keyword": keyword, "related": related, "dense_error": dense_error}
 
 
 # Grounding excerpt budget. Matches get a near-full chunk (chunks are bounded
@@ -650,9 +649,6 @@ def query(ws_path: str, text: str, k: int = 8, graph_hop: bool = True) -> dict:
 # supporting context, so they get a shorter excerpt.
 _GROUND_MATCH_CHARS = 1500
 _GROUND_RELATED_CHARS = 600
-# Drop vector matches below this cosine score: they're noise that only dilutes
-# the grounding block (and tempts the model to distrust the passages).
-_GROUND_SCORE_FLOOR = 0.15
 # Max chunks any single file may contribute to the grounding block (matches AND
 # graph-hop related combined), so one large document (e.g. a 300-chunk book)
 # can't monopolise the slots and crowd out the small-but-relevant file (e.g. a
@@ -735,11 +731,10 @@ def retrieve_grounding(
     k: int = 12,
     *,
     extra_queries: list[str] | None = None,
-    return_meta: bool = False,
     forced: bool = False,
-):
+) -> tuple[str, dict]:
     """Search the given indexed workspaces and return a cited Markdown context
-    block (or '' if nothing). Used to ground a chat answer when the user has
+    block (or '' if nothing) and its meta. Used to ground a chat answer when the user has
     selected indexes to search.
 
     Retrieves for ``question`` plus any ``extra_queries`` (e.g. a
@@ -751,8 +746,8 @@ def retrieve_grounding(
     files. Source links use absolute paths so they reveal in Finder regardless
     of which workspace is connected.
 
-    With ``return_meta`` the second value is ``{folders, passages, sources,
-    best_score, dense_muted}``, where ``sources`` lists every injected passage
+    The second value is ``{folders, passages, sources,
+    best_score, dense_muted, dense_errors}``, where ``sources`` lists every injected passage
     with its retrieval provenance (``kind``: keyword / semantic / entity /
     related, plus entity-name chips) — the payload behind the chat's "Answer
     sources" surface.
@@ -780,14 +775,11 @@ def retrieve_grounding(
         seen_roots.add(root)
         valid_roots.append((p, root))
 
-    # Per-backend cosine floor — score distributions differ across embedders.
-    try:
-        from server.infrastructure.model_mode import resolve_backend
+    # Per-backend cosine floor: score distributions differ across embedders.
+    from server.infrastructure.model_mode import resolve_backend
 
-        _embed_backend = resolve_backend("embed")
-    except Exception:
-        _embed_backend = "qwen3"
-    ground_floor = GROUND_SCORE_FLOORS.get(_embed_backend, _GROUND_SCORE_FLOOR)
+    _embed_backend = resolve_backend("embed")
+    ground_floor = GROUND_SCORE_FLOORS[_embed_backend]
 
     # Dedup on the FULL normalized text (not a prefix): a duplicate file is
     # byte-identical so it collapses, while two distinct invoices that merely
@@ -800,6 +792,9 @@ def retrieve_grounding(
 
     related: list[dict] = []
     searched_roots: set[str] = set()
+    # Folders whose dense leg could not run (unusable vectors from an older
+    # build): they still ground on keywords and entities.
+    dense_errors: dict[str, str] = {}
     # Which retrieval legs surfaced each chunk (by file+line key), and the
     # query-named entities that anchored it. Feeds the per-passage "sources"
     # meta so the UI can say HOW each passage got here — matched words
@@ -807,7 +802,7 @@ def retrieve_grounding(
     legs_by_key: dict[tuple, set] = {}
     ent_names_by_key: dict[tuple, list] = {}
 
-    on_topic_floor = GROUND_ON_TOPIC_FLOORS.get(_embed_backend, 0.40)
+    on_topic_floor = GROUND_ON_TOPIC_FLOORS[_embed_backend]
     best_dense = 0.0  # best raw cosine seen across queries/indexes (pre-floor)
 
     # Per query, build THREE global lists (across all indexes): the dense list,
@@ -834,6 +829,8 @@ def retrieve_grounding(
                 log.warning("Grounding query failed for %s: %s", p, e)
                 continue
             searched_roots.add(root)
+            if res["dense_error"]:
+                dense_errors[root] = res["dense_error"]
             for m in res.get("matches", []):
                 m = dict(m)
                 m["_abs"] = os.path.join(root, m["path"])
@@ -890,9 +887,8 @@ def retrieve_grounding(
 
     # Graph hop, from the primary query's surviving dense seeds only. On auto
     # turns seeds must additionally clear the on-topic floor — a weak seed's
-    # entity neighborhood is noise squared. (This expansion historically ran
-    # inside query() off the raw pre-floor top-k, which is how an off-topic
-    # question dragged a dozen "related" passages into the prompt.)
+    # entity neighborhood is noise squared. Expanding from the raw pre-floor
+    # top-k would drag off-topic "related" passages into the prompt.
     seed_floor = ground_floor if forced else on_topic_floor
     if leg_sets:
         seeds_by_ws: dict[str, list[int]] = {}
@@ -977,15 +973,14 @@ def retrieve_grounding(
     matches = deduped
 
     if not matches:
-        if return_meta:
-            return "", {
-                "folders": folders_searched,
-                "passages": 0,
-                "sources": [],
-                "best_score": round(best_dense, 3),
-                "dense_muted": dense_muted,
-            }
-        return ""
+        return "", {
+            "folders": folders_searched,
+            "passages": 0,
+            "sources": [],
+            "best_score": round(best_dense, 3),
+            "dense_muted": dense_muted,
+            "dense_errors": dense_errors,
+        }
 
     # Auto-merge (parent-document retrieval): when a SMALL, focused document has
     # a chunk among the top matches, splice in its remaining chunks right after
@@ -1034,9 +1029,9 @@ def retrieve_grounding(
     # "invoice (1).pdf") reappears as supporting context.
     chosen = {_key(m) for m in matches}
     related_uniq: list[dict] = []
-    # Rank by the salience/IDF-weighted graph score (falling back to the raw
-    # shared-entity count for un-migrated indexes) so a link through a rare,
-    # discriminative entity outranks one through a common word.
+    # Rank by the salience/IDF-weighted graph score (the shared-entity count only
+    # breaks ties) so a link through a rare, discriminative entity outranks one
+    # through a common word.
     for r in sorted(
         related,
         key=lambda r: (r.get("graph_score", 0.0), r.get("shared_entities", 0)),
@@ -1085,37 +1080,37 @@ def retrieve_grounding(
         for m in related_uniq:
             out.append(f"- {_fmt(m, _GROUND_RELATED_CHARS)}")
     text = "\n".join(out)
-    if return_meta:
-        # Structured per-passage provenance, mirroring the grounding block: one
-        # entry per injected passage with HOW it was retrieved. Persisted per
-        # answer so the chat's grounding chip can show the passages behind it.
-        def _kind(m: dict) -> str:
-            lg = legs_by_key.get(_key(m)) or set()
-            if "keyword" in lg:
-                return "keyword"
-            if "semantic" in lg:
-                return "semantic"
-            return "entity" if "entity" in lg else "semantic"
 
-        def _source(m: dict, kind: str, entities: list | None) -> dict:
-            return {
-                "path": m.get("path"),
-                "abs": m.get("_abs"),
-                "ws": m.get("_ws"),
-                "start_line": m.get("start_line"),
-                "end_line": m.get("end_line"),
-                "kind": kind,
-                "entities": entities or [],
-                "snippet": " ".join((m.get("text") or "").split())[:240],
-            }
+    # Structured per-passage provenance, mirroring the grounding block: one
+    # entry per injected passage with HOW it was retrieved. Persisted per
+    # answer so the chat's grounding chip can show the passages behind it.
+    def _kind(m: dict) -> str:
+        lg = legs_by_key.get(_key(m)) or set()
+        if "keyword" in lg:
+            return "keyword"
+        if "semantic" in lg:
+            return "semantic"
+        return "entity" if "entity" in lg else "semantic"
 
-        sources = [_source(m, _kind(m), ent_names_by_key.get(_key(m))) for m in matches]
-        sources += [_source(r, "related", r.get("shared_entity_names")) for r in related_uniq]
-        return text, {
-            "folders": folders_searched,
-            "passages": len(matches),
-            "sources": sources,
-            "best_score": round(best_dense, 3),
-            "dense_muted": dense_muted,
+    def _source(m: dict, kind: str, entities: list | None) -> dict:
+        return {
+            "path": m.get("path"),
+            "abs": m.get("_abs"),
+            "ws": m.get("_ws"),
+            "start_line": m.get("start_line"),
+            "end_line": m.get("end_line"),
+            "kind": kind,
+            "entities": entities or [],
+            "snippet": " ".join((m.get("text") or "").split())[:240],
         }
-    return text
+
+    sources = [_source(m, _kind(m), ent_names_by_key.get(_key(m))) for m in matches]
+    sources += [_source(r, "related", r.get("shared_entity_names")) for r in related_uniq]
+    return text, {
+        "folders": folders_searched,
+        "passages": len(matches),
+        "sources": sources,
+        "best_score": round(best_dense, 3),
+        "dense_muted": dense_muted,
+        "dense_errors": dense_errors,
+    }

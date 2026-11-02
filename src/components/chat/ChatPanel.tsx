@@ -9,6 +9,7 @@ import { ChatMessage } from './ChatMessage';
 import { TurnBubble } from './TurnBubble';
 import { isLiveTurn, turnEntries, turnKey, spokenTurn } from './turnEntries';
 import { resolveTaskCheckpoints } from './TaskCard';
+import { questionsOf } from './messageActions';
 import { StreamingMessage } from './StreamingMessage';
 import { ICON } from './activityIcons';
 import { VoiceLiveMessage } from './VoiceLiveMessage';
@@ -18,6 +19,7 @@ import { ApprovalBanner } from './ApprovalBanner';
 import { AutoModeBreakerBanner } from './AutoModeBreakerBanner';
 import { formatMessageTimestamp, formatSegmentTimestamp } from '@/utils/formatTimestamp';
 import { downloadFile } from '@/utils/downloadFile';
+import { toError } from '@/utils/toError';
 import { useTaskStore } from '@/stores/taskStore';
 import { fetchSessionTasks } from '@/api/tasks';
 import { permissionModeLabel } from '@/utils/permissionModes';
@@ -66,7 +68,7 @@ const PendingNotes: React.FC = () => {
 };
 
 /**
- * Chat panel matching the vanilla #chatPanelWrap structure exactly.
+ * Chat panel (#chatPanelWrap).
  *
  * Structure:
  *   div.panel#chatPanelWrap  (adds .chat-panel-active when messages exist)
@@ -177,13 +179,13 @@ export const ChatPanel: React.FC = () => {
   }
 
   // Hydrate the Tasks store for this session so the in-chat task row and the
-  // Tasks drawer reflect the plan even on a restored conversation (the live
+  // Tasks panel reflect the plan even on a restored conversation (the live
   // `todo_update` SSE events don't replay). The server list is authoritative
   // and is written even when empty, so a session with no (or cleared) tasks
   // resolves to [] instead of each message falling back to its own partial
   // per-turn snapshot. The one exception is a turn that is actively streaming:
   // its live `todo_update` is the fresher source, so a slow GET must not
-  // clobber it. Fire-and-forget.
+  // clobber it. A failed read says so (one keyed toast).
   useEffect(() => {
     if (!currentSessionId) return;
     let active = true;
@@ -193,7 +195,14 @@ export const ChatPanel: React.FC = () => {
         if (getChatStore(currentSessionId).getState().isStreaming) return;
         useTaskStore.getState().setTasks(currentSessionId, tasks);
       })
-      .catch(() => {});
+      .catch((err: unknown) => {
+        if (!active) return;
+        useUIStore.getState().addToast({
+          type: 'error',
+          key: 'tasks-hydrate',
+          message: `Could not load this session's tasks: ${toError(err).message}`,
+        });
+      });
     return () => { active = false; };
   }, [currentSessionId]);
 
@@ -254,10 +263,10 @@ export const ChatPanel: React.FC = () => {
         if (msg.toolUse?.length) {
           md += `**Tools:** ${msg.toolUse.map(t => `${t.toolName} (${t.status})`).join(', ')}\n\n`;
         }
-        if (msg.userQuestion) {
-          md += `> **Question:** ${msg.userQuestion.question}\n`;
-          md += `> **Options:** ${msg.userQuestion.options.join(', ')}\n`;
-          if (msg.userQuestion.answered) md += `> *Answered*\n`;
+        for (const q of questionsOf(msg)) {
+          md += `> **Question:** ${q.question}\n`;
+          md += `> **Options:** ${q.options.join(', ')}\n`;
+          if (q.answered) md += `> *Answered*\n`;
           md += '\n';
         }
         if (msg.content) md += `${msg.content}\n\n`;
@@ -297,9 +306,7 @@ export const ChatPanel: React.FC = () => {
         </h2>
         {/* Workspace mode indicator, shown when workspace connected.
          * Reads the actual permission mode (default / auto / plan /
-         * acceptEdits / bypassPermissions / dontAsk). The old code hard-
-         * coded a binary plan/auto split which made every non-plan mode
-         * misreport as "Auto Mode". */}
+         * acceptEdits / bypassPermissions / dontAsk). */}
         {wsConnected && (
           <div className="ws-mode-indicator" id="wsModeIndicator" title={`Permission mode: ${modeLabel}`}>
             {modeLabel}
