@@ -209,19 +209,32 @@ def load_permissions() -> dict:
     # in place (e.g. add_rule's data["rules"].append(...)) never reaches back
     # into the module-level DEFAULTS singleton and corrupts it for the rest
     # of the process.
+    # A file that cannot be read or parsed raises: reading it as the defaults
+    # would drop the user's rules and network tier, and the next save would
+    # write the defaults over it.
     defaults = copy.deepcopy(DEFAULTS)
     try:
         with open(PERMISSIONS_PATH) as f:
             data = json.load(f)
-        return {**defaults, **data}
-    except Exception:
+    except FileNotFoundError:
         return defaults
+    except ValueError as e:
+        raise PermissionsFileError(f"{PERMISSIONS_PATH} is not valid JSON: {e}") from e
+    if not isinstance(data, dict):
+        raise PermissionsFileError(f"{PERMISSIONS_PATH} does not hold a JSON object.")
+    return {**defaults, **data}
+
+
+class PermissionsFileError(ValueError):
+    """permissions.json exists but cannot be used."""
 
 
 def save_permissions(data: dict):
     os.makedirs(os.path.dirname(PERMISSIONS_PATH), exist_ok=True)
-    with open(PERMISSIONS_PATH, "w") as f:
+    tmp = PERMISSIONS_PATH + ".tmp"
+    with open(tmp, "w") as f:
         json.dump(data, f, indent=2)
+    os.replace(tmp, PERMISSIONS_PATH)
 
 
 def get_mode() -> str:
