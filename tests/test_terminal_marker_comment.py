@@ -48,3 +48,12 @@ def test_exit_code_still_captured_via_dollar_question():
     payload = _build_run_payload("true", "aa11bb22")
     assert "$?" in payload
     assert payload.rstrip("\n").endswith("$?")
+
+
+def test_charset_designations_are_stripped_whole():
+    from server.terminal import _strip_ansi
+
+    # tput sgr0 output: ESC ( B then ESC [ m. No stray "B" may reach the model.
+    assert _strip_ansi("\x1b(B\x1b[mok") == "ok"
+    assert _strip_ansi("\x1b)0line") == "line"
+    assert _strip_ansi("a\x1b=b\x1b>c") == "abc"

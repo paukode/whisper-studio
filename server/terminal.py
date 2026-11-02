@@ -378,7 +378,7 @@ _DEFAULT_TIMEOUT_S = 30
 #   bare: BEL (\x07), bare CR not followed by LF, backspace
 _CSI_RE = re.compile(r"\x1b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]")
 _OSC_RE = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
-_C1_RE = re.compile(r"\x1b[\(\)=>\\(]")
+_C1_RE = re.compile(r"\x1b[()][0-9A-Za-z]|\x1b[=>\\]")
 _BEL_RE = re.compile(r"\x07")
 _CR_RE = re.compile(r"\r(?!\n)")
 _BS_RE = re.compile(r".\x08")  # backspace deletes prev char
