@@ -100,15 +100,19 @@ export const ConfigEditorDialog: React.FC<{ onClose: () => void }> = ({ onClose 
     }
   }, [text, queryClient, addToast, onClose]);
 
+  // Escape closes only this editor. The capture-phase listener stops the
+  // key before the Settings modal's own Escape (useDismiss, bubble phase)
+  // can close everything under it.
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
+        e.stopPropagation();
         onClose();
       }
     };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
+    document.addEventListener('keydown', handleKeyDown, true);
+    return () => document.removeEventListener('keydown', handleKeyDown, true);
   }, [onClose]);
 
   const tabButton = (id: Tab, label: string) => (

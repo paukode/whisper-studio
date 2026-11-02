@@ -14,6 +14,8 @@ const api = vi.hoisted(() => ({
 vi.mock('@/api/client', () => api);
 
 import { ConfigEditorDialog, ConfigJsonLink } from './ConfigEditorDialog';
+import { useRef } from 'react';
+import { useDismiss } from '@/hooks/useDismiss';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useUIStore } from '@/stores/uiStore';
 
@@ -153,6 +155,27 @@ describe('ConfigEditorDialog', () => {
     await screen.findByRole('textbox', { name: 'Your config contents' });
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('Escape closes only the editor, not the Settings modal under it', async () => {
+    const closeSettings = vi.fn();
+    function SettingsHost() {
+      const ref = useRef<HTMLDivElement>(null);
+      useDismiss(ref, closeSettings, { outsideClick: false });
+      return <div ref={ref} />;
+    }
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const onClose = vi.fn();
+    render(
+      <QueryClientProvider client={qc}>
+        <SettingsHost />
+        <ConfigEditorDialog onClose={onClose} />
+      </QueryClientProvider>,
+    );
+    const box = await screen.findByRole('textbox', { name: 'Your config contents' });
+    fireEvent.keyDown(box, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(closeSettings).not.toHaveBeenCalled();
   });
 
   it('closing (Cancel) does not bubble to the hosting Settings modal', async () => {
