@@ -119,12 +119,9 @@ def _is_gpt(model: str) -> bool:
     catalog no longer carries) priced under the OpenAI cache convention."""
     if tracker.cached_in_input_for(model):
         return True
-    try:
-        from server.openai_bedrock.runtime import is_openai_model
+    from server.openai_bedrock.runtime import is_openai_model
 
-        return is_openai_model(model)
-    except Exception:  # noqa: BLE001 - a config read failure is not a GPT row
-        return False
+    return is_openai_model(model)
 
 
 def _is_unpriced(model: str) -> bool:
@@ -245,12 +242,9 @@ def _buckets(start: date, end: date, granularity: str) -> list[tuple[date, date,
 
 
 def _model_labels() -> dict[str, str]:
-    try:
-        from server.infrastructure.config import load_config
+    from server.infrastructure.config import load_config
 
-        meta = load_config().get("chat_model_meta") or {}
-    except Exception:  # noqa: BLE001 - labels are cosmetic, keys still show
-        return {}
+    meta = load_config().get("chat_model_meta") or {}
     return {k: str(v.get("label") or k) for k, v in meta.items() if isinstance(v, dict)}
 
 
@@ -266,8 +260,9 @@ def _session_titles(ids: list[str]) -> dict[str, str]:
                     f"SELECT id, title FROM sessions WHERE id IN ({marks})", chunk
                 ).fetchall():
                     titles[r["id"]] = r["title"] or "Untitled Session"
-    except Exception:  # noqa: BLE001 - no sessions table: every id reads as deleted
-        pass
+    except Exception as e:  # noqa: BLE001 - never read every session as deleted
+        log.error("Session title read failed: %s", e)
+        raise CostLogUnreadable("the session titles", e) from e
     return titles
 
 

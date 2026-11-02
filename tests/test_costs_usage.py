@@ -334,6 +334,8 @@ def test_an_unreadable_log_is_an_error_never_an_empty_report(unreadable_log, cli
         usage.today_spend_usd()
     with pytest.raises(tracker.CostLogUnreadable):
         tracker.get_session_usage("s1")
+    with pytest.raises(tracker.CostLogUnreadable):
+        usage._session_titles(["s1"])  # never every session read as deleted
     for path in (
         "/api/costs/usage?from=2026-09-01&to=2026-09-02",
         "/api/costs/usage",
