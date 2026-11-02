@@ -277,6 +277,17 @@ def _import_mcp_servers(source_path: str, config_rels: list[str], parser) -> dic
         if name in config:
             skipped.append({"name": name, "reason": "already configured"})
             continue
+        if not str(conf.get("command", "") or "").strip():
+            # A remote server (url) or an entry without a command would be
+            # saved as a server that never starts. Remote servers carry a
+            # URL and a token variable, so the user adds them in Settings.
+            reason = (
+                "remote (url) server: add it in Settings > MCP"
+                if conf.get("url")
+                else "no command to run"
+            )
+            skipped.append({"name": name, "reason": reason})
+            continue
         config[name] = {
             "command": str(conf.get("command", "") or ""),
             "args": list(conf.get("args", []) or []),

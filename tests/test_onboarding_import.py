@@ -319,6 +319,32 @@ def test_codex_mcp_servers_parsed_from_config_toml(tmp_path, isolated_skills, is
     assert servers["foo"]["env"] == {"API_KEY": "abc"}
 
 
+def test_remote_mcp_server_is_skipped_with_a_reason(tmp_path, isolated_skills, isolated_mcp):
+    src = tmp_path / "src"
+    _write(
+        str(src / ".mcp.json"),
+        json.dumps(
+            {
+                "mcpServers": {
+                    "remote": {"type": "http", "url": "https://mcp.example.com/mcp"},
+                    "local": {"command": "npx", "args": ["-y", "server"]},
+                }
+            }
+        ),
+    )
+    ws = tmp_path / "ws"
+    ws.mkdir()
+
+    result = ie.import_claude_project(str(src), str(ws))
+
+    assert result["mcp"]["added"] == ["local"]
+    assert [s["name"] for s in result["mcp"]["skipped"]] == ["remote"]
+    assert "url" in result["mcp"]["skipped"][0]["reason"]
+    with open(isolated_mcp) as f:
+        servers = json.load(f)["servers"]
+    assert "remote" not in servers
+
+
 # --- bad source/workspace paths raise a recoverable error -------------------
 
 
