@@ -81,15 +81,27 @@
         gates.</li>
       <li>The commands of the subagents and workflows that the Bypass turn starts. A workflow keeps
         the scope of the turn or the person that started it.</li>
-      <li>A command on an approval card that you approve while the app is in Bypass.</li>
+      <li>A command on an approval card that a Bypass turn made.</li>
     </ul>
     <p>These runs keep the sandbox: all modes other than Bypass, a scheduled cron job (also when a
       Bypass turn made the job), and a headless run that no Bypass turn started.</p>
     <p>Because there is no sandbox, setuid programs such as <code>/bin/ps</code> run, a nested
       <code>sandbox-exec</code> runs (for example the test suite of a project that uses it), and a
       write outside the workspace succeeds. <code>sandbox_permissions="danger-full-access"</code>
-      has no meaning in Bypass. The executors accept it and ignore it, with no justification
-      check. A failed command in Bypass does not get a sandbox-denial hint.</p>
+      has no meaning in Bypass. The approval floor does not ask for it, and the executors accept it
+      and ignore it, with no justification check. A failed command in Bypass does not get a
+      sandbox-denial hint.</p>
+    <p>A read-only scope keeps the sandbox, also in Bypass. This applies to a read-only agent (for
+      example a memory agent or an Explore agent) and to a call made in plan mode. Their commands
+      run in the read-only profile, so the sandbox refuses a write that the command classifier
+      missed. In this scope the executors refuse <code>danger-full-access</code>, because Bypass
+      shows no card for it.</p>
+    <p>An approval card runs with the scope of the turn that made the card. The gate puts a
+      server stamp on the card of a Bypass turn. When you approve the card, the app reads the stamp.
+      It does not read the mode at the time of your click. Thus, if you change to Bypass before you
+      approve a card from another mode, the command stays in the sandbox. The
+      <code>/subagent</code> command and a workflow that you start yourself use the mode at the time
+      you start them.</p>
 
     <h2 id="write-modes">Three write modes</h2>
     <p>The deny-list above is only half the profile. The other half is how much of the filesystem the
@@ -122,7 +134,7 @@
       <tbody>
         <tr><td><code>workspace-write</code></td><td><code>workspace</code></td><td>The default. Write inside the project, the session's own scratch folder, and the temp directories, nowhere else.</td></tr>
         <tr><td><code>read-only</code></td><td><code>readonly</code></td><td>Run it, change nothing.</td></tr>
-        <tr><td><code>danger-full-access</code></td><td><code>open</code></td><td>Write anywhere. The call must carry a <code>justification</code>. Asking for this always raises an approval card, whatever the permission mode, because it is a request to drop the confinement. A subagent or another unattended run is refused.</td></tr>
+        <tr><td><code>danger-full-access</code></td><td><code>open</code></td><td>Write anywhere. The call must carry a <code>justification</code>. Asking for this raises an approval card in every permission mode except Bypass, because it is a request to drop the confinement. In Bypass there is no sandbox, so the app ignores the request with no card. A subagent or another unattended run is refused.</td></tr>
       </tbody>
     </table></div>
     <p>When a command fails under <code>workspace</code> or <code>readonly</code>,

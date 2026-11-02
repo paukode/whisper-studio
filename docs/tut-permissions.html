@@ -289,7 +289,7 @@
       <div class="callout__body"><p>The app examines a call in this sequence:</p>
         <ol>
           <li>The hard floors: <code>github-destructive</code>, a delete outside the workspace, and a
-            write outside the sandbox. Also a command in your visible terminal (outside Bypass), and
+            write outside the sandbox (outside Bypass). Also a command in your visible terminal (outside Bypass), and
             an MCP server that you marked for approval.</li>
           <li>The app folders: a write there runs. A delete there runs only in Bypass.</li>
           <li>The category mode, if you set one. It replaces the global mode.</li>
@@ -341,6 +341,9 @@
           workflows that a Bypass chat starts also run with no sandbox. Scheduled jobs keep the
           sandbox. Thus in Bypass a command can run <code>/bin/ps</code>, run a test suite that uses
           <code>sandbox-exec</code>, and write outside the workspace.</p>
+        <p>Plan mode and read-only agents keep the sandbox, also in Bypass. If you approve a card,
+          the command uses the mode of the turn that made the card. It does not use the mode at the
+          time of your click.</p>
       </div>
       <div class="card">
         <h3>The app blocks destructive patterns</h3>

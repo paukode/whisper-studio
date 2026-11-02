@@ -201,9 +201,12 @@
         command <code class="path">.whisper/launch.json</code> resolves it to and the one pinned into
         the call, each joined with spaces, plus any script it hands a shell with <code>-c</code>.</p></li>
       <li><h4>A request to leave the sandbox</h4><p>A call asking for
-        <code>sandbox_permissions: "danger-full-access"</code> always returns ask. That parameter is
-        a request to drop the sandbox's write confinement for one command, so it can never be covered
-        by a mode, a rule, or a session approval.</p></li>
+        <code>sandbox_permissions: "danger-full-access"</code> returns ask in every mode except
+        <code>bypassPermissions</code>. That parameter is a request to drop the sandbox's write
+        confinement for one command, so outside Bypass it can never be covered by a mode, a rule, or
+        a session approval. In Bypass, commands run with no sandbox, so the request has no meaning:
+        the app accepts it and ignores it, with no card. In a read-only scope under Bypass (plan mode
+        or a read-only agent), the executor refuses it.</p></li>
       <li><h4>A command in the visible terminal</h4><p>A <code>terminal_run</code> call with
         <code>mode: "visible"</code> returns ask in every mode except <code>bypassPermissions</code>.
         The command goes into the user's own shell, and the OS does not limit the writes of that

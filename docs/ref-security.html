@@ -110,8 +110,9 @@
         <code class="path">~/.aws</code>. Even inside those folders it cannot write the app's own
         config and grant files, and it cannot connect to the app's own API port. The escape hatch,
         <code>sandbox_permissions: "danger-full-access"</code>, requires a written justification,
-        always shows an approval card, and is <em>refused outright</em> from an unattended agent, so
-        there is no path where a delegated agent self-approves unconfined writes.</li>
+        shows an approval card in every mode except Bypass, and is <em>refused outright</em> from an
+        unattended agent, so there is no path where a delegated agent self-approves unconfined
+        writes. In Bypass, commands run with no sandbox, so the app ignores the request.</li>
       <li><b>MCP child processes do not inherit the main credential variables.</b> A local (stdio)
         MCP server is spawned with <code>AWS_ACCESS_KEY_ID</code>, <code>AWS_SECRET_ACCESS_KEY</code>,
         <code>AWS_SESSION_TOKEN</code>, <code>ANTHROPIC_API_KEY</code>, <code>OPENAI_API_KEY</code>,
@@ -368,10 +369,11 @@
             hidden <code>terminal_run</code> PTY, in one of three write modes (see
             <a href="#write-modes">Write modes</a>). If <code>sandbox-exec</code> cannot be used, the
             command is refused.</td>
-          <td><b>Boundary</b> - the strongest layer. Even if everything above is bypassed, code runs
-            with the secret-store deny-list applied (writes always; reads unless the mode is bypass or
+          <td><b>Boundary</b> - the strongest layer outside Bypass. Even if everything above is
+            bypassed, code runs with the secret-store deny-list applied (writes always; reads unless
             a person approved the read), and in workspace-write or read-only mode with the write deny
-            applied too.</td>
+            applied too. In Bypass, commands run with no sandbox, so this layer does not apply. A
+            read-only scope (plan mode or a read-only agent) keeps the sandbox in Bypass.</td>
         </tr>
         <tr>
           <td>Workflow-launch category mode
@@ -478,7 +480,8 @@
           <td><code>open</code></td>
           <td>Writes allowed everywhere except the deny-list.</td>
           <td>Only <code>sandbox_permissions: "danger-full-access"</code>, which needs a written
-            justification, always shows an approval card no matter the permission mode, and is refused
+            justification, shows an approval card in every permission mode except Bypass (where
+            commands have no sandbox and the request is ignored), and is refused
             outright from an unattended agent. Human-approved commands on the ordinary shell path also
             run open, because there the approval card is the control.</td>
         </tr>
