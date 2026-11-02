@@ -513,9 +513,15 @@ async def get_whisper_md():
     try:
         with open(path, errors="replace") as f:
             content = f.read()
-        return {"content": content, "exists": True, "path": path}
-    except Exception as e:
-        return {"content": "", "exists": False, "error": str(e)}
+    except OSError as e:
+        # A 200 with empty content would read as "no instructions", and a
+        # Save from that editor would overwrite the unreadable file.
+        return Response(
+            content=json.dumps({"error": f"Could not read {path}: {e}"}),
+            status_code=500,
+            media_type="application/json",
+        )
+    return {"content": content, "exists": True, "path": path}
 
 
 @whisper_md_router.put("")
