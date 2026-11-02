@@ -5,7 +5,6 @@ import { useMcpStore } from '@/stores/mcpStore';
 import { chatModelBlockReason, useSettingsStore } from '@/stores/settingsStore';
 import { useUIStore } from '@/stores/uiStore';
 import { useChatStream } from '@/hooks/useChatStream';
-import { updatePermissions } from '@/api/settings';
 import { useChatAutocomplete } from '@/hooks/useChatAutocomplete';
 import { useSlashCommands } from '@/hooks/useSlashCommands';
 import { useComposerDragDrop } from '@/hooks/useComposerDragDrop';
@@ -13,7 +12,7 @@ import { useComposerChatEvents } from '@/hooks/useComposerChatEvents';
 import { useDictationInput } from '@/hooks/useDictationInput';
 import { useComposerAttachments } from '@/hooks/useComposerAttachments';
 import { requestModelChange } from './dataRetentionConsent';
-import { post, put } from '@/api/client';
+import { post } from '@/api/client';
 import { useRecentWorkspaces } from '@/hooks/useRecentWorkspaces';
 import { useQuery } from '@tanstack/react-query';
 import { listIndexes, type IndexInfo } from '@/api/workspace';
@@ -191,9 +190,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
     try {
       let id = planId;
       if (!id) {
-        const list = await fetch(`/api/plans?session=${encodeURIComponent(sessionId ?? '')}`)
-          .then((r) => (r.ok ? r.json() : { plans: [] }))
-          .catch(() => ({ plans: [] }));
+        const resp = await fetch(`/api/plans?session=${encodeURIComponent(sessionId ?? '')}`);
+        if (!resp.ok) throw new Error(`Could not list the plans (HTTP ${resp.status})`);
+        const list = await resp.json();
         id = list.plans?.[0]?.id as string | undefined;
       }
       if (!id) {
@@ -206,16 +205,16 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
         return;
       }
       const s = useSettingsStore.getState();
-      if (s.planMode || s.config.permissionMode === 'plan') {
-        await updatePermissions({ mode: 'auto' }).catch(() => {});
-        useSettingsStore.setState((st) => ({ planMode: false, config: { ...st.config, permissionMode: 'auto' } }));
-      }
+      if (s.config.permissionMode === 'plan') await s.setPermissionMode('auto');
       await chatStream.send(
         `The plan below is approved. Implement it now, step by step, and verify each step as you go.\n\n---\n\n${md}`,
         { displayText: 'Approved — implement the plan.' },
       );
-    } catch {
-      useUIStore.getState().addToast({ type: 'error', message: 'Could not start the plan implementation.' });
+    } catch (err) {
+      useUIStore.getState().addToast({
+        type: 'error',
+        message: `Could not start the plan implementation: ${toError(err).message}`,
+      });
     }
   }, [chatStream, sessionId]);
 
@@ -330,9 +329,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
   );
   const setEffortLevel = useSettingsStore((s) => s.setEffortLevel);
   const setVerbosity = useSettingsStore((s) => s.setVerbosity);
-  const planMode = useSettingsStore((s) => s.planMode);
-  const setPlanMode = useSettingsStore((s) => s.setPlanMode);
-  const updateConfig = useSettingsStore((s) => s.updateConfig);
+  const setPermissionMode = useSettingsStore((s) => s.setPermissionMode);
   // Live permission mode for the Mode dropdown's current-state badge.
   // Falls back to 'default' to match the backend's initial value.
   const permissionMode = useSettingsStore((s) => s.config.permissionMode ?? 'default');
@@ -354,33 +351,26 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
     openWorkspaceConnect();
   }, [openWorkspaceConnect]);
 
-  const handlePlanToggle = useCallback(async () => {
-    const newPlan = !planMode;
-    setPlanMode(newPlan);
-    const targetMode = newPlan ? 'plan' : 'auto';
-    updateConfig({ permissionMode: targetMode });
+  /** Switch the permission mode. The server write goes first; a refused or
+   *  failed write keeps the old mode on screen and says why. */
+  const switchMode = useCallback(async (target: string) => {
     try {
-      await put('/api/permissions/mode', { mode: targetMode });
+      await setPermissionMode(target);
     } catch (err) {
-      console.warn('Failed to set permission mode:', err);
+      addToast({ type: 'error', message: `Could not switch the permission mode: ${toError(err).message}` });
     }
-  }, [planMode, setPlanMode, updateConfig]);
+  }, [setPermissionMode, addToast]);
 
-  /** Switch the permission mode from the permissions panel. Same write
-   *  path as the Settings panel — store, config, then PUT /api/permissions/mode
-   *  so the backend session_approvals view stays in sync. The Plan-mode flag
-   *  is mirrored so any code that still reads `planMode` keeps working. */
+  const handlePlanToggle = useCallback(async () => {
+    await switchMode(permissionMode === 'plan' ? 'auto' : 'plan');
+  }, [permissionMode, switchMode]);
+
+  /** Switch the permission mode from the permissions panel. */
   const handleSelectMode = useCallback(async (target: string) => {
     setPermOpen(false);
     if (target === permissionMode) return;
-    setPlanMode(target === 'plan');
-    updateConfig({ permissionMode: target });
-    try {
-      await put('/api/permissions/mode', { mode: target });
-    } catch (err) {
-      console.warn('Failed to set permission mode:', err);
-    }
-  }, [permissionMode, setPlanMode, updateConfig]);
+    await switchMode(target);
+  }, [permissionMode, switchMode]);
 
   // Autocomplete state machine (slash + @ mention). Destructured into the
   // same local names the component used before the extraction so the

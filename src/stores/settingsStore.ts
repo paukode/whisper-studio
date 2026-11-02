@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { AppConfig, IndexCapability, ModelEntry, ModelsResponse } from '@/types/settings';
 import { get, put } from '@/api/client';
+import { putPermissionMode } from '@/api/settings';
 import {
   AppConfigResponseSchema,
   ModelsResponseSchema,
@@ -10,6 +11,7 @@ import {
 } from '@/types/schemas';
 import { useUIStore } from './uiStore';
 import { clampEffort, normalizeEffort, DEFAULT_EFFORT } from '@/utils/effort';
+import { toError } from '@/utils/toError';
 
 /** Local-model context-window bounds (tokens). 32K is the floor AND the default:
  *  the full tool pool is always advertised and its prompt alone is ~12K tokens,
@@ -201,7 +203,6 @@ export interface SettingsState {
   localThinkingLevel: string;
   /** GPT-5.x verbosity (text.verbosity); only used by openai_bedrock models. */
   verbosity: string;
-  planMode: boolean;
   autoMemory: boolean;
   /** What the active mode leaves out of auto memory (Local mode recalls but
    *  records nothing), from the flag's `local_mode_note`; null when nothing. */
@@ -222,7 +223,10 @@ export interface SettingsState {
   setEffortLevel: (level: string) => void;
   setLocalThinkingLevel: (level: string) => void;
   setVerbosity: (v: string) => void;
-  setPlanMode: (on: boolean) => void;
+  /** Switch the permission mode: the server write first, then the store, so
+   *  the UI never shows a mode the server does not enforce. Rejects on
+   *  failure with the store unchanged. */
+  setPermissionMode: (mode: string) => Promise<void>;
   setAutoMemory: (on: boolean) => void;
   /** Set the index/RAG model mode (cloud | hybrid | local), persisting to config. */
   setModelMode: (mode: AppConfig['modelMode']) => void;
@@ -302,7 +306,6 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
   effortLevel: DEFAULT_EFFORT,
   localThinkingLevel: readLocalThinkingLevel(),
   verbosity: readVerbosity() ?? 'medium',
-  planMode: false,
   // Global memory defaults ON (matches config.example.json feature_flags.auto_memory).
   autoMemory: true,
   autoMemoryNote: null,
@@ -333,16 +336,9 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
         effortLevel: normalizeEffort(config.effortLevel),
       });
 
-      // Load actual permission mode from the permissions endpoint (ground truth)
-      try {
-        const perms = await get<{ mode?: string }>('/api/permissions', { schema: PermissionsResponseSchema });
-        const actualMode = perms.mode ?? 'default';
-        set({ planMode: actualMode === 'plan' });
-        set((state) => ({ config: { ...state.config, permissionMode: actualMode } }));
-      } catch {
-        // Permissions API not available — fall back to config value
-        set({ planMode: config.permissionMode === 'plan' });
-      }
+      // The permission mode the server enforces lives in permissions.json.
+      const perms = await get<{ mode?: string }>('/api/permissions', { schema: PermissionsResponseSchema });
+      set((state) => ({ config: { ...state.config, permissionMode: perms.mode ?? 'default' } }));
 
       // Hydrate the global-memory toggle from its backend feature flag so the
       // toolbar reflects the real state (and the on-by-default config value),
@@ -352,7 +348,7 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
       console.warn('Failed to load config:', err);
       useUIStore.getState().addToast({
         type: 'error',
-        message: 'Failed to load config',
+        message: `Failed to load config: ${toError(err).message}`,
         duration: 4000,
       });
     }
@@ -474,8 +470,9 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
     set({ verbosity: v });
   },
 
-  setPlanMode: (on) => {
-    set({ planMode: on });
+  setPermissionMode: async (mode) => {
+    await putPermissionMode(mode);
+    set((state) => ({ config: { ...state.config, permissionMode: mode } }));
   },
 
   setAutoMemory: (on) => {

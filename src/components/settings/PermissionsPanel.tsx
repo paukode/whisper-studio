@@ -161,8 +161,6 @@ export const PermissionsPanel: React.FC = () => {
         setCategories(Array.isArray(data.categories) ? data.categories : []);
         setCategoryModes(data.category_modes ?? {});
         updateConfig({ permissionMode: data.mode ?? 'default' });
-        // Sync plan mode on initial load
-        useSettingsStore.getState().setPlanMode((data.mode ?? 'default') === 'plan');
         const np = { ...DEFAULT_NETWORK_POLICY, ...(data.network_policy ?? {}) };
         setNetworkPolicy(np);
         setCustomDomainsText((np.custom_allowed_domains ?? []).join('\n'));
@@ -185,10 +183,7 @@ export const PermissionsPanel: React.FC = () => {
 
   const handleSaveMode = useCallback(() => {
     void saveMode.run(async () => {
-      await put('/api/permissions/mode', { mode });
-      updateConfig({ permissionMode: mode });
-      // Sync plan mode state
-      useSettingsStore.getState().setPlanMode(mode === 'plan');
+      await useSettingsStore.getState().setPermissionMode(mode);
     });
   }, [mode, updateConfig, saveMode]);
 

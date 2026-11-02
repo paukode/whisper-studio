@@ -8,7 +8,7 @@ import { requestModelChange } from '@/components/chat/dataRetentionConsent';
 import { effortLabel, thinkingLabel } from '@/utils/effort';
 import { PERMISSION_MODES } from '@/utils/permissionModes';
 import { SETTINGS_TABS } from '@/components/settings/SettingsModal';
-import { put } from '@/api/client';
+import { toError } from '@/utils/toError';
 
 /**
  * ⌘K command palette: the connective tissue the app was missing.
@@ -89,17 +89,14 @@ export const CommandPalette: React.FC = () => {
         run: run(() => { void requestModelChange(m.key); }) });
     }
 
-    // Permission modes. Same write path as ChatInput's Mode dropdown
-    // (handleSelectMode): flip the Plan flag, update the config's permissionMode,
-    // then PUT /api/permissions/mode so the backend session_approvals view stays
-    // in sync.
+    // Permission modes. Same write path as ChatInput's Mode dropdown: the
+    // server write first, then the store; a failed write keeps the old mode
+    // on screen and says why.
     for (const { value, label } of PERMISSION_MODES) {
       list.push({ id: `mode-${label}`, group: 'Mode', title: `Set permission mode: ${label}`, keywords: 'permission',
         run: run(() => {
-          settings.setPlanMode(value === 'plan');
-          settings.updateConfig({ permissionMode: value });
-          void put('/api/permissions/mode', { mode: value }).catch((err) => {
-            console.warn('Failed to set permission mode:', err);
+          settings.setPermissionMode(value).catch((err: unknown) => {
+            ui.addToast({ type: 'error', message: `Could not switch the permission mode: ${toError(err).message}` });
           });
         }) });
     }
