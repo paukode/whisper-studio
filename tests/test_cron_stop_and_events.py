@@ -1,4 +1,4 @@
-"""Cron live progress events and cooperative stop."""
+"""Cron live progress events and stop."""
 
 import json
 
@@ -9,23 +9,37 @@ from fastapi.testclient import TestClient
 from server import cron_events
 
 
+class _FakeTask:
+    """Stands in for the asyncio.Task a run registers."""
+
+    def __init__(self):
+        self.cancelled = False
+
+    def done(self):
+        return self.cancelled
+
+    def cancel(self):
+        self.cancelled = True
+
+
 @pytest.fixture(autouse=True)
 def clean_registry():
     with cron_events._lock:
-        cron_events._stop_events.clear()
+        cron_events._running_tasks.clear()
     yield
     with cron_events._lock:
-        cron_events._stop_events.clear()
+        cron_events._running_tasks.clear()
 
 
 def test_stop_registry_lifecycle():
     assert cron_events.request_stop("j1") is False  # nothing running
-    cron_events.open_run("j1")
-    assert cron_events.stop_requested("j1") is False
+    task = _FakeTask()
+    cron_events.open_run("j1", task)
+    assert task.cancelled is False
     assert cron_events.request_stop("j1") is True
-    assert cron_events.stop_requested("j1") is True
+    assert task.cancelled is True
     cron_events.close_run("j1")
-    assert cron_events.stop_requested("j1") is False
+    assert cron_events.request_stop("j1") is False
 
 
 def test_emit_progress_payload_shape(monkeypatch):
@@ -95,12 +109,13 @@ def test_stop_endpoint_running_job(cron_client):
     cs.save_cron_jobs(jobs)
     with cs._IN_PROGRESS_LOCK:
         cs._in_progress.add("j5")
-    cron_events.open_run("j5")
+    task = _FakeTask()
+    cron_events.open_run("j5", task)
     try:
         r = client.post("/api/cron/j5/stop")
         assert r.status_code == 200
         assert r.json() == {"stopping": True}
-        assert cron_events.stop_requested("j5") is True
+        assert task.cancelled is True
     finally:
         with cs._IN_PROGRESS_LOCK:
             cs._in_progress.discard("j5")
@@ -163,11 +178,13 @@ def test_stop_endpoint_reaches_deleted_but_running_job(cron_client):
     cs.save_cron_jobs([])  # job no longer on disk
     with cs._IN_PROGRESS_LOCK:
         cs._in_progress.add("ghost")
-    cron_events.open_run("ghost")
+    task = _FakeTask()
+    cron_events.open_run("ghost", task)
     try:
         r = client.post("/api/cron/ghost/stop")
         assert r.status_code == 200
         assert r.json() == {"stopping": True}
+        assert task.cancelled is True
     finally:
         with cs._IN_PROGRESS_LOCK:
             cs._in_progress.discard("ghost")

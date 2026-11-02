@@ -183,11 +183,10 @@ async def run_cron_job(job_id: str):
 
 @router.post("/{job_id}/stop")
 async def stop_cron_job(job_id: str):
-    """Cooperatively stop an in-flight run of this job.
+    """Stop an in-flight run of this job by cancelling its task.
 
-    404 when the job doesn't exist, 409 when it isn't running. The run loop
-    observes the flag at round boundaries and between tools (in-flight tool
-    waits poll in 1s slices), then exits with status 'stopped'.
+    404 when the job doesn't exist, 409 when it isn't running. The run ends
+    at its next await point with status 'stopped'.
     """
     # Live registry FIRST: a job deleted while its run is in flight must
     # still be stoppable (the file no longer lists it, the run doesn't care).
