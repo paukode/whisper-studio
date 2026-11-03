@@ -327,6 +327,65 @@ def _group_has_only_leader(pgid: int) -> bool:
     return members == {str(pgid)}
 
 
+def _wrapped_foreground(shell_pid: int) -> str | None:
+    """The program holding the foreground of a terminal a wrapper runs, else
+    None.
+
+    Some login shells are wrappers: a terminal integration (``zsh
+    (kiro-cli-term)``, say) starts the user's real shell on a second, inner
+    PTY and copies its bytes. The outer PTY then always shows the wrapper in
+    its foreground, idle, while a command runs inside. Each process below the
+    login shell that sits on another terminal reads that terminal's
+    foreground group (``tpgid``): the inner shell's own group is its prompt,
+    any other group is a running program. Unknown (``ps`` fails) is None."""
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["ps", "-ax", "-o", "pid=,ppid=,pgid=,tpgid=,tty=,comm="],
+            capture_output=True,
+            text=True,
+            timeout=1.0,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    rows = {}
+    children: dict[int, list[int]] = {}
+    for line in out.stdout.splitlines():
+        parts = line.split(None, 5)
+        if len(parts) < 6:
+            continue
+        try:
+            pid, ppid, pgid, tpgid = (int(x) for x in parts[:4])
+        except ValueError:
+            continue
+        rows[pid] = {"pgid": pgid, "tpgid": tpgid, "tty": parts[4], "comm": parts[5]}
+        children.setdefault(ppid, []).append(pid)
+    top = rows.get(shell_pid)
+    if top is None:
+        return None
+    # Breadth first: the first process met on a terminal is that terminal's shell.
+    seen_ttys = {top["tty"], "??", "-"}
+    queue = list(children.get(shell_pid, []))
+    while queue:
+        pid = queue.pop(0)
+        row = rows.get(pid)
+        if row is None:
+            continue
+        queue.extend(children.get(pid, []))
+        if row["tty"] in seen_ttys:
+            continue
+        seen_ttys.add(row["tty"])
+        fg = row["tpgid"]
+        if fg > 0 and fg != row["pgid"]:
+            leader = rows.get(fg)
+            name = leader["comm"] if leader else ""
+            return os.path.basename(name.split(" ")[0]).lstrip("-") if name else ""
+    return None
+
+
 def _line_editor_reading(session) -> bool:
     """True when canonical input mode is off on the PTY: a line editor (zsh's
     ZLE, readline, a multiplexer or ssh client in raw mode) reads each key.
@@ -359,8 +418,11 @@ def _foreground_program(session) -> str | None:
         shell_pgrp = os.getpgid(session.process.pid)
     except OSError:
         return None
-    if not fg or fg == shell_pgrp:
+    if not fg:
         return None
+    if fg == shell_pgrp:
+        # Idle on this PTY; a wrapper's inner terminal may still run something.
+        return _wrapped_foreground(session.process.pid)
     # A group's id is its leader's pid.
     name = _process_name(fg)
     if name in _PROMPT_HOSTS and _line_editor_reading(session) and _group_has_only_leader(fg):
