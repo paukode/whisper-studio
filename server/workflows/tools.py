@@ -259,6 +259,8 @@ async def execute_workflow_run(tool_input, session_id, model_id, effort_label) -
             phases=phases,
             name=wf_name,
             resume_from=resume,
+            # An agent's launch belongs to that agent's own loop.
+            wake_on_finish=not tool_input.get("__agent__"),
         )
         body = {"run_id": rid, "status": "running", "name": wf_name}
         if auto:

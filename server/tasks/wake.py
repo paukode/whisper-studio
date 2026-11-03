@@ -6,7 +6,8 @@ the header's task list showed it, but the model learned the result only by
 polling task_status, or when the user wrote again. A long build then cost a
 round of polling every minute, or the turn ended and the work stopped there.
 
-Now a finished command reports back, the way agent reports do
+Now a finished command, or a workflow run a chat turn launched, reports
+back the way agent reports do
 (server/agents/wake.py):
 
 - its result is kept as a ``task_report`` row in the chat, which the model
@@ -82,15 +83,21 @@ def _started_at(task: dict) -> str:
 
 
 def report_payload(task: dict) -> dict:
-    """The ``task_report`` row's payload for a finished shell task row."""
+    """The ``task_report`` row's payload for a finished shell or workflow
+    task row. A workflow's "command" is the tool call that launched it."""
+    kind = task.get("kind") or "shell"
+    command = task.get("command") or task.get("title") or ""
+    if kind == "workflow":
+        run_id = (task.get("meta") or {}).get("run_id", "")
+        command = f"{task.get('title') or 'Workflow'} (workflow_run, run {run_id})"
     return {
         "task_id": task.get("task_id", ""),
-        "command": task.get("command") or task.get("title") or "",
+        "command": command,
         "status": task.get("status", ""),
         "exit_code": task.get("exit_code"),
         "started_at": _started_at(task),
         "duration_ms": _duration_ms(task),
-        "output_tail": _result_excerpt("shell", task.get("result_text") or ""),
+        "output_tail": _result_excerpt(kind, task.get("result_text") or ""),
         "timestamp": _utc_now_iso(),
     }
 
@@ -175,10 +182,11 @@ def request_wake(session_id: str, task_ids: list[str]) -> None:
 
 
 def report_finished(task: dict | None, *, stopped_on_request: bool) -> str:
-    """Bring a finished shell task back to its chat. Returns how: ``live``
-    (folded into the running turn), ``wake`` (the app was asked to start a
-    turn) or ``skipped:<reason>``. Called from the task's waiter thread."""
-    if not task or task.get("kind") != "shell":
+    """Bring a finished shell or workflow task back to its chat. Returns how:
+    ``live`` (folded into the running turn), ``wake`` (the app was asked to
+    start a turn) or ``skipped:<reason>``. Called from the task's waiter
+    thread, or when a workflow run ends (server.workflows.manager)."""
+    if not task or task.get("kind") not in ("shell", "workflow"):
         return "skipped:kind"
     session_id = task.get("session_id") or ""
     if not session_id:

@@ -37,7 +37,9 @@ _TASK_TERMINAL = {
 }
 
 
-def _register_task(run_id: str, name: str, session_id: str, model_key: str) -> str:
+def _register_task(
+    run_id: str, name: str, session_id: str, model_key: str, *, wake_on_finish: bool = False
+) -> str:
     """Mirror a launched run into the unified background-task registry, so it
     shows in the header's task list and completion_inject reports it back to
     the model on the next turn. A registry hiccup must never stop the run
@@ -51,7 +53,7 @@ def _register_task(run_id: str, name: str, session_id: str, model_key: str) -> s
             "workflow",
             session_id=session_id,
             title=f"Workflow: {name or run_id}",
-            meta={"run_id": run_id, "model": model_key},
+            meta=_task_meta(run_id, model_key, wake_on_finish),
         )
         row = registry.get_task(task_id)
         if row and session_id:
@@ -60,6 +62,15 @@ def _register_task(run_id: str, name: str, session_id: str, model_key: str) -> s
     except Exception as e:  # noqa: BLE001 — mirroring is never load-bearing
         log.warning("workflow %s: task registry mirror failed: %s", run_id, e)
         return ""
+
+
+def _task_meta(run_id: str, model_key: str, wake_on_finish: bool) -> dict:
+    meta = {"run_id": run_id, "model": model_key}
+    if wake_on_finish:
+        from server.tasks.wake import WAKE_META_KEY
+
+        meta[WAKE_META_KEY] = True
+    return meta
 
 
 def _finish_task(run_id: str, status: str, outcome: dict) -> None:
@@ -80,6 +91,24 @@ def _finish_task(run_id: str, status: str, outcome: dict) -> None:
             emit_task_event(finished.get("session_id") or "", event, finished)
     except Exception as e:  # noqa: BLE001
         log.warning("workflow %s: task registry close failed: %s", run_id, e)
+        return
+    if finished:
+        _report_back(run_id, finished, stopped_on_request=status == "stopped")
+
+
+def _report_back(run_id: str, task: dict, *, stopped_on_request: bool) -> None:
+    """Bring a finished run a chat turn launched back to that chat: the
+    workflow_run tool tells the model the run's end wakes it, so the model
+    ends its turn and the result must start the next one
+    (server/tasks/wake.py)."""
+    try:
+        from server.tasks.wake import report_finished
+
+        how = report_finished(task, stopped_on_request=stopped_on_request)
+        if not how.startswith("skipped"):
+            log.info("workflow %s reported back to its chat (%s)", run_id, how)
+    except Exception as e:  # noqa: BLE001 - the task row and its event are already out
+        log.warning("workflow %s not reported back: %s", run_id, e)
 
 
 def _task_result_text(status: str, outcome: dict) -> str:
@@ -247,6 +276,7 @@ def start_run(
     resume_from: str = "",
     agent_runner=None,
     unsandboxed: bool | None = None,
+    wake_on_finish: bool = False,
 ) -> str:
     """Register + launch a run detached; returns its run_id immediately.
 
@@ -264,6 +294,9 @@ def start_run(
     (server.workflows.manager.resolve_workflow_workspace), and callers
     re-validate it still exists right before calling this rather than
     swapping to something else if it does not.
+
+    ``wake_on_finish``: a chat launched the run (the workflow_run tool, or a
+    card or slash command in that chat), so its end reports back there.
     """
     from server.infrastructure.async_tasks import spawn
     from server.workflows.runtime import DEFAULT_WORKFLOW_BUDGET_TOKENS
@@ -310,7 +343,9 @@ def start_run(
             ),
         )
 
-    _task_ids[run_id] = _register_task(run_id, name, session_id, model_key)
+    _task_ids[run_id] = _register_task(
+        run_id, name, session_id, model_key, wake_on_finish=wake_on_finish
+    )
 
     resume_cache = jnl.load_resume_cache(resume_from) if resume_from else {}
     journal = jnl.Journal(run_id)
@@ -644,6 +679,13 @@ def get_run(run_id: str, *, journal_tail: int = 200) -> dict | None:
     entries = jnl.read_journal(run_id)
     out["journal"] = entries[-journal_tail:] if len(entries) > journal_tail else entries
     out["agent_calls"] = agent_call_rows(entries)
+    live = _live.get(run_id)
+    if live is not None:
+        # The journal records a call when it ends: the calls still running
+        # come from the live run, or a reload mid-run drops them from the card.
+        done = {c.get("seq") for c in out["agent_calls"]}
+        running = [dict(c) for seq, c in sorted(live.in_flight.items()) if seq not in done]
+        out["agent_calls"] = sorted(out["agent_calls"] + running, key=lambda c: c.get("seq", 0))
     return out
 
 

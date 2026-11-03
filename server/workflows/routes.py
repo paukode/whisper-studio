@@ -208,6 +208,7 @@ async def launch_run(request: Request):
         budget_tokens=budget_tokens,
         phases=meta.get("phases", []),
         name=name or meta.get("name", ""),
+        wake_on_finish=bool(session_id),
     )
     return {"run_id": run_id, "status": "running", "trusted_as": trusted_as}
 
