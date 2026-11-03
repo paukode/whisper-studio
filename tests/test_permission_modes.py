@@ -649,14 +649,15 @@ def test_resume_auto_mode_is_a_noop_when_nothing_tripped():
     assert is_auto_mode_tripped(session_id) is False
 
 
-# ── bypassPermissions stops at the workspace boundary ───────────────────────
-# The user's rule: inside the connected workspace bypass does anything, but a
-# change outside it asks even in bypass. A save to a path the user named and
-# reach into a folder they have not granted are the two approval categories
-# whose action lands outside the workspace; the app's own folder is exempt.
+# ── bypassPermissions has no workspace boundary ─────────────────────────────
+# The user's decision of 2026-11-02 replaces the rule of 2026-10-18 ("a change
+# outside the workspace asks even in bypass"): Bypass works like Claude Code's
+# bypass, so a save to a path the user named and reach into a folder they have
+# not granted run with no card. A category row of the user's that names
+# another mode still decides that category.
 
 
-def test_bypass_still_asks_for_a_save_outside_the_workspace(monkeypatch, tmp_path):
+def test_bypass_allows_a_save_outside_the_workspace(monkeypatch, tmp_path):
     _patch_rules(monkeypatch, [])
     decision = resolve_static_decision(
         "save_file",
@@ -665,10 +666,10 @@ def test_bypass_still_asks_for_a_save_outside_the_workspace(monkeypatch, tmp_pat
         session_approvals={},
         mode=MODE_BYPASS,
     )
-    assert decision == "ask"
+    assert decision == "allow"
 
 
-def test_bypass_still_asks_before_reaching_into_a_new_folder(monkeypatch, tmp_path):
+def test_bypass_allows_reaching_into_a_new_folder(monkeypatch, tmp_path):
     _patch_rules(monkeypatch, [])
     decision = resolve_static_decision(
         "ws_open_folder",
@@ -677,7 +678,41 @@ def test_bypass_still_asks_before_reaching_into_a_new_folder(monkeypatch, tmp_pa
         session_approvals={},
         mode=MODE_BYPASS,
     )
-    assert decision == "ask"
+    assert decision == "allow"
+
+
+def test_an_outside_save_and_folder_reach_still_ask_outside_bypass(monkeypatch, tmp_path):
+    _patch_rules(monkeypatch, [])
+    for mode in (MODE_DEFAULT, MODE_ACCEPT_EDITS):
+        assert (
+            resolve_static_decision(
+                "save_file",
+                {"action": "save_to_path", "path": str(tmp_path / "notes.txt")},
+                "save",
+                {},
+                mode,
+            )
+            == "ask"
+        )
+        assert (
+            resolve_static_decision(
+                "ws_open_folder",
+                {"action": "folder_access", "path": str(tmp_path / "project2")},
+                "folder-access",
+                {},
+                mode,
+            )
+            == "ask"
+        )
+
+
+def test_a_category_row_of_the_users_still_asks_in_bypass(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "server.security.permissions.load_permissions",
+        lambda: {"mode": MODE_BYPASS, "rules": [], "category_modes": {"save": MODE_DEFAULT}},
+    )
+    payload = {"action": "save_to_path", "path": str(tmp_path / "notes.txt")}
+    assert resolve_static_decision("save_file", payload, "save", {}, MODE_BYPASS) == "ask"
 
 
 def test_bypass_allows_a_save_under_the_apps_own_folder(monkeypatch):

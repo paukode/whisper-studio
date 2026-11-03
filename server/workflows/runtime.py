@@ -18,6 +18,8 @@ import asyncio
 import contextvars
 import logging
 import os
+import time
+import uuid
 
 from server.infrastructure.binaries import resolve
 from server.workflows import rpc
@@ -32,6 +34,10 @@ WORKFLOW_MAX_AGENTS = 1000
 # can read off any provider's pricing page). Callers that set no budget get
 # this default.
 DEFAULT_WORKFLOW_BUDGET_TOKENS = 600_000
+# The smallest budget a run may ask for. Below it a run with a handful of
+# agents runs out mid-run (one agent can write tens of thousands of output
+# tokens), so workflow_run refuses it up front with a message instead.
+MIN_WORKFLOW_BUDGET_TOKENS = 100_000
 _LINE_LIMIT = 10 * 1024 * 1024
 
 _HARNESS = os.path.join(os.path.dirname(__file__), "harness", "harness.mjs")
@@ -163,7 +169,16 @@ class WorkflowRun:
         self.tokens_out = 0
         self.cost_usd = 0.0
         self.cap_reached = False
+        # Agents a limit stopped before they finished (status "incomplete").
+        self.agents_incomplete = 0
+        # Agent calls that hold a slot and have not finished, by seq: the
+        # journal records a call only when it ends, so a page that reloads
+        # mid-run lists these from here (manager.get_run).
+        self.in_flight: dict[int, dict] = {}
         self._seq = 0
+        # The phase the script last entered with phase(): an agent call with
+        # no opts.phase of its own counts under it.
+        self._phase = ""
         self._sem = asyncio.Semaphore(WORKFLOW_MAX_CONCURRENCY)
         self._write_lock = asyncio.Lock()
         self._cancelled = False
@@ -263,6 +278,7 @@ class WorkflowRun:
         method = msg.get("method")
         params = msg.get("params") or {}
         if method == "phase":
+            self._phase = str(params.get("name", ""))
             self.journal.phase(params.get("name", ""))
             self._emit({"type": "phase", "name": params.get("name", "")})
         elif method == "log":
@@ -321,7 +337,11 @@ class WorkflowRun:
         from server.tool_inputs import ToolInputError, schemas_for_tools, validate_tool_input
 
         try:
-            validate_tool_input(name, args, schemas_for_tools(assemble_full_catalog()))
+            # The ultracode catalog: it is the full one plus the workflow
+            # tools, so a script may read workflow_status and workflow_list.
+            validate_tool_input(
+                name, args, schemas_for_tools(assemble_full_catalog(ultracode=True))
+            )
         except ToolInputError as exc:
             return await self._error(mid, rpc.ERR_INTERNAL, str(exc))
 
@@ -351,7 +371,9 @@ class WorkflowRun:
                 rpc.ERR_INTERNAL,
                 f"tool '{name}' is not read-only and cannot be called from a tool "
                 "script. Read-only tools (file reads, greps, searches, git status/"
-                "diff, web fetch/search, aws_boto3, MCP tools marked read-only) run "
+                "diff, web fetch/search, aws_boto3, run status reads such as "
+                "workflow_status, task_status and task_output, MCP tools marked "
+                "read-only) run "
                 "here; anything that writes or needs approval must be called directly "
                 "as a normal tool.",
             )
@@ -440,25 +462,35 @@ class WorkflowRun:
         seq = self._seq
         self._seq += 1
         h = call_hash(prompt, opts)
+        phase = opts.get("phase") or self._phase
 
         # Resume cache: an identical prior call replays instantly at zero cost.
         cached = self.resume_cache.get(h)
         if cached:
             result = cached.popleft()
+            hit_at = time.time()
             self.journal.agent_call(
                 {
                     "seq": seq,
                     "call_hash": h,
-                    "phase": opts.get("phase", ""),
+                    "phase": phase,
                     "label": opts.get("label", ""),
                     "status": "cache_hit",
                     "text": result.get("text", ""),
                     "output": result.get("output"),
                     "usage": result.get("usage"),
+                    "started_at": hit_at,
+                    "finished_at": hit_at,
                 }
             )
             self._emit(
-                {"type": "agent", "seq": seq, "status": "cache_hit", "label": opts.get("label", "")}
+                {
+                    "type": "agent",
+                    "seq": seq,
+                    "status": "cache_hit",
+                    "label": opts.get("label", ""),
+                    "phase": phase,
+                }
             )
             return await self._respond(mid, result)
 
@@ -475,34 +507,61 @@ class WorkflowRun:
                 return await self._error(
                     mid, rpc.ERR_BUDGET, f"budget {self.budget_tokens} output tokens exhausted"
                 )
+            # The id is chosen here, not by the agent runtime, so the call is
+            # listed under the same id before and after it ends.
+            agent_id = uuid.uuid4().hex[:10]
+            started_at = time.time()
+            self.in_flight[seq] = {
+                "seq": seq,
+                "phase": phase,
+                "label": opts.get("label", ""),
+                "status": "running",
+                "agent_id": agent_id,
+                "started_at": started_at,
+            }
             self._emit(
                 {
                     "type": "agent",
                     "seq": seq,
                     "status": "running",
                     "label": opts.get("label", ""),
-                    "phase": opts.get("phase", ""),
+                    "phase": phase,
+                    "agent_id": agent_id,
                 }
             )
-            result = await self._agent_runner(prompt, opts)
+            try:
+                result = await self._agent_runner(prompt, {**opts, "_agent_id": agent_id})
+            finally:
+                self.in_flight.pop(seq, None)
+            finished_at = time.time()
 
         self._account(result.get("usage") or {})
+        if result.get("status") == "incomplete":
+            self.agents_incomplete += 1
         self.journal.agent_call(
             {
                 "seq": seq,
                 "call_hash": h,
-                "phase": opts.get("phase", ""),
+                "phase": phase,
                 "label": opts.get("label", ""),
                 "status": result.get("status", "completed"),
+                # Why the agent ended ("turn_limit", "deadline", ...): an
+                # incomplete agent is never replayed by a resume, so the
+                # journal says which limit stopped it.
+                "stop_reason": result.get("stop_reason", ""),
                 "text": result.get("text", ""),
                 "output": result.get("output"),
                 "usage": result.get("usage"),
-                "agent_id": result.get("agent_id", ""),
+                "agent_id": result.get("agent_id") or agent_id,
                 # Non-empty when the script's opts.model was rejected (unknown
                 # key, or on-device with no agent adapter) and the run's own
                 # model was used instead — journaled so a script author can
                 # see why their override did nothing.
                 "model_warning": result.get("model_warning", ""),
+                # Wall-clock span of the call: the run card reads how many
+                # agents ran at the same time from these.
+                "started_at": started_at,
+                "finished_at": finished_at,
             }
         )
         self._emit(
@@ -510,7 +569,9 @@ class WorkflowRun:
                 "type": "agent",
                 "seq": seq,
                 "status": result.get("status", "completed"),
+                "stop_reason": result.get("stop_reason", ""),
                 "label": opts.get("label", ""),
+                "phase": phase,
                 "cost_usd": round(self.cost_usd, 4),
                 "model_warning": result.get("model_warning", ""),
             }
@@ -538,6 +599,7 @@ class WorkflowRun:
         self.tokens_in += int(child_outcome.get("tokens_in", 0) or 0)
         self.tokens_out += int(child_outcome.get("tokens_out", 0) or 0)
         self.cost_usd += float(child_outcome.get("cost_usd", 0) or 0)
+        self.agents_incomplete += int(child_outcome.get("agents_incomplete", 0) or 0)
         if child_outcome.get("cap_reached"):
             self.cap_reached = True
 
@@ -573,12 +635,26 @@ class WorkflowRun:
         except Exception as e:  # noqa: BLE001 - a listener failure must not end the run
             log.warning("workflow %s: event listener failed: %s", self.run_id, e)
 
+    def live_counters(self) -> dict:
+        """The ledger as it stands mid-run. The workflow_runs row holds the
+        counters only from the run's end, so workflow_status reads these for
+        a live run (it showed 0 agents and $0 while agents had finished)."""
+        return {
+            "agents_spawned": self.agents_spawned,
+            "agents_incomplete": self.agents_incomplete,
+            "tokens_in": self.tokens_in,
+            "tokens_out": self.tokens_out,
+            "cost_usd": round(self.cost_usd, 6),
+            "cap_reached": self.cap_reached,
+        }
+
     def _result(self, status: str, *, result=None, error: str = "") -> dict:
         return {
             "status": status,
             "result": result,
             "error": error,
             "agents_spawned": self.agents_spawned,
+            "agents_incomplete": self.agents_incomplete,
             "tokens_in": self.tokens_in,
             "tokens_out": self.tokens_out,
             "cost_usd": round(self.cost_usd, 6),

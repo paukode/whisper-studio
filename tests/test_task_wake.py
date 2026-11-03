@@ -209,9 +209,11 @@ def test_ws_run_command_marks_a_chat_command_and_not_an_agents(tmp_path, monkeyp
         _wait_finished(task_id)
     assert registry.get_task(ids["chat"])["meta"].get(task_wake.WAKE_META_KEY) is True
     assert task_wake.WAKE_META_KEY not in registry.get_task(ids["agent"])["meta"]
-    # The chat is told not to poll; the agent, with no wake, still polls.
+    # The chat is told not to poll; the agent, with no wake, is told to
+    # block on task_wait for this task, never to poll.
     assert "comes back to you" in texts["chat"] and "do not poll" in texts["chat"]
-    assert "Check on it with task_status" in texts["agent"]
+    assert "task_wait" in texts["agent"] and ids["agent"] in texts["agent"]
+    assert "comes back to you" not in texts["agent"]
 
 
 def test_the_background_cap_fits_a_release_build():
@@ -310,3 +312,35 @@ def test_text_without_a_report_head_carries_no_command():
     body = task_wake.report_body(task_wake.report_payload(_task()))
     messages = [{"role": "user", "content": f"look at this:\n{body}"}]
     assert woken_calls(messages) == ([], None)
+
+
+# ── a workflow run a chat launched reports back too ───────────────────────
+
+
+def _workflow_task(**over) -> dict:
+    return _task(
+        kind="workflow",
+        title="Workflow: three-notes",
+        command="",
+        exit_code=None,
+        result_text="Workflow done: 6 agent(s)\n\nResult:\nnotes: ...",
+        meta={"run_id": "r1", task_wake.WAKE_META_KEY: True},
+        **over,
+    )
+
+
+def test_a_finished_workflow_wakes_its_chat(out):
+    rows, frames = out
+    assert task_wake.report_finished(_workflow_task(), stopped_on_request=False) == "wake"
+    payload = rows[0][1]
+    assert "Workflow: three-notes" in payload["command"] and "r1" in payload["command"]
+    assert payload["output_tail"].startswith("Workflow done")
+    assert _wake_frames(frames) == [{"task_ids": ["t1"]}]
+
+
+def test_a_workflow_an_agent_launched_wakes_nobody(out):
+    rows, frames = out
+    task = _workflow_task()
+    task["meta"] = {"run_id": "r1"}
+    assert task_wake.report_finished(task, stopped_on_request=False).startswith("skipped")
+    assert rows == [] and frames == []

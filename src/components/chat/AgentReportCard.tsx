@@ -19,6 +19,7 @@
  * most recent keys are kept; with no storage the cue lasts until the report
  * is opened in this view.
  */
+import { plainTaskPreview } from '@/utils/stripMarkdownTitle';
 import React, { useState } from 'react';
 import type { AgentReportPayload, AgentReportRow } from '@/types/chat';
 import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer';
@@ -212,7 +213,7 @@ export const AgentReportCard: React.FC<Props> = ({ report }) => {
       <div className="agent-report-card" data-testid="agent-report-card">
         <ReportLine
           label={`Report from ${agentName(agent)}`}
-          tail={agent.task}
+          tail={plainTaskPreview(agent.task)}
           title={[agent.task, report.reason].filter(Boolean).join('\n\n')}
           chips={<OutcomeChip agent={agent} />}
           open={openAgents.has(0)}
@@ -244,7 +245,7 @@ export const AgentReportCard: React.FC<Props> = ({ report }) => {
             <div key={`${i}-${keys[i]}`} className="agent-report-agent">
               <ReportLine
                 label={agentName(agent)}
-                tail={agent.task}
+                tail={plainTaskPreview(agent.task)}
                 title={agent.task}
                 chips={<OutcomeChip agent={agent} />}
                 open={openAgents.has(i)}

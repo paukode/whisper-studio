@@ -302,12 +302,21 @@ def test_bypass_treats_a_named_config_like_any_other_call(trusted, perms):
 
 
 @pytest.mark.parametrize("name", RM_OUTSIDE)
-@pytest.mark.parametrize("mode", ALL_MODES)
+@pytest.mark.parametrize("mode", [m for m in ALL_MODES if m != MODE_BYPASS])
 def test_a_launch_config_that_deletes_outside_the_workspace_still_asks(name, mode, trusted, perms):
-    # Trusted or not: a floor is a floor.
+    # Trusted or not: a floor is a floor outside Bypass.
     parsed = _parsed(session_name=name)
     assert approval_floor("preview_start", parsed, "preview") == "rm"
     assert _decide(mode, session_name=name) == "ask"
+
+
+@pytest.mark.parametrize("name", RM_OUTSIDE)
+def test_a_launch_config_that_deletes_outside_the_workspace_runs_in_bypass(name, trusted, perms):
+    # The user's decision of 2026-11-02: Bypass lifts the rm floor.
+    assert (
+        approval_floor("preview_start", _parsed(session_name=name), "preview", MODE_BYPASS) is None
+    )
+    assert _decide(MODE_BYPASS, session_name=name) == "allow"
 
 
 @pytest.mark.parametrize("name", RM_INSIDE)
@@ -346,7 +355,7 @@ def test_a_cwd_outside_the_workspace_puts_a_relative_delete_outside(workspace, p
 
 
 def test_the_card_for_an_rm_class_config_shows_what_would_run(workspace, perms, spawn, classifier):
-    _content, request = _process(MODE_BYPASS, {"preview": "allow"}, session_name="wipehome")
+    _content, request = _process(MODE_DEFAULT, {"preview": "allow"}, session_name="wipehome")
     assert request is not None
     assert request["always_asks"] is True
     assert request["payload"]["command"] == "rm -rf '~/Downloads/build'"

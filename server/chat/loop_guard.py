@@ -45,7 +45,20 @@ DEFAULT_CAPS: dict[str, int] = {
     "web_search": 50,
     "spawn_agent": 50,
     "team_create": 20,
+    # Sleep-polling background work wastes a round per check; task_wait and
+    # workflow_wait block in one call instead. The cap ends a runaway poll.
+    "sleep": 10,
 }
+
+# From this many sleep calls in one turn on, each result carries a note that
+# points at the wait tools, before the cap refuses the call.
+SLEEP_NOTE_FROM = 3
+
+_WAIT_INSTEAD = (
+    "To wait for background work, call task_wait (shell commands, agents) or "
+    "workflow_wait (workflow runs): each blocks in one call until the work ends. "
+    "Or end the turn: completion wakes you."
+)
 
 # Tools whose repeated identical invocation is the point (polling a background
 # task, waiting, checking CI, re-listing). Exempt from streak and cycle checks.
@@ -53,6 +66,8 @@ REPEATABLE_TOOLS: frozenset[str] = frozenset(
     {
         "task_status",
         "task_output",
+        "task_wait",
+        "workflow_wait",
         "task_list",
         "task_get",
         "sleep",
@@ -208,13 +223,17 @@ def before_call(scope: str, tool_name: str, tool_input: dict | None) -> GuardDec
         st.counts[tool_name] = st.counts.get(tool_name, 0) + 1
         cap = caps().get(tool_name, 0)
         if cap and st.counts[tool_name] > cap:
+            advice = (
+                _WAIT_INSTEAD
+                if tool_name == "sleep"
+                else "Work with the results you already have and give the user your answer."
+            )
             return GuardDecision(
                 allow=False,
                 reason="cap",
                 message=(
                     f"[Loop guard] {tool_name} has been called {cap} times this turn, which is "
-                    "the per-turn cap. This looks like a runaway loop. Work with the results you "
-                    "already have and give the user your answer."
+                    f"the per-turn cap. This looks like a runaway loop. {advice}"
                 ),
             )
         fails = st.failures.get((tool_name, args), 0)
@@ -286,6 +305,12 @@ def after_call(
         st.calls.append(_Call(tool_name, args, result, error=is_error))
         if len(st.calls) > _HISTORY_LIMIT:
             del st.calls[: len(st.calls) - _HISTORY_LIMIT]
+        if tool_name == "sleep" and st.counts.get("sleep", 0) >= SLEEP_NOTE_FROM:
+            return (
+                f"\n\n[Loop guard note: sleep call number {st.counts['sleep']} this turn. "
+                f"{_WAIT_INSTEAD}]",
+                None,
+            )
         if tool_name in REPEATABLE_TOOLS:
             return None, None
         streak = _trailing_identical(st.calls, tool_name, args)
@@ -312,6 +337,7 @@ __all__ = [
     "IDENTICAL_STREAK_LIMIT",
     "MAX_CYCLE_PERIOD",
     "REPEATABLE_TOOLS",
+    "SLEEP_NOTE_FROM",
     "STUB_MIN_CHARS",
     "GuardDecision",
     "after_call",

@@ -19,4 +19,5 @@ paths = [
   '''tests/test_config_no_secret_leak\.py''',
   '''tests/test_memory_medium_fixes\.py''',
   '''tests/test_config_tools_safety\.py''',
+  '''tests/test_git_add_commit_secrets\.py''',
 ]

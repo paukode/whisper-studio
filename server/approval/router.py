@@ -52,6 +52,8 @@ async def approval_execute(req: ExecuteRequest):
     from server.workspace import get_workspace_path
 
     ws_before = get_workspace_path()
+    # The action runs with the sandbox scope of the turn that raised the
+    # card, never the mode live at the click (execute_approved_by_human).
     try:
         outcome = await execute_approved_by_human(spec, payload)
     except Exception as e:  # noqa: BLE001 - executor is user-registered

@@ -31,6 +31,17 @@ from .spec import ApprovalOutcome, refuse_if_agent, refuse_if_agent_rm, reviewed
 log = logging.getLogger("whisper-studio")
 
 
+def _changeable(full: str, ws: str, payload: dict) -> bool:
+    """Whether the write or delete this payload carries may change ``full``:
+    the workspace and the session's scratch folder, and in bypassPermissions
+    anywhere (server.workspace.paths.ws_path_changeable). The action runs
+    now, so the app's mode right now decides."""
+    from server import workspace
+    from server.security.permissions import bypass_now
+
+    return workspace.ws_path_changeable(full, ws, payload.get("session_id"), bypass_now())
+
+
 async def _do_write(payload: dict) -> ApprovalOutcome:
     from server import workspace
 
@@ -40,7 +51,7 @@ async def _do_write(payload: dict) -> ApprovalOutcome:
     path = payload.get("path", "")
     content = workspace._normalize_lf(payload.get("content", ""))
     full = os.path.join(ws, path)
-    if not workspace._ws_path_allowed(full, ws, payload.get("session_id")):
+    if not _changeable(full, ws, payload):
         return ApprovalOutcome(ok=False, error="Invalid path")
     # The file before the write: the undo copy (its exact bytes), and the
     # old side of the diff stats and the stored edit below. Empty for a
@@ -223,7 +234,7 @@ async def _do_delete(payload: dict) -> ApprovalOutcome:
         return ApprovalOutcome(ok=False, error="No workspace connected")
     path = payload.get("path", "")
     full = os.path.join(ws, path)
-    allowed = workspace._ws_path_allowed(full, ws, payload.get("session_id"))
+    allowed = _changeable(full, ws, payload)
     if not allowed or not os.path.exists(full):
         return ApprovalOutcome(ok=False, error="Path not found")
     try:

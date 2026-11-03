@@ -13,7 +13,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from server.workflows import manager, store
-from server.workflows.launch_policy import grant_session, is_session_granted
+from server.workflows.launch_policy import grant_session, is_bypass, is_session_granted
 
 router = APIRouter(prefix="/api/workflows", tags=["workflows"])
 
@@ -72,6 +72,11 @@ async def launch_run(request: Request):
     session_id = body.get("session_id", "")
     args = body.get("args")
     budget_tokens = body.get("budget_tokens")
+    from server.workflows.tools import budget_error as _budget_check
+
+    budget_error = _budget_check(budget_tokens)
+    if budget_error:
+        return JSONResponse({"error": budget_error}, status_code=400)
     if budget_tokens is None:
         from server.workflows.runtime import DEFAULT_WORKFLOW_BUDGET_TOKENS
 
@@ -122,7 +127,7 @@ async def launch_run(request: Request):
     if "workspace_path" in body:
         raw_ws = (body.get("workspace_path") or "").strip()
         workspace_path, ws_error = (
-            manager.resolve_workflow_workspace(raw_ws) if raw_ws else (None, "")
+            manager.resolve_workflow_workspace(raw_ws, bypass=is_bypass()) if raw_ws else (None, "")
         )
     else:
         workspace_path, ws_error = manager.resolve_workflow_workspace(None)
@@ -187,8 +192,13 @@ async def launch_run(request: Request):
             trusted_as = slug
             break
 
+    from server.security import bypass_sandbox
+    from server.security.permissions import get_mode
+
     run_id = manager.start_run(
         script,
+        # A person launched it: in Bypass its agents run with no OS sandbox.
+        unsandboxed=bypass_sandbox.is_bypass(get_mode()),
         args=args,
         session_id=session_id,
         model_key=model_key,
@@ -198,6 +208,7 @@ async def launch_run(request: Request):
         budget_tokens=budget_tokens,
         phases=meta.get("phases", []),
         name=name or meta.get("name", ""),
+        wake_on_finish=bool(session_id),
     )
     return {"run_id": run_id, "status": "running", "trusted_as": trusted_as}
 

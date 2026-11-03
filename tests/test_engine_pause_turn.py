@@ -122,3 +122,26 @@ def test_pause_turn_without_content_does_not_hang(monkeypatch):
     lines = run_chat_turn(monkeypatch, client, {"question": "edge"})
     assert lines[-1] == "[DONE]"
     assert len(client.requests) == 1
+
+
+def test_refusal_stop_says_the_tool_calls_did_not_run(monkeypatch):
+    # A refusal ends the turn after one round, and the reply says why its
+    # tool call never ran instead of reading as a normal finish.
+    from server.chat.engine.runner import REFUSAL_NOTE
+    from tests.golden_harness import tool_use_block
+
+    client = FakeBedrockClient(
+        [
+            [
+                msg_start(),
+                *text_block("Reading the file."),
+                *tool_use_block("toolu_1", "ws_read_file", {"path": "README.md"}, index=1),
+                *msg_end(stop_reason="refusal"),
+            ],
+        ]
+    )
+    lines = run_chat_turn(monkeypatch, client, {"question": "read the readme"})
+    texts = [json.loads(line).get("text", "") for line in lines if line.startswith("{")]
+    assert REFUSAL_NOTE in texts
+    assert lines[-1] == "[DONE]"
+    assert len(client.requests) == 1

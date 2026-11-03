@@ -32,6 +32,7 @@ import re
 
 from server.approval.markers import approval_request
 from server.executors import register_executor
+from server.security import bypass_sandbox
 from server.security.secret_reads import requested
 
 log = logging.getLogger("whisper-studio")
@@ -112,14 +113,23 @@ def _resolve_sandbox_permissions(payload: dict) -> tuple[str, str, str]:
     Returns (permissions, justification, error). error is "" when valid.
     Empty/missing permissions default to workspace-write. danger-full-access
     requires a non-empty justification and is refused outright for unattended
-    (agent-stamped) payloads — the whole point of the escalation is that a
-    human reads the justification before the command runs unconfined, and the
+    (agent-stamped) payloads: the whole point of the escalation is that a
+    human reads the justification before the command writes anywhere, and the
     agent auto-approve path has no human."""
     perms = (payload.get("sandbox_permissions") or "workspace-write").strip()
     justification = (payload.get("justification") or "").strip()
     if perms not in _WRITE_MODE_FOR_PERMS:
         allowed = ", ".join(sorted(_WRITE_MODE_FOR_PERMS))
         return "", "", f"invalid sandbox_permissions {perms!r} — must be one of: {allowed}"
+    if perms == "danger-full-access" and bypass_sandbox.active():
+        # A Bypass turn runs with no sandbox, so there is nothing to escalate
+        # out of: accept the value and ignore it, with no justification or
+        # agent check.
+        return "workspace-write", justification, ""
+    if perms == "danger-full-access" and bypass_sandbox.held_back():
+        # Bypass asks no card for the escalation, and a read-only scope keeps
+        # the sandbox: with no person to read the justification, refuse it.
+        return "", "", bypass_sandbox.HELD_BACK_REFUSAL
     if perms == "danger-full-access":
         if payload.get("__agent__"):
             return (
@@ -219,10 +229,32 @@ def _visible_busy(program: str) -> str:
 _OPENED_NOTE = "[terminal] No terminal was open, so a new one was opened for this command.\n"
 
 
+# How to stop a run of the assistant that still holds the visible terminal.
+_STOP_HINT = (
+    "To stop it, call terminal_send with target='visible' and input '\\x03' (Ctrl-C), "
+    "or ask the user to press Ctrl-C in that terminal tab."
+)
+
+
+def _still_running(program: str) -> str:
+    """The refusal for a visible run while the assistant's own earlier run
+    still holds the visible terminal."""
+    who = f" ({program})" if program else ""
+    return (
+        f"Your earlier command is still running in the visible terminal{who}. "
+        "Further visible runs are refused until it ends, so nothing is typed into it. "
+        "Wait for it to end and call terminal_run again. " + _STOP_HINT
+    )
+
+
 # Programs that hold the terminal's foreground while sitting at a prompt of
 # their own: a nested shell (bash, nix develop's bash), a multiplexer, a
-# remote or elevated shell. A command typed into one runs at that prompt and
-# prints its completion marker as usual, so they do not make the terminal busy.
+# remote or elevated shell. They count as idle only while a line editor reads
+# the terminal (canonical input mode off, _line_editor_reading) AND the leader
+# is alone in its group (_group_has_only_leader): a shell that runs a script
+# (`bash script.sh`) or `sudo make` keeps canonical mode, and a script that
+# runs a pager, a REPL or fzf keeps that child in its own group. Both are
+# busy, so a command is never typed into their stdin.
 _PROMPT_HOSTS = frozenset(
     {
         "sh",
@@ -269,16 +301,116 @@ def _process_name(pid: int) -> str:
     return os.path.basename(name).lstrip("-")
 
 
+def _group_has_only_leader(pgid: int) -> bool:
+    """True when process group ``pgid`` holds only its leader. An interactive
+    shell at its prompt runs each job in a group of its own (job control), so
+    its group holds only itself; a `bash script.sh` keeps every child it runs
+    in its group. Unknown (``ps`` fails) counts as not alone, so busy."""
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["ps", "-ax", "-o", "pgid=,pid="],
+            capture_output=True,
+            text=True,
+            timeout=1.0,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if out.returncode != 0:
+        return False
+    members = set()
+    for row in out.stdout.splitlines():
+        parts = row.split()
+        if len(parts) == 2 and parts[0] == str(pgid):
+            members.add(parts[1])
+    return members == {str(pgid)}
+
+
+def _wrapped_foreground(shell_pid: int) -> str | None:
+    """The program holding the foreground of a terminal a wrapper runs, else
+    None.
+
+    Some login shells are wrappers: a terminal integration (``zsh
+    (kiro-cli-term)``, say) starts the user's real shell on a second, inner
+    PTY and copies its bytes. The outer PTY then always shows the wrapper in
+    its foreground, idle, while a command runs inside. Each process below the
+    login shell that sits on another terminal reads that terminal's
+    foreground group (``tpgid``): the inner shell's own group is its prompt,
+    any other group is a running program. Unknown (``ps`` fails) is None."""
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["ps", "-ax", "-o", "pid=,ppid=,pgid=,tpgid=,tty=,comm="],
+            capture_output=True,
+            text=True,
+            timeout=1.0,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    rows = {}
+    children: dict[int, list[int]] = {}
+    for line in out.stdout.splitlines():
+        parts = line.split(None, 5)
+        if len(parts) < 6:
+            continue
+        try:
+            pid, ppid, pgid, tpgid = (int(x) for x in parts[:4])
+        except ValueError:
+            continue
+        rows[pid] = {"pgid": pgid, "tpgid": tpgid, "tty": parts[4], "comm": parts[5]}
+        children.setdefault(ppid, []).append(pid)
+    top = rows.get(shell_pid)
+    if top is None:
+        return None
+    # Breadth first: the first process met on a terminal is that terminal's shell.
+    seen_ttys = {top["tty"], "??", "-"}
+    queue = list(children.get(shell_pid, []))
+    while queue:
+        pid = queue.pop(0)
+        row = rows.get(pid)
+        if row is None:
+            continue
+        queue.extend(children.get(pid, []))
+        if row["tty"] in seen_ttys:
+            continue
+        seen_ttys.add(row["tty"])
+        fg = row["tpgid"]
+        if fg > 0 and fg != row["pgid"]:
+            leader = rows.get(fg)
+            name = leader["comm"] if leader else ""
+            return os.path.basename(name.split(" ")[0]).lstrip("-") if name else ""
+    return None
+
+
+def _line_editor_reading(session) -> bool:
+    """True when canonical input mode is off on the PTY: a line editor (zsh's
+    ZLE, readline, a multiplexer or ssh client in raw mode) reads each key.
+    A program that just runs keeps canonical mode, and a line typed at it
+    waits in the tty queue for its stdin."""
+    import termios
+
+    try:
+        return not termios.tcgetattr(session.master_fd)[3] & termios.ICANON
+    except (OSError, termios.error):
+        return False
+
+
 def _foreground_program(session) -> str | None:
     """The program holding the PTY's foreground when it is not at a shell
     prompt, else None.
 
     The login shell is its own session and group leader (setsid at spawn), so
-    its pid is its group id; a foreground child runs in a group of its own. A
-    child that is itself a prompt host (a nested shell, tmux, ssh) does not
-    count. Unknown (the fd or the shell is gone) is not busy: the write then
-    fails on its own and says so. Returns "" for a busy group whose leader's
-    name cannot be read. Blocking (it may ask ``ps``)."""
+    its pid is its group id; a foreground child runs in a group of its own.
+    That group is idle only when its leader is a prompt host, a line editor
+    reads the terminal and the leader is alone in its group: a nested
+    interactive shell at its prompt, not a `bash script.sh` that runs (or
+    whose child, a pager or a REPL, reads the keys). Unknown (the fd or the shell is gone) is not
+    busy: the write then fails on its own and says so. Returns "" for a busy
+    group whose leader's name cannot be read. Blocking (it may ask ``ps``)."""
     from server.terminal import _foreground_pgrp
 
     fg = _foreground_pgrp(session)
@@ -286,11 +418,14 @@ def _foreground_program(session) -> str | None:
         shell_pgrp = os.getpgid(session.process.pid)
     except OSError:
         return None
-    if not fg or fg == shell_pgrp:
+    if not fg:
         return None
+    if fg == shell_pgrp:
+        # Idle on this PTY; a wrapper's inner terminal may still run something.
+        return _wrapped_foreground(session.process.pid)
     # A group's id is its leader's pid.
     name = _process_name(fg)
-    if name in _PROMPT_HOSTS:
+    if name in _PROMPT_HOSTS and _line_editor_reading(session) and _group_has_only_leader(fg):
         return None
     return name
 
@@ -305,6 +440,8 @@ async def do_terminal_run(payload: dict) -> tuple[bool, str]:
     only return ok=False for *system* failures (bad mode, no visible
     session, etc.) — those are conditions the model can correct."""
     from server.terminal import (
+        assistant_run_pending,
+        clear_pending_run,
         latest_visible_session,
         open_visible_session,
         run_in_sandbox,
@@ -403,6 +540,14 @@ async def do_terminal_run(payload: dict) -> tuple[bool, str]:
             preamble = _OPENED_NOTE
         else:
             program = await asyncio.to_thread(_foreground_program, session)
+            if assistant_run_pending(session):
+                if program is not None:
+                    # The assistant's own timed-out run: a new tab would start
+                    # the same work twice, so wait for it or stop it.
+                    return False, _still_running(program)
+                # The shell is idle again, but the marker never printed (the
+                # command read its stdin, say): nothing is running any more.
+                clear_pending_run(session)
             if program is not None:
                 # Typing there would feed the command to that program's stdin (a
                 # dev server another chat left running, say), and a Ctrl-C meant
@@ -426,16 +571,22 @@ async def do_terminal_run(payload: dict) -> tuple[bool, str]:
         summary = f"TIMED OUT after {timeout:.0f}s; partial output below.\n{summary}"
         if mode == "visible":
             summary += (
-                "\nThe command may still be running in the foreground of the visible "
-                "terminal; a further visible run opens a new terminal tab until it exits."
+                "\nThe command is still running in the visible terminal. Further visible "
+                "runs are refused until it ends. " + _STOP_HINT
             )
     output = result.get("output") or "(no output)"
 
-    # A failed confined run whose output looks like an OS write denial gets a
+    # A failed sandboxed run whose output looks like an OS write denial gets a
     # hint naming the effective mode and the escalation path, so the model can
-    # tell "the sandbox said no" from "the command itself is broken".
+    # tell "the sandbox said no" from "the command itself is broken". An
+    # escalated ("open") run is still sandboxed: it is checked for a setuid
+    # program or a nested sandbox-exec the sandbox refused.
     denial_hint = ""
-    if write_mode in ("workspace", "readonly") and result.get("exit_code") not in (0, None):
+    if (
+        mode == "sandbox"
+        and result.get("exit_code") not in (0, None)
+        and not bypass_sandbox.active()
+    ):
         from server.sandbox import classify_sandbox_denial
 
         hint = classify_sandbox_denial(output, write_mode)
@@ -454,6 +605,9 @@ async def do_terminal_run(payload: dict) -> tuple[bool, str]:
 # Keys that stop or resume the running program and type no command: Ctrl-C
 # (interrupt), Ctrl-D (end of input), Ctrl-Q (resume output a Ctrl-S paused).
 _CONTROL_KEYS = frozenset("\x03\x04\x11")
+
+# The one key terminal_send target='visible' may send (_send_keys_to_visible).
+_INTERRUPT_KEY = "\x03"
 
 _WAIT_REASON_HINTS = {
     "inferred_idle": (
@@ -487,6 +641,12 @@ async def do_terminal_send(payload: dict) -> tuple[bool, str]:
         return False, "input is required (use an empty string to just read pending output)"
     if not isinstance(text, str):
         return False, "input must be a string"
+
+    target = (payload.get("target") or "interactive").strip()
+    if target not in ("interactive", "visible"):
+        return False, f"invalid target {target!r}: must be 'interactive' or 'visible'"
+    if target == "visible":
+        return await _send_keys_to_visible(payload, text)
 
     # Validate whatever LOOKS like a command: the first non-empty line. An empty
     # send (read-only poll), bare REPL expressions, and a send of only the keys
@@ -537,6 +697,59 @@ async def do_terminal_send(payload: dict) -> tuple[bool, str]:
     return True, f"wait_reason: {reason}\n{hint}\n---\n{output}"
 
 
+async def _send_keys_to_visible(payload: dict, text: str) -> tuple[bool, str]:
+    """Send Ctrl-C to the user's visible terminal, to stop the assistant's
+    own visible run that timed out and still holds that terminal.
+
+    Nothing else goes there: no command, no other key, no key while the
+    terminal is idle or runs a program the user started (their dev server,
+    their own shell, which a Ctrl-D would close). The visible run itself was
+    approved under the visible-terminal floor; this only interrupts it, so a
+    session approval of terminal_send cannot reach anything else in that
+    terminal. An unattended subagent never touches the user's terminal."""
+    from server.terminal import (
+        assistant_run_pending,
+        clear_pending_run,
+        latest_visible_session,
+        send_and_wait,
+    )
+
+    if payload.get("__agent__"):
+        return False, (
+            "target='visible' is not permitted from an unattended subagent: only "
+            "the top-level session can stop a command in the user's terminal."
+        )
+    if text != _INTERRUPT_KEY:
+        return False, (
+            "target='visible' sends only '\\x03' (Ctrl-C), with no other text, to stop "
+            "your own visible command that timed out. Use terminal_run mode='visible' to "
+            "run a command there."
+        )
+    session = latest_visible_session()
+    if session is None:
+        return False, "No visible terminal is open."
+    if (
+        assistant_run_pending(session)
+        and await asyncio.to_thread(_foreground_program, session) is None
+    ):
+        # The shell is at its prompt again, but the marker never printed (the
+        # command read its stdin, say): the run is over.
+        clear_pending_run(session)
+    if not assistant_run_pending(session):
+        return False, (
+            "No command of yours is still running in the visible terminal, so no key "
+            "was sent. Ctrl-C there would reach the user's own shell or program."
+        )
+    try:
+        wait = max(0.5, min(float(payload.get("timeout", 10.0)), float(_MAX_TIMEOUT_S)))
+    except (TypeError, ValueError):
+        return False, "timeout must be a number (seconds)"
+    result = await send_and_wait(session, text, timeout=wait)
+    reason = result["wait_reason"]
+    output = result.get("output") or "(no output)"
+    return True, f"wait_reason: {reason}\n{_WAIT_REASON_HINTS.get(reason, '')}\n---\n{output}"
+
+
 async def do_terminal_close(payload: dict) -> tuple[bool, str]:
     from server.terminal import close_interactive
 
@@ -561,6 +774,7 @@ def _exec_terminal_send(tool_input, transcript, current_attachments):
         {
             "action": "terminal_send",
             "input": tool_input.get("input"),
+            "target": (tool_input.get("target") or "").strip(),
             "timeout": tool_input.get("timeout", 10.0),
             "cwd": tool_input.get("cwd") or "",
             "session_id": session_id,

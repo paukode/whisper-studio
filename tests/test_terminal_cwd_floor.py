@@ -1,8 +1,9 @@
 """Where a terminal command runs, and what it may change there.
 
 The user's contract (docs/tut-permissions.html, "The guards that never turn
-off"): bypass may change anything inside the connected workspace and the
-app's folders; a change outside must always ask a person; fail toward asking.
+off"): outside Bypass a change outside the connected workspace and the app's
+folders must always ask a person; fail toward asking. In Bypass it runs with
+no card (the user's decision of 2026-11-02).
 
 Three holes this pins shut:
 
@@ -11,8 +12,8 @@ Three holes this pins shut:
    it, ignores the call's cwd, and has no OS write confinement. The rm floor
    used to resolve a relative delete against the workspace, so `rm -rf notes`
    ran in bypass with no card. Now a visible run has no known working
-   directory (every relative delete is outside), and every visible run asks a
-   person in every mode but Bypass (the visible-terminal floor; the user's
+   directory (every relative delete is outside, which asks outside Bypass),
+   and every visible run asks a person in every mode but Bypass (the visible-terminal floor; the user's
    rule 2026-10-28: in Bypass the terminal opens and the command runs).
 2. A sandbox run's relative cwd was resolved against the server process's own
    folder, while the floor joined it to the workspace. Now one resolver
@@ -39,8 +40,6 @@ from server.security.permissions import (
     resolve_static_decision,
 )
 
-ALL_MODES = (MODE_DEFAULT, MODE_ACCEPT_EDITS, MODE_DONT_ASK, MODE_BYPASS)
-
 
 @pytest.fixture
 def workspace(tmp_path, monkeypatch):
@@ -62,24 +61,26 @@ def _run_payload(command, **extra):
     return {"action": "terminal_run", "command": command, "cwd": "", **extra}
 
 
-def _decisions(payload, tool="terminal_run"):
-    """The decision in every mode, under a session "Yes, all cli", and for a
-    trusted skill script."""
-    decide = lambda **kw: resolve_static_decision(tool, payload, "cli", **kw)  # noqa: E731
-    out = [decide(session_approvals={}, mode=mode) for mode in ALL_MODES]
-    out.append(decide(session_approvals={"cli": "allow"}, mode=MODE_BYPASS))
-    out.append(decide(session_approvals={}, mode=MODE_DEFAULT, auto_allow_trusted=True))
-    return out
-
-
 # ── 1. The visible terminal ────────────────────────────────────────────────
 
 
-def test_the_field_report_a_relative_delete_after_cd_asks_in_bypass(workspace):
+def test_the_field_report_a_relative_delete_after_cd_asks_outside_bypass(workspace):
     # Call 1 `cd ~/Documents` moved the visible shell; call 2 deletes there.
     payload = _run_payload("rm -rf notes", mode="visible")
     assert approval_floor("terminal_run", payload, "cli") == "rm"
-    assert set(_decisions(payload)) == {"ask"}
+    for mode in (MODE_DEFAULT, MODE_ACCEPT_EDITS, MODE_DONT_ASK):
+        assert resolve_static_decision("terminal_run", payload, "cli", {}, mode) == "ask"
+        # A session "Yes, all cli" does not cover it outside Bypass.
+        assert resolve_static_decision("terminal_run", payload, "cli", {"cli": "allow"}, mode) == (
+            "ask"
+        )
+    # Nor does a trusted skill script.
+    assert (
+        resolve_static_decision(
+            "terminal_run", payload, "cli", {}, MODE_DEFAULT, auto_allow_trusted=True
+        )
+        == "ask"
+    )
 
     # The one-call form: the shell is still in the workspace when the call
     # arrives, so only "no known working directory" catches it.
@@ -109,12 +110,13 @@ def test_a_visible_run_asks_in_every_mode_but_bypass(workspace):
     assert approval_floor("terminal_run", inside, "cli") == "visible-terminal"
 
 
-def test_a_visible_delete_asks_even_in_bypass(workspace):
-    # The visible shell's folder is unknown, so a relative delete is outside
-    # the workspace for the rm floor, which no mode lifts.
+def test_a_visible_delete_runs_in_bypass(workspace):
+    # The user's decision of 2026-11-02 (replaces "asks even in bypass"):
+    # Bypass lifts the rm floor, so a delete in the visible shell runs.
     payload = _run_payload("rm -rf dist", mode="visible")
-    assert approval_floor("terminal_run", payload, "cli", MODE_BYPASS) == "rm"
-    assert resolve_static_decision("terminal_run", payload, "cli", {}, MODE_BYPASS) == "ask"
+    assert approval_floor("terminal_run", payload, "cli") == "rm"
+    assert approval_floor("terminal_run", payload, "cli", MODE_BYPASS) is None
+    assert resolve_static_decision("terminal_run", payload, "cli", {}, MODE_BYPASS) == "allow"
 
 
 def test_a_sandbox_run_still_follows_the_mode(workspace):
@@ -239,9 +241,13 @@ def test_the_interactive_terminal_reopens_for_a_new_workspace(monkeypatch):
             self.id = f"pty{len(opened)}"
             self.write_root = write_root
             self.alive = True
+            # A sandboxed hidden shell has a profile; a Bypass one has none.
+            self.profile_path = None if bypass_sandbox.active() else "/tmp/fake.sb"
 
         def kill(self):
             self.alive = False
+
+    from server.security import bypass_sandbox
 
     def fake_create(cwd, *, hidden, write_mode, scratch_dir, write_root):
         session = FakeSession(write_root)
@@ -257,9 +263,16 @@ def test_the_interactive_terminal_reopens_for_a_new_workspace(monkeypatch):
     second = terminal.get_or_open_interactive("chat", "/b", write_root="/b")
     assert second is not first and second.write_root == "/b"
     assert not first.alive
+    # A Bypass turn never reuses a sandboxed shell, nor the other way round.
+    with bypass_sandbox.entered(True):
+        free = terminal.get_or_open_interactive("chat", "/b", write_root="/b")
+        assert free is not second and free.profile_path is None
+        assert terminal.get_or_open_interactive("chat", "/b", write_root="/b") is free
+    confined = terminal.get_or_open_interactive("chat", "/b", write_root="/b")
+    assert confined is not free and not free.alive
     with terminal._sessions_lock:
         assert first.id not in terminal._sessions
-        terminal._sessions.pop(second.id, None)
+        terminal._sessions.pop(confined.id, None)
 
 
 def test_a_profile_with_no_workspace_writes_no_tree(tmp_path):

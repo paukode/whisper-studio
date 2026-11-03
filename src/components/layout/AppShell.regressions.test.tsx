@@ -34,6 +34,7 @@ vi.mock('@/components/terminal/TerminalPanel', () => ({ TerminalPanel: () => <di
 vi.mock('@/components/preview/RightDock', () => ({ RightDock: () => <div data-testid="right-dock" /> }));
 vi.mock('@/components/common/ToastContainer', () => ({ ToastContainer: () => <div data-testid="toasts" /> }));
 vi.mock('@/components/common/ModelLoadingBanner', () => ({ ModelLoadingBanner: () => <div data-testid="banner" /> }));
+vi.mock('@/components/common/UpdateNotice', () => ({ UpdateNotice: () => null }));
 vi.mock('@/components/settings/SettingsModal', () => ({ SettingsModal: () => <div data-testid="settings" /> }));
 vi.mock('@/components/workspace/WorkspaceConnectDialog', () => ({ WorkspaceConnectDialog: () => <div data-testid="connect" /> }));
 vi.mock('@/components/workspace/explorer/IndexExplorer', () => ({ IndexExplorer: () => <div data-testid="graph" /> }));

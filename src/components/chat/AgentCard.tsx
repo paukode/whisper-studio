@@ -18,6 +18,7 @@
  * reads naturally.
  */
 
+import { stripMarkdownTitle } from '@/utils/stripMarkdownTitle';
 import type { ToolUseEvent } from '@/types/chat';
 import { ICON, iconFor } from '@/components/chat/activityIcons';
 
@@ -241,7 +242,7 @@ function deriveAgentTitle(tools: ToolUseEvent[]): string {
       const task = (input.task as string | undefined) ?? '';
       if (task.trim()) {
         // Trim long tasks so the header stays one line.
-        const oneLine = task.split('\n')[0].trim();
+        const oneLine = stripMarkdownTitle(task.split('\n').find((l) => l.trim()) ?? '');
         return oneLine.length > 70 ? oneLine.slice(0, 67) + '…' : oneLine;
       }
     }

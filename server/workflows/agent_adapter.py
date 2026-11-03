@@ -2,7 +2,10 @@
 
 Maps the harness opts (label/phase/schema/effort/isolation/agentType/model) to
 run_agent kwargs and normalizes the AgentResult back to the JS-facing shape
-``{text, output, usage, status, agent_id}``. Structured-output validation +
+``{text, output, usage, status, agent_id, stop_reason, stopped_early}``.
+An agent that a limit stopped (round limit, time limit, cost cap, refused
+calls) reports ``status:"incomplete"``: its work is partial, and a script must
+treat it so, never as a finished result. Structured-output validation +
 one repair retry already live inside run_agent (WS-C), so passing
 ``structured_schema`` is all that's needed — this stays a thin seam.
 """
@@ -99,6 +102,9 @@ async def run_workflow_agent(
             # Recorded in the agent's journal so its pane can fold the brief
             # this run's agents share and show the agent's own task first.
             workflow_run_id=run_id,
+            # Chosen by the run (WorkflowRun._handle_agent), so a reload
+            # mid-run lists this agent under the id its events carry.
+            agent_id=opts.get("_agent_id") or None,
         )
     except Exception as e:  # noqa: BLE001 — surface as a failed agent, never crash the run
         log.warning("workflow agent error (run %s): %s", run_id, e)
@@ -108,6 +114,8 @@ async def run_workflow_agent(
             "usage": {},
             "status": "failed",
             "agent_id": "",
+            "stop_reason": "error",
+            "stopped_early": False,
         }
 
     return {
@@ -115,6 +123,23 @@ async def run_workflow_agent(
         "text": res.output or "",
         "output": res.structured_output,
         "usage": res.usage or {},
-        "status": res.status or "completed",
+        "status": agent_status(res),
         "agent_id": res.agent_id or "",
+        "stop_reason": getattr(res, "stop_reason", "") or "completed",
+        "stopped_early": bool(getattr(res, "stopped_early", False)),
     }
+
+
+def agent_status(res) -> str:
+    """The status a script reads for one finished agent.
+
+    run_agent keeps ``status="completed"`` for an agent a limit stopped (its
+    memory and subagent callers branch on that), and marks the stop only in
+    ``stopped_early``. A script that read only ``status`` took a half-done
+    agent for a finished one, so here a limit stop is ``"incomplete"``. A
+    failure stays ``"failed"``.
+    """
+    status = res.status or "completed"
+    if status == "completed" and getattr(res, "stopped_early", False):
+        return "incomplete"
+    return status

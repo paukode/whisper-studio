@@ -144,6 +144,15 @@ def _gated_messages(ctx: GateContext) -> list:
 
 
 async def run_completion_gate(ctx: GateContext) -> GateDecision:
+    """Decide whether the turn may end (``_run_completion_gate``). A Bypass
+    turn's Stop hooks and quality gates run with no OS sandbox."""
+    from server.security import bypass_sandbox
+
+    with bypass_sandbox.entered(ctx.unsandboxed):
+        return await _run_completion_gate(ctx)
+
+
+async def _run_completion_gate(ctx: GateContext) -> GateDecision:
     """Decide whether the turn may end. See module docstring for ordering.
 
     The goal_loop flag gates ONLY the goal phases: Stop hooks are WS-I's

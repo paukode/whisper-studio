@@ -175,6 +175,32 @@ def test_cancelled_run_leaves_a_salvage_report(monkeypatch):
     assert "cancelled before it could report" in row["result_text"]
 
 
+def test_a_running_agent_checkpoints_its_messages_every_round(monkeypatch):
+    """While the first tool call runs, the record already holds the message
+    list of the round that made it, so a killed run can resume from there."""
+    seen: dict = {}
+
+    async def _peek(tool_name, tool_input, **kw):
+        rec = _record("peek-me")
+        seen["messages"] = rec["messages"]
+        seen["rounds"] = rec["meta"].get("rounds")
+        return "matches found", []
+
+    _patch_engine(monkeypatch, _tool_then_text("FINDINGS: x."), route_tool=_peek)
+    asyncio.run(
+        run_agent(
+            "search the repo",
+            agent_type="general",
+            session_id="s1",
+            model_id_override="m",
+            agent_id="peek-me",
+        )
+    )
+    assert isinstance(seen["messages"], list) and seen["messages"]
+    assert "search the repo" in json.dumps(seen["messages"])
+    assert seen["rounds"] == 0
+
+
 # ── addressable after it stopped ────────────────────────────────────────────
 
 

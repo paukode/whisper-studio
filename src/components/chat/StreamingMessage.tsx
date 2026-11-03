@@ -12,6 +12,7 @@ import { findMatchingTeamReports } from '@/hooks/chatStream/teamProgress';
 import { mergeDeliveries } from '@/hooks/chatStream/deliveries';
 import { liveCaption } from '@/hooks/chatStream/activityLabels';
 import type { Delivery } from '@/types/chat';
+import { activeMs, waitSummary } from '@/hooks/chatStream/waitClock';
 
 export interface StreamingMessageProps {
   content: string;
@@ -38,6 +39,8 @@ export const StreamingMessage: React.FC<StreamingMessageProps> = ({ content, isS
   const streamStatus = useActiveChatStore((s) => s.streamStatus);
   const thinkingStartTime = useActiveChatStore((s) => s.thinkingStartTime);
   const thinkingElapsedMs = useActiveChatStore((s) => s.thinkingElapsedMs);
+  // Approval cards, questions and sleep tools: the timer skips them.
+  const waitSpans = useActiveChatStore((s) => s.waitSpans);
   const inputTokens = useActiveChatStore((s) => s.inputTokens);
   const outputTokens = useActiveChatStore((s) => s.outputTokens);
   const streamToolUse = useActiveChatStore((s) => s.currentStreamToolUse);
@@ -57,13 +60,20 @@ export const StreamingMessage: React.FC<StreamingMessageProps> = ({ content, isS
 
   // Live timer
   const [elapsed, setElapsed] = useState(0);
+  const [tickedWait, setWaited] = useState('');
+  // No clock: a wait summary from the last stream must not linger.
+  const waited = thinkingStartTime ? tickedWait : '';
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     if (thinkingStartTime && !content) {
-      timerRef.current = setInterval(() => {
-        setElapsed(performance.now() - thinkingStartTime);
-      }, 100);
+      const tick = () => {
+        const now = performance.now();
+        setElapsed(activeMs(thinkingStartTime, now, waitSpans));
+        setWaited(waitSummary(thinkingStartTime, now, waitSpans));
+      };
+      tick();
+      timerRef.current = setInterval(tick, 100);
     } else {
       if (timerRef.current) clearInterval(timerRef.current);
       timerRef.current = null;
@@ -71,7 +81,7 @@ export const StreamingMessage: React.FC<StreamingMessageProps> = ({ content, isS
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [thinkingStartTime, content]);
+  }, [thinkingStartTime, content, waitSpans]);
 
   const formatMs = (ms: number) => (ms / 1000).toFixed(1) + 's';
   const formatTokens = (n: number) => n.toLocaleString();
@@ -80,7 +90,7 @@ export const StreamingMessage: React.FC<StreamingMessageProps> = ({ content, isS
   const displayElapsed = content ? thinkingElapsedMs : elapsed;
 
   // Token meta line shown after thinking completes
-  const showMeta = content && (thinkingElapsedMs > 0 || inputTokens > 0);
+  const showMeta = content && (thinkingElapsedMs > 0 || inputTokens > 0 || waited);
 
   const deliveries = priorDeliveries && priorDeliveries.length > 0
     ? mergeDeliveries(priorDeliveries, liveDeliveries)
@@ -116,6 +126,7 @@ export const StreamingMessage: React.FC<StreamingMessageProps> = ({ content, isS
             {displayElapsed > 0 && (
               <span className="thinking-elapsed">{formatMs(displayElapsed)}</span>
             )}
+            {!content && waited && <span className="thinking-waited">{waited}</span>}
           </summary>
           {thinkingContent && <div className="thinking-body">{thinkingContent}</div>}
         </details>
@@ -193,6 +204,9 @@ export const StreamingMessage: React.FC<StreamingMessageProps> = ({ content, isS
           gap: 8,
         }}>
           {thinkingElapsedMs > 0 && <span>{formatMs(thinkingElapsedMs)}</span>}
+          {/* The waits stay once text arrives: the tick froze them when the
+           *  timer stopped, next to the thinking time they explain. */}
+          {waited && <span className="thinking-waited thinking-waited--meta">{waited}</span>}
           {inputTokens > 0 && (
             <>
               <span>{'\u00B7'}</span>

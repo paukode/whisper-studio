@@ -39,7 +39,8 @@ def test_spawn_agent_detach_returns_task_id_immediately(monkeypatch):
     )
     assert out["task_id"] == "task123abc"
     assert out["detached"] is True
-    assert "task_status" in out["hint"]
+    # The hint teaches waiting (completion wakes the chat), never polling.
+    assert "task_wait" in out["hint"]
     # safety default: detached agents run read-only, with effort inherited
     assert started["read_only"] is True
     assert started["effort_label"] == "high"

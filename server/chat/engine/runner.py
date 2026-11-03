@@ -56,6 +56,12 @@ from .tool_rounds import ToolRound, run_tool_round
 
 log = logging.getLogger("whisper-studio")
 
+# Shown when the model ends a reply with stop_reason "refusal".
+REFUSAL_NOTE = (
+    "\n\n*(The model ended this reply with a refusal stop, so its pending tool "
+    "calls did not run. Ask again or rephrase.)*"
+)
+
 # Transient mid-stream provider faults (RoundError.retryable — e.g. OpenAI's
 # server_error after HTTP 200, Bedrock's ModelStreamErrorException) get this
 # many re-runs of the failed round before the error is surfaced. The counter
@@ -383,6 +389,7 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
             else None
         )
         deadline_hit = _soft_deadline is not None and time.monotonic() >= _soft_deadline
+        ctx.wait_deadline = _soft_deadline
         is_last_round = round_num == cap - 1 or deadline_hit
 
         from server.chat.loop_hints import FINAL_ROUND_AT, near_cap_reminder
@@ -832,6 +839,16 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
             # Everything left here is a genuine end-of-turn (end_turn,
             # stop_sequence, refusal) or an unknown stop reason we conservatively
             # treat as terminal rather than risk an unbounded resubmit loop.
+            if stop_reason == "refusal":
+                # The provider's safety stop ends the reply, and any tool call
+                # in it never runs. Say so, or the turn (and an agent's report)
+                # reads as a normal finish that silently skipped its work.
+                log.warning(
+                    "Round %d ended with stop_reason=refusal (%d tool calls not run)",
+                    round_num,
+                    len(tool_uses),
+                )
+                yield f"data: {ndjson_dumps({'text': REFUSAL_NOTE})}\n\n"
             if stop_reason != "tool_use" or not tool_uses:
                 # What reaches the inbox after this round's drain (a message
                 # the user sent, agent reports) was accepted by the route and
@@ -858,6 +875,7 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
                     last_round_not_checked,
                     run_gate_with_progress,
                 )
+                from server.security import bypass_sandbox
 
                 # Where no gate reads the reply (agents, scheduled and headless
                 # runs, on-device chat with no goal), the claim guard sends a
@@ -896,6 +914,7 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
                             asked=ctx.asked,
                             tools_enabled=getattr(ctx.adapter, "tools_enabled", True),
                             plan_mode=ctx.plan_mode,
+                            unsandboxed=bypass_sandbox.is_bypass(ctx.mode),
                             attempt=stop_blocks_used,
                             max_consecutive_blocks=_goal_cap,
                         )

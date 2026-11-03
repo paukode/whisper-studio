@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Git integration &amp; LSP - Whisper Studio Docs</title>
-  <meta name="description" content="How Whisper Studio talks to git: cached root discovery, a hardened subprocess wrapper, approval-gated write tools, secret-file guards, a .git watcher that feeds the SPA over SSE, and the LSP proxy.">
+  <meta name="description" content="How Whisper Studio talks to git: cached root discovery, a hardened subprocess wrapper, approval-gated write tools, a secret content guard, a .git watcher that feeds the SPA over SSE, and the LSP proxy.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -155,19 +155,38 @@
       strict allowlist (<code>https://</code>, <code>ssh://</code>, or <code>git@host:path</code>, no
       shell metacharacters, no <code>file://</code>) and refuses a non-empty destination.</p>
 
-    <h3 id="secret-guard">The secret-file guard</h3>
-    <p>Before <code>git_add_commit</code> stages anything, <code>contains_secret_files()</code> in
-      <code class="path">server/git/security.py</code> matches every path against a pattern list and
-      refuses the commit if any look sensitive. The patterns include <code>.env</code> and
-      <code>.env.*</code>, <code>*.pem</code>, <code>*.key</code>, <code>*.p12</code>,
-      <code>*.pfx</code>, <code>*.keystore</code>, <code>credentials.json</code>,
-      <code>service-account*.json</code>, <code>id_rsa</code>, <code>id_ed25519</code>, and
-      catch-alls like <code>*secret*</code> and <code>*password*</code>.</p>
+    <h3 id="secret-guard">The secret content guard</h3>
+    <p>A file name never blocks a commit. Whisper Studio commits a file such as
+      <code>tests/test_secret_reads.py</code> or <code>password-policy.md</code> like any other file.
+      Only a real secret in the staged changes blocks a commit.</p>
+    <p>Before <code>git_add_commit</code> stages anything, it stages the changes into a copy of the
+      git index. Then <code class="path">server/git/security.py</code> reads the lines that the commit
+      adds (<code>git diff --cached -U0</code>) and scans each line. The scan finds these secrets:</p>
+    <ul>
+      <li>Provider keys with a known shape, for example AWS access keys, GitHub, Slack, OpenAI,
+        Anthropic and Stripe keys, and JSON Web Tokens. These rules come from
+        <code class="path">server/memory/secret_scanner.py</code>.</li>
+      <li>A private key block: a <code>BEGIN ... PRIVATE KEY</code> line with a key body after it. The
+        body can be on the next lines or on the same line, for example in the JSON string of a
+        cloud service-account file. A line that only names the format does not match.</li>
+      <li>A password, secret, token or API key assignment with a random value. The scan reads code,
+        <code>.env</code> files (also with a comment at the end of the line) and YAML files (also
+        with no quotes around the value).</li>
+      <li>A password inside a URL, for example <code>postgres://user:value@host</code>.</li>
+    </ul>
+    <p>The scan ignores placeholders. Examples are <code>your-api-key-here</code>,
+      <code>changeme</code>, values with <code>EXAMPLE</code>, alphabet runs, environment variable
+      references and code expressions.</p>
+    <p>If the scan finds a secret, the tool refuses the commit. The message gives the file, the line
+      and the kind of secret. It never shows the value. The real index stays as it was, so nothing is
+      staged or committed. To continue, move the value to an environment variable or a gitignored
+      file, then commit again.</p>
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
-      <div class="callout__body"><p>The secret guard is a safety net, not a boundary. It matches on
-        file names, not contents, so a secret stored under an innocuous name can still slip through.
-        Treat it as defense-in-depth on top of a good <code>.gitignore</code>. See the
+      <div class="callout__body"><p>The secret guard is a safety net, not a boundary. It reads text
+        lines only, so it does not scan binary files such as <code>.p12</code> or
+        <code>.keystore</code>. A secret with no known shape and a low-entropy value can also pass.
+        Keep a good <code>.gitignore</code>. See the
         <a href="ref-security.html">security model</a> for what is a hard boundary versus a
         best-effort check.</p></div>
     </div>
@@ -425,7 +444,7 @@
       <dt><code class="path">server/git/executor.py</code></dt><dd>Read and write git tools; the <code>do_*</code> helpers approval runs after consent.</dd>
       <dt><code class="path">server/git/diff.py</code></dt><dd>Diff fetching and parsing with size limits and transient-state detection.</dd>
       <dt><code class="path">server/git/file_diff.py</code></dt><dd>One file's diff shaped for the side-by-side viewer, and the choice of <code>full</code>, <code>hunks</code>, <code>binary</code>, or <code>error</code> mode.</dd>
-      <dt><code class="path">server/git/security.py</code></dt><dd>The secret-file pattern list and <code>contains_secret_files()</code>.</dd>
+      <dt><code class="path">server/git/security.py</code></dt><dd>The secret content scan of the staged changes and the refusal message.</dd>
       <dt><code class="path">server/git/worktree_session.py</code></dt><dd>Session worktrees: slug validation, the <code>.whisper/worktrees</code> conventions, enter/exit, and the persisted session pins.</dd>
       <dt><code class="path">server/git/worktree_harvest.py</code></dt><dd>Harvests a finished agent's worktree delta back into the spawning tree, uncommitted.</dd>
       <dt><code class="path">server/git/gh_classify.py</code>, <code class="path">gh_executor.py</code>, <code class="path">gh_tools.py</code></dt><dd>The GitHub hybrid tools: table-driven classification of <code>gh</code> invocations (DENY / REDIRECT / READ / WRITE / DANGER / FORBIDDEN, unknown shapes fail closed to approval-gated WRITE) and their executors.</dd>

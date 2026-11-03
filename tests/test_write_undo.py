@@ -156,3 +156,23 @@ def test_a_workspace_change_clears_the_copies(ws, tmp_path, monkeypatch):
     other.mkdir()
     state.connect_workspace(str(other), by_user=True)
     assert not write_undo.has_undo("toolu_1")
+
+
+def test_undo_of_a_bypass_write_outside_the_workspace(ws, tmp_path, monkeypatch):
+    # The user's decision of 2026-11-02: in Bypass the write executor changes
+    # files outside the workspace, so Undo must put them back too. Outside
+    # Bypass the same record is out of reach, as the write itself would be.
+    note = tmp_path / "elsewhere" / "note.txt"
+    note.parent.mkdir()
+    note.write_text("before\n")
+    monkeypatch.setattr("server.security.permissions.get_mode", lambda: "bypassPermissions")
+    _write(str(note), "after\n", "toolu_out")
+    _write(str(note), "again\n", "toolu_out2")
+
+    monkeypatch.setattr("server.security.permissions.get_mode", lambda: "default")
+    assert _undo("toolu_out2").status_code == 403
+    assert note.read_text() == "again\n"
+
+    monkeypatch.setattr("server.security.permissions.get_mode", lambda: "bypassPermissions")
+    assert _undo("toolu_out2").status_code == 200
+    assert note.read_text() == "after\n"

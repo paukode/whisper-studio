@@ -10,6 +10,7 @@ server/chat/engine/anthropic.AnthropicAdapter interactive chat uses.
 """
 
 import asyncio
+import json
 import subprocess
 
 from server.agents.config import AgentConfig
@@ -326,7 +327,8 @@ def test_ephemeral_agent_type_resolves_through_new_loop(monkeypatch):
     assert "Summary: it's a demo repo." in result.output
 
     # The ephemeral system_prompt reached the new adapter's request...
-    assert "You summarize README files concisely." in fake_stream.requests[0]["system"]
+    # (a string, or the cached system blocks when prompt caching is on).
+    assert "You summarize README files concisely." in json.dumps(fake_stream.requests[0]["system"])
     # ...and its read_only + tools whitelist actually restricted the pool —
     # write tools never reached the model, only the whitelisted read tool.
     sent_tool_names = {t["name"] for t in fake_stream.requests[0].get("tools", [])}

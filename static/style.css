@@ -3268,6 +3268,28 @@ input.segment-speaker {
     color: var(--callout);
 }
 
+/* Update notice under the header (src/components/common/UpdateNotice.tsx):
+   an info callout with a 3px left bar, flat, no shadow. */
+.update-notice {
+    margin: 8px 12px 0; padding: 8px 12px;
+    border-left: 3px solid var(--callout);
+    border-radius: var(--radius-md); box-shadow: none;
+    font-family: var(--font-sans); flex-shrink: 0;
+}
+.update-notice__row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.update-notice__text { flex: 1; min-width: 200px; font-size: var(--fs-small); color: var(--text-primary); }
+.update-notice__current { color: var(--text-muted); }
+.update-notice__update { text-decoration: none; }
+.update-notice__commands {
+    margin-top: 6px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    font-size: var(--fs-caption); color: var(--text-secondary);
+}
+.update-notice__commands code {
+    font-family: var(--font-mono); padding: 2px 6px; border-radius: var(--radius-sm);
+    background: var(--bg-secondary); border: 1px solid var(--border); color: var(--text-primary);
+    user-select: all;
+}
+
 /* Workspace expand tab */
 .ws-expand-tab {
     display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -5495,6 +5517,22 @@ button.ws-git-status-badge:hover {
     max-height: 220px;
     overflow-y: auto;
 }
+/* A finished agent's report: markdown in the chat's body font. */
+.bg-tasks-report {
+    margin: 6px 0 0;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    font-size: var(--fs-small);
+    line-height: 1.55;
+    word-break: break-word;
+    max-height: 320px;
+    overflow-y: auto;
+}
+.bg-tasks-report .markdown-content > :first-child { margin-top: 0; }
+.bg-tasks-report .markdown-content > :last-child { margin-bottom: 0; }
 /* The countdown line under a finished row: full when it finishes, gone
    when the row leaves. */
 .bg-tasks-linger { height: 2px; background: var(--bg-surface); }
@@ -5600,7 +5638,10 @@ button.ws-git-status-badge:hover {
 }
 .agent-ev-body .mono { font-family: var(--font-mono); font-size: var(--fs-caption); }
 .agent-ev-arg { color: var(--text-secondary); }
-.agent-ev-task { color: var(--text-secondary); white-space: pre-wrap; }
+/* The task renders as markdown, like the agent's own words. */
+.agent-ev-task { color: var(--text-secondary); }
+.agent-ev-task .markdown-content > :first-child { margin-top: 0; }
+.agent-ev-task .markdown-content > :last-child { margin-bottom: 0; }
 .agent-ev-wait .agent-ev-body { display: flex; align-items: center; gap: 6px; color: var(--text-muted); }
 .agent-ev-end .agent-ev-body { color: var(--text-secondary); }
 .agent-ev-tool.errored .mono:first-child { color: var(--danger); }
@@ -5632,10 +5673,17 @@ button.ws-git-status-badge:hover {
 }
 /* The task's folds (a shared workflow brief, a long task's rest) hold prose,
    so they keep the body font inside the tool-result box. */
-.agent-ev-task-fold { font-family: inherit; font-size: inherit; }
+.agent-ev-task-fold {
+    margin: 4px 0 0;
+    padding: 6px 10px;
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    max-height: 320px;
+    overflow-y: auto;
+}
 .agent-ev-brief { margin-bottom: 4px; }
 /* Reports are written line by line (FINDINGS, EVIDENCE, ...); keep the breaks. */
-.agent-pane-report { padding: 8px 12px; border-top: 1px solid var(--border); white-space: pre-wrap; }
+.agent-pane-report { padding: 8px 12px; border-top: 1px solid var(--border); }
 .agent-pane-report > summary { font-size: var(--fs-caption); color: var(--text-muted); cursor: pointer; margin-bottom: 6px; }
 
 /* notify_user title header inside a toast */

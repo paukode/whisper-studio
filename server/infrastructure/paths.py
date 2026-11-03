@@ -174,12 +174,19 @@ def app_config_paths() -> list[str]:
     return paths
 
 
+def terminal_scripts_root() -> str:
+    """The script files a long terminal command is sourced from
+    (server.terminal.command_script_dir). Each one is run as approved."""
+    return os.path.join(data_root(), "terminal-scripts")
+
+
 def app_config_dirs() -> list[str]:
     """Directories whose contents are app code or agent types the assistant
     must not rewrite without a person: the installed plugin modules (they load
-    into the server process with no sandbox) and the user's custom agent types
-    (each one can grant a running agent its own tools)."""
-    return [plugins_root(), os.path.join(user_root(), "agents")]
+    into the server process with no sandbox), the user's custom agent types
+    (each one can grant a running agent its own tools) and the scripts the
+    visible terminal sources, unconfined, after approval."""
+    return [plugins_root(), os.path.join(user_root(), "agents"), terminal_scripts_root()]
 
 
 def _seed_file(src: str, dst: str) -> None:

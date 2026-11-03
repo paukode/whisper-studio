@@ -4,6 +4,8 @@
   returns a preview side-effect for the user to approve before it executes; a
   TRUSTED saved workflow or a resume launches immediately.
 - workflow_status: phase tree + journal tail + spend for a run (or the list).
+- workflow_wait: block until the given runs end (any or all), bounded, then
+  return their status. It replaces sleep-and-poll loops.
 - workflow_save: persist a named workflow (untrusted until approved).
 - workflow_list: saved workflows + this session's recent runs.
 
@@ -20,9 +22,10 @@ import os
 
 from server.workflows import manager, store
 from server.workflows.journal import run_dir
-from server.workflows.launch_policy import is_session_granted, launch_decision
+from server.workflows.launch_policy import is_bypass, is_session_granted, launch_decision
 from server.workflows.runtime import (
     DEFAULT_WORKFLOW_BUDGET_TOKENS,
+    MIN_WORKFLOW_BUDGET_TOKENS,
     NodeNotFoundError,
     parse_workflow,
 )
@@ -38,7 +41,9 @@ WORKFLOW_TOOLS: list[dict] = [
             "shown to the user for approval before it runs (or auto-launches when the "
             "user's workflow permission mode allows it within budget); a trusted saved "
             "workflow (by `name`) or a `resume_from_run_id` launches immediately. Runs "
-            "detached from this turn — poll workflow_status for progress. Use for "
+            "detached from this turn. Do not poll: end the turn or do other work, and "
+            "the run's completion wakes you; to block until it ends, call "
+            "workflow_wait. Use for "
             "comprehensive, parallel, or adversarially-verified work; answer directly for "
             "simple tasks."
         ),
@@ -58,7 +63,7 @@ WORKFLOW_TOOLS: list[dict] = [
                     "type": "integer",
                     "description": (
                         "Hard cap on the run's total agent OUTPUT tokens "
-                        "(default 600000 when omitted)."
+                        "(default 600000 when omitted, at least 100000)."
                     ),
                 },
                 "resume_from_run_id": {
@@ -85,6 +90,35 @@ WORKFLOW_TOOLS: list[dict] = [
         "input_schema": {
             "type": "object",
             "properties": {"run_id": {"type": "string"}},
+        },
+    },
+    {
+        "name": "workflow_wait",
+        "description": (
+            "Wait until workflow runs end, then return their status, spend and result. "
+            "mode 'all' (default) waits for every run_id, 'any' returns when the first "
+            "one ends. Returns early with timed_out true after timeout_seconds (default "
+            "600, at most 1800); call it again to keep waiting. Use this instead of "
+            "sleep or repeated workflow_status calls. Time spent here does not count "
+            "against an agent's time limit."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "run_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "minItems": 1,
+                    "maxItems": 32,
+                    "description": "The workflow run ids to wait for.",
+                },
+                "mode": {"type": "string", "enum": ["all", "any"]},
+                "timeout_seconds": {
+                    "type": "integer",
+                    "description": "How long to wait at most (default 600, max 1800).",
+                },
+            },
+            "required": ["run_ids"],
         },
     },
     {
@@ -141,6 +175,25 @@ def _default_model_key() -> str:
     return load_config()["default_chat_model"]
 
 
+def budget_error(budget_tokens) -> str:
+    """A message when an explicit budget is unusable, else "". A budget below
+    MIN_WORKFLOW_BUDGET_TOKENS used to be accepted and then end the run
+    mid-way with BudgetExceededError, after agents had already spent it."""
+    if budget_tokens is None:
+        return ""
+    if isinstance(budget_tokens, bool) or not isinstance(budget_tokens, int):
+        return "Error: budget_tokens must be a whole number of output tokens."
+    if budget_tokens < MIN_WORKFLOW_BUDGET_TOKENS:
+        return (
+            f"Error: budget_tokens {budget_tokens} is below the minimum of "
+            f"{MIN_WORKFLOW_BUDGET_TOKENS} output tokens. A smaller budget runs out "
+            "part way through a run. Not started. Omit budget_tokens to use the "
+            f"default ({DEFAULT_WORKFLOW_BUDGET_TOKENS}), or pass at least "
+            f"{MIN_WORKFLOW_BUDGET_TOKENS}."
+        )
+    return ""
+
+
 def _preview(
     script: str,
     meta: dict,
@@ -187,6 +240,9 @@ async def execute_workflow_run(tool_input, session_id, model_id, effort_label) -
     budget_tokens = tool_input.get("budget_tokens")
     resume_from = (tool_input.get("resume_from_run_id") or "").strip()
     model_key = _model_key_for(model_id) or _default_model_key()
+    budget_problem = budget_error(budget_tokens)
+    if budget_problem:
+        return budget_problem, []
 
     def _launch(
         src, *, wf_name, phases, resume="", auto=False, session_grant=False, workspace_path=None
@@ -203,6 +259,8 @@ async def execute_workflow_run(tool_input, session_id, model_id, effort_label) -
             phases=phases,
             name=wf_name,
             resume_from=resume,
+            # An agent's launch belongs to that agent's own loop.
+            wake_on_finish=not tool_input.get("__agent__"),
         )
         body = {"run_id": rid, "status": "running", "name": wf_name}
         if auto:
@@ -272,7 +330,9 @@ async def execute_workflow_run(tool_input, session_id, model_id, effort_label) -
     # workspace switch. An explicit path must already exist; see
     # resolve_workflow_workspace's docstring for why this never falls back or
     # creates one.
-    workspace_path, ws_error = manager.resolve_workflow_workspace(tool_input.get("workspace_path"))
+    workspace_path, ws_error = manager.resolve_workflow_workspace(
+        tool_input.get("workspace_path"), bypass=is_bypass()
+    )
     if ws_error:
         return ws_error, []
 
@@ -385,14 +445,68 @@ def _brief(run: dict) -> dict:
     }
 
 
+def _incomplete_agents(journal: list[dict]) -> list[dict]:
+    """The agents a limit stopped before they finished, from the journal."""
+    return [
+        {
+            "seq": e.get("seq"),
+            "label": e.get("label", ""),
+            "stop_reason": e.get("stop_reason", ""),
+            "agent_id": e.get("agent_id", ""),
+        }
+        for e in journal
+        if e.get("type") == "agent_call" and e.get("status") == "incomplete"
+    ]
+
+
 def _status_view(run: dict) -> dict:
-    tail = run.get("journal", [])[-30:]
-    return {
+    journal = run.get("journal", [])
+    view = {
         **_brief(run),
         "result": run.get("result"),
         "error": run.get("error", ""),
-        "journal_tail": tail,
+        "journal_tail": journal[-30:],
     }
+    incomplete = _incomplete_agents(journal)
+    if incomplete:
+        view["incomplete_agents"] = incomplete
+        view["incomplete_note"] = (
+            "These agents stopped at a round, time or cost limit before they "
+            "finished. Treat their results as partial and re-run the remainder."
+        )
+    return view
+
+
+def _wait_view(run_id: str) -> dict:
+    run = manager.get_run(run_id, journal_tail=500)
+    if not run:
+        return {"run_id": run_id, "status": "not_found", "finished": True}
+    view = _status_view(run)
+    view.pop("journal_tail", None)
+    view["finished"] = run.get("status") != "running"
+    return view
+
+
+async def execute_workflow_wait(tool_input, session_id) -> str:  # noqa: ARG001
+    from server.tasks.wait import (
+        bounded_timeout,
+        user_message_waiting,
+        wait_for,
+        wait_ids,
+        wait_seconds,
+    )
+
+    ids = wait_ids(tool_input.get("run_ids"))
+    if not ids:
+        return "Error: run_ids must list at least one workflow run id."
+    result = await wait_for(
+        ids,
+        _wait_view,
+        mode=str(tool_input.get("mode") or "all"),
+        timeout=bounded_timeout(wait_seconds(tool_input.get("timeout_seconds")), True),
+        interrupted=user_message_waiting(),
+    )
+    return json.dumps(result, indent=2, default=str)
 
 
 async def execute_workflow_save(tool_input, session_id: str = "") -> str:

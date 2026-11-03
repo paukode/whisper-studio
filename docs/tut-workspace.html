@@ -174,7 +174,20 @@ share a helper with @file:src/components/workspace/WorkspacePanel.tsx</code></pr
       30 s, and the assistant can increase it to 300 s.</p>
     <p>The app refuses commands that wait for input, for example <code>vim</code>, <code>less</code>,
       <code>top</code>, and <code>watch</code>. If you ask to see a command, the assistant can type
-      it into your open terminal. A write outside the working folder needs a second run with a short
+      it into your open terminal.</p>
+    <p>These rules apply to a command in your visible terminal:</p>
+    <ul>
+      <li>The app first clears any text that is half typed on the terminal line.</li>
+      <li>A long command (more than about 900 characters) or a command with more than one line goes
+        into a script file in an app folder that only the app can write. The terminal gets one short
+        line that runs that file.</li>
+      <li>If a program runs in the terminal, for example <code>bash script.sh</code> or a pager
+        that a script started, the app does not type into it. The command runs in a new terminal tab.</li>
+      <li>If the assistant's own command runs past its time limit, it continues in the terminal. The
+        app refuses more visible commands until it stops. To stop it, press Ctrl-C in that tab. The
+        assistant can also send Ctrl-C with <code>terminal_send</code>.</li>
+    </ul>
+    <p>A write outside the working folder needs a second run with a short
       reason. That run always asks you, also when you approved other commands in the session.</p>
     <p>For an interactive program, the assistant uses <code>terminal_send</code>. Examples are a
       <code>python3</code> REPL, a database shell, and an installer that asks yes or no. The tool
@@ -214,7 +227,7 @@ share a helper with @file:src/components/workspace/WorkspacePanel.tsx</code></pr
         <tr><td>Auto (<code>auto</code>)</td><td>A classifier approves each write and command, or asks you.</td></tr>
         <tr><td>Plan (<code>plan</code>)</td><td>Read-only. The assistant reads and gives a plan. It does not write or run commands.</td></tr>
         <tr><td>Accept edits (<code>acceptEdits</code>)</td><td>File writes run without a question. Deletes and commands ask.</td></tr>
-        <tr><td>Bypass (<code>bypassPermissions</code>)</td><td>No questions for work in the workspace. A change outside the workspace, a delete outside the workspace, and a destructive GitHub action ask.</td></tr>
+        <tr><td>Bypass (<code>bypassPermissions</code>)</td><td>No questions, in the workspace and outside it. Only a destructive GitHub action and a tool of an MCP server that you marked for approval ask.</td></tr>
         <tr><td>"Don't ask" (<code>dontAsk</code>)</td><td>Only read-only tools run. The app refuses writes and does not ask.</td></tr>
       </tbody>
     </table></div>
@@ -233,8 +246,7 @@ share a helper with @file:src/components/workspace/WorkspacePanel.tsx</code></pr
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg></span>
       <div class="callout__body"><p><b>Hard guards stay on in all modes.</b> Each shell command runs
         in the macOS sandbox. The app blocks some destructive commands in all modes, for example
-        <code>rm -rf /</code> and <code>mkfs</code>. Bypass removes the questions in the workspace. It
-        does not remove the sandbox. For the exact limits, see <a href="tut-permissions.html">Permissions
+        <code>rm -rf /</code> and <code>mkfs</code>. Bypass removes the questions, in the workspace and outside it. For the exact limits, see <a href="tut-permissions.html">Permissions
         &amp; approvals</a> and <a href="arch-sandbox.html">Sandbox &amp; security</a>.</p></div>
     </div>
 

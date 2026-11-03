@@ -12,6 +12,16 @@ import { useUIStore } from '@/stores/uiStore';
 const renderer = new marked.Renderer();
 renderer.code = renderCodeBlock;
 
+const escapeHtml = (text: string) =>
+  text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+// The same, but raw HTML in the source (a block or an inline tag) shows as
+// text instead of markup: for text another model wrote (an agent's task or
+// report), where a tag is far more likely to be content than intent.
+const textOnlyRenderer = new marked.Renderer();
+textOnlyRenderer.code = renderCodeBlock;
+textOnlyRenderer.html = ({ text }) => escapeHtml(text);
+
 export interface MarkdownRendererProps {
   content: string;
   /** Link plain path mentions to the editor against the workspace root
@@ -19,6 +29,8 @@ export interface MarkdownRendererProps {
    *  notebook cell), whose relative paths read against that file's folder,
    *  not the root. */
   linkPaths?: boolean;
+  /** false: raw HTML in the source shows as text, never as markup. */
+  rawHtml?: boolean;
 }
 
 /**
@@ -36,6 +48,7 @@ export interface MarkdownRendererProps {
 export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
   content,
   linkPaths = true,
+  rawHtml = true,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   // Unique per-instance prefix so code blocks in different message
@@ -49,8 +62,10 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
   const html = useMemo(() => {
     if (!content) return '';
     beginCodeBlockParse(instanceId);
-    return renderMarkdownSafe(linkifyPaths(content, linkRoot), { markedOptions: { renderer } });
-  }, [content, instanceId, linkRoot]);
+    return renderMarkdownSafe(linkifyPaths(content, linkRoot), {
+      markedOptions: { renderer: rawHtml ? renderer : textOnlyRenderer },
+    });
+  }, [content, instanceId, linkRoot, rawHtml]);
   const innerHtml = useHtmlProp(html);
 
   // Attach code block action handlers via event delegation

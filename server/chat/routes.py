@@ -1051,6 +1051,13 @@ async def subagent_stream_endpoint(request: Request):
         # The run owns the commands it starts (server/tasks/owner.py): a chat
         # Stop in the session spares them, and stopping this run kills them.
         work_owner = f"subagent:{team_id}"
+        # Started in Bypass, its commands run with no OS sandbox.
+        import contextvars
+
+        from server.security import bypass_sandbox
+
+        _agent_context = contextvars.copy_context()
+        bypass_sandbox.set_on(_agent_context, bypass_sandbox.is_bypass(get_mode()))
         agent_task = asyncio.create_task(
             run_owned(
                 work_owner,
@@ -1069,7 +1076,8 @@ async def subagent_stream_endpoint(request: Request):
                     effort_label=effort_for_model(model_key, body.get("effort_level")),
                     agent_id=registry_task_id,
                 ),
-            )
+            ),
+            context=_agent_context,
         )
         # Register the live coroutine so POST /api/background-tasks/{id}/stop
         # (kind=agent -> agents.cancel_task) can cancel this run too.
@@ -1552,6 +1560,7 @@ async def chat_endpoint(request: Request):
             session_memory_context=session_memory_context,
             ultracode=ultracode_active,
             deferred_tool_index=_deferred_index,
+            permission_mode=mode,
         )
 
         # Filter out UI-only rows (cron_event, etc.) before building the
@@ -1876,21 +1885,25 @@ async def chat_endpoint(request: Request):
         # return (or a project's SessionStart hook loading conventions) is injected
         # into the conversation so the model actually reads it this turn.
         _status("preparing")
-        _session_ctx = await run_hooks(
-            "SessionStart",
-            {"event": "SessionStart", "session_id": session_id, "model_id": model_id},
-            workspace=ws_path,
-        )
-        _prompt_ctx = await run_hooks(
-            "UserPromptSubmit",
-            {
-                "event": "UserPromptSubmit",
-                "session_id": session_id,
-                "model_id": model_id,
-                "tool_input": {"question": question[:500]},
-            },
-            workspace=ws_path,
-        )
+        from server.security import bypass_sandbox
+
+        # A Bypass turn's hooks run with no OS sandbox.
+        with bypass_sandbox.entered(bypass_sandbox.is_bypass(mode)):
+            _session_ctx = await run_hooks(
+                "SessionStart",
+                {"event": "SessionStart", "session_id": session_id, "model_id": model_id},
+                workspace=ws_path,
+            )
+            _prompt_ctx = await run_hooks(
+                "UserPromptSubmit",
+                {
+                    "event": "UserPromptSubmit",
+                    "session_id": session_id,
+                    "model_id": model_id,
+                    "tool_input": {"question": question[:500]},
+                },
+                workspace=ws_path,
+            )
         _injected_contexts = [*_session_ctx.contexts, *_prompt_ctx.contexts]
         if _injected_contexts and messages and messages[-1].get("role") == "user":
             _note = "\n\n".join(f"[Hook context] {c}" for c in _injected_contexts)

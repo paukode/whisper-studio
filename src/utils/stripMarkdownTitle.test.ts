@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { stripMarkdownTitle } from './stripMarkdownTitle';
+import { plainTaskPreview, stripMarkdownTitle } from './stripMarkdownTitle';
 
 describe('stripMarkdownTitle', () => {
   it('strips leading heading markers', () => {
@@ -38,5 +38,16 @@ describe('stripMarkdownTitle', () => {
     expect(stripMarkdownTitle('***')).toBe('***');
     expect(stripMarkdownTitle('  spaced  ')).toBe('spaced');
     expect(stripMarkdownTitle('')).toBe('');
+  });
+});
+
+describe('plainTaskPreview', () => {
+  it('reads a multi-line Markdown task as one plain line', () => {
+    const task = '## Goal\nList the files.\n- use ws_glob\n```bash\nls -la\n```';
+    expect(plainTaskPreview(task)).toBe('Goal List the files. use ws_glob ls -la');
+  });
+  it('keeps plain text unchanged', () => {
+    expect(plainTaskPreview('grep for TODO')).toBe('grep for TODO');
+    expect(plainTaskPreview('')).toBe('');
   });
 });

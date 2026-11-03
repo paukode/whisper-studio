@@ -5,7 +5,7 @@ Each section is a named, prioritized block, enabled per request.
 
 Layers:
   1. Identity (base persona, code-output rule, user rules): always included
-  2. Mode (brief): conditional on session config
+  2. Mode (brief, the permission-mode line): conditional on session config
   3. Workspace (workspace and git instructions, project instructions,
      learning guidance, rules capture, narration, visuals, deferred tool index)
   4. Dynamic (plan mode, memory, session memory, git status): per request
@@ -23,7 +23,7 @@ from enum import IntEnum
 
 from server.git.prompts import build_git_instructions_prompt, build_git_status_prompt
 from server.prompts.base import BASE
-from server.prompts.modes import BRIEF_PREFIX, PLAN_MODE
+from server.prompts.modes import BRIEF_PREFIX, BYPASS_MODE, GUARDED_MODE, PLAN_MODE
 from server.prompts.narration import WORK_NARRATION
 from server.prompts.rules import rules_block as _user_rules_block
 from server.prompts.visuals import VISUAL_CHOICE
@@ -111,10 +111,12 @@ def _build_code_output_rule(ws_path: str | None = None, **_) -> str:
     return CODE_OUTPUT_RULE_WORKSPACE if ws_path else CODE_OUTPUT_RULE_GENERIC
 
 
-def _build_workspace_section(ws_path: str | None = None, session_id: str = "default", **_) -> str:
+def _build_workspace_section(
+    ws_path: str | None = None, session_id: str = "default", permission_mode: str = "", **_
+) -> str:
     if not ws_path:
         return ""
-    return workspace_prompt(ws_path, session_id)
+    return workspace_prompt(ws_path, session_id, permission_mode)
 
 
 def _build_no_workspace_section(ws_path: str | None = None, **_) -> str:
@@ -135,6 +137,42 @@ def _build_no_workspace_section(ws_path: str | None = None, **_) -> str:
         "save, and do not guess a path with ws_open_folder (use that only when the user names a "
         "folder to open). For a conversation or a throwaway snippet, just answer; no write tool."
     )
+
+
+# The permissions.json value for Bypass (server.security.permissions.MODE_BYPASS).
+# Spelled out here so the prompt package does not import the security module.
+_BYPASS = "bypassPermissions"
+_PLAN = "plan"
+
+# The last mode other than Plan that each session's prompt was built with. Plan
+# is a mode of its own in permissions.json, but the plan-mode text rides the
+# DYNAMIC layer so a toggle keeps the cached block. Reading Plan as "the mode
+# you came from" for the static sections keeps that promise for Bypass too: a
+# Bypass, Plan, Bypass flip leaves the static bytes alone.
+_BASE_MODE: dict[str, str] = {}
+_BASE_MODE_CAP = 512
+
+
+def _static_permission_mode(session_id: str, permission_mode: str) -> str:
+    """The mode the cached sections are built for (Plan reads as its base)."""
+    if permission_mode != _PLAN:
+        if permission_mode:
+            _BASE_MODE.pop(session_id, None)
+            _BASE_MODE[session_id] = permission_mode
+            while len(_BASE_MODE) > _BASE_MODE_CAP:
+                _BASE_MODE.pop(next(iter(_BASE_MODE)))
+        return permission_mode
+    return _BASE_MODE.get(session_id, permission_mode)
+
+
+def _build_permission_mode_section(permission_mode: str = "", **_) -> str:
+    """The line that says what the permission mode lets the model do.
+
+    Bypass gets the "act without check-ins" line; every other mode gets the
+    literal-delete-paths rule, which is the same text for all of them, so a
+    flip between Default, Plan and Accept edits leaves the cached block alone.
+    """
+    return BYPASS_MODE if permission_mode == _BYPASS else GUARDED_MODE
 
 
 def _git_context_on(ws_path: str | None) -> bool:
@@ -242,6 +280,18 @@ _registry.register(
         content=BRIEF_PREFIX,
         enabled=False,  # Enabled dynamically
         prepend=True,
+    )
+)
+
+# The permission-mode line rides the cached MODE layer, unlike plan mode below:
+# the user changes the mode rarely, and a session in Bypass must see the Bypass
+# line on every round without paying for it as uncached input.
+_registry.register(
+    PromptSection(
+        name="permission_mode",
+        layer=PromptLayer.MODE,
+        priority=10,
+        builder=_build_permission_mode_section,
     )
 )
 
@@ -453,6 +503,7 @@ def _resolve_sections(
     session_memory_context: str = "",
     ultracode: bool = False,
     deferred_tool_index: str = "",
+    permission_mode: str = "",
 ) -> tuple[str, str]:
     """Resolve the section registry into a ``(static, dynamic)`` pair.
 
@@ -503,6 +554,7 @@ def _resolve_sections(
         "ws_path": ws_path,
         "session_id": session_id,
         "deferred_tool_index": deferred_tool_index,
+        "permission_mode": _static_permission_mode(session_id, permission_mode),
     }
 
     static_prepend: list[str] = []
@@ -543,6 +595,7 @@ def build_system_prompt(
     session_memory_context: str = "",
     ultracode: bool = False,
     deferred_tool_index: str = "",
+    permission_mode: str = "",
 ) -> str:
     """Build the complete system prompt as a single string (unchanged contract).
 
@@ -559,6 +612,7 @@ def build_system_prompt(
         session_memory_context=session_memory_context,
         ultracode=ultracode,
         deferred_tool_index=deferred_tool_index,
+        permission_mode=permission_mode,
     )
     return static_block + dynamic_block
 
@@ -574,6 +628,7 @@ def build_system_prompt_split(
     session_memory_context: str = "",
     ultracode: bool = False,
     deferred_tool_index: str = "",
+    permission_mode: str = "",
 ) -> tuple[str, str]:
     """Like :func:`build_system_prompt` but returns ``(static, dynamic)`` so the
     cloud path can prompt-cache the static prefix. By construction,
@@ -589,4 +644,5 @@ def build_system_prompt_split(
         session_memory_context=session_memory_context,
         ultracode=ultracode,
         deferred_tool_index=deferred_tool_index,
+        permission_mode=permission_mode,
     )

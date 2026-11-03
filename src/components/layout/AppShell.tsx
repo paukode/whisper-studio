@@ -21,6 +21,7 @@ import { AppStatusBar } from './AppStatusBar';
 import { Splitter } from './Splitter';
 import { ToastContainer } from '@/components/common/ToastContainer';
 import { ModelLoadingBanner } from '@/components/common/ModelLoadingBanner';
+import { UpdateNotice } from '@/components/common/UpdateNotice';
 import { SettingsModal } from '@/components/settings/SettingsModal';
 import { TranscriptionPanel } from '@/components/transcription/TranscriptionPanel';
 import { ChatPanel } from '@/components/chat/ChatPanel';
@@ -346,6 +347,7 @@ const AppShell: React.FC = () => {
       {/* Main workspace */}
       <div className="workspace">
         <Header />
+        <UpdateNotice />
 
         {/* Panels area.
             Layout shape:

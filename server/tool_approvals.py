@@ -21,7 +21,7 @@ from typing import NamedTuple
 from server.approval.markers import APPROVAL
 from server.approval.spec import WORKSPACE_ROOT_KEY, ApprovalOutcome, turn_workspace_refusal
 from server.auto_mode import classify_tool_call
-from server.security import secret_reads
+from server.security import bypass_sandbox, secret_reads
 from server.security.explainer import explain_permission
 from server.security.permissions import (
     FILE_WRITE_CATEGORIES,
@@ -139,6 +139,20 @@ def _bind_to_workspace(spec, state, ws_parsed: dict) -> str | None:
     return turn_workspace_refusal(spec, ws_parsed)
 
 
+def _explainer_input(spec, ws_parsed: dict, secret: str | None) -> dict:
+    """What the risk explainer reads: the fields the card shows, never the
+    server's own stamps. Bypass stamps ``secret_access`` on every call, so
+    passing it on made the explainer warn about a Keychain read the call
+    never asked for. It goes only with a card that asks for that read."""
+    shown = spec.build_payload(ws_parsed)
+    for key in list(shown):
+        if key.startswith("__") or key in (WORKSPACE_ROOT_KEY, "session_id"):
+            shown.pop(key)
+    if secret != "ask":
+        shown.pop(secret_reads.SECRET_ACCESS_KEY, None)
+    return shown
+
+
 def _settle_secret_access(spec, ws_parsed: dict, mode: str) -> str | None:
     """Settle the payload's credential-store read for ``mode``: None when the
     call asks for none, else "allow" | "ask" | "deny" (secret_reads.decision).
@@ -210,6 +224,8 @@ async def gate_approval(
     # no card; anywhere else the request asks a person every time, Don't ask
     # refuses it, and so does a run with no person to ask.
     secret = _settle_secret_access(spec, ws_parsed, mode)
+    # Only the gate stamps the sandbox scope a card's yes runs with (below).
+    ws_parsed.pop(bypass_sandbox.UNSANDBOXED_KEY, None)
     if secret == "deny":
         return ApprovalStep(OUTPUT, secret_reads.REFUSED_DONT_ASK)
     if secret == "ask" and unattended:
@@ -253,13 +269,13 @@ async def gate_approval(
         if command_runs_trusted_skill(ws_parsed.get("command", "")):
             auto_allow_trusted = True
 
-    # Precedence: the hard floors (github-destructive, a delete outside the
-    # workspace, sandbox escalation, a visible terminal run, MCP-approve), app
-    # storage, category mode override, bypassPermissions (not for a save or
-    # folder reach outside the workspace), trusted skill, session approvals,
-    # custom rules, approved
-    # launch.json preview (allow), dontAsk, acceptEdits, auto (classifier),
-    # ask. See server.security.permissions.resolve_static_decision.
+    # Precedence: the hard floors (github-destructive, MCP-approve, and
+    # outside bypass a delete outside the workspace, sandbox escalation, a
+    # visible terminal run), app storage, category mode override,
+    # bypassPermissions (allows the rest, anywhere), trusted skill, session
+    # approvals, custom rules, approved launch.json preview (allow), dontAsk,
+    # acceptEdits, auto (classifier), ask. See
+    # server.security.permissions.resolve_static_decision.
     if secret == "ask":
         # Not the classifier, a session approval or a rule: a person, each time.
         decision = "ask"
@@ -345,7 +361,7 @@ async def gate_approval(
     if config and model_id:
         explanation = await explain_permission(
             tool_name=state.tool_name,
-            tool_input=ws_parsed,
+            tool_input=_explainer_input(spec, ws_parsed, secret),
             recent_messages=recent_messages or [],
             config=config,
             session_id=cost_session_id,
@@ -362,6 +378,10 @@ async def gate_approval(
     # No more per-action shape: the frontend reads `preview`
     # and picks one of four renderers (diff/command/list/text).
     payload = spec.build_payload(ws_parsed)
+    # The yes runs with this turn's sandbox scope, not the mode live at the
+    # click (server/security/bypass_sandbox.py).
+    if bypass_sandbox.active():
+        payload[bypass_sandbox.UNSANDBOXED_KEY] = True
     summary = spec.render_summary(ws_parsed)
     if secret == "ask" and spec.category != secret_reads.SECRET_READ_CATEGORY:
         summary = f"READS THE KEYCHAIN AND CREDENTIAL STORES: {summary}"

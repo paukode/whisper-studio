@@ -67,6 +67,7 @@ from server.skills import router as skills_router
 from server.tasks.routes import router as background_tasks_router
 from server.tasks_tracker import router as tasks_router
 from server.terminal import router as terminal_router
+from server.update_check import router as update_check_router
 from server.voice.routes import router as voice_router
 from server.websocket import router as ws_router
 from server.workflows.routes import router as workflows_router
@@ -529,6 +530,7 @@ app.include_router(lsp_proxy_router)
 app.include_router(terminal_router)
 app.include_router(buddy_router)
 app.include_router(doctor_router)
+app.include_router(update_check_router)
 app.include_router(git_router)
 app.include_router(feature_flags_router)
 app.include_router(cost_router)

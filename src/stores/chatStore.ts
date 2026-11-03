@@ -3,6 +3,21 @@ import type { ChatMessage, ApprovalCategory, Delivery, ToolUseEvent, PreviewKind
 import { foldTeamProgressIntoMap, foldTeamResultsInto } from '@/hooks/chatStream/teamProgress';
 import { mergeDeliveries } from '@/hooks/chatStream/deliveries';
 import type { WrittenLabel } from '@/hooks/chatStream/activityLabels';
+import { activeMs, beginWait, endAllWaits, endWait, waitKindOfTool, type WaitSpan, type WaitKind } from '@/hooks/chatStream/waitClock';
+
+/** One wait reason per tool row. An untagged frame's row carries the tool
+ *  name as its id, so two parallel untagged sleeps share an id; the sequence
+ *  number keeps their waits apart. */
+let toolWaitSeq = 0;
+const toolWaitReason = (toolId: string) => `tool:${toolId}#${++toolWaitSeq}`;
+
+/** The oldest open wait reason of a tool id. Untagged rows complete in
+ *  order, so the oldest one is the call a result belongs to. Object keys
+ *  keep their insertion order. */
+function firstToolWaitReason(reasons: Record<string, WaitKind>, toolId: string): string | undefined {
+  const prefix = `tool:${toolId}#`;
+  return Object.keys(reasons).find((r) => r.startsWith(prefix));
+}
 
 /**
  * Generic pending approval. The shape is the same regardless of action —
@@ -10,6 +25,7 @@ import type { WrittenLabel } from '@/hooks/chatStream/activityLabels';
  * preview-specific fields (e.g. {path, original, content} for diff,
  * {command} for command, {paths} for list).
  */
+
 export interface PendingApproval {
   toolUseId: string;
   action: string;
@@ -96,6 +112,11 @@ export interface ChatState {
   /** Thinking timer state */
   thinkingStartTime: number | null;
   thinkingElapsedMs: number;
+  /** The waits of this stream (an approval card, a question, a sleep tool):
+   *  the thinking timer skips them and shows them apart (waitClock.ts). */
+  waitSpans: WaitSpan[];
+  /** The waits open now, by reason id. */
+  waitReasons: Record<string, WaitKind>;
   inputTokens: number;
   outputTokens: number;
   estimatedCost: number;
@@ -287,6 +308,8 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
   autoModeBreaker: null,
   thinkingStartTime: null,
   thinkingElapsedMs: 0,
+  waitSpans: [],
+  waitReasons: {},
   inputTokens: 0,
   outputTokens: 0,
   estimatedCost: 0,
@@ -329,9 +352,13 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
   },
 
   addStreamToolUse: (trace: ToolUseEvent) => {
-    set((state) => ({
-      currentStreamToolUse: [...state.currentStreamToolUse, trace],
-    }));
+    set((state) => {
+      const kind = trace.status === 'running' ? waitKindOfTool(trace.toolName) : null;
+      return {
+        currentStreamToolUse: [...state.currentStreamToolUse, trace],
+        ...(kind ? beginWait(state, toolWaitReason(trace.toolId), kind, performance.now()) : {}),
+      };
+    });
   },
 
   addStreamLabel: (label: WrittenLabel) => {
@@ -351,10 +378,16 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
       const idx = state.currentStreamToolUse.findIndex(
         (t) => t.toolId === key && t.status === 'running',
       );
-      if (idx === -1) return state;
+      // A wait tool (sleep, a question) that leaves 'running' ends its wait,
+      // also when a segment flush already committed its row: the wait must
+      // not stay open until the stream ends.
+      const ended = updates.status !== undefined && updates.status !== 'running';
+      const reason = ended ? firstToolWaitReason(state.waitReasons, key) : undefined;
+      const waits = reason ? endWait(state, reason, performance.now()) : {};
+      if (idx === -1) return reason ? waits : state;
       const next = state.currentStreamToolUse.slice();
       next[idx] = { ...next[idx], ...updates };
-      return { currentStreamToolUse: next };
+      return { currentStreamToolUse: next, ...waits };
     });
   },
 
@@ -420,6 +453,10 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
         liveTeamReports: {},
         thinkingStartTime: performance.now(),
         thinkingElapsedMs: 0,
+        // A card still on screen from the last stream keeps waiting.
+        ...(get().currentApproval
+          ? beginWait({ waitSpans: [], waitReasons: {} }, 'approval', 'user', performance.now())
+          : { waitSpans: [], waitReasons: {} }),
         inputTokens: 0,
         outputTokens: 0,
         estimatedCost: 0,
@@ -440,6 +477,7 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
         currentStreamToolUse: [],
         currentStreamLabels: [],
         thinkingStartTime: null,
+        ...endAllWaits(get(), performance.now()),
       });
     }
   },
@@ -455,6 +493,7 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
         currentStreamToolUse: [],
         currentStreamLabels: [],
         thinkingStartTime: null,
+        ...endAllWaits(state, performance.now()),
         liveDeliveries: [],
         pendingMidTurn: [],
         messages: withPendingNotes(
@@ -557,7 +596,7 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
   enqueueApproval: (approval: PendingApproval) => {
     const { currentApproval } = get();
     if (!currentApproval) {
-      set({ currentApproval: approval });
+      set((state) => ({ currentApproval: approval, ...beginWait(state, 'approval', 'user', performance.now()) }));
     } else {
       set((state) => ({
         approvalQueue: [...state.approvalQueue, approval],
@@ -571,12 +610,12 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
       const [next, ...rest] = approvalQueue;
       set({ currentApproval: next, approvalQueue: rest });
     } else {
-      set({ currentApproval: null });
+      set((state) => ({ currentApproval: null, ...endWait(state, 'approval', performance.now()) }));
     }
   },
 
   clearCurrentApproval: () => {
-    set({ currentApproval: null });
+    set((state) => ({ currentApproval: null, ...endWait(state, 'approval', performance.now()) }));
   },
 
   setSessionApproval: (category: ApprovalCategory, mode: SessionApprovalMode) => {
@@ -610,9 +649,9 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
   },
 
   setThinkingStop: () => {
-    const { thinkingStartTime } = get();
+    const { thinkingStartTime, waitSpans } = get();
     if (thinkingStartTime) {
-      set({ thinkingElapsedMs: performance.now() - thinkingStartTime });
+      set({ thinkingElapsedMs: activeMs(thinkingStartTime, performance.now(), waitSpans) });
     }
   },
 

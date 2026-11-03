@@ -25,6 +25,7 @@ vi.mock('@/components/transcription/TranscriptionPanel', () => ({ TranscriptionP
 vi.mock('@/components/preview/RightDock', () => ({ RightDock: () => <div /> }));
 vi.mock('@/components/common/ToastContainer', () => ({ ToastContainer: () => <div /> }));
 vi.mock('@/components/common/ModelLoadingBanner', () => ({ ModelLoadingBanner: () => <div /> }));
+vi.mock('@/components/common/UpdateNotice', () => ({ UpdateNotice: () => null }));
 vi.mock('@/components/settings/SettingsModal', () => ({ SettingsModal: () => <div /> }));
 vi.mock('@/components/workspace/WorkspaceConnectDialog', () => ({ WorkspaceConnectDialog: () => <div /> }));
 vi.mock('@/components/workspace/explorer/IndexExplorer', () => ({ IndexExplorer: () => <div /> }));

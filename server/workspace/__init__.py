@@ -30,6 +30,7 @@ from .paths import (  # noqa: E402,F401
     _ws_path_allowed,
     _ws_validate_path,
     own_scratch_dir,
+    ws_path_changeable,
 )
 from .state import (  # noqa: E402,F401
     connect_workspace,

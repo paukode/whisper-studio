@@ -499,7 +499,13 @@ async def execute_tool_batch(
         _ro_token = read_only_scope.set(plan_mode or read_only_scope.get())
         # An agent waiting on agents it started is not using its own time:
         # each of them has its own limits (ToolScope.waited).
+        # A task_wait on a shell command is the agent's own work
+        # (server/tasks/wait.py::waits_on_agents).
         _waits = tool_scope is not None and tool_name in WAITS_ON_AGENTS
+        if _waits and tool_name in ("task_wait", "workflow_wait"):
+            from server.tasks.wait import waits_on_agents
+
+            _waits = waits_on_agents(tool_name, call_input)
         _started = time.monotonic()
         try:
             try:
@@ -610,17 +616,21 @@ async def execute_tool_batch(
             read_only_scope.reset(_ro_token)
 
     # --- Execute batches ---
+    # A Bypass turn's commands run with no OS sandbox, hooks and agents it
+    # starts included (server/security/bypass_sandbox.py).
+    from server.security import bypass_sandbox
     from server.workspace.state import reset_turn_latch, set_turn_latch
 
     latch_token = set_turn_latch(workspace_latch)
     try:
-        batches = partition_batches(tool_uses, is_concurrent_safe)
-        for batch in batches:
-            batch_states = [state_by_id[tu["id"]] for tu in batch]
-            if len(batch_states) == 1:
-                await _run_one(batch_states[0])
-            else:
-                await asyncio.gather(*[_run_one(s) for s in batch_states])
+        with bypass_sandbox.entered(bypass_sandbox.is_bypass(mode)):
+            batches = partition_batches(tool_uses, is_concurrent_safe)
+            for batch in batches:
+                batch_states = [state_by_id[tu["id"]] for tu in batch]
+                if len(batch_states) == 1:
+                    await _run_one(batch_states[0])
+                else:
+                    await asyncio.gather(*[_run_one(s) for s in batch_states])
     finally:
         reset_turn_latch(latch_token)
 
@@ -696,22 +706,26 @@ async def process_tool_results(
         - has_pending_approval: True if any tool needs user approval before the LLM continues
         - has_user_question: True if any tool triggered a pause
     """
+    from server.security import bypass_sandbox
     from server.workspace.state import reset_turn_latch, set_turn_latch
 
     latch_token = set_turn_latch(workspace_latch)
     try:
-        return await _process_tool_results(
-            states,
-            budget_fn,
-            session_approvals=session_approvals,
-            config=config,
-            model_id=model_id,
-            recent_messages=recent_messages,
-            mode=mode,
-            session_id=session_id,
-            cost_session_id=cost_session_id,
-            unattended=unattended,
-        )
+        # An action run inline here (a Bypass command, an agent's own write)
+        # runs with no OS sandbox in a Bypass turn, as in execute_tool_batch.
+        with bypass_sandbox.entered(bypass_sandbox.is_bypass(mode)):
+            return await _process_tool_results(
+                states,
+                budget_fn,
+                session_approvals=session_approvals,
+                config=config,
+                model_id=model_id,
+                recent_messages=recent_messages,
+                mode=mode,
+                session_id=session_id,
+                cost_session_id=cost_session_id,
+                unattended=unattended,
+            )
     finally:
         reset_turn_latch(latch_token)
 

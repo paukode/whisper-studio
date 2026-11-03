@@ -63,7 +63,7 @@
         <tr><td><b>Auto</b> (<code>auto</code>)</td><td>Reads run. A classifier approves each write and command, or asks you. The config keys <code>auto_mode_allow</code>, <code>auto_mode_soft_deny</code>, and <code>auto_mode_environment</code> hold its lists. The assistant can change them with <code>config_set</code>, which follows the permission mode.</td></tr>
         <tr><td><b>Plan</b> (<code>plan</code>)</td><td>Read-only. The app blocks file edits and commands. The assistant gives the changes as a plan.</td></tr>
         <tr><td><b>Accept edits</b> (<code>acceptEdits</code>)</td><td>File writes and new files run without a question. Deletes and commands ask. Use it for a long edit task.</td></tr>
-        <tr><td><b>Bypass</b> (<code>bypassPermissions</code>)</td><td>No questions for work in the connected workspace. A change outside the workspace, a delete outside the workspace, and a destructive GitHub action ask.</td></tr>
+        <tr><td><b>Bypass</b> (<code>bypassPermissions</code>)</td><td>No questions, in the workspace and outside it. Only a destructive GitHub action and a tool of an MCP server that you marked for approval ask. A category mode that you set also stays in effect.</td></tr>
         <tr><td><b>"Don't ask"</b> (<code>dontAsk</code>)</td><td>The app refuses writes and does not show a card. Only read-only tools run.</td></tr>
       </tbody>
     </table></div>
@@ -71,6 +71,24 @@
       Each option shows the mode name and a short help text, for example "Asks first: Reads are
       allowed. Every file write and command asks first." Select a mode and click <b>Save
       Mode</b>.</p>
+    <h3 id="mode-and-questions">How the mode changes the questions the assistant asks</h3>
+    <p>The assistant knows the current mode. In Bypass, it acts and then tells you what it did. It
+      does not ask before it runs a command, edits a file, or makes a commit. It does not ask you to
+      reply "go" between the steps of a plan that you approved. In Bypass, file changes do not
+      stop the turn, so the assistant can make many changes in one step. In the other modes, it
+      makes one file change at a time and waits for your decision.</p>
+    <p>When you switch from Bypass to Plan, the assistant keeps the Bypass rules for the time
+      after the plan. Plan still blocks all changes until you approve the plan.</p>
+    <p>In all modes, the assistant asks a question only when the answer changes a result that you
+      see, costs money, or cannot be undone. It first reads your rules and its memory. An
+      instruction about how to work, for example "commit after each stage", stays in force for
+      the full session. When it has more than one real question, it puts them in one numbered list
+      at the end of a stage. It continues the work that does not need the answers.</p>
+    <p>When you refuse an action, the assistant does not try the same action again. It finds a
+      different safe way to continue. It asks you only when no safe way is available.</p>
+    <p>Outside Bypass, the assistant writes each path in a delete command as a full literal path,
+      for example <code class="path">/Users/you/project/build</code>. A shell variable such as
+      <code>$DIR</code> in a delete path stops the command for an approval card.</p>
 
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
@@ -105,7 +123,7 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Mode</th><th>Read of a credential store</th></tr></thead>
       <tbody>
-        <tr><td><b>Bypass</b></td><td>All read tools and commands read them without a card.</td></tr>
+        <tr><td><b>Bypass</b></td><td>All read tools and commands read them without a card. Commands run with no sandbox, so they can also write them.</td></tr>
         <tr><td><b>"Don't ask"</b></td><td>Refused.</td></tr>
         <tr><td><b>Asks first</b>, <b>Accept edits</b>, <b>Plan</b>, <b>Auto</b></td><td>You approve each read. The Auto classifier does not decide it. A "Yes, all" for commands does not approve it.</td></tr>
       </tbody>
@@ -114,8 +132,10 @@
       <code>codesign</code>, or <code>notarytool</code>, which use the login Keychain. For these
       commands, the card summary starts with "READS THE KEYCHAIN AND CREDENTIAL STORES:". This card
       does not keep your answer for the session. Subagents and scheduled jobs cannot read the stores
-      outside Bypass, because no person can answer the card. No mode lets a tool write to a credential
-      store.</p>
+      outside Bypass, because no person can answer the card. Outside Bypass, no mode lets a tool write
+      to a credential store. In Bypass, shell commands run with no sandbox and can write there, but
+      <code>ws_write_file</code>, <code>ws_edit_file</code>, and <code>ws_delete_file</code> still
+      refuse a credential store outside the workspace.</p>
 
     <h2 id="category-modes">Per-category modes</h2>
     <p>The global mode applies to all actions. To set a different mode for one <em>type</em> of
@@ -288,13 +308,12 @@
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
       <div class="callout__body"><p>The app examines a call in this sequence:</p>
         <ol>
-          <li>The hard floors: <code>github-destructive</code>, a delete outside the workspace, and a
-            write outside the sandbox. Also a command in your visible terminal (outside Bypass), and
-            an MCP server that you marked for approval.</li>
+          <li>The hard floors: <code>github-destructive</code> and an MCP server that you marked
+            for approval. Outside Bypass, also a delete outside the workspace, a write outside the
+            sandbox, and a command in your visible terminal.</li>
           <li>The app folders: a write there runs. A delete there runs only in Bypass.</li>
           <li>The category mode, if you set one. It replaces the global mode.</li>
-          <li><code>bypassPermissions</code>: all actions in the workspace run. A save to a path
-            outside it and access to a new folder ask.</li>
+          <li><code>bypassPermissions</code>: all actions run, in the workspace and outside it.</li>
           <li>A trusted skill script.</li>
           <li>Your session choice ("Yes, all" or "Block").</li>
           <li>Your custom rules.</li>
@@ -328,22 +347,38 @@
 
     <h2 id="hard-guards">The guards that stay on</h2>
     <p>Modes and rules control <em>consent</em>: if the app asks you or not. Below them are two
-      guards that apply in all modes, also <code>bypassPermissions</code>. These guards are the real
-      security boundary.</p>
+      guards. These guards are the real security boundary. The command validator applies in all
+      modes. The sandbox applies in all modes except <code>bypassPermissions</code>.</p>
     <div class="cols-2">
       <div class="card">
-        <h3>All commands run in the sandbox</h3>
+        <h3>Commands run in the sandbox, except in Bypass</h3>
         <p>Each shell command and each Python run is in the macOS kernel sandbox
           (<code>sandbox-exec</code>). The sandbox applies the file and network policy at the OS level.
           An approval lets a command <em>run</em>. It does not remove the sandbox. If the sandbox is
           not available, the app does not run the command.</p>
+        <p>In Bypass, commands run with no sandbox, the same as in Claude Code. The subagents and
+          workflows that a Bypass chat starts also run with no sandbox. Scheduled jobs keep the
+          sandbox. Thus in Bypass a command can run <code>/bin/ps</code>, run a test suite that uses
+          <code>sandbox-exec</code>, and write outside the workspace.</p>
+        <p>Plan mode and read-only agents keep the sandbox, also in Bypass. If you approve a card,
+          the command uses the mode of the turn that made the card. It does not use the mode at the
+          time of your click.</p>
       </div>
       <div class="card">
         <h3>The app blocks destructive patterns</h3>
         <p>A command validator refuses some destructive commands before they run:
-          <code>rm -rf /</code> on the root folder, <code>mkfs</code>, <code>dd</code> to a device, and
+          a delete of a protected folder, <code>mkfs</code>, <code>dd</code> to a device, and
           redirects into <code>/etc/</code>. It also refuses backticks, and a <code>$(...)</code> that
           runs a command that is not read-only. The validator refuses these commands in all modes.</p>
+        <p>A protected folder is the root folder <code>/</code>, a folder directly below it (for
+          example <code class="path">/System</code>, <code class="path">/Users</code>, or
+          <code class="path">/Applications</code>), and your home folder. The validator reads the
+          target of the delete, not one spelling. It refuses <code>rm -rf /</code>,
+          <code>rm -fr /</code>, <code>rm --recursive --force /</code>, <code>rm -rf "/"</code>,
+          <code>find / -delete</code>, <code>rm -rf ~</code>, and <code>cd / &amp;&amp; rm -rf usr</code>.
+          A folder below a protected folder, for example <code class="path">~/Documents/old</code>,
+          is not protected. The file tool <code>ws_delete_file</code> also refuses a protected folder
+          in all modes.</p>
       </div>
     </div>
     <p>The validator also refuses access to sensitive paths and files, except in a run that can
@@ -354,7 +389,7 @@
       attacker. <code>ws_read_file</code> and <code>ws_list_directory</code> can read all files and
       folders on your Mac by absolute path, except <a href="#credential-stores">credential
       stores</a>.</p>
-    <p>Three types of command always show a card:</p>
+    <p>Outside Bypass, three types of command always show a card:</p>
     <ul>
       <li>A command that <b>deletes outside the workspace</b>. Examples are <code>rm</code>,
         <code>rmdir</code>, <code>shred</code>, and <code>find -delete</code>, also behind
@@ -363,14 +398,17 @@
         outside the workspace and the app folder.</li>
       <li>A command that asks for <b>full disk write access</b> instead of the usual limit to the
         project.</li>
-      <li>A command that the assistant types into your <b>visible terminal</b>, outside Bypass. That
-        terminal runs in its current folder, and the OS does not limit its writes. In Bypass, the
-        terminal panel opens and the command runs without a card.</li>
+      <li>A command that the assistant types into your <b>visible terminal</b>. That terminal runs
+        in its current folder, and the OS does not limit its writes.</li>
     </ul>
-    <p>A mode, a rule, or a "Yes, all" cannot remove the first two cards. A rule or a "Yes, all"
-      cannot remove the third card. An unattended agent cannot run these commands. In the workspace,
-      the mode decides: Bypass runs <code>rm -rf dist</code> without a card, and the other modes
-      handle it as a usual command.</p>
+    <p>A rule, a "Yes, all", or a trusted skill cannot remove these cards. Outside Bypass, an
+      unattended agent cannot run a delete. In the workspace, the mode decides: the other modes
+      handle <code>rm -rf dist</code> as a usual command.</p>
+    <p>In Bypass, these three types of command run without a card. A subagent or a workflow script
+      of the session also runs a delete without a card. The validator still refuses a delete of a
+      protected folder. A category mode that you set for <code>cli</code> can only make Bypass
+      stricter: if it is not Bypass, these commands ask again. A category mode of Bypass does not
+      remove these cards when the session is in a different mode.</p>
     <p>For a relative path in a delete, the app uses the folder of a <code>cd</code> earlier in the
       same command. If the command does not name that folder, the delete always shows a card. Examples
       are <code>cd "$DIR"</code>, <code>cd -</code>, <code>pushd</code>, and <code>popd</code>.</p>
@@ -392,11 +430,15 @@
       <code>su -c</code>), a path that starts with <code>~</code> shows a card. There, <code>~</code>
       is the home folder of the other user. If a path goes through a symlink and then up with
       <code>..</code>, the app reads <code>..</code> from the target of the link.</p>
-    <p>The workspace boundary applies in all modes. A read on your Mac does not ask, except for
-      credential stores such as <code class="path">~/.ssh</code>. A change outside the workspace asks also in
-      <code>bypassPermissions</code>. Examples are a file saved to a path that you named and a
-      folder opened as a new workspace. Other examples are a delete outside the tree and a command
-      that asks to leave the sandbox.</p>
+    <p>The workspace boundary applies in all modes except Bypass. A read on your Mac does not ask,
+      except for credential stores such as <code class="path">~/.ssh</code>. A change outside the
+      workspace asks. Examples are a file saved to a path that you named and a folder opened as a
+      new workspace. Other examples are a delete outside the tree and a command that asks to leave
+      the sandbox.</p>
+    <p>In <code>bypassPermissions</code>, a change outside the workspace runs without a card. The
+      file tools (<code>ws_write_file</code>, <code>ws_edit_file</code>, and
+      <code>ws_delete_file</code>) change files at all locations on your Mac. They do not change the
+      scratch folder of a different session.</p>
     <p>If Bypass, a "Yes, all", a rule, or Auto mode lets a command run without a card, the OS limits
       its writes to the workspace. Only a command that you approved on its card can write in other
       locations. A terminal command in the sandbox writes only in the workspace, its scratch folder,
@@ -416,7 +458,7 @@
       <dt><code class="path">acceptEdits</code></dt><dd>Use it for a long edit task. You trust the edits, but you want a question before deletes and commands.</dd>
       <dt><code class="path">auto</code></dt><dd>Use it for fewer questions. The classifier approves the safe writes.</dd>
       <dt><code class="path">dontAsk</code></dt><dd>Use it for read-only work. The assistant does not write, and the app does not ask you.</dd>
-      <dt><code class="path">bypassPermissions</code></dt><dd>Use it only for a scratch workspace. Do not use it for important work.</dd>
+      <dt><code class="path">bypassPermissions</code></dt><dd>Use it only for a scratch workspace. Do not use it for important work. Commands run with no OS sandbox in this mode.</dd>
     </dl>
 
     <h2 id="how-it-fits">How this fits the pipeline</h2>

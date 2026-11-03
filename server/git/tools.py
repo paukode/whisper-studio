@@ -225,7 +225,9 @@ GIT_WRITE_TOOLS = [
         "description": (
             "[Git] Stage files and create a git commit. Specify files to stage "
             "or set 'all' to stage every change, new files included. Never "
-            "amends. Rejects commits containing secret files."
+            "amends. Refuses a commit whose staged changes contain a real secret "
+            "(a key or password value, reported by file and line); file names "
+            "never block it."
         ),
         "input_schema": {
             "type": "object",

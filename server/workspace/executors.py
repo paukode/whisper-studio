@@ -24,7 +24,9 @@ from dataclasses import dataclass
 from server import file_state
 from server.approval.markers import approval_request
 from server.executors import register_executor
+from server.security import bypass_sandbox
 from server.security import secret_reads as secret_reads_policy
+from server.security.permissions import bypass_call
 
 from .commands import (
     _apply_stdin_redirect,
@@ -43,6 +45,7 @@ from .paths import (
     in_other_scratch,
     own_scratch_dir,
     stage_file_bytes,
+    ws_path_changeable,
 )
 from .read_only import _is_read_only_command
 from .state import (
@@ -400,7 +403,7 @@ def _exec_ws_write_file(tool_input, transcript, current_attachments):
     path = tool_input.get("path", "")
     content = _normalize_lf(tool_input.get("content", ""))
     full = os.path.join(ws, path)
-    if not _ws_path_allowed(full, ws, session_id):
+    if not ws_path_changeable(full, ws, session_id, bypass_call(tool_input)):
         return outside_roots_error(path, ws, session_id)
     if not os.path.isfile(full):
         return f"File not found: {path}. Use ws_create_file for new files."
@@ -467,7 +470,7 @@ def _exec_ws_edit_file(tool_input, transcript, current_attachments):
         return "Error: old_string and new_string are identical."
 
     full = os.path.join(ws, path)
-    if not _ws_path_allowed(full, ws, session_id):
+    if not ws_path_changeable(full, ws, session_id, bypass_call(tool_input)):
         return outside_roots_error(path, ws, session_id)
     if not os.path.isfile(full):
         return f"File not found: {path}"
@@ -682,7 +685,7 @@ def _exec_ws_delete_file(tool_input, transcript, current_attachments):
     session_id = tool_input.pop("__session_id__", "")
     path = tool_input.get("path", "")
     full = os.path.join(ws, path)
-    if not _ws_path_allowed(full, ws, session_id):
+    if not ws_path_changeable(full, ws, session_id, bypass_call(tool_input)):
         return outside_roots_error(path, ws, session_id)
     if not os.path.exists(full):
         return f"File not found: {path}"
@@ -860,9 +863,10 @@ def run_workspace_command(
         # Said for every failure, so neither the model nor the claim check
         # (server/goals/evidence.py) reads a failed command as done.
         output += f"\n(exit code {result.returncode})"
-    if write_mode != "open" and result.returncode not in (0, None):
-        # A confined run that failed on a write the OS refused: say which
+    if result.returncode not in (0, None) and not bypass_sandbox.active():
+        # A sandboxed run that failed on something the OS refused: say which
         # sandbox it was and how to ask for more, the way terminal_run does.
+        # A Bypass run had no sandbox, so no OS refusal to explain.
         from server.sandbox import classify_sandbox_denial
 
         hint = classify_sandbox_denial(output, write_mode)
@@ -959,10 +963,11 @@ def _background_started_message(
             f"Raw output file: {output_path}"
         )
     return head + (
-        "The command is running in the background. Check on it with task_status "
-        f"{{'task_id': '{task_id}'}} and read its output with task_output "
-        f"{{'task_id': '{task_id}'}}; wait a while between checks (30s, then "
-        f"1-2 min) rather than polling immediately. Raw output file: {output_path}"
+        "The command is running in the background. Do other work in the meantime. "
+        f"To wait for it, call task_wait {{'task_ids': ['{task_id}']}}: it blocks in "
+        "one call until the command ends, so do not poll with sleep or task_status. "
+        f"Read its output with task_output {{'task_id': '{task_id}'}}. "
+        f"Raw output file: {output_path}"
     )
 
 

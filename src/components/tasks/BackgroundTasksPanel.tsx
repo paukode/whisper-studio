@@ -7,6 +7,7 @@ import { useNow } from '@/hooks/useNow';
 import { formatMessageTimestamp } from '@/utils/formatTimestamp';
 import { useUIStore } from '@/stores/uiStore';
 import { toError } from '@/utils/toError';
+import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer';
 
 /** How often an unfolded running row refreshes its output tail. */
 const OUTPUT_POLL_MS = 2000;
@@ -156,7 +157,8 @@ const TaskRow: React.FC<{ task: BackgroundTaskInfo; now: number }> = ({ task, no
 
 /** Unfolded row: where and when it ran, and its output. A running task's
  *  output is polled from its file; a finished one shows the result it ended
- *  with (an agent's is its report). */
+ *  with. A finished agent's result is its report, written as markdown, so it
+ *  reads like a chat reply; shell output and live tails stay preformatted. */
 const TaskDetail: React.FC<{ task: BackgroundTaskInfo }> = ({ task }) => {
   const running = task.status === 'running';
   const liveTail = useOutputTail(task.task_id, running && task.kind !== 'agent');
@@ -176,10 +178,21 @@ const TaskDetail: React.FC<{ task: BackgroundTaskInfo }> = ({ task }) => {
         {model ? ` · ${model}` : ''}
       </div>
       {task.kind !== 'shell' && <div className="bg-tasks-detail-task">{task.title}</div>}
-      {tail && <pre className="bg-tasks-tail">{tail}</pre>}
+      {tail && (isReport(task) ? (
+        <div className="bg-tasks-report">
+          <MarkdownRenderer content={tail} rawHtml={false} />
+        </div>
+      ) : (
+        <pre className="bg-tasks-tail">{tail}</pre>
+      ))}
     </div>
   );
 };
+
+/** A finished agent's result: its report, rendered as markdown. */
+export function isReport(task: BackgroundTaskInfo): boolean {
+  return task.kind === 'agent' && task.status !== 'running';
+}
 
 function useOutputTail(taskId: string, active: boolean): string {
   const [text, setText] = useState('');

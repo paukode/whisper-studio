@@ -339,3 +339,30 @@ def _ws_path_allowed(filepath: str, ws_root: str, session_id: str | None = None)
     if _is_system_path(filepath):
         return False
     return in_own_scratch(filepath, session_id)
+
+
+def ws_path_changeable(filepath: str, ws_root: str, session_id: str | None, bypass: bool) -> bool:
+    """Whether a ws_* file tool may write, edit or delete ``filepath``.
+
+    In no mode: a protected root (server.security.protected_roots: the
+    filesystem root, a folder directly under it, the home folder or one above
+    it), the same line as the rm -rf / hard block for commands. Outside
+    bypassPermissions: the workspace and the session's own scratch folder
+    (_ws_path_allowed). In bypassPermissions also anywhere else on the
+    machine (the user's decision of 2026-11-02: Bypass works like Claude
+    Code's bypass), except the kernel pseudo-filesystems, the scratch folders
+    of other sessions, and the credential stores of the sensitive-path list,
+    which a save outside the workspace refuses in every mode too."""
+    from server.security.protected_roots import is_protected_root
+
+    if is_protected_root(filepath):
+        return False
+    if _ws_path_allowed(filepath, ws_root, session_id):
+        return True
+    if not bypass or _is_system_path(filepath):
+        return False
+    from server.security.sensitive_paths import is_sensitive_path
+
+    if is_sensitive_path(filepath):
+        return False
+    return not in_other_scratch(filepath, session_id)

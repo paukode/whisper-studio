@@ -84,7 +84,7 @@ export const AgentPanel: React.FC<{ agentId: string }> = ({ agentId }) => {
         {!running && rec.report && (
           <details className="agent-pane-report" open>
             <summary>Report</summary>
-            <MarkdownRenderer content={rec.report} />
+            <MarkdownRenderer content={rec.report} rawHtml={false} />
           </details>
         )}
       </div>
@@ -163,15 +163,51 @@ export interface TaskParts {
 
 /** Split a task for the pane: the shared brief (only when the task really
  *  starts with it), the agent's own part, and the rest of a long one, cut at
- *  a line break or a space in the second half of what shows. */
+ *  a line break or a space in the second half of what shows. Both parts
+ *  render as markdown, so the cut never falls inside a code fence: it moves
+ *  back to the line where the fence opens, or, for a fence that opens at the
+ *  top, past the line where it closes. */
 export function taskParts(task: string, brief: string, shownChars = TASK_SHOWN_CHARS): TaskParts {
   const shared = brief && brief.length < task.length && task.startsWith(brief) ? brief : '';
   const body = task.slice(shared.length);
   if (body.length <= shownChars) return { brief: shared, own: body, rest: '' };
   const lineEnd = body.lastIndexOf('\n', shownChars);
   const space = body.lastIndexOf(' ', shownChars);
-  const end = lineEnd > shownChars / 2 ? lineEnd + 1 : space > shownChars / 2 ? space + 1 : shownChars;
+  const cut = lineEnd > shownChars / 2 ? lineEnd + 1 : space > shownChars / 2 ? space + 1 : shownChars;
+  const end = fenceSafeCut(body, cut);
   return { brief: shared, own: body.slice(0, end), rest: body.slice(end) };
+}
+
+const FENCE = /^ {0,3}(`{3,}|~{3,})/;
+
+/** The fences of `text` as [start of the opening line, end of the closing
+ *  line] pairs; an unclosed fence runs to the end. */
+function fenceRanges(text: string): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  let open: { start: number; marker: string } | null = null;
+  let pos = 0;
+  for (const line of text.split('\n')) {
+    const lineEnd = Math.min(text.length, pos + line.length + 1);
+    const m = FENCE.exec(line);
+    if (m) {
+      if (!open) open = { start: pos, marker: m[1] };
+      else if (m[1][0] === open.marker[0] && m[1].length >= open.marker.length && !line.trim().slice(m[1].length).trim()) {
+        ranges.push([open.start, lineEnd]);
+        open = null;
+      }
+    }
+    pos = lineEnd;
+  }
+  if (open) ranges.push([open.start, text.length]);
+  return ranges;
+}
+
+/** Move a cut that falls inside a code fence to an edge of that fence. */
+export function fenceSafeCut(text: string, cut: number): number {
+  for (const [start, end] of fenceRanges(text)) {
+    if (cut > start && cut < end) return start > 0 ? start : end;
+  }
+  return cut;
 }
 
 const chars = (n: number) => `${n.toLocaleString('en-US')} chars`;
@@ -192,17 +228,21 @@ const TaskRow: React.FC<{ task: string; shared: SharedBrief | null }> = ({ task,
               <ChevronIcon direction="right" />
               shared brief · {chars(brief.length)} · also given to {others} other agent{others === 1 ? '' : 's'}
             </summary>
-            <div className="agent-ev-pre agent-ev-task-fold">{brief.trimEnd()}</div>
+            <div className="agent-ev-task-fold">
+              <MarkdownRenderer content={brief.trimEnd()} rawHtml={false} />
+            </div>
           </details>
         )}
-        {own}
+        <MarkdownRenderer content={own} rawHtml={false} />
         {rest && (
           <details className="agent-ev-result">
             <summary>
               <ChevronIcon direction="right" />
               rest of the task · {chars(rest.length)}
             </summary>
-            <div className="agent-ev-pre agent-ev-task-fold">{rest}</div>
+            <div className="agent-ev-task-fold">
+              <MarkdownRenderer content={rest} rawHtml={false} />
+            </div>
           </details>
         )}
       </div>

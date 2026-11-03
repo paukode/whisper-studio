@@ -81,7 +81,7 @@
           <td><code>bypassPermissions</code></td>
           <td>Bypass</td>
           <td>Auto-allow</td>
-          <td>Every action inside the workspace runs with no card. The hard floors still ask, and a save outside the workspace or a reach into an ungranted folder still asks unless that category's own row is set to bypass.</td>
+          <td>Every action runs with no card, inside the workspace and outside it (the user's decision of 2026-11-02). Only the github-destructive and MCP-approve floors ask, and a category row of the user's that names another mode still decides that category.</td>
         </tr>
         <tr>
           <td><code>dontAsk</code></td>
@@ -100,8 +100,8 @@
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
       <div class="callout__body"><p><b>Two of these modes are irreversible by design.</b>
-        <code>bypassPermissions</code> runs every action inside the workspace with no prompt (only
-        the hard floors and actions outside the workspace still ask), and <code>dontAsk</code>
+        <code>bypassPermissions</code> runs every action with no prompt (only a destructive GitHub
+        action and an MCP-approve tool still ask), and <code>dontAsk</code>
         silently drops almost every gated action. Both are deliberate opt-ins for trusted or hands-off sessions;
         neither should be the default for exploratory work. The sandbox still applies under
         <code>bypassPermissions</code> - it removes the <em>prompt</em>, not the OS boundary. In
@@ -162,9 +162,12 @@
         <code>dontAsk</code> (the global mode or the category's own row) it returns deny instead,
         because that mode never shows a card.</p></li>
       <li><h4>An rm-class command reaching outside the workspace</h4><p>A command that deletes
-        anything beyond the connected workspace and the app's own folder always returns ask,
-        whatever the mode; a delete that stays inside them is an ordinary command and follows the
-        mode (the user's rule: inside the workspace, bypass means bypass).
+        anything beyond the connected workspace and the app's own folder returns ask in every mode
+        except <code>bypassPermissions</code>, where it runs with no card (the user's decision of
+        2026-11-02); a delete that stays inside them is an ordinary command and follows the mode.
+        The effective mode is the category's own row when the user set one, so a <code>cli</code>
+        row that names another mode keeps the floor in Bypass. The <code>rm -rf /</code> hard block
+        in <code class="path">server/security/command_validator.py</code> refuses in every mode.
         <code>delete_sites</code> (<code class="path">server/security/delete_sites.py</code>)
         parses the command with <code>shlex</code> rather than matching a substring, so it sees
         through wrappers (<code>sudo</code>, <code>env</code>, <code>command</code>,
@@ -201,15 +204,18 @@
         command <code class="path">.whisper/launch.json</code> resolves it to and the one pinned into
         the call, each joined with spaces, plus any script it hands a shell with <code>-c</code>.</p></li>
       <li><h4>A request to leave the sandbox</h4><p>A call asking for
-        <code>sandbox_permissions: "danger-full-access"</code> always returns ask. That parameter is
-        a request to drop the sandbox's write confinement for one command, so it can never be covered
-        by a mode, a rule, or a session approval.</p></li>
+        <code>sandbox_permissions: "danger-full-access"</code> returns ask in every mode except
+        <code>bypassPermissions</code>. That parameter is a request to drop the sandbox's write
+        confinement for one command, so outside Bypass it can never be covered by a mode, a rule, or
+        a session approval. In Bypass, commands run with no sandbox, so the request has no meaning:
+        the app accepts it and ignores it, with no card. In a read-only scope under Bypass (plan mode
+        or a read-only agent), the executor refuses it.</p></li>
       <li><h4>A command in the visible terminal</h4><p>A <code>terminal_run</code> call with
         <code>mode: "visible"</code> returns ask in every mode except <code>bypassPermissions</code>.
         The command goes into the user's own shell, and the OS does not limit the writes of that
         shell. No rule or session approval can cover it. In <code>bypassPermissions</code>, the
-        command runs with no card. A delete in that shell still returns ask, because the app does not
-        know its current folder. An unattended agent cannot use visible mode.</p></li>
+        command runs with no card, a delete included. An unattended agent cannot use visible
+        mode.</p></li>
       <li><h4>MCP approve tier</h4><p>An MCP tool whose server or tool is marked
         <code>approval_mode: "approve"</code> in <code>mcp_servers.json</code> always returns ask.
         Like the previous check, this is a hard floor: the user explicitly marked that server as one
@@ -231,12 +237,15 @@
         <code>permissions.json</code> replaces the global mode for everything that follows,
         including the <code>bypassPermissions</code> check right below. That is the point: "always
         confirm deletes" can hold even when the global mode is more permissive.</p></li>
-      <li><h4>bypassPermissions</h4><p>If the effective mode is <code>bypassPermissions</code>, allow,
-        except for the two categories whose action lands outside the workspace: a save to a path
-        the user named (<code>save</code>) and reach into a folder they have not granted
-        (<code>folder-access</code>) fall through to the session approvals, the rules and finally
-        ask, unless that category's own row says bypass. A write under
-        <code class="path">~/.whisper</code> was already allowed above.</p></li>
+      <li><h4>bypassPermissions</h4><p>If the effective mode is <code>bypassPermissions</code>,
+        allow. This includes a save to a path the user named (<code>save</code>) and reach into a
+        folder they have not granted (<code>folder-access</code>). The ws_* file tools and the write
+        and delete executors also change a file at any path in Bypass
+        (<code class="path">server/workspace/paths.py</code> <code>ws_path_changeable</code>),
+        except in the scratch folder of another session. An unattended run (a subagent, a workflow
+        script) carries no mode of its own, so its executors read the app's mode
+        (<code>bypass_now</code>): in Bypass, <code>refuse_if_agent_rm</code> lets its delete
+        run.</p></li>
       <li><h4>Trusted skill script</h4><p>If the call comes from a trusted skill script
         (<code>auto_allow_trusted</code>), allow.</p></li>
       <li><h4>Session approvals</h4><p>If you clicked "Yes, all write" (or "Block write") earlier
@@ -390,7 +399,12 @@
       capped at 3 seconds and never allowed to raise, and its result (a LOW / MEDIUM / HIGH risk
       level plus a sentence of prose) rides the <code>approval_request</code> event as
       <code>explanation</code>. It runs only on the <em>ask</em> branch, and only when the turn has a
-      cloud model to ask, so an offline local-model turn simply shows the card without one. The
+      cloud model to ask, so an offline local-model turn simply shows the card without one.
+      The explainer reads only the fields the card shows. Server stamps (keys that start with
+      <code>__</code>, <code>session_id</code>, the workspace root) do not go to it, and
+      <code>secret_access</code> goes only with a card that asks for a credential-store read.
+      Long input values are cut at a word boundary. The explanation, the reasoning and the risk
+      are cut at a word boundary too, and the card shows each one as its own paragraph. The
       config key <code>permission_explainer_enabled</code> (default <code>true</code>) turns it off;
       there is no toggle in Settings, it is a <code class="path">config.user.json</code> key that
       <code>config_set</code> in chat can also change. The separate

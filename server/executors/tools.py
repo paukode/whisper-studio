@@ -159,14 +159,16 @@ RUN_PYTHON_TOOL = {
                     "Filesystem confinement. Omit for the default workspace-write "
                     "(writes limited to the workspace, this session's scratch folder, "
                     "temp, and ~/.aws). read-only "
-                    "denies all writes. danger-full-access runs unconfined, requires "
-                    "justification, and always triggers a per-call approval prompt."
+                    "denies all writes. danger-full-access lifts the write limits but "
+                    "still runs inside the OS sandbox (setuid programs such as ps and a "
+                    "nested sandbox-exec still fail), requires justification, and "
+                    "always triggers a per-call approval prompt."
                 ),
             },
             "justification": {
                 "type": "string",
                 "description": (
-                    "One line explaining why full filesystem access is needed. "
+                    "One line explaining why writes outside the workspace are needed. "
                     "Required with sandbox_permissions='danger-full-access'; shown "
                     "verbatim on the user's approval card."
                 ),
@@ -193,7 +195,9 @@ TERMINAL_RUN_TOOL = {
         "when commands are otherwise session-approved. mode=visible types the command "
         "into the user's terminal panel so they can watch: it opens the panel, and a "
         "new terminal (in cwd, else the workspace) when none is open or the open one "
-        "is busy. It runs in that terminal's current folder with no write confinement, "
+        "is busy. A visible run that timed out keeps running there, and further visible "
+        "runs are refused until it ends. It runs in that terminal's current folder with no "
+        "write confinement, "
         "so it asks the user to approve in every permission mode except Bypass. "
         "Use it only when the user asks to see it run. Every call is approval-gated "
         "and validated first; dangerous commands and interactive ones that wait for "
@@ -247,8 +251,10 @@ TERMINAL_RUN_TOOL = {
                     "Filesystem confinement for sandbox mode. Omit for the default "
                     "workspace-write (writes limited to the workspace, this session's "
                     "scratch folder and temp, not to cwd). read-only denies "
-                    "all writes. danger-full-access runs unconfined, requires "
-                    "justification, and always triggers a per-call approval prompt; "
+                    "all writes. danger-full-access lifts the write limits but still "
+                    "runs inside the OS sandbox (setuid programs such as ps and a "
+                    "nested sandbox-exec still fail), requires justification, and "
+                    "always triggers a per-call approval prompt; "
                     "use it only after a workspace-write run was blocked by the "
                     "sandbox, or when the task clearly requires writing outside the "
                     "workspace and the scratch folder."
@@ -257,7 +263,7 @@ TERMINAL_RUN_TOOL = {
             "justification": {
                 "type": "string",
                 "description": (
-                    "One line explaining why full filesystem access is needed. "
+                    "One line explaining why writes outside the workspace are needed. "
                     "Required with sandbox_permissions='danger-full-access'; shown "
                     "verbatim on the user's approval card."
                 ),
@@ -283,7 +289,10 @@ TERMINAL_SEND_TOOL = {
         "just read pending output without typing. Every call is approval-gated and "
         "the first command line is validated. Default read budget 10s, max 300s. "
         "Writes are confined to the workspace, this session's scratch folder and "
-        "temp; a new workspace opens a fresh terminal. Call terminal_close when done."
+        "temp; a new workspace opens a fresh terminal. Call terminal_close when done. "
+        "With target='visible' it sends only Ctrl-C to the user's visible terminal, and "
+        "only to stop your own terminal_run mode='visible' that timed out and still runs "
+        "there."
     ),
     "input_schema": {
         "type": "object",
@@ -303,6 +312,15 @@ TERMINAL_SEND_TOOL = {
                 "description": (
                     "Seconds to wait for the program to settle before returning. "
                     "Default 10, max 300."
+                ),
+            },
+            "target": {
+                "type": "string",
+                "enum": ["interactive", "visible"],
+                "description": (
+                    "interactive (default): this chat's persistent terminal. visible: "
+                    "the user's visible terminal, for Ctrl-C only (\\x03 with no other "
+                    "text) while your own timed-out visible run still runs there."
                 ),
             },
             "cwd": {

@@ -37,7 +37,9 @@ _TASK_TERMINAL = {
 }
 
 
-def _register_task(run_id: str, name: str, session_id: str, model_key: str) -> str:
+def _register_task(
+    run_id: str, name: str, session_id: str, model_key: str, *, wake_on_finish: bool = False
+) -> str:
     """Mirror a launched run into the unified background-task registry, so it
     shows in the header's task list and completion_inject reports it back to
     the model on the next turn. A registry hiccup must never stop the run
@@ -51,7 +53,7 @@ def _register_task(run_id: str, name: str, session_id: str, model_key: str) -> s
             "workflow",
             session_id=session_id,
             title=f"Workflow: {name or run_id}",
-            meta={"run_id": run_id, "model": model_key},
+            meta=_task_meta(run_id, model_key, wake_on_finish),
         )
         row = registry.get_task(task_id)
         if row and session_id:
@@ -60,6 +62,15 @@ def _register_task(run_id: str, name: str, session_id: str, model_key: str) -> s
     except Exception as e:  # noqa: BLE001 — mirroring is never load-bearing
         log.warning("workflow %s: task registry mirror failed: %s", run_id, e)
         return ""
+
+
+def _task_meta(run_id: str, model_key: str, wake_on_finish: bool) -> dict:
+    meta = {"run_id": run_id, "model": model_key}
+    if wake_on_finish:
+        from server.tasks.wake import WAKE_META_KEY
+
+        meta[WAKE_META_KEY] = True
+    return meta
 
 
 def _finish_task(run_id: str, status: str, outcome: dict) -> None:
@@ -80,6 +91,24 @@ def _finish_task(run_id: str, status: str, outcome: dict) -> None:
             emit_task_event(finished.get("session_id") or "", event, finished)
     except Exception as e:  # noqa: BLE001
         log.warning("workflow %s: task registry close failed: %s", run_id, e)
+        return
+    if finished:
+        _report_back(run_id, finished, stopped_on_request=status == "stopped")
+
+
+def _report_back(run_id: str, task: dict, *, stopped_on_request: bool) -> None:
+    """Bring a finished run a chat turn launched back to that chat: the
+    workflow_run tool tells the model the run's end wakes it, so the model
+    ends its turn and the result must start the next one
+    (server/tasks/wake.py)."""
+    try:
+        from server.tasks.wake import report_finished
+
+        how = report_finished(task, stopped_on_request=stopped_on_request)
+        if not how.startswith("skipped"):
+            log.info("workflow %s reported back to its chat (%s)", run_id, how)
+    except Exception as e:  # noqa: BLE001 - the task row and its event are already out
+        log.warning("workflow %s not reported back: %s", run_id, e)
 
 
 def _task_result_text(status: str, outcome: dict) -> str:
@@ -91,6 +120,12 @@ def _task_result_text(status: str, outcome: dict) -> str:
         f"{outcome.get('tokens_in', 0) + outcome.get('tokens_out', 0)} tokens"
         + (" (budget cap reached)" if outcome.get("cap_reached") else "")
     )
+    incomplete = int(outcome.get("agents_incomplete", 0) or 0)
+    if incomplete:
+        head += (
+            f"\n{incomplete} agent(s) stopped at a limit before they finished "
+            '(status "incomplete"): their results are partial. Re-run the remainder.'
+        )
     if outcome.get("error"):
         return f"{head}\n\nError: {outcome['error']}"
     body = _render_result(outcome.get("result"))
@@ -152,7 +187,7 @@ def resolve_workflow_effort(effort_label: str | None, model_key: str) -> str | N
     return effort_for_model(model_key, effort_label)
 
 
-def resolve_workflow_workspace(raw: str | None) -> tuple[str | None, str]:
+def resolve_workflow_workspace(raw: str | None, *, bypass: bool = False) -> tuple[str | None, str]:
     """Resolve the workspace a run is pinned to. Returns (path, error) — path
     is ``None`` with error set on a bad explicit path, or ``None`` with no
     error when nothing is connected and none was given (nothing to pin to).
@@ -165,6 +200,11 @@ def resolve_workflow_workspace(raw: str | None) -> tuple[str | None, str]:
     Omitted, it snapshots whatever is connected RIGHT NOW, so a workspace
     switch after launch can never redirect an already-running run's later
     agents.
+
+    ``bypass`` (the Bypass permission mode) skips the folder-grant check: in
+    Bypass a run may be pinned to any existing folder with no card, the way
+    every other tool reaches outside the workspace in Bypass. The folder must
+    still exist.
     """
     from server.workspace.state import get_workspace_path
 
@@ -180,7 +220,7 @@ def resolve_workflow_workspace(raw: str | None) -> tuple[str | None, str]:
         # remembered, so this only ever fires the first time.
         from server.security.folder_grants import needs_grant
 
-        if needs_grant(resolved, connected):
+        if not bypass and needs_grant(resolved, connected):
             return None, (
                 f"Error: '{raw}' is outside the connected workspace and has not been "
                 "approved yet. Call ws_open_folder with that path first so the user "
@@ -235,8 +275,16 @@ def start_run(
     name: str = "",
     resume_from: str = "",
     agent_runner=None,
+    unsandboxed: bool | None = None,
+    wake_on_finish: bool = False,
 ) -> str:
     """Register + launch a run detached; returns its run_id immediately.
+
+    ``unsandboxed``: the run's agents run their commands with no OS sandbox
+    (server/security/bypass_sandbox.py). None takes it from the launcher: a
+    Bypass turn's tool call launches an unsandboxed run, a confined one a
+    confined run. The run keeps the value it started with, also when it is
+    driven from another thread or loop.
 
     ``workspace_path`` is taken as-is, already resolved by the caller — unlike
     effort, it must NOT be re-derived here: a value shown on an approval card
@@ -246,6 +294,9 @@ def start_run(
     (server.workflows.manager.resolve_workflow_workspace), and callers
     re-validate it still exists right before calling this rather than
     swapping to something else if it does not.
+
+    ``wake_on_finish``: a chat launched the run (the workflow_run tool, or a
+    card or slash command in that chat), so its end reports back there.
     """
     from server.infrastructure.async_tasks import spawn
     from server.workflows.runtime import DEFAULT_WORKFLOW_BUDGET_TOKENS
@@ -292,7 +343,9 @@ def start_run(
             ),
         )
 
-    _task_ids[run_id] = _register_task(run_id, name, session_id, model_key)
+    _task_ids[run_id] = _register_task(
+        run_id, name, session_id, model_key, wake_on_finish=wake_on_finish
+    )
 
     resume_cache = jnl.load_resume_cache(resume_from) if resume_from else {}
     journal = jnl.Journal(run_id)
@@ -316,10 +369,13 @@ def start_run(
         on_event=lambda ev: _publish(run_id, session_id, ev),
     )
     _live[run_id] = run
+    from server.security import bypass_sandbox
     from server.tasks.owner import run_owned
 
+    if unsandboxed is None:
+        unsandboxed = bypass_sandbox.active()
     # The workflow's agents run their own commands: a chat Stop spares them.
-    _schedule(run_owned(f"workflow:{run_id}", _drive(run)), run_id, spawn)
+    _schedule(run_owned(f"workflow:{run_id}", _drive(run, unsandboxed)), run_id, spawn)
     return run_id
 
 
@@ -452,10 +508,13 @@ def _load_trusted_saved(name: str):
     return loaded if loaded and loaded["trusted"] else None
 
 
-async def _drive(run: WorkflowRun) -> None:
+async def _drive(run: WorkflowRun, unsandboxed: bool = False) -> None:
+    from server.security import bypass_sandbox
+
     outcome = {"status": "failed", "error": "runner did not start"}
     try:
-        outcome = await run.run()
+        with bypass_sandbox.entered(unsandboxed):
+            outcome = await run.run()
         outcome = verify_deliverables(outcome, getattr(run, "workspace_path", None))
     except Exception as e:  # noqa: BLE001
         log.error("workflow %s crashed: %s", run.run_id, e, exc_info=True)
@@ -557,6 +616,7 @@ def _finalize(run: WorkflowRun, outcome: dict) -> None:
             "phase": "completed",
             "status": status,
             "agents_spawned": outcome.get("agents_spawned", 0),
+            "agents_incomplete": outcome.get("agents_incomplete", 0),
             "cost_usd": outcome.get("cost_usd", 0.0),
             "cap_reached": bool(outcome.get("cap_reached")),
             "error": outcome.get("error", ""),
@@ -599,7 +659,13 @@ def _row_to_dict(row) -> dict:
                 d[k.replace("_json", "")] = None
         d.pop(k, None)
     d["cap_reached"] = bool(d.get("cap_reached"))
-    d["live"] = row["run_id"] in _live
+    live = _live.get(row["run_id"])
+    d["live"] = live is not None
+    if live is not None:
+        # The row's counters are written once, at the run's end. A live run
+        # reads the in-memory ledger instead, or a status check mid-run shows
+        # 0 agents and $0 while agents have already finished.
+        d.update(live.live_counters())
     return d
 
 
@@ -610,8 +676,37 @@ def get_run(run_id: str, *, journal_tail: int = 200) -> dict | None:
     if not row:
         return None
     out = _row_to_dict(row)
-    out["journal"] = jnl.tail_journal(run_id, journal_tail)
+    entries = jnl.read_journal(run_id)
+    out["journal"] = entries[-journal_tail:] if len(entries) > journal_tail else entries
+    out["agent_calls"] = agent_call_rows(entries)
+    live = _live.get(run_id)
+    if live is not None:
+        # The journal records a call when it ends: the calls still running
+        # come from the live run, or a reload mid-run drops them from the card.
+        done = {c.get("seq") for c in out["agent_calls"]}
+        running = [dict(c) for seq, c in sorted(live.in_flight.items()) if seq not in done]
+        out["agent_calls"] = sorted(out["agent_calls"] + running, key=lambda c: c.get("seq", 0))
     return out
+
+
+_AGENT_CALL_FIELDS = (
+    "seq",
+    "phase",
+    "label",
+    "status",
+    "agent_id",
+    "started_at",
+    "finished_at",
+)
+
+
+def agent_call_rows(entries: list[dict]) -> list[dict]:
+    """Every agent call of a run, in issue order, without its text or
+    output: what the run card lists after the agents finish or the page
+    reloads. The journal tail alone drops early calls of a long run."""
+    calls = [e for e in entries if e.get("type") == "agent_call"]
+    calls.sort(key=lambda e: e.get("seq", 0))
+    return [{k: e[k] for k in _AGENT_CALL_FIELDS if k in e} for e in calls]
 
 
 def list_runs(session_id: str | None = None, *, limit: int = 50) -> list[dict]:

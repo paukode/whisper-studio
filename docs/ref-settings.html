@@ -390,14 +390,16 @@
     <p>The loop guard (<code class="path">server/chat/loop_guard.py</code>, gated by the
       <code>tool_loop_guard</code> feature flag) refuses a tool call that repeats the same arguments
       after two identical results, a call that has already failed three times unchanged, and a
-      repeating cycle of calls. It also caps the two tools that run away most: <code>web_search</code>
-      at 50 calls a turn, <code>spawn_agent</code> at 50 and <code>team_create</code> at 20. The
+      repeating cycle of calls. It also caps the tools that run away most: <code>web_search</code>
+      at 50 calls a turn, <code>spawn_agent</code> at 50, <code>team_create</code> at 20 and
+      <code>sleep</code> at 10. From the third <code>sleep</code> call in a turn, each result has a
+      note. The note tells the model to use <code>task_wait</code> or <code>workflow_wait</code>. The
       <code>tool_loop_caps</code> object overlays those numbers by tool name, and a cap of
       <code>0</code> turns that tool's cap off:</p>
     <div class="code-block"><pre><code>"tool_loop_caps": { "web_search": 10, "team_create": 0 }</code></pre></div>
-    <p>Pollers that legitimately repeat (<code>task_status</code>, <code>sleep</code>,
-      <code>ci_status</code>, <code>git_status</code> and friends) are exempt from the repeat checks;
-      caps still apply to them.</p>
+    <p>Tools that repeat on purpose (<code>task_status</code>, <code>task_wait</code>,
+      <code>workflow_wait</code>, <code>sleep</code>, <code>ci_status</code>, <code>git_status</code>
+      and similar tools) are exempt from the repeat checks. The caps still apply to them.</p>
 
     <h2 id="feature-flags">Feature flags</h2>
     <p>The <code>feature_flags</code> key is a small namespace of booleans that gate optional behavior
@@ -415,7 +417,7 @@
       <tbody>
         <tr><td><code>companion</code></td><td><code>false</code></td><td>Show the cosmetic buddy companion in the chat corner. Purely visual; makes no model calls.</td></tr>
         <tr><td><code>git_context</code></td><td><code>true</code></td><td>Include git status and instructions in the system prompt.</td></tr>
-        <tr><td><code>prompt_caching</code></td><td><code>true</code></td><td>Cloud (Bedrock) prompt caching of tool definitions and the static system prompt, to cut input-token cost on multi-turn conversations.</td></tr>
+        <tr><td><code>prompt_caching</code></td><td><code>true</code></td><td>Cloud (Bedrock) prompt caching of tool definitions and the static system prompt, to cut input-token cost on multi-turn conversations. It applies to chat, cron, headless runs, subagents and workflow agents on Claude models. GPT models cache on their own.</td></tr>
         <tr><td><code>progressive_tools</code></td><td><code>true</code></td><td>Progressive tool disclosure: advertise a core tool set plus session-activated tools, with everything else discoverable via <code>tool_search</code> from a compact index. Cuts roughly 60-75% of tool-schema tokens per turn.</td></tr>
         <tr><td><code>rag_hybrid_search</code></td><td><code>true</code></td><td>Fuse keyword/BM25 (SQLite FTS5) results with dense vector search via reciprocal-rank fusion.</td></tr>
         <tr><td><code>rag_reranker</code></td><td><code>false</code></td><td>Cross-encoder reranking of fused retrieval candidates before grounding's top-k (Cohere Rerank 3.5 in cloud mode, Qwen3-Reranker-0.6B in local mode). Off by default: the local model adds seconds per grounded turn and can OOM on memory-pressured machines, for a modest gain on top of hybrid retrieval.</td></tr>
@@ -509,19 +511,20 @@
       <code>default</code> while setting <code>category_modes.cli</code> to
       <code>bypassPermissions</code> so shell commands stop asking while file writes and deletes
       still ask. The always-ask floors below still apply.</p>
-    <p>These things always ask, no matter what the global mode, a category override, a bypass mode,
+    <p>Two things always ask, no matter what the global mode, a category override, a bypass mode,
       a custom rule or a blanket session approval says: <b><code>github-destructive</code></b> (repo
-      or ref deletion, PR merge, archive or rename, a raw API DELETE), any command that is
-      <b><code>rm</code></b> or a close cousin of it and deletes outside the connected workspace and
-      the app's own folders (a delete inside them follows the mode), any tool call asking for
-      <b><code>sandbox_permissions: "danger-full-access"</code></b>, and a call to an MCP server
-      configured with <code>approval_mode: "approve"</code>. One exception: in <code>dontAsk</code>
-      (the global mode or the <code>github-destructive</code> row) a destructive GitHub action is
-      denied instead, because that mode never shows a card. A <code>terminal_run</code> typed into
-      your visible terminal asks in every mode except <code>bypassPermissions</code>, because that
-      shell is not sandboxed. Bypass itself stops
-      at the workspace boundary: a file saved to a path outside the workspace and the first reach
-      into a new folder still ask in <code>bypassPermissions</code>.</p>
+      or ref deletion, PR merge, archive or rename, a raw API DELETE), and a call to an MCP server
+      configured with <code>approval_mode: "approve"</code>. In <code>dontAsk</code> (the global mode
+      or the <code>github-destructive</code> row) a destructive GitHub action is denied instead,
+      because that mode never shows a card. Three more ask in every mode except
+      <code>bypassPermissions</code>: any command that is <b><code>rm</code></b> or a close cousin
+      of it and deletes outside the connected workspace and the app's own folders (a delete inside
+      them follows the mode), any tool call asking for
+      <b><code>sandbox_permissions: "danger-full-access"</code></b>, and a
+      <code>terminal_run</code> typed into your visible terminal. Bypass has no workspace boundary:
+      a file saved to a path outside the workspace and the first reach into a new folder run with no
+      card. A category row that names another mode still decides that category in Bypass. The
+      command validator refuses <code>rm -rf /</code> in every mode.</p>
     <p><code>workflow</code> is the one entry that is not an approval-card category. It is read by
       <code class="path">server/workflows/launch_policy.py</code> when the model launches a new
       <a href="arch-ultracode.html">ultracode workflow</a> script: <code>bypassPermissions</code>

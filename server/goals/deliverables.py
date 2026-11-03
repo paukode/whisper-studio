@@ -498,7 +498,7 @@ def claim_feedback(failed: list, messages: list, workspace: str | None) -> str:
         # would do it twice.
         tail = (
             "\nA call of this turn that started one of these has not finished: check on it "
-            "(task_status, task_output, terminal_send) and never start it again." + tail
+            "(task_wait, task_status, task_output, terminal_send) and never start it again." + tail
         )
     return (
         f"{CLAIM_MARKER} These sentences of your reply were held back from the user, because "

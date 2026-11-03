@@ -130,7 +130,7 @@
         <tr><td>DOMPurify on every <code>dangerouslySetInnerHTML</code> site</td><td>Strips <code>&lt;script&gt;</code>, inline handlers, and <code>javascript:</code> URLs from any HTML reaching the React DOM</td><td><b>Boundary</b> for the chat/Markdown render path: without it a prompt-injected page fetched via <code>web_fetch</code> could run JS in the SPA origin</td></tr>
         <tr><td>Approval router with a server-held pause</td><td>Real consent flow for risky commands</td><td><b>Boundary</b>: the server stashes the paused turn and re-validates the payload itself; the client can't fabricate approval</td></tr>
         <tr><td><code>validate_command</code> (regex deny-list)</td><td>Catches <code>rm -rf /</code>, <code>mkfs</code>, <code>dd of=/dev/…</code>, reads of sensitive paths</td><td><b>Defence-in-depth</b> in front of the sandbox on every command path; regex-based and bypassable alone</td></tr>
-        <tr><td><code>sandbox-exec(5)</code></td><td>macOS sandbox profile around every shell + code execution path (including the terminal PTY). When <code>sandbox-exec</code> cannot be used, the command does not run.</td><td><b>Boundary</b>: the strongest layer; even if everything above is bypassed, code runs with the secret-store deny-list applied (writes always; reads unless the mode is Bypass or a person approved the read)</td></tr>
+        <tr><td><code>sandbox-exec(5)</code></td><td>macOS sandbox profile around every shell + code execution path (including the terminal PTY), in every mode except Bypass. In Bypass, commands run with no sandbox. When <code>sandbox-exec</code> cannot be used outside Bypass, the command does not run.</td><td><b>Boundary</b>: the strongest layer; even if everything above is bypassed, code runs with the secret-store deny-list applied outside Bypass (writes always; reads unless a person approved the read). In Bypass, commands run with no sandbox, so the deny-list does not apply to them.</td></tr>
         <tr><td><code>_AWS_READONLY_GUARD</code> in <code>executors/code.py</code></td><td>Monkey-patches <code>botocore</code> to reject non-read AWS calls</td><td><b>Defence-in-depth only</b>: user code in the same process can <code>del</code> the patch; the real container is <code>sandbox-exec</code></td></tr>
         <tr><td>Plugin loader (<code>enabled</code> allow-list)</td><td>Dropping a <code>.py</code> into <code>plugins/</code> does nothing until explicitly enabled</td><td><b>Boundary</b> for the drive-by-plugin vector</td></tr>
         <tr><td>Credential environment denylist (<code class="path">server/security/sensitive_env.py</code>)</td><td>Strips GitHub tokens from sandboxed shells, and GitHub tokens plus cloud and API keys from every local MCP child process</td><td><b>Defence-in-depth</b>: exact variable names only, and the background-task shell path inherits the parent environment unscrubbed</td></tr>
@@ -154,8 +154,8 @@
       modes exist: write anywhere, write only inside the workspace and the temp directories, or
       write nothing. The assistant picks between them with a <code>sandbox_permissions</code>
       parameter (<code>workspace-write</code>, the default, <code>read-only</code>, or
-      <code>danger-full-access</code>), and asking for full access always raises an approval card
-      whatever the permission mode says. The secret deny rules are emitted last in the generated
+      <code>danger-full-access</code>), and asking for full access raises an approval card in every
+      permission mode except Bypass. In Bypass there is no sandbox, so the app ignores the request. The secret deny rules are emitted last in the generated
       profile, so a workspace that happens to be your home directory cannot re-expose
       <code class="path">~/.ssh</code> through the writable-root allow-back. See
       <a href="arch-sandbox.html#write-modes">Three write modes</a>.</p>

@@ -161,3 +161,35 @@ def test_events_emitted(monkeypatch):
     kinds = {e["type"] for e in events}
     assert "phase" in kinds and "agent" in kinds
     assert any(e.get("label") == "scout" for e in events if e["type"] == "agent")
+
+
+def test_agent_calls_journal_their_spans_and_phase():
+    """Each agent call journals when it started and finished, so the run card
+    can read how many ran at once; agent events carry the phase both ways."""
+    from server.workflows import journal as jnl
+    from server.workflows.manager import agent_call_rows
+
+    events = []
+
+    async def fake_agent(prompt, opts):
+        await asyncio.sleep(0.05)
+        return {"text": "ok", "usage": {}, "status": "completed", "agent_id": f"id-{prompt}"}
+
+    src = (
+        "export const meta = { name: 'x', description: 'y', phases: ['work'] }\n"
+        "phase('work')\n"
+        "await parallel([() => agent('a'), () => agent('b')])\n"
+        "return 1\n"
+    )
+    run = _mk(src, agent_runner=fake_agent, on_event=lambda ev: events.append(ev))
+    assert _run(run.run())["status"] == "done"
+    rows = agent_call_rows(jnl.read_journal("run-test"))
+    assert [r["agent_id"] for r in sorted(rows, key=lambda r: r["agent_id"])] == ["id-a", "id-b"]
+    assert all("text" not in r and "output" not in r for r in rows)
+    for r in rows:
+        assert r["started_at"] < r["finished_at"]
+    # The two parallel calls overlap in time.
+    a, b = rows
+    assert a["started_at"] < b["finished_at"] and b["started_at"] < a["finished_at"]
+    agent_events = [e for e in events if e["type"] == "agent"]
+    assert agent_events and all(e.get("phase") == "work" for e in agent_events)
