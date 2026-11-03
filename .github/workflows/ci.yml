@@ -26,10 +26,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      # The Python of setup.sh: Homebrew's python@3.13. The python.org build
+      # that actions/setup-python installs on macOS has a sqlite3 that cannot
+      # load extensions, and the index stores its vectors with sqlite-vec.
+      # The venv's bin goes on PATH, so python, pip and ruff below are the venv's.
+      - name: Set up Homebrew Python 3.13
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+        run: |
+          brew list python@3.13 >/dev/null 2>&1 || brew install python@3.13
+          "$(brew --prefix)/opt/python@3.13/bin/python3.13" -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/python" -c 'import sqlite3; sqlite3.connect(":memory:").enable_load_extension(True)'
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+
+      - uses: actions/cache@v4
         with:
-          python-version: '3.13'
-          cache: pip
+          path: ~/Library/Caches/pip
+          key: pip-${{ runner.os }}-brew313-${{ hashFiles('requirements.txt') }}
+          restore-keys: pip-${{ runner.os }}-brew313-
 
       # The transcription / ML stack (mlx*, parakeet-mlx, torch/torchaudio/
       # speechbrain) is not exercised by the test suite: server.chat /
@@ -37,14 +51,14 @@ jobs:
       # lines so the install stays fast.
       # gliner pulls torch in transitively, so the strip doesn't keep torch
       # out; it just drops the pin, leaving CI to test a floating torch.
-      # Constrain it to the version requirements.txt pins (torch==2.11.0) so
+      # Constrain it to the version requirements.txt pins (torch==2.15.0) so
       # CI exercises the same torch the app ships. The paired setuptools<82
       # cap still holds: setuptools==81.0.0 survives the grep and installs
       # from requirements-ci.txt directly.
       - name: Install Python deps (test subset)
         run: |
           grep -vE '^(mlx|mlx-whisper|parakeet-mlx|torch|torchaudio|speechbrain)==' requirements.txt > /tmp/requirements-ci.txt
-          printf 'torch==2.11.0\n' > /tmp/constraints-ci.txt
+          printf 'torch==2.15.0\n' > /tmp/constraints-ci.txt
           python -m pip install --upgrade pip
           pip install -c /tmp/constraints-ci.txt -r /tmp/requirements-ci.txt
 
