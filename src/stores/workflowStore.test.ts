@@ -118,6 +118,27 @@ describe('workflowStore: finished agents stay listed', () => {
     expect(act.peak).toBe(2);
   });
 
+  it('a reload mid-run lists the agents still running, and their live events update the same rows', () => {
+    apply({
+      type: 'snapshot',
+      run: run({
+        status: 'running',
+        agent_calls: [
+          { seq: 0, phase: 'draft', label: 'draft:a', status: 'completed', agent_id: 'a0', started_at: 0, finished_at: 5 },
+          { seq: 1, phase: 'draft', label: 'draft:b', status: 'running', agent_id: 'a1', started_at: 0 },
+        ],
+      }),
+    });
+    let act = useWorkflowStore.getState().activity[RUN];
+    expect(act.agentOrder).toEqual(['a0', 'a1']);
+    expect(act.agentReports.a1.status).toBe('running');
+
+    apply({ agent_id: 'a1', agent_name: 'draft:b', phase: 'completed' });
+    act = useWorkflowStore.getState().activity[RUN];
+    expect(act.agentOrder).toEqual(['a0', 'a1']);
+    expect(act.agentReports.a1.status).toBe('completed');
+  });
+
   it('a live row keeps its name and task, and the journal settles its status', () => {
     apply({ agent_id: 'a1', agent_name: 'review:bugs', phase: 'started', task: 'find bugs' });
     apply({ type: 'snapshot', run: run() });

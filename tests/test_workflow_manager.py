@@ -131,3 +131,76 @@ def test_reconcile_stale():
     n = manager.reconcile_stale()
     assert n >= 1
     assert manager.get_run("ghost")["status"] == "stale"
+
+
+def test_a_finished_chat_run_reports_back_and_an_agents_run_does_not(monkeypatch):
+    from server.tasks import wake as task_wake
+    from server.workflows import manager
+
+    reported: list[dict] = []
+    monkeypatch.setattr(
+        task_wake,
+        "report_finished",
+        lambda task, *, stopped_on_request: reported.append(task) or "wake",
+    )
+
+    async def fake_agent(prompt, opts):
+        return {"text": "ok", "usage": {}, "status": "completed"}
+
+    src = "export const meta = { name: 'w', description: 'd', phases: [] }\nreturn 1\n"
+
+    async def go():
+        chat = manager.start_run(src, session_id="s3", agent_runner=fake_agent, wake_on_finish=True)
+        agents = manager.start_run(src, session_id="s3", agent_runner=fake_agent)
+        await _await_done(chat)
+        await _await_done(agents)
+        for _ in range(50):
+            if len(reported) == 2:
+                break
+            await asyncio.sleep(0.05)
+
+    asyncio.run(go())
+    assert len(reported) == 2
+    woken = [t for t in reported if (t.get("meta") or {}).get(task_wake.WAKE_META_KEY)]
+    assert len(woken) == 1 and woken[0]["kind"] == "workflow"
+
+
+def test_a_reload_mid_run_lists_the_agents_still_running():
+    from server.workflows import manager
+
+    # A plain flag: the run may be driven on another thread's loop.
+    gate = {"open": False}
+    seen_ids: list[str] = []
+
+    async def slow_agent(prompt, opts):
+        seen_ids.append(opts.get("_agent_id", ""))
+        while not gate["open"]:
+            await asyncio.sleep(0.02)
+        return {"text": "ok", "usage": {}, "status": "completed"}
+
+    src = (
+        "export const meta = { name: 'w', description: 'd', phases: ['draft'] }\n"
+        "phase('draft')\n"
+        "await parallel([1, 2].map((i) => () => agent('t' + i, {label: 'draft:' + i})))\n"
+        "return 1\n"
+    )
+
+    async def go():
+        rid = manager.start_run(src, session_id="s4", agent_runner=slow_agent)
+        for _ in range(100):
+            if len(seen_ids) == 2:
+                break
+            await asyncio.sleep(0.05)
+        mid = manager.get_run(rid)
+        gate["open"] = True
+        done = await _await_done(rid)
+        return mid, done
+
+    mid, done = asyncio.run(go())
+    running = mid["agent_calls"]
+    assert [c["status"] for c in running] == ["running", "running"]
+    assert {c["label"] for c in running} == {"draft:1", "draft:2"}
+    # The id a running row carries is the one the finished call keeps.
+    assert {c["agent_id"] for c in running} == set(seen_ids)
+    assert {c["agent_id"] for c in done["agent_calls"]} == set(seen_ids)
+    assert all(c["status"] == "completed" for c in done["agent_calls"])

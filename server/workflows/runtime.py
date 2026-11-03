@@ -19,6 +19,7 @@ import contextvars
 import logging
 import os
 import time
+import uuid
 
 from server.infrastructure.binaries import resolve
 from server.workflows import rpc
@@ -170,6 +171,10 @@ class WorkflowRun:
         self.cap_reached = False
         # Agents a limit stopped before they finished (status "incomplete").
         self.agents_incomplete = 0
+        # Agent calls that hold a slot and have not finished, by seq: the
+        # journal records a call only when it ends, so a page that reloads
+        # mid-run lists these from here (manager.get_run).
+        self.in_flight: dict[int, dict] = {}
         self._seq = 0
         # The phase the script last entered with phase(): an agent call with
         # no opts.phase of its own counts under it.
@@ -502,6 +507,18 @@ class WorkflowRun:
                 return await self._error(
                     mid, rpc.ERR_BUDGET, f"budget {self.budget_tokens} output tokens exhausted"
                 )
+            # The id is chosen here, not by the agent runtime, so the call is
+            # listed under the same id before and after it ends.
+            agent_id = uuid.uuid4().hex[:10]
+            started_at = time.time()
+            self.in_flight[seq] = {
+                "seq": seq,
+                "phase": phase,
+                "label": opts.get("label", ""),
+                "status": "running",
+                "agent_id": agent_id,
+                "started_at": started_at,
+            }
             self._emit(
                 {
                     "type": "agent",
@@ -509,10 +526,13 @@ class WorkflowRun:
                     "status": "running",
                     "label": opts.get("label", ""),
                     "phase": phase,
+                    "agent_id": agent_id,
                 }
             )
-            started_at = time.time()
-            result = await self._agent_runner(prompt, opts)
+            try:
+                result = await self._agent_runner(prompt, {**opts, "_agent_id": agent_id})
+            finally:
+                self.in_flight.pop(seq, None)
             finished_at = time.time()
 
         self._account(result.get("usage") or {})
@@ -532,7 +552,7 @@ class WorkflowRun:
                 "text": result.get("text", ""),
                 "output": result.get("output"),
                 "usage": result.get("usage"),
-                "agent_id": result.get("agent_id", ""),
+                "agent_id": result.get("agent_id") or agent_id,
                 # Non-empty when the script's opts.model was rejected (unknown
                 # key, or on-device with no agent adapter) and the run's own
                 # model was used instead — journaled so a script author can

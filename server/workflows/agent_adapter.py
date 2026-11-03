@@ -102,6 +102,9 @@ async def run_workflow_agent(
             # Recorded in the agent's journal so its pane can fold the brief
             # this run's agents share and show the agent's own task first.
             workflow_run_id=run_id,
+            # Chosen by the run (WorkflowRun._handle_agent), so a reload
+            # mid-run lists this agent under the id its events carry.
+            agent_id=opts.get("_agent_id") or None,
         )
     except Exception as e:  # noqa: BLE001 — surface as a failed agent, never crash the run
         log.warning("workflow agent error (run %s): %s", run_id, e)

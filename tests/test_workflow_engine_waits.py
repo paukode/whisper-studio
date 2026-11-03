@@ -174,6 +174,8 @@ def test_get_run_reads_the_live_ledger_for_a_running_run():
         )
 
     class _Live:
+        in_flight: dict = {}
+
         def live_counters(self):
             return {"agents_spawned": 3, "tokens_out": 40, "cost_usd": 1.25}
 

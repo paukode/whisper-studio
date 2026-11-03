@@ -77,7 +77,8 @@ export function peakConcurrency(calls: readonly WorkflowAgentCall[]): number {
 }
 
 function journalStatus(status: string | undefined): TeamAgentReport['status'] {
-  if (status === 'failed' || status === 'stopped' || status === 'turn_limit') return status;
+  // 'running': a live run's snapshot lists the calls that have not ended.
+  if (status === 'failed' || status === 'stopped' || status === 'turn_limit' || status === 'running') return status;
   return 'completed';
 }
 
