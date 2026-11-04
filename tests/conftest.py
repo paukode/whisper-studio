@@ -301,6 +301,30 @@ def _no_live_activity_labels(monkeypatch):
     monkeypatch.setattr(activity_labels, "_in_thread", {})
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _isolate_pricing_overrides(tmp_path_factory):
+    """Price every test at the shipped rates only.
+
+    tracker builds _MODEL_PRICING at import, during collection, from
+    pricing.example.json overlaid by the developer's own gitignored
+    pricing.json, so a stale local override failed the pricing tests. The
+    table is refilled in place (tests import it by name) from the example
+    file alone, and PRICING_PATH names a file that does not exist. Tests of
+    the override itself patch PRICING_PATH and call _load_pricing."""
+    from server.costs import tracker
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(
+            tracker, "PRICING_PATH", str(tmp_path_factory.mktemp("pricing") / "pricing.json")
+        )
+        live = dict(tracker._MODEL_PRICING)
+        tracker._MODEL_PRICING.clear()
+        tracker._MODEL_PRICING.update(tracker._load_pricing())
+        yield
+        tracker._MODEL_PRICING.clear()
+        tracker._MODEL_PRICING.update(live)
+
+
 @pytest.fixture(autouse=True)
 def _isolate_aws_dir(tmp_path_factory, monkeypatch):
     """Never create folders in the developer's real ~/.aws: aws_cli and
