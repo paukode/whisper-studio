@@ -3,7 +3,7 @@ around the dispatch, the size of what the model received and whether the
 budget cut it, the lines a file read carries, and the diff stats of a write
 the gate ran inline. Every key is always present, null when unknown, so the
 client schema can declare them all. The call's id reaches a write on every
-approval exit (the inline path, the card's POST, a spoken yes) so the edit is
+approval exit (the inline path, the card's POST) so the edit is
 kept for the diff dialog.
 """
 
@@ -420,7 +420,7 @@ def test_result_meta_reads_a_states_stats_and_duration():
     }
 
 
-# ── The card's POST and a spoken yes carry the id, and the POST the stats ──
+# ── The card's POST carries the id and the stats ──
 
 
 def test_the_card_post_stamps_the_id_and_returns_the_stats():
@@ -456,17 +456,3 @@ def test_the_card_post_without_an_id_stamps_nothing():
         )
     assert res.json()["stats"] is None
     assert "__tool_use_id__" not in captured[0]
-
-
-def test_a_spoken_yes_passes_the_requests_id_to_the_executor():
-    from server.voice.tools import _execute_approval
-
-    captured: list[dict] = []
-    _register(captured, None, action="test_meta_voice")
-    ok, detail = asyncio.run(
-        _execute_approval("test_meta_voice", {"path": "a.py"}, tool_use_id="toolu_v")
-    )
-    assert ok is True and detail == "Wrote a.py (2 bytes)."
-    assert captured[0]["__tool_use_id__"] == "toolu_v"
-    asyncio.run(_execute_approval("test_meta_voice", {"path": "a.py"}))
-    assert "__tool_use_id__" not in captured[1]

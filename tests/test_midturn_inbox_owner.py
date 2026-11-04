@@ -1,6 +1,6 @@
 """Only the user-facing chat turn reads the mid-turn inbox.
 
-Subagents, detached and workflow agents, cron, voice and wake turns all run
+Subagents, detached and workflow agents, cron and wake turns all run
 under the chat's session_id. When they drained the inbox, a message the user
 typed into the running chat turn was folded into an agent's private context
 instead (and an agent about to finish spent an extra round on it), while the

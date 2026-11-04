@@ -598,7 +598,7 @@ def test_a_session_whose_earlier_call_is_still_in_its_thread_starts_no_new_one(m
 # Fallbacks: the deterministic label stands
 
 
-@pytest.mark.parametrize("source", ["agent", "workflow", "cron", "voice", "headless", "wake"])
+@pytest.mark.parametrize("source", ["agent", "workflow", "cron", "headless", "wake"])
 def test_only_the_chat_turn_asks_for_a_caption(monkeypatch, model, source):
     _tool_pipeline(monkeypatch)
     chunks, _ = _run(_ctx(_Adapter([read("tu_a", "a.py")]), cost_source=source))

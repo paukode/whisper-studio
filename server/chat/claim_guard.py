@@ -46,7 +46,7 @@ first, in order.
 The guard keeps every call of the turn as it first read it, so compaction or
 a salvage round cannot make a done act look undone (or a failed one done),
 and the completion gate reads the same calls. Every consumer of the runner's
-frames (the chat, subagents, scheduled and headless runs, voice) gets the
+frames (the chat, subagents, scheduled and headless runs) gets the
 guarded text, and so does the model's next turn, which is rebuilt from what
 the chat showed; the memory hooks read the turn without the dropped
 sentences (``redact``). The memory agents' notes are not replies and are not

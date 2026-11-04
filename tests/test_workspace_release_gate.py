@@ -4,7 +4,7 @@ tests/test_workspace_disconnect_midturn.py pins the contract for tools the
 batch runs directly. These pin the rest of it: the gate that processes a
 batch's results (where pre-approved and unattended actions actually execute,
 after the batch's own latch is gone), the turns that are not chat turns
-(subagents, scheduled runs, voice and other headless runs), commands whose
+(subagents, scheduled runs and headless runs), commands whose
 cwd falls back to the workspace, and tools that would connect a folder
 themselves and so undo the user's disconnect.
 
@@ -468,7 +468,7 @@ def test_a_subagent_spawned_by_a_released_turn_cannot_touch_the_new_workspace(
     assert forked == [], "an isolated subagent forked the newly connected workspace"
 
 
-# ── Scheduled and headless (voice) runs are latched too ──────────────────
+# ── Scheduled and headless runs are latched too ──────────────────────────
 
 
 def _switch_then_route(ws_b):
@@ -529,9 +529,9 @@ def test_a_scheduled_run_is_refused_after_a_switch(ws_a, ws_b, monkeypatch):
     assert "No workspace connected" in _replayed_result(fake_bedrock)
 
 
-def test_a_voice_run_is_refused_instead_of_paused_after_a_switch(ws_a, ws_b, monkeypatch):
-    """Voice turns are attended headless runs: unlatched, the delete raised a
-    card for B and paused the run."""
+def test_a_headless_run_is_refused_after_a_switch(ws_a, ws_b, monkeypatch):
+    """An unpinned headless run (the agent wake) is latched: after the user
+    switches to B, the delete is refused instead of acting on B."""
     from server.approval.bootstrap import register_defaults
     from server.exec.headless import run_headless_turn
     from server.infrastructure import config as config_mod
@@ -554,8 +554,7 @@ def test_a_voice_run_is_refused_instead_of_paused_after_a_switch(ws_a, ws_b, mon
                 "clean the build",
                 model_key="sonnet",
                 ephemeral=True,
-                attended=True,
-                session_id="sess-voice-release",
+                session_id="sess-headless-release",
             )
         ]
 

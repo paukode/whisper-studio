@@ -1,9 +1,9 @@
 """One round limit and one time limit, from Settings, for every run.
 
 server/infrastructure/run_limits.py is the control, like bedrock_region for
-the model region: chat, voice, headless and scheduled runs and every agent
-type read it, and the old per-caller numbers are gone. Agents are covered in
-tests/test_agent_turn_budget.py, voice in tests/test_voice_tools.py.
+the model region: chat, headless and scheduled runs and every agent type read
+it, and the old per-caller numbers are gone. Agents are covered in
+tests/test_agent_turn_budget.py.
 """
 
 import asyncio
@@ -94,11 +94,10 @@ async def _ok_route(tool_name, tool_input, **kwargs):
     return "ok", []
 
 
-# ── headless: the round limit; the time limit only when nobody attends ─────
+# ── headless: the round limit and the time limit ──────────────────────────
 
 
-@pytest.mark.parametrize("attended", [False, True])
-def test_a_headless_run_takes_the_rounds_and_time_only_when_unattended(monkeypatch, attended):
+def test_a_headless_run_takes_the_rounds_and_time(monkeypatch):
     from tests.test_headless_turn import _collect, _patch_common
 
     _patch_common(monkeypatch, FakeBedrockClient([[msg_start(), *text_block("hi"), *msg_end()]]))
@@ -112,14 +111,13 @@ def test_a_headless_run_takes_the_rounds_and_time_only_when_unattended(monkeypat
                 model_key="sonnet",
                 ephemeral=True,
                 session_id=f"s-{uuid.uuid4().hex[:8]}",
-                attended=attended,
             )
         )
     )
 
     (policy,) = policies
     assert policy.max_rounds == 9
-    assert policy.deadline_seconds == (None if attended else 600.0)
+    assert policy.deadline_seconds == 600.0
 
 
 def test_a_headless_caller_with_its_own_round_count_keeps_it(monkeypatch):

@@ -68,7 +68,6 @@ from server.tasks.routes import router as background_tasks_router
 from server.tasks_tracker import router as tasks_router
 from server.terminal import router as terminal_router
 from server.update_check import router as update_check_router
-from server.voice.routes import router as voice_router
 from server.websocket import router as ws_router
 from server.workflows.routes import router as workflows_router
 from server.workspace import router as workspace_router
@@ -506,7 +505,6 @@ app.include_router(attachments_router)
 app.include_router(chat_router)
 app.include_router(sessions_router)
 app.include_router(ws_router)
-app.include_router(voice_router)
 app.include_router(capture_helper_router)
 app.include_router(speakers_router)
 app.include_router(permissions_router)

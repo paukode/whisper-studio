@@ -454,7 +454,7 @@ def test_scheduled_turns_defer_the_memory_tools(monkeypatch):
     assert CHAT_CORE_TOOLS <= {t["name"] for t in deferred}
 
 
-def test_a_voice_turn_keeps_the_memory_tools_an_unattended_run_defers(monkeypatch):
+def test_a_headless_run_defers_the_memory_tools(monkeypatch):
     from server.chat import tool_pool
     from server.exec.headless import _round_catalog
 
@@ -463,10 +463,9 @@ def test_a_voice_turn_keeps_the_memory_tools_an_unattended_run_defers(monkeypatc
     monkeypatch.setattr(
         "server.infrastructure.feature_flags.is_enabled", lambda name, *a, **k: True
     )
-    voice = {t["name"] for t in _round_catalog("s-voice", attended=True)}
     unattended = {t["name"] for t in _round_catalog("s-wake")}
-    assert CHAT_CORE_TOOLS <= voice
     assert CHAT_CORE_TOOLS.isdisjoint(unattended)
+    assert "ws_read_file" in unattended
 
 
 def test_an_agent_can_still_load_the_memory_tools_it_is_not_offered(monkeypatch):

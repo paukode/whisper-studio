@@ -3,16 +3,16 @@
 One control, the way ``bedrock_region`` is one control for every model call:
 Settings > Costs > Budget, config keys ``round_limit`` and
 ``time_limit_minutes`` (defaults in server/infrastructure/config.py DEFAULTS).
-Every run reads the round limit: chat turns, voice, every agent type, cron and
+Every run reads the round limit: chat turns, every agent type, cron and
 headless runs. The time limit applies where nobody is watching: agents, cron
-and unattended headless runs. Both are read when a run starts, so a change in
+and headless runs. Both are read when a run starts, so a change in
 Settings applies to the next run. An agent's time limit covers its own work:
 time spent waiting on agents it starts does not count, since each of those has
 its own limits (server/agents/tool_access.py WAITS_ON_AGENTS).
 
 The exceptions, chosen on 2026-10-04:
 
-- chat and voice have no time limit: the user is there, and Stop is the brake;
+- chat has no time limit: the user is there, and Stop is the brake;
 - the background memory jobs (extraction, dream, session summary) keep their
   own small round caps (AgentConfig.internal), and two single steps inside a
   turn keep theirs: the learning review (server/memory/review_fork.py) and the

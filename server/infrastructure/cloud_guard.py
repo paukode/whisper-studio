@@ -2,7 +2,7 @@
 
 The first-run notice and the Settings panel promise that in Local mode nothing
 leaves the Mac. Every caller that would reach a cloud service directly
-(Bedrock InvokeModel, the mantle Responses API, the Nova Sonic stream) asks
+(Bedrock InvokeModel, the mantle Responses API) asks
 this module first, so the promise is enforced in one place instead of each
 caller deciding for itself.
 

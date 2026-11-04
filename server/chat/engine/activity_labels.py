@@ -31,7 +31,7 @@ client would slow the chat's own requests.
 No caption is asked for:
 
 - outside the user-facing chat turn (cost_source "chat"): agents,
-  workflows, cron, voice, wake and headless runs never ask;
+  workflows, cron, wake and headless runs never ask;
 - in Local mode: the ``activity_labels`` flag is off there, and aux_refusal
   names the cloud guard's reason;
 - for a chat on an on-device model (Hybrid mode): the user chose an

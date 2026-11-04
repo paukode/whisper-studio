@@ -1,7 +1,7 @@
 """The turn's input contract.
 
 ``TurnContext`` is everything a turn needs, assembled by the caller (the chat
-routes, the agent runtime, cron, voice, headless runs) and handed to
+routes, the agent runtime, cron, headless runs) and handed to
 runner.run_turn. The engine reads it and never builds one: no request
 parsing, grounding or prompt building happens in the loop.
 
@@ -30,7 +30,7 @@ class TurnContext:
     loop: Any
     executor: Any
     # Who is paying for this turn's rounds, recorded on every cost row
-    # (server.costs.sources): chat, agent, workflow, cron, voice, headless,
+    # (server.costs.sources): chat, agent, workflow, cron, headless,
     # memory, wake. Required, so no caller's spend lands unlabelled.
     cost_source: str
     plan_mode: bool = False
@@ -62,7 +62,7 @@ class TurnContext:
     is_disconnected: Callable[[], Any] | None = None  # async
     # True only for the user-facing chat turn (the cloud and local chat
     # routes), the one the composer is talking to. That turn alone reads
-    # server.chat.engine.midturn_inbox. Subagents, cron, voice and wake turns
+    # server.chat.engine.midturn_inbox. Subagents, cron and wake turns
     # run under the same session_id, and draining there took the user's
     # message into a context nobody reads back.
     midturn_inbox: bool = False
@@ -96,7 +96,8 @@ class TurnContext:
     turn_scope_id: str | None = None
     # Channel the turn's agent progress is published on and drained from.
     # None means the session id (typed chat). A run that must not mix its
-    # agent cards into a concurrent chat turn (voice) uses its own channel.
+    # agent cards into a concurrent chat turn (a /subagent stream) uses its
+    # own channel.
     event_channel: str | None = None
     # Per-round tool catalog override. When set, called instead of
     # _assemble_round_tools(ctx) to get (tools, core_count): lets a caller

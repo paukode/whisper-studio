@@ -194,7 +194,7 @@ def _owned_in_thread(owner_id: str, fn):
 
 
 def test_chat_stop_spares_a_command_another_run_started_in_the_window(tmp_path):
-    """A detached agent, a workflow, a voice-delegated run or a cron job runs
+    """A detached agent, a workflow, or a cron job runs
     its tools under the chat session id. The chat's Stop must not kill what
     that run started, even inside the stopped turn's window; the chat turn's
     own command in the same window still dies."""

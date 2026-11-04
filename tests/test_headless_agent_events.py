@@ -1,9 +1,8 @@
 """run_headless_turn: agent progress relay (team_progress events reach the
 caller, in order, between the spawning tool_call and its tool_result) and the
-scope_id keyword (pause isolation per run while session_id keeps driving the
-TurnContext and tool dispatch). Same fixtures as tests/test_headless_turn.py
-and tests/test_headless_attended.py: FakeBedrockClient scripts the real
-AnthropicAdapter, a fake route_tool stands in for execution."""
+scope_id keyword (turn state per run while session_id keeps driving the
+TurnContext). Same fixtures as tests/test_headless_turn.py: FakeBedrockClient
+scripts the real AnthropicAdapter, a fake route_tool stands in for execution."""
 
 import asyncio
 import json
@@ -209,41 +208,19 @@ def test_no_agent_activity_yields_no_team_progress(monkeypatch):
     ]
 
 
-# ── scope_id: pause slot per run, session_id everywhere else ──────────────────
+# ── scope_id: turn state per run, session_id everywhere else ──────────────────
 
 
-def test_scope_id_keys_the_pause_slot_while_session_id_drives_the_context(monkeypatch):
+def test_scope_id_keys_the_turn_state_while_session_id_drives_the_context(monkeypatch):
     import server.chat.engine.runner as runner_mod
-    from server.approval.bootstrap import register_defaults
 
-    register_defaults()
-    sid = "sess-voice-shared"
+    sid = "sess-shared"
     scope = "run-one"
-    paused_sessions.pop(f"exec:{scope}", None)
-    paused_sessions.pop(f"exec:{sid}", None)
-
     fake_stream = FakeBedrockClient(
-        [
-            [
-                msg_start(),
-                *tool_use_block("t1", "ws_run_command", {"command": "pytest -q"}),
-                *msg_end(stop_reason="tool_use"),
-            ]
-        ]
+        [[msg_start(), *text_block("Done."), *msg_end(stop_reason="end_turn")]]
     )
-    tools = [{"name": "ws_run_command", "description": "d", "input_schema": {"type": "object"}}]
-    _patch_common(monkeypatch, fake_stream, tools)
+    _patch_common(monkeypatch, fake_stream, [])
 
-    dispatched_session_ids: list[str] = []
-
-    async def fake_route_tool(tool_name, tool_input, **kw):
-        dispatched_session_ids.append(kw["session_id"])
-        payload = json.dumps({"action": "command", "command": tool_input["command"], "cwd": "/tmp"})
-        return approval_request(payload), []
-
-    monkeypatch.setattr("server.tool_executor.route_tool", fake_route_tool)
-
-    # Spy on the real run_turn to read the built TurnContext directly.
     real_run_turn = runner_mod.run_turn
     captured: list[dict] = []
 
@@ -257,182 +234,12 @@ def test_scope_id_keys_the_pause_slot_while_session_id_drives_the_context(monkey
     events = asyncio.run(
         _collect(
             run_headless_turn(
-                "run the tests",
-                model_key="sonnet",
-                ephemeral=True,
-                session_id=sid,
-                attended=True,
-                scope_id=scope,
+                "hi", model_key="sonnet", ephemeral=True, session_id=sid, scope_id=scope
             )
         )
     )
-    assert events[-1] == {"type": "done", "status": "paused", "session_id": sid}
-    assert any(e["type"] == "approval_request" and e["tool_use_id"] == "t1" for e in events)
-
-    # The pause slot is keyed by the scope, not the session...
-    assert f"exec:{scope}" in paused_sessions
-    assert f"exec:{sid}" not in paused_sessions
-    # ...while the TurnContext and tool dispatch still run under session_id.
+    assert events[-1] == {"type": "done", "status": "completed", "session_id": sid}
     assert captured == [{"session_id": sid, "turn_scope_id": f"exec:{scope}"}]
-    assert dispatched_session_ids == [sid]
-
-    # Resuming under the bare session (no scope_id) finds nothing: the slot
-    # belongs to the scoped run and stays put.
-    events_wrong = asyncio.run(
-        _collect(
-            run_headless_turn(
-                "",
-                model_key="sonnet",
-                ephemeral=True,
-                session_id=sid,
-                attended=True,
-                resume={"answers": [{"tool_use_id": "t1", "content": "[User approved]"}]},
-            )
-        )
-    )
-    assert events_wrong[0]["type"] == "error" and "Nothing to resume" in events_wrong[0]["message"]
-    assert events_wrong[-1]["status"] == "failed"
-    assert f"exec:{scope}" in paused_sessions
-
-    # Resuming with the same scope_id pops the slot and finishes the turn.
-    fake_stream2 = FakeBedrockClient(
-        [[msg_start(), *text_block("Done, all green."), *msg_end(stop_reason="end_turn")]]
-    )
-    monkeypatch.setattr("server.chat.engine.anthropic._get_bedrock_client", lambda: fake_stream2)
-    events2 = asyncio.run(
-        _collect(
-            run_headless_turn(
-                "",
-                model_key="sonnet",
-                ephemeral=True,
-                session_id=sid,
-                attended=True,
-                scope_id=scope,
-                resume={
-                    "answers": [
-                        {
-                            "tool_use_id": "t1",
-                            "content": "[User approved] command: pytest -q. The action succeeded.",
-                        }
-                    ]
-                },
-            )
-        )
-    )
-    assert events2[-1] == {"type": "done", "status": "completed", "session_id": sid}
-    assert any(e.get("text") == "Done, all green." for e in events2)
-    assert f"exec:{scope}" not in paused_sessions
-    assert captured[-1] == {"session_id": sid, "turn_scope_id": f"exec:{scope}"}
-    sent = fake_stream2.requests[0]["messages"]
-    assert sent[-1]["role"] == "user"
-    assert sent[-1]["content"][0]["tool_use_id"] == "t1"
-    assert sent[-1]["content"][0]["content"].startswith("[User approved]")
-
-
-def test_two_runs_on_one_session_pause_independently(monkeypatch):
-    from server.approval.bootstrap import register_defaults
-
-    register_defaults()
-    sid = "sess-voice-two-runs"
-    for key in (f"exec:{sid}", "exec:run-a", "exec:run-b"):
-        paused_sessions.pop(key, None)
-
-    tools = [{"name": "ws_run_command", "description": "d", "input_schema": {"type": "object"}}]
-
-    async def fake_route_tool(tool_name, tool_input, **kw):
-        payload = json.dumps({"action": "command", "command": tool_input["command"], "cwd": "/tmp"})
-        return approval_request(payload), []
-
-    monkeypatch.setattr("server.tool_executor.route_tool", fake_route_tool)
-
-    def _pause(scope, command):
-        fake_stream = FakeBedrockClient(
-            [
-                [
-                    msg_start(),
-                    *tool_use_block(f"t-{scope}", "ws_run_command", {"command": command}),
-                    *msg_end(stop_reason="tool_use"),
-                ]
-            ]
-        )
-        _patch_common(monkeypatch, fake_stream, tools)
-        events = asyncio.run(
-            _collect(
-                run_headless_turn(
-                    command,
-                    model_key="sonnet",
-                    ephemeral=True,
-                    session_id=sid,
-                    attended=True,
-                    scope_id=scope,
-                )
-            )
-        )
-        assert events[-1]["status"] == "paused"
-
-    _pause("run-a", "pytest -q")
-    _pause("run-b", "ruff check .")
-
-    # Both runs are parked under their own keys; neither clobbered the other
-    # and nothing landed under the shared session key.
-    assert "exec:run-a" in paused_sessions
-    assert "exec:run-b" in paused_sessions
-    assert f"exec:{sid}" not in paused_sessions
-    assert paused_sessions["exec:run-a"]["pending_tool_results"][0]["tool_use_id"] == "t-run-a"
-    assert paused_sessions["exec:run-b"]["pending_tool_results"][0]["tool_use_id"] == "t-run-b"
-
-    paused_sessions.pop("exec:run-a", None)
-    paused_sessions.pop("exec:run-b", None)
-
-
-def test_event_channel_keeps_agent_progress_off_the_session_channel(monkeypatch):
-    """A run with its own event channel drains agent progress from that channel
-    and ignores the session channel, so a concurrent typed chat turn on the same
-    session never adopts a voice run's agent cards (and vice versa)."""
-    from server.agents.event_bus import event_bus
-
-    fake_stream = FakeBedrockClient(
-        [
-            [
-                msg_start(),
-                *tool_use_block("t1", "spawn_agent", {"task": "audit"}),
-                *msg_end(stop_reason="tool_use"),
-            ],
-            [msg_start(), *text_block("Done."), *msg_end(stop_reason="end_turn")],
-        ]
-    )
-    tools = [{"name": "spawn_agent", "description": "d", "input_schema": {"type": "object"}}]
-    _patch_common(monkeypatch, fake_stream, tools)
-    sid = "sess-shared"
-    seen_channels: list[str | None] = []
-
-    async def fake_route_tool(tool_name, tool_input, **kw):
-        seen_channels.append(kw.get("event_channel"))
-        event_bus.publish(
-            kw["event_channel"], {"phase": "started", "agent_id": "a1", "team_id": "t"}
-        )
-        await asyncio.sleep(0)
-        # Another turn's agents on the plain session channel: not ours.
-        event_bus.publish(
-            kw["session_id"], {"phase": "started", "agent_id": "other", "team_id": "x"}
-        )
-        await asyncio.sleep(0)
-        return "ok", []
-
-    monkeypatch.setattr("server.tool_executor.route_tool", fake_route_tool)
-
-    async def collect():
-        out = []
-        async for ev in run_headless_turn(
-            "audit", model_key="sonnet", ephemeral=True, session_id=sid, event_channel="voice:r1"
-        ):
-            out.append(ev)
-        return out
-
-    events = asyncio.run(collect())
-    assert seen_channels == ["voice:r1"]
-    progress = [e["event"] for e in events if e["type"] == "team_progress"]
-    assert progress == [{"phase": "started", "agent_id": "a1", "team_id": "t"}]
 
 
 def test_a_headless_run_caches_its_prompt_prefix(monkeypatch):

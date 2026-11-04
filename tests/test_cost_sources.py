@@ -11,10 +11,12 @@ from server.chat.engine.events import RoundResult, Usage
 from server.chat.engine.local import LocalAdapter
 from server.chat.engine.policy import LOCAL_POLICY
 from server.chat.engine.runner import TurnContext, run_turn
+from server.costs import sources as tracker_sources
 from server.costs import tracker
 from tests.cost_rows import session_cost_rows
 
 m021 = importlib.import_module("server.migrations.021_cost_rows_source_and_provenance")
+m026 = importlib.import_module("server.migrations.026_retire_voice_cost_source")
 
 
 class _OneRound(LocalAdapter):
@@ -185,6 +187,18 @@ def test_migration_021_moves_duplicate_rollups_and_labels_history(tmp_path):
     est = by_session["s4"][0]
     assert (est["count_source"], est["estimated_fields"]) == ("estimated", "input,output")
     assert {r["count_source"] for r in by_session["s1"]} == {"reported"}
+
+
+def test_migration_026_relabels_voice_rows_as_unattributed(tmp_path):
+    conn = _old_db(tmp_path)
+    m021.migrate(conn)
+    m026.migrate(conn)
+    conn.commit()
+
+    by_session = {r["session_id"]: r["source"] for r in _rows(conn)}
+    assert by_session["voice-abc-1234"] == "unattributed"
+    assert by_session["dream"] == "memory"
+    assert "voice" not in tracker_sources.SOURCE_LABELS
 
 
 def test_migration_021_reads_review_rows_by_the_forks_own_turn_base():

@@ -1,6 +1,6 @@
 """Side-task model calls reach the cost log exactly once, with their source.
 
-The turn engine records chat, agent, workflow, cron, voice and headless
+The turn engine records chat, agent, workflow, cron and headless
 rounds. Titles, compaction summaries, the auto-mode classifier, the
 permission explainer, memory recall, query rewriting, the goal evaluator,
 index passes, OCR, condensation and structured-output distillation call Bedrock themselves; each is billed, so each is logged.

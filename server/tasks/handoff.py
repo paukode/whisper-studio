@@ -308,7 +308,7 @@ def stop_turn_work(session_id: str, since: float) -> dict:
     (epoch seconds, when that turn's stream started). Work from earlier turns,
     such as a dev server started before, keeps running; the task panel stops
     that. So does work of another run that shares the session id (a detached
-    agent, a workflow, a voice-delegated run, a cron job, a /subagent run;
+    agent, a workflow, a cron job, a /subagent run;
     see server/tasks/owner.py), even when it started in the same window.
 
     Every target is signalled at once and the kills run in parallel threads,

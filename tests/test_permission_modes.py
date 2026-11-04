@@ -249,7 +249,7 @@ def test_classifier_confirm_still_shows_the_banner(monkeypatch):
 
 
 def test_classifier_and_explainer_bill_the_chat_session_not_the_turn_scope(monkeypatch):
-    # A voice-delegated turn runs under the scope "exec:voice-..." while its
+    # A scoped headless turn runs under the scope "exec:wake:..." while its
     # rounds are logged under the chat session. The side calls must land on
     # the chat session (its budget and readout), the breaker on the scope.
     _patch_rules(monkeypatch, [])
@@ -273,13 +273,13 @@ def test_classifier_and_explainer_bill_the_chat_session_not_the_turn_scope(monke
             model_id="test-model",
             recent_messages=[],
             mode=MODE_AUTO,
-            session_id="exec:voice-chat1-1234abcd",
+            session_id="exec:wake:chat1",
             cost_session_id="chat1",
         )
     )
     assert classify.call_args.kwargs["session_id"] == "chat1"
     assert explain.call_args.kwargs["session_id"] == "chat1"
-    assert breaker_keys == ["exec:voice-chat1-1234abcd"]
+    assert breaker_keys == ["exec:wake:chat1"]
 
 
 # ── category_modes ───────────────────────────────────────────────────────────

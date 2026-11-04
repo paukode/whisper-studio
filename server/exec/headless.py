@@ -2,8 +2,7 @@
 shared agentic turn engine (server.chat.engine.runner.run_turn).
 
 Backend code drives one turn to completion with no HTTP client involved:
-voice delegation (server/voice/tools.py, an attended run) and the
-agent-report wake (server/agents/wake.py). There is no network route here;
+the agent-report wake (server/agents/wake.py). There is no network route here;
 this module is imported and awaited directly, the same way
 server/agents/runtime.py's run_agent() is called in-process.
 
@@ -77,25 +76,13 @@ golden-fixture pinning; those frames can reshape independently of this one):
         Present only when ``output_schema`` was given and the one-shot
         distillation call (_distill_structured) produced a schema-valid
         result. Absent (not an error) if validation failed twice.
-    {"type": "approval_request", "tool_use_id": str, "action": str,
-     "category": str, "summary": str, "payload": dict, "preview": str,
-     "risk_hint": str | None}
-    {"type": "user_question", "tool_use_id": str, "question": str,
-     "options": list[str]}
-    {"type": "workspace_prompt", "tool_use_id": str, "payload": dict}
-        Attended runs only (``attended=True``): the engine paused because a
-        tool needs the human's decision. The turn's state is stashed under
-        its scope; feed the decision back with ``resume=`` on a later call
-        (same ``session_id``) to continue. Followed by a "done" event with
-        status="paused".
     {"type": "folder_opened", "path": str}
         An approval executed inline switched the connected workspace.
-    {"type": "done", "status": "completed" | "turn_limit" | "failed" | "paused",
+    {"type": "done", "status": "completed" | "turn_limit" | "failed",
      "session_id": str}
         Always the last event. "turn_limit" means the round budget was
         exhausted before a natural finish (mirrors AgentResult.stopped_early).
         "failed" means a pre-flight check stopped the run before any turn ran.
-        "paused" means an attended run is waiting on the human (see above).
 
 A raised exception from inside the turn itself (as opposed to a frame-level
 "error") propagates to the caller rather than being swallowed, this mirrors
@@ -126,14 +113,13 @@ def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _round_catalog(session_id: str, *, attended: bool = False) -> list[dict]:
+def _round_catalog(session_id: str) -> list[dict]:
     """This round's advertised tools: the core pool plus everything tool_search
-    has activated for ``session_id`` so far, deduplicated by name. An attended
-    run (voice: a person is there, just not at the chat) keeps the chat's core
-    set, memory tools included; an unattended one leaves them deferred."""
+    has activated for ``session_id`` so far, deduplicated by name. The chat-only
+    core set (memory tools included) stays deferred, since nobody attends."""
     from server.chat.tool_pool import assemble_partitioned_pool
 
-    advertised, _deferred, _core = assemble_partitioned_pool(session_id=session_id, chat=attended)
+    advertised, _deferred, _core = assemble_partitioned_pool(session_id=session_id, chat=False)
     seen: set[str] = set()
     tools: list[dict] = []
     for t in advertised:
@@ -145,29 +131,6 @@ def _round_catalog(session_id: str, *, attended: bool = False) -> list[dict]:
     return ToolCatalog(tools, available=[*advertised, *_deferred])
 
 
-def _resume_messages(paused: dict, answers: list[dict]) -> list:
-    """Continuation messages for a paused run: the stashed messages plus one
-    user turn carrying every pending tool_result, with the placeholders the
-    human decided on filled in by tool_use_id (an unknown id is appended).
-    Same rule as server.chat.routes._resume_messages' paused branch."""
-    blocks = [dict(b) for b in paused.get("pending_tool_results", [])]
-    for ans in answers:
-        tool_use_id = str(ans.get("tool_use_id", ""))
-        for block in blocks:
-            if block.get("tool_use_id") == tool_use_id:
-                block["content"] = str(ans.get("content", ""))
-                break
-        else:
-            blocks.append(
-                {
-                    "type": "tool_result",
-                    "tool_use_id": tool_use_id,
-                    "content": str(ans.get("content", "")),
-                }
-            )
-    return [*paused["messages"], {"role": "user", "content": blocks}]
-
-
 async def run_headless_turn(
     prompt: str,
     *,
@@ -177,12 +140,8 @@ async def run_headless_turn(
     ephemeral: bool = False,
     session_id: str | None = None,
     max_rounds: int | None = None,
-    attended: bool = False,
-    session_approvals: dict | None = None,
-    resume: dict | None = None,
     system_hint: str | None = None,
     scope_id: str | None = None,
-    event_channel: str | None = None,
     cost_source: str = "headless",
 ) -> AsyncIterator[dict]:
     """Run one full agentic turn headlessly and yield progress/result events.
@@ -214,36 +173,18 @@ async def run_headless_turn(
             caller-supplied id must not collide with a live chat session it
             doesn't intend to append into.
         max_rounds: Caps model rounds this turn gets. None takes the round
-            limit from Settings (server/infrastructure/run_limits.py). An
-            unattended run also gets the Settings time limit; an attended one
-            (voice) has none, as in chat.
-        attended: A human IS present (voice mode) but not at a chat UI.
-            Approval-gated tools follow the user's configured permission mode
-            exactly as interactive chat does (auto mode classifier included);
-            anything that needs the human pauses the turn (approval_request /
-            user_question / workspace_prompt events, then done status
-            "paused") instead of being auto-approved or refused.
-        session_approvals: The chat session's per-category approval memory
-            (same shape /api/chat receives), honoured when ``attended``.
+            limit from Settings (server/infrastructure/run_limits.py), and
+            the run also gets the Settings time limit.
         system_hint: Extra paragraph appended to the system prompt (e.g. the
-            voice layer's note that the request came through speech
-            recognition).
-        resume: ``{"answers": [{"tool_use_id": str, "content": str}]}`` to
-            continue a paused attended run: the stashed messages are restored
-            with the placeholder tool_results filled in, exactly like the chat
-            route's approval continuation. ``prompt`` is ignored; ``session_id``
-            (and ``scope_id``, when the paused run used one) must be the
-            paused run's.
-        scope_id: Keys this run's turn-scoped state (the paused_sessions
-            pause/resume slot, goal store, auto-mode breaker) as
-            f"exec:{scope_id}" instead of f"exec:{session_id}". Lets several
-            runs share one ``session_id`` (tool dispatch, agent registry,
-            costs and tool activations all stay keyed by session_id) while
-            each pauses and resumes independently. None keys it as
+            agent-report wake's note on how to answer).
+        scope_id: Keys this run's turn-scoped state (goal store, auto-mode
+            breaker) as f"exec:{scope_id}" instead of f"exec:{session_id}".
+            Lets several runs share one ``session_id`` (tool dispatch, agent
+            registry, costs and tool activations all stay keyed by
+            session_id) while each keeps its own turn state. None keys it as
             f"exec:{session_id}".
         cost_source: The ``source`` recorded on this run's cost rows
-            (server.costs.sources): voice delegation passes "voice", the
-            agent-report wake "wake".
+            (server.costs.sources): the agent-report wake passes "wake".
 
     Yields:
         Event dicts per the vocabulary documented in this module's docstring.
@@ -262,15 +203,14 @@ async def run_headless_turn(
     from server.workspace.state import reset_workspace_override, set_workspace_override
 
     session_id = session_id or uuid.uuid4().hex
-    # Pause isolation is per run: a caller running several turns against one
-    # session_id passes a distinct scope_id so their paused slots never collide.
+    # Turn state is per run: a caller running several turns against one
+    # session_id passes a distinct scope_id so their turn state never collides.
     turn_scope_id = f"exec:{scope_id or session_id}"
 
     # ── Local mode ────────────────────────────────────────────────────────
     # This runner serves cloud models only, and Local mode keeps every call on
-    # this Mac: refuse before a model is resolved, so no caller (voice, the
-    # agent wake, anything later) can reach the cloud default through it. A
-    # paused run's stashed state is left in place for when the mode allows it.
+    # this Mac: refuse before a model is resolved, so no caller (the agent
+    # wake, anything later) can reach the cloud default through it.
     from server.infrastructure.cloud_guard import cloud_refusal
 
     refusal = cloud_refusal("A background assistant turn")
@@ -335,7 +275,7 @@ async def run_headless_turn(
 
         register_override(workspace_path)
     try:
-        # An unpinned run (voice, the agent wake) works under a latch like a
+        # An unpinned run (the agent wake) works under a latch like a
         # chat turn's: once the user disconnects (or switches away from) the
         # workspace it started in, its workspace tools are refused instead of
         # pausing on a folder picker or acting on the folder connected in its
@@ -345,32 +285,18 @@ async def run_headless_turn(
         ws_latch = latch_workspace(get_workspace_path) if workspace_path is None else None
         ws_path = get_workspace_path()
 
-        from server.chat.engine.pause import paused_sessions
+        if not ephemeral:
+            from server.infrastructure.sessions import append_message
 
-        paused = paused_sessions.pop(turn_scope_id, None) if resume is not None else None
-        if resume is not None and paused is None:
-            yield {
-                "type": "error",
-                "message": "Nothing to resume: this run has no paused turn waiting on a decision.",
-            }
-            yield {"type": "done", "status": "failed", "session_id": session_id}
-            return
+            await append_message(
+                session_id,
+                {"role": "user", "content": prompt, "timestamp": _utc_now_iso()},
+            )
 
-        if paused is not None:
-            messages = _resume_messages(paused, list(resume.get("answers") or []))
-        else:
-            if not ephemeral:
-                from server.infrastructure.sessions import append_message
-
-                await append_message(
-                    session_id,
-                    {"role": "user", "content": prompt, "timestamp": _utc_now_iso()},
-                )
-
-            # The turn's only user message, built here (rather than down by
-            # ctx = TurnContext(...)) so it's already in scope for
-            # activate_from_history below; reused verbatim for the TurnContext.
-            messages = [{"role": "user", "content": prompt}]
+        # The turn's only user message, built here (rather than down by
+        # ctx = TurnContext(...)) so it's already in scope for
+        # activate_from_history below; reused verbatim for the TurnContext.
+        messages = [{"role": "user", "content": prompt}]
 
         # ── Tool catalog: core + this session's activated tools, reassembled
         # EVERY round ─────────────────────────────────────────────────────────
@@ -386,12 +312,12 @@ async def run_headless_turn(
         # appended to the system prompt below.
         activate_from_history(session_id, messages)
         _advertised0, deferred, _core_count = assemble_partitioned_pool(
-            session_id=session_id, chat=attended
+            session_id=session_id, chat=False
         )
         deferred_tool_index = build_deferred_index(deferred)
 
         def _tool_catalog() -> tuple[list[dict], int | None]:
-            return _round_catalog(session_id, attended=attended), None
+            return _round_catalog(session_id), None
 
         system = (
             "You are completing a single headless task with no human attending this "
@@ -446,14 +372,12 @@ async def run_headless_turn(
         from server.chat.engine.policy import TurnPolicy
         from server.chat.engine.runner import TurnContext, run_turn
         from server.infrastructure.run_limits import round_limit, time_limit_seconds
-        from server.security.permissions import get_mode
 
         rounds = max_rounds or round_limit()
-        deadline = None if attended else time_limit_seconds()
+        deadline = time_limit_seconds()
         run_started = time.monotonic()
         ctx = TurnContext(
             session_id=session_id,
-            event_channel=event_channel,
             model_key=resolved_model_key,
             model_id=model_id,
             messages=messages,
@@ -470,16 +394,10 @@ async def run_headless_turn(
             # Agents this run spawns inherit the same level.
             effort_label=_effort_label,
             memory_hooks=lambda msgs: None,
-            # Attended runs (voice) follow the user's permission mode and pause
-            # for decisions like interactive chat; unattended ones auto-resolve.
-            # The mode is read from permissions.json (get_mode), the same source
-            # the chat gate and the UI mode selector use, not config
-            # permission_mode (which the UI never writes, so plan/dontAsk/bypass
-            # chosen there would not have reached voice).
-            unattended=not attended,
-            mode=get_mode() if attended else "default",
-            session_approvals=dict(session_approvals or {}) if attended else {},
-            session_config=cfg if attended else {},
+            unattended=True,
+            mode="default",
+            session_approvals={},
+            session_config={},
             turn_scope_id=turn_scope_id,
             tool_catalog=_tool_catalog,
             ws_latch=ws_latch,
@@ -571,33 +489,6 @@ async def run_headless_turn(
                         if msg:
                             all_text_parts.append(msg)
                             yield {"type": "text", "text": msg}
-                    elif "approval_request" in frame:
-                        req = frame["approval_request"] or {}
-                        yield {
-                            "type": "approval_request",
-                            "tool_use_id": str(req.get("tool_use_id", "")),
-                            "action": str(req.get("action", "")),
-                            "category": str(req.get("category", "")),
-                            "summary": str(req.get("summary", "")),
-                            "payload": req.get("payload") or {},
-                            "preview": str(req.get("preview", "text")),
-                            "risk_hint": req.get("risk_hint"),
-                        }
-                    elif "user_question" in frame:
-                        q = frame["user_question"] or {}
-                        yield {
-                            "type": "user_question",
-                            "tool_use_id": str(q.get("tool_use_id", "")),
-                            "question": str(q.get("question", "")),
-                            "options": [str(o) for o in (q.get("options") or [])],
-                        }
-                    elif "ws_workspace_prompt" in frame:
-                        wp = frame["ws_workspace_prompt"] or {}
-                        yield {
-                            "type": "workspace_prompt",
-                            "tool_use_id": str(wp.get("tool_use_id", "")),
-                            "payload": wp,
-                        }
                     elif "ws_folder_opened" in frame and frame["ws_folder_opened"]:
                         yield {"type": "folder_opened", "path": str(frame["ws_folder_opened"])}
         finally:
@@ -621,12 +512,6 @@ async def run_headless_turn(
         )
         stopped_early = rounds_used >= rounds or time_up
         collected_text = "\n\n".join(all_text_parts)
-
-        if attended and turn_scope_id in paused_sessions:
-            # The engine stashed the turn and ended the stream: a decision is
-            # needed. No structured distillation on a half-finished turn.
-            yield {"type": "done", "status": "paused", "session_id": session_id}
-            return
 
         structured = None
         if output_schema is not None:

@@ -160,16 +160,6 @@ DEFAULTS = {
     # recording unless this is turned on explicitly.
     "speaker_voiceprints": False,
     "bedrock_region": "us-east-1",
-    # Hands-free voice mode (Amazon Nova 2 Sonic over Bedrock). region "" follows
-    # bedrock_region; Sonic is only in us-east-1, us-west-2, eu-north-1 and
-    # ap-northeast-1. Effective values resolve in server/voice/routes.py.
-    "voice": {
-        "enabled": True,
-        "model_id": "amazon.nova-2-sonic-v1:0",
-        "region": "",
-        "voice_id": "tiffany",
-        "endpointing": "MEDIUM",
-    },
     # Chat-model catalog. The app-owned catalog lives in config.example.json (the
     # SYSTEM layer); the empty entry here only marks chat_models as a settable
     # key (PUT /api/config and config_set write DEFAULTS keys). SYSTEM and USER deep-merge ADDITIVELY per key (see load_config): the shipped

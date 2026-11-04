@@ -14,9 +14,9 @@ class TurnPolicy:
     # from Settings when the turn starts; a run with its own budget passes it
     # (an agent's resolved config, a scheduled run's remaining rounds).
     max_rounds: int | None = None
-    # Wall-clock brake; None = no deadline (chat and voice, where the user's
-    # Stop button is the brake). Runs nobody is watching pass the Settings
-    # time limit: agents, scheduled runs and unattended headless runs.
+    # Wall-clock brake; None = no deadline (chat, where the user's Stop
+    # button is the brake). Runs nobody is watching pass the Settings time
+    # limit: agents, scheduled runs and headless runs.
     deadline_seconds: float | None = None
     # Completion gate (Stop hooks, the deliverable and verification checks, the
     # goal's quality gates and its judge). Unattended consumers (agents, cron,

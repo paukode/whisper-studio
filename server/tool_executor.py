@@ -679,7 +679,7 @@ async def process_tool_results(
         session_id: Keys the auto-mode circuit breaker (server.security.permissions).
             Empty is treated as "no breaker tracking" (matches existing test callers
             that don't pass one). A turn scope (TurnContext.turn_scope_id), which
-            is not the chat session for a delegated voice or headless turn.
+            is not the chat session for a scoped headless turn.
         cost_session_id: The chat session the classifier and explainer calls
             are billed to in the cost log, the one the turn's own rounds are
             logged under, so they count toward its budget and readout.

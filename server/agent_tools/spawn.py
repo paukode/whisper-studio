@@ -305,8 +305,8 @@ async def execute_spawn_agent(
     chat leaves all four at their defaults, exactly as before this parameter
     set existed.
     """
-    # Progress cards go where this turn drains them (voice runs use their own
-    # channel so a concurrent chat turn never adopts their agents).
+    # Progress cards go where this turn drains them (a /subagent stream uses
+    # its own channel so a concurrent chat turn never adopts its agents).
     progress_channel = event_channel or session_id
     from server.agents.model_resolve import resolve_model_override
     from server.agents.runtime import run_agent

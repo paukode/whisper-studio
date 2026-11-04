@@ -276,8 +276,6 @@ def _session_label(session_id: str, titles: dict[str, str]) -> tuple[str, bool]:
         return titles[session_id], False
     if session_id == "dream":
         return "Memory consolidation", False
-    if session_id.startswith("voice-"):
-        return "Voice run", False
     return "Deleted session", True
 
 
