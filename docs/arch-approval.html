@@ -33,7 +33,8 @@
     </figure>
 
     <figure class="shot">
-      <img src="assets/img/approval-card.png" alt="An approval card rendered from a pending approval request">
+      <img class="shot-light" src="assets/img/approval-card.png" alt="An approval card rendered from a pending approval request">
+      <img class="shot-dark" src="assets/img/approval-card-dark.png" alt="An approval card rendered from a pending approval request">
       <figcaption><strong>The approval flow, as the user sees it.</strong> The card is rendered from the <code>approval_request</code> event of a paused turn; nothing runs until one of these four buttons resolves it.</figcaption>
     </figure>
 
@@ -46,7 +47,7 @@
       classifier accepts also runs with no card, inside the read-only sandbox, so a write the
       classifier missed is refused by the OS. The one exception is a read of a credential store (see
       <a href="#secret-reads">Reads of credential stores</a>). The modes differ in how they treat
-      <em>write</em> and <em>command</em> tools. You set the mode in the composer Mode menu or in
+      <em>write</em> and <em>command</em> tools. You set the mode in the permission mode chip in the composer or in
       Settings &gt; Keys and permissions &gt; Permissions; the label column shows the name the UI
       uses.</p>
 

@@ -346,8 +346,8 @@
         <code>AttributeError</code>. Parallel tool calls work here, matching how the cloud paths batch
         reads.</li>
     </ul>
-    <p>The loop itself matches the cloud paths: up to the round limit in Settings &gt; Costs &gt;
-      Budget (120 by default), with calls forbidden on the last round so the model must synthesize an
+    <p>The loop itself matches the cloud paths: up to the round limit in Settings &gt; Usage and advanced &gt; Costs,
+      Budgets card (120 by default), with calls forbidden on the last round so the model must synthesize an
       answer from what it has. Tool execution goes through the
       engine's shared <code>execute_tool_batch</code> and <code>process_tool_results</code> pipeline, so
       an on-device turn is gated by the same <a href="arch-approval.html">permission modes</a> and
@@ -463,7 +463,7 @@
       offers to return the account to zero retention (mode <code>none</code>).</p>
 
     <h3 id="model-fallback">Falling back to a cheaper model</h3>
-    <p>Settings &gt; Costs has a checkbox, <b>Enable model fallback (downgrade model when approaching
+    <p>Settings &gt; Usage and advanced &gt; Costs has a checkbox, <b>Enable model fallback (downgrade model when approaching
       budget)</b>. It is off by default. With it on, the chat endpoint resolves the session's model
       through <code class="path">server/infrastructure/model_fallback.py</code> before the turn starts:
       once the session or daily spend reaches 80 percent of its cap, the turn runs on the next cheaper
