@@ -22,9 +22,9 @@ def test_flags_registry_holds_only_live_flags():
         "parallel_tools",
         "latched_config",
         "secret_scanning",
+        "companion",
     }
     live = {
-        "companion",
         "git_context",
         "prompt_caching",
         "progressive_tools",

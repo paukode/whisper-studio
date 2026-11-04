@@ -24,7 +24,7 @@ RICH_CONFIG = {
             "requires_data_retention": True,
         },
     },
-    "feature_flags": {"companion": False},
+    "feature_flags": {"git_context": False},
 }
 
 
@@ -37,13 +37,13 @@ def test_toggling_flag_preserves_rich_chat_models(tmp_path, monkeypatch):
 
     app = FastAPI()
     app.include_router(ff_router)
-    resp = TestClient(app).put("/api/feature-flags/companion", json={"enabled": True})
+    resp = TestClient(app).put("/api/feature-flags/git_context", json={"enabled": True})
     assert resp.status_code == 200
     assert resp.json()["enabled"] is True
 
     on_disk = json.loads(cfg.read_text())
     # Flag was flipped …
-    assert on_disk["feature_flags"]["companion"] is True
+    assert on_disk["feature_flags"]["git_context"] is True
     # … and chat_models kept its RICH shape (dict, not a flat id string),
     # with requires_data_retention intact.
     fable = on_disk["chat_models"]["fable5.0"]
@@ -63,7 +63,7 @@ HAND_FORMATTED = (
     "  },\n"
     '  "feature_flags": {\n'
     '    "auto_memory": true,\n'
-    '    "companion": false\n'
+    '    "git_context": false\n'
     "  }\n"
     "}\n"
 )
@@ -76,15 +76,15 @@ def test_toggle_changes_only_the_one_boolean(tmp_path, monkeypatch):
     monkeypatch.setattr(config_mod, "USER_CONFIG_PATH", str(cfg))
     config_mod._invalidate_cache()
 
-    config_mod.set_feature_flag("companion", True)
+    config_mod.set_feature_flag("git_context", True)
 
     out = cfg.read_text()
     # Byte-for-byte identical except the single flipped token.
-    assert out == HAND_FORMATTED.replace('"companion": false', '"companion": true')
+    assert out == HAND_FORMATTED.replace('"git_context": false', '"git_context": true')
     config_mod._invalidate_cache()
 
 
-def test_toggle_other_flag_leaves_companion_and_formatting(tmp_path, monkeypatch):
+def test_toggle_other_flag_leaves_git_context_and_formatting(tmp_path, monkeypatch):
     cfg = tmp_path / "config.user.json"
     cfg.write_text(HAND_FORMATTED)
     # Pin the user layer to this throwaway file so the repo's is never touched.
@@ -110,7 +110,7 @@ def test_toggle_inserts_absent_flag_without_reflowing_rest(tmp_path, monkeypatch
     data = json.loads(cfg.read_text())
     assert data["feature_flags"]["dream_consolidation"] is True
     # Pre-existing flags and the rich chat_models are untouched.
-    assert data["feature_flags"]["companion"] is False
+    assert data["feature_flags"]["git_context"] is False
     assert isinstance(data["chat_models"]["fable5.0"], dict)
     assert data["chat_models"]["fable5.0"]["requires_data_retention"] is True
     config_mod._invalidate_cache()

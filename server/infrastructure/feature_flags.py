@@ -160,17 +160,6 @@ def get_flag_states() -> dict[str, dict[str, Any]]:
 # list of gated features and their defaults.
 
 register_flag(
-    "companion",
-    description="Show the cosmetic buddy companion in the chat corner",
-    # Default OFF — opt-in delight, not a default. The companion is now
-    # purely cosmetic (animated SVG, client-rendered): it makes no LLM calls
-    # and never touches a chat turn. The flag just controls whether the
-    # widget is shown at all.
-    default=False,
-    category="ui",
-)
-
-register_flag(
     "git_context",
     description="Include git status and instructions in system prompt",
     default=True,

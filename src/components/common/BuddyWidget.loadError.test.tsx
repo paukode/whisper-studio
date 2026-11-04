@@ -14,7 +14,6 @@ import { ApiError } from '@/types/api';
 
 function serveBuddyError(err: Error): void {
   getMock.mockReset().mockImplementation(async (url: string) => {
-    if (url === '/api/feature-flags') return { companion: { enabled: true } };
     if (url === '/api/buddy') throw err;
     throw new Error(`unexpected ${url}`);
   });
@@ -27,6 +26,7 @@ const toastMessages = () => useUIStore.getState().toasts.map((t) => t.message);
 describe('BuddyWidget load error', () => {
   beforeEach(() => {
     localStorage.clear();
+    localStorage.setItem('buddy_state', JSON.stringify({ hidden: false })); // shown with the smiley earlier
     postMock.mockReset();
     useUIStore.setState({ toasts: [] });
   });
