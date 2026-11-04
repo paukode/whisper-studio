@@ -94,8 +94,7 @@ function stateMark(state: GroupState, tools: ToolUseEvent[]): React.ReactNode {
 }
 
 /** When the group's running calls arrived: the earliest skill frame of them
- *  (ToolUseEvent.startedAt, on live rows), or null when none carries one (a
- *  voice step). */
+ *  (ToolUseEvent.startedAt, on live rows), or null when none carries one. */
 function runningSince(tools: ToolUseEvent[]): number | null {
   let since: number | null = null;
   for (const t of tools) {

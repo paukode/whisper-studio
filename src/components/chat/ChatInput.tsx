@@ -29,10 +29,7 @@ import {
   type SlashCommand,
 } from './chatInputConstants';
 import { MoreMenu, type MoreSection } from './MoreMenu';
-import { useVoiceStore } from '@/stores/voiceStore';
-import { voiceController } from '@/services/voiceController';
 import { reportConnectWarnings, settleWorkspaceOps } from '@/services/workspaceConnection';
-import { VoiceBar } from './VoiceBar';
 
 export interface ChatInputProps {
   sessionId: string | null;
@@ -68,24 +65,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
   const acRef = useRef<HTMLDivElement>(null);
 
   const chatStream = useChatStream();
-  // Voice mode (Nova 2 Sonic). While a conversation is open the text row is
-  // replaced by the VoiceBar unless the user asked to type; typed text then
-  // goes to the voice model as a cross-modal turn instead of the SSE chat.
-  // The conversation belongs to the session it started in: every other
-  // session's composer is an ordinary chat composer.
-  const voiceStatus = useVoiceStore((s) => s.status);
-  const voiceSessionId = useVoiceStore((s) => s.sessionId);
-  const voiceTyping = useVoiceStore((s) => s.typing);
-  const voiceAvailable = useVoiceStore((s) => s.available);
-  const voiceReason = useVoiceStore((s) => s.unavailableReason);
-  const voiceOn = voiceStatus !== 'off' && voiceSessionId === sessionId;
-  // Subscribed so the composer re-renders whenever a hung-up conversation
-  // starts or stops draining; which session it drains for comes from the
-  // controller's per-socket record.
-  const voiceDraining = useVoiceStore((s) => s.draining);
-  // Voice is off here but its delegated work is still running for this session.
-  const voiceWorking = !voiceOn && voiceDraining > 0 && voiceController.hasDrainingRuns(sessionId);
-  useEffect(() => { void voiceController.loadStatus(); }, []);
   const { mic, handleMicClick, inputTextRef, submitRef, stopMic } = useDictationInput({
     text,
     setText,
@@ -414,7 +393,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
   });
 
   // Core send logic, parameterized by the raw message text. Both the form
-  // (Enter / Send button, which pass the current input) and the voice path
+  // (Enter / Send button, which pass the current input) and the dictation path
   // (which passes the accumulated dictation directly) funnel through here, so
   // every submit path shares the same guards and skill-prefix handling.
   const submitMessage = useCallback(
@@ -441,25 +420,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
         inputTextRef.current = '';
         setText('');
         void approvePlan();
-        return;
-      }
-
-      // Voice mode is on in THIS session: a typed message is a cross-modal
-      // turn for the voice model (it hears it as if spoken); the normal SSE
-      // turn is bypassed. Only clear the composer once the text was sent: a
-      // call that is still connecting or already ending has no open socket.
-      const voice = useVoiceStore.getState();
-      if (voice.status !== 'off' && voice.sessionId === sessionId) {
-        if (voiceController.sendText(trimmed)) {
-          inputTextRef.current = '';
-          setText('');
-        } else {
-          useUIStore.getState().addToast({
-            type: 'error',
-            message: 'Not delivered: the voice conversation is not connected right now. Your text is still in the box.',
-            duration: 5000,
-          });
-        }
         return;
       }
 
@@ -701,7 +661,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
       />
 
       {/* The composer box: attachments, the message, and one row of every
-       *  control (attach, chips, dictation, voice, send) inside one card. */}
+       *  control (attach, chips, dictation, send) inside one card. */}
       <div className="composer-box">
         {/* Attachment preview. Chips grow with the filename but cap their
          * inner label at a sane width — beyond that the name is ellipsized
@@ -727,9 +687,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
           })}
         </div>
 
-        {voiceOn && !voiceTyping ? (
-          <VoiceBar />
-        ) : (
         <div className="chat-input-row" style={{ position: 'relative' }}>
           <textarea
             ref={textareaRef}
@@ -782,7 +739,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
             </div>
           )}
         </div>
-        )}
 
         {/* Dictation hint — only while recording. Surfaces the hands-free submit
          *  phrases so users discover them in context, exactly when relevant. */}
@@ -799,19 +755,17 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
         )}
 
         <div className="composer-bar">
-          {!(voiceOn && !voiceTyping) && (
-            <button
-              type="button"
-              className="attach-btn"
-              id="attachBtn"
-              title={`Attach files. Supported: ${SUPPORTED_ATTACHMENT_SUMMARY}`}
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>
-              </svg>
-            </button>
-          )}
+          <button
+            type="button"
+            className="attach-btn"
+            id="attachBtn"
+            title={`Attach files. Supported: ${SUPPORTED_ATTACHMENT_SUMMARY}`}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>
+            </svg>
+          </button>
           {/* Composer controls: How it thinks, permissions, workspace (each
            *  opens its labeled panel) and the round More button, left-aligned
            *  on one row. */}
@@ -876,117 +830,66 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
                 textareaRef.current?.focus();
               }}
             />
-
-            {voiceWorking && (
-              <>
-                <span className="toolbar-btn voice-chip voice-working-chip" title="The assistant is still finishing the work you started by voice. Type to continue, or press Stop.">
-                  <span className="pulse voice-request-dot" aria-hidden="true" />
-                  Working in background
-                </span>
-              </>
-            )}
-            {voiceOn && (
-              <>
-                <button
-                  type="button"
-                  className="toolbar-btn active voice-chip"
-                  id="voiceChip"
-                  title={voiceTyping ? 'Back to the voice bar' : 'Voice conversation is on. Click to type instead.'}
-                  onClick={() => useVoiceStore.getState().setTyping(!voiceTyping)}
-                >
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="10" x2="4" y2="14"/><line x1="8" y1="7" x2="8" y2="17"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="16" y1="8" x2="16" y2="16"/><line x1="20" y1="11" x2="20" y2="13"/></svg>
-                  Voice on
-                </button>
-              </>
-            )}
-
           </div>
-          {!(voiceOn && !voiceTyping) && (
-            <div className="composer-actions">
-              {/* Mic dictation — speak instead of type, transcribed into the input */}
-              <button
-                type="button"
-                className={`mic-btn${mic.isRecording ? ' recording' : ''}${mic.isConnecting ? ' connecting' : ''}`}
-                id="chatMicBtn"
-                title={
-                  mic.error
-                    ? `Mic error: ${mic.error}`
-                    : mic.isRecording
-                      ? 'Stop recording'
-                      : mic.isConnecting
-                        ? 'Connecting…'
-                        : "Dictate by voice. To send hands-free, finish by saying a phrase like 'okay send' or 'send now'."
-                }
-                aria-pressed={mic.isRecording}
-                aria-label={mic.isRecording ? 'Stop dictation' : 'Start dictation'}
-                onClick={handleMicClick}
-              >
-                {mic.isRecording ? (
-                  // Stop square — solid fill, rounded, matches the streaming
-                  // .btn-chat-stop indicator so "stop" reads consistently across
-                  // the input bar.
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                    <rect x="3" y="3" width="10" height="10" rx="2" fill="currentColor"/>
-                  </svg>
-                ) : (
-                  // Modern microphone — matches the stroke weight and round-cap
-                  // style of the attach (paperclip) and send (paper-plane) icons
-                  // beside it. Capsule + stand bracket + base line.
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="9" y="3" width="6" height="11" rx="3"/>
-                    <path d="M19 11a7 7 0 0 1-14 0"/>
-                    <line x1="12" y1="18" x2="12" y2="22"/>
-                  </svg>
-                )}
-              </button>
-              {/* Talk — hands-free voice conversation (Nova 2 Sonic). Between the
-               *  dictation mic and Send. Once a conversation is open this whole row
-               *  is replaced by the VoiceBar; when the user chose to type mid-call,
-               *  the button brings the bar back instead of starting a second call. */}
-              <button
-                type="button"
-                className={`mic-btn talk-btn${voiceOn ? ' on' : ''}`}
-                id="chatTalkBtn"
-                title={
-                  voiceOn
-                    ? 'Back to the voice bar'
-                    : voiceAvailable === false
-                      ? `Voice mode unavailable: ${voiceReason ?? 'not configured'}`
-                      : 'Talk with the assistant hands-free. Your audio goes to Amazon Bedrock (Nova 2 Sonic) while this is on.'
-                }
-                aria-label={voiceOn ? 'Back to the voice bar' : 'Start voice conversation'}
-                disabled={!voiceOn && voiceAvailable === false}
-                onClick={() => {
-                  if (voiceOn) useVoiceStore.getState().setTyping(false);
-                  else void voiceController.start(sessionId);
-                }}
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="10" x2="4" y2="14"/><line x1="8" y1="7" x2="8" y2="17"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="16" y1="8" x2="16" y2="16"/><line x1="20" y1="11" x2="20" y2="13"/></svg>
-              </button>
-              {/* Stop button during streaming (or while voice work is still
-               *  finishing after a hang-up), send button otherwise. One button, one
-               *  meaning. A message still goes into the running turn, by Enter; the
-               *  placeholder above says so. */}
-              {isStreaming || (voiceWorking && !text.trim()) ? (
-                <button
-                  className="btn btn-chat-stop"
-                  type="button"
-                  title={isStreaming ? 'Stop' : 'Stop the background work'}
-                  onClick={isStreaming ? handleAbort : () => voiceController.cancelRuns(sessionId)}
-                >
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                    <rect x="3" y="3" width="10" height="10" rx="2" fill="currentColor"/>
-                  </svg>
-                </button>
+          <div className="composer-actions">
+            {/* Mic dictation — speak instead of type, transcribed into the input */}
+            <button
+              type="button"
+              className={`mic-btn${mic.isRecording ? ' recording' : ''}${mic.isConnecting ? ' connecting' : ''}`}
+              id="chatMicBtn"
+              title={
+                mic.error
+                  ? `Mic error: ${mic.error}`
+                  : mic.isRecording
+                    ? 'Stop recording'
+                    : mic.isConnecting
+                      ? 'Connecting…'
+                      : "Dictate by voice. To send hands-free, finish by saying a phrase like 'okay send' or 'send now'."
+              }
+              aria-pressed={mic.isRecording}
+              aria-label={mic.isRecording ? 'Stop dictation' : 'Start dictation'}
+              onClick={handleMicClick}
+            >
+              {mic.isRecording ? (
+                // Stop square — solid fill, rounded, matches the streaming
+                // .btn-chat-stop indicator so "stop" reads consistently across
+                // the input bar.
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                  <rect x="3" y="3" width="10" height="10" rx="2" fill="currentColor"/>
+                </svg>
               ) : (
-                <button className="btn btn-send" type="submit" id="chatSendBtn" aria-label="Send message" disabled={!text.trim()}>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
-                  </svg>
-                </button>
+                // Modern microphone — matches the stroke weight and round-cap
+                // style of the attach (paperclip) and send (paper-plane) icons
+                // beside it. Capsule + stand bracket + base line.
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="9" y="3" width="6" height="11" rx="3"/>
+                  <path d="M19 11a7 7 0 0 1-14 0"/>
+                  <line x1="12" y1="18" x2="12" y2="22"/>
+                </svg>
               )}
-            </div>
-          )}
+            </button>
+            {/* Stop button during streaming, send button otherwise. One button,
+             *  one meaning. A message still goes into the running turn, by Enter;
+             *  the placeholder above says so. */}
+            {isStreaming ? (
+              <button
+                className="btn btn-chat-stop"
+                type="button"
+                title="Stop"
+                onClick={handleAbort}
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                  <rect x="3" y="3" width="10" height="10" rx="2" fill="currentColor"/>
+                </svg>
+              </button>
+            ) : (
+              <button className="btn btn-send" type="submit" id="chatSendBtn" aria-label="Send message" disabled={!text.trim()}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                </svg>
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </form>

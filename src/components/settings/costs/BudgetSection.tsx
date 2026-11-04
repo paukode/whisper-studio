@@ -171,7 +171,7 @@ export const BudgetSection: React.FC<BudgetSectionProps> = ({ today }) => {
             onChange={(e) => setRoundLimit(e.target.value)}
           />
           <div className="settings-hint usage-budget-note" id="budgetRoundLimitHint">
-            The most model rounds any run takes: chat, voice, agents, scheduled runs. The memory
+            The most model rounds any run takes: chat, agents, scheduled runs. The memory
             jobs keep their own small caps.
           </div>
         </div>
@@ -189,7 +189,7 @@ export const BudgetSection: React.FC<BudgetSectionProps> = ({ today }) => {
           />
           <div className="settings-hint usage-budget-note" id="budgetTimeLimitHint">
             For runs nobody is watching: agents, scheduled and background runs. Time an agent waits
-            on agents it started does not count. Chat and voice have no time limit.
+            on agents it started does not count. Chat has no time limit.
           </div>
         </div>
       </div>

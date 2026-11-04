@@ -2,8 +2,8 @@
  * The chat's view of delegated work: one line per agent, the way the header's
  * task list shows it. Name, status, and Open, which puts the agent's full live
  * feed (its words, every tool call and result) in the dock's agent pane.
- * Shared by committed messages, the streaming turn, voice runs and workflow
- * run cards; Stop lives in the pane and in the header's task list.
+ * Shared by committed messages, the streaming turn and workflow run cards;
+ * Stop lives in the pane and in the header's task list.
  */
 import React from 'react';
 import type { TeamAgentReport, TeamReportData } from '@/types/chat';

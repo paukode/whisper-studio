@@ -38,7 +38,7 @@ describe('chartSeries', () => {
   it('adds no Other when every key has its own colour', () => {
     const report = usageFor('/api/costs/usage?split=source');
     const series = chartSeries(report.rows, report.buckets, byLabel);
-    expect(series.map((s) => s.key)).toEqual(['chat', 'agent', 'voice']);
+    expect(series.map((s) => s.key)).toEqual(['chat', 'agent', 'cron']);
   });
 
   it('names two keys that share a name by their raw keys too', () => {

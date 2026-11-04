@@ -2,7 +2,7 @@ import React, { useCallback, useMemo } from 'react';
 import type { ChatMessage, Delivery } from '@/types/chat';
 import type { SessionTask } from '@/stores/taskStore';
 import { TurnSegment, sameRows } from '@/components/chat/TurnSegment';
-import { traceRuns, spokenTurn } from '@/components/chat/turnEntries';
+import { traceRuns } from '@/components/chat/turnEntries';
 import { DeliveryChips } from '@/components/chat/DeliveryChips';
 import { mergeDeliveries } from '@/hooks/chatStream/deliveries';
 import { getActiveChatStore } from '@/stores/sessionRuntimes';
@@ -50,8 +50,7 @@ const ICON_PROPS = {
  * the tool work, every card) render in order as TurnSegments, one for each
  * run of rows whose tool traces draw as one list (traceRuns); after the last
  * one, once per turn: the Verified chips over every row's deliveries, the
- * spoken mark when any row was spoken, the last row's timestamp, and the
- * actions. Copy takes the
+ * last row's timestamp, and the actions. Copy takes the
  * prose of all rows, Regenerate re-sends the user message the turn answers,
  * Delete removes every row of the turn.
  *
@@ -124,12 +123,6 @@ const TurnBubbleView: React.FC<TurnBubbleProps> = ({
 
             {last.timestamp && (
               <span className="msg-timestamp">
-                {spokenTurn(rows) && (
-                  <span className="msg-spoken" title="Spoken in voice mode">
-                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M19 11a7 7 0 0 1-14 0"/><line x1="12" y1="18" x2="12" y2="22"/></svg>
-                    spoken ·{' '}
-                  </span>
-                )}
                 {formatMessageTimestamp(last.timestamp)}
               </span>
             )}

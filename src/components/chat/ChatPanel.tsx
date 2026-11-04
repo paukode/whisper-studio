@@ -7,12 +7,11 @@ import { getActiveTranscriptionStore } from '@/stores/sessionRuntimes';
 import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 import { ChatMessage } from './ChatMessage';
 import { TurnBubble } from './TurnBubble';
-import { isLiveTurn, turnEntries, turnKey, spokenTurn } from './turnEntries';
+import { isLiveTurn, turnEntries, turnKey } from './turnEntries';
 import { resolveTaskCheckpoints } from './TaskCard';
 import { questionsOf } from './messageActions';
 import { StreamingMessage } from './StreamingMessage';
 import { ICON } from './activityIcons';
-import { VoiceLiveMessage } from './VoiceLiveMessage';
 import { ChatInput } from './ChatInput';
 import { GoalBanner } from './GoalBanner';
 import { ApprovalBanner } from './ApprovalBanner';
@@ -383,17 +382,11 @@ export const ChatPanel: React.FC = () => {
               indices={entry.indices}
               taskCheckpoints={taskCheckpoints}
               liveCheckpointIdx={liveCheckpointIdx}
-              // A spoken turn replaces the live voice bubble that already
-              // showed its words; replaying the entrance animation would read
-              // as the message vanishing and streaming back in.
-              noEnter={noEnterKeys.has(key) || spokenTurn(entry.rows)}
+              noEnter={noEnterKeys.has(key)}
               renderLive={entry === liveTurn ? renderLive : undefined}
             />
           );
         })}
-
-        {/* Voice mode: the utterance being spoken right now */}
-        <VoiceLiveMessage />
 
         {/* Streaming response that starts a new turn */}
         {isStreaming && !liveTurn && <LiveReply />}

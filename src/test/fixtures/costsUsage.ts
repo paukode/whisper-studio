@@ -114,12 +114,12 @@ const SESSION_OF: Record<string, SplitKey> = {
   'gpt6-astra': GONE,
   'opus5.0': GONE,
   'haiku4.5': DREAM,
-  'nova-sonic': OLD,
+  'mistral-large': OLD,
 };
 
 const CHAT: SplitKey = { key: 'chat', label: 'Chat', deleted: false };
 const AGENT: SplitKey = { key: 'agent', label: 'Agent', deleted: false };
-const VOICE: SplitKey = { key: 'voice', label: 'Voice', deleted: false };
+const CRON: SplitKey = { key: 'cron', label: 'Scheduled tasks', deleted: false };
 
 const SOURCE_OF: Record<string, SplitKey> = {
   'gpt5.6-sol': CHAT,
@@ -128,7 +128,7 @@ const SOURCE_OF: Record<string, SplitKey> = {
   [LOCAL_MODEL]: CHAT,
   'gpt6-astra': AGENT,
   'haiku4.5': AGENT,
-  'nova-sonic': VOICE,
+  'mistral-large': CRON,
 };
 
 function splitKeyOf(split: UsageSplit, model: UsageRow): SplitKey {
@@ -206,7 +206,7 @@ export function usageFor(url: string): UsageResponse {
       output_tokens: sum('output_tokens'),
       calls: sum('calls'),
       estimated_calls: sum('estimated_calls'),
-      // Every fixture model has a rate (nova-sonic included), or is on-device.
+      // Every fixture model has a rate (mistral-large included), or is on-device.
       unpriced_calls: 0,
       cache_hit_rate: prompt > 0 ? cacheRead / prompt : 0,
       cache_savings_usd: (ft.cache_savings_usd * cost) / ft.cost_usd,

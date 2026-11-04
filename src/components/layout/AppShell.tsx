@@ -11,8 +11,6 @@ import { useSessionPersistence } from '@/hooks/useSessionPersistence';
 import { killSessionStream } from '@/hooks/chatStream/streamControl';
 import { openEventChannel, useActiveChatStore } from '@/stores/sessionRuntimes';
 import { hasRunningSubagent, useSubagentStore } from '@/stores/subagentStore';
-import { useVoiceStore } from '@/stores/voiceStore';
-import { voiceController } from '@/services/voiceController';
 import { initRecordingControllerEvents } from '@/services/recordingController';
 import { syncWorkspaceStatus } from '@/services/workspaceConnection';
 import { Sidebar } from './Sidebar';
@@ -212,20 +210,10 @@ const AppShell: React.FC = () => {
   const viewedSessionId = useSessionStore((s) => s.currentSessionId);
   const isActiveStreaming = useActiveChatStore((s) => s.isStreaming);
   const hasRunningSubagents = useSubagentStore((s) => hasRunningSubagent(s, viewedSessionId));
-  // The draining count re-renders this on every change; the controller says
-  // whether any of it belongs to the viewed session.
-  const voiceDrainingCount = useVoiceStore((s) => s.draining);
-  const voiceDraining = voiceDrainingCount > 0 && voiceController.hasDrainingRuns(viewedSessionId);
   useKeyboardShortcut(
     'escape',
-    () => {
-      if (isActiveStreaming || hasRunningSubagents) {
-        killSessionStream(useSessionStore.getState().currentSessionId);
-      } else {
-        voiceController.cancelRuns(useSessionStore.getState().currentSessionId);
-      }
-    },
-    isActiveStreaming || hasRunningSubagents || voiceDraining,
+    () => killSessionStream(useSessionStore.getState().currentSessionId),
+    isActiveStreaming || hasRunningSubagents,
   );
 
   // ── Workspace collapse / expand ──

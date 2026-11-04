@@ -54,7 +54,6 @@ vi.mock('./ChatInput', () => ({ ChatInput: () => null }));
 vi.mock('./ApprovalBanner', () => ({ ApprovalBanner: () => null }));
 vi.mock('./GoalBanner', () => ({ GoalBanner: () => null }));
 vi.mock('./AutoModeBreakerBanner', () => ({ AutoModeBreakerBanner: () => null }));
-vi.mock('./VoiceLiveMessage', () => ({ VoiceLiveMessage: () => null }));
 vi.mock('@/api/tasks', () => ({
   fetchSessionTasks: vi.fn(() => Promise.reject(new Error('noop'))),
 }));

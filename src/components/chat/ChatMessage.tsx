@@ -226,12 +226,6 @@ const ChatMessageView: React.FC<ChatMessageProps> = ({ message, index }) => {
 
         {message.timestamp && (
           <span className="msg-timestamp">
-            {message.spoken && (
-              <span className="msg-spoken" title="Spoken in voice mode">
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M19 11a7 7 0 0 1-14 0"/><line x1="12" y1="18" x2="12" y2="22"/></svg>
-                spoken ·{' '}
-              </span>
-            )}
             {formatMessageTimestamp(message.timestamp)}
           </span>
         )}

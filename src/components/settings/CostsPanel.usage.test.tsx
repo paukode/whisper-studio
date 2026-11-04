@@ -282,25 +282,25 @@ describe('CostsPanel: how it draws the report', () => {
     const header = (name: string) => within(table(container)).getByRole('button', { name });
 
     expect(rowKeys(container)).toEqual([
-      'gpt5.6-sol', 'gpt6-astra', 'opus5.0', 'sonnet5', 'haiku4.5', 'nova-sonic', LOCAL,
+      'gpt5.6-sol', 'gpt6-astra', 'opus5.0', 'sonnet5', 'haiku4.5', 'mistral-large', LOCAL,
     ]);
     expect(header('Cost').closest('th')).toHaveAttribute('aria-sort', 'descending');
 
     fireEvent.click(header('Cost'));
     expect(rowKeys(container)).toEqual([
-      LOCAL, 'nova-sonic', 'haiku4.5', 'sonnet5', 'opus5.0', 'gpt6-astra', 'gpt5.6-sol',
+      LOCAL, 'mistral-large', 'haiku4.5', 'sonnet5', 'opus5.0', 'gpt6-astra', 'gpt5.6-sol',
     ]);
     expect(header('Cost').closest('th')).toHaveAttribute('aria-sort', 'ascending');
 
     fireEvent.click(header('Calls'));
     expect(rowKeys(container)).toEqual([
-      'gpt5.6-sol', 'gpt6-astra', 'opus5.0', 'haiku4.5', 'sonnet5', LOCAL, 'nova-sonic',
+      'gpt5.6-sol', 'gpt6-astra', 'opus5.0', 'haiku4.5', 'sonnet5', LOCAL, 'mistral-large',
     ]);
     expect(header('Cost').closest('th')).toHaveAttribute('aria-sort', 'none');
 
     fireEvent.click(header('Model'));
     expect(rowKeys(container)).toEqual([
-      'gpt5.6-sol', 'gpt6-astra', 'haiku4.5', LOCAL, 'nova-sonic', 'opus5.0', 'sonnet5',
+      'gpt5.6-sol', 'gpt6-astra', 'haiku4.5', LOCAL, 'mistral-large', 'opus5.0', 'sonnet5',
     ]);
   });
 
