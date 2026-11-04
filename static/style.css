@@ -2969,6 +2969,25 @@ input.segment-speaker {
     overflow-y: auto; font-size: var(--fs-small); font-family: var(--font-mono);
     padding: 0 4px 8px;
 }
+/* File tree rows (FileTreeNode). The row's left padding comes inline from
+ * its depth. A file has no chevron, so its icon takes the chevron's width as
+ * a margin and lines up with its sibling folders. */
+.file-tree-node {
+    display: flex; align-items: center; gap: 4px;
+    padding: 2px 8px 2px 0; cursor: pointer; border-radius: var(--radius-sm);
+    white-space: nowrap; color: var(--text-secondary); line-height: 1.5;
+}
+.file-tree-node:hover { background: var(--bg-hover); color: var(--text-primary); }
+.file-tree-node-selected,
+.file-tree-node-selected:hover { background: var(--accent-dim); color: var(--accent); }
+.file-tree-chevron {
+    display: inline-flex; justify-content: center; width: 12px; flex-shrink: 0;
+    font-size: 8px; color: var(--text-muted); transition: transform 0.12s ease;
+}
+.file-tree-chevron-expanded { transform: rotate(90deg); }
+.file-tree-icon { flex-shrink: 0; width: 16px; text-align: center; font-size: 13px; }
+.file-tree-node > .file-tree-icon:first-child { margin-left: 16px; }
+.file-tree-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .ws-tree-file {
     padding: 3px 8px 3px 16px; cursor: pointer; border-radius: var(--radius-sm);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -3225,9 +3244,9 @@ input.segment-speaker {
 
 /* Mode indicator */
 .ws-mode-indicator {
-    display: flex; gap: 2px; background: var(--bg-primary);
-    border-radius: var(--radius-md); padding: 2px; border: 1px solid var(--border);
-    margin-right: 8px;
+    flex-shrink: 0; white-space: nowrap; margin-right: 8px; padding: 2px 8px;
+    background: var(--bg-primary); border: 1px solid var(--border); border-radius: var(--radius-md);
+    font-size: var(--fs-caption); color: var(--text-secondary);
 }
 
 /* Permission explainer, risk levels */
@@ -3948,6 +3967,29 @@ input.segment-speaker {
 .ws-git-changes-header svg {
     opacity: 0.6;
     flex-shrink: 0;
+}
+.ws-git-branch {
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-family: var(--font-mono); font-weight: 500; color: var(--text-muted);
+}
+.ws-git-change-count {
+    flex-shrink: 0; padding: 0 6px; border-radius: var(--radius-sm);
+    background: var(--accent-dim); color: var(--accent); font-weight: 600;
+}
+.ws-git-refresh-btn {
+    flex-shrink: 0; width: 22px; height: 22px; padding: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: none; border: 1px solid transparent; border-radius: var(--radius-sm);
+    color: var(--text-muted); font-size: 13px; cursor: pointer;
+}
+.ws-git-refresh-btn:hover:not(:disabled) {
+    background: var(--bg-hover); border-color: var(--border); color: var(--text-primary);
+}
+.ws-git-refresh-btn:disabled { opacity: 0.4; cursor: default; }
+.ws-git-section-title {
+    padding: 6px 10px 2px 14px;
+    font-family: var(--font-mono); font-size: var(--fs-caption); font-weight: 500;
+    letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted);
 }
 .ws-git-changes-list {
     overflow-y: auto;
