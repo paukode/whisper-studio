@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { getUpdateCheck, type UpdateCheck } from '@/api/updateCheck';
 import { STORAGE_KEYS } from '@/utils/storageKeys';
+import { useUIStore } from '@/stores/uiStore';
+
+/** The Mac app's Check for Updates menu item dispatches this on the window
+ *  (macapp/shell/main.swift checkForUpdates). */
+export const CHECK_FOR_UPDATES_EVENT = 'ws-check-for-updates';
 
 /**
  * Update notice: a slim callout under the header when the installed app is
@@ -12,6 +17,11 @@ import { STORAGE_KEYS } from '@/utils/storageKeys';
  * Dismiss hides the notice for that one version only; a newer release shows
  * it again. The notice only reports: it never changes permissions or
  * behaviour, and a failed check shows nothing.
+ *
+ * Check for Updates (the Mac app menu) asks again at once, past the backend's
+ * cache: a newer release shows the notice even if that version was
+ * dismissed, and otherwise a toast says the app is up to date or that the
+ * check could not reach GitHub.
  */
 
 function readDismissed(): string {
@@ -46,6 +56,30 @@ export const UpdateNotice: React.FC = () => {
     return () => {
       live = false;
     };
+  }, []);
+
+  useEffect(() => {
+    const onCheck = () => {
+      const { addToast } = useUIStore.getState();
+      getUpdateCheck(true)
+        .then((data) => {
+          setCheck(data ?? null);
+          if (data?.update_available && data.latest) {
+            setDismissed('');
+            return;
+          }
+          if (data?.latest) {
+            addToast({ type: 'success', message: `Whisper Studio is up to date (v${data.current ?? data.latest.version}).` });
+          } else {
+            addToast({ type: 'warning', message: 'Could not check for updates. Check the network connection, then try again.' });
+          }
+        })
+        .catch(() => {
+          addToast({ type: 'warning', message: 'Could not check for updates. Check the network connection, then try again.' });
+        });
+    };
+    window.addEventListener(CHECK_FOR_UPDATES_EVENT, onCheck);
+    return () => window.removeEventListener(CHECK_FOR_UPDATES_EVENT, onCheck);
   }, []);
 
   const latest = check?.latest;

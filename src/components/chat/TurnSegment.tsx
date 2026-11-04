@@ -17,9 +17,26 @@ import { WorkflowRunCard } from '@/components/chat/WorkflowRunCard';
 import { CIStatusCard } from '@/components/chat/CIStatusCard';
 import { CIDiagnosisCard } from '@/components/chat/CIDiagnosisCard';
 import { saveMediaSize } from '@/components/chat/MediaResize';
+import { getActiveChatStore } from '@/stores/sessionRuntimes';
+import { useSessionStore } from '@/stores/sessionStore';
 import { findMatchingTeamReports } from '@/hooks/chatStream/teamProgress';
 import { UserQuestionCard, UserQuestionGroupCard } from '@/components/chat/UserQuestionCard';
 import { AnswerSources } from '@/components/chat/AnswerSources';
+
+/** Saves the user's open or closed choice for one row's thinking box with
+ *  the session, so it holds across reloads and session switches. */
+function saveThinkingOpen(message: ChatMessage, open: boolean): void {
+  if (!!message._thinkingOpen === open) return;
+  const store = getActiveChatStore();
+  const messages = store.getState().messages;
+  const idx = messages.indexOf(message);
+  if (idx < 0) return;
+  const updated = [...messages];
+  updated[idx] = { ...message, _thinkingOpen: open || undefined };
+  store.getState().setMessages(updated);
+  const sid = useSessionStore.getState().currentSessionId;
+  if (sid) useSessionStore.getState().debouncedSave(sid);
+}
 
 export interface TurnSegmentProps {
   /** One run of the turn's rows (traceRuns): the store's own objects, never
@@ -95,7 +112,11 @@ const TurnSegmentView: React.FC<TurnSegmentProps> = ({ rows, indices, taskCheckp
   return (
     <>
       {head._thinkingText && (
-        <details className="thinking-block">
+        <details
+          className="thinking-block"
+          open={!!head._thinkingOpen}
+          onToggle={(e) => saveThinkingOpen(head, e.currentTarget.open)}
+        >
           <summary className="thinking-summary">
             <span className="activity-slot">{ICON.thought}</span>
             Thought process

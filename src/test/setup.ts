@@ -19,3 +19,13 @@ import './mocks/resizeObserver';
 if (typeof Element.prototype.scrollIntoView !== 'function') {
   Element.prototype.scrollIntoView = () => {};
 }
+
+// Composer drafts live in a store that outlives a component (per-session
+// drafts, src/stores/composerDraftStore.ts). Every test starts with none, as
+// a freshly mounted composer did when the text was component state.
+import { beforeEach } from 'vitest';
+import { useComposerDraftStore } from '@/stores/composerDraftStore';
+
+beforeEach(() => {
+  useComposerDraftStore.setState({ bySession: {} });
+});

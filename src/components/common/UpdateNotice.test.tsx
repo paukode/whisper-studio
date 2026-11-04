@@ -4,7 +4,8 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 const { getMock } = vi.hoisted(() => ({ getMock: vi.fn() }));
 vi.mock('@/api/client', () => ({ get: getMock }));
 
-import { UpdateNotice } from './UpdateNotice';
+import { UpdateNotice, CHECK_FOR_UPDATES_EVENT } from './UpdateNotice';
+import { useUIStore } from '@/stores/uiStore';
 import { STORAGE_KEYS } from '@/utils/storageKeys';
 
 const PAGE = 'https://github.com/paukode/whisper-studio/releases/tag/v2.16.0';
@@ -100,5 +101,45 @@ describe('UpdateNotice', () => {
       getItem.mockRestore();
       setItem.mockRestore();
     }
+  });
+
+  describe('Check for Updates from the app menu', () => {
+    beforeEach(() => {
+      useUIStore.setState({ toasts: [] });
+    });
+
+    const toastMessages = () => useUIStore.getState().toasts.map((t) => t.message);
+
+    it('asks past the cache and shows a newer release even after it was dismissed', async () => {
+      localStorage.setItem(STORAGE_KEYS.UPDATE_DISMISSED, '2.16.0');
+      getMock.mockResolvedValue(check());
+      render(<UpdateNotice />);
+      await settle();
+      expect(screen.queryByTestId('update-notice')).toBeNull();
+
+      window.dispatchEvent(new Event(CHECK_FOR_UPDATES_EVENT));
+      expect(await screen.findByTestId('update-notice')).toBeInTheDocument();
+      expect(getMock).toHaveBeenCalledWith('/api/update-check?fresh=true');
+    });
+
+    it('says the app is up to date when no newer release exists', async () => {
+      getMock.mockResolvedValue(check({ current: '2.16.0', update_available: false }));
+      render(<UpdateNotice />);
+      await settle();
+
+      window.dispatchEvent(new Event(CHECK_FOR_UPDATES_EVENT));
+      await waitFor(() => expect(toastMessages()).toContain('Whisper Studio is up to date (v2.16.0).'));
+      expect(screen.queryByTestId('update-notice')).toBeNull();
+    });
+
+    it('says the check could not run when GitHub gives no answer', async () => {
+      getMock.mockResolvedValueOnce(check({ current: '2.16.0', update_available: false }));
+      getMock.mockResolvedValueOnce(check({ current: '2.16.0', latest: null, update_available: false }));
+      render(<UpdateNotice />);
+      await settle();
+
+      window.dispatchEvent(new Event(CHECK_FOR_UPDATES_EVENT));
+      await waitFor(() => expect(toastMessages().some((m) => m.startsWith('Could not check for updates'))).toBe(true));
+    });
   });
 });

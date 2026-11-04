@@ -411,6 +411,7 @@ export async function sendChatTurn(question: string, opts?: SendOptions): Promis
         teamReports: store().takeTeamReports(),
         _thinkingMs: result.thinkingMs > 0 ? Math.round(result.thinkingMs) : undefined,
         _thinkingText: result.thinkingText || undefined,
+        _thinkingOpen: (result.thinkingText && store().thinkingOpen) || undefined,
       }, store().messages, result.activityLabels));
       toolRowAdded = true;
     }
@@ -449,6 +450,7 @@ export async function sendChatTurn(question: string, opts?: SendOptions): Promis
           plan: result.pendingPlan ?? undefined,
           _thinkingMs: result.thinkingMs > 0 ? Math.round(result.thinkingMs) : undefined,
           _thinkingText: result.thinkingText || undefined,
+          _thinkingOpen: (result.thinkingText && store().thinkingOpen) || undefined,
           _usage: (result.inputTokens > 0 || result.outputTokens > 0)
             ? { input_tokens: result.inputTokens, output_tokens: result.outputTokens }
             : undefined,

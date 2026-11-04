@@ -68,6 +68,10 @@ export interface ChatState {
   isStreaming: boolean;
   currentStreamContent: string;
   currentThinkingContent: string;
+  /** The live thinking box is open: only the user opens it (it starts closed
+   *  every round), and the round's committed row keeps the choice
+   *  (ChatMessage._thinkingOpen). */
+  thinkingOpen: boolean;
   /** Tool traces shown in real-time during streaming */
   currentStreamToolUse: ToolUseEvent[];
   /** Captions (activity_label frames) for calls in currentStreamToolUse, in
@@ -226,6 +230,7 @@ export interface ChatState {
    *  (thinking/text) arrives or the stream ends. */
   streamStatus: string | null;
   setStreamStatus: (status: string | null) => void;
+  setThinkingOpen: (open: boolean) => void;
   setThinkingStop: () => void;
   setUsage: (input: number, output: number, cost?: number, contextUsed?: number, contextMax?: number) => void;
   /** Seed the session-cumulative totals from the server's recorded spend
@@ -295,6 +300,7 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
   isStreaming: false,
   currentStreamContent: '',
   currentThinkingContent: '',
+  thinkingOpen: false,
   streamStatus: null,
   currentStreamToolUse: [],
   currentStreamLabels: [],
@@ -445,6 +451,7 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
         isStreaming: true,
         currentStreamContent: '',
         currentThinkingContent: '',
+        thinkingOpen: false,
         streamStatus: null,
         currentStreamToolUse: [],
         currentStreamLabels: [],
@@ -474,6 +481,7 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
         streamStatus: null,
         currentStreamContent: '',
         currentThinkingContent: '',
+        thinkingOpen: false,
         currentStreamToolUse: [],
         currentStreamLabels: [],
         thinkingStartTime: null,
@@ -490,6 +498,7 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
         streamStatus: null,
         currentStreamContent: '',
         currentThinkingContent: '',
+        thinkingOpen: false,
         currentStreamToolUse: [],
         currentStreamLabels: [],
         thinkingStartTime: null,
@@ -519,6 +528,7 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
       liveDeliveries: [],
       currentStreamContent: '',
       currentThinkingContent: '',
+      thinkingOpen: false,
       currentStreamToolUse: [],
       currentStreamLabels: [],
       thinkingStartTime: performance.now(),
@@ -555,6 +565,7 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
       pendingMidTurn: [],
       currentStreamContent: '',
       currentThinkingContent: '',
+      thinkingOpen: false,
       isStreaming: false,
     });
   },
@@ -639,6 +650,10 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
   },
 
   // ── Thinking/usage ──
+
+  setThinkingOpen: (open: boolean) => {
+    set({ thinkingOpen: open });
+  },
 
   setStreamStatus: (status: string | null) => {
     set({ streamStatus: status });

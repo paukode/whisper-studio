@@ -17,6 +17,7 @@ export interface UpdateCheck {
   update_commands: string[];
 }
 
-export function getUpdateCheck(): Promise<UpdateCheck> {
-  return get<UpdateCheck>('/api/update-check');
+/** `fresh` skips the backend's cache: a person asked (Check for Updates). */
+export function getUpdateCheck(fresh = false): Promise<UpdateCheck> {
+  return get<UpdateCheck>(fresh ? '/api/update-check?fresh=true' : '/api/update-check');
 }
