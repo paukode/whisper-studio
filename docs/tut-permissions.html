@@ -32,7 +32,8 @@
     </figure>
 
     <figure class="shot">
-      <img src="assets/img/approval-card.png" alt="An approval card requesting permission to run a command">
+      <img class="shot-light" src="assets/img/approval-card.png" alt="An approval card requesting permission to run a command">
+      <img class="shot-dark" src="assets/img/approval-card-dark.png" alt="An approval card requesting permission to run a command">
       <figcaption><strong>An approval card that waits for an answer.</strong> In Asks first mode, each
         command stops here first. The card shows the exact command, its folder, and a risk level.
         <em>Yes, all cli</em> approves all the commands of this session. <em>Block cli</em> refuses
@@ -42,7 +43,7 @@
     <h2 id="the-mode-dial">The main control: the Permissions control</h2>
     <p>The <b>Permissions</b> control is below the composer, next to the "How it thinks" control. It
       shows the current mode. Click it to open the panel <b>What runs without asking</b>. Select a
-      mode in the panel. The <b>Manage rules…</b> link opens <b>Settings &rsaquo; Permissions</b>.</p>
+      mode in the panel. The <b>Manage rules…</b> link opens <b>Settings &rsaquo; Keys and permissions &rsaquo; Permissions</b>.</p>
     <p>You can change the mode at any time during a conversation. The server stores the mode in
       <code class="path">permissions.json</code> in the data folder of the app. For the Mac app, this
       is <code class="path">~/.whisper/data/permissions.json</code>. For a source install, it is
@@ -67,7 +68,7 @@
         <tr><td><b>"Don't ask"</b> (<code>dontAsk</code>)</td><td>The app refuses writes and does not show a card. Only read-only tools run.</td></tr>
       </tbody>
     </table></div>
-    <p>The same six modes are in <b>Settings &rsaquo; Permissions</b>, below <b>Permission Mode</b>.
+    <p>The same six modes are in <b>Settings &rsaquo; Keys and permissions &rsaquo; Permissions</b>, below <b>Permission Mode</b>.
       Each option shows the mode name and a short help text, for example "Asks first: Reads are
       allowed. Every file write and command asks first." Select a mode and click <b>Save
       Mode</b>.</p>
@@ -139,7 +140,7 @@
 
     <h2 id="category-modes">Per-category modes</h2>
     <p>The global mode applies to all actions. To set a different mode for one <em>type</em> of
-      action, use the <b>Per-Category Defaults</b> section in <b>Settings &rsaquo; Permissions</b>.
+      action, use the <b>Per-Category Defaults</b> section in <b>Settings &rsaquo; Keys and permissions &rsaquo; Permissions</b>.
       Each row is one approval category. A mode in a row replaces the global mode for that category.
       A row with <b>Use global setting</b> uses the global mode.</p>
     <div class="table-wrap"><table>
@@ -274,7 +275,7 @@
 
     <h2 id="per-tool-rules">Per-tool rules</h2>
     <p>Modes apply to many actions. For a fixed decision for one tool or one command, write a
-      <b>per-tool rule</b> in <b>Settings &rsaquo; Permissions</b>. The app examines the rules before
+      <b>per-tool rule</b> in <b>Settings &rsaquo; Keys and permissions &rsaquo; Permissions</b>. The app examines the rules before
       the default of the mode. Thus a rule has priority over the mode, with one exception (see below).
       Each rule names a tool, matches its input, and sets an action:</p>
     <div class="table-wrap"><table>
@@ -444,7 +445,7 @@
       locations. A terminal command in the sandbox writes only in the workspace, its scratch folder,
       and the temporary folders. This also applies when it starts in a different folder. Without a connected
       workspace, it writes only in its scratch folder and the temporary folders.</p>
-    <p><b>Settings &rsaquo; Permissions</b> has two more sections. <b>Sandbox Network Policy</b> sets
+    <p><b>Settings &rsaquo; Keys and permissions &rsaquo; Permissions</b> has two more sections. <b>Sandbox Network Policy</b> sets
       the network access of commands in the sandbox. The tiers are Permissive (no limit, the default),
       Curated (frequent package and documentation domains, and your own domains), and Restrictive
       (only your own domains). <b>Folder Access</b> lists the folders outside your workspace that you

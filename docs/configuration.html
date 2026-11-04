@@ -32,7 +32,8 @@
     </figure>
 
     <figure class="shot">
-      <img src="assets/img/settings-api-keys.png" alt="The Settings dialog on the API Keys tab">
+      <img class="shot-light" src="assets/img/settings-api-keys.png" alt="The Settings dialog on the API Keys tab">
+      <img class="shot-dark" src="assets/img/settings-api-keys-dark.png" alt="The Settings dialog on the API Keys tab">
       <figcaption><strong>The Settings dialog.</strong> These fields write to the user layer; the
         grouped left rail (Chat and models, Tools and automation, Access and usage, Look and feel) holds the full
         set of configurable surfaces, each with its own sub-tabs.</figcaption>
@@ -210,16 +211,17 @@ source ~/.zshrc</code></pre></div>
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
       <div class="callout__body"><p><b>There is no "default model" field in Settings.</b> The chat model
-        is chosen from the <b>model chip</b> in the composer toolbar (or with <code>/model</code>), and
+        is chosen in the <b>Model</b> row of the <b>How it thinks</b> chip in the composer (or with
+        <code>/model</code>), and
         the app keeps the choice in its browser storage, so it survives a reload. Settings &rarr;
-        Models &rarr; Chat is where you hide models from that chip or add your own; Discover is where
+        Models &rarr; Chat is where you hide models from the Model list or add your own; Discover is where
         you install on-device ones. The <code>default_chat_model</code> config key is only the
         starting default when nothing is stored yet; its shipped value is <code>gpt6-luna</code>
         (GPT-6 Luna).</p></div>
     </div>
 
     <h3 id="session-controls">Controls that live in the composer, not in Settings</h3>
-    <p>Three dials sit in the <b>How it thinks</b> capsule under the chat input rather than in the
+    <p>Three dials sit in the <b>How it thinks</b> chip under the chat input rather than in the
       Settings panel, because you change them mid-conversation. The model and the answer length are
       kept in the app's browser storage; the thinking level starts from <code>effort_level</code>
       and returns to it on reload.</p>
@@ -248,7 +250,7 @@ source ~/.zshrc</code></pre></div>
     <div class="table-wrap"><table>
       <thead><tr><th>Setting</th><th>Where</th><th>What it does</th></tr></thead>
       <tbody>
-        <tr><td>Permission Mode</td><td>the Permissions capsule (shield) in the composer</td><td><code>default</code> / <code>auto</code> / <code>plan</code> / <code>acceptEdits</code> / <code>bypassPermissions</code> / <code>dontAsk</code>. How risky tool calls are gated. See <a href="tut-permissions.html">Permissions &amp; approvals</a>.</td></tr>
+        <tr><td>Permission Mode</td><td>the permission mode chip (shield) in the composer</td><td><code>default</code> / <code>auto</code> / <code>plan</code> / <code>acceptEdits</code> / <code>bypassPermissions</code> / <code>dontAsk</code>. How risky tool calls are gated. See <a href="tut-permissions.html">Permissions &amp; approvals</a>.</td></tr>
         <tr><td>Permissions panel</td><td>Keys and permissions &rarr; Permissions</td><td>Per-rule justification notes, a dry-run tester, per-category approval defaults (<code>category_modes</code>), and the sandbox network egress policy (<code>network_policy</code>, tiers <code>restrictive</code> / <code>curated</code> / <code>permissive</code>; <code>permissive</code> is the default, meaning no restriction).</td></tr>
         <tr><td>Feature Flags</td><td>Usage and advanced &rarr; Feature flags</td><td>Turn gated features on or off (<code>feature_flags</code>) without editing the file. <code>progressive_tools</code> (progressive tool disclosure) is one example, with companion <code>progressive_tools_core_extra</code> / <code>progressive_tools_defer_extra</code> keys for tuning the split.</td></tr>
         <tr><td>Cost Limits</td><td>Usage and advanced &rarr; Costs</td><td>Per-session (<code>max_session_cost_usd</code>) and per-day (<code>max_daily_cost_usd</code>, the UTC day) Bedrock spend caps. <code>0</code> means unlimited. Reaching a cap leaves the turn one final round to answer. The same section sets the round limit (<code>round_limit</code>, 120) and time limit (<code>time_limit_minutes</code>, 15) every run uses. See <a href="arch-costs.html">Cost tracking &amp; budgets</a>.</td></tr>

@@ -8,7 +8,10 @@ local mode, and a full development environment (file
 tree, Monaco editor, integrated terminal, Git, LSP) in a single browser tab
 served by a single local process.
 
-![Whisper Studio Mac app on first launch, ready to record or chat](docs/assets/img/hero.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/img/hero-dark.png">
+  <img src="docs/assets/img/hero.png" alt="Whisper Studio Mac app on first launch, ready to record or chat">
+</picture>
 
 *The Mac app on first launch. Chat, live transcription, and a full
 development environment (file tree, Monaco editor, terminal, Git, LSP) live
@@ -84,7 +87,10 @@ Deploy setup is in [`docs/README.md`](docs/README.md).
   originating chat.
 - **Persistent sessions** in SQLite (WAL), with user files under `~/.whisper`.
 
-![Live transcription with two speakers separated and named](docs/assets/img/transcription-diarization.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/img/transcription-diarization-dark.png">
+  <img src="docs/assets/img/transcription-diarization.png" alt="Live transcription with two speakers separated and named">
+</picture>
 
 *Live transcription with diarization. Speakers are separated automatically and
 renamed by clicking the label; the assistant on the left summarised the
@@ -123,13 +129,19 @@ Models > Discover**, or switch **Settings > Model mode** to Hybrid or Cloud
 for Claude and GPT on Bedrock. For Bedrock, click the gear icon to set your
 **Bedrock Region**:
 
-![Settings on the API Keys tab, showing Bedrock Region](docs/assets/img/settings-api-keys.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/img/settings-api-keys-dark.png">
+  <img src="docs/assets/img/settings-api-keys.png" alt="Settings on Keys and permissions, API keys sub-tab, showing Bedrock Region">
+</picture>
 
-Pick the model from the **model chip** in the composer toolbar rather than in
-Settings. It lists the models your mode offers (in Hybrid mode, cloud and
+Pick the model in the **How it thinks** chip in the composer (its **Model** row)
+rather than in Settings. It lists the models your mode offers (in Hybrid mode, cloud and
 on-device models sit in the same list):
 
-![The model picker listing Claude, GPT and on-device models](docs/assets/img/model-picker.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/img/model-picker-dark.png">
+  <img src="docs/assets/img/model-picker.png" alt="The model picker listing Claude, GPT and on-device models">
+</picture>
 
 Then type "hello" in chat. If the model responds, you are done. Transcription
 needs no setup; the transcription engine downloads on first record.
@@ -204,8 +216,8 @@ the weights:
 
 `repo_id`, `filename` and `dir` are required for a GGUF entry (an MLX entry
 takes `"engine": "mlx"` and needs no `filename`); an entry missing them is
-skipped with a warning. A reasoning key is not necessary. The composer shows
-the "Thinking" chip for each local model that has a reasoning mode in its chat
+skipped with a warning. A reasoning key is not necessary. The **How it thinks** chip shows a
+Thinking level for each local model that has a reasoning mode in its chat
 template. `ctx` defaults to 32768, which is what the full tool
 pool needs. The model appears in the picker right away, and its weights
 download the first time you select it, with no `setup.sh` run needed. Most
@@ -258,7 +270,10 @@ In the default permission mode, read-only commands run at once and every
 other command stops for approval first, showing the exact command, its
 working directory, and a risk rating:
 
-![An approval card asking to run pytest, with Yes, Yes-all, No and Block](docs/assets/img/approval-card.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/img/approval-card-dark.png">
+  <img src="docs/assets/img/approval-card.png" alt="An approval card asking to run pytest, with Yes, Yes-all, No and Block">
+</picture>
 
 Full boundary table: **[Security model](https://paukode.github.io/whisper-studio/ref-security.html)**,
 with the deeper rationale in
