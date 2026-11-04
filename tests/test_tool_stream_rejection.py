@@ -213,7 +213,7 @@ def _anthropic_delta(raw):
     }
 
 
-@pytest.mark.parametrize("raw", ["", " ", "{", "[]", "null", "5"])
+@pytest.mark.parametrize("raw", [" ", "{", "[]", "null", "5"])
 def test_anthropic_malformed_arguments_are_rejected_with_usage(raw):
     adapter, events = _anthropic_events(
         [
@@ -240,6 +240,50 @@ def test_anthropic_explicit_initial_empty_object_is_a_valid_zero_argument_call()
     )
     assert isinstance(events[-1], EV.RoundResult)
     assert events[-1].content[-1]["input"] == {}
+
+
+def test_anthropic_zero_argument_call_as_bedrock_streams_it_is_valid():
+    # The real Bedrock shape for a call with no arguments: the block starts with
+    # input {}, sends one empty argument piece, then stops.
+    _, events = _anthropic_events(
+        [
+            msg_start(),
+            _anthropic_start({}),
+            _anthropic_delta(""),
+            {"type": "content_block_stop", "index": 0},
+            *msg_end("tool_use"),
+        ]
+    )
+    assert isinstance(events[-1], EV.RoundResult)
+    assert events[-1].content[-1]["input"] == {}
+
+
+def test_anthropic_arguments_after_the_leading_empty_piece_are_parsed():
+    _, events = _anthropic_events(
+        [
+            msg_start(),
+            _anthropic_start({}),
+            _anthropic_delta(""),
+            _anthropic_delta('{"path"'),
+            _anthropic_delta(': "."}'),
+            {"type": "content_block_stop", "index": 0},
+            *msg_end("tool_use"),
+        ]
+    )
+    assert events[-1].content[-1]["input"] == {"path": "."}
+
+
+def test_anthropic_empty_piece_without_a_declared_input_is_rejected():
+    _, events = _anthropic_events(
+        [
+            msg_start(),
+            _anthropic_start(),
+            _anthropic_delta(""),
+            {"type": "content_block_stop", "index": 0},
+            *msg_end("tool_use"),
+        ]
+    )
+    _assert_rejected(events)
 
 
 def test_anthropic_unclosed_tool_block_is_not_executable():

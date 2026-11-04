@@ -431,7 +431,12 @@ class AnthropicAdapter:
                         if current_block["type"] != "tool_use" or not isinstance(piece, str):
                             argument_error = "Orphan or invalid tool argument delta."
                             continue
-                        current_block["input_delta_seen"] = True
+                        # Bedrock opens every tool block with an empty piece, and a call
+                        # with no arguments sends only that one, then the stop. An empty
+                        # piece carries no arguments, so it does not count as a delta and
+                        # the call keeps its declared input ({}).
+                        if piece:
+                            current_block["input_delta_seen"] = True
                         current_block["input_json"] += piece
                         _n = len(current_block["input_json"])
                         if _n >= current_block.get("next_progress", TOOL_ARGS_PROGRESS_STEP):
