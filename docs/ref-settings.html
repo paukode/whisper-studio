@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Settings &amp; config keys - Whisper Studio Docs</title>
-  <meta name="description" content="Every config key with its default and meaning, and the Settings-UI field that writes it: region, model mode, voice, speakers, feature flags, effort, permission mode, category modes, network policy, cron, agents, and cost caps.">
+  <meta name="description" content="Every config key with its default and meaning, and the Settings-UI field that writes it: region, model mode, speakers, feature flags, effort, permission mode, category modes, network policy, cron, agents, and cost caps.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -55,7 +55,7 @@
           <td>API keys</td>
           <td>The AWS region every Claude and GPT call is routed to. It must match a region where the
             model you selected is actually enabled, or Bedrock returns an access error. Defaults to
-            <code>us-east-1</code>. Voice mode follows it unless <code>voice.region</code> overrides it.
+            <code>us-east-1</code>.
             See <a href="#pitfalls">Region pitfalls</a>.</td>
         </tr>
         <tr>
@@ -264,20 +264,20 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Key</th><th>Type</th><th>Default</th><th>Written by</th></tr></thead>
       <tbody>
-        <tr><td><code>permission_mode</code></td><td>string</td><td><code>"default"</code></td><td>No field. No run reads this key. The live mode is the <code>mode</code> in <code class="path">permissions.json</code>, which both the composer Permissions capsule and Settings &gt; Permissions write. A voice run uses that mode, and an unattended run (scheduled or headless) uses <code>default</code></td></tr>
+        <tr><td><code>permission_mode</code></td><td>string</td><td><code>"default"</code></td><td>No field. No run reads this key. The live mode is the <code>mode</code> in <code class="path">permissions.json</code>, which both the composer Permissions capsule and Settings &gt; Permissions write. An unattended run (scheduled or headless) uses <code>default</code></td></tr>
         <tr><td><code>permission_explainer_enabled</code></td><td>boolean</td><td><code>true</code></td><td>No field. When on, an approval card carries a short risk level and explanation written by a side model call, capped at 3 seconds so the card is never delayed</td></tr>
         <tr><td><code>auto_mode_allow</code></td><td>array</td><td><code>[]</code></td><td>No field. Extra patterns the <code>auto</code> classifier always allows</td></tr>
         <tr><td><code>auto_mode_soft_deny</code></td><td>array</td><td><code>[]</code></td><td>No field. Patterns the <code>auto</code> classifier should decline</td></tr>
         <tr><td><code>auto_mode_environment</code></td><td>array</td><td><code>[]</code></td><td>No field. Extra context lines given to the <code>auto</code> classifier</td></tr>
         <tr><td><code>tool_loop_caps</code></td><td>object</td><td><code>{}</code></td><td>No field. Per-turn call caps overlaying the loop guard's own. See <a href="#loop-caps">Loop-guard caps</a></td></tr>
-        <tr><td><code>round_limit</code></td><td>number</td><td><code>120</code></td><td>Costs &gt; Round limit. The most model rounds any run takes: chat turns, voice requests, every agent type, scheduled and headless runs. The memory agents keep their own small caps</td></tr>
-        <tr><td><code>time_limit_minutes</code></td><td>number</td><td><code>15</code></td><td>Costs &gt; Time limit. The time budget of a run nobody is watching: agents, scheduled runs and unattended headless runs. Time an agent spends waiting on agents it started does not count, since those have their own. Chat and voice have no time limit</td></tr>
+        <tr><td><code>round_limit</code></td><td>number</td><td><code>120</code></td><td>Costs &gt; Round limit. The most model rounds any run takes: chat turns, every agent type, scheduled and headless runs. The memory agents keep their own small caps</td></tr>
+        <tr><td><code>time_limit_minutes</code></td><td>number</td><td><code>15</code></td><td>Costs &gt; Time limit. The time budget of a run nobody is watching: agents, scheduled runs and unattended headless runs. Time an agent spends waiting on agents it started does not count, since those have their own. Chat has no time limit</td></tr>
         <tr><td><code>wake_parent_on_reports</code></td><td>boolean</td><td><code>true</code></td><td>No field. When agent reports land in a session with no turn running, start a one-round synthesis turn that answers from them. There is no such turn when you stopped the turn that launched the agents, in Local mode, for agents that ran on an on-device model, or when the session cost cap is reached. Off, or in those cases, the reports stay as a card in the chat and your next message reads them</td></tr>
         <tr><td><code>goal_max_consecutive_blocks</code></td><td>number</td><td><code>8</code> (shipped and in code)</td><td>No field. How many times the completion gate may block a turn from ending before it gives up</td></tr>
       </tbody>
     </table></div>
 
-    <h3 id="keys-speech">Speech, speakers and voice</h3>
+    <h3 id="keys-speech">Speech and speakers</h3>
     <div class="table-wrap"><table>
       <thead><tr><th>Key</th><th>Type</th><th>Default</th><th>Written by</th></tr></thead>
       <tbody>
@@ -287,7 +287,6 @@
         <tr><td><code>speaker_embedder</code></td><td>string</td><td><code>"redimnet"</code></td><td>No field. The speaker encoder behind "Speaker N": <code>redimnet</code> (ReDimNet2-B2) or <code>ecapa</code>. ReDimNet2 ships with the Mac app, and <code>setup.sh</code> fetches it for a source install; a missing copy downloads on first use. If it cannot load, speaker labels stop with an error and the encoder is not switched. Changing it hides stored voiceprints, which are filed per encoder, because vectors from different encoders are not comparable</td></tr>
         <tr><td><code>speaker_split_turns</code></td><td>boolean</td><td><code>true</code></td><td>No field. Cut one utterance at a speaker handover instead of labelling the whole thing as one speaker. Needs word timestamps, which Whisper and Parakeet both report</td></tr>
         <tr><td><code>speaker_voiceprints</code></td><td>boolean</td><td><code>false</code> (opt-in)</td><td>No field. Remember named speakers across recordings, so renaming "Speaker 2" to a name once gets that person their name back in later sessions</td></tr>
-        <tr><td><code>voice</code></td><td>object</td><td><code>{"enabled": true, "model_id": "amazon.nova-2-sonic-v1:0", "region": "", "voice_id": "tiffany", "endpointing": "MEDIUM"}</code></td><td>No field. See <a href="#voice">Voice-mode keys</a></td></tr>
       </tbody>
     </table></div>
 
@@ -334,27 +333,6 @@
     </div>
     <p>See <a href="arch-backends.html">Model backends &amp; modes</a> and
       <a href="arch-index.html">Index / GraphRAG</a> for how each capability is used.</p>
-
-    <h2 id="voice">Voice-mode keys</h2>
-    <p>The <code>voice</code> object configures the spoken conversation the <b>Talk</b> button opens
-      (Amazon Nova 2 Sonic over Bedrock). It has no Settings-panel field: edit it through the
-      config.user.json editor. Effective values resolve in
-      <code class="path">server/voice/routes.py</code>.</p>
-    <div class="table-wrap"><table>
-      <thead><tr><th>Sub-key</th><th>Default</th><th>Meaning</th></tr></thead>
-      <tbody>
-        <tr><td><code>enabled</code></td><td><code>true</code></td><td>Master switch. When false, the Talk button is disabled and says voice mode is off in config.</td></tr>
-        <tr><td><code>model_id</code></td><td><code>"amazon.nova-2-sonic-v1:0"</code></td><td>The Bedrock model that carries the voice. Your account needs access to it in the region below.</td></tr>
-        <tr><td><code>region</code></td><td><code>""</code></td><td>Blank follows <code>bedrock_region</code>. Nova 2 Sonic is only in <code>us-east-1</code>, <code>us-west-2</code>, <code>eu-north-1</code> and <code>ap-northeast-1</code>, so set this when your chat region is elsewhere.</td></tr>
-        <tr><td><code>voice_id</code></td><td><code>"tiffany"</code></td><td>Which voice speaks. Sixteen are available across en-US, en-GB, en-AU, en-IN, fr-FR, it-IT, de-DE, es-US and pt-BR; <code>tiffany</code> and <code>matthew</code> are the polyglot pair. An unknown id falls back to the default.</td></tr>
-        <tr><td><code>endpointing</code></td><td><code>"MEDIUM"</code></td><td><code>LOW</code>, <code>MEDIUM</code> or <code>HIGH</code>: how long a pause has to be before the model takes it as the end of your turn. Anything else falls back to <code>MEDIUM</code>.</td></tr>
-      </tbody>
-    </table></div>
-    <p>Voice mode is not available in Local mode, which is what a fresh install runs: switch
-      Settings &gt; Model mode to Hybrid or Cloud to use it. It also needs the
-      <code>aws-sdk-bedrock-runtime</code> package (both installs include it) and AWS credentials, the
-      same ones chat uses. When something is missing, <code>GET /api/voice/status</code> says what.
-      See <a href="tut-voice-mode.html">Voice conversations</a>.</p>
 
     <h2 id="auxiliary">Auxiliary models</h2>
     <p>The <code>auxiliary_models</code> map names the model for each side call the assistant makes
@@ -611,7 +589,7 @@
     <div class="table-wrap"><table>
       <thead><tr><th>#</th><th>Layer</th><th>Source</th><th>Scope</th></tr></thead>
       <tbody>
-        <tr><td>1</td><td>Defaults</td><td>built into <code class="path">server/infrastructure/config.py</code></td><td>Always the bottom layer. It gives every key that <code class="path">config.example.json</code> does not ship (for example <code>data_dir</code>, <code>translate_mode</code>, <code>translate_target</code>, <code>mode_notice_seen</code> and <code>voice</code>).</td></tr>
+        <tr><td>1</td><td>Defaults</td><td>built into <code class="path">server/infrastructure/config.py</code></td><td>Always the bottom layer. It gives every key that <code class="path">config.example.json</code> does not ship (for example <code>data_dir</code>, <code>translate_mode</code>, <code>translate_target</code> and <code>mode_notice_seen</code>).</td></tr>
         <tr><td>2</td><td>System</td><td><code class="path">config.example.json</code> that ships with the app (inside the app bundle, or at the root of a source checkout)</td><td>The app-owned shipped defaults and model catalog. Read live on every config load, not copied. A missing or broken file stops the app with an error.</td></tr>
         <tr><td>3</td><td>User</td><td><code class="path">config.user.json</code> in your user folder</td><td>Your own deltas on top of the shipped defaults: added local models, region/keys/flags, per-field overrides, a hide-list.</td></tr>
         <tr><td>4</td><td>Project</td><td><code class="path">.whisper/settings.json</code> in the workspace root</td><td>Per-project overrides for a safe subset of keys.</td></tr>
@@ -675,19 +653,14 @@
         edit the shipped <code class="path">config.example.json</code>: in the Mac app it is part of the
         signed app bundle, and every update replaces it. It is the file a developer changes to ship
         new defaults.</li>
-      <li><b>A blank voice region is not a bug.</b> <code>voice.region</code> defaults to empty on
-        purpose so voice follows <code>bedrock_region</code>. Set it only when your chat region is one
-        of the many where Nova 2 Sonic is not available.</li>
     </ul>
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
       <div class="callout__body"><p><b>Related:</b> <a href="configuration.html">Configuration</a> for
         the layered model in context, <a href="ref-env.html">Environment variables</a> for the env
-        layer, <a href="tut-model-modes.html">Model modes</a> for cloud vs hybrid vs local,
-        <a href="arch-backends.html">Model backends &amp; modes</a> for how each model is routed, and
-        <a href="tut-voice-mode.html">Voice conversations</a> for the <code>voice</code> block in
-        practice.</p></div>
+        layer, <a href="tut-model-modes.html">Model modes</a> for cloud vs hybrid vs local, and
+        <a href="arch-backends.html">Model backends &amp; modes</a> for how each model is routed.</p></div>
     </div>
   </main>
 

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Configuration - Whisper Studio Docs</title>
-  <meta name="description" content="Whisper Studio's five config layers, environment variables, the Settings panel tab by tab, the first-run config.user.json, voice settings, and secrets hygiene.">
+  <meta name="description" content="Whisper Studio's five config layers, environment variables, the Settings panel tab by tab, the first-run config.user.json, and secrets hygiene.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -255,25 +255,6 @@ source ~/.zshrc</code></pre></div>
         <tr><td>Import project</td><td>Tools and automation &rarr; Import project</td><td>Migrates CLAUDE.md or AGENTS.md to the project's WHISPER.md under <code class="path">~/.whisper/rules/</code>, copies skills, and translates <code>.mcp.json</code> (Claude Code) or <code>config.toml</code> (Codex) MCP servers. Source files are never modified. See <a href="installation.html#import-project">Installation</a>.</td></tr>
       </tbody>
     </table></div>
-
-    <h3 id="voice-settings">Voice conversations</h3>
-    <p>Spoken conversations (the <b>Talk</b> button in the composer) are configured through the
-      <code>voice</code> block rather than a Settings tab. The voice bar shows the active voice and its
-      locale on the right, under the label <em>Voice and language</em>, so you can see what is in
-      effect while you talk.</p>
-    <div class="table-wrap"><table>
-      <thead><tr><th>Key</th><th>Default</th><th>Meaning</th></tr></thead>
-      <tbody>
-        <tr><td><code>voice.enabled</code></td><td><code>true</code></td><td>Master switch. Off disables the Talk button, and the tooltip says so.</td></tr>
-        <tr><td><code>voice.model_id</code></td><td><code>amazon.nova-2-sonic-v1:0</code></td><td>The Bedrock model that carries the voice.</td></tr>
-        <tr><td><code>voice.region</code></td><td><code>""</code></td><td>Blank follows <code>bedrock_region</code>. Nova 2 Sonic exists in <code>us-east-1</code>, <code>us-west-2</code>, <code>eu-north-1</code>, and <code>ap-northeast-1</code> only, so set this when your chat region is elsewhere.</td></tr>
-        <tr><td><code>voice.voice_id</code></td><td><code>tiffany</code></td><td>One of sixteen voices. Tiffany and Matthew are polyglot; the rest are tied to one locale (English, French, Italian, German, Spanish, Portuguese).</td></tr>
-        <tr><td><code>voice.endpointing</code></td><td><code>MEDIUM</code></td><td><code>LOW</code>, <code>MEDIUM</code>, or <code>HIGH</code>: how long a pause has to be before the assistant takes it as your turn ending.</td></tr>
-      </tbody>
-    </table></div>
-    <p>An unknown voice id or endpointing level falls back to the default rather than failing. See
-      <a href="tut-voice-mode.html">Voice conversations</a> for the walk-through and
-      <a href="requirements.html#voice-access">Requirements</a> for the model access it needs.</p>
 
     <h3 id="model-mode-and-flags">Model Mode and Feature Flags</h3>
     <p>These two deserve a note because they behave a little differently from the rest.</p>

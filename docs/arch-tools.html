@@ -349,7 +349,7 @@
         background-task tools, orchestration, and the workflow / CI tools when present.
         <code>core_names()</code> adds the four memory tools (while <code>auto_memory</code> puts
         them in the catalogue) and <code>skill_manage</code> (while
-        <code>skill_self_improvement</code> is on), in chat and voice turns only. The post-turn learning review replays a turn's
+        <code>skill_self_improvement</code> is on), in chat turns only. The post-turn learning review replays a turn's
         tools array and cannot load a deferred tool, so what it saves with has to be core.</dd>
       <dt>Session activation</dt><dd>Tools this session has pulled in via <code>tool_search</code> or
         history replay, tracked in <code class="path">server/chat/tool_activation.py</code> and
@@ -373,9 +373,8 @@
       connects mid-run is available from the next round, under the same filter. A tool it may run
       that its round merely deferred still runs by name, as in chat. Three refused calls in a row
       (the executor's refusals and the loop guard's alike) make the agent's next round its last, with
-      no tools, so it answers with what it has. The memory tools are core in chat and voice turns
-      only (<code>CHAT_CORE_TOOLS</code>: the learning review replays a chat turn's tools, and a
-      person can ask for a memory by voice); agents and scheduled
+      no tools, so it answers with what it has. The memory tools are core in chat turns
+      only (<code>CHAT_CORE_TOOLS</code>: the learning review replays a chat turn's tools); agents and scheduled
       tasks reach them through <code>tool_search</code>, and a scheduled task's tools are rebuilt
       every round, so what it loads is offered from its next round. Two things differ from chat. An agent with an <code>allowed_tools</code> whitelist is offered its whole
       whitelist every round and gets no deferred index: the memory agents cannot call

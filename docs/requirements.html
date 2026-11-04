@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Requirements - Whisper Studio Docs</title>
-  <meta name="description" content="Everything you need before installing Whisper Studio: macOS, the four command-line tools for a source install, an Amazon Bedrock account, Nova 2 Sonic access for voice, an optional Tavily key, and the disk and RAM each model mode asks for.">
+  <meta name="description" content="Everything you need before installing Whisper Studio: macOS, the four command-line tools for a source install, an Amazon Bedrock account, an optional Tavily key, and the disk and RAM each model mode asks for.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -16,8 +16,8 @@
   <main class="doc" data-page="requirements">
     <h1>Requirements</h1>
     <p class="subtitle">Everything you need in place before installing: the operating system, the
-      command-line tools a source install expects, an Amazon Bedrock account, model access for chat
-      and for voice, an optional web-search key, and the disk and memory each model mode asks for.</p>
+      command-line tools a source install expects, an Amazon Bedrock account, model access for chat,
+      an optional web-search key, and the disk and memory each model mode asks for.</p>
 
     <p class="lead">Whisper Studio targets macOS. Which of the boxes below you have to tick depends on
       how you install. The <b>Mac app</b> needs almost nothing: an Apple Silicon Mac on macOS 14 or
@@ -42,7 +42,7 @@
         <tr><td>Homebrew</td><td>Not needed.</td><td>Needed. The script installs Python, Git, and the AWS CLI through it.</td></tr>
         <tr><td>Xcode Command Line Tools</td><td>Not needed.</td><td>Needed, to build the capture helper.</td></tr>
         <tr><td>Git</td><td>Optional. Needed on the host only for the Git and GitHub tools.</td><td>Needed to clone (the script installs it if missing).</td></tr>
-        <tr><td>AWS CLI and credentials</td><td>Needed for cloud chat and for voice mode (Hybrid or Cloud mode).</td><td>Same. The script installs the CLI; you still run <code>aws configure</code>.</td></tr>
+        <tr><td>AWS CLI and credentials</td><td>Needed for cloud chat (Hybrid or Cloud mode).</td><td>Same. The script installs the CLI; you still run <code>aws configure</code>.</td></tr>
         <tr><td>Gatekeeper step</td><td>No. Release DMGs are signed with a Developer ID and notarized.</td><td>No.</td></tr>
       </tbody>
     </table></div>
@@ -148,30 +148,6 @@ xcode-select --install</code></pre></div>
         that happens after install, run <code>/doctor</code> in the chat input for an automated
         AWS-credentials and Bedrock-connectivity check.</p></div>
     </div>
-
-    <h2 id="voice-access">Voice conversations: Amazon Nova 2 Sonic access</h2>
-    <p>Talking to the assistant out loud is a separate grant from chat. The voice stream runs on
-      <b>Amazon Nova 2 Sonic</b> (<code>amazon.nova-2-sonic-v1:0</code>), so you need that model
-      enabled in the Bedrock region voice uses, on the same credentials as chat. These things decide
-      whether the <b>Talk</b> button is available:</p>
-    <ul>
-      <li><b>The model mode.</b> Voice mode uses Bedrock, so Local mode (the first-run default)
-        refuses it. Switch <b>Settings &rarr; Model mode</b> to Hybrid or Cloud.</li>
-      <li><b>The <code>voice.enabled</code> config key.</b> It is on by default; when it is off, Talk
-        is disabled.</li>
-      <li><b>AWS credentials</b> that resolve, the same ones chat uses.</li>
-      <li><b>Model access.</b> Request access to Nova 2 Sonic in the Bedrock console, in the region
-        below.</li>
-      <li><b>The region.</b> Voice follows your <b>Bedrock Region</b> setting unless you override it
-        with the <code>voice.region</code> config key. The default is <code>us-east-1</code>. Nova 2
-        Sonic is offered in <code>us-east-1</code>, <code>us-west-2</code>, <code>eu-north-1</code>,
-        and <code>ap-northeast-1</code> only, so if your chat region is elsewhere, set
-        <code>voice.region</code> to one of these.</li>
-    </ul>
-    <p>When one of the first three is missing the <b>Talk</b> button is disabled and its tooltip names the
-      actual reason, including the model id and region to check. Dictation (the microphone button) is
-      unaffected: it transcribes on-device and needs no Bedrock access at all. See
-      <a href="tut-voice-mode.html">Voice conversations</a>.</p>
 
     <h2 id="optional-tavily">Optional: a Tavily key for web search</h2>
     <p>The assistant's web-search tool is powered by <a href="https://tavily.com">Tavily</a>. It is

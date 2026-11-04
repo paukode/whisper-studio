@@ -27,8 +27,8 @@
     <h2 id="requirements">What you need</h2>
     <p>An Apple Silicon Mac on macOS 14 or later, Homebrew, and the Xcode Command Line Tools.
       <code class="path">setup.sh</code> builds the venv from Homebrew's Python 3.13 (the version the
-      Mac app ships) and installs it when it is missing. The code itself keeps Python 3.12 as its floor,
-      because the voice-mode SDK needs it. Node is pinned by <code class="path">.nvmrc</code> and
+      Mac app ships) and installs it when it is missing. The code itself keeps Python 3.12 as its floor.
+      Node is pinned by <code class="path">.nvmrc</code> and
       installed into the venv. Run <code>bash setup.sh</code> once to provision
       <code class="path">venv/</code> and the frontend bundle before anything below.</p>
 
@@ -71,7 +71,6 @@ npm run build                       # production build</code></pre></div>
 │   ├── memory/             two-tier memory, extraction, dream consolidation, review fork
 │   ├── agents/             subagent runtime, event bus, journal.py, wake.py, extensions.py
 │   ├── tasks/              background-task registry (shell, agent, workflow, ci)
-│   ├── voice/              spoken conversations: protocol, routes, session, client, tools
 │   ├── costs/              per-turn cost tracking + budgets
 │   ├── workspace/          file browser, atomic writes, workspace tools
 │   ├── asr/                Whisper + Parakeet transcription backends, Canary translator, language ID

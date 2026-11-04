@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>First run &amp; verify - Whisper Studio Docs</title>
-  <meta name="description" content="A short checklist to confirm chat, transcription, voice, and the workspace all work after installing Whisper Studio: set your region, pick a model, send a first message, record, and run /doctor.">
+  <meta name="description" content="A short checklist to confirm chat, transcription, and the workspace all work after installing Whisper Studio: set your region, pick a model, send a first message, record, and run /doctor.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -17,7 +17,7 @@
     <h1>First run &amp; verify</h1>
     <p class="subtitle">You opened the Mac app for the first time, or <code>bash setup.sh</code>
       printed a URL. This page is the short checklist that confirms the things you actually came for
-      work: chat, on-device transcription, spoken conversations, and the workspace tools.</p>
+      work: chat, on-device transcription, and the workspace tools.</p>
 
     <p>Whisper Studio is one process serving one origin, so there is nothing to "connect" between a
       frontend and a backend. What is left is choosing where models run, telling the app which AWS
@@ -45,8 +45,8 @@
       machine</a>), and the dialog explains the three modes (Local, Hybrid,
       Cloud) and where to change them. Click <b>Got it</b> to dismiss it, or <b>Open model
       settings</b> to jump straight to <b>Settings &rarr; Model mode</b>. It never appears again.</p>
-    <p>Local mode offers and runs only on-device models, and it refuses every cloud call (chat, voice
-      mode, and background work). The app ships no on-device chat model, so until you install one the
+    <p>Local mode offers and runs only on-device models, and it refuses every cloud call (chat and background
+      work). The app ships no on-device chat model, so until you install one the
       model picker shows an install hint instead of a list. You have two ways forward: install an
       on-device model from <b>Settings &rarr; Models &rarr; Discover</b>, or switch
       <b>Settings &rarr; Model mode</b> to Hybrid or Cloud to chat on Bedrock. See
@@ -103,16 +103,6 @@
           to start because the on-device speech model (Parakeet by default, or Whisper)
           downloads and loads into memory on first use; after that it is warm. Transcription runs
           entirely on your machine, so it needs no AWS setup and works even offline.</p>
-      </li>
-      <li>
-        <h4>Optional: confirm voice with the Talk button</h4>
-        <p>The waveform button between the microphone and Send starts a spoken conversation. Voice
-          mode streams to Amazon Nova 2 Sonic on Bedrock, so it needs Hybrid or Cloud mode. If it is
-          greyed out, hover it: the tooltip names the reason, usually that the app is in Local mode,
-          that no AWS credentials were found, or that <code>voice.enabled</code> is off in the
-          config. Click it and say something; the assistant
-          answers out loud and everything it says is written into the chat. See
-          <a href="tut-voice-mode.html">Voice conversations</a>.</p>
       </li>
       <li>
         <h4>Optional: connect a workspace folder</h4>
@@ -216,12 +206,6 @@
             <a href="tut-voice.html">Voice &amp; meetings</a>.</td>
         </tr>
         <tr>
-          <td>The Talk button is greyed out</td>
-          <td>Hover it for the actual reason. Usually the app is in Local mode (switch to Hybrid or
-            Cloud), no AWS credentials were found, or <code>voice.enabled</code> is off.
-            See <a href="requirements.html#voice-access">Requirements</a>.</td>
-        </tr>
-        <tr>
           <td>The model picker shows no on-device models</td>
           <td>Expected: a fresh install ships none. Install one from
             <b>Settings &rarr; Models &rarr; Discover</b>, which grades each model against your
@@ -239,7 +223,6 @@
       <a class="card card--link" href="tut-first-chat.html"><h3>Your first chat</h3><p>Models, effort levels, slash commands, streaming, and exporting a conversation.</p><span class="card__meta">Tutorial: Your first chat →</span></a>
       <a class="card card--link" href="tut-goals.html"><h3>Goals &amp; autopilot</h3><p>When to just prompt, when to set a goal that runs to completion, and when to run a parallel workflow.</p><span class="card__meta">Tutorial: Goals &amp; autopilot →</span></a>
       <a class="card card--link" href="tut-workspace.html"><h3>The workspace IDE</h3><p>Connect a repo and let Claude read, edit, run, and commit, gated by mode.</p><span class="card__meta">Tutorial: Workspace IDE →</span></a>
-      <a class="card card--link" href="tut-voice-mode.html"><h3>Talk to it</h3><p>Hold a spoken conversation with the assistant while it uses the same tools as typed chat.</p><span class="card__meta">Tutorial: Voice conversations →</span></a>
     </div>
 
     <div class="callout callout--tip">
