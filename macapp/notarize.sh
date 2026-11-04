@@ -67,9 +67,22 @@ if [[ "$STATUS" != "Accepted" ]]; then
     die "notarization of $TARGET ended with status '${STATUS:-unknown}'"
 fi
 
+# Both stapler calls fetch the ticket from Apple's CDN, and a dropped
+# connection there (error 68, "The network connection was lost") fails an
+# artifact Apple already accepted. Try a few times before giving up.
+stapler_retry() {
+    local attempt
+    for attempt in 1 2 3 4 5; do
+        if xcrun stapler "$@"; then return 0; fi
+        echo "    stapler $1 failed (attempt $attempt of 5); retrying in $((attempt * 15)) s" >&2
+        sleep $((attempt * 15))
+    done
+    die "stapler $1 failed 5 times for $TARGET"
+}
+
 echo "==> Stapling the ticket"
-xcrun stapler staple "$TARGET"
-xcrun stapler validate "$TARGET"
+stapler_retry staple "$TARGET"
+stapler_retry validate "$TARGET"
 
 # Gatekeeper's own verdict, as a downloaded copy would get it.
 case "$TARGET" in
