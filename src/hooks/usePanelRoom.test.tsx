@@ -9,7 +9,7 @@ function rect(top: number, bottom: number): DOMRect {
 
 function Panel({ open, bottom, clipTop }: { open: boolean; bottom: number; clipTop: number }) {
   const ref = useRef<HTMLDivElement>(null);
-  const room = usePanelRoom(ref, open);
+  usePanelRoom(ref, open);
   return (
     <div
       data-testid="clip"
@@ -22,7 +22,6 @@ function Panel({ open, bottom, clipTop }: { open: boolean; bottom: number; clipT
           (ref as React.MutableRefObject<HTMLDivElement | null>).current = el;
           if (el) el.getBoundingClientRect = () => rect(bottom - 300, bottom);
         }}
-        data-room={room ?? ''}
       />
     </div>
   );
@@ -31,7 +30,7 @@ function Panel({ open, bottom, clipTop }: { open: boolean; bottom: number; clipT
 describe('usePanelRoom', () => {
   it('gives an open panel the space between its bottom edge and the top of the box that clips it', () => {
     const { getByTestId } = render(<Panel open bottom={380} clipTop={52} />);
-    const room = Number(getByTestId('panel').dataset.room);
+    const room = parseFloat(getByTestId('panel').style.maxHeight);
     // The panel ends inside the clipping box, with a margin under its top edge.
     expect(room).toBeLessThan(380 - 52);
     expect(room).toBeGreaterThan(380 - 52 - 40);
@@ -39,11 +38,11 @@ describe('usePanelRoom', () => {
 
   it('keeps a usable height when the panel sits near the top', () => {
     const { getByTestId } = render(<Panel open bottom={90} clipTop={52} />);
-    expect(Number(getByTestId('panel').dataset.room)).toBeGreaterThanOrEqual(160);
+    expect(parseFloat(getByTestId('panel').style.maxHeight)).toBeGreaterThanOrEqual(160);
   });
 
   it('sets no height while the panel is closed', () => {
     const { getByTestId } = render(<Panel open={false} bottom={380} clipTop={52} />);
-    expect(getByTestId('panel').dataset.room).toBe('');
+    expect(getByTestId('panel').style.maxHeight).toBe('');
   });
 });

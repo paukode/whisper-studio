@@ -1,4 +1,4 @@
-import { useLayoutEffect, useState, type RefObject } from 'react';
+import { useLayoutEffect, type RefObject } from 'react';
 
 /** Space a panel keeps from the edge that clips it. */
 const EDGE_MARGIN = 12;
@@ -16,7 +16,8 @@ function clipTop(el: HTMLElement): number {
 }
 
 /**
- * The height a composer panel can use, in px, while `open`.
+ * Caps an open composer panel's height to the room it has, so it stays in
+ * view and scrolls.
  *
  * `.cg-panel` opens upward: its bottom edge is pinned above the composer and
  * it grows toward the top. Its CSS cap assumes the composer sits at the
@@ -24,27 +25,19 @@ function clipTop(el: HTMLElement): number {
  * so a long list (the Workspace recents) ran past the top of the chat area,
  * where the app clips it, and could not scroll. The room is the space between
  * the panel's own bottom edge (which does not move with its height) and the
- * top of the box that clips it, so the panel stays in view and scrolls
- * instead. Measured again when the window resizes. `undefined` while closed.
+ * top of the box that clips it. Set as an inline max-height on the panel, and
+ * measured again when the window resizes.
  */
-export function usePanelRoom(panelRef: RefObject<HTMLElement | null>, open: boolean): number | undefined {
-  const [room, setRoom] = useState<number | undefined>(undefined);
-
+export function usePanelRoom(panelRef: RefObject<HTMLElement | null>, open: boolean): void {
   useLayoutEffect(() => {
-    if (!open) {
-      setRoom(undefined);
-      return;
-    }
+    const el = panelRef.current;
+    if (!open || !el) return;
     const measure = () => {
-      const el = panelRef.current;
-      if (!el) return;
       const bottom = el.getBoundingClientRect().bottom;
-      setRoom(Math.max(MIN_ROOM, Math.floor(bottom - clipTop(el) - EDGE_MARGIN)));
+      el.style.maxHeight = `${Math.max(MIN_ROOM, Math.floor(bottom - clipTop(el) - EDGE_MARGIN))}px`;
     };
     measure();
     window.addEventListener('resize', measure);
     return () => window.removeEventListener('resize', measure);
   }, [panelRef, open]);
-
-  return room;
 }

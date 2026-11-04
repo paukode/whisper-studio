@@ -210,7 +210,7 @@ export const PermissionGroup: React.FC<PermissionGroupProps> = ({
   const ref = useRef<HTMLDivElement>(null);
   useDismiss(ref, onClose, { enabled: open });
   const panelRef = useRef<HTMLDivElement>(null);
-  const room = usePanelRoom(panelRef, open);
+  usePanelRoom(panelRef, open);
   const current = PERMISSION_MODES.find((m) => m.value === permissionMode);
   const modeLabel = current?.label ?? permissionMode;
 
@@ -227,7 +227,7 @@ export const PermissionGroup: React.FC<PermissionGroupProps> = ({
         <span className={`cg-seg cg-perm tone-${modeTone(permissionMode)}`} title={`Permission mode: ${modeLabel}`}>{Icon.shield}<span className="cg-t">{modeLabel}</span></span>
       </button>
       {open && (
-        <div ref={panelRef} className="cg-panel" role="group" aria-label="Permissions" style={{ maxHeight: room }} data-testid="perm-panel">
+        <div ref={panelRef} className="cg-panel" role="group" aria-label="Permissions" data-testid="perm-panel">
           <div className="cg-panel-title">Permissions</div>
           <div className="cg-row cg-row-stack">
             <div className="cg-row-label"><b>What runs without asking</b><small>applies to every chat</small></div>
@@ -271,7 +271,7 @@ export const WorkspaceGroup: React.FC<WorkspaceGroupProps> = ({
   const ref = useRef<HTMLDivElement>(null);
   useDismiss(ref, onClose, { enabled: open });
   const panelRef = useRef<HTMLDivElement>(null);
-  const room = usePanelRoom(panelRef, open);
+  usePanelRoom(panelRef, open);
   const wsName = connected && wsPath ? baseName(wsPath) : 'No workspace';
 
   return (
@@ -287,7 +287,7 @@ export const WorkspaceGroup: React.FC<WorkspaceGroupProps> = ({
         <span className={`cg-seg cg-ws${connected ? ' on' : ''}`} title={connected ? wsPath : 'No workspace connected'}>{Icon.folder}<span className="cg-t">{wsName}</span></span>
       </button>
       {open && (
-        <div ref={panelRef} className="cg-panel" role="group" aria-label="Workspace" style={{ maxHeight: room }} data-testid="workspace-panel">
+        <div ref={panelRef} className="cg-panel" role="group" aria-label="Workspace" data-testid="workspace-panel">
           <div className="cg-panel-title">Workspace</div>
           <div className="cg-row cg-row-stack">
             <div className="cg-row-label"><b>Files it can see</b><small>{connected ? 'connected folder' : 'no folder connected'}</small></div>
