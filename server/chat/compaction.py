@@ -232,13 +232,37 @@ async def _compact_strategies(
     # Pruning was insufficient. The summary must see all original text and
     # tool arguments/results, not a clipped or pruned version of that history.
     old_messages, recent_messages = messages[:split], messages[split:]
+    summary = await summarize_messages(old_messages, model_key, session_id)
+    result = [{"role": "user", "content": summary}, *recent_messages]
+    after_chars = estimate_message_size(result)
+    if after_chars >= before_chars or after_chars > hard_ceiling:
+        raise CompactionError()
+    return result, "summary"
+
+
+SUMMARY_HEADER = "[Context summary of earlier conversation]"
+
+
+async def summarize_messages(
+    messages: list, model_key: str, session_id: str = "", note: str = ""
+) -> str:
+    """One summary of ``messages`` by the compaction model, as the user message
+    that stands in for them (header, summary, deterministic extras). ``note``
+    is what the user asked the summary to keep. Raises CompactionError."""
     summary_key = _summary_model_key(model_key)
-    extras = _summary_extras(old_messages, session_id)
+    extras = _summary_extras(messages, session_id)
+    keep = (
+        f"The user asked the summary to keep this in particular: {note.strip()}\n\n"
+        if note.strip()
+        else ""
+    )
     summary_prompt = (
         "Summarize the following conversation history concisely. Preserve user intent, "
         "constraints, decisions, files, tool calls and results, errors, and pending tasks. "
         "Keep it under 500 words. Attachment omission markers are references, not image "
-        "or document contents; do not invent their contents.\n\n" + _serialize_history(old_messages)
+        "or document contents; do not invent their contents.\n\n"
+        + keep
+        + _serialize_history(messages)
     )
     summary_system = (
         "You produce concise conversation summaries. Do not use em dashes or en dashes; "
@@ -268,19 +292,41 @@ async def _compact_strategies(
     summary = await asyncio.get_running_loop().run_in_executor(executor, call)
     if not isinstance(summary, str) or not summary.strip():
         raise CompactionError()
-    result = [
-        {
-            "role": "user",
-            "content": (
-                f"[Context summary of earlier conversation]\n{summary.strip()}\n\n{extras}"
-            ).rstrip(),
-        },
-        *recent_messages,
-    ]
-    after_chars = estimate_message_size(result)
-    if after_chars >= before_chars or after_chars > hard_ceiling:
-        raise CompactionError()
-    return result, "summary"
+    return f"{SUMMARY_HEADER}\n{summary.strip()}\n\n{extras}".rstrip()
+
+
+async def compact_on_request(
+    messages: list, model_key: str, session_id: str, note: str = ""
+) -> tuple[str, int, int]:
+    """The /compact command: always one summary of the whole prompt history.
+    Returns ``(summary, before_chars, after_chars)``; a summary that does not
+    shrink the history raises CompactionError, so nothing is replaced."""
+    from server.chat.compaction_log import record_end, record_start
+
+    before = estimate_message_size(messages)
+    outcome, after = "error", before
+    try:
+        record_start(session_id, trigger="manual", before_chars=before)
+    except Exception:  # noqa: BLE001 - diagnostics cannot change the outcome
+        log.debug("Compaction diagnostics unavailable")
+    try:
+        if not messages:
+            raise CompactionError()
+        summary = await summarize_messages(messages, model_key, session_id, note)
+        after = estimate_message_size([{"role": "user", "content": summary}])
+        if after >= before:
+            raise CompactionError()
+        outcome = "summary"
+        return summary, before, after
+    except (CompactionError, asyncio.CancelledError):
+        raise
+    except Exception:  # noqa: BLE001 - no provider response or prompt in public errors
+        raise CompactionError() from None
+    finally:
+        try:
+            record_end(session_id, outcome=outcome, after_chars=after)
+        except Exception:  # noqa: BLE001
+            log.debug("Compaction diagnostics unavailable")
 
 
 def _serialize_history(messages: list) -> str:

@@ -103,7 +103,8 @@ export interface ChatMessage {
     | 'session_message'
     | 'agent_report'
     | 'agent_answer'
-    | 'task_report';
+    | 'task_report'
+    | 'compact_summary';
   content: string;
   timestamp: string;
   /** Populated when role === 'cron_event'. Renders as a CronEventCard
@@ -122,6 +123,10 @@ export interface ChatMessage {
    *  model): the result of a background command this chat started, which
    *  finished after the turn that started it (server/tasks/wake.py). */
   taskReport?: TaskReportPayload;
+  /** role='compact_summary' (backend-owned): a /compact summary that stands in
+   *  for every row above it in what the model reads. `content` is the summary
+   *  the model gets. */
+  compactSummary?: CompactSummaryPayload;
   /** Populated when role === 'session_message'. Renders as a
    *  SessionMessageCard. */
   sessionMessage?: SessionMessagePayload;
@@ -387,6 +392,16 @@ export interface AgentAnswerPayload {
   team_name?: string;
   model?: string | null;
   timestamp?: string;
+}
+
+/** What a /compact run did (server/chat/compact_route.py). */
+export interface CompactSummaryPayload {
+  /** What the user asked the summary to keep; '' when no note was given. */
+  note: string;
+  /** Prompt messages the summary replaced. */
+  messages: number;
+  before_chars: number;
+  after_chars: number;
 }
 
 /** A finished background command's result (server/tasks/wake.py). */

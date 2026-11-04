@@ -298,10 +298,18 @@ def visible_chat_history(history: list[dict]) -> list[dict]:
     """
     if not history:
         return history
+    # A /compact summary stands in for every row before it
+    # (server/chat/compact_route.py): the model reads the summary as a user
+    # turn and then only what came after it.
+    marks = [i for i, m in enumerate(history) if m.get("role") == "compact_summary"]
+    if marks:
+        history = history[marks[-1] :]
     out = []
     for m in history:
         role = m.get("role")
-        if role in PROMPT_ROLES:
+        if role == "compact_summary":
+            out.append({"role": "user", "content": m.get("content", "")})
+        elif role in PROMPT_ROLES:
             out.append(m)
         elif role == "session_message":
             out.append(_session_message_prompt_view(m))

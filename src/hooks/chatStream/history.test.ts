@@ -123,4 +123,19 @@ describe('buildHistoryPayload', () => {
     );
     expect(rows[rows.length - 1]).toEqual({ role: 'task_report', content: '', taskReport: report });
   });
+
+  it('starts at the last /compact summary and always keeps it inside the window', () => {
+    const turns = (n: number, tag: string) => Array.from({ length: n }, (_, i) =>
+      msg({ role: i % 2 ? 'assistant' : 'user', content: `${tag} ${i}` }));
+    const summary = msg({ role: 'compact_summary', content: 'summary' });
+    const all = [...turns(6, 'old'), summary, ...turns(50, 'new'), msg({ content: 'just sent' })];
+
+    const rows = buildHistoryPayload(all, false);
+    expect(rows[0]).toEqual({ role: 'compact_summary', content: 'summary' });
+    expect(rows.some((r) => String(r.content).startsWith('old'))).toBe(false);
+    expect(rows.filter((r) => r.role === 'user' || r.role === 'assistant')).toHaveLength(40);
+
+    const everything = buildHistoryPayload(all, false, true);
+    expect(everything).toHaveLength(51); // the summary and every row after it
+  });
 });

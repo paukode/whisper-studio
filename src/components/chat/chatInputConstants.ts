@@ -46,6 +46,7 @@ export interface SlashCommand {
 export const BASE_SLASH_COMMANDS: SlashCommand[] = [
   { cmd: 'ci ', icon: 'checkSquare', desc: 'Watch CI for a branch, or `ci autofix` a failing run', category: 'ai' },
   { cmd: 'clear ', icon: 'x', desc: 'Clear chat display', category: 'general' },
+  { cmd: 'compact ', icon: 'layers', desc: 'Summarize the conversation so far (add a note to say what to keep)', category: 'ai' },
   { cmd: 'doctor ', icon: 'pulse', desc: 'Run diagnostics', category: 'debug' },
   { cmd: 'doctor context ', icon: 'ruler', desc: 'Rightsize the system prompt', category: 'debug' },
   { cmd: 'effort ', icon: 'sliders', desc: 'Set thinking depth', options: ['low', 'medium', 'high', 'extra', 'max', 'ultracode'], category: 'ai' },

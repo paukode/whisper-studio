@@ -54,6 +54,7 @@
         <tr><td><code>/mcp:</code></td><td>List your MCP servers with each one's state and tool count in an inline picker.</td></tr>
         <tr><td><code>/export</code></td><td>Download the visible conversation as a text file.</td></tr>
         <tr><td><code>/clear</code></td><td>Empty this session's chat (the next save persists it empty).</td></tr>
+        <tr><td><code>/compact [note]</code></td><td>Summarize the conversation so far. The model then reads the summary in place of the earlier messages.</td></tr>
         <tr><td><code>/rename &lt;title&gt;</code></td><td>Rename the current session.</td></tr>
         <tr><td><code>/workspace</code></td><td>Open the Connect Workspace dialog.</td></tr>
         <tr><td><code>/theme &lt;mode&gt;</code></td><td>Switch between light, dark, and system mode.</td></tr>
@@ -256,6 +257,16 @@
       the view. The session itself stays in the sidebar, keeping its title and its meeting transcript.
       If you want the old messages back later, start a new session instead of clearing this one, and to
       remove a session for good, delete it from the sidebar.</p>
+
+    <h3 id="compact">/compact</h3>
+    <p><code>/compact</code> summarizes the whole conversation now. Use it when a chat gets long and
+      you want to keep working in it. Add a note after the command to tell the summary what to keep,
+      for example <code>/compact keep the MCP setup steps</code>. The compaction model writes one
+      summary, and the chat shows a "Conversation compacted" row. Open the row to read the summary.
+      From then on, the model reads the summary and the messages after it, not the earlier messages.
+      The earlier messages stay on the screen and in the saved session. If the summary fails, or it
+      is not smaller than the conversation, nothing changes and an error tells you why. You cannot
+      run <code>/compact</code> while a reply streams.</p>
 
     <h3 id="rename">/rename</h3>
     <p><code>/rename &lt;new title&gt;</code> sets a custom title for the current session and marks it as
