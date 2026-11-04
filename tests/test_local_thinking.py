@@ -129,6 +129,39 @@ def test_a_template_with_its_own_levels_gets_the_level():
     assert mlx["chat_template_kwargs"] == {"enable_thinking": True, "reasoning_effort": "low"}
 
 
+# Qwen3.8's check: any other reasoning_effort value raises in the template.
+QWEN38_LIKE = (
+    "{%- set resolved_reasoning_effort = reasoning_effort|default('xhigh') %}"
+    "{%- if resolved_reasoning_effort not in ('xhigh', 'medium', 'low') %}"
+    "{{- raise_exception('Unexpected reasoning effort ' ~ reasoning_effort) }}{%- endif %}"
+    "<think>"
+)
+
+
+def test_a_template_that_lists_its_efforts_only_gets_values_it_accepts(monkeypatch):
+    from server.local import runtime
+
+    caps = thinking.caps_from_template(QWEN38_LIKE)
+    assert caps.native_levels and set(caps.efforts) == {"xhigh", "medium", "low"}
+    monkeypatch.setattr(thinking, "caps_for", lambda key: caps)
+    monkeypatch.setattr(runtime, "is_mlx_model", lambda key: True)
+    offered = thinking.levels_for("local_x")
+    assert offered == ["none", "low", "medium", "max"]  # no "high" rung to send
+    for level in (*offered, "high"):  # "high" can still arrive from an old session
+        kwargs = thinking.request_fields(level, caps, mlx=True, answer_tokens=4096)[
+            "chat_template_kwargs"
+        ]
+        assert kwargs.get("reasoning_effort", "xhigh") in caps.efforts
+    top = thinking.request_fields("max", caps, mlx=True, answer_tokens=4096)
+    assert top["chat_template_kwargs"]["reasoning_effort"] == "xhigh"
+
+
+def test_a_template_without_an_effort_list_offers_every_level():
+    caps = thinking.caps_from_template(GPT_OSS_LIKE)
+    assert caps.efforts == ()
+    assert thinking.native_effort("medium", caps) == "medium"
+
+
 def test_mlx_turns_thinking_off_through_the_template_only():
     assert thinking.off_fields(mlx=True) == {"chat_template_kwargs": {"enable_thinking": False}}
 
