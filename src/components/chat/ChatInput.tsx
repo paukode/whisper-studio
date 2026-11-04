@@ -83,7 +83,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
   useComposerChatEvents(chatStream);
 
   /* ── Workspace dropdown helpers ── */
-  const recentPaths = useRecentWorkspaces(workOpen).slice(0, 5);
+  // Every saved recent (the backend keeps ten); the panel scrolls within the window.
+  const recentPaths = useRecentWorkspaces(workOpen);
 
   const connectToWorkspace = useCallback(async (wsPath: string) => {
     try {
