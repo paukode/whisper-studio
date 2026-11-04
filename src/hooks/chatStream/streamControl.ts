@@ -13,6 +13,7 @@ import { useUIStore } from '@/stores/uiStore';
 import type { ChatState } from '@/stores/chatStore';
 import type { ChatMessage, ToolUseEvent } from '@/types/chat';
 import { labelCommit } from './activityLabels';
+import { STOPPED_TOOL_RESULT } from './notRun';
 
 /** One in-flight controller per session, module-scoped so it survives
  *  component remounts and session switches. */
@@ -104,9 +105,7 @@ export function abortSessionStream(sessionId: string): void {
   }
 }
 
-/** Placeholder result for a step the user cut short before its tool
- *  returned, so the committed row still has something to expand. */
-export const STOPPED_TOOL_RESULT = '[Stopped by user]';
+export { STOPPED_TOOL_RESULT };
 
 /** Freeze a live tool trace for the transcript: a step still running (or
  *  never started) becomes 'stopped' so no committed row spins forever. The

@@ -15,7 +15,7 @@
  * is auto-created per session id by the runtime registry.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { NOT_RUN_RESULT, nextRoundBase, readSSEStream } from './sseStream';
+import { NOT_RUN_RESULT, committedToolUse, nextRoundBase, readSSEStream } from './sseStream';
 import { sendApprovalContinuation } from './approvalContinuation';
 import { killSessionStream } from './streamControl';
 import { useUIStore } from '@/stores/uiStore';
@@ -963,6 +963,20 @@ describe('readSSEStream tool frames', () => {
     const [paused, never] = committed(sid)[0].toolUse ?? [];
     expect(paused).toMatchObject({ toolId: 'tu_a', status: 'complete', result: 'Awaiting approval: Write a.py' });
     expect(never).toMatchObject({ toolId: 'tu_b', status: 'stopped', result: NOT_RUN_RESULT });
+  });
+
+  it('a call an error frame left unrun keeps the error as its result', async () => {
+    const error = "Tool 'preview_list' has missing or blank arguments; expected a JSON object. No tools from this round were run.";
+    const r = await readSSEStream(sseResponse([
+      { skill: 'ws_read_file', tool_use_id: 'tu_ok', round: 0 },
+      { skill_result: 'ws_read_file', tool_use_id: 'tu_ok', output: 'contents' },
+      { skill: 'preview_list', tool_use_id: 'tu_pl', round: 1 },
+      { error },
+    ]), 'sess-refused', signal(), SETTINGS);
+
+    const [ran, refused] = r.skillTraces.map(committedToolUse);
+    expect(ran).toMatchObject({ toolId: 'tu_ok', status: 'complete', result: 'contents' });
+    expect(refused).toMatchObject({ toolId: 'tu_pl', status: 'stopped', result: error });
   });
 
   it("a result that lands after a card committed its row patches that row, and saves", async () => {

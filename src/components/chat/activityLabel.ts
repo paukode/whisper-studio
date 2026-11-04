@@ -1,4 +1,5 @@
 import type { ToolUseEvent } from '@/types/chat';
+import { notRunReason } from '@/hooks/chatStream/notRun';
 
 /**
  * The words on an activity row, computed from the ToolUseEvent rows alone:
@@ -552,8 +553,9 @@ export function callVerb(tool: ToolUseEvent, desc: CallDesc = describeCall(tool)
 
 // ── The group ─────────────────────────────────────────────────────────
 
-/** Aggregate state for the collapsed row. 'stopped' (the user cut the turn
- *  short) is terminal and never reads as running. 'unchecked' (a goal the
+/** Aggregate state for the collapsed row. 'stopped' (a call that never ran:
+ *  the user pressed Stop, or the turn ended first) is terminal and never
+ *  reads as running. 'unchecked' (a goal the
  *  judge could not check) is neither a pass nor a failure. */
 function groupState(tools: ToolUseEvent[]): GroupState {
   if (tools.some((t) => t.status === 'error')) return 'error';
@@ -729,7 +731,14 @@ export function describeGroup(tools: ToolUseEvent[], written?: string): GroupDes
   // A failure keeps the executable's own case: "ruff check failed".
   const joined = parts.map((p) => p.text).join(', ');
   let sentence = state === 'error' ? joined : capitalize(joined);
-  if (state === 'stopped' && !cardOnly) sentence = sentence ? `${sentence}, stopped` : 'Stopped';
+  // A Stop the user pressed reads "stopped"; any other unrun call reads
+  // "not run" and the tail gives the server's reason when it sent one.
+  const reason = state === 'stopped' && !cardOnly ? notRunReason(tools) : null;
+  const byUser = reason === 'user';
+  if (state === 'stopped' && !cardOnly) {
+    const word = byUser ? 'stopped' : 'not run';
+    sentence = sentence ? `${sentence}, ${word}` : capitalize(word);
+  }
 
   const named = new Set(parts.flatMap((p) => p.named));
   const items = cardOnly
@@ -739,8 +748,9 @@ export function describeGroup(tools: ToolUseEvent[], written?: string): GroupDes
         return !(key && named.has(key));
       }));
   const stopped = state === 'stopped' && !cardOnly;
-  const fullTail = stopped ? 'Stopped by you' : items.join(', ');
-  const tail = !stopped && items.length > MAX_TAIL_ITEMS
+  const showItems = !stopped || reason === null;
+  const fullTail = showItems ? items.join(', ') : byUser ? 'Stopped by you' : reason;
+  const tail = showItems && items.length > MAX_TAIL_ITEMS
     ? `${items.slice(0, MAX_TAIL_ITEMS).join(', ')} +${items.length - MAX_TAIL_ITEMS} more`
     : fullTail;
 

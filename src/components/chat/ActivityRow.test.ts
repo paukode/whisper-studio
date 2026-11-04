@@ -467,6 +467,20 @@ describe('group label', () => {
     expect(groupChips(tools)).toEqual([{ kind: 'text', text: '1 not run', tone: 'muted' }]);
   });
 
+  it('a call the server refused reads "not run" with its reason, never "Stopped by you"', () => {
+    const error = "Tool 'preview_list' has missing or blank arguments; expected a JSON object. No tools from this round were run.";
+    const g = describeGroup([tool('preview_list', { status: 'stopped', result: error })]);
+    expect(g.state).toBe('stopped');
+    expect(g.label).toBe('Not run');
+    expect(g.tail).toBe("Tool 'preview_list' has missing or blank arguments; expected a JSON object.");
+  });
+
+  it('a call left unrun with no reason reads "not run" and keeps its items', () => {
+    const g = describeGroup([read('a.ts'), tool('ws_read_file', { input: { path: 'b.ts' }, status: 'stopped', result: 'Not run' })]);
+    expect(g.label).toBe('Read a.ts, not run');
+    expect(g.tail).not.toContain('Stopped by you');
+  });
+
   it('a written label takes the label; the deterministic sentence becomes the tail and the title', () => {
     const tools = [
       tool('ws_edit_file', { input: { path: 'ActivityRow.tsx' } }),

@@ -32,6 +32,7 @@ import { syncAutoAppliedTab } from './autoApplied';
 import { toolMetaFromFrame } from './toolMeta';
 import { labelCommit, patchCommittedLabel, writtenLabelFromFrame, type WrittenLabel } from './activityLabels';
 import { patchCommittedRows } from './committedRows';
+import { NOT_RUN_RESULT } from './notRun';
 import { activeMs } from './waitClock';
 
 // Augment Window for SSE diagnostics access
@@ -50,8 +51,7 @@ export const _sseEventLog: SSEEventData[] = [];
  *  chatStore.updateStreamToolUse): the provider's id, else the name. */
 const rowKey = (t: SkillTrace): string => t.id || t.name;
 
-/** What the committed row of a call with no result says. */
-export const NOT_RUN_RESULT = 'Not run';
+export { NOT_RUN_RESULT };
 
 /**
  * The transcript row a trace commits as, shared by every commit site (the
@@ -61,7 +61,9 @@ export const NOT_RUN_RESULT = 'Not run';
  * 'stopped' with NOT_RUN_RESULT for a trace with none: the server answers
  * every call it ran, so one with no result never ran, or its result comes
  * after a card frame committed its row and patches it there (the
- * skill_result handler). The call an approval card waits on keeps the
+ * skill_result handler). A trace an error frame left unrun keeps the error
+ * as its result, so the row says why (notRun.notRunReason). The call an
+ * approval card waits on keeps the
  * "Awaiting approval" it was given until the card's answer patches it
  * (approvalLeg). The kill switch stamps 'stopped' on its own rows in
  * streamControl. A resolved trace also carries the verdict and exit code
@@ -977,6 +979,11 @@ export async function readSSEStream(
             textPacer.flush();
             store().appendStreamToken(errLine);
             if (parsed.error_code && refusal === null) refusal = parsed.error;
+            // A call still waiting for its result never runs now: the error
+            // is why, so its row says so instead of reading as a Stop.
+            for (const t of skillTraces) {
+              if (!t.resolved && !t.paused && !t.output) t.output = parsed.error;
+            }
           }
 
         } catch (e) {
