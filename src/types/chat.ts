@@ -141,6 +141,10 @@ export interface ChatMessage {
   teamReports?: Record<string, TeamReportData>;
   _thinkingMs?: number;
   _thinkingText?: string;
+  /** The user opened this row's thinking box. Absent means closed: a box
+   *  opens only when the user opens it, and the choice is saved with the
+   *  session. */
+  _thinkingOpen?: boolean;
   _usage?: { input_tokens: number; output_tokens: number };
   /** Index-grounding summary for this turn: how many indexed folders were
    *  searched and how many passages were injected. `searched: 0` renders as

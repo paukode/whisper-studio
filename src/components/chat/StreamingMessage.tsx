@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useActiveChatStore } from '@/stores/sessionRuntimes';
+import { getActiveChatStore, useActiveChatStore } from '@/stores/sessionRuntimes';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { StreamingMarkdown } from '@/components/markdown/StreamingMarkdown';
 import { AgentCard, groupAgentTools, groupForActivity, isActivityEntry, isTasksEntry, ACTIVITY_MIN_RUN } from '@/components/chat/AgentCard';
@@ -31,11 +31,13 @@ export interface StreamingMessageProps {
  *    tail of the turn's bubble
  *  - Live elapsed timer during thinking (100ms updates, "X.Ys")
  *  - Token meta display ("1.2s . 1,234 in . 5,678 out")
- *  - Collapse thinking on first text token
+ *  - Thinking box closed unless the user opens it
  *  - Remove empty thinking block if no text arrives
  */
 export const StreamingMessage: React.FC<StreamingMessageProps> = ({ content, isStreaming, embedded, priorDeliveries }) => {
   const thinkingContent = useActiveChatStore((s) => s.currentThinkingContent);
+  // Closed until the user opens it; the committed row keeps the choice.
+  const thinkingOpen = useActiveChatStore((s) => s.thinkingOpen);
   const streamStatus = useActiveChatStore((s) => s.streamStatus);
   const thinkingStartTime = useActiveChatStore((s) => s.thinkingStartTime);
   const thinkingElapsedMs = useActiveChatStore((s) => s.thinkingElapsedMs);
@@ -100,7 +102,14 @@ export const StreamingMessage: React.FC<StreamingMessageProps> = ({ content, isS
     <>
       {/* Thinking block, shown immediately when streaming starts */}
       {((isStreaming && !content) || thinkingContent) && (
-        <details className="thinking-block" open={!content}>
+        <details
+          className="thinking-block"
+          open={thinkingOpen}
+          onToggle={(e) => {
+            const open = e.currentTarget.open;
+            if (open !== thinkingOpen) getActiveChatStore().getState().setThinkingOpen(open);
+          }}
+        >
           <summary className="thinking-summary">
             <span className="activity-slot">{(isLocalModel && !thinkingContent) ? ICON.sparkle : ICON.thought}</span>
             {/* A status outranks the thinking label: thinking tokens clear
