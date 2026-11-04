@@ -17,7 +17,8 @@ The GitHub request carries no user data: a fixed User-Agent and Accept
 header, no version, no token. It has a short timeout, and any failure (no
 network, rate limit, a malformed body) means "no update known". A good answer
 is cached for some hours and a failure for a shorter time, so the check costs
-at most a few requests a day. This module never changes permissions or
+at most a few requests a day. ``?fresh=true`` (Check for Updates in the Mac
+app menu) skips the cache once and stores what it finds. This module never changes permissions or
 behaviour; it only reports.
 """
 
@@ -172,11 +173,12 @@ def release_from_payload(data: Any) -> dict[str, str] | None:
     }
 
 
-async def latest_release() -> dict[str, str] | None:
-    """The cached newest release; fetched again when the cache expires."""
+async def latest_release(fresh: bool = False) -> dict[str, str] | None:
+    """The cached newest release; fetched again when the cache expires, or at
+    once when ``fresh`` (a person asked: the Check for Updates menu item)."""
     async with _lock:
         now = time.monotonic()
-        if _cache["at"] and now - _cache["at"] < _cache["ttl"]:
+        if not fresh and _cache["at"] and now - _cache["at"] < _cache["ttl"]:
             return _cache["release"]
         release = await fetch_latest_release()
         _cache.update(
@@ -195,9 +197,9 @@ def reset_cache() -> None:
 
 
 @router.get("")
-async def update_check() -> dict[str, Any]:
+async def update_check(fresh: bool = False) -> dict[str, Any]:
     current = await asyncio.to_thread(running_version)
-    release = await latest_release()
+    release = await latest_release(fresh)
     install = "app" if is_packaged() else "source"
     return {
         "current": current,

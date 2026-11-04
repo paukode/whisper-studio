@@ -53,7 +53,7 @@ def github(monkeypatch):
     update_check.reset_cache()
 
 
-def _check(monkeypatch, current: str, packaged: bool = False) -> dict:
+def _check(monkeypatch, current: str, packaged: bool = False, fresh: bool = False) -> dict:
     monkeypatch.setattr(update_check, "running_version", lambda: current)
     if packaged:
         monkeypatch.setenv("WHISPER_HOME", "/tmp/whisper-home-test")
@@ -61,7 +61,7 @@ def _check(monkeypatch, current: str, packaged: bool = False) -> dict:
         monkeypatch.delenv("WHISPER_HOME", raising=False)
     app = FastAPI()
     app.include_router(update_check.router)
-    resp = TestClient(app).get("/api/update-check")
+    resp = TestClient(app).get("/api/update-check", params={"fresh": "true"} if fresh else None)
     assert resp.status_code == 200
     return resp.json()
 
@@ -141,6 +141,18 @@ def test_release_is_cached_between_checks(github, monkeypatch):
     data = _check(monkeypatch, "2.15.2")
     assert len(github["requests"]) == 1
     assert data["latest"]["version"] == "2.16.0"
+
+
+def test_a_fresh_check_skips_the_cache_and_refills_it(github, monkeypatch):
+    github["response"] = _release("v2.16.0")
+    _check(monkeypatch, "2.16.0")
+    github["response"] = _release("v2.16.1")
+    data = _check(monkeypatch, "2.16.0", fresh=True)
+    assert len(github["requests"]) == 2
+    assert data["update_available"] is True
+    # The fresh answer is what the next ordinary check reuses.
+    assert _check(monkeypatch, "2.16.0")["latest"]["version"] == "2.16.1"
+    assert len(github["requests"]) == 2
 
 
 def test_request_sends_no_user_data(github, monkeypatch):

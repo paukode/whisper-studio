@@ -511,6 +511,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         let studioItem = NSMenuItem()
         let studioMenu = NSMenu(title: "Whisper Studio")
         studioMenu.addItem(
+            withTitle: "Check for Updates\u{2026}",
+            action: #selector(AppDelegate.checkForUpdates(_:)),
+            keyEquivalent: "")
+        studioMenu.addItem(NSMenuItem.separator())
+        studioMenu.addItem(
             withTitle: "Open in Browser",
             action: #selector(AppDelegate.openInBrowser(_:)),
             keyEquivalent: "")
@@ -526,6 +531,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
 
     @objc func reloadPage(_ sender: Any?) {
         webView?.reload()
+    }
+
+    /// Asks the page to check GitHub for a newer release now, past the
+    /// backend's cache (src/components/common/UpdateNotice.tsx listens for
+    /// the event). The page shows the Update notice or a toast with the answer.
+    @objc func checkForUpdates(_ sender: Any?) {
+        NSApp.activate(ignoringOtherApps: true)
+        webView?.window?.makeKeyAndOrderFront(nil)
+        webView?.evaluateJavaScript(
+            "window.dispatchEvent(new Event('ws-check-for-updates'))", completionHandler: nil)
     }
 
     @objc func openInBrowser(_ sender: Any?) {
