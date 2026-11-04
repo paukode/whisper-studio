@@ -89,8 +89,8 @@ async def _do_write(payload: dict) -> ApprovalOutcome:
         f"To reference this file for the user, copy this link verbatim: {link}"
     )
     # An assistant write, create or edit of a Python file in the workspace
-    # lands here on every approval path (inline, the card's Yes, a spoken yes,
-    # an unattended agent); one saved to an absolute path lands in
+    # lands here on every approval path (inline, the card's Yes, an
+    # unattended agent); one saved to an absolute path lands in
     # _do_save_to_path, which runs the same check. The note rides in the tool
     # result the gate budgets. Bounded, and off the event loop. A file in the
     # scratch folder is outside the workspace, so it is only checked, the way
@@ -118,9 +118,8 @@ async def _do_write(payload: dict) -> ApprovalOutcome:
             log.warning("write %s: no undo copy kept, the file could not be read back: %s", path, e)
     # The stats are computed once, here, after ruff: against the file as it
     # is on disk now, so a fix or a reformat counts. They ride on the
-    # outcome to the inline path's skill_result meta and the card's JSON (a
-    # spoken yes drops them: voice rows carry no meta). The gate, the card
-    # and the voice executor stamp the call's tool_use id after
+    # outcome to the inline path's skill_result meta and the card's JSON.
+    # The gate and the card stamp the call's tool_use id after
     # build_payload, and the edit is kept under it for the diff dialog; a
     # write with no id (a direct call) records nothing. The write already
     # happened, so a failure here costs the numbers, never the outcome.

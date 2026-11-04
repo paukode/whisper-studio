@@ -57,12 +57,8 @@
       <thead><tr><th>Keys</th><th>Action</th></tr></thead>
       <tbody>
         <tr><td><kbd>Esc</kbd> <span class="badge badge--muted">while streaming</span></td><td>Kill the current stream, this session's <code>/subagent</code> runs, and the shell work the turn started (same as pressing Stop).</td></tr>
-        <tr><td><kbd>Esc</kbd> <span class="badge badge--muted">voice work pending</span></td><td>Cancel background work left over from a voice conversation.</td></tr>
       </tbody>
     </table></div>
-    <p>The same key covers voice. If nothing is streaming but work you started by voice is still
-      finishing in the background, <kbd>Esc</kbd> cancels that work instead, which is what the Stop
-      button beside the composer does at that moment.</p>
     <p>The kill switch is armed only while something is actually running, so <kbd>Esc</kbd> keeps its
       ordinary meaning everywhere else. Overlays and popups that already treat <kbd>Esc</kbd> as
       "close me" always win: the first press dismisses the overlay (a composer dropdown, a dialog, the
@@ -115,7 +111,7 @@
 
     <h2 id="voice-submit">Voice submit (hands-free)</h2>
     <p>Dictation is not a key, but it is the closest thing to a hands-free "send". Click the microphone
-      icon between <b>Attach</b> and <b>Talk</b> to dictate into the chat textarea; the transcript
+      icon in the composer to dictate into the chat textarea; the transcript
       appends as you speak. To submit without touching the keyboard, end a sentence with a spoken
       submit command like the examples below. The command words are stripped from the message before
       it is sent. A bare verb on its own (just "send") never fires, so a one-word mishear cannot
@@ -129,9 +125,7 @@
     <p>The chat-input mic and the meeting <b>Record</b> button share one reference-counted audio stream,
       so you can dictate a message while a meeting is recording. See
       <a href="tut-voice.html">Voice &amp; meetings</a> for dictation, diarization, and system-audio
-      capture. Dictation is not the same as a voice conversation: the <b>Talk</b> button beside the mic
-      opens one, and it has no keyboard shortcut either (see
-      <a href="tut-voice-mode.html">Voice conversations</a>).</p>
+      capture.</p>
 
     <h2 id="docs-shortcuts">These docs</h2>
     <p>This documentation site has its own small helper: press <kbd>/</kbd> anywhere (as long as you are
@@ -158,7 +152,7 @@
 
     <h2 id="beyond-keys">Beyond keys</h2>
     <p>Whisper Studio deliberately keeps a small, memorable set of shortcuts rather than a large one.
-      Recording, the Talk button, the notifications bell, the right-hand dock, and the docs panel
+      Recording, the notifications bell, the right-hand dock, and the docs panel
       behind the header's <b>?</b> button are all click-only on purpose. Most actions are reachable two
       other ways that need nothing to memorize:</p>
     <div class="cols-2">

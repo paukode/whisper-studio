@@ -3,8 +3,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // settingsStore.setAutoMemory persists via put() from the api client.
 const { putMock, getMock } = vi.hoisted(() => ({ putMock: vi.fn(), getMock: vi.fn() }));
 vi.mock('@/api/client', () => ({ get: getMock, put: putMock }));
-const { loadStatusMock } = vi.hoisted(() => ({ loadStatusMock: vi.fn() }));
-vi.mock('@/services/voiceController', () => ({ voiceController: { loadStatus: loadStatusMock } }));
 
 import { activeEffortLevel, chatModelBlockReason, pickActiveModel, useSettingsStore } from './settingsStore';
 import { turnModelSettings } from '@/hooks/chatStream/turnSettings';
@@ -222,30 +220,27 @@ describe('the picker follows the model mode and the workspace', () => {
   });
 });
 
-describe('setModelMode and voice availability', () => {
+describe('setModelMode', () => {
   const flush = () => new Promise((r) => setTimeout(r, 0));
 
   beforeEach(() => {
     putMock.mockReset();
-    loadStatusMock.mockReset();
     useSettingsStore.setState((s) => ({ config: { ...s.config, modelMode: 'cloud' } }));
   });
 
-  it('re-reads voice availability once the server holds the new mode', async () => {
+  it('keeps the new mode once the server holds it', async () => {
     putMock.mockResolvedValue({});
     useSettingsStore.getState().setModelMode('local');
     await flush();
     await flush();
-    expect(loadStatusMock).toHaveBeenCalledWith(true);
     expect(useSettingsStore.getState().config.modelMode).toBe('local');
   });
 
-  it('leaves voice availability alone when the mode was not saved', async () => {
+  it('rolls the mode back when it was not saved', async () => {
     putMock.mockRejectedValue(new Error('offline'));
     useSettingsStore.getState().setModelMode('local');
     await flush();
     await flush();
-    expect(loadStatusMock).not.toHaveBeenCalled();
     expect(useSettingsStore.getState().config.modelMode).toBe('cloud');
   });
 });

@@ -28,7 +28,7 @@ WSDiagram.mount("overview-diagram", {
 
     { id: "rest", group: "transport", col: 1, row: 0, label: "REST", sub: "/api JSON", desc: "Request/response endpoints for chat, sessions, workspace, git, config, and more." },
     { id: "sse", group: "transport", col: 1, row: 1, label: "SSE", sub: "tokens + events", desc: "Server-Sent Events carry streamed chat tokens and per-session agent/cron events." },
-    { id: "ws", group: "transport", col: 1, row: 2, label: "WebSocket", sub: "audio · voice · PTY · LSP", desc: "Binary PCM16 recording audio in (/ws), the voice-mode stream (/ws/voice), the terminal PTY, the LSP proxy, the Live preview screencast, and the capture helper of a source install (/ws/capture-helper)." },
+    { id: "ws", group: "transport", col: 1, row: 2, label: "WebSocket", sub: "audio · PTY · LSP", desc: "Binary PCM16 recording audio in (/ws), the terminal PTY, the LSP proxy, the Live preview screencast, and the capture helper of a source install (/ws/capture-helper)." },
 
     { id: "chatR", group: "server", col: 2, row: 0, label: "chat", sub: "chat/routes.py", desc: "The streaming state machine: builds the prompt, invokes the model, and drives the agentic tool loop. It also owns the session busy slot, so a message sent while the turn runs is queued into that turn instead of starting a second one." },
     { id: "sessR", group: "server", col: 3, row: 0, label: "sessions", sub: "infrastructure/sessions.py", desc: "List, load, rename, delete, and persist sessions (routes in sessions_routes.py); the per-session UPSERT with merge." },
@@ -63,7 +63,7 @@ WSDiagram.mount("overview-diagram", {
     { id: "cfg", group: "persist", kind: "store", col: 7, row: 2, label: "config.user.json", sub: "+ env overlay", desc: "Your settings, over the shipped config.example.json defaults: in ~/.whisper for the Mac app, at the checkout root for a source install, with the TAVILY_API_KEY env overlay on top." },
     { id: "memdir", group: "persist", kind: "store", col: 7, row: 3, label: "memory store", sub: "data/memory + global_memory", desc: "The two-tier memory store: project memory in data/memory, global memory in data/global_memory, injected into later prompts." },
 
-    { id: "bedrock", group: "external", kind: "external", col: 7, row: 4, label: "Amazon Bedrock", sub: "Claude · GPT · Sonic", desc: "The only cloud LLM. Called for chat turns on cloud models and for background work (memory recall, titles, captions, the goal judge, CI diagnosis, cron runs, cloud-mode indexing), never in Local mode. Bedrock hosts the Claude and GPT models in the picker, and carries the Amazon Nova 2 Sonic voice stream." },
+    { id: "bedrock", group: "external", kind: "external", col: 7, row: 4, label: "Amazon Bedrock", sub: "Claude · GPT", desc: "The only cloud LLM. Called for chat turns on cloud models and for background work (memory recall, titles, captions, the goal judge, CI diagnosis, cron runs, cloud-mode indexing), never in Local mode. Bedrock hosts the Claude and GPT models in the picker." },
     { id: "mcp", group: "external", kind: "external", col: 7, row: 5, label: "MCP servers", sub: "stdio or HTTP, optional", desc: "External tool providers: local child processes over stdio, or remote HTTP servers you explicitly configure (URL plus optional bearer-token env var). Per-server approval_mode and tool allow/deny lists gate what they expose." },
     { id: "tavily", group: "external", kind: "external", col: 7, row: 6, label: "Tavily", sub: "web search", desc: "Optional web-search provider for the research tools." }
   ],

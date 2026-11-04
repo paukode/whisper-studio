@@ -94,8 +94,7 @@
         bills per search unit ($0.002 each), not per token, so its rows have no rate in the table.
         Its calls and tokens are in the log and on the Costs tab, priced at $0 with the
         unpriced-model note, so the app's total falls short of Cost Explorer by exactly that spend.
-        Nova Sonic speech and text (<code>&lt;model id&gt;:speech</code> and
-        <code>&lt;model id&gt;:text</code>) and Cohere Embed 4 are priced at the AWS Price List
+        Cohere Embed 4 is priced at the AWS Price List
         rates, which match the unit costs Cost Explorer shows.</p></div>
     </div>
 
@@ -109,8 +108,6 @@
         <tr><td><code>gpt6.1-sol</code></td><td>$2.20</td><td>$11.00</td><td>$0.11</td><td>$2.75</td></tr>
         <tr><td><code>gpt6-astra</code></td><td>$11.00</td><td>$55.00</td><td>$1.10</td><td>$13.75</td></tr>
         <tr><td><code>gpt6-luna</code></td><td>$0.11</td><td>$0.55</td><td>$0.011</td><td>$0.1375</td></tr>
-        <tr><td><code>amazon.nova-2-sonic-v1:0:speech</code></td><td>$3.00</td><td>$12.00</td><td>n/a</td><td>n/a</td></tr>
-        <tr><td><code>amazon.nova-2-sonic-v1:0:text</code></td><td>$0.33</td><td>$2.75</td><td>n/a</td><td>n/a</td></tr>
         <tr><td><code>cohere.embed-v4:0</code></td><td>$0.12</td><td>n/a</td><td>n/a</td><td>n/a</td></tr>
         <tr><td><code>global.cohere.embed-v4:0</code></td><td>$0.12</td><td>n/a</td><td>n/a</td><td>n/a</td></tr>
       </tbody>
@@ -187,7 +184,7 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Source</th><th>Calls</th></tr></thead>
       <tbody>
-        <tr><td><code>chat</code>, <code>agent</code>, <code>workflow</code>, <code>cron</code>, <code>voice</code>, <code>headless</code>, <code>wake</code></td><td>Turn-engine rounds, tagged by the caller through <code>TurnContext.cost_source</code>. A structured-output distillation call bills under its run's source. Under <code>voice</code>, Nova Sonic's own speech and text tokens are logged too (<code class="path">server/voice/cost_log.py</code>), from the running totals its <code>usageEvent</code> reports, once per stream at each completion end and when the stream closes.</td></tr>
+        <tr><td><code>chat</code>, <code>agent</code>, <code>workflow</code>, <code>cron</code>, <code>headless</code>, <code>wake</code></td><td>Turn-engine rounds, tagged by the caller through <code>TurnContext.cost_source</code>. A structured-output distillation call bills under its run's source.</td></tr>
         <tr><td><code>memory</code></td><td>Memory extraction and consolidation runs, the learning review fork, memory recall.</td></tr>
         <tr><td><code>compaction</code>, <code>title</code>, <code>query_rewrite</code>, <code>classifier</code>, <code>explainer</code>, <code>evaluator</code>, <code>ci_diagnose</code>, <code>activity_label</code>, <code>condensation</code>, <code>ocr</code>, <code>index</code>, <code>buddy</code>, <code>doctor</code></td><td>Side tasks that call Bedrock directly, logged by <code class="path">calls.py</code> in the thread that made the call (so a call its caller timed out on is still logged). <code>index</code> includes the Cohere Embed v4 and Rerank 3.5 calls of the cloud index backends, counted from Bedrock's input token-count header or, without one, as characters / 4 of the body posted.</td></tr>
         <tr><td><code>unattributed</code></td><td>Rows written before sources were recorded.</td></tr>
@@ -252,7 +249,7 @@
       the rows are the history, and the daily window moves on its own. If the cost log cannot be
       read, a configured cap counts as reached: the run stops and the message gives the reason.</p>
     <p>The same Budgets card also sets the <b>Round limit</b> (<code>round_limit</code>, default 120)
-      that every run gets (chat, voice, agents, cron and headless; the background memory jobs keep
+      that every run gets (chat, agents, cron and headless; the background memory jobs keep
       their own small caps) and the <b>Time limit</b>
       (<code>time_limit_minutes</code>, default 15) for runs nobody watches (agents, cron and
       unattended headless runs), and the <b>Enable model fallback</b> switch

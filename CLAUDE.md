@@ -11,10 +11,9 @@ This file is about how to change the code safely.
 A local, single-user AI workstation for macOS: a FastAPI backend (`server/`),
 a React + TypeScript + Vite frontend (`src/`), a Swift app shell (`macapp/`),
 and an on-device ASR stack. Cloud models run on Amazon Bedrock (Claude and
-OpenAI on mantle); on-device chat runs through llama-server or MLX; voice mode
-streams Amazon Nova Sonic while the session model does the work. One turn
-engine (`server/chat/engine/runner.py`) serves chat, subagents, cron, voice,
-and headless runs.
+OpenAI on mantle); on-device chat runs through llama-server or MLX. One turn
+engine (`server/chat/engine/runner.py`) serves chat, subagents, cron, and
+headless runs.
 
 ## Invariants (review every change against these)
 
@@ -75,7 +74,6 @@ server/agents/           subagent runtime, agent types, tool filtering, journal.
                          extensions.py (grant a running agent more rounds),
                          wake.py (parent answers when reports land with no live turn)
 server/tasks/            task registry, session events, detached agent runs
-server/voice/            Nova Sonic bidirectional stream, voice tools, approvals aloud
 server/costs/            per-turn cost log, budgets, the soft cap that reserves a round
 server/infrastructure/   config, sessions store, session_search, auxiliary models, oneshot
 server/skills.py         skill loader; skills_routes.py (HTTP); agent_tools/ (model tools)
@@ -93,7 +91,7 @@ venv/bin/ruff check . && venv/bin/ruff format --check .
 npx tsc --noEmit && npm test && npm run lint && npm run build
 ```
 
-- Python 3.12 is the code's floor (the voice SDK pins it); the packaged app
+- Python 3.12 is the code's floor; the packaged app
   and `setup.sh` use 3.13. The project pins Node in `.nvmrc` (26.13.0), and
   `setup.sh` installs it into `venv/`; the system Node on this Mac is 24, so
   use `venv/bin/node` when the version matters.

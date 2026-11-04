@@ -1,6 +1,6 @@
 fastapi==0.162.0
-# Some routes import starlette (server/voice/routes.py) and pydantic request
-# models directly; fastapi only sets a floor for both.
+# The tests import starlette and the routes import pydantic request models
+# directly; fastapi only sets a floor for both.
 starlette==1.10.0
 pydantic==2.14.2
 uvicorn[standard]==0.54.0
@@ -11,15 +11,6 @@ websockets==17.4
 boto3==1.43.123
 # server/infrastructure/errors.py imports urllib3 (botocore's transport) directly.
 urllib3==2.8.0
-# Voice mode (Nova 2 Sonic) speaks Bedrock's bidirectional stream, which boto3
-# cannot; this Smithy-based SDK (Developer Preview) can, over the awscrt HTTP/2
-# transport (the default aiohttp one has no duplex streaming). Needs Python 3.12+,
-# the app's floor.
-aws-sdk-bedrock-runtime[awscrt]==0.11.0
-# server/voice/sonic_client.py imports the SDK's smithy layers directly; keep
-# them on the release line aws-sdk-bedrock-runtime requires.
-smithy-aws-core==0.11.0
-smithy-http==0.5.0
 numpy==2.4.6
 python-multipart==0.0.33
 Pillow==12.2.0

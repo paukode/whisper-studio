@@ -16,7 +16,6 @@ SOURCE_LABELS: dict[str, str] = {
     "agent": "Agents",
     "workflow": "Workflows",
     "cron": "Scheduled tasks",
-    "voice": "Voice",
     "headless": "Headless runs",
     "wake": "Replies to agent reports",
     "memory": "Memory",

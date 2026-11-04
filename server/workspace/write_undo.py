@@ -2,7 +2,7 @@
 
 server/approval/executors.py _do_write runs every approved write, create or
 edit of a workspace file, on every approval path (the card's Yes, an inline
-run in Bypass, a spoken yes, an unattended agent). When the call has a
+run in Bypass, an unattended agent). When the call has a
 tool_use id, it keeps here the exact bytes of the file from immediately
 before that write (None when the write created the file) and a hash of the
 file as the write left it (after ruff, which can fix or reformat it).

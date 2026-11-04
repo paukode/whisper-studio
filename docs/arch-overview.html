@@ -43,7 +43,7 @@
     <h3>Transport (same origin)</h3>
     <p>Three channels share one <code>127.0.0.1</code> origin: REST for request/response, Server-Sent
       Events for streamed tokens and session events, and WebSocket for recording audio
-      (<code>/ws</code>), voice mode (<code>/ws/voice</code>), the terminal PTY, LSP, the Live preview
+      (<code>/ws</code>), the terminal PTY, LSP, the Live preview
       screencast, and the capture helper of a source install (<code>/ws/capture-helper</code>). The
       Mac app serves on port 41410; a source install runs the backend on 41430 and, with
       <code>--dev</code>, Vite on 41460, so the two never compete. When a port is taken, the nearest
@@ -102,8 +102,7 @@
 
     <h3>External services</h3>
     <p><a href="arch-backends.html">Amazon Bedrock</a> is the only cloud LLM. It carries the Claude
-      and GPT chat models and the Amazon Nova 2 Sonic voice stream behind
-      <a href="tut-voice-mode.html">voice mode</a>. It is called when you
+      and GPT chat models. It is called when you
       submit a message to a cloud model, and also from background work: auxiliary side calls (memory
       recall, titles, activity captions, the goal evaluator in
       <code class="path">server/goals/evaluator.py</code>, CI diagnose in
@@ -124,8 +123,7 @@
         exposure requires an explicit <code>HOST=0.0.0.0</code> opt-in, and the LAN origin must be
         listed in <code>WHISPER_TRUSTED_ORIGINS</code> or the origin guard refuses it.</p></div>
       <div class="card"><h3>Transcription is local</h3><p>Recording and transcription audio never
-        leaves the machine. Voice mode is the exception: it streams your microphone to Amazon Nova 2
-        Sonic on Bedrock.</p></div>
+        leaves the machine.</p></div>
       <div class="card"><h3>Bedrock is the only cloud LLM</h3><p>No telemetry, no proxy, no gateway.
         The signed request goes straight from the local process to Bedrock. TLS verifies against the
         system keychain as well as the bundled CA list, so a corporate proxy does not break

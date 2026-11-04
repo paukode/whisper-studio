@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Glossary - Whisper Studio Docs</title>
-  <meta name="description" content="Definitions of the terms used across Whisper Studio: ASR, Bedrock, GraphRAG, MCP, permission mode, sandbox-exec, SSE, voice mode, voiceprints, the agent flight recorder, sub-agents, WHISPER.md, and more.">
+  <meta name="description" content="Definitions of the terms used across Whisper Studio: ASR, Bedrock, GraphRAG, MCP, permission mode, sandbox-exec, SSE, voiceprints, the agent flight recorder, sub-agents, WHISPER.md, and more.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -74,7 +74,7 @@
           <td><code>ASR</code></td>
           <td>Automatic Speech Recognition. The task of turning audio into text. Whisper Studio runs ASR
             entirely on-device (Whisper or Parakeet) in every model mode, so recorded audio
-            never leaves your machine. <b>Voice mode</b> is the exception and is a different feature.
+            never leaves your machine.
             See <a href="arch-transcription.html">Transcription &amp; diarization</a>.</td>
         </tr>
         <tr>
@@ -93,8 +93,7 @@
             <code>bedrock-runtime.&lt;region&gt;.amazonaws.com</code> via
             <code>invoke_model_with_response_stream</code>; GPT goes to
             <code>bedrock-mantle.&lt;region&gt;.api.aws</code>'s OpenAI-compatible Responses API.
-            <b>Voice mode</b> is a third Bedrock surface, a bidirectional stream to
-            <b>Nova 2 Sonic</b>. All cloud model calls the app makes go to Bedrock; there is no other
+            All cloud model calls the app makes go to Bedrock; there is no other
             provider. See
             <a href="arch-backends.html">Model backends &amp; modes</a> and
             <a href="https://docs.aws.amazon.com/bedrock/">the Amazon Bedrock docs</a>.</td>
@@ -447,16 +446,6 @@
             hostname, never the traffic itself. See <a href="ref-security.html#egress">Security
             model</a>.</td>
         </tr>
-        <tr>
-          <td>Nova 2 Sonic</td>
-          <td>Amazon Nova 2 Sonic, the speech-to-speech model on Bedrock that carries a
-            <b>voice mode</b> conversation: it hears your microphone and speaks the replies, over one
-            bidirectional stream. Default model id <code>amazon.nova-2-sonic-v1:0</code>, available in
-            <code>us-east-1</code>, <code>us-west-2</code>, <code>eu-north-1</code> and
-            <code>ap-northeast-1</code> only, with sixteen voices across nine locales. It is not the
-            model doing the work: the session's own Claude or GPT model still answers and uses the
-            tools. See <a href="tut-voice-mode.html">Voice conversations</a>.</td>
-        </tr>
       </tbody>
     </table></div>
 
@@ -735,8 +724,7 @@
             the <b>VAD</b> buffer and handed to the transcription engine as one piece. Speaker labels,
             language detection and the translation line all attach per utterance. Because the buffer
             flushes on silence and not on speaker change, a handover with no gap lands inside one
-            utterance, which is what <b>speaker turn splitting</b> exists to fix. In <b>voice mode</b>
-            the same word means one spoken turn, and the app writes each one to the chat as a message.</td>
+            utterance, which is what <b>speaker turn splitting</b> exists to fix.</td>
         </tr>
         <tr>
           <td><code>VAD</code></td>
@@ -754,18 +742,6 @@
             real verification or an honest blocker, at most twice per turn. Prose-only edits never
             trigger it. Gated by the <code>verify_on_stop</code> feature flag. Compare <b>quality
             gate</b>, which is a command you named rather than an inference.</td>
-        </tr>
-        <tr>
-          <td>voice mode (Talk)</td>
-          <td>A spoken conversation with the assistant, opened with the <b>Talk</b> button beside the
-            composer. <b>Nova 2 Sonic</b> carries the voice while the session's own model does the work
-            through the same tools as typed chat, so it can read files, run commands and delegate.
-            Approvals are asked aloud and shown as the usual card. The composer is replaced by a voice
-            bar (Type instead, Mute, End); the app writes one message for each <b>utterance</b>, so the
-            conversation is in your history afterwards. Long delegated work keeps running in the
-            background and is reported back, and hanging up never cancels it. Distinct from dictation
-            (speaking one message into the composer) and from meeting transcription. See
-            <a href="tut-voice-mode.html">Voice conversations</a>.</td>
         </tr>
         <tr>
           <td>voiceprint</td>
@@ -883,10 +859,9 @@
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
       <div class="callout__body"><p>Whisper (the speech model) and Whisper Studio (the app) are
         different things. When these docs say "Whisper" alone in a transcription context, they mean the
-        model; the product is always "Whisper Studio". Three separate things involve your voice, too:
-        <b>dictation</b> speaks one message into the composer, <b>meeting transcription</b> records and
-        writes up a conversation, and <b>voice mode</b> is a spoken conversation with the assistant.
-        Only the last one sends audio anywhere.</p></div>
+        model; the product is always "Whisper Studio". Two separate things use your voice, too:
+        <b>dictation</b> speaks one message into the composer, and <b>meeting transcription</b> records and
+        writes up a conversation. Both keep the audio on your machine.</p></div>
     </div>
 
     <div class="callout callout--tip">

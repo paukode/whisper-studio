@@ -167,7 +167,7 @@
         <p>At the end of the turn, the server states each held claim that is still false ("Not saved:
         <code>~/a.docx</code> does not exist.", "Not confirmed yet: the deploy is still running."),
         unless a sentence after it corrected it. This makes sure that the chat never shows a false
-        claim as fact. The same guard covers subagents, scheduled and headless runs, and voice. A run
+        claim as fact. The same guard covers subagents and scheduled and headless runs. A run
         with no gate ends its last round with the note, so the report of a subagent includes it. A turn
         that stops for an approval gives its dropped claims and the sentences that it still held to its
         continuation. The continuation examines them against the call that the user approved, and

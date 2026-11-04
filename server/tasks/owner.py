@@ -1,6 +1,6 @@
 """Which run started a command, so a chat Stop reaches only its own work.
 
-Detached and resumed agents, workflows, voice-delegated runs and cron jobs
+Detached and resumed agents, workflows and cron jobs
 all run tools under the chat session id they belong to, so the session's
 foreground commands and shell tasks mix their work with the chat turn's. A
 chat Stop (server.tasks.handoff.stop_turn_work) must not kill a command one

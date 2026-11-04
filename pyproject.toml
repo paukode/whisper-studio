@@ -1,5 +1,5 @@
 [tool.ruff]
-# The app's runtime floor is Python 3.12 (setup.sh, the voice SDK); the app and
+# The app's runtime floor is Python 3.12 (setup.sh); the app and
 # CI run 3.13. pyupgrade (UP) rewrites code up to this target, so pin it to the
 # floor, not the CI version.
 target-version = "py312"

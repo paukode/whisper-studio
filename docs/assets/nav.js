@@ -25,7 +25,6 @@ window.WS_NAV = [
       { t: "Your first chat", h: "tut-first-chat.html", d: "Models, thinking levels, slash commands, streaming, export." },
       { t: "Goals & autopilot", h: "tut-goals.html", d: "Prompt vs a goal that runs to completion vs a parallel workflow, and how to set a goal." },
       { t: "Voice & meetings", h: "tut-voice.html", d: "Dictation, diarization, speaker rename, system audio." },
-      { t: "Talk: voice conversations", h: "tut-voice-mode.html", d: "Hold a spoken conversation with the assistant; approvals by voice, background work." },
       { t: "Working with documents", h: "tut-documents.html", d: "Drag-drop attachments, extraction, follow-ups." },
       { t: "Saving files & documents", h: "tut-save-files.html", d: "The save flow without a location question, and docx/pptx/xlsx/pdf files." },
       { t: "Web research", h: "tut-research.html", d: "Tavily web search, page fetch, citations." },

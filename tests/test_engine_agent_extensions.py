@@ -345,7 +345,7 @@ def test_deadline_hit_forces_a_terminal_no_tools_round():
 
 
 def test_tool_result_side_calls_bill_the_chat_session_under_a_turn_scope(monkeypatch):
-    # A voice-delegated turn: rounds log under the chat session, the scope
+    # A scoped turn (the agent wake): rounds log under the chat session, the scope
     # keys turn state. The classifier and explainer calls that
     # process_tool_results makes must bill the chat session too.
     seen: dict = {}
@@ -367,10 +367,10 @@ def test_tool_result_side_calls_bill_the_chat_session_under_a_turn_scope(monkeyp
     )
     ctx = _base_ctx(
         session_id="chat1",
-        turn_scope_id="exec:voice-chat1-1234abcd",
+        turn_scope_id="exec:wake:chat1",
         adapter=adapter,
-        cost_source="voice",
+        cost_source="wake",
     )
     asyncio.run(_drain(ctx))
-    assert seen["session_id"] == "exec:voice-chat1-1234abcd"
+    assert seen["session_id"] == "exec:wake:chat1"
     assert seen["cost_session_id"] == "chat1"

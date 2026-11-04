@@ -107,8 +107,7 @@
           <td><code>AWS_BEARER_TOKEN_BEDROCK</code></td>
           <td><span class="badge badge--muted">unset</span></td>
           <td>A Bedrock API key. It authenticates chat and the other Bedrock calls, and
-            <code>/doctor</code> reports it. Voice mode does not accept it: Nova Sonic needs signed AWS
-            credentials. It is not stripped from MCP child environments.</td>
+            <code>/doctor</code> reports it. It is not stripped from MCP child environments.</td>
         </tr>
         <tr>
           <td><code>AWS_PROFILE</code> / <code>AWS_DEFAULT_PROFILE</code></td>
@@ -361,7 +360,7 @@ HOST=0.0.0.0 PORT=8080 python -m server.main</code></pre></div>
       (<code>TAVILY_API_KEY</code> over <code>tavily_api_key</code>) and the data root
       (<code>WHISPER_DATA_DIR</code> over <code>data_dir</code>, resolved where the data root is read).
       <code>TZ</code> runs the other way: <code>cron_timezone</code> wins over it. Everything else (model,
-      region, effort level, permission mode, feature flags, cost caps, voice, speakers) lives only in
+      region, effort level, permission mode, feature flags, cost caps, speakers) lives only in
       the project, user, and system layers. For the complete key-by-key list, see
       <a href="ref-settings.html">Settings &amp; config keys</a>.</p>
 

@@ -119,7 +119,7 @@
     </div>
 
     <h2 id="step-2">Step 2: Connect AWS</h2>
-    <p>Cloud chat (Claude or GPT) and voice mode run on Amazon Bedrock, so they need AWS credentials.
+    <p>Cloud chat (Claude or GPT) runs on Amazon Bedrock, so it needs AWS credentials.
       Skip this step if you will use only on-device models. <code>setup.sh</code> installs the AWS
       CLI when it is missing; you can run this step after Step 4. Run:</p>
     <div class="code-block"><pre><code>aws configure</code></pre></div>
@@ -135,9 +135,7 @@
         Claude must be enabled in your account. Set the same value as the <b>Bedrock Region</b> in
         Settings later. A mismatch is the most common first-run error (see
         <a href="#troubleshooting">Troubleshooting</a>). You also need Bedrock model access granted for
-        the Claude models you intend to use. If you want spoken conversations, grant access to
-        <b>Amazon Nova 2 Sonic</b> in that region as well: see
-        <a href="requirements.html#voice-access">Requirements</a>.</p></div>
+        the Claude models you intend to use.</p></div>
     </div>
 
     <h2 id="step-3">Step 3: (Optional) Tavily key for web search</h2>
@@ -421,7 +419,6 @@ bash setup.sh</code></pre></div>
         <tr><td>Any install step failing</td><td>Read the 40 lines the script prints from <code class="path">setup.log</code>, or open the full log at the repo root.</td></tr>
         <tr><td><code>AccessDeniedException</code> / <code>Could not invoke model</code> in chat</td><td>The AWS user lacks Bedrock permissions, or the Claude model is not enabled in your region.</td></tr>
         <tr><td><code>You don't have access to the model with the specified model ID</code></td><td>Region mismatch: the model is enabled in a different region than Settings says. Align the Bedrock Region.</td></tr>
-        <tr><td>The <b>Talk</b> button is disabled</td><td>Hover it: the tooltip names the reason. Usually the app is in Local mode (switch to Hybrid or Cloud), the AWS credentials are missing, or <code>voice.enabled</code> is off. If Talk starts but fails, check that Nova 2 Sonic is enabled in the voice region.</td></tr>
         <tr><td>An on-device model fails with <code>unknown model architecture</code></td><td>The llama.cpp build is older than the build in <code class="path">server/local/llama_pin.env</code>. Run <code>bash setup.sh</code>.</td></tr>
         <tr><td>Port 41430 or 41460 already in use</td><td>The script takes the nearest free port. Read the URL it actually prints.</td></tr>
         <tr><td>The page says <code>Frontend build missing</code></td><td>The frontend bundle is missing. Re-run <code>bash setup.sh</code>, or <code>bash setup.sh --new</code> for a clean rebuild.</td></tr>

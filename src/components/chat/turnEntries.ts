@@ -129,14 +129,6 @@ export function turnKey(entry: TurnEntry): string {
   return `${entry.rows[0].timestamp}-${entry.index}`;
 }
 
-/** A turn that holds a spoken row (voice mode): its bubble carries the
- *  spoken mark, and it never replays the entrance, because the live voice
- *  bubble already showed those words. One predicate for both: a turn only
- *  grows, so once spoken it stays spoken, and the entrance class never
- *  comes off (which would restart the animation). */
-export function spokenTurn(rows: readonly ChatMessage[]): boolean {
-  return rows.some((r) => !!r.spoken);
-}
 
 /** Something a row draws above its tool traces: the thinking block or the
  *  grounding chip. */

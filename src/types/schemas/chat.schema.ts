@@ -1,8 +1,7 @@
 import { z } from 'zod';
 
 /** One agent progress event from the chat engine (server/agents/runtime.py _emit,
- *  spawn.py team_started/team_completed). Shared by the chat SSE frame and the
- *  voice socket's team_progress event. */
+ *  spawn.py team_started/team_completed), as the chat SSE frame carries it. */
 export const TeamProgressEventSchema = z.object({
   seq: z.number().optional(),
   agent_id: z.string().optional(),

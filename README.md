@@ -4,7 +4,7 @@
 That is the whole install (see [Quick start](#quick-start)). Whisper Studio
 is a local-first AI workspace for macOS: real-time speech transcription, a
 chat client to Claude or GPT (via Amazon Bedrock) or an on-device model in
-local mode, a spoken voice mode, and a full development environment (file
+local mode, and a full development environment (file
 tree, Monaco editor, integrated terminal, Git, LSP) in a single browser tab
 served by a single local process.
 
@@ -15,13 +15,12 @@ development environment (file tree, Monaco editor, terminal, Git, LSP) live
 behind that one composer.*
 
 > **Transcription runs entirely on your machine.** The speech model
-> loads into memory on first record and runs locally on CPU/GPU. Recorded
-> audio never leaves the laptop. In Local mode (the first-run default) every
+> loads into memory on first record and runs locally on CPU/GPU. Recorded and
+> dictated audio never leaves the laptop. In Local mode (the first-run default) every
 > model call stays on the Mac. In Hybrid and Cloud modes the app calls Amazon
 > Bedrock for cloud chat (Claude or GPT) and for background work such as
-> session titles, memory, compaction, and indexing. The one path that sends
-> audio is voice mode: while you hold a spoken conversation, that audio is
-> streamed to Amazon Nova Sonic on Bedrock. Model weights download from
+> session titles, memory, compaction, and indexing. No audio goes to
+> Bedrock. Model weights download from
 > Hugging Face on first use. No telemetry, no proxies, no per-minute
 > transcription fees.
 
@@ -47,8 +46,7 @@ Deploy setup is in [`docs/README.md`](docs/README.md).
 |---|---|
 | Install from scratch (zero prior tooling) | [Installation](https://paukode.github.io/whisper-studio/installation.html) · [Requirements](https://paukode.github.io/whisper-studio/requirements.html) |
 | Configure region, model, keys, feature flags | [Configuration](https://paukode.github.io/whisper-studio/configuration.html) · [Env vars](https://paukode.github.io/whisper-studio/ref-env.html) · [Settings keys](https://paukode.github.io/whisper-studio/ref-settings.html) |
-| Learn a task (chat, voice, docs, research, coding, cron) | [Tutorials](https://paukode.github.io/whisper-studio/tut-first-chat.html) |
-| Talk to the assistant out loud | [Talk: voice conversations](https://paukode.github.io/whisper-studio/tut-voice-mode.html) |
+| Learn a task (chat, meetings, docs, research, coding, cron) | [Tutorials](https://paukode.github.io/whisper-studio/tut-first-chat.html) |
 | Record mic, a Chrome tab, or system audio for meetings | [Voice & meetings](https://paukode.github.io/whisper-studio/tut-voice.html) |
 | Run parallel agents and read what they found | [Sub-agents & teams](https://paukode.github.io/whisper-studio/tut-subagents.html) · [Agent flight recorder](https://paukode.github.io/whisper-studio/arch-agent-recorder.html) |
 | Review a repo with a background agent swarm | [Ultracode](ULTRACODE.md) |
@@ -66,9 +64,6 @@ Deploy setup is in [`docs/README.md`](docs/README.md).
   (Parakeet streaming, Whisper batch) plus Canary translation, word-level timings,
   turns split where one speaker takes over, and opt-in voiceprints that
   recognise a named speaker in later recordings.
-- **Talk to it.** Voice mode holds a spoken conversation: Amazon Nova Sonic
-  carries the voice while your session's model does the work through the
-  same tools as typed chat, approvals included.
 - **Chat with Claude or GPT.** Fable 5.1, Opus 5.5, Sonnet 5.5, Haiku 4.5,
   GPT-6.1 Sol and GPT-6 Astra/Luna, with streaming tokens, tool use, attachments
   and slash commands. Or run fully on-device in local mode.
@@ -182,9 +177,7 @@ On first run `setup.sh` creates `config.user.json` with the same defaults a
 fresh Mac-app install gets: local model mode, on-device index capabilities,
 and every weight downloading on demand. Transcription and the workspace tools
 work out of the box. Chat needs an on-device model from Discover, or a switch
-to Hybrid or Cloud mode for Bedrock; web search needs a Tavily key, and voice
-mode needs Hybrid or Cloud mode and Amazon Nova Sonic access in your Bedrock
-region. Full field-by-field
+to Hybrid or Cloud mode for Bedrock. Web search needs a Tavily key. Full field-by-field
 tables are in
 **[Configuration](https://paukode.github.io/whisper-studio/configuration.html)**,
 **[Environment variables](https://paukode.github.io/whisper-studio/ref-env.html)**, and
@@ -239,8 +232,8 @@ current permission mode.
 
 Each of these has a tutorial or reference page:
 
-- **[Tutorials](https://paukode.github.io/whisper-studio/tut-first-chat.html)**: first chat, voice
-  conversations, meetings and dictation, documents, web research, the
+- **[Tutorials](https://paukode.github.io/whisper-studio/tut-first-chat.html)**: first chat,
+  meetings and dictation, documents, web research, the
   workspace IDE, permissions, memory & WHISPER.md, skills, sub-agents, cron,
   indexing & search, MCP & plugins, and model modes.
 - **[Slash commands](https://paukode.github.io/whisper-studio/ref-slash-commands.html)** and
@@ -258,7 +251,7 @@ execute time, and wraps shell and Python execution in `sandbox-exec(5)`
 HTTPS is verified against the macOS trust store as well as the bundled
 certificate list. Plugins are opt-in, credentials are scrubbed from MCP
 child processes, and in Hybrid and Cloud modes the backend's own outbound
-model calls go to Amazon Bedrock (chat, voice, and background work such as
+model calls go to Amazon Bedrock (chat and background work such as
 titles and memory); Local mode makes none. No telemetry.
 
 In the default permission mode, read-only commands run at once and every
@@ -301,7 +294,7 @@ any other company whose products or services it can connect to.
 All product names, brands, and model names referenced in this project are the
 property of their respective owners:
 
-- Amazon, AWS, Amazon Bedrock, and Amazon Nova are trademarks of Amazon.com, Inc. or its affiliates.
+- Amazon, AWS, and Amazon Bedrock are trademarks of Amazon.com, Inc. or its affiliates.
 - Claude is a trademark of Anthropic.
 - GPT and ChatGPT are trademarks of OpenAI.
 - Gemma is a trademark of Google LLC.

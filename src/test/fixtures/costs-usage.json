@@ -96,7 +96,7 @@
           "output_tokens": 12000,
           "calls": 14
         },
-        "nova-sonic": {
+        "mistral-large": {
           "cost_usd": 0.05,
           "prompt_tokens": 10000,
           "output_tokens": 2000,
@@ -172,8 +172,8 @@
       "deleted": false
     },
     {
-      "key": "nova-sonic",
-      "label": "Nova Sonic",
+      "key": "mistral-large",
+      "label": "Mistral Large",
       "cost_usd": 0.05,
       "share": 0.000653,
       "prompt_tokens": 10000,

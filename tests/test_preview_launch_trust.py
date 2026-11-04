@@ -208,16 +208,6 @@ def test_a_yes_on_the_card_lets_later_starts_skip_the_card_in_every_mode(mode, w
     assert len(previews.started) == 2, content
 
 
-def test_a_spoken_yes_trusts_it_too(workspace, previews):
-    from server.voice.tools import _execute_approval
-
-    _content, request = _process(_parsed(session_name="dev"), MODE_DEFAULT)
-    ok, _detail = asyncio.run(_execute_approval(request["action"], request["payload"]))
-
-    assert ok
-    assert _trusted(workspace)
-
-
 @pytest.mark.parametrize(
     ("mode", "session_approvals"),
     [(MODE_BYPASS, {}), (MODE_DEFAULT, {"preview": "allow"})],

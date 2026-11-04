@@ -262,7 +262,7 @@
         <code>dontAsk</code>, and <code>auto</code> without a classifier call. Trust is the SHA-256
         of the resolved argv per workspace (<code class="path">server/preview/launch_trust.py</code>),
         recorded only by a person's answer to the card (<code>execute_approved_by_human</code> in
-        <code class="path">server/approval/spec.py</code>, used by the Yes button and a spoken yes);
+        <code class="path">server/approval/spec.py</code>, used by the Yes button);
         a config nobody approved, or one whose command changed, skips this step and follows the
         mode. It sits below the checks above on purpose: outside bypass a deny rule or a session "Block
         preview" still refuses it, and the rm-class floor is checked against
@@ -481,8 +481,7 @@
       executor reads the file again and counts the added and removed lines. The executor returns
       these counts in <code>ApprovalOutcome.stats</code>. The inline path puts them in the
       <code>meta</code> of its <code>skill_result</code> frame. The
-      <code>POST /api/approval/execute</code> endpoint returns them as <code>stats</code>. A spoken
-      yes keeps the edit but does not return the counts.</p>
+      <code>POST /api/approval/execute</code> endpoint returns them as <code>stats</code>.</p>
     <p>The exact diff stops after 0.25 s, or when one pass must compare more than 500,000 line pairs.
       Then the counts come from a fast estimate, and <code>stats.approximate</code> is true. A save to
       an absolute path (<code>_do_save_to_path</code>) gives no counts and no stored edit.</p>

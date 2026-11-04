@@ -43,12 +43,10 @@
         untrusted network can't reach it. LAN exposure takes an explicit <code>HOST=0.0.0.0</code>
         opt-in.</p></div>
       <div class="card"><h3>Transcription is local</h3><p>The speech model (Parakeet or Whisper)
-        loads on first record and runs in-process; recorded audio never leaves the machine. Voice
-        mode is the one path that sends audio: it streams your speech to Amazon Nova 2 Sonic, and only
-        in Hybrid or Cloud mode.</p></div>
+        loads on first record and runs in-process; recorded audio never leaves the machine.</p></div>
       <div class="card"><h3>Bedrock is the only cloud LLM</h3><p>No telemetry, no proxy, no gateway.
         The signed request goes straight from the local process to
-        <code>bedrock-runtime.&lt;region&gt;.amazonaws.com</code> (Claude, Nova Sonic, Cohere) or
+        <code>bedrock-runtime.&lt;region&gt;.amazonaws.com</code> (Claude, Cohere) or
         <code>bedrock-mantle.&lt;region&gt;.api.aws</code> (GPT) and back. In Hybrid and Cloud modes
         the app also calls Bedrock in the background (session titles, memory, compaction, the index);
         Local mode makes no Bedrock calls.</p></div>

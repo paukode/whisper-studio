@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ChatMessage } from '@/types/chat';
-import { isLiveTurn, spokenTurn, traceRuns, turnEntries, turnKey, type DisplayEntry, type TurnEntry } from './turnEntries';
+import { isLiveTurn, traceRuns, turnEntries, turnKey, type DisplayEntry, type TurnEntry } from './turnEntries';
 
 const tool = (name: string) => ({ toolId: `tu_${name}`, toolName: name, input: {}, status: 'complete' as const });
 
@@ -182,11 +182,6 @@ describe('turnEntries', () => {
       { message: 4 },
       { turn: [5] },
     ]);
-  });
-
-  it('marks a turn spoken when any of its rows was spoken', () => {
-    expect(spokenTurn([text('a'), text('b')])).toBe(false);
-    expect(spokenTurn([{ ...text('Sure.'), spoken: true }, text('The written answer.')])).toBe(true);
   });
 
   it('keys a turn by its first row, so it keeps its key while it grows', () => {

@@ -165,10 +165,10 @@ def test_spawn_agent_detach_does_not_scaffold(monkeypatch):
 
 
 def test_spawn_agent_publishes_on_the_turn_event_channel(monkeypatch):
-    """A turn with its own event channel (a voice run) must see the whole
+    """A turn with its own event channel (a delegated run) must see the whole
     agent story there: the scaffold, and the per-turn progress the runtime
     emits, which means run_agent has to be told the channel too. Seen live:
-    without it only team_started and team_completed reached the voice socket."""
+    without it only team_started and team_completed reached that channel."""
     bus = _Bus()
     monkeypatch.setattr("server.agents.event_bus.event_bus", bus)
     captured = {}
@@ -190,12 +190,12 @@ def test_spawn_agent_publishes_on_the_turn_event_channel(monkeypatch):
 
     asyncio.run(
         agent_tools.execute_spawn_agent(
-            {"task": "Review protocol.py"}, "chat-sid", "model-x", event_channel="voice:r1"
+            {"task": "Review protocol.py"}, "chat-sid", "model-x", event_channel="run:r1"
         )
     )
-    assert captured["event_channel"] == "voice:r1"
+    assert captured["event_channel"] == "run:r1"
     assert captured["session_id"] == "chat-sid"  # registry and costs stay with the session
     channels = {ch for ch, _ in bus.events}
-    assert channels == {"voice:r1"}
+    assert channels == {"run:r1"}
     phases = [ev.get("phase") for _, ev in bus.events]
     assert phases == ["team_started", "team_completed"]

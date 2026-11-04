@@ -49,7 +49,7 @@
     <p>The shell also mounts a persistent bottom status strip,
       <code class="path">src/components/layout/AppStatusBar.tsx</code>, that reads only from
       existing stores to show the active model, its effort (or Thinking level on an on-device model),
-      the permission mode, the git branch with dirty and ahead/behind counts, the voice status, and a
+      the permission mode, the git branch with dirty and ahead/behind counts, and a
       running background-task pill. Tokens, cost, and the context meter live in the composer's
       token counter instead. The <code>Header</code> carries its own running-count pill that opens the
       <code>BackgroundTasksPanel</code>.</p>
@@ -99,8 +99,7 @@
     <p>The shell also wires the global keyboard shortcuts (<kbd>Cmd</kbd>+<kbd>,</kbd> for Settings,
       <kbd>Cmd</kbd>+<kbd>B</kbd> to toggle the sidebar, <kbd>Cmd</kbd>+<kbd>K</kbd> for the
       command palette) and the <a href="arch-approval.html">ESC kill switch</a>. It is armed only
-      while the viewed session has something to stop (a running stream, its own subagents, or
-      voice-delegated runs that still drain), so <kbd>Esc</kbd> keeps its normal meaning everywhere
+      while the viewed session has something to stop (a running stream or its own subagents), so <kbd>Esc</kbd> keeps its normal meaning everywhere
       else.</p>
 
     <h2 id="session-runtimes">Per-session runtimes</h2>
@@ -157,7 +156,6 @@
         <tr><td><code>settingsStore</code></td><td>singleton</td><td>Config, model list, selected model, effort level, verbosity, data retention, and the skill catalogue (<code>loadSkills</code>).</td></tr>
         <tr><td><code>mcpStore</code></td><td>singleton</td><td>The one MCP server list, with live status, tool counts and pending elicitations. Settings &gt; MCP, the composer's <code>/mcp:</code> and <code>@mcp:</code> menus and the import panel all read it; the backend's <code>mcp_changed</code> events refetch it.</td></tr>
         <tr><td><code>taskStore</code>, <code>recordingStore</code>, <code>cronUnreadStore</code>, <code>subagentStore</code></td><td>singleton</td><td>The live task list, the shared mic, cron badges, and running subagents.</td></tr>
-        <tr><td><code>voiceStore</code></td><td>singleton</td><td>Voice-mode state for the Talk bar: off, connecting, listening, thinking, speaking, ending, plus the draining flag that keeps background work running after you hang up.</td></tr>
         <tr><td><code>composerAttachmentsStore</code></td><td>singleton</td><td>The composer's attachment chips, kept per session.</td></tr>
         <tr><td><code>agentFeedStore</code></td><td>singleton</td><td>The agent pane's records: the journal read once, the live tail merged by <code>seq</code>, and the status readout.</td></tr>
         <tr><td><code>indexSearchStore</code></td><td>singleton</td><td>Per-session selection of which indexed workspaces a turn should search (<code>selected_search_indexes</code>), persisted to <code>localStorage</code> so a session's choice survives a reload.</td></tr>
@@ -324,7 +322,7 @@
       restores the same stashed paused-turn state. A bare answer string sent any other way is treated as
       a brand-new chat message and never resumes anything. The
       <a href="arch-approval.html">ESC kill switch</a> stops the viewed session's stream and that
-      session's own subagents (or, when only they remain, its voice-delegated runs) synchronously, and a <code>wasKillFinalized</code> guard stops the read loop from
+      session's own subagents synchronously, and a <code>wasKillFinalized</code> guard stops the read loop from
       resurrecting an answer after a kill.</p>
 
     <h2 id="readable-transcript">A readable transcript</h2>
@@ -481,7 +479,7 @@
     <h2 id="key-files">Key files</h2>
     <div class="spec">
       <dt><code class="path">src/components/layout/AppShell.tsx</code></dt><dd>Top-level layout and the startup sequence.</dd>
-      <dt><code class="path">src/components/layout/AppStatusBar.tsx</code></dt><dd>Persistent bottom status strip: model, effort or Thinking level, permission mode, git, voice status, background-task pill.</dd>
+      <dt><code class="path">src/components/layout/AppStatusBar.tsx</code></dt><dd>Persistent bottom status strip: model, effort or Thinking level, permission mode, git, background-task pill.</dd>
       <dt><code class="path">src/stores/sessionRuntimes.ts</code></dt><dd>The per-session runtime registry: stores, LRU eviction, and the app's one event channel, which routes <code>task_event</code>/<code>ci_progress</code>/<code>ci_result</code> and the other out-of-band frames.</dd>
       <dt><code class="path">src/hooks/useChatStream.ts</code></dt><dd>The send path: bind the owning session, POST, commit atomically.</dd>
       <dt><code class="path">src/hooks/chatStream/sseStream.ts</code></dt><dd>The SSE parser.</dd>

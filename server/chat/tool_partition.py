@@ -79,8 +79,7 @@ CORE_TOOLS: frozenset[str] = frozenset(
 # auto_memory is on, so core exactly then: the post-turn learning review
 # replays the chat turn's tools array byte for byte
 # (server/memory/review_fork.py) and cannot load a deferred tool, so the
-# tools it saves with must be advertised. Voice turns keep them as well (a
-# person is there to ask for a memory). Agents, scheduled tasks and other
+# tools it saves with must be advertised. Agents, scheduled tasks and other
 # unattended runs have no review fork; there the tools stay one tool_search
 # away, so they do not carry their schemas on every request nor write or
 # delete memories unasked.

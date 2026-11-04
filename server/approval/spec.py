@@ -25,9 +25,9 @@ UNREVIEWED_KEY = "__unreviewed__"
 
 
 def reviewed_by_human(payload: dict) -> bool:
-    """A person saw this exact action on its card (or heard it in voice mode)
-    and said yes. False for a mode, a session answer, a rule, the classifier
-    or an unattended agent letting it through."""
+    """A person saw this exact action on its card and said yes. False for a
+    mode, a session answer, a rule, the classifier or an unattended agent
+    letting it through."""
     return not (payload.get("__agent__") or payload.get(UNREVIEWED_KEY))
 
 
@@ -49,8 +49,7 @@ class ApprovalOutcome:
     # kept for the diff dialog (server/workspace/edits.py). None for every
     # other action, and for a write whose file could not be read back. The
     # inline path puts it in its skill_result meta and the card's POST
-    # returns it; a spoken yes stores the edit but carries no stats, since
-    # voice rows have no meta.
+    # returns it.
     stats: dict | None = None
     # A command's own exit status, for the exit chip of its row: set by the
     # command executors when the command finished (ws_run_command's run, an
@@ -154,9 +153,9 @@ class ApprovalSpec:
     shows the full action (e.g. `git commit -m 'long message…'`).
 
     `on_approved_by_human` is an optional callable run with the payload just
-    before the executor when a person approved the card (its Yes button, or a
-    spoken yes), and never when a mode, a session approval, the classifier or
-    an unattended agent let the action through. See execute_approved_by_human.
+    before the executor when a person approved the card (its Yes button), and
+    never when a mode, a session approval, the classifier or an unattended
+    agent let the action through. See execute_approved_by_human.
 
     `workspace_bound` marks an action whose executor resolves against the
     workspace connected when the user clicks Yes (a workspace-relative path, a
@@ -286,8 +285,8 @@ def _same_root(a: str | None, b: str | None) -> bool:
 
 
 async def execute_approved_by_human(spec: ApprovalSpec, payload: dict) -> ApprovalOutcome:
-    """Run an action a person approved: the card's Yes (POST /api/approval/execute)
-    or a spoken yes in voice mode. The only entry point that runs the spec's
+    """Run an action a person approved: the card's Yes (POST /api/approval/execute).
+    The only entry point that runs the spec's
     ``on_approved_by_human`` hook, so what a person approved can be remembered
     (a trusted launch config) without an automatic path ever doing the same.
     A failing hook is logged and does not stop the approved action.

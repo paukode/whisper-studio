@@ -60,15 +60,6 @@ function persistSelectedModel(model: string): void {
 /** Response-length value (stored as GPT-5.x's native verbosity low/medium/high;
  *  the toolbar shows Brief/Normal/Detailed). Persisted so the choice survives a
  *  refresh, like the model selection. */
-/** Voice mode is refused in Local mode, and the Talk button shows why: re-read
- *  its availability once the server holds a new mode. Loaded lazily (the voice
- *  controller imports this store); never rejects. */
-function refreshVoiceStatus(): void {
-  void import('@/services/voiceController')
-    .then(({ voiceController }) => voiceController.loadStatus(true))
-    .catch(() => {});
-}
-
 /** Hydrate the Memory toggle from its backend feature flag, so the toolbar
  *  shows the real state and what the active mode leaves out of it (Local mode
  *  recalls memories but records none). Re-read after a mode switch. Rejects
@@ -502,14 +493,13 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
     void put('/api/config', { model_mode: mode })
       .then(() => {
         // A mode switch changes what is visible and usable: the chat model
-        // list, the data-retention gate, and whether voice mode is offered.
+        // list and the data-retention gate.
         const s = useSettingsStore.getState();
         void s.loadModels();
         void s.loadDataRetention();
         loadMemoryFlag().catch((err: unknown) => {
           useUIStore.getState().addToast({ type: 'error', message: `Could not read the memory setting: ${toError(err).message}` });
         });
-        refreshVoiceStatus();
       })
       .catch(() => {
         set((s) => ({ config: { ...s.config, modelMode: prev } }));

@@ -18,7 +18,7 @@ The runner frames reports and results as data, never as something the user
 said.
 
 Exactly one consumer drains it: the user-facing chat turn that owns the
-session's busy slot (``TurnContext.midturn_inbox``). Subagents, cron, voice
+session's busy slot (``TurnContext.midturn_inbox``). Subagents, cron
 and wake turns share the chat session id but never read or wait on it.
 run_turn drains it once per round and folds the text into the live message
 list, persisted like every other mid-turn reminder.

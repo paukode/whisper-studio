@@ -26,21 +26,15 @@ def test_every_cloud_model_is_priced():
         assert get_model_pricing(key) is not None, f"no pricing entry for {key!r}"
 
 
-def test_the_voice_and_index_cost_rows_are_priced():
-    # Nova Sonic logs speech and text under their own keys and Cohere Embed
-    # under its model id; each has a Price List rate, so none of these billed
-    # calls shows as $0.
+def test_the_index_cost_rows_are_priced():
+    # Cohere Embed logs under its model id and has a Price List rate, so its
+    # billed calls never show as $0.
     from server.index.config import COHERE_EMBED_MODEL_ID
-    from server.voice.cost_log import model_keys
-    from server.voice.protocol import DEFAULT_MODEL_ID
 
-    for key in (*model_keys(DEFAULT_MODEL_ID).values(), COHERE_EMBED_MODEL_ID):
-        rates = get_model_pricing(key)
-        assert rates is not None, key
-        assert rates["input"] > 0, key
-        assert estimate_cost(key, 1_000_000, 0) == pytest.approx(rates["input"]), key
-    speech, text = (get_model_pricing(k) for k in model_keys(DEFAULT_MODEL_ID).values())
-    assert speech["input"] > text["input"] and speech["output"] > text["output"]
+    rates = get_model_pricing(COHERE_EMBED_MODEL_ID)
+    assert rates is not None
+    assert rates["input"] > 0
+    assert estimate_cost(COHERE_EMBED_MODEL_ID, 1_000_000, 0) == pytest.approx(rates["input"])
 
 
 def test_no_fallback_for_unknown_or_legacy_key():

@@ -150,9 +150,6 @@ export interface ChatMessage {
    *  (GET /api/sessions/{sid}/grounding/{id}) — when present, the chip is a
    *  button that opens them. */
   grounding?: { searched: number; passages: number; id?: string };
-  /** Voice mode: this turn was spoken (user speech transcribed by the voice
-   *  model, or the assistant's spoken reply). Renders a small mic glyph. */
-  spoken?: boolean;
   /** Set when the user cut this turn short (Stop button or ESC). The
    *  content ends in "(Stopped)" and any toolUse entry that was still
    *  running carries status 'stopped'. */
@@ -262,12 +259,12 @@ export interface ToolUseEvent {
    *  has none. Absent until the result lands. */
   exitCode?: number | null;
   /** Set by the server's skill_result frame; absent on rows from older
-   *  transcripts, slash commands and the voice path. */
+   *  transcripts and slash commands. */
   meta?: ToolMeta;
   /** The model round that issued the call, from its skill frame, counted
    *  across the legs of one turn: a leg that resumes the turn counts on from
-   *  the leg that paused (sseStream.nextRoundBase). Absent on older rows,
-   *  slash-command rows and the voice path. The activity groups split where
+   *  the leg that paused (sseStream.nextRoundBase). Absent on older rows and
+   *  slash-command rows. The activity groups split where
    *  it changes (AgentCard.groupForActivity). */
   round?: number;
   /** When the call's skill frame arrived (Date.now()), on a live row only:

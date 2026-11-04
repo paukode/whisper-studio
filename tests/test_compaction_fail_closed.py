@@ -291,7 +291,7 @@ def test_telemetry_failure_does_not_mask_original_error(monkeypatch):
     "key, model_id",
     [
         ("missing", None),
-        ("unsupported", "amazon.nova-pro"),
+        ("unsupported", "cohere.command-r-v1:0"),
         ("fable", "global.anthropic.claude-fable-5"),
         ("local_cloud", "local:test"),
     ],
