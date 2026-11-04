@@ -5,6 +5,7 @@ import type { ChatMessage } from '@/types/chat';
 import * as sessionsApi from '@/api/sessions';
 import { SessionListResponseSchema } from '@/types/schemas';
 import {
+  DRAFT_SESSION,
   dropRuntime,
   getChatStore,
   getRuntime,
@@ -17,6 +18,7 @@ import { useWorkspaceStore } from './workspaceStore';
 import { useUIStore } from './uiStore';
 import { useIndexSearchStore } from './indexSearchStore';
 import { useComposerAttachmentsStore } from './composerAttachmentsStore';
+import { useComposerDraftStore } from '@/stores/composerDraftStore';
 import { useCronUnreadStore } from './cronUnreadStore';
 import { refreshSessionUsage } from './sessionUsage';
 import { toError } from '@/utils/toError';
@@ -278,6 +280,10 @@ export const useSessionStore = create<SessionState>()(persist((set, get) => ({
     const entry = getRuntime(id);
     entry.hydrated = true;
 
+    // A draft typed on the welcome screen before any session existed moves
+    // into this session, so starting one never loses it.
+    useComposerDraftStore.getState().adopt(DRAFT_SESSION, id);
+
     set((state) => ({
       sessions: [summary, ...state.sessions],
       currentSessionId: id,
@@ -382,6 +388,7 @@ export const useSessionStore = create<SessionState>()(persist((set, get) => ({
     get().dropLiveSession(id);
     useIndexSearchStore.getState().clearSession(id);
     useComposerAttachmentsStore.getState().clearSession(id);
+    useComposerDraftStore.getState().clearSession(id);
 
     const wasActive = get().currentSessionId === id;
     const filtered = get().sessions.filter((s) => s.id !== id);
@@ -425,6 +432,7 @@ export const useSessionStore = create<SessionState>()(persist((set, get) => ({
       get().dropLiveSession(sid);
       useIndexSearchStore.getState().clearSession(sid);
       useComposerAttachmentsStore.getState().clearSession(sid);
+      useComposerDraftStore.getState().clearSession(sid);
     }
 
     const wasActive = toDelete.has(get().currentSessionId ?? '');

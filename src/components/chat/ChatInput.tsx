@@ -12,6 +12,7 @@ import { useComposerDragDrop } from '@/hooks/useComposerDragDrop';
 import { useComposerChatEvents } from '@/hooks/useComposerChatEvents';
 import { useDictationInput } from '@/hooks/useDictationInput';
 import { useComposerAttachments } from '@/hooks/useComposerAttachments';
+import { useComposerDraft } from '@/hooks/useComposerDraft';
 import { requestModelChange } from './dataRetentionConsent';
 import { post } from '@/api/client';
 import { useRecentWorkspaces } from '@/hooks/useRecentWorkspaces';
@@ -40,7 +41,8 @@ export interface ChatInputProps {
  * (skill-autocomplete CSS classes).
  */
 export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
-  const [text, setText] = useState('');
+  // Per-session draft: the composer is never remounted on a session switch.
+  const [text, setText] = useComposerDraft(sessionId);
   const {
     attachments,
     setAttachments,
@@ -227,7 +229,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
     };
     window.addEventListener(CHAT_INSERT_EVENT, handler);
     return () => window.removeEventListener(CHAT_INSERT_EVENT, handler);
-  }, []);
+  }, [setText]);
 
   // Listen for "Add to Chat" events from context menu
   useEffect(() => {
@@ -530,7 +532,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
       });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- inputTextRef/stopMic are stable (refs/callback from useDictationInput)
-    [handleSlashCommand, closeAc, attachments, chatStream, waitForUploads, attachmentsRef, setAttachments, approvePlan, skills, sessionId],
+    [handleSlashCommand, closeAc, attachments, chatStream, waitForUploads, attachmentsRef, setAttachments, approvePlan, skills, sessionId, setText],
   );
 
   const handleSubmit = useCallback(
@@ -553,7 +555,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
     setText(val);
     const cursorPos = e.target.selectionStart;
     computeAutocomplete(val, cursorPos);
-  }, [computeAutocomplete]);
+  }, [computeAutocomplete, setText]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
