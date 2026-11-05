@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { get, post, put } from '@/api/client';
-import { dialogConfirm, useUIStore } from '@/stores/uiStore';
+import { get, post } from '@/api/client';
+import { useUIStore } from '@/stores/uiStore';
 import { ApiError } from '@/types/api';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { pickFact } from '@/components/common/buddyFacts';
@@ -31,6 +31,7 @@ interface BuddyResponse {
   stars: string;
 }
 
+// Hidden until the user first clicks the smiley: the companion is opt-in.
 interface BuddyState { hidden: boolean; x: number; y: number; fw: number; fh: number; }
 
 const STORAGE_KEY = 'buddy_state';
@@ -41,7 +42,7 @@ function loadBuddyState(): BuddyState {
     if (raw) {
       const p: Partial<BuddyState> = JSON.parse(raw);
       return {
-        hidden: p.hidden ?? false,
+        hidden: p.hidden ?? true,
         x: typeof p.x === 'number' ? p.x : -1,
         y: typeof p.y === 'number' ? p.y : -1,
         fw: typeof p.fw === 'number' ? p.fw : -1,
@@ -49,7 +50,7 @@ function loadBuddyState(): BuddyState {
       };
     }
   } catch { /* ignore */ }
-  return { hidden: false, x: -1, y: -1, fw: -1, fh: -1 };
+  return { hidden: true, x: -1, y: -1, fw: -1, fh: -1 };
 }
 function saveBuddyState(s: BuddyState): void {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); } catch { /* ignore */ }
@@ -166,8 +167,6 @@ export const BuddyWidget: React.FC = () => {
   const freshFactsOff = modelMode === 'local'
     ? LOCAL_MODE_FACTS_REASON
     : serverRefusal?.mode === modelMode ? serverRefusal.reason : null;
-  // companion feature flag, null until resolved; the widget is dormant when false.
-  const [companionEnabled, setCompanionEnabled] = useState<boolean | null>(null);
   const [position, setPosition] = useState<{ right: number; bottom: number }>(() => {
     const s = loadBuddyState();
     return { right: s.x >= 0 ? s.x : 20, bottom: s.y >= 0 ? s.y : 96 };
@@ -196,24 +195,15 @@ export const BuddyWidget: React.FC = () => {
   const resizeStart = useRef({ mouseX: 0, mouseY: 0, w: 0, h: 0 });
   const bubbleRef = useRef<HTMLDivElement | null>(null);
 
-  /* Resolve the companion flag on mount. */
   useEffect(() => {
     mountedRef.current = true;
-    void (async () => {
-      try {
-        const flags = await get<Record<string, { enabled?: boolean }>>('/api/feature-flags');
-        if (mountedRef.current) setCompanionEnabled(!!flags?.companion?.enabled);
-      } catch {
-        if (mountedRef.current) setCompanionEnabled(false);
-      }
-    })();
     return () => { mountedRef.current = false; };
   }, []);
 
-  /* Load (and auto-hatch) the buddy once enabled. No polling; the creature
-   *  animates entirely in CSS, so this fires exactly once. */
+  /* Load (and auto-hatch) the buddy the first time it is shown. No polling;
+   *  the creature animates entirely in CSS, so this fires exactly once. */
   useEffect(() => {
-    if (!companionEnabled) return;
+    if (hidden || buddy) return;
     void (async () => {
       try {
         let data = await get<BuddyResponse>('/api/buddy');
@@ -235,36 +225,15 @@ export const BuddyWidget: React.FC = () => {
         }
       }
     })();
-  }, [companionEnabled]);
-
-  const enableCompanion = useCallback(() => {
-    void (async () => {
-      const ok = await dialogConfirm({
-        title: 'Show the companion?',
-        message:
-          'A small creature lives in the corner of the UI. Purely cosmetic, with ' +
-          'no AI calls and no effect on your chats. It’s unique to this machine. ' +
-          'Toggle it off any time.',
-        confirmText: 'Show it',
-      });
-      if (ok !== true) return;
-      try {
-        await put('/api/feature-flags/companion', { enabled: true });
-        setCompanionEnabled(true);
-        setHidden(false);
-        saveBuddyState({ ...loadBuddyState(), hidden: false });
-      } catch (err) { console.warn('Failed to enable companion:', err); }
-    })();
-  }, []);
+  }, [hidden, buddy]);
 
   const handleToggleClick = useCallback(() => {
-    if (companionEnabled === false) { enableCompanion(); return; }
     setHidden((prev) => {
       const next = !prev;
       saveBuddyState({ ...loadBuddyState(), hidden: next });
       return next;
     });
-  }, [companionEnabled, enableCompanion]);
+  }, []);
 
   /* Persist the AI-facts opt-in. */
   useEffect(() => {
@@ -399,7 +368,7 @@ export const BuddyWidget: React.FC = () => {
     if (petTimer.current) clearTimeout(petTimer.current);
   }, []);
 
-  const showBody = !!buddy && !hidden && companionEnabled === true;
+  const showBody = !!buddy && !hidden;
 
   return (
     <>
@@ -499,8 +468,8 @@ export const BuddyWidget: React.FC = () => {
 
       <button
         className="buddy-toggle-btn"
-        title={companionEnabled === false ? 'Show companion' : hidden ? 'Show companion' : 'Hide companion'}
-        aria-label={companionEnabled === false ? 'Show companion' : hidden ? 'Show companion' : 'Hide companion'}
+        title={hidden ? 'Show companion' : 'Hide companion'}
+        aria-label={hidden ? 'Show companion' : 'Hide companion'}
         onClick={handleToggleClick}
         type="button"
       >

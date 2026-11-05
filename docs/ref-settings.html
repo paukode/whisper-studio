@@ -393,7 +393,6 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Flag</th><th>Default</th><th>What it gates</th></tr></thead>
       <tbody>
-        <tr><td><code>companion</code></td><td><code>false</code></td><td>Show the cosmetic buddy companion in the chat corner. Purely visual; makes no model calls.</td></tr>
         <tr><td><code>git_context</code></td><td><code>true</code></td><td>Include git status and instructions in the system prompt.</td></tr>
         <tr><td><code>prompt_caching</code></td><td><code>true</code></td><td>Cloud (Bedrock) prompt caching of tool definitions and the static system prompt, to cut input-token cost on multi-turn conversations. It applies to chat, cron, headless runs, subagents and workflow agents on Claude models. GPT models cache on their own.</td></tr>
         <tr><td><code>progressive_tools</code></td><td><code>true</code></td><td>Progressive tool disclosure: advertise a core tool set plus session-activated tools, with everything else discoverable via <code>tool_search</code> from a compact index. Cuts roughly 60-75% of tool-schema tokens per turn.</td></tr>

@@ -25,7 +25,6 @@ function setMode(mode: 'local' | 'hybrid' | 'cloud'): void {
 
 function serve(fact: Record<string, string>): void {
   getMock.mockReset().mockImplementation(async (url: string) => {
-    if (url === '/api/feature-flags') return { companion: { enabled: true } };
     if (url === '/api/buddy') return BUDDY;
     if (url === '/api/buddy/fact') return fact;
     throw new Error(`unexpected ${url}`);
@@ -39,6 +38,7 @@ const factCalls = () => getMock.mock.calls.filter(([url]) => url === '/api/buddy
 describe('BuddyWidget fresh facts and Local mode', () => {
   beforeEach(() => {
     localStorage.clear();
+    localStorage.setItem('buddy_state', JSON.stringify({ hidden: false })); // shown with the smiley earlier
     localStorage.setItem('buddy_ai_facts', '1'); // the user opted in earlier
     serve({ fact: 'A fresh cloud fact.' });
   });
