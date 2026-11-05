@@ -44,6 +44,7 @@ import time
 from fastapi import APIRouter, Request
 
 from server.infrastructure.effort import (
+    DEFAULT_EFFORT,
     infer_effort_tier,
     infer_supports_ultracode,
     normalize_effort,
@@ -186,7 +187,7 @@ DEFAULTS = {
     # key, "local" to follow the active local model, or none). Unset
     # capabilities fall back to the cloud backend.
     "backends": {},
-    "effort_level": "high",
+    "effort_level": DEFAULT_EFFORT,
     "auto_mode_allow": [],
     "auto_mode_soft_deny": [],
     "auto_mode_environment": [],
@@ -861,7 +862,10 @@ RETIRED_USER_VALUES = {
     },
     "translate_mode": {"auto": _OLD_TRANSLATE, "model": _OLD_TRANSLATE},
     "effort_level": {
-        "auto": ("high", "the automatic effort level is gone, so high effort is used"),
+        "auto": (
+            DEFAULT_EFFORT,
+            f"the automatic effort level is gone, so {DEFAULT_EFFORT} effort is used",
+        ),
     },
 }
 

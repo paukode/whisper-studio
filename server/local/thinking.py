@@ -2,7 +2,7 @@
 what a request sends at each thinking level.
 
 A local model gets the same level chip as a cloud model: off (``none``),
-``low``, ``medium``, ``high`` and ``max`` (the default). The chat template
+``low``, ``medium`` (the default), ``high`` and ``max``. The chat template
 decides what a level means:
 
 * a template that reads ``reasoning_effort`` gets the level itself. When it
@@ -37,7 +37,7 @@ from dataclasses import dataclass
 log = logging.getLogger("whisper-studio")
 
 LEVELS = ("none", "low", "medium", "high", "max")
-DEFAULT_LEVEL = "max"
+DEFAULT_LEVEL = "medium"
 # Thinking-token caps per level; max has none.
 BUDGETS = {"low": 1024, "medium": 4096, "high": 16384}
 # The room a max-level request leaves for thinking before the answer.

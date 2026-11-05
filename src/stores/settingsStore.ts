@@ -77,10 +77,10 @@ async function loadMemoryFlag(): Promise<void> {
 
 /** The thinking level for on-device models, kept apart from the cloud effort
  *  level so switching between a cloud and a local model changes neither.
- *  Max (no thinking cap) is the default; persisted like the context window. */
+ *  Medium is the default on a fresh install; persisted like the context window. */
 const LOCAL_THINKING_KEY = 'whisper.localThinkingLevel';
 const LOCAL_THINKING_LEVELS = ['none', 'low', 'medium', 'high', 'max'];
-const LOCAL_THINKING_DEFAULT = 'max';
+const LOCAL_THINKING_DEFAULT = 'medium';
 
 function readLocalThinkingLevel(): string {
   try {
@@ -448,6 +448,11 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
 
   setEffortLevel: (level) => {
     set({ effortLevel: level });
+    // Saved as the config's effort_level, which every launch loads (loadConfig),
+    // so the pick survives a restart and an update.
+    void put('/api/config', { effort_level: level }).catch((err: unknown) => {
+      console.warn('Could not save the effort level:', err);
+    });
   },
 
   setLocalThinkingLevel: (level) => {

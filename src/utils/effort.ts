@@ -18,7 +18,8 @@ const EFFORT_LABELS: Record<string, string> = {
   ultracode: 'Ultracode',
 };
 
-export const DEFAULT_EFFORT = 'high';
+/** What a fresh install starts at; the composer saves the user's pick after that. */
+export const DEFAULT_EFFORT = 'medium';
 
 /** Friendly display name for a level key (falls back to the raw value). */
 export function effortLabel(level: string): string {
