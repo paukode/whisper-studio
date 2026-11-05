@@ -22,6 +22,7 @@ from server.attachments import router as attachments_router
 from server.buddy import router as buddy_router
 from server.capture_helper import router as capture_helper_router
 from server.chat import router as chat_router
+from server.chat.compact_route import router as compact_router
 from server.chat.compaction_log import router as compaction_log_router
 from server.chat.request_snapshots import router as request_snapshots_router
 from server.ci.routes import router as ci_router
@@ -495,6 +496,7 @@ app.include_router(data_retention_router)
 app.include_router(result_cache_router)
 app.include_router(request_snapshots_router)
 app.include_router(compaction_log_router)
+app.include_router(compact_router)
 app.include_router(mcp_router)
 app.include_router(skills_router)
 app.include_router(whisper_md_router)

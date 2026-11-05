@@ -3,6 +3,7 @@ import type { ChatMessage as ChatMessageType } from '@/types/chat';
 import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer';
 import { TaskReportCard } from './TaskReportCard';
 import { AgentReportCard } from './AgentReportCard';
+import { CompactSummaryCard } from './CompactSummaryCard';
 import { CronEventCard } from '@/components/chat/CronEventCard';
 import { SessionMessageCard } from '@/components/chat/SessionMessageCard';
 import { getActiveChatStore } from '@/stores/sessionRuntimes';
@@ -147,6 +148,17 @@ const ChatMessageView: React.FC<ChatMessageProps> = ({ message, index }) => {
       <div className="chat-msg-wrap assistant-wrap agent-report-wrap">
         <TaskReportCard report={report} />
         {report.timestamp && <span className="msg-timestamp">{formatMessageTimestamp(report.timestamp)}</span>}
+      </div>
+    );
+  }
+
+  // A /compact summary: everything above it reaches the model only as this
+  // summary from now on (visible_chat_history).
+  if (message.role === 'compact_summary') {
+    return (
+      <div className="chat-msg-wrap assistant-wrap agent-report-wrap">
+        <CompactSummaryCard summary={message.content} info={message.compactSummary} />
+        <span className="msg-timestamp">{formatMessageTimestamp(message.timestamp)}</span>
       </div>
     );
   }

@@ -351,6 +351,12 @@
       the turn stops with an error that says to check the compaction model or start a new
       conversation. A second prompt-too-long rejection in the same overflow also stops the turn.
       Nothing is truncated quietly.</p>
+    <p>Automatic compaction changes only the request it runs for. The <code>/compact</code> command
+      (<code class="path">server/chat/compact_route.py</code>) is different: it always writes one
+      summary of the whole history, with the user's optional note in the prompt, and appends it to
+      the stored session as a backend-owned <code>compact_summary</code> row. On every later turn,
+      <code>visible_chat_history</code> starts at the last such row and sends it as a user message,
+      so the earlier rows never reach the model again.</p>
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
       <div class="callout__body"><p><b>A summary paraphrases; two things must not be paraphrased.</b>

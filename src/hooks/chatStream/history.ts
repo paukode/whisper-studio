@@ -19,6 +19,7 @@ const MODEL_ROWS: ReadonlySet<ChatMessage['role']> = new Set([
   'agent_answer',
   'session_message',
   'task_report',
+  'compact_summary',
 ]);
 
 /** How many user and assistant rows travel. The backend rows between them
@@ -36,23 +37,31 @@ const isConversation = (m: ChatMessage) => m.role === 'user' || m.role === 'assi
  *
  *  `isContinuation` keeps the LAST message too: a fresh turn has just appended
  *  the user's new question (which travels as `question`, not history), while a
- *  continuation appended nothing. */
+ *  continuation appended nothing.
+ *
+ *  A /compact summary row stands in for every row above it, so the payload
+ *  starts there, and the summary always travels even when the window cap
+ *  falls below it. `uncapped` sends every row (the /compact request itself). */
 export function buildHistoryPayload(
   allMessages: ChatMessage[],
   isContinuation: boolean,
+  uncapped = false,
 ): Array<Record<string, unknown>> {
-  const rows = allMessages
+  let rows = allMessages
     .slice(0, isContinuation ? allMessages.length : -1)
     .filter(m => isConversation(m) || MODEL_ROWS.has(m.role));
+  const lastSummary = rows.map((m) => m.role).lastIndexOf('compact_summary');
+  if (lastSummary > 0) rows = rows.slice(lastSummary);
   let start = 0;
   let counted = 0;
-  for (let i = rows.length - 1; i >= 0; i--) {
+  for (let i = rows.length - 1; i >= 0 && !uncapped; i--) {
     if (isConversation(rows[i]) && ++counted === CONVERSATION_ROWS) {
       start = i;
       break;
     }
   }
-  return rows.slice(start).map(m => ({
+  const kept = start > 0 && lastSummary >= 0 ? [rows[0], ...rows.slice(start)] : rows.slice(start);
+  return kept.map(m => ({
     role: m.role,
     content: m.content,
     ...(m.attachmentIds?.length ? { attachmentIds: m.attachmentIds } : {}),

@@ -1,6 +1,7 @@
 import React, { useCallback } from 'react';
 import { get } from '@/api/client';
 import { getChatStore } from '@/stores/sessionRuntimes';
+import { runCompact } from '@/hooks/compactCommand';
 import { useSubagentStore } from '@/stores/subagentStore';
 import { applyTeamProgressToMessage } from '@/hooks/chatStream/teamProgress';
 import type { ChatMessage, TeamAgentReport, TeamProgressEvent } from '@/types/chat';
@@ -558,6 +559,13 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
           size: 'md',
           body: <div style={{ maxHeight: '60vh', overflow: 'auto' }}>{helpSections}</div>,
         });
+        return true;
+      }
+      case 'compact': {
+        if (sessionId) {
+          const note = input.trim().slice('/compact'.length).trim();
+          void runCompact(sessionId, note, selectedModel, addToast);
+        }
         return true;
       }
       case 'clear': {
