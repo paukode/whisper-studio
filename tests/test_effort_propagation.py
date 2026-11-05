@@ -81,7 +81,7 @@ def test_explicit_config_flag_wins_both_ways():
 
 
 def test_resolve_effort_clamps_per_model_and_keeps_none_for_effortless():
-    from server.infrastructure.effort import resolve_effort
+    from server.infrastructure.effort import DEFAULT_EFFORT, resolve_effort
 
     assert resolve_effort(_SONNET5, "sonnet5", "ultracode") == "ultracode"
     # A model without the mode drops to the nearest rung it does have.
@@ -90,7 +90,7 @@ def test_resolve_effort_clamps_per_model_and_keeps_none_for_effortless():
     # Haiku has no effort at all — the ONLY legitimate None.
     assert resolve_effort(_HAIKU, "haiku", "ultracode") is None
     # An omitted level is not a decision: fall back to the default, not to None.
-    assert resolve_effort(_SONNET5, "sonnet5", None) == "high"
+    assert resolve_effort(_SONNET5, "sonnet5", None) == DEFAULT_EFFORT
 
 
 def test_anthropic_body_sends_sonnet5s_own_top_rung_for_ultracode(monkeypatch):

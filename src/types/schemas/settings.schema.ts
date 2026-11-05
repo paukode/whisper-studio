@@ -3,7 +3,7 @@ import { z } from 'zod';
 /** GET /api/config */
 export const AppConfigResponseSchema = z.object({
   chat_models: z.record(z.string(), z.string()).optional().default({}),
-  effort_level: z.string().optional().default('high'),
+  effort_level: z.string().optional().default('medium'),
   permission_mode: z.string().optional().default('default'),
   transcription_backend: z.enum(['whisper', 'streaming']).optional().default('streaming'),
   // Where indexing/RAG capabilities run: cloud (Bedrock) | hybrid (per-capability) | local (on-device).
@@ -31,7 +31,7 @@ export const ModelsResponseSchema = z.object({
     supports_tools: z.boolean().optional().default(false),
     // Per-model effort catalogue (empty ⇒ no effort, e.g. Haiku).
     effort_levels: z.array(z.string()).optional().default([]),
-    default_effort: z.string().optional().default('high'),
+    default_effort: z.string().optional().default('medium'),
     supports_ultracode: z.boolean().optional().default(false),
     // GPT-5.x verbosity control (text.verbosity); openai_bedrock models only.
     supports_verbosity: z.boolean().optional().default(false),

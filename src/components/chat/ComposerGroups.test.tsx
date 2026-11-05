@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 
 // settingsStore imports the api client; stub so rendering is inert.
-vi.mock('@/api/client', () => ({ get: vi.fn(), put: vi.fn(), post: vi.fn(), del: vi.fn() }));
+vi.mock('@/api/client', () => ({ get: vi.fn(), put: vi.fn(() => Promise.resolve({})), post: vi.fn(), del: vi.fn() }));
 
 import { PermissionGroup, ThinkGroup, WorkspaceGroup } from './ComposerGroups';
 import { getActiveChatStore } from '@/stores/sessionRuntimes';

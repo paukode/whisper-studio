@@ -72,7 +72,7 @@ describe('AppConfigResponseSchema', () => {
     const result = AppConfigResponseSchema.safeParse({});
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.effort_level).toBe('high');
+      expect(result.data.effort_level).toBe('medium');
     }
   });
 });

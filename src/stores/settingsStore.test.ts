@@ -140,6 +140,22 @@ describe('setAutoMemory persistence', () => {
   });
 });
 
+// The effort the user picks is the config's effort_level, which every launch
+// loads, so a restart or an update keeps it instead of the install default.
+describe('effort level persistence', () => {
+  it('saves the pick as effort_level', () => {
+    putMock.mockReset().mockResolvedValue({});
+    useSettingsStore.getState().setEffortLevel('low');
+    expect(useSettingsStore.getState().effortLevel).toBe('low');
+    expect(putMock).toHaveBeenCalledWith('/api/config', { effort_level: 'low' });
+  });
+
+  it('starts a fresh install at medium', async () => {
+    const { DEFAULT_EFFORT } = await import('@/utils/effort');
+    expect(DEFAULT_EFFORT).toBe('medium');
+  });
+});
+
 // Local mode with no on-device model: /api/models offers nothing, and the store
 // must never put a cloud key back into the selection (no hardcoded stand-in, no
 // stale persisted key).

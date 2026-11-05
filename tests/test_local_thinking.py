@@ -176,13 +176,18 @@ def test_a_model_that_cannot_think_gets_no_thinking_fields():
 # ── the effort catalogue for local models ────────────────────────────────────
 
 
-def test_a_local_model_offers_its_thinking_levels_and_starts_at_max(monkeypatch):
+def test_a_local_model_offers_its_thinking_levels_and_starts_at_its_default(monkeypatch):
     monkeypatch.setattr(
         thinking, "levels_for", lambda key: ["none", "low", "medium", "high", "max"]
     )
     meta = {"is_local": True}
     assert effort.effort_levels_for(meta, "local_x") == ["none", "low", "medium", "high", "max"]
-    assert effort.default_effort_for(meta, "local_x") == "max"
+    assert effort.default_effort_for(meta, "local_x") == thinking.DEFAULT_LEVEL == "medium"
+    monkeypatch.setattr(thinking, "levels_for", lambda key: ["none", "max"])
+    assert effort.default_effort_for(meta, "local_x") == "max"  # MLX: off or max only
+    monkeypatch.setattr(
+        thinking, "levels_for", lambda key: ["none", "low", "medium", "high", "max"]
+    )
     assert (
         effort.resolve_effort(meta, "local_x", "extra") == "high"
     )  # a cloud-only rung clamps down

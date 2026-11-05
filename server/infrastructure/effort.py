@@ -70,7 +70,9 @@ _LABEL_TO_API = {
 # the providers.
 _LABEL_ALIASES = {"xhigh": "extra", "minimal": "low", "none": "none"}
 
-DEFAULT_EFFORT = "high"
+# What a fresh install starts at; after that the composer saves the user's pick
+# into effort_level (src/stores/settingsStore.ts setEffortLevel).
+DEFAULT_EFFORT = "medium"
 
 _OPUS_RE = re.compile(r"opus(\d+)\.(\d+)$", re.IGNORECASE)
 _SONNET_RE = re.compile(r"sonnet(\d+)\.(\d+)$", re.IGNORECASE)
@@ -203,12 +205,13 @@ def resolve_effort(meta: dict | None, key: str, requested: str | None) -> str | 
 def default_effort_for(meta: dict | None, key: str) -> str:
     """The default effort label for a model (DEFAULT_EFFORT, clamped to what
     the model supports). Falls back to DEFAULT_EFFORT for effort-less models.
-    An on-device model that can think starts at its deepest level, max."""
+    An on-device model that can think starts at its own default level,
+    clamped to its ladder (an MLX model with only off and max starts at max)."""
     allowed = effort_levels_for(meta, key)
     if (meta or {}).get("is_local") and allowed:
         from server.local.thinking import DEFAULT_LEVEL
 
-        return DEFAULT_LEVEL
+        return clamp_effort(DEFAULT_LEVEL, allowed) or DEFAULT_LEVEL
     return clamp_effort(DEFAULT_EFFORT, allowed) or DEFAULT_EFFORT
 
 

@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from server.infrastructure import config as cfg
+from server.infrastructure.effort import DEFAULT_EFFORT
 
 # A minimal SYSTEM catalog (config.example.json) used across the split tests.
 SYSTEM_V1 = {
@@ -170,24 +171,26 @@ def test_an_old_translate_mode_runs_as_off_and_gets_a_notice(split_env, monkeypa
     assert (tmp / "config.user.json").read_text() == text
 
 
-def test_an_old_or_unknown_effort_level_runs_as_high_and_gets_a_notice(split_env, monkeypatch):
+def test_an_old_or_unknown_effort_level_runs_as_the_default_and_gets_a_notice(
+    split_env, monkeypatch
+):
     tmp = split_env
     text = json.dumps({"effort_level": "auto"})
     (tmp / "config.user.json").write_text(text)
     _reset(monkeypatch)
 
-    assert cfg.load_config()["effort_level"] == "high"
+    assert cfg.load_config()["effort_level"] == DEFAULT_EFFORT
     [(title, message)] = cfg.old_config_notices()
     assert title == 'effort_level "auto" is no longer offered'
-    assert "high effort is used" in message
+    assert f"{DEFAULT_EFFORT} effort is used" in message
     assert (tmp / "config.user.json").read_text() == text
 
     (tmp / "config.user.json").write_text(json.dumps({"effort_level": "turbo"}))
     _reset(monkeypatch)
-    assert cfg.load_config()["effort_level"] == "high"
+    assert cfg.load_config()["effort_level"] == DEFAULT_EFFORT
     [(title, message)] = cfg.old_config_notices()
     assert title == "Unknown setting values"
-    assert 'effort_level "turbo" (high effort is used)' in message
+    assert f'effort_level "turbo" ({DEFAULT_EFFORT} effort is used)' in message
 
     # A raw wire alias is known: it runs as its app label, with no notice.
     (tmp / "config.user.json").write_text(json.dumps({"effort_level": "xhigh"}))
@@ -196,7 +199,9 @@ def test_an_old_or_unknown_effort_level_runs_as_high_and_gets_a_notice(split_env
     assert cfg.old_config_notices() == []
 
 
-def test_a_project_effort_level_auto_runs_as_high_and_gets_one_notice(split_env, monkeypatch):
+def test_a_project_effort_level_auto_runs_as_the_default_and_gets_one_notice(
+    split_env, monkeypatch
+):
     from server import notifications
 
     tmp = split_env
@@ -212,12 +217,12 @@ def test_a_project_effort_level_auto_runs_as_high_and_gets_one_notice(split_env,
         lambda **kw: seen.append((kw["title"], kw["message"])),
     )
 
-    assert cfg.load_config(str(ws))["effort_level"] == "high"
-    assert cfg.load_config(str(ws))["effort_level"] == "high"
+    assert cfg.load_config(str(ws))["effort_level"] == DEFAULT_EFFORT
+    assert cfg.load_config(str(ws))["effort_level"] == DEFAULT_EFFORT
     [(title, message)] = seen
     assert title == 'effort_level "auto" is no longer offered'
     assert str(ws / ".whisper" / "settings.json") in message
-    assert "high effort is used" in message
+    assert f"{DEFAULT_EFFORT} effort is used" in message
     assert (ws / ".whisper" / "settings.json").read_text() == text
 
     # A project with a value the app offers says nothing.

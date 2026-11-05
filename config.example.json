@@ -54,7 +54,7 @@
   "permission_explainer_enabled": true,
   "model_mode": "cloud",
   "backends": {},
-  "effort_level": "max",
+  "effort_level": "medium",
   "auto_mode_allow": [],
   "auto_mode_soft_deny": [],
   "auto_mode_environment": [],
