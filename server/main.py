@@ -183,6 +183,25 @@ def _trust_system_certs() -> None:
 
 _trust_system_certs()
 
+
+def _import_hub_once() -> None:
+    """Import huggingface_hub's API modules once, on this thread, at boot.
+
+    huggingface_hub loads its submodules lazily, and that lazy import is not
+    thread-safe: Discover fans one search out over about twenty threads, and
+    when they all made the first import at once it failed with a circular
+    import error. The failure stuck for the life of the process, so every
+    later search, repo page and download came back empty. Importing here
+    first leaves the threads nothing to race on. Costs about 0.7 s of boot.
+    """
+    import huggingface_hub
+
+    huggingface_hub.HfApi  # noqa: B018 (the lazy attribute import is the point)
+    huggingface_hub.HfFileSystem  # noqa: B018
+
+
+_import_hub_once()
+
 # Import executor modules to trigger registration. Each module registers
 # tool executors as a side effect of being imported. A module that fails to
 # import stops the boot with its traceback (every dependency is pinned).
