@@ -5,6 +5,8 @@ export interface LatestRelease {
   tag: string;
   version: string;
   url: string;
+  /** The release's DMG (server/update_check.py _dmg_url); "" when it has none. */
+  download_url?: string;
   published_at: string;
 }
 

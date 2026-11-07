@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from server import update_check
 
 RELEASE_PAGE = "https://github.com/paukode/whisper-studio/releases/tag/"
+DOWNLOAD = "https://github.com/paukode/whisper-studio/releases/download/"
 
 
 def _release(tag: str, **extra):
@@ -21,6 +22,12 @@ def _release(tag: str, **extra):
         "draft": False,
         "prerelease": False,
         "body": "notes",
+        "assets": [
+            {
+                "name": f"WhisperStudio-{tag[1:]}.dmg",
+                "browser_download_url": f"{DOWNLOAD}{tag}/WhisperStudio-{tag[1:]}.dmg",
+            }
+        ],
     }
     body.update(extra)
     return body
@@ -74,6 +81,7 @@ def test_older_app_sees_the_newer_release(github, monkeypatch):
     assert data["latest"]["version"] == "2.16.0"
     assert data["latest"]["tag"] == "v2.16.0"
     assert data["latest"]["url"] == RELEASE_PAGE + "v2.16.0"
+    assert data["latest"]["download_url"] == DOWNLOAD + "v2.16.0/WhisperStudio-2.16.0.dmg"
     assert data["latest"]["published_at"] == "2026-10-29T12:00:00Z"
     assert data["install"] == "app"
     assert data["update_commands"] == []
@@ -122,6 +130,24 @@ def test_release_page_outside_this_repo_is_ignored(github, monkeypatch):
     data = _check(monkeypatch, "2.0.0")
     assert data["latest"] is None
     assert data["update_available"] is False
+
+
+@pytest.mark.parametrize(
+    "assets",
+    [
+        [],
+        None,
+        [{"name": "notes.txt", "browser_download_url": DOWNLOAD + "v9.0.0/notes.txt"}],
+        [{"name": "WhisperStudio-9.0.0.dmg", "browser_download_url": "https://example.com/x.dmg"}],
+        ["not an asset"],
+    ],
+)
+def test_no_dmg_of_this_repo_leaves_only_the_release_page(github, monkeypatch, assets):
+    github["response"] = _release("v9.0.0", assets=assets)
+    data = _check(monkeypatch, "2.15.2", packaged=True)
+    assert data["update_available"] is True
+    assert data["latest"]["download_url"] == ""
+    assert data["latest"]["url"] == RELEASE_PAGE + "v9.0.0"
 
 
 def test_draft_or_prerelease_is_ignored(github, monkeypatch):

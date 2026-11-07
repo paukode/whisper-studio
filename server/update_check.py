@@ -3,7 +3,9 @@
 ``GET /api/update-check`` returns the running version, how it was installed
 (the Mac app or a ``setup.sh`` source checkout), and the newest published
 release of paukode/whisper-studio. The UI shows an Update notice only when
-``update_available`` is true.
+``update_available`` is true. In the Mac app its Update button downloads the
+release's DMG at once (``download_url``); the release page is the fallback
+when the release has no DMG, and what a source install opens.
 
 Where the running version comes from:
 
@@ -43,6 +45,9 @@ RELEASES_URL = "https://api.github.com/repos/paukode/whisper-studio/releases/lat
 # The release page the Update button opens must be on this repo's releases,
 # never a URL the response could point anywhere else.
 RELEASE_PAGE_PREFIX = "https://github.com/paukode/whisper-studio/releases/"
+# The same for the DMG the Update button downloads: an asset of a release of
+# this repo, never a URL the response could point anywhere else.
+DOWNLOAD_PREFIX = "https://github.com/paukode/whisper-studio/releases/download/"
 FETCH_TIMEOUT_S = 5.0
 CACHE_OK_S = 6 * 3600
 CACHE_FAIL_S = 30 * 60
@@ -169,8 +174,26 @@ def release_from_payload(data: Any) -> dict[str, str] | None:
         "tag": tag,
         "version": tag[1:] if tag.startswith("v") else tag,
         "url": url,
+        "download_url": _dmg_url(data.get("assets")),
         "published_at": published if isinstance(published, str) else "",
     }
+
+
+def _dmg_url(assets: Any) -> str:
+    """The download URL of the release's DMG, or "" when it has none."""
+    for asset in assets if isinstance(assets, list) else []:
+        if not isinstance(asset, dict):
+            continue
+        name = asset.get("name")
+        link = asset.get("browser_download_url")
+        if (
+            isinstance(name, str)
+            and name.lower().endswith(".dmg")
+            and isinstance(link, str)
+            and link.startswith(DOWNLOAD_PREFIX)
+        ):
+            return link
+    return ""
 
 
 async def latest_release(fresh: bool = False) -> dict[str, str] | None:

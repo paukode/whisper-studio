@@ -9,6 +9,7 @@ import { useUIStore } from '@/stores/uiStore';
 import { STORAGE_KEYS } from '@/utils/storageKeys';
 
 const PAGE = 'https://github.com/paukode/whisper-studio/releases/tag/v2.16.0';
+const DMG = 'https://github.com/paukode/whisper-studio/releases/download/v2.16.0/WhisperStudio-2.16.0.dmg';
 
 function check(over: Record<string, unknown> = {}) {
   return {
@@ -33,7 +34,24 @@ describe('UpdateNotice', () => {
     getMock.mockReset();
   });
 
-  it('shows the newer version with an Update link to the release page', async () => {
+  it('in the app, Update downloads the release DMG at once', async () => {
+    getMock.mockResolvedValue(check({ latest: { ...check().latest, download_url: DMG } }));
+    render(<UpdateNotice />);
+    const update = await screen.findByRole('link', { name: 'Update' });
+    expect(update.getAttribute('href')).toBe(DMG);
+    expect(update.getAttribute('target')).toBe('_blank');
+  });
+
+  it('a source install opens the release page, never the DMG', async () => {
+    getMock.mockResolvedValue(
+      check({ install: 'source', update_commands: ['git pull'], latest: { ...check().latest, download_url: DMG } }),
+    );
+    render(<UpdateNotice />);
+    const update = await screen.findByRole('link', { name: 'Update' });
+    expect(update.getAttribute('href')).toBe(PAGE);
+  });
+
+  it('shows the newer version with an Update link to the release page when it has no DMG', async () => {
     getMock.mockResolvedValue(check());
     render(<UpdateNotice />);
     expect(await screen.findByText(/A newer version of Whisper Studio is available \(v2\.16\.0\)/)).toBeInTheDocument();
