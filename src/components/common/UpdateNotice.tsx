@@ -10,10 +10,12 @@ export const CHECK_FOR_UPDATES_EVENT = 'ws-check-for-updates';
 /**
  * Update notice: a slim callout under the header when the installed app is
  * older than the newest GitHub release (server/update_check.py decides; a
- * dev build ahead of the newest tag never sees it). Update opens the release
- * page: a target=_blank link, which the Mac app's WKWebView hands to the
- * default browser (macapp/shell/main.swift createWebViewWith) and a browser
- * opens in a new tab. A source install also gets the commands to update.
+ * dev build ahead of the newest tag never sees it). In the Mac app, Update
+ * downloads the release's DMG at once; with no DMG on the release, and in a
+ * source install, it opens the release page. It is a target=_blank link,
+ * which the Mac app's WKWebView hands to the default browser
+ * (macapp/shell/main.swift createWebViewWith) and a browser opens in a new
+ * tab. A source install also gets the commands to update.
  * Dismiss hides the notice for that one version only; a newer release shows
  * it again. The notice only reports: it never changes permissions or
  * behaviour, and a failed check shows nothing.
@@ -93,6 +95,7 @@ export const UpdateNotice: React.FC = () => {
   if (!check?.update_available || !latest || !latest.url || dismissed === version) return null;
 
   const commands = check.install === 'source' ? (check.update_commands ?? []) : [];
+  const href = check.install === 'app' && latest.download_url ? latest.download_url : latest.url;
 
   return (
     <div className="ws-approval-card ws-callout-info update-notice" role="status" data-testid="update-notice">
@@ -104,7 +107,7 @@ export const UpdateNotice: React.FC = () => {
         </span>
         <a
           className="btn btn-primary btn-sm update-notice__update"
-          href={latest.url}
+          href={href}
           target="_blank"
           rel="noopener noreferrer"
         >
