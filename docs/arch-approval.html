@@ -478,7 +478,7 @@
 
     <h2 id="write-stats">Diff stats and stored edits</h2>
     <p>Each write, edit, or create of a workspace file runs in <code>_do_write</code>
-      (<code class="path">server/approval/executors.py</code>). After the write and the ruff pass, the
+      (<code class="path">server/approval/executors.py</code>). After the write and the formatter pass, the
       executor reads the file again and counts the added and removed lines. The executor returns
       these counts in <code>ApprovalOutcome.stats</code>. The inline path puts them in the
       <code>meta</code> of its <code>skill_result</code> frame. The
@@ -496,7 +496,7 @@
     <p>The same write keeps an undo copy in memory
       (<code class="path">server/workspace/write_undo.py</code>), keyed by the
       <code>tool_use_id</code>: the exact bytes of the file before the write (none for a created
-      file) and a hash of the file after the write and the ruff fix. The record route returns
+      file) and a hash of the file after the write and the formatter fix. The record route returns
       <code>undoable</code>, and the diff dialog shows <b>Undo</b> only then.
       <code>POST /api/workspace/undo</code> with the <code>tool_use_id</code> puts back the bytes,
       or removes the created file. It refuses with 409 when the file is not as that write left it

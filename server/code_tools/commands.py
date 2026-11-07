@@ -232,9 +232,10 @@ class EslintInstall:
     version: str
 
 
-def eslint_install_in(d: str) -> EslintInstall | None:
-    """The ESLint installed in ``d``/node_modules, if any."""
-    pkg_dir = os.path.join(d, "node_modules", "eslint")
+def _node_package_in(d: str, name: str, default_bin: str) -> EslintInstall | None:
+    """The package ``name`` installed in ``d``/node_modules, if any, with the
+    CLI script its package.json names."""
+    pkg_dir = os.path.join(d, "node_modules", name)
     try:
         with open(os.path.join(pkg_dir, "package.json"), encoding="utf-8") as f:
             meta = json.load(f)
@@ -244,15 +245,71 @@ def eslint_install_in(d: str) -> EslintInstall | None:
         return None
     bin_field = meta.get("bin")
     if isinstance(bin_field, dict):
-        rel = bin_field.get("eslint") or ""
+        rel = bin_field.get(name) or ""
     elif isinstance(bin_field, str):
         rel = bin_field
     else:
         rel = ""
-    entry = os.path.normpath(os.path.join(pkg_dir, rel or "bin/eslint.js"))
+    entry = os.path.normpath(os.path.join(pkg_dir, rel or default_bin))
     if not os.path.isfile(entry):
         return None
     return EslintInstall(project_dir=d, entry=entry, version=str(meta.get("version", "")))
+
+
+def eslint_install_in(d: str) -> EslintInstall | None:
+    """The ESLint installed in ``d``/node_modules, if any."""
+    return _node_package_in(d, "eslint", "bin/eslint.js")
+
+
+# The files that make Prettier "configured by the project" (Prettier's own
+# names), plus a package.json with a "prettier" key.
+PRETTIER_CONFIG_FILES = (
+    ".prettierrc",
+    ".prettierrc.json",
+    ".prettierrc.yaml",
+    ".prettierrc.yml",
+    ".prettierrc.json5",
+    ".prettierrc.js",
+    ".prettierrc.cjs",
+    ".prettierrc.mjs",
+    ".prettierrc.ts",
+    ".prettierrc.cts",
+    ".prettierrc.mts",
+    ".prettierrc.toml",
+    "prettier.config.js",
+    "prettier.config.cjs",
+    "prettier.config.mjs",
+    "prettier.config.ts",
+    "prettier.config.cts",
+    "prettier.config.mts",
+)
+
+
+def find_workspace_prettier(ws: str, start_dir: str) -> EslintInstall | None:
+    """The workspace's own Prettier nearest to ``start_dir``, looking up to the
+    workspace root, the way find_workspace_eslint looks."""
+    for d in _dirs_up_to(start_dir, ws):
+        if install := _node_package_in(d, "prettier", "bin/prettier.cjs"):
+            return install
+    return None
+
+
+def workspace_prettier_config(ws: str, start_dir: str) -> str | None:
+    """The nearest Prettier config from ``start_dir`` up to the workspace root.
+    Prettier formats without one too, but only a project that sets Prettier up
+    gets its files formatted, as only a ruff config opts in to ruff fixes."""
+    for d in _dirs_up_to(start_dir, ws):
+        for name in PRETTIER_CONFIG_FILES:
+            if os.path.isfile(os.path.join(d, name)):
+                return os.path.join(d, name)
+        try:
+            with open(os.path.join(d, "package.json"), encoding="utf-8") as f:
+                meta = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if isinstance(meta, dict) and "prettier" in meta:
+            return os.path.join(d, "package.json")
+    return None
 
 
 def find_workspace_eslint(ws: str, start_dir: str) -> EslintInstall | None:

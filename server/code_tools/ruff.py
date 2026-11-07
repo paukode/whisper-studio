@@ -208,12 +208,11 @@ def after_write(ws: str, full_path: str, rel: str, *, may_fix: bool = True) -> s
         else:
             remaining = after_fix
     except ToolUnavailable as e:
-        note = (
+        # A fix ruff made before it stopped is shown to the model with the
+        # change itself (server/code_tools/after_write.py).
+        return (
             f"[ruff] Could not check {rel}: ruff could not run ({e}). The write itself succeeded."
         )
-        if config is not None and _read(full_path) != written:
-            note += " ruff had already changed the file: re-read it before editing it again."
-        return note
 
     config_rel = os.path.relpath(config, os.path.realpath(ws))
     fixed = _fixed_summary(before, after_fix)
@@ -228,11 +227,6 @@ def after_write(ws: str, full_path: str, rel: str, *, may_fix: bool = True) -> s
     if fmt.returncode != 0:
         reason = first_error_line(fmt.stderr) or f"exit status {fmt.returncode}"
         lines.append(f"Not formatted: ruff format failed ({reason}).")
-    if _read(full_path) != written:
-        lines.append(
-            "The file on disk now differs from the content you wrote: re-read it before "
-            "editing it again."
-        )
     if remaining:
         lines.append(f"Remaining: {_count(len(remaining))}:\n{_render(remaining, rel)}")
     else:

@@ -772,6 +772,7 @@ async def _process_tool_results(
             sse_events.append(ndjson_dumps(effect))
 
         tool_output = state.output
+        model_note = ""
 
         # Unattended (agent) turns: a tool that signaled SIDE_EFFECT_PAUSE
         # (ask_user_question, or any future pause-inducing tool) has no human
@@ -847,6 +848,7 @@ async def _process_tool_results(
                 continue
             # An inline run's result or a refusal: processed like any output.
             tool_output = step.text
+            model_note = step.model_note
 
         # Preview screenshot detection: preview_screenshot's executor returns
         # a sentinel carrying base64 JPEG bytes + a caption. Unlike every
@@ -917,6 +919,10 @@ async def _process_tool_results(
         if not isinstance(tool_output, str):
             tool_output = str(tool_output)
         preview = tool_output[:2000] + ("..." if len(tool_output) > 2000 else "")
+        # A write's formatter note is the model's alone: after the budget and
+        # the preview, so the row shows the write like any other.
+        if model_note:
+            tool_output = f"{tool_output}\n\n{model_note}"
         sse_events.append(_result_frame(state, full_output, preview, sent=tool_output))
 
         tool_results.append(

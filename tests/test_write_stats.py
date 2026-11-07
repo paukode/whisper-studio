@@ -72,7 +72,9 @@ def test_the_stats_describe_the_file_after_ruff_reformatted_it(ws):
     assert outcome.stats["removed"] == 0
     # The byte count in the sentence is still the content as sent.
     assert outcome.output.startswith(f"Wrote pkg/a.py ({len(DIRTY)} bytes). ")
-    assert "reformatted" in outcome.output
+    # What ruff did is the model's note; the row shows the write only.
+    assert "reformatted" in outcome.model_note
+    assert "reformatted" not in outcome.output
 
 
 def test_the_edit_is_kept_under_the_calls_id_for_the_diff_dialog(ws):

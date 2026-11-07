@@ -74,13 +74,6 @@ async def _do_write(payload: dict) -> ApprovalOutcome:
         workspace._atomic_write_text(full, content)
     except Exception as e:
         return ApprovalOutcome(ok=False, error=f"Write failed: {e}")
-    # The session now knows the whole file, so its next edit of it needs no
-    # re-read. Recorded before ruff: a fix or a reformat moves the mtime, and
-    # the ruff note below already asks for a re-read then.
-    if payload.get("session_id"):
-        from server import file_state
-
-        file_state.record_write(payload["session_id"], full)
     from server.index.citations import created_file_link
 
     link = created_file_link(path, full)
@@ -88,23 +81,25 @@ async def _do_write(payload: dict) -> ApprovalOutcome:
         f"Wrote {path} ({len(content)} bytes). "
         f"To reference this file for the user, copy this link verbatim: {link}"
     )
-    # An assistant write, create or edit of a Python file in the workspace
-    # lands here on every approval path (inline, the card's Yes, an
-    # unattended agent); one saved to an absolute path lands in
-    # _do_save_to_path, which runs the same check. The note rides in the tool
-    # result the gate budgets. Bounded, and off the event loop. A file in the
-    # scratch folder is outside the workspace, so it is only checked, the way
-    # a save to an absolute path is.
-    from server.code_tools.commands import PYTHON_EXTENSIONS
+    # An assistant write, create or edit of a Python or JS/TS file lands here
+    # on every approval path (inline, the card's Yes, an unattended agent);
+    # one saved to an absolute path lands in _do_save_to_path, which runs the
+    # same step. The project's own tools fix and format it now, bounded and
+    # off the event loop, and what they did goes to the model only
+    # (server/code_tools/after_write.py). A file in the scratch folder is
+    # outside the workspace, so ruff only checks it.
+    model_note = None
+    from server.code_tools import after_write
 
-    if os.path.splitext(path)[1].lower() in PYTHON_EXTENSIONS:
-        from server.code_tools import ruff
+    if after_write.handles(path):
+        model_note = await asyncio.to_thread(after_write.after_write, ws, full) or None
+    # The session now knows the whole file, so its next edit of it needs no
+    # re-read. Recorded after the formatter, which the app ran itself: the
+    # note above shows the model what it changed.
+    if payload.get("session_id"):
+        from server import file_state
 
-        if workspace._ws_validate_path(full, ws):
-            note = await asyncio.to_thread(ruff.after_write, ws, full, path)
-        else:
-            note = await asyncio.to_thread(ruff.after_save, full, ws)
-        output = f"{output}\n\n{note}"
+        file_state.record_write(payload["session_id"], full)
     # The undo copy of this one write, keyed by its tool_use id, with the
     # file as the write and ruff left it (server/workspace/write_undo.py).
     # A write with no id (a direct call) or an unreadable old file keeps none.
@@ -130,7 +125,7 @@ async def _do_write(payload: dict) -> ApprovalOutcome:
     except Exception as e:  # noqa: BLE001
         log.warning("write stats for %s failed: %s", path, e)
         stats = None
-    return ApprovalOutcome(ok=True, output=output, stats=stats)
+    return ApprovalOutcome(ok=True, output=output, stats=stats, model_note=model_note)
 
 
 def _write_stats(
@@ -311,20 +306,20 @@ async def _do_save_to_path(payload: dict) -> ApprovalOutcome:
         f"To reference this file for the user, copy this link verbatim: {link} "
         f"{REVISION_HINT}"
     )
-    # A Python file saved here (save_file, ws_create_file with a destination
-    # or with no workspace) is the assistant's Python like any other: ruff
-    # checks it, and fixes and formats it when it lands in a connected
-    # workspace that configures ruff (user decision 3).
-    from server.code_tools.commands import PYTHON_EXTENSIONS
+    # A code file saved here (save_file, ws_create_file with a destination
+    # or with no workspace) is the assistant's code like any other: ruff
+    # checks Python, and the project's tools fix and format it when it lands
+    # in a connected workspace that sets them up (user decision 3). What they
+    # did goes to the model only.
+    from server.code_tools import after_write
 
-    if os.path.splitext(real_dest)[1].lower() in PYTHON_EXTENSIONS:
+    model_note = None
+    if after_write.handles(real_dest):
         from server import workspace
-        from server.code_tools import ruff
 
         ws = workspace.get_workspace_path() or None
-        note = await asyncio.to_thread(ruff.after_save, real_dest, ws)
-        output = f"{output}\n\n{note}"
-    return ApprovalOutcome(ok=True, output=output)
+        model_note = await asyncio.to_thread(after_write.after_write, ws, real_dest) or None
+    return ApprovalOutcome(ok=True, output=output, model_note=model_note)
 
 
 async def _do_create_document(payload: dict) -> ApprovalOutcome:

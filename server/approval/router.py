@@ -85,4 +85,7 @@ async def approval_execute(req: ExecuteRequest):
         # A finished command's exit status, the one the inline path's
         # skill_result frame carries; null for every other action.
         "exit_code": getattr(outcome, "exit_code", None),
+        # What only the model reads (ApprovalOutcome.model_note): the card's
+        # continuation appends it to the tool result, the row never shows it.
+        "model_note": getattr(outcome, "model_note", None),
     }
