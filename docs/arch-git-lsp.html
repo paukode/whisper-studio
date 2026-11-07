@@ -369,23 +369,40 @@
       and column and shows surrounding context, and references do a bounded workspace grep (capped
       at 100 matches).</p>
 
-    <h3 id="ruff-after-write">Ruff after every Python write</h3>
-    <p>Every successful assistant write, create or edit of a Python file runs through one of two
+    <h3 id="ruff-after-write">Formatters after every code write</h3>
+    <p>Every successful assistant write, create or edit of a Python or JS/TS file runs through one of two
       approval executors on every approval path (<code class="path">server/approval/executors.py</code>):
       <code>_do_write</code> for a workspace-relative path, and <code>_do_save_to_path</code> for a file
       saved to an absolute path (<code>save_file</code>, <code>ws_create_file</code> with a
-      destination or with no workspace connected). Both run ruff on it
-      (<code class="path">server/code_tools/ruff.py</code>). Ruff always checks the file and its
-      findings join the tool result. A file saved outside the connected workspace is only checked.
+      destination or with no workspace connected). Both call
+      <code class="path">server/code_tools/after_write.py</code>, which runs ruff on a Python file
+      (<code class="path">server/code_tools/ruff.py</code>). Ruff always checks the file. A file
+      saved outside the connected workspace is only checked.
       Only when the workspace configures ruff (<code class="path">pyproject.toml</code> with a <code>[tool.ruff]</code> table,
       <code class="path">ruff.toml</code> or <code class="path">.ruff.toml</code>) does it also run
-      <code>check --fix</code> and <code>ruff format</code>; the result then says what changed and
-      that the model must re-read the file before editing it again. Everything runs off the event
+      <code>check --fix</code> and <code>ruff format</code>. Everything runs off the event
       loop within a 20-second budget, with <code>--no-cache</code> and <code>--force-exclude</code>,
       and a ruff that cannot run is said so in the result. Every check that is not the fix step
       passes <code>--no-fix</code>: ruff otherwise applies fixes whenever the config it resolves sets
       <code>fix = true</code>, and that config may sit above the workspace or be the user's global
       one, so <code>lsp_diagnostics</code> (read-only, allowed in plan mode) never edits a file.</p>
+    <p>A JS/TS file inside the workspace gets the project's Prettier (<code>--write</code>), then its
+      ESLint (<code>--fix</code>), from <code class="path">server/code_tools/js_format.py</code>.
+      Each runs only when the workspace sets it up: its package in <code>node_modules</code> between
+      the file and the workspace root, and a config for it (a <code>.prettierrc</code> or another
+      Prettier config, an <code>eslint.config.*</code> that ESLint reads). Both run with the app's
+      node from the directory that holds the package, so the project's versions, configs and
+      ignore files apply.</p>
+    <p>What the tools found, and the change they made, go to the model only:
+      <code>ApprovalOutcome.model_note</code>. The inline path appends it to the tool result after
+      the budget and the row preview (<code class="path">server/tool_executor.py</code>), and the
+      card's continuation appends it to the tool result it sends
+      (<code class="path">src/hooks/chatStream/approvalContinuation.ts</code>). The activity row
+      shows the write like any other. When a tool changed the file, the note shows the change as a
+      diff, or the whole file when that is shorter. The write then records the file as it is after
+      the tools (<code class="path">server/file_state.py</code> <code>record_write</code>), so the
+      next edit needs no re-read: an edit matches its <code>old_string</code> against the file on
+      disk, so a stale one fails as not found and changes nothing.</p>
 
     <h3 id="lsp-proxy">The LSP proxy (editor)</h3>
     <p>The Monaco editor in the workspace is a real language-server client, so

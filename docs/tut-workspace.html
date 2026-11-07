@@ -78,7 +78,9 @@
       <div class="card">
         <h3>Code checks: Python and TypeScript</h3>
         <p>Ruff examines each Python file that the assistant writes. If the project configures ruff,
-          ruff also fixes and formats the file. <code>lsp_diagnostics</code> runs ruff or the ESLint
+          ruff also fixes and formats the file. If the project sets up Prettier or ESLint, they
+          format and fix each JS or TS file that the assistant writes. The assistant gets the
+          result and continues. The chat shows only the write. <code>lsp_diagnostics</code> runs ruff or the ESLint
           of the project. The language servers of the editor add completion, hover, and inline
           diagnostics. <b>Settings &gt; Tools and automation &gt; Code tools</b> shows which tools
           operate.</p>

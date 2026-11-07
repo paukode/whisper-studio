@@ -3,7 +3,8 @@
 Every successful write, create or edit of a Python file (in the workspace
 through the approval executor _do_write, to an absolute path through
 _do_save_to_path, on every approval path) is checked by ruff, and the findings
-ride in the tool result. Only a workspace that
+ride in the note only the model reads (ApprovalOutcome.model_note). Only a
+workspace that
 configures ruff (pyproject.toml [tool.ruff], ruff.toml or .ruff.toml) gets the
 file fixed and formatted, and the result states what changed. A ruff that
 cannot run is said so; the write itself stands.
@@ -34,7 +35,9 @@ def ws(tmp_path, monkeypatch):
 def _write(ws, rel: str, content: str) -> str:
     outcome = asyncio.run(_do_write({"path": rel, "content": content}))
     assert outcome.ok, outcome.error
-    return outcome.output
+    # The activity row shows the write like any other; ruff speaks to the model.
+    assert "[ruff]" not in outcome.output
+    return outcome.model_note or ""
 
 
 def test_write_in_a_workspace_without_ruff_config_checks_and_changes_nothing(ws):
@@ -59,7 +62,8 @@ def test_write_in_a_ruff_configured_workspace_fixes_formats_and_says_so(ws):
     assert "pyproject.toml" in out
     assert "fixed 1 issue (F401)" in out
     assert "reformatted" in out
-    assert "re-read it before editing it again" in out
+    assert "formatter changed pkg/a.py" in out
+    assert "re-read" not in out
     assert "Remaining: no issues." in out
     assert not (ws / ".ruff_cache").exists()
 
@@ -93,7 +97,7 @@ def test_the_post_write_check_runs_off_the_event_loop(ws, monkeypatch):
 
     monkeypatch.setattr(ruff, "after_write", fake_after_write)
     outcome = asyncio.run(run())
-    assert outcome.output.endswith("[ruff] fake")
+    assert outcome.model_note == "[ruff] fake"
     assert threads["check"] != threads["loop"]
 
 
@@ -128,7 +132,8 @@ def _save(tmp_path, monkeypatch, tool: str, args: dict):
     spec = registry.get(card["action"])
     outcome = asyncio.run(spec.executor(spec.build_payload(card)))
     assert outcome.ok, outcome.error
-    return outcome.output
+    assert "[ruff]" not in outcome.output
+    return outcome.model_note or ""
 
 
 def test_a_python_file_saved_into_the_workspace_is_fixed_like_any_write(ws, tmp_path, monkeypatch):

@@ -58,6 +58,12 @@ class ApprovalOutcome:
     # returns it; the inline path reads the same status from the result text
     # (server/tool_executor.py tool_outcome).
     exit_code: int | None = None
+    # What only the model reads after ``output``: the project's formatter and
+    # linter after a code file write (server/code_tools/after_write.py). The
+    # activity row never shows it; the inline path appends it to the tool
+    # result (server/tool_executor.py) and the card's continuation does the
+    # same (src/hooks/chatStream/approvalContinuation.ts).
+    model_note: str | None = None
 
 
 def refuse_if_agent(payload: dict, what: str = "This action") -> ApprovalOutcome | None:

@@ -43,6 +43,9 @@ PAUSE = "pause"  # an approval card went out: the turn pauses, no sibling runs
 class ApprovalStep(NamedTuple):
     kind: str
     text: str = ""
+    # An inline run's ApprovalOutcome.model_note: appended to the tool result
+    # after the budget, never shown in the activity row.
+    model_note: str = ""
 
 
 async def _execute_ws_approval_inline(
@@ -248,7 +251,7 @@ async def gate_approval(
         # executors can still refuse to run unattended).
         outcome = await _run_inline(state, ws_parsed, agent=True)
         sse_events.append(ndjson_dumps({"ws_auto_applied": ws_parsed}))
-        return ApprovalStep(OUTPUT, inline_result_text(action, outcome))
+        return ApprovalStep(OUTPUT, inline_result_text(action, outcome), outcome.model_note or "")
 
     category = spec.category
 
@@ -351,7 +354,7 @@ async def gate_approval(
         ws_after = get_workspace_path()
         if ws_after and ws_after != ws_before:
             sse_events.append(ndjson_dumps({"ws_folder_opened": ws_after}))
-        return ApprovalStep(OUTPUT, inline_result_text(action, outcome))
+        return ApprovalStep(OUTPUT, inline_result_text(action, outcome), outcome.model_note or "")
     if decision == "deny":
         path = ws_parsed.get("path", ws_parsed.get("command", ""))
         return ApprovalStep(REPLY, f"[Denied by session rule] {action}: {path}, blocked by user.")
