@@ -343,8 +343,15 @@
       when the history is already large, after an output-limit continuation, and when the provider
       rejects a prompt as too long. Thresholds are per model: 95 percent of its usable input budget
       triggers compaction, and the result must fit under 98 percent. It has two steps. First a local
-      pre-pass shortens older <code>tool_result</code> blocks by age; if that alone fits, it is used.
-      Otherwise one summary call condenses the older messages and keeps the recent ones. The summary
+      pre-pass shortens older <code>tool_result</code> blocks by age. It keeps the newest eight
+      messages as they are and changes all older ones, also the older tool rounds of the current
+      turn. If that alone fits, it is used.
+      Otherwise one summary call condenses the older messages and keeps the recent ones. The cut
+      between the two parts is at the start of a user turn. One long turn (one prompt and many tool
+      rounds) has no such cut near the end, so the cut can also be inside that turn, on an assistant
+      message, so that no tool call is separated from its result. Then the turn's prompt stays word
+      for word, and the summary follows it. When the older part is too large for the summary model,
+      the summary reads the shortened version of that part. The summary
       model is the <code>auxiliary_models.compaction</code> entry, or the session's own model when
       that entry is <code>main</code> or not set. Compaction <b>fails closed</b>: when the summary
       fails, comes back empty, or does not make the history smaller, the history stays unchanged and

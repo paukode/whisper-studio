@@ -102,9 +102,11 @@ def test_short_overflow_refuses_ordinary_pressure_is_unchanged(count):
     assert messages == original
 
 
-def test_no_clean_split_cannot_commit_pruning(monkeypatch):
-    messages = [{"role": "user", "content": "begin"}]
-    for i in range(10):
+def long_turn(result_chars=6000, pairs=10):
+    """One prompt and many tool rounds: the shape of a field session whose
+    compaction found no clean user turn to cut at and changed nothing."""
+    messages = [{"role": "user", "content": "begin the audit"}]
+    for i in range(pairs):
         messages.extend(
             [
                 {
@@ -114,16 +116,88 @@ def test_no_clean_split_cannot_commit_pruning(monkeypatch):
                 {
                     "role": "user",
                     "content": [
-                        {"type": "tool_result", "tool_use_id": str(i), "content": "x" * 6000}
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": str(i),
+                            "content": "x" * result_chars,
+                        }
                     ],
                 },
             ]
         )
+    return messages
+
+
+def test_one_long_turn_prunes_its_old_tool_results_under_pressure():
+    messages = long_turn()
     original = deepcopy(messages)
-    with pytest.raises(compaction.CompactionError):
-        compact(messages)
-    assert compact(messages, "pressure") == original
+    out = compact(messages, "pressure")
     assert messages == original
+    assert len(out) == len(messages)
+    assert out[0] == messages[0]
+    assert out[-compaction.KEEP_RECENT :] == messages[-compaction.KEEP_RECENT :]
+    assert compaction.estimate_message_size(out) < compaction.estimate_message_size(messages)
+    assert compaction.sanitize_tool_pairs(out) == out
+
+
+def test_one_long_turn_is_summarized_inside_the_turn_keeping_the_prompt(monkeypatch):
+    call = Mock(return_value="Short summary")
+    monkeypatch.setattr(oneshot, "one_shot", call)
+    messages = long_turn()
+    original = deepcopy(messages)
+    # An overflow skips pruning; before this change it raised for want of a cut.
+    out = compact(messages)
+    assert messages == original
+    assert call.call_count == 1
+    first, kept = out[0], out[1:]
+    assert compaction._is_clean_user_start(first)
+    assert first["content"].startswith("begin the audit\n\n" + compaction.SUMMARY_HEADER)
+    assert "Short summary" in first["content"]
+    # The prompt is kept once, not again among the summary's verbatim excerpts.
+    assert first["content"].count("begin the audit") == 1
+    assert len(kept) >= compaction.KEEP_RECENT
+    assert kept == messages[-len(kept) :]
+    assert kept[0]["role"] == "assistant"
+    assert compaction.sanitize_tool_pairs(out) == out
+
+
+def test_a_turn_too_large_for_the_summary_model_is_summarized_from_its_pruned_part(
+    models, monkeypatch
+):
+    models["auxiliary_models"] = {"compaction": "gpt"}
+    monkeypatch.setattr(
+        compaction,
+        "thresholds_for",
+        lambda key: (100_000, 120_000) if key == "claude" else (30_000, 40_000),
+    )
+    call = Mock(return_value="Short summary")
+    monkeypatch.setattr(oneshot, "one_shot", call)
+    messages = long_turn(result_chars=8000)
+    out = compact(messages)
+    assert call.call_count == 1
+    prompt = call.call_args.args[1]
+    assert "x" * 8000 not in prompt  # the old part was pruned to fit
+    assert "removed for compaction" in prompt
+    assert out[0]["content"].startswith("begin the audit")
+
+
+def test_a_cut_never_splits_a_tool_pair_or_starts_on_a_result():
+    messages = long_turn()
+    split, turn = compaction._summary_cut(messages, compaction.KEEP_RECENT)
+    assert turn == 0
+    assert messages[split]["role"] == "assistant"
+    assert len(messages) - split >= compaction.KEEP_RECENT
+    # A history with a clean user turn near the end still cuts there.
+    later = [*messages, {"role": "user", "content": "next"}, *long_turn(pairs=5)[1:]]
+    split, turn = compaction._summary_cut(later, compaction.KEEP_RECENT)
+    assert later[split]["role"] == "assistant" and turn == len(messages)
+
+
+def test_list_content_prompt_keeps_its_blocks_and_gets_a_summary_block():
+    prompt = {"role": "user", "content": [{"type": "text", "text": "look"}]}
+    out = compaction._prompt_with_summary(prompt, "S")
+    assert out["content"] == [{"type": "text", "text": "look"}, {"type": "text", "text": "S"}]
+    assert prompt["content"] == [{"type": "text", "text": "look"}]
 
 
 @pytest.mark.parametrize("summary", ["", " \n\t", "x" * 100_000, None])
