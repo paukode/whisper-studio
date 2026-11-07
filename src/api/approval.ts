@@ -29,6 +29,11 @@ export interface ApprovalOutcome {
    *  the inline path's skill_result frame carries; null for every other
    *  action, and for a command that went to the background or was stopped. */
   exit_code?: number | null;
+  /** What only the model reads after `output`: the project's formatter and
+   *  linter after a code file write (server/code_tools/after_write.py). The
+   *  continuation appends it to the tool_result; the activity row never
+   *  shows it. */
+  model_note?: string | null;
 }
 
 /** What a write changed: lines added and removed against the file before it

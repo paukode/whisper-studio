@@ -79,7 +79,10 @@ export async function sendApprovalContinuation(
     content = `[User denied] ${approval.action}: ${target}. The user rejected this action; it did not run.`;
   } else if (outcome) {
     if (outcome.ok) {
-      const detail = outcome.output ? `\n\n${outcome.output}` : '';
+      const detail = [outcome.output, outcome.model_note]
+        .filter(Boolean)
+        .map((part) => `\n\n${part}`)
+        .join('');
       content = `[User approved] ${approval.action}: ${target}. The action succeeded.${detail}`;
     } else {
       // A command that ran and failed carries its output next to the exit code.

@@ -432,6 +432,25 @@ describe('sendApprovalContinuation', () => {
     expect(content).not.toContain('filesystem');
   });
 
+  it('gives the model the formatter note the row never shows', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(sseResponse([{ text: 'done' }]));
+
+    await sendApprovalContinuation(approval, 'sess-resume', true, undefined, {
+      ok: true,
+      output: 'Wrote a.py (9 bytes).',
+      model_note: '[ruff] reformatted',
+    });
+
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]!.body)) as {
+      approved_tool_result: { content: string };
+    };
+    expect(body.approved_tool_result.content).toMatch(
+      /The action succeeded\.\n\nWrote a\.py \(9 bytes\)\.\n\n\[ruff\] reformatted$/,
+    );
+  });
+
   it('keeps a failed command’s output next to its exit code', async () => {
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')
