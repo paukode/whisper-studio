@@ -204,6 +204,54 @@ async def compact_messages_with_claude(
         record(record_end, outcome=outcome, after_chars=after_chars)
 
 
+# The newest messages every compaction keeps exactly as they are.
+KEEP_RECENT = 8
+
+
+def _last_turn_start(messages: list) -> int | None:
+    """The index of the last clean user turn (the prompt the current turn
+    answers), or None."""
+    return next(
+        (i for i in range(len(messages) - 1, -1, -1) if _is_clean_user_start(messages[i])), None
+    )
+
+
+def _summary_cut(messages: list, keep_recent: int) -> tuple[int, int | None]:
+    """Where a summary may cut, and the turn's prompt index when the cut is
+    inside the last turn (else None).
+
+    A clean cut starts the kept part on a user turn. One long turn (a single
+    prompt and many tool rounds) has no such cut near the end, so the cut may
+    also fall inside the last turn: on an assistant message whose previous
+    message is a user message, so no tool pair is split. The cut closest to
+    the end that keeps ``keep_recent`` messages wins."""
+    clean = _safe_recent_split(messages, keep_recent)
+    turn = _last_turn_start(messages)
+    if turn is None:
+        return clean, None
+    limit = len(messages) - keep_recent
+    in_turn = next(
+        (
+            c
+            for c in range(limit, turn + 1, -1)
+            if messages[c].get("role") == "assistant" and messages[c - 1].get("role") == "user"
+        ),
+        0,
+    )
+    if in_turn > clean:
+        return in_turn, turn
+    return clean, None
+
+
+def _prompt_with_summary(prompt: dict, summary: str) -> dict:
+    """The turn's prompt kept verbatim, with the summary of the earlier
+    conversation and of the turn's earlier work after it."""
+    content = prompt.get("content")
+    if isinstance(content, str):
+        return {**prompt, "content": f"{content}\n\n{summary}"}
+    return {**prompt, "content": [*deepcopy(content), {"type": "text", "text": summary}]}
+
+
 async def _compact_strategies(
     messages: list,
     model_id: str,
@@ -211,12 +259,17 @@ async def _compact_strategies(
     model_key: str,
     trigger: str = "pressure",
 ) -> tuple[list, str]:
-    """Try pure pruning, then one summary of ORIGINAL history, with no fallback."""
+    """Try pure pruning, then one summary, with no fallback.
+
+    Pruning shortens old tool results everywhere but the newest
+    ``KEEP_RECENT`` messages, inside the current turn too. A summary cuts at
+    a clean user turn, or inside one long turn (see _summary_cut), and then
+    keeps that turn's prompt verbatim before the summary."""
     messages = deepcopy(messages)
     before_chars = estimate_message_size(messages)
     trigger_chars, hard_ceiling = thresholds_for(model_key)
-    split = _safe_recent_split(messages, min(8, len(messages)))
-    pruned = microcompact_messages(messages, keep_recent=len(messages) - split)
+    keep = min(KEEP_RECENT, len(messages))
+    pruned = microcompact_messages(messages, keep_recent=keep)
     pruned_chars = estimate_message_size(pruned)
     if (
         trigger != "context-overflow"
@@ -224,16 +277,25 @@ async def _compact_strategies(
         and pruned_chars < before_chars
     ):
         return pruned, "pruned-only"
+    split, turn = _summary_cut(messages, keep)
     if split == 0:
         if trigger == "context-overflow":
             raise CompactionError()
         return messages, "unchanged"
 
-    # Pruning was insufficient. The summary must see all original text and
-    # tool arguments/results, not a clipped or pruned version of that history.
+    # Pruning was insufficient. The summary sees the original text and tool
+    # arguments/results when they fit the summary model, else the pruned old
+    # part (one long turn can be larger than any model's window).
     old_messages, recent_messages = messages[:split], messages[split:]
-    summary = await summarize_messages(old_messages, model_key, session_id)
-    result = [{"role": "user", "content": summary}, *recent_messages]
+    if not _summary_input_fits(old_messages, model_key):
+        old_messages = pruned[:split]
+    # The kept prompt is not repeated in the summary's verbatim user excerpts.
+    extras_from = None if turn is None else [m for i, m in enumerate(old_messages) if i != turn]
+    summary = await summarize_messages(old_messages, model_key, session_id, extras_from=extras_from)
+    if turn is None:
+        result = [{"role": "user", "content": summary}, *recent_messages]
+    else:
+        result = [_prompt_with_summary(messages[turn], summary), *recent_messages]
     after_chars = estimate_message_size(result)
     if after_chars >= before_chars or after_chars > hard_ceiling:
         raise CompactionError()
@@ -243,31 +305,47 @@ async def _compact_strategies(
 SUMMARY_HEADER = "[Context summary of earlier conversation]"
 
 
+_SUMMARY_INSTRUCTIONS = (
+    "Summarize the following conversation history concisely. Preserve user intent, "
+    "constraints, decisions, files, tool calls and results, errors, and pending tasks. "
+    "Keep it under 500 words. Attachment omission markers are references, not image "
+    "or document contents; do not invent their contents.\n\n"
+)
+_SUMMARY_SYSTEM = (
+    "You produce concise conversation summaries. Do not use em dashes or en dashes; "
+    "prefer commas, parentheses, a colon, or a short spaced hyphen."
+)
+
+
+def _summary_input_fits(messages: list, model_key: str) -> bool:
+    """Whether a summary of ``messages`` (with no note) fits the compaction
+    model's window, measured the way summarize_messages measures it."""
+    size = len(_SUMMARY_SYSTEM) + len(_SUMMARY_INSTRUCTIONS) + 40
+    size += len(_serialize_history(messages))
+    return size <= thresholds_for(_summary_model_key(model_key))[1]
+
+
 async def summarize_messages(
-    messages: list, model_key: str, session_id: str = "", note: str = ""
+    messages: list,
+    model_key: str,
+    session_id: str = "",
+    note: str = "",
+    extras_from: list | None = None,
 ) -> str:
     """One summary of ``messages`` by the compaction model, as the user message
     that stands in for them (header, summary, deterministic extras). ``note``
-    is what the user asked the summary to keep. Raises CompactionError."""
+    is what the user asked the summary to keep. ``extras_from`` is the part
+    the extras are taken from, when not all of ``messages``. Raises
+    CompactionError."""
     summary_key = _summary_model_key(model_key)
-    extras = _summary_extras(messages, session_id)
+    extras = _summary_extras(messages if extras_from is None else extras_from, session_id)
     keep = (
         f"The user asked the summary to keep this in particular: {note.strip()}\n\n"
         if note.strip()
         else ""
     )
-    summary_prompt = (
-        "Summarize the following conversation history concisely. Preserve user intent, "
-        "constraints, decisions, files, tool calls and results, errors, and pending tasks. "
-        "Keep it under 500 words. Attachment omission markers are references, not image "
-        "or document contents; do not invent their contents.\n\n"
-        + keep
-        + _serialize_history(messages)
-    )
-    summary_system = (
-        "You produce concise conversation summaries. Do not use em dashes or en dashes; "
-        "prefer commas, parentheses, a colon, or a short spaced hyphen."
-    )
+    summary_prompt = _SUMMARY_INSTRUCTIONS + keep + _serialize_history(messages)
+    summary_system = _SUMMARY_SYSTEM
     if len(summary_system) + len(summary_prompt) + 40 > thresholds_for(summary_key)[1]:
         raise CompactionError()
 
