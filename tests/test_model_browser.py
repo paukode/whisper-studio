@@ -118,6 +118,26 @@ def test_group_gguf_files_hides_mmproj_and_folds_shards():
     assert shard.filename == "Big-Q5_K_M-00001-of-00002.gguf"
 
 
+def test_group_gguf_files_hides_mtp_draft_heads():
+    # The MTP head shares the main file's quant; it must not take that row.
+    files = [
+        ("Model-Q8_0.gguf", 8000),
+        ("MTP/mtp-Model-Q8_0.gguf", 400),
+        ("MTP/mtp-Model-Q4_K_M.gguf", 200),
+        ("Model-MTP-Q6_K.gguf", 600),
+    ]
+    opts = compat.group_gguf_files(files)
+    assert [o.filename for o in opts] == ["Model-Q8_0.gguf"]
+
+
+def test_is_mtp_head_needs_a_bounded_token():
+    assert compat.is_mtp_head("MTP/mtp-Qwen3.8-Flash-Next-Q8_0.gguf")
+    assert compat.is_mtp_head("Model-mtp.Q4_K_M.gguf")
+    # "mtp" inside a longer word is part of a model name, not a draft head.
+    assert not compat.is_mtp_head("Promptly-7B-Q4_K_M.gguf")
+    assert not compat.is_mtp_head("Smtpx-Q8_0.gguf")
+
+
 def test_recommended_quant_prefers_q4_k_m():
     files = [
         ("M-Q2_K.gguf", 200),

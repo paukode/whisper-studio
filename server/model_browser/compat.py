@@ -261,7 +261,7 @@ def parse_mlx_quant(repo_id: str) -> str | None:
     return matches[-1].group("quant").lower()
 
 
-# ── Filename parsing: quant token, shards, mmproj ────────────────────────────
+# ── Filename parsing: quant token, shards, mmproj, MTP ────────────────────────
 
 # The quant code in a GGUF filename: an optional Unsloth "UD-" dynamic prefix
 # followed by an IQ*/Q* code (Q4_K_M, Q5_K_S, Q8_0, Q4_0, IQ4_XS, IQ2_M …), or a
@@ -322,6 +322,18 @@ def is_mmproj(filename: str) -> bool:
     return "mmproj" in filename.lower()
 
 
+# An "mtp" token bounded by a delimiter or a path separator: Unsloth ships the
+# multi-token prediction head as "MTP/mtp-<Model>-Q8_0.gguf".
+_MTP_RE = re.compile(r"(?:^|[/_.-])mtp(?=$|[/_.-])", re.IGNORECASE)
+
+
+def is_mtp_head(filename: str) -> bool:
+    """A multi-token prediction (MTP) draft head, hidden. It holds only the
+    next-token layer for speculative decoding, so llama-server cannot load it
+    as a chat model on its own."""
+    return bool(_MTP_RE.search(filename))
+
+
 def param_count_b(repo_id: str, filename: str = "") -> float | None:
     """Parameter count in BILLIONS parsed from the repo name, falling back to the
     GGUF filename, or None when neither carries a size.
@@ -377,6 +389,7 @@ def group_gguf_files(files: list[tuple[str, int]]) -> list[QuantOption]:
     Rules:
       * only ``*.gguf`` files;
       * ``*mmproj*`` projector files are dropped (vision, not chat);
+      * MTP draft heads (``MTP/mtp-*.gguf``) are dropped (not a whole model);
       * shards (``-00001-of-000NN.gguf``) collapse to ONE option, sizes summed,
         the first shard kept as the load target;
       * files with no recognizable quant token are skipped (base/unknown dumps).
@@ -388,7 +401,7 @@ def group_gguf_files(files: list[tuple[str, int]]) -> list[QuantOption]:
     for filename, size in files:
         if not filename.lower().endswith(".gguf"):
             continue
-        if is_mmproj(filename):
+        if is_mmproj(filename) or is_mtp_head(filename):
             continue
         quant = parse_quant(filename)
         if not quant:
