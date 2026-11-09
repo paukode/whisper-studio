@@ -25,13 +25,13 @@ function firstToolWaitReason(reasons: Record<string, WaitKind>, toolId: string):
  *
  * - `idle`: nothing runs. A card may still wait on the user (currentApproval),
  *   whichever leg of the turn raised it.
- * - `preparing`: a send is getting ready (a /file upload) and opens its stream
+ * - `starting`: a send is getting ready (a /file upload) and opens its stream
  *   next. The code that started it either starts the stream or finishes it.
  * - `approvedAction`: an action the user approved runs; its continuation
  *   streams next (hooks/chatStream/approvalLeg).
  * - `streaming`: a stream is open.
  */
-export type TurnPhase = 'idle' | 'preparing' | 'approvedAction' | 'streaming';
+export type TurnPhase = 'idle' | 'starting' | 'approvedAction' | 'streaming';
 
 /**
  * Generic pending approval. The shape is the same regardless of action —

@@ -317,8 +317,8 @@ describe('chatStore: wait tools close their wait', () => {
     it('isStreaming follows the phase, and every startTurn counts a new leg', () => {
       const store = createChatStore();
       expect(store.getState().turnPhase).toBe('idle');
-      const a = store.getState().startTurn('preparing');
-      expect(store.getState()).toEqual(expect.objectContaining({ turnPhase: 'preparing', isStreaming: true }));
+      const a = store.getState().startTurn('starting');
+      expect(store.getState()).toEqual(expect.objectContaining({ turnPhase: 'starting', isStreaming: true }));
       const b = store.getState().startTurn('streaming');
       expect(b).toBeGreaterThan(a);
       store.getState().finishStream();

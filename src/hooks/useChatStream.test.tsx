@@ -96,8 +96,8 @@ describe('useChatStream', () => {
   });
 
   describe('turn phase', () => {
-    it('a declined consent ends a turn still preparing, and the send says it was refused', async () => {
-      // /file shows the turn as preparing while it uploads, then sends. The
+    it('a declined consent ends a turn still starting, and the send says it was refused', async () => {
+      // /file shows the turn as starting while it uploads, then sends. The
       // send asked for consent and the user declined: the session used to
       // stay "streaming" with nothing running, and Reset did not clear it.
       useSessionStore.setState({ currentSessionId: 'consent-sess', liveSessions: {}, sessions: [] });
@@ -109,7 +109,7 @@ describe('useChatStream', () => {
       } as unknown as Partial<typeof settings>);
       ensureRetentionEnabled.mockResolvedValueOnce(false);
       const chat = getChatStore('consent-sess');
-      chat.getState().startTurn('preparing');
+      chat.getState().startTurn('starting');
 
       const { result } = renderHook(() => useChatStream());
       let ran: boolean | undefined;
@@ -123,10 +123,10 @@ describe('useChatStream', () => {
       useSettingsStore.setState(settings);
     });
 
-    it('a turn still preparing refuses a mid-turn message and says why', async () => {
+    it('a turn still starting refuses a mid-turn message and says why', async () => {
       useSessionStore.setState({ currentSessionId: 'prep-sess', liveSessions: {}, sessions: [] });
       const fetchSpy = vi.spyOn(globalThis, 'fetch');
-      getChatStore('prep-sess').getState().startTurn('preparing');
+      getChatStore('prep-sess').getState().startTurn('starting');
       const addToast = vi.spyOn(useUIStore.getState(), 'addToast');
 
       const { result } = renderHook(() => useChatStream());

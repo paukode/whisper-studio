@@ -158,13 +158,13 @@ function toastQueuedIntoReplacedTurn(): void {
 const midTurnInFlight = new Set<string>();
 
 
-/** A send refused before its stream opened. A leg still preparing for it (a
+/** A send refused before its stream opened. A leg still starting for it (a
  *  /file upload) ends with it, or the session would look busy with nothing
  *  running. */
 function refuseSend(sessionId: string | null | undefined): false {
   if (sessionId) {
     const chat = getChatStore(sessionId).getState();
-    if (chat.turnPhase === 'preparing') chat.finishStream();
+    if (chat.turnPhase === 'starting') chat.finishStream();
   }
   return false;
 }
@@ -584,7 +584,7 @@ export function useChatStream(): UseChatStreamReturn {
     // would refuse this anyway. Say what is actually happening instead of "no
     // longer running".
     const phase = getChatStore(activeSessionId).getState().turnPhase;
-    if (phase === 'approvedAction' || phase === 'preparing') {
+    if (phase === 'approvedAction' || phase === 'starting') {
       useUIStore.getState().addToast({
         type: 'error',
         message: phase === 'approvedAction'

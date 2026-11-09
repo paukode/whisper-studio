@@ -69,7 +69,7 @@ describe('useSlashCommands: /file:path question', () => {
     );
   });
 
-  it('shows the turn as preparing while the file uploads', async () => {
+  it('shows the turn as starting while the file uploads', async () => {
     let finishUpload: (v: { id: string; filename: string }) => void = () => {};
     const uploadWorkspaceFile = vi.fn(() => new Promise<{ id: string; filename: string }>((r) => { finishUpload = r; }));
     const send = vi.fn().mockResolvedValue(true);
@@ -82,7 +82,7 @@ describe('useSlashCommands: /file:path question', () => {
 
     result.current.handleSlashCommand('/file:src/App.tsx Explain');
 
-    expect(getChatStore('file-sess').getState().turnPhase).toBe('preparing');
+    expect(getChatStore('file-sess').getState().turnPhase).toBe('starting');
     expect(getChatStore('file-sess').getState().isStreaming).toBe(true);
     finishUpload({ id: 'att1', filename: 'App.tsx' });
     await waitFor(() => expect(send).toHaveBeenCalled());
