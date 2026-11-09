@@ -507,8 +507,9 @@
 
     <h2 id="preview">Live preview &amp; browser</h2>
     <p>A dev-server-plus-headless-browser session for building and checking web UIs. The 14 preview
-      tools are in the catalogue only while the <code>preview_tools</code> feature flag is on (its
-      default) and the Playwright and Chromium install is present; otherwise they are absent. The read-only
+      tools are always in the catalogue: <code>setup.sh</code> installs Playwright and Chromium, and
+      the Mac app includes them. If the browser is missing, each preview tool returns the repair step
+      (run <code>setup.sh</code> again, or install the app again). The read-only
       tools (logs, snapshots, inspection) run freely; anything that starts a server or drives the page
       follows the permission mode, except that a named <code class="path">.whisper/launch.json</code>
       config whose command you approved once starts without asking (see <code>preview_start</code>
