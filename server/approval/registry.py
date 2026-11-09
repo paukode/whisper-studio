@@ -41,12 +41,4 @@ def get(action: str) -> ApprovalSpec | None:
     return _REGISTRY.get(action)
 
 
-def all_categories() -> list[str]:
-    seen: list[str] = []
-    for spec in _REGISTRY.values():
-        if spec.category not in seen:
-            seen.append(spec.category)
-    return seen
-
-
-__all__ = ["register", "get", "all_categories"]
+__all__ = ["register", "get"]

@@ -257,10 +257,8 @@ def test_budget_below_the_floor_is_refused_before_launch(monkeypatch):
 
 
 def test_bypass_accepts_a_folder_outside_the_workspace(tmp_path, monkeypatch):
-    from server.security import folder_grants as fg
     from server.workflows import manager
 
-    monkeypatch.setattr(fg, "GRANTS_PATH", str(tmp_path / "grants.json"))
     ws = tmp_path / "ws"
     other = tmp_path / "elsewhere"
     ws.mkdir()
@@ -273,20 +271,6 @@ def test_bypass_accepts_a_folder_outside_the_workspace(tmp_path, monkeypatch):
     # Bypass never invents a folder.
     path, err = manager.resolve_workflow_workspace(str(tmp_path / "missing"), bypass=True)
     assert path is None and "does not exist" in err
-
-
-def test_is_bypass_follows_the_workflow_mode(monkeypatch):
-    from server.workflows import launch_policy
-
-    monkeypatch.setattr(
-        "server.security.permissions.load_permissions", lambda: {"mode": "bypassPermissions"}
-    )
-    assert launch_policy.is_bypass() is True
-    monkeypatch.setattr(
-        "server.security.permissions.load_permissions",
-        lambda: {"mode": "bypassPermissions", "category_modes": {"workflow": "default"}},
-    )
-    assert launch_policy.is_bypass() is False
 
 
 # 2. Blocking waits.

@@ -519,7 +519,7 @@ def workspace(tmp_path, monkeypatch):
     monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: str(ws))
     monkeypatch.setattr(
         "server.security.permissions.load_permissions",
-        lambda: {"mode": MODE_DEFAULT, "rules": [], "category_modes": {}},
+        lambda: {"mode": MODE_DEFAULT},
     )
     return ws
 
@@ -638,19 +638,6 @@ def test_a_delete_below_a_protected_root_is_not_the_hard_blocks():
 
     for command in ("rm -rf ~/old", "rm -rf /tmp/build", "rm -rf dist", "rm -rf $BUILD"):
         assert validate_command(command, secret_reads=True) is None, command
-
-
-def test_a_category_row_that_asks_keeps_the_rm_floor_in_bypass(monkeypatch, tmp_path):
-    ws = tmp_path / "project"
-    ws.mkdir()
-    monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: str(ws))
-    monkeypatch.setattr(
-        "server.security.permissions.load_permissions",
-        lambda: {"mode": MODE_BYPASS, "rules": [], "category_modes": {"cli": MODE_DEFAULT}},
-    )
-    payload = {"command": "rm -rf ~/old"}
-    assert approval_floor("ws_run_command", payload, "cli", MODE_BYPASS) == "rm"
-    assert _decide("rm -rf ~/old", mode=MODE_BYPASS) == "ask"
 
 
 def test_a_symlink_out_of_the_workspace_reads_as_outside(workspace, tmp_path):

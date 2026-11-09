@@ -171,18 +171,18 @@ def register_defaults() -> None:
     register_secret_read_approval()
 
     # Folder access, its own category so it is never covered by "Yes for all
-    # writes"/"all commands". Granting the app reach into a NEW folder outside
-    # the connected workspace is a distinct, durable decision (it persists
-    # across sessions), so it gets its own prompt and its own session bucket.
+    # writes"/"all commands". Opening a folder outside the connected workspace
+    # as the workspace follows the permission mode every time (nothing is
+    # remembered), with its own prompt and its own session bucket.
     register(
         "folder_access",
         ApprovalSpec(
             category="folder-access",
             preview="text",
-            summary=lambda p: f"Allow access to {p.get('path', '?')}",
+            summary=lambda p: f"Open {p.get('path', '?')} as the workspace",
             executor=_do_folder_access,
             risk_hint="medium",
-            payload_fields=["path", "reason", "create", "connect"],
+            payload_fields=["path", "reason", "create"],
         ),
     )
 

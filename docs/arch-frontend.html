@@ -255,7 +255,7 @@
         <tr><td><code>program_artifact</code></td><td>Stashes a generated mini-app/report so it attaches to the bottom of the settled assistant message as an artifact card.</td></tr>
         <tr><td><code>tool_result_truncated</code></td><td>Toasts that a tool's output was trimmed to a head+tail slice before reaching the model, linking to the full output in the result cache.</td></tr>
         <tr><td><code>auto_mode_breaker</code></td><td>Raises a persistent banner (not a toast) when auto mode's rolling-denial circuit breaker trips and falls back to asking, with a one-click resume.</td></tr>
-        <tr><td><code>security_blocked</code></td><td>Renders a card for a tool call the egress/security policy refused outright.</td></tr>
+        <tr><td><code>security_blocked</code></td><td>Renders a card for a tool call the security policy refused outright.</td></tr>
         <tr><td><code>error</code></td><td>Logs the backend's error text and appends it inline to the response instead of losing the partial answer.</td></tr>
         <tr><td><code>hook_blocked</code> / <code>stop_hook_block</code></td><td>Surfaces a <a href="arch-hooks.html">blocking hook</a>'s veto and the completion gate's reason for continuing the turn.</td></tr>
         <tr><td><code>skill_progress</code></td><td>A tool call's arguments are still streaming; the running step shows how much has arrived (<code>7.3 KB</code>, then <code>143 KB</code>) next to its spinner.</td></tr>

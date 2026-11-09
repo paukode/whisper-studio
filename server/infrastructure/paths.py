@@ -132,9 +132,9 @@ def app_storage_roots() -> list[str]:
 
 
 # The app's own grant and config files. Each one decides what the assistant
-# may do next (the permission rules, the MCP servers, the hooks and their
-# trust, the trusted skills, the folder grants, the connected workspace, the
-# enabled plugins, the scheduled jobs, the trusted preview commands), so the
+# may do next (the permission mode, the MCP servers, the hooks and their
+# trust, the trusted skills, the connected workspace, the enabled plugins,
+# the scheduled jobs, the trusted preview commands), so the
 # app storage rule above does not cover them: a tool write to one follows the
 # permission mode instead (server/security/permissions.py, the app-config
 # table), never the no-card allow the rest of the app's folder gets, and a
@@ -146,7 +146,6 @@ APP_CONFIG_FILES = (
     "hooks.json",
     "hooks_trust.json",
     "skills_config.json",
-    "folder_grants.json",
     "workspace_config.json",
     "plugins_config.json",
     "cron_jobs.json",

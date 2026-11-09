@@ -382,9 +382,7 @@ def _gate(monkeypatch, states, session_approvals):
     from server.approval.bootstrap import register_defaults
 
     register_defaults()
-    monkeypatch.setattr(
-        "server.security.permissions.load_permissions", lambda: {"mode": "default", "rules": []}
-    )
+    monkeypatch.setattr("server.security.permissions.load_permissions", lambda: {"mode": "default"})
     return asyncio.run(
         te.process_tool_results(
             states,

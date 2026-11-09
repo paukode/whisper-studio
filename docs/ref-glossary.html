@@ -437,15 +437,6 @@
             Settings, like chat (embed through its global profile). See <a href="tut-model-modes.html">Model modes</a> and
             <a href="ref-settings.html#model-selection">Settings &amp; config keys</a>.</td>
         </tr>
-        <tr>
-          <td>network egress policy</td>
-          <td>An opt-in, default-off restriction on what sandboxed commands can reach on the network:
-            a <code>network_policy.tier</code> of <code>permissive</code> (default, unrestricted),
-            <code>curated</code> (a seed allowlist plus your own additions), or <code>restrictive</code>
-            (only domains you add). Enforced by a local proxy that reads only the TLS ClientHello's SNI
-            hostname, never the traffic itself. See <a href="ref-security.html#egress">Security
-            model</a>.</td>
-        </tr>
       </tbody>
     </table></div>
 
@@ -483,8 +474,7 @@
             ask), <code>auto</code> (a classifier decides per call), <code>plan</code> (workspace
             writes hard-blocked, a proposal comes back), <code>acceptEdits</code> (edits auto-approve),
             <code>bypassPermissions</code> (no prompts), or <code>dontAsk</code> (reads allow, writes
-            silently deny). Per-tool rules decide only after the always-ask floors, Bypass and your
-            session approvals. These ask no matter what: destructive GitHub actions, an
+            silently deny). It is the only permission setting. These ask no matter what: destructive GitHub actions, an
             <code>rm</code>-class command that deletes outside the workspace and the app's own folders,
             a request to escape the sandbox, and a call to an MCP server marked
             <code>approve</code>. In <code>dontAsk</code>, a destructive GitHub action is denied

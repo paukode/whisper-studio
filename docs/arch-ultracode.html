@@ -149,8 +149,8 @@ return { confirmed: results.flat().filter(f =&gt; f.verdict?.isReal) }</code></p
       closed on a name the registry does not know.</p></li>
       <li><h4>A pinned workspace</h4><p>The run's root is frozen when it is previewed or launched, so every
         agent in it resolves workspace tools against that path rather than whatever folder happens to be
-        connected by the time it starts. An explicit path must already exist, and one outside the connected
-        workspace needs a folder grant. The preview card shows the path it will use.</p></li>
+        connected by the time it starts. An explicit path must already exist. Outside Bypass, it must be
+        inside the connected workspace. The preview card shows the path it will use.</p></li>
       <li><h4>A resumable journal</h4><p>Every phase and agent call is appended to the run's journal; the
         resume cache is built from it (see below).</p></li>
     </ol>
@@ -240,8 +240,8 @@ return { confirmed: results.flat().filter(f =&gt; f.verdict?.isReal) }</code></p
     <p><code>workflow_run</code> refuses a <code>budget_tokens</code> below 100,000 output tokens with a
       message, and the run does not start. A smaller budget ran out part way through a run. In the
       Bypass permission mode, a run may be pinned to any existing folder with
-      <code>workspace_path</code>, also a folder outside the connected workspace. In the other modes, a
-      folder outside the workspace still needs a folder grant first.</p>
+      <code>workspace_path</code>, also a folder outside the connected workspace. In the other modes,
+      open the folder with <code>ws_open_folder</code> first. Its card follows the mode.</p>
     <h3 id="deliverables">Deliverable verification</h3>
     <p>A script that produces files lists their paths in its return value under <code>deliverables</code> (strings, or
       <code>{path}</code> objects; relative paths resolve against the run's workspace), and
@@ -279,10 +279,8 @@ return { confirmed: results.flat().filter(f =&gt; f.verdict?.isReal) }</code></p
       later edited, since it is pinned by hash, and session grants are process memory that a restart
       clears. A resume replays a run you already approved. This preview-then-approve gate is the same
       mechanism the CI autofix below reuses.</p>
-    <p>Whether a new script shows the card at all is decided by the <b>Workflow runs</b> row under
-    Settings &rsaquo; Keys and permissions &rsaquo; Permissions &rsaquo; Per-Category Defaults
-    (<code class="path">server/workflows/launch_policy.py</code> reads the <code>category_modes</code>
-    entry, and uses the global permission mode when the row is "Use global setting"): <b>Bypass</b>
+    <p>The permission mode decides whether a new script shows the card
+    (<code class="path">server/workflows/launch_policy.py</code>): <b>Bypass</b>
     launches with no card, <b>Auto</b> launches runs budgeted within the 600,000-token default and
     shows the card for anything bigger, <b>Don't ask</b> declines the launch, and every other mode
     (Asks first, Plan, Accept edits) shows the card. Trusted saved
@@ -324,7 +322,7 @@ return { confirmed: results.flat().filter(f =&gt; f.verdict?.isReal) }</code></p
       <dt><code class="path">server/workflows/rpc.py</code> · <code class="path">agent_adapter.py</code></dt><dd>ndjson JSON-RPC framing; the <code>agent()</code>-to-<code>run_agent</code> seam.</dd>
       <dt><code class="path">server/workflows/manager.py</code> · <code class="path">journal.py</code> · <code class="path">store.py</code></dt><dd>Lifecycle + the <code>workflow_runs</code> row; the resumable journal; saved-workflow trust.</dd>
       <dt><code class="path">server/workflows/tools.py</code> · <code class="path">routes.py</code></dt><dd><code>workflow_run</code>, <code>workflow_status</code>, <code>workflow_save</code>, <code>workflow_list</code>, <code>workflow_delete</code>; <code>/api/workflows</code> launch (which is also where approving trusts), status, stop, and the per-run SSE stream.</dd>
-      <dt><code class="path">server/workflows/launch_policy.py</code></dt><dd>The category-mode gate for new-script launches: resolves the <code>workflow</code> entry in <code>category_modes</code> to launch, ask, or decline.</dd>
+      <dt><code class="path">server/workflows/launch_policy.py</code></dt><dd>The permission-mode gate for new-script launches: launch, ask, or decline.</dd>
       <dt><code class="path">server/prompts/ultracode.py</code></dt><dd>The script-authoring directive injected in the ultracode tier.</dd>
       <dt><code class="path">server/ci/</code></dt><dd>The CI watch + autofix loop that generates and runs workflows.</dd>
       <dt><code class="path">src/stores/workflowStore.ts</code> · <code class="path">components/chat/WorkflowPreviewCard.tsx</code> · <code class="path">WorkflowRunCard.tsx</code></dt><dd>The approval preview, the live run card, and the run store.</dd>

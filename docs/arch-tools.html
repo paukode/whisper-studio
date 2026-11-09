@@ -150,15 +150,12 @@
       hard floors (a destructive GitHub mutation, a delete that reaches outside the workspace and the
       app's folders, a request for <code>danger-full-access</code>, a visible terminal command
       outside bypass, an MCP server marked <code>approve</code>), a write to the app's own grant
-      and config files, a write under <code class="path">~/.whisper</code>, the per-category
-      override, <code>bypassPermissions</code> (which still asks for a save outside the workspace
-      and a reach into an ungranted folder), trusted-skill scripts, session approvals, custom rules,
-      an approved named <code>launch.json</code> preview, and finally the mode. The full order, with
+      and config files, a write under <code class="path">~/.whisper</code>,
+      <code>bypassPermissions</code> (which allows the rest, also outside the workspace),
+      trusted-skill scripts, session approvals, an approved named <code>launch.json</code> preview,
+      and finally the mode. The full order, with
       what each step does, is in <a href="arch-approval.html#decision-order">How a decision is
       resolved</a>.</p>
-    <p>Custom rules can carry an optional <code>justification</code> that is surfaced with the rule,
-      and <code>POST /api/permissions/rules/test</code> dry-runs a candidate rule against a sample
-      tool call before you commit it.</p>
     <p>An <code>allow</code> runs the action inline through the same <code>ApprovalSpec</code> executor
       the UI's Yes button uses, so there is a single execution path. A <code>deny</code> returns a
       "blocked by user" result. Anything else emits an <code>approval_request</code> event (optionally

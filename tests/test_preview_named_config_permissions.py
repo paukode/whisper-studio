@@ -4,9 +4,9 @@ The user's rule: whatever permission mode is selected, a preview should be
 allowed to start. It covers a preview_start that names a launch config, so the
 command comes wholly from launch.json, once a person has approved that command
 (tests/test_preview_launch_trust.py covers how trust is earned and lost); an
-ad-hoc runtimeExecutable/runtimeArgs call keeps following the mode. Explicit
-denies (a custom rule, a session "No for all" on the preview category) still
-refuse a named config outside bypass, and the hard floors are checked against
+ad-hoc runtimeExecutable/runtimeArgs call keeps following the mode. A session
+"No for all" on the preview category still refuses a named config outside
+bypass, and the hard floors are checked against
 the command the config resolves to, including inside a shell's -c script.
 
 The tests write a real launch.json into a temporary workspace, drive the real
@@ -121,8 +121,8 @@ def trusted(workspace):
 
 @pytest.fixture
 def perms(monkeypatch):
-    """Set the persisted permissions the resolver reads (rules, category_modes)."""
-    state = {"mode": MODE_DEFAULT, "rules": [], "category_modes": {}}
+    """Set the persisted permission mode."""
+    state = {"mode": MODE_DEFAULT}
     monkeypatch.setattr("server.security.permissions.load_permissions", lambda: dict(state))
     return state
 
@@ -210,15 +210,6 @@ def test_a_named_config_starts_without_a_prompt_or_the_classifier(
     assert classifier.await_count == 0
 
 
-@pytest.mark.parametrize("category_mode", ALL_MODES)
-def test_a_preview_category_mode_does_not_block_a_named_config(
-    category_mode, trusted, perms, spawn, classifier
-):
-    perms["category_modes"] = {"preview": category_mode}
-    for global_mode in (MODE_DEFAULT, MODE_BYPASS):
-        assert _decide(global_mode, session_name="dev") == "allow"
-
-
 def test_a_named_config_starts_on_an_on_device_turn_in_auto_mode(trusted, perms, spawn):
     # Local turns pass an empty tool-exec model id, where auto mode cannot
     # classify and would fall back to asking.
@@ -266,13 +257,7 @@ def test_an_ad_hoc_command_still_reaches_the_auto_classifier(workspace, perms, s
     assert classifier.await_count == 1
 
 
-# ── Explicit denies still win ─────────────────────────────────────────────────
-
-
-@pytest.mark.parametrize("mode", MODES_THAT_HONOR_DENIES)
-def test_a_deny_rule_refuses_a_named_config(mode, trusted, perms):
-    perms["rules"] = [{"tool": "preview_start", "pattern": "*", "action": "deny"}]
-    assert _decide(mode, session_name="dev") == "deny"
+# ── A session No for all still wins ─────────────────────────────────────────────────
 
 
 @pytest.mark.parametrize("mode", MODES_THAT_HONOR_DENIES)
@@ -286,13 +271,7 @@ def test_a_session_no_for_all_refuses_a_named_config(mode, trusted, perms, spawn
     assert content.startswith("[Denied by session rule]")
 
 
-def test_an_ask_rule_the_user_wrote_keeps_asking(trusted, perms):
-    perms["rules"] = [{"tool": "preview_start", "pattern": "*", "action": "ask"}]
-    assert _decide(MODE_DONT_ASK, session_name="dev") == "ask"
-
-
 def test_bypass_treats_a_named_config_like_any_other_call(trusted, perms):
-    perms["rules"] = [{"tool": "preview_start", "pattern": "*", "action": "deny"}]
     named = _decide(MODE_BYPASS, session_name="dev")
     adhoc = _decide(MODE_BYPASS, session_name="dev", runtimeExecutable="npm")
     assert named == adhoc
@@ -469,15 +448,6 @@ def test_earlier_denials_still_hold_back_a_named_config_that_asks(
     state = _after_denials(monkeypatch, {"session_name": name})
     assert state.status == "skipped"
     assert state.output.startswith("[Denied]")
-
-
-@pytest.mark.parametrize("action", ["ask", "deny"])
-def test_earlier_denials_still_hold_back_a_named_config_a_rule_asks_for(
-    action, trusted, perms, monkeypatch
-):
-    perms["rules"] = [{"tool": "preview_start", "pattern": "*", "action": action}]
-    state = _after_denials(monkeypatch, {"session_name": "dev"})
-    assert state.status == "skipped"
 
 
 def test_earlier_denials_still_hold_back_a_config_not_approved_yet(workspace, perms, monkeypatch):

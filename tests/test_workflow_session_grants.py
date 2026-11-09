@@ -191,16 +191,16 @@ def test_editing_the_script_brings_the_card_back():
 
 
 def test_grant_beats_dontask_like_other_session_approvals(monkeypatch):
-    # A category mode of dontAsk declines NEW scripts, but a script the user
-    # already approved this session launches — same precedence as the
-    # category-approval system, where a session "allow" beats dontAsk.
+    # The Don't ask mode declines NEW scripts, but a script the user already
+    # approved this session launches: the same precedence as the session
+    # approvals, where a session "allow" beats dontAsk.
     from server.security import permissions as P
 
     _client().post("/api/workflows/runs", json={"script": _NOOP, "session_id": "s1"})
     monkeypatch.setattr(
         P,
         "load_permissions",
-        lambda: {"mode": "default", "rules": [], "category_modes": {"workflow": "dontAsk"}},
+        lambda: {"mode": "dontAsk"},
     )
     out, side = _run_tool({"script": _NOOP}, "s1")
     assert json.loads(out)["session_approved"] is True

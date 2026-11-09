@@ -29,8 +29,8 @@
       <div id="sandbox-diagram" class="diagram"></div>
       <figcaption>A shell command's route to execution. A gated action pauses for approval first; the
         command validator then re-checks it once approved, as defense-in-depth rather than a pre-filter.
-        The sandbox is the layer that actually contains the subprocess. Network stays open by default,
-        with an opt-in egress policy to restrict it.</figcaption>
+        The sandbox is the layer that actually contains the subprocess. The network stays
+        open.</figcaption>
     </figure>
 
     <h2 id="the-sandbox">The sandbox, and everything it wraps</h2>
@@ -46,8 +46,8 @@
         <tr><td><code>build_pty_sandbox_wrap</code></td><td>Wraps a long-lived PTY</td><td>The hidden <code>terminal_run</code> shell and preview dev servers.</td></tr>
       </tbody>
     </table></div>
-    <p><code>popen_sandboxed</code> gives its child the same scrubbed environment, the same egress
-      proxy variables, and the same network rules as <code>run_sandboxed</code>. The interactive PTY
+    <p><code>popen_sandboxed</code> gives its child the same scrubbed environment as
+      <code>run_sandboxed</code>. The interactive PTY
       runs under the identical deny-list as a one-shot command. In workspace-write mode, the write
       root of that shell is the connected workspace, not the folder where the shell starts. With no
       workspace, the shell writes only in its scratch folder and the temporary folders.</p>
@@ -68,7 +68,7 @@
       <code class="path">server/security/bypass_sandbox.py</code>. When the scope is on, they run
       <code>/bin/sh -c "..."</code> directly. They write no profile, and they do not need
       <code>sandbox-exec</code>. The environment does not change: the GitHub tokens stay removed,
-      and the egress proxy variables and the scratch package caches stay as they are.</p>
+      and the scratch package caches stay as they are.</p>
     <p>These commands run with no sandbox in a Bypass turn:</p>
     <ul>
       <li><code>ws_run_command</code>, also its read-only path, its 30 s handoff, and its background
@@ -291,10 +291,9 @@
     <p>Because the default is <em>allow</em>, two things follow directly, and both are accepted on
       purpose:</p>
     <ul>
-      <li><b>Network is unrestricted by default.</b> Sandboxed <code>git</code>, <code>npm</code>,
-        <code>pip</code>, <code>aws</code>, and build commands all need the network to function, so the
-        default (permissive) tier leaves it open. Users who want less can opt into the
-        <a href="#egress-policy">network egress policy</a> below.</li>
+      <li><b>The network is open.</b> Sandboxed <code>git</code>, <code>npm</code>,
+        <code>pip</code>, <code>aws</code>, and build commands need the network, so the sandbox
+        does not limit it.</li>
       <li><b>Reads of non-listed secrets are not blocked.</b> The deny-list is broad but not
         exhaustive - a secret file that is not on <code>_DENIED_PATHS</code> can still be read.</li>
     </ul>
@@ -303,36 +302,6 @@
       the boundary you trust <em>last</em>: it does not try to be a jail, it guarantees the
       high-value secret stores stay unwritable even if every layer in front of it is defeated. They
       also stay unreadable, unless the session is in Bypass or a person approved the read.</p>
-
-    <h2 id="egress-policy">The network egress policy (opt-in)</h2>
-    <p>Since the sandbox itself leaves the network open, an opt-in egress policy
-      (<code class="path">server/security/egress_policy.py</code>) restricts <em>where</em> a
-      sandboxed command can send bytes. It is stored in <code>permissions.json</code> under
-      <code>network_policy</code> and is off by default. You set it in Settings &gt; Keys and
-      permissions &gt; Permissions &gt; Sandbox Network Policy, which has three controls: Tier,
-      Custom allowed domains, and Safe methods only.</p>
-    <div class="table-wrap"><table>
-      <thead><tr><th>Tier</th><th>Meaning</th></tr></thead>
-      <tbody>
-        <tr><td><code>permissive</code></td><td>No restriction, no proxy. The default.</td></tr>
-        <tr><td><code>curated</code></td><td>A seed allowlist of common package-registry, docs, and API domains, plus any <code>custom_allowed_domains</code> the user adds.</td></tr>
-        <tr><td><code>restrictive</code></td><td>Nothing outbound except the user's own <code>custom_allowed_domains</code>.</td></tr>
-      </tbody>
-    </table></div>
-    <p>Enforcement is an SNI-filtering local TCP proxy that never terminates TLS. The one handshake
-      message every TLS client sends in cleartext, the ClientHello, carries the destination hostname
-      in its SNI extension; the proxy parses just that, checks the hostname against the active tier's
-      allowlist, and either relays the raw bytes transparently or refuses the connection. No key
-      material, no decryption. The proxy is injected into <code>run_sandboxed</code>'s environment
-      via <code>HTTPS_PROXY</code> / <code>HTTP_PROXY</code>, which well-behaved HTTP clients honor
-      voluntarily - so a non-permissive tier <em>also</em> appends
-      <code>(deny network-outbound (remote ip "*:443"))</code> and <code>"*:80"</code> rules to the
-      sandbox profile, forcing raw-socket traffic through the kernel boundary rather than merely
-      asking nicely.</p>
-    <p>Two documented limitations: <code>methods_only_safe</code> (block POST/PUT/PATCH/DELETE even
-      to allowed domains) can only be enforced on plaintext HTTP, since the method of HTTPS traffic
-      lives inside the encrypted tunnel; and DNS on port 53 is neither restricted nor inspected, so
-      DNS-based exfiltration is out of scope.</p>
 
     <h2 id="layers-in-front">Layers in front (defence-in-depth)</h2>
     <p>Before a command reaches the sandbox, several cheaper checks catch the easy cases. It is worth
@@ -441,7 +410,6 @@
     <div class="spec">
       <dt><code class="path">server/sandbox.py</code></dt><dd><code>run_sandboxed</code> and <code>popen_sandboxed</code>, <code>build_pty_sandbox_wrap</code>, the three write modes, and the profile generator.</dd>
       <dt><code class="path">server/security/sensitive_env.py</code></dt><dd>The credential environment denylist shared by sandboxed shells and MCP child processes.</dd>
-      <dt><code class="path">server/security/egress_policy.py</code></dt><dd>The opt-in network egress tiers and the SNI-filtering local proxy.</dd>
       <dt><code class="path">server/security/sensitive_paths.py</code></dt><dd>The single source of truth for the secret-path deny-list, shaped for both consumers.</dd>
       <dt><code class="path">server/security/bypass_sandbox.py</code></dt><dd>The scope that runs the commands of a Bypass turn with no sandbox, and who sets it.</dd>
       <dt><code class="path">server/security/secret_reads.py</code></dt><dd>The policy for reads of the credential stores, per permission mode.</dd>

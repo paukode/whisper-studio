@@ -58,9 +58,7 @@ def workspace(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "server.workspace.state.load_workspace_config", lambda: {"path": str(tmp_path)}
     )
-    monkeypatch.setattr(
-        "server.security.permissions.load_permissions", lambda: {"mode": "default", "rules": []}
-    )
+    monkeypatch.setattr("server.security.permissions.load_permissions", lambda: {"mode": "default"})
     return tmp_path
 
 

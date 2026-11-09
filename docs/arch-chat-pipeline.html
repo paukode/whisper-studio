@@ -250,7 +250,7 @@
         tool runs on its own. So <code>[read, read, write, read]</code> becomes
         <code>[[read, read], [write], [read]]</code>.</li>
       <li><b>Permission checks.</b> Every tool is evaluated against the current
-        <a href="arch-approval.html">permission mode</a> and per-tool rules: allow, ask, or deny.</li>
+        <a href="arch-approval.html">permission mode</a>: allow, ask, or deny.</li>
       <li><b>Approval gate.</b> A tool that needs consent pauses the turn (state is
         stashed in the unified pause store, <code class="path">server/chat/engine/pause.py</code>, keyed
         by session), and waits for the client to confirm.</li>

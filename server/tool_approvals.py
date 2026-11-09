@@ -275,13 +275,12 @@ async def gate_approval(
 
     # Precedence: the hard floors (github-destructive, MCP-approve, and
     # outside bypass a delete outside the workspace, sandbox escalation, a
-    # visible terminal run), app storage, category mode override,
-    # bypassPermissions (allows the rest, anywhere), trusted skill, session
-    # approvals, custom rules, approved launch.json preview (allow), dontAsk,
-    # acceptEdits, auto (classifier), ask. See
+    # visible terminal run), app storage, bypassPermissions (allows the rest,
+    # anywhere), trusted skill, session approvals, approved launch.json
+    # preview (allow), dontAsk, acceptEdits, auto (classifier), ask. See
     # server.security.permissions.resolve_static_decision.
     if secret == "ask":
-        # Not the classifier, a session approval or a rule: a person, each time.
+        # Not the classifier or a session approval: a person, each time.
         decision = "ask"
     else:
         decision = resolve_static_decision(
