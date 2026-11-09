@@ -178,19 +178,24 @@ export interface ChatMessage {
    * and 2+ questions stacked into one form with a single submit. Both fields
    * can coexist for back-compat — the renderer prefers `userQuestions` when it
    * has at least one entry. `answered` is persisted on submit so a re-render
-   * or session restore keeps the card disabled (no duplicate continuation).
+   * or session restore keeps the card disabled (no duplicate continuation),
+   * and `answer` holds what the user answered: later turns send the model
+   * each question with its answer (chatStream/history.ts), so it does not
+   * ask again.
    */
   userQuestion?: {
     question: string;
     options: string[];
     toolUseId: string;
     answered?: boolean;
+    answer?: string;
   };
   userQuestions?: Array<{
     question: string;
     options: string[];
     toolUseId: string;
     answered?: boolean;
+    answer?: string;
   }>;
   /** On the message that carries a question card or a workspace-folder
    *  prompt: the settings of the turn that paused on it. The answer resumes

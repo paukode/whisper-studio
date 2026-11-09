@@ -287,6 +287,32 @@ def _task_report_prompt_view(msg: dict) -> dict:
     }
 
 
+def _question_cards_prompt_view(msg: dict) -> dict:
+    """An assistant row that carries question cards (ask_user_question): the
+    model reads each question with the user's answer, or that it has none,
+    after the prose of the row. Without this the row reads as an empty reply,
+    and the model asks the same question again in the next turn."""
+    lines = []
+    for q in msg.get("userQuestions") or []:
+        if not isinstance(q, dict):
+            continue
+        line = f'[You asked with ask_user_question: "{q.get("question") or ""}"'
+        options = "; ".join(str(o) for o in q.get("options") or [])
+        if options:
+            line += f" (options: {options})"
+        answer = q.get("answer")
+        if answer:
+            line += f'. The user answered: "{answer}"]'
+        elif q.get("answered"):
+            line += ". The user answered it.]"
+        else:
+            line += ". The user did not answer it.]"
+        lines.append(line)
+    content = msg.get("content")
+    text = content.strip() if isinstance(content, str) else ""
+    return {**msg, "content": "\n\n".join(p for p in (text, *lines) if p)}
+
+
 def visible_chat_history(history: list[dict]) -> list[dict]:
     """Drop non-prompt roles before building a Bedrock request.
 
@@ -294,7 +320,8 @@ def visible_chat_history(history: list[dict]) -> list[dict]:
     chat renders it on resume, but it must not enter Claude's context.
     session_message is the one exception: it's UI-only in storage (see
     PROMPT_ROLES) but IS meant to reach the model, so it's translated into a
-    user turn rather than dropped.
+    user turn rather than dropped. An assistant row with question cards gets
+    the questions and their answers as text (_question_cards_prompt_view).
     """
     if not history:
         return history
@@ -310,7 +337,7 @@ def visible_chat_history(history: list[dict]) -> list[dict]:
         if role == "compact_summary":
             out.append({"role": "user", "content": m.get("content", "")})
         elif role in PROMPT_ROLES:
-            out.append(m)
+            out.append(_question_cards_prompt_view(m) if m.get("userQuestions") else m)
         elif role == "session_message":
             out.append(_session_message_prompt_view(m))
         elif role == "agent_report":

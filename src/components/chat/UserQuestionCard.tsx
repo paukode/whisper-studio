@@ -80,10 +80,10 @@ export const UserQuestionCard: React.FC<{
   // a proper tool_result for the ask_user_question tool_use, not a fresh user
   // message that leaves the tool_use unmatched.
   const submitAnswer = useCallback((answer: string) => {
-    const toolUseId = message.userQuestion?.toolUseId ?? '';
-    void answerPausedTurn(sessionId, [{ tool_use_id: toolUseId, content: answer }], (answered) => {
+    const answers = [{ tool_use_id: message.userQuestion?.toolUseId ?? '', content: answer }];
+    void answerPausedTurn(sessionId, answers, (answered) => {
       setSelectedOption(answered ? answer : null);
-      markQuestionsAnswered(sessionId, [toolUseId], answered);
+      markQuestionsAnswered(sessionId, answers, answered);
     });
   }, [message, sessionId]);
 
@@ -251,16 +251,12 @@ export const UserQuestionGroupCard: React.FC<{ message: ChatMessageType }> = ({ 
   // answered; a refused resume re-enables the card (answerPausedTurn).
   const submit = useCallback((finalAnswers: Record<string, string>) => {
     if (submittedRef.current) return;
-    const ids = questions.map((q) => q.toolUseId);
-    void answerPausedTurn(
-      sessionId,
-      questions.map((q) => ({ tool_use_id: q.toolUseId, content: finalAnswers[q.toolUseId] ?? '' })),
-      (answered) => {
-        submittedRef.current = answered;
-        setSubmitted(answered);
-        markQuestionsAnswered(sessionId, ids, answered);
-      },
-    );
+    const batch = questions.map((q) => ({ tool_use_id: q.toolUseId, content: finalAnswers[q.toolUseId] ?? '' }));
+    void answerPausedTurn(sessionId, batch, (answered) => {
+      submittedRef.current = answered;
+      setSubmitted(answered);
+      markQuestionsAnswered(sessionId, batch, answered);
+    });
   }, [questions, sessionId]);
 
   const setAnswer = useCallback((toolUseId: string, value: string) => {

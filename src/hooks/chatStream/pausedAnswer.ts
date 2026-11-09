@@ -39,28 +39,30 @@ export async function answerPausedTurn(
   return resumed;
 }
 
-/** Set `answered` on the question rows asking these tool calls, in the
- *  owning session's transcript, so the card keeps its state across a
- *  re-render or a restore. */
+/** Record on the question rows asking these tool calls, in the owning
+ *  session's transcript, whether they are answered and with what. The card
+ *  keeps its state across a re-render or a restore, and later turns send the
+ *  model each question with its answer (history.ts). */
 export function markQuestionsAnswered(
   sessionId: string | null,
-  toolUseIds: readonly string[],
+  answers: readonly PausedAnswer[],
   answered: boolean,
 ): void {
   const chat = getChatStore(sessionId).getState();
-  const ids = new Set(toolUseIds);
+  const byId = new Map(answers.map((a) => [a.tool_use_id, a.content]));
+  const mark = <Q extends { toolUseId: string }>(q: Q): Q =>
+    byId.has(q.toolUseId)
+      ? { ...q, answered, answer: answered ? byId.get(q.toolUseId) : undefined }
+      : q;
   let changed = false;
   const messages = chat.messages.map((m) => {
-    if (m.userQuestions?.some((q) => ids.has(q.toolUseId))) {
+    if (m.userQuestions?.some((q) => byId.has(q.toolUseId))) {
       changed = true;
-      return {
-        ...m,
-        userQuestions: m.userQuestions.map((q) => (ids.has(q.toolUseId) ? { ...q, answered } : q)),
-      };
+      return { ...m, userQuestions: m.userQuestions.map(mark) };
     }
-    if (m.userQuestion && ids.has(m.userQuestion.toolUseId)) {
+    if (m.userQuestion && byId.has(m.userQuestion.toolUseId)) {
       changed = true;
-      return { ...m, userQuestion: { ...m.userQuestion, answered } };
+      return { ...m, userQuestion: mark(m.userQuestion) };
     }
     return m;
   });
