@@ -130,8 +130,8 @@ for Claude and GPT on Bedrock. For Bedrock, click the gear icon to set your
 **Bedrock Region**:
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/img/settings-api-keys-dark.png">
-  <img src="docs/assets/img/settings-api-keys.png" alt="Settings on the General tab, showing Bedrock Region">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/img/settings-general-dark.png">
+  <img src="docs/assets/img/settings-general.png" alt="Settings on the General tab, showing Bedrock Region">
 </picture>
 
 Pick the model in the **How it thinks** chip in the composer (its **Model** row)
