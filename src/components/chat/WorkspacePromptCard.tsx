@@ -3,6 +3,8 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useUIStore } from '@/stores/uiStore';
 import { reportConnectWarnings, settleWorkspaceOps, syncWorkspaceStatus } from '@/services/workspaceConnection';
 import { ICON } from '@/components/chat/activityIcons';
+import { useSessionStore } from '@/stores/sessionStore';
+import { answerPausedTurn } from '@/hooks/chatStream/pausedAnswer';
 
 export interface WorkspacePromptCardProps {
   suggested: string;
@@ -15,19 +17,6 @@ export interface WorkspacePromptCardProps {
    *  treated as a brand-new chat message, not a continuation, and never
    *  reaches the paused turn. */
   toolUseId: string;
-}
-
-/** Dispatch a resume for a paused tool_use block via the SAME mechanism
- *  UserQuestionCard already uses successfully: an `answers` array
- *  ({tool_use_id, content}), which useComposerChatEvents routes through
- *  chatStream.send('', {approvedToolResult: ...}), the only path that
- *  reaches server/chat/routes.py's approved_tool_result branch and restores
- *  the stashed paused-turn state. A bare `answer` string is treated as a
- *  brand new chat message instead, which never resumes anything. */
-function dispatchResume(toolUseId: string, content: string): void {
-  window.dispatchEvent(new CustomEvent('whisper-submit-answer', {
-    detail: { answers: [{ tool_use_id: toolUseId, content }] },
-  }));
 }
 
 /**
@@ -53,6 +42,19 @@ export const WorkspacePromptCard: React.FC<WorkspacePromptCardProps> = ({
 }) => {
   const [isBusy, setIsBusy] = useState(false);
   const [resolved, setResolved] = useState<string | null>(null);
+  // The session that owns this card: the resume goes there even if the user
+  // switches sessions while the folder picker is open.
+  const sessionId = useSessionStore((s) => s.currentSessionId);
+
+  // Resume the paused tool call the way every card does (answerPausedTurn).
+  // A refused resume gives the card back so the user can answer again.
+  const resume = useCallback((content: string) => {
+    void answerPausedTurn(sessionId, [{ tool_use_id: toolUseId, content }], (answered) => {
+      if (answered) return;
+      setResolved(null);
+      setIsBusy(false);
+    });
+  }, [sessionId, toolUseId]);
   const [error, setError] = useState<string | null>(null);
 
   // Re-read the authoritative workspace the moment this card appears. The
@@ -125,8 +127,7 @@ export const WorkspacePromptCard: React.FC<WorkspacePromptCardProps> = ({
       // tool already wrote the file": soft wording ("Please proceed with
       // creating the files") let some responses reply "Done!" without
       // re-issuing the write tool, and the file never landed on disk.
-      dispatchResume(
-        toolUseId,
+      resume(
         `Workspace connected to ${root}. ` +
           `IMPORTANT: the original tool call did NOT execute: ` +
           `no workspace was connected at the time. ` +
@@ -137,7 +138,7 @@ export const WorkspacePromptCard: React.FC<WorkspacePromptCardProps> = ({
       setError('Could not reach the backend.');
       setIsBusy(false);
     }
-  }, [toolUseId]);
+  }, [resume]);
 
   const handleBrowse = useCallback(async () => {
     setIsBusy(true);
@@ -167,12 +168,11 @@ export const WorkspacePromptCard: React.FC<WorkspacePromptCardProps> = ({
   const handleDecline = useCallback(() => {
     setIsBusy(true);
     setResolved('');
-    dispatchResume(
-      toolUseId,
+    resume(
       `The user declined to connect a workspace. The original tool call did NOT execute. ` +
         `Do not retry it as-is. Say what you needed and let the user decide.`,
     );
-  }, [toolUseId]);
+  }, [resume]);
 
   const recentPaths = recent.filter(p => p !== suggested);
 

@@ -1,11 +1,11 @@
 /**
- * WorkspacePromptCard's resume mechanism must dispatch the `answers` array
- * shape ({tool_use_id, content}), not a bare `answer` string — only the
- * former is routed by useComposerChatEvents through
- * chatStream.send('', {approvedToolResult}), the sole path that reaches
- * server/chat/routes.py's approved_tool_result branch and restores the
- * stashed paused-turn state. A bare string is treated as a brand new chat
- * message and never resumes anything (see sseStream.ts / tool_executor.py).
+ * WorkspacePromptCard's resume must send the `answers` array shape
+ * ({tool_use_id, content}), not a bare `answer` string: only the former goes
+ * through sendChatTurn('', {approvedToolResult}) (hooks/chatStream/pausedAnswer),
+ * the sole path that reaches server/chat/routes.py's approved_tool_result
+ * branch and restores the stashed paused-turn state. A bare string is treated
+ * as a brand new chat message and never resumes anything (see sseStream.ts /
+ * tool_executor.py).
  *
  * This card only handles the workspace-connect flow for a modify or delete
  * with no workspace connected. One-off file saves resolve their destination
@@ -18,12 +18,20 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { WorkspacePromptCard } from './WorkspacePromptCard';
 import { useUIStore } from '@/stores/uiStore';
 
-function captureResumeEvents(): Array<{ answer?: string; answers?: Array<{ tool_use_id: string; content: string }> }> {
-  const captured: Array<{ answer?: string; answers?: Array<{ tool_use_id: string; content: string }> }> = [];
-  const handler = (e: Event) => {
-    captured.push((e as CustomEvent).detail);
-  };
-  window.addEventListener('whisper-submit-answer', handler);
+type Answers = Array<{ tool_use_id: string; content: string }>;
+
+// Patched where pausedAnswer reads it: the card resumes through sendChatTurn.
+const sendChatTurn = vi.hoisted(() => vi.fn());
+vi.mock('@/hooks/useChatStream', () => ({ sendChatTurn }));
+
+/** What each resume sent; `resumed` is what sendChatTurn answers. */
+function captureResumeEvents(resumed = true): Array<{ answer?: string; answers?: Answers }> {
+  const captured: Array<{ answer?: string; answers?: Answers }> = [];
+  sendChatTurn.mockReset();
+  sendChatTurn.mockImplementation(async (_q: string, opts: { approvedToolResult: Answers }) => {
+    captured.push({ answers: opts.approvedToolResult });
+    return resumed;
+  });
   return captured;
 }
 
@@ -120,5 +128,19 @@ describe('WorkspacePromptCard', () => {
     fireEvent.click(getByText('/gone'));
 
     expect(await findByText('Directory not found: /gone')).toBeTruthy();
+  });
+
+  it('a refused resume gives the card back so the user can answer again', async () => {
+    // Refused before the server ran it (the parallel ceiling, declined
+    // consent): a card stuck on "connected" would strand the paused turn.
+    const captured = captureResumeEvents(false);
+    const { getByText, getByRole } = render(
+      <WorkspacePromptCard suggested="/Users/me/Projects/site" recent={[]} toolUseId="tu_x" />,
+    );
+
+    fireEvent.click(getByRole('button', { name: /not now/i }));
+
+    await waitFor(() => expect(captured).toHaveLength(1));
+    await waitFor(() => expect(getByText('/Users/me/Projects/site').closest('button')).toBeEnabled());
   });
 });

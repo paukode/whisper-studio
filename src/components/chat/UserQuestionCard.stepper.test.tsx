@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { act, fireEvent, render, screen } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { UserQuestionGroupCard } from './UserQuestionCard';
 import type { ChatMessage as ChatMessageType } from '@/types/chat';
 import { getActiveChatStore } from '@/stores/sessionRuntimes';
@@ -11,6 +11,10 @@ import { getActiveChatStore } from '@/stores/sessionRuntimes';
  * second question could never be answered.
  */
 type Answer = { tool_use_id: string; content: string };
+
+// Patched where pausedAnswer reads it: every card resumes through sendChatTurn.
+const sendChatTurn = vi.hoisted(() => vi.fn());
+vi.mock('@/hooks/useChatStream', () => ({ sendChatTurn }));
 
 const twoQuestions = (): ChatMessageType => ({
   role: 'assistant',
@@ -31,17 +35,14 @@ const oneQuestion = (): ChatMessageType => ({
 
 describe('UserQuestionGroupCard stepper', () => {
   const submits: Answer[][] = [];
-  const onSubmit = (e: Event) => {
-    submits.push(((e as CustomEvent).detail as { answers: Answer[] }).answers);
-  };
 
   beforeEach(() => {
     submits.length = 0;
-    window.addEventListener('whisper-submit-answer', onSubmit);
-  });
-
-  afterEach(() => {
-    window.removeEventListener('whisper-submit-answer', onSubmit);
+    sendChatTurn.mockReset();
+    sendChatTurn.mockImplementation(async (_q: string, opts: { approvedToolResult: Answer[] }) => {
+      submits.push(opts.approvedToolResult);
+      return true;
+    });
   });
 
   it('shows one question at a time, with a tab per question', () => {
@@ -137,5 +138,25 @@ describe('UserQuestionGroupCard stepper', () => {
     expect(screen.queryByRole('button', { name: 'Next' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'pg' }));
     expect(submits).toEqual([[{ tool_use_id: 'tu_solo', content: 'pg' }]]);
+  });
+
+  it('a refused resume gives the card back, unanswered, so the user can answer again', async () => {
+    // The send was refused before the server ran it (the parallel ceiling,
+    // declined consent): a card left "Submitted" would strand the turn.
+    sendChatTurn.mockImplementation(async (_q: string, opts: { approvedToolResult: Answer[] }) => {
+      submits.push(opts.approvedToolResult);
+      return false;
+    });
+    const message = oneQuestion();
+    getActiveChatStore().getState().setMessages([message]);
+    render(<UserQuestionGroupCard message={message} />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'pg' }));
+    });
+
+    expect(submits).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'sqlite' })).toBeEnabled();
+    expect(getActiveChatStore().getState().messages[0].userQuestions?.[0].answered).toBe(false);
   });
 });
