@@ -27,13 +27,12 @@ export async function startPreviewSession(name: string, sessionId: string): Prom
 }
 
 /**
- * Stop a preview session (kills the dev server + its browser). With
- * `sessionId` (the Live pane) the backend stops it only when that chat owns
- * it; without (the Settings kill switch) it stops any preview.
+ * Stop a preview session (kills the dev server + its browser). The backend
+ * stops it only when the chat `sessionId` owns it; quitting the app stops
+ * every preview.
  */
-export async function stopPreviewSession(name: string, sessionId?: string): Promise<void> {
-  const query = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : '';
-  await del(`/api/preview/sessions/${encodeURIComponent(name)}${query}`);
+export async function stopPreviewSession(name: string, sessionId: string): Promise<void> {
+  await del(`/api/preview/sessions/${encodeURIComponent(name)}?session_id=${encodeURIComponent(sessionId)}`);
 }
 
 /**
