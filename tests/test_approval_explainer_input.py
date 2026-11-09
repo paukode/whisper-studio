@@ -31,7 +31,7 @@ class _State:
 def _explained_input(monkeypatch, payload: dict, mode: str) -> dict:
     monkeypatch.setattr(
         "server.security.permissions.load_permissions",
-        lambda: {"mode": mode, "rules": []},
+        lambda: {"mode": mode},
     )
     explain = AsyncMock(return_value=None)
     monkeypatch.setattr("server.tool_approvals.explain_permission", explain)

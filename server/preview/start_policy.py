@@ -26,10 +26,9 @@ here once:
     it (``rm -rf dist`` before a build) is an ordinary command.
   - ``server.security.permissions.resolve_static_decision`` lets a trusted
     named config stand in for the mode's own default (``starts_without_approval``),
-    after the floors, bypass, session approvals and custom rules. The global
-    mode, a per-category mode for ``preview``, plan mode, dontAsk and auto (no
-    classifier call) all yield to it; outside bypass, an explicit deny rule or
-    a session "No for all" on the preview category still refuses it.
+    after the floors, bypass and session approvals. The mode, plan mode,
+    dontAsk and auto (no classifier call) all yield to it; outside bypass, a
+    session "No for all" on the preview category still refuses it.
   - ``server.tool_executor.execute_tool_batch`` does not hold a call back on
     the per-tool denial counter when it will start with no card at all
     (``never_prompts``).
@@ -193,17 +192,14 @@ def starts_without_approval(tool_name: str, tool_input: dict) -> bool:
 
 
 def _nothing_else_asks(tool_name: str, tool_input: dict) -> bool:
-    from server.security.permissions import approval_floor, evaluate_rules
+    from server.security.permissions import approval_floor
 
-    if approval_floor(tool_name, tool_input, PREVIEW_CATEGORY) is not None:
-        return False
-    return evaluate_rules(tool_name, tool_input) in (None, "allow")
+    return approval_floor(tool_name, tool_input, PREVIEW_CATEGORY) is None
 
 
 def never_prompts(tool_name: str, tool_input: dict) -> bool:
     """True when this call, as the model made it, starts with no card in any
-    mode: trusted, no hard floor, and no rule of the user's that asks or
-    denies. The per-tool denial counter counts refused cards, so it must not
+    mode: trusted and no hard floor. The per-tool denial counter counts refused cards, so it must not
     hold back a call that never shows one, and must keep holding back one that
     does. It runs before dispatch, so the call is pinned here the way the
     preview router will pin it."""

@@ -1,12 +1,10 @@
 """
-Permission rule system for Whisper Studio.
-Rules format:
-  {"tool": "ws_write_file", "pattern": "*", "action": "ask"}
-  {"tool": "ws_run_command", "pattern": "git *", "action": "allow"}
-  {"tool": "ws_run_command", "prefix": "git ", "action": "allow"}
-  {"tool": "ws_delete_file", "pattern": "*.log", "action": "deny"}
+Permission modes for Whisper Studio.
 
-Actions: "allow" | "ask" | "deny"
+The permission mode is the only setting a person changes (the composer's Mode
+menu). permissions.json holds that one value: {"mode": "default"}.
+
+Decisions: "allow" | "ask" | "deny"
 Modes:
   "default"            read-only tools auto-allow; write tools ask
   "auto"               read-only auto-allow; write tools go through Haiku classifier
@@ -20,25 +18,19 @@ Modes:
   "bypassPermissions": everything allowed, no prompts
   "dontAsk"            read-only auto-allow; write tools auto-deny silently
 
-category_modes (optional, in permissions.json):
-  {"write": "acceptEdits", "cli": "default", ...}, per-category override of
-  the global mode above, keyed by the ApprovalSpec categories declared in
-  server/approval/bootstrap.py (write, delete, cli, worktree, preview,
-  github, github-destructive, ...) plus the policy-only "workflow" category
-  (new workflow-script launches; resolved by
-  server/workflows/launch_policy.py). A category with no entry falls back
-  to the global mode. "github-destructive" always asks no matter what a
-  category mode (or bypassPermissions, or a blanket session approval) says,
-  see resolve_static_decision below. A command input that deletes outside
-  the connected workspace and the app's own folders
-  (server/security/delete_scope.py) asks in every mode but bypassPermissions.
+The ApprovalSpec categories (server/approval/bootstrap.py: write, delete,
+cli, worktree, preview, github, github-destructive, ...) only key the session
+approvals ("Yes, all" / "Block all" for one session). "github-destructive"
+always asks, whatever the mode or a blanket session approval says, see
+resolve_static_decision below. A command input that deletes outside the
+connected workspace and the app's own folders
+(server/security/delete_scope.py) asks in every mode but bypassPermissions.
 
 The permission contract behind the order below (the user's decision of
 2026-11-02): bypassPermissions works like Claude Code's bypass and shows no
-card anywhere on the machine, with three exceptions that keep asking: a
-destructive remote GitHub action, a tool of an MCP server marked
-``approval_mode: "approve"``, and an explicit category row of the user's in
-permissions.json that names another mode. The rm -rf / hard block
+card anywhere on the machine, with two exceptions that keep asking: a
+destructive remote GitHub action and a tool of an MCP server marked
+``approval_mode: "approve"``. The rm -rf / hard block
 (server/security/command_validator.py) refuses in every mode. In every other
 mode a change outside the workspace asks (a save to a path outside it, reach
 into a folder outside it, a command that deletes outside it, a command asking
@@ -62,8 +54,6 @@ docstrings for the exact thresholds). server.tool_executor consults it right bef
 calling the classifier.
 """
 
-import copy
-import fnmatch
 import json
 import logging
 import os
@@ -72,7 +62,6 @@ from fastapi import APIRouter, Request
 from fastapi.responses import Response
 
 from server.infrastructure.paths import data_root
-from server.security.egress_policy import DEFAULT_NETWORK_POLICY, VALID_TIERS
 
 log = logging.getLogger("whisper-studio")
 
@@ -96,15 +85,6 @@ VALID_MODES = {MODE_DEFAULT, MODE_AUTO, MODE_PLAN, MODE_ACCEPT_EDITS, MODE_BYPAS
 # every mode: github-destructive and mcp-approve.
 BYPASS_LIFTED_FLOORS = frozenset({"rm", "sandbox-escalation", "visible-terminal"})
 
-DEFAULTS = {
-    "mode": "default",
-    "rules": [],
-    "category_modes": {},
-    # Egress control for sandboxed commands (server/sandbox.py +
-    # server/security/egress_policy.py), off by default: "permissive" means
-    # no domain restriction and no proxy. See egress_policy.py for the tiers.
-    "network_policy": DEFAULT_NETWORK_POLICY,
-}
 
 # ── Auto-mode circuit breaker ───────────────────────────────────────────────
 # The "auto" mode classifier (server.auto_mode.classify_tool_call) only ever
@@ -200,84 +180,42 @@ def resume_auto_mode(session_id: str) -> bool:
 
 
 def load_permissions() -> dict:
-    # DEFAULTS holds mutable containers ("rules": [], "category_modes": {}).
-    # Deep-copy before merging/returning so a caller that mutates the result
-    # in place (e.g. add_rule's data["rules"].append(...)) never reaches back
-    # into the module-level DEFAULTS singleton and corrupts it for the rest
-    # of the process.
-    # A file that cannot be read or parsed raises: reading it as the defaults
-    # would drop the user's rules and network tier, and the next save would
-    # write the defaults over it.
-    defaults = copy.deepcopy(DEFAULTS)
+    """The saved permission settings: {"mode": ...}, and nothing else.
+
+    Only the mode is read, so a key an older version wrote is ignored now and
+    gone after the next save. A mode that is not one of VALID_MODES reads as
+    the default (Asks first). A file that cannot be read or parsed raises:
+    reading it as the default would quietly change the mode the user chose.
+    """
     try:
         with open(PERMISSIONS_PATH) as f:
             data = json.load(f)
     except FileNotFoundError:
-        return defaults
+        return {"mode": MODE_DEFAULT}
     except ValueError as e:
         raise PermissionsFileError(f"{PERMISSIONS_PATH} is not valid JSON: {e}") from e
     if not isinstance(data, dict):
         raise PermissionsFileError(f"{PERMISSIONS_PATH} does not hold a JSON object.")
-    return {**defaults, **data}
+    mode = data.get("mode")
+    return {"mode": mode if mode in VALID_MODES else MODE_DEFAULT}
 
 
 class PermissionsFileError(ValueError):
     """permissions.json exists but cannot be used."""
 
 
-def save_permissions(data: dict):
+def save_mode(mode: str) -> None:
+    """Write the permission mode. The file holds only the mode."""
     os.makedirs(os.path.dirname(PERMISSIONS_PATH), exist_ok=True)
     tmp = PERMISSIONS_PATH + ".tmp"
     with open(tmp, "w") as f:
-        json.dump(data, f, indent=2)
+        json.dump({"mode": mode}, f, indent=2)
     os.replace(tmp, PERMISSIONS_PATH)
 
 
 def get_mode() -> str:
     """Return the current permission mode."""
-    return load_permissions().get("mode", MODE_DEFAULT)
-
-
-def _match_rule(tool_name: str, tool_input: dict, rules: list) -> tuple[int | None, dict | None]:
-    """Find the first rule in `rules` that matches (tool_name, tool_input).
-    Returns (index, rule) or (None, None). Shared by evaluate_rules and the
-    /rules/test dry-run endpoint so both use the exact same matching logic."""
-    input_str = _tool_input_str(tool_name, tool_input)
-    for index, rule in enumerate(rules):
-        if rule.get("tool") == tool_name or rule.get("tool") == "*":
-            if "prefix" in rule:
-                if input_str.startswith(rule["prefix"]):
-                    return index, rule
-            else:
-                pattern = rule.get("pattern", "*")
-                if pattern == "*" or fnmatch.fnmatch(input_str, pattern):
-                    return index, rule
-    return None, None
-
-
-def _validate_network_policy(np: object) -> str | None:
-    """Returns an error string if `np` isn't a valid (partial) network_policy
-    body, or None if it's fine to merge onto the saved config."""
-    if not isinstance(np, dict):
-        return "network_policy must be an object"
-    if "tier" in np and np["tier"] not in VALID_TIERS:
-        return f"network_policy.tier must be one of: {', '.join(sorted(VALID_TIERS))}"
-    if "custom_allowed_domains" in np:
-        domains = np["custom_allowed_domains"]
-        if not isinstance(domains, list) or not all(isinstance(d, str) for d in domains):
-            return "network_policy.custom_allowed_domains must be a list of strings"
-    if "methods_only_safe" in np and not isinstance(np["methods_only_safe"], bool):
-        return "network_policy.methods_only_safe must be a boolean"
-    return None
-
-
-def evaluate_rules(tool_name: str, tool_input: dict, rules: list | None = None) -> str | None:
-    """Evaluate custom permission rules (permissions.json's `rules` array) against
-    a tool call. Returns the first matching rule's action, or None if no rule matches."""
-    if rules is None:
-        rules = load_permissions().get("rules", [])
-    _, rule = _match_rule(tool_name, tool_input, rules)
-    return rule.get("action", "ask") if rule is not None else None
+    return load_permissions()["mode"]
 
 
 def approval_floor(
@@ -285,9 +223,8 @@ def approval_floor(
 ) -> str | None:
     """The hard floor this call hits, or None.
 
-    A floor that applies always asks a human: no category override,
-    trusted-skill flag, session approval ("Yes, all" / "Block"), custom rule
-    or default decides it. Returns which floor ("github-destructive", "rm",
+    A floor that applies always asks a human: no trusted-skill flag, session
+    approval ("Yes, all" / "Block") or mode default decides it. Returns which floor ("github-destructive", "rm",
     "sandbox-escalation", "visible-terminal", "mcp-approve"). Any floor marks
     the approval card's request ``always_asks``, so the card never offers a
     remember-for-session choice that would then be ignored. One floor is
@@ -298,27 +235,14 @@ def approval_floor(
     floors in BYPASS_LIFTED_FLOORS do not apply (the user's decision of
     2026-11-02: Bypass works like Claude Code's bypass, so a delete outside
     the workspace, a sandbox escalation and a visible terminal run show no
-    card). A category row of the user's in permissions.json (category_modes)
-    can only tighten this: a row naming another mode keeps the floors under a
-    Bypass session, and a row naming bypassPermissions lifts nothing under any
-    other mode, since the ws_* executors read the session's mode too.
-    github-destructive and mcp-approve keep asking in every mode. ``mode``
+    card). github-destructive and mcp-approve keep asking in every mode. ``mode``
     None (a caller that only asks whether any floor could apply) lifts
     nothing.
     """
     floor = _floor(tool_name, tool_input, category)
-    if floor in BYPASS_LIFTED_FLOORS and _bypass_lifts(category, mode):
+    if floor in BYPASS_LIFTED_FLOORS and mode == MODE_BYPASS:
         return None
     return floor
-
-
-def _bypass_lifts(category: str, mode: str | None) -> bool:
-    """Whether Bypass lifts the floors for ``category``: the session's mode is
-    bypassPermissions and no category row of the user's names another mode."""
-    if mode != MODE_BYPASS:
-        return False
-    row = (load_permissions().get("category_modes") or {}).get(category)
-    return row not in VALID_MODES or row == MODE_BYPASS
 
 
 def bypass_now() -> bool:
@@ -349,17 +273,16 @@ def _floor(tool_name: str, tool_input: dict, category: str) -> str | None:
     """The hard floor this call hits before the mode is applied, or None."""
     # Destructive GitHub mutations (repo/ref delete, PR merge, archive/rename,
     # API DELETE) ALWAYS require an explicit human approval, no bypass mode,
-    # autopilot, trusted-skill, blanket session approval, or category mode
-    # override may cover them, given the irreversibility and remote blast
-    # radius. Checked before everything, including the category mode lookup
-    # in resolve_static_decision.
+    # autopilot, trusted-skill or blanket session approval may cover them,
+    # given the irreversibility and remote blast radius. Checked before
+    # everything else in resolve_static_decision.
     if category == "github-destructive":
         return "github-destructive"
 
     # rm (and its close cousins, see delete_sites) reaching outside the
     # connected workspace and the app's own folders: outside bypassPermissions
-    # no category override, trusted-skill flag, blanket "allow all commands"
-    # session approval, custom rule, or dontAsk/acceptEdits default may let it
+    # no trusted-skill flag, blanket "allow all commands" session approval,
+    # or dontAsk/acceptEdits default may let it
     # run without a real human clicking Approve. In bypassPermissions it runs
     # (approval_floor lifts it); the rm -rf / hard block in
     # server/security/command_validator.py still refuses there. A delete that
@@ -391,9 +314,8 @@ def _floor(tool_name: str, tool_input: dict, category: str) -> str | None:
     # Sandbox escalation (sandbox_permissions="danger-full-access"): the same
     # floor as rm. The parameter's entire meaning is "run this ONE command
     # outside the workspace-write OS sandbox, with a human reading the
-    # justification first", so outside bypassPermissions no category
-    # override, trusted-skill flag, blanket session approval, custom rule, or
-    # dontAsk default may cover it. Without this, "Yes, all cli" would
+    # justification first", so outside bypassPermissions no trusted-skill
+    # flag, blanket session approval or dontAsk default may cover it. Without this, "Yes, all cli" would
     # silently convert every later escalated call into an unconfined
     # auto-run. In bypassPermissions it runs (approval_floor lifts it).
     if str(tool_input.get("sandbox_permissions") or "").strip() == "danger-full-access":
@@ -402,7 +324,7 @@ def _floor(tool_name: str, tool_input: dict, category: str) -> str | None:
     # A terminal_run typed into the user's visible terminal. That shell runs
     # with no OS write confinement, so outside bypassPermissions only a person
     # reading the command keeps a write outside the workspace from happening:
-    # a "Yes, all cli", a rule or the Auto classifier never runs it with no
+    # a "Yes, all cli" or the Auto classifier never runs it with no
     # card. In bypassPermissions it runs (the user's rule 2026-10-28; see
     # approval_floor).
     if _visible_terminal(tool_name, tool_input):
@@ -417,8 +339,8 @@ def _floor(tool_name: str, tool_input: dict, category: str) -> str | None:
     # Every other tier ("auto", "prompt", "writes") falls straight through to
     # the standard resolution below unchanged, the per-server config only
     # ever ADDS a gate (server.mcp.MCPManager.call_tool decides whether to
-    # ask at all); it never removes the user's ability to configure the
-    # ordinary mode/session/rule pipeline for MCP tools like any other tool.
+    # ask at all); it never removes the ordinary mode and session approval
+    # pipeline for MCP tools like any other tool.
     if category == "mcp":
         from server.mcp import mcp_manager
 
@@ -597,23 +519,18 @@ def resolve_static_decision(
     escalation and a visible terminal run; see approval_floor;
     github-destructive is denied instead when the mode is dontAsk) → app
     storage (a write under ~/.whisper is allowed in every mode, a delete there
-    only in bypassPermissions; see targets_app_storage) → category mode
-    override → bypassPermissions (allows everything left, anywhere on the
-    machine) →
-    trusted skill script → session approvals ("yes/no for all this session")
-    → explicit custom rules → a preview_start naming an approved launch.json
-    config (allow) → dontAsk → acceptEdits (write category only) → auto
-    (defer) → ask.
+    only in bypassPermissions; see targets_app_storage) → bypassPermissions
+    (allows everything left, anywhere on the machine) → trusted skill script →
+    session approvals ("yes/no for all this session") → a preview_start naming
+    an approved launch.json config (allow) → dontAsk → acceptEdits (write
+    category only) → auto (defer) → ask.
     """
     floor = approval_floor(tool_name, tool_input, category, mode)
     if floor is not None:
         # A destructive GitHub call never runs without a person, and Don't ask
         # means nobody is there to ask, so it is denied there (stricter than
-        # the card). The mode is the global one or the category's own row.
-        if floor == "github-destructive" and MODE_DONT_ASK in (
-            mode,
-            (load_permissions().get("category_modes") or {}).get(category),
-        ):
+        # the card).
+        if floor == "github-destructive" and mode == MODE_DONT_ASK:
             return "deny"
         return "ask"
 
@@ -629,26 +546,15 @@ def resolve_static_decision(
 
     # The app's own folders (~/.whisper: rules, profile, scratch, memory,
     # data) are where these writes belong, so no mode asks for them. Checked
-    # before the category override and the mode: "in any permission mode" is
-    # the user's rule. A delete there is silent only in bypassPermissions;
-    # every other mode applies its normal delete rule.
+    # before the mode: "in any permission mode" is the user's rule. A delete
+    # there is silent only in bypassPermissions; every other mode applies its
+    # normal delete rule.
     if targets_app_storage(tool_input) and (category != "delete" or mode == MODE_BYPASS):
         return "allow"
 
-    # Per-category default overrides the global mode for everything that
-    # follows (including the bypassPermissions check right below), that's
-    # the point: e.g. "always confirm deletes" can hold even when the global
-    # mode is more permissive. No entry for this category (or a
-    # "category_modes" of null) leaves `mode` as the caller passed it.
-    category_mode = (load_permissions().get("category_modes") or {}).get(category)
-    if category_mode in VALID_MODES:
-        mode = category_mode
-
     # Bypass allows everything the floors above left, inside the workspace
-    # and outside it (a save to a path the user named, reach into a folder
-    # they have not granted): the user's decision of 2026-11-02. A category
-    # row of the user's that names another mode replaced ``mode`` above, so
-    # that row still decides.
+    # and outside it (a save to a path the user named, a folder outside the
+    # workspace): the user's decision of 2026-11-02.
     if mode == MODE_BYPASS:
         return "allow"
     if auto_allow_trusted:
@@ -658,15 +564,11 @@ def resolve_static_decision(
     if session_approvals.get(category) == "deny":
         return "deny"
 
-    rule_decision = evaluate_rules(tool_name, tool_input)
-    if rule_decision is not None:
-        return rule_decision
-
     # A preview_start naming a .whisper/launch.json config whose command a
     # person approved once starts whatever the mode says
     # (server/preview/start_policy.py): it stands in for the mode defaults
-    # below, so the floors, session approvals and custom rules above still
-    # decide first and an explicit deny keeps refusing it.
+    # below, so the floors and session approvals above still decide first and
+    # a session "No for all" keeps refusing it.
     from server.preview.start_policy import starts_without_approval
 
     if starts_without_approval(tool_name, tool_input):
@@ -682,199 +584,12 @@ def resolve_static_decision(
     return "ask"
 
 
-# Field to match rule patterns/prefixes against, per tool. Tools not listed
-# here fall back to matching the JSON-encoded input (mainly useful with a
-# wildcard "*" pattern).
-_RULE_MATCH_FIELDS = {
-    "ws_write_file": "path",
-    "ws_create_file": "path",
-    "ws_delete_file": "path",
-    "ws_read_file": "path",
-    "ws_run_command": "command",
-    "terminal_run": "command",
-    "terminal_send": "input",
-    "run_python": "code",
-    "run_tool_script": "code",
-    "aws_cli": "command",
-    "git_push": "branch",
-    "git_pull": "branch",
-    "git_fetch": "remote",
-    "git_checkout": "branch",
-    "git_merge": "branch",
-    "git_create_branch": "name",
-    "git_delete_branch": "branch",
-    "git_add_commit": "message",
-    "enter_worktree": "name",
-}
-
-
-def _tool_input_str(tool_name: str, tool_input: dict) -> str:
-    """Build a matchable string from tool input for pattern matching."""
-    field = _RULE_MATCH_FIELDS.get(tool_name)
-    if field:
-        return str(tool_input.get(field, ""))
-    return json.dumps(tool_input)
-
-
 # --- API Routes ---
 
 
 @router.get("")
 async def get_permissions():
-    from server.approval.registry import all_categories
-
-    data = load_permissions()
-    # "categories" is computed from the live ApprovalSpec registry, not
-    # persisted, it just tells the frontend which category_modes rows to
-    # render (server/approval/bootstrap.py is the source of truth).
-    categories = all_categories()
-    # "workflow" is a policy-only category: new workflow-script launches
-    # consult it via server/workflows/launch_policy.py instead of the
-    # ApprovalSpec registry, but users configure it like any other row.
-    if "workflow" not in categories:
-        categories.append("workflow")
-    return {**data, "categories": categories}
-
-
-@router.put("")
-async def update_permissions(request: Request):
-    from server.security.shadowed_rules import detect_shadowed_rules
-
-    body = await request.json()
-    data = load_permissions()
-    if "mode" in body:
-        mode = body["mode"]
-        if mode not in VALID_MODES:
-            return Response(
-                content=json.dumps(
-                    {"error": f"mode must be one of: {', '.join(sorted(VALID_MODES))}"}
-                ),
-                status_code=400,
-                media_type="application/json",
-            )
-        data["mode"] = mode
-    if "rules" in body:
-        data["rules"] = body["rules"]
-    if "category_modes" in body:
-        category_modes = body["category_modes"]
-        if not isinstance(category_modes, dict):
-            return Response(
-                content=json.dumps({"error": "category_modes must be an object"}),
-                status_code=400,
-                media_type="application/json",
-            )
-        cleaned: dict = {}
-        for cat, cat_mode in category_modes.items():
-            if not cat_mode:
-                continue  # falsy/empty = "use the global mode", nothing to store
-            if cat_mode not in VALID_MODES:
-                return Response(
-                    content=json.dumps(
-                        {
-                            "error": (
-                                f"category_modes.{cat} must be one of: "
-                                f"{', '.join(sorted(VALID_MODES))}"
-                            )
-                        }
-                    ),
-                    status_code=400,
-                    media_type="application/json",
-                )
-            cleaned[cat] = cat_mode
-        data["category_modes"] = cleaned
-    if "network_policy" in body:
-        error = _validate_network_policy(body["network_policy"])
-        if error:
-            return Response(
-                content=json.dumps({"error": error}), status_code=400, media_type="application/json"
-            )
-        existing = data.get("network_policy") or {}
-        data["network_policy"] = {**existing, **body["network_policy"]}
-    save_permissions(data)
-    warnings = detect_shadowed_rules(data["rules"])
-    return {
-        "updated": True,
-        "mode": data["mode"],
-        "rules": data["rules"],
-        "category_modes": data.get("category_modes", {}),
-        "warnings": warnings,
-    }
-
-
-@router.post("/rules")
-async def add_rule(request: Request):
-    from server.security.shadowed_rules import detect_shadowed_rules
-
-    body = await request.json()
-    tool = body.get("tool", "")
-    action = body.get("action", "ask")
-    if not tool or action not in ("allow", "ask", "deny"):
-        return Response(
-            content=json.dumps({"error": "Invalid rule. action must be allow/ask/deny"}),
-            status_code=400,
-            media_type="application/json",
-        )
-    rule: dict = {"tool": tool, "action": action}
-    if "prefix" in body:
-        rule["prefix"] = body["prefix"]
-    else:
-        rule["pattern"] = body.get("pattern", "*")
-    # Purely additive audit-trail metadata, never consulted by evaluate_rules
-    # or resolve_static_decision, just persisted and returned so the UI can
-    # show why a rule exists.
-    justification = body.get("justification")
-    if justification:
-        rule["justification"] = justification
-    data = load_permissions()
-    data["rules"].append(rule)
-    save_permissions(data)
-    warnings = detect_shadowed_rules(data["rules"])
-    return {"added": True, "rules": data["rules"], "warnings": warnings}
-
-
-@router.post("/rules/test")
-async def test_rule(request: Request):
-    """Dry-run rule matching for a sample tool/input pair, the rule editor's
-    "Test this rule" button. Mirrors server.hooks.routes.test_hook's shape:
-    run the same evaluation the live path uses and report the decision.
-
-    Matches against the persisted rule set by default. Pass "rules" (a list)
-    to test a draft list in isolation, e.g. the one rule you're about to
-    save, before you've saved it."""
-    body = await request.json()
-    tool = body.get("tool", "")
-    if not tool:
-        return Response(
-            content=json.dumps({"error": "tool is required"}),
-            status_code=400,
-            media_type="application/json",
-        )
-    tool_input = body.get("input") or {}
-    rules = body.get("rules")
-    if rules is None:
-        rules = load_permissions().get("rules", [])
-    index, rule = _match_rule(tool, tool_input, rules)
-    decision = rule.get("action", "ask") if rule is not None else None
-    return {"decision": decision, "matched_index": index, "matched_rule": rule}
-
-
-@router.delete("/rules/{index}")
-async def delete_rule(index: int):
-    from server.security.shadowed_rules import detect_shadowed_rules
-
-    data = load_permissions()
-    rules = data.get("rules", [])
-    if index < 0 or index >= len(rules):
-        return Response(
-            content=json.dumps({"error": "Rule not found"}),
-            status_code=404,
-            media_type="application/json",
-        )
-    deleted = rules.pop(index)
-    data["rules"] = rules
-    save_permissions(data)
-    warnings = detect_shadowed_rules(rules)
-    return {"deleted": deleted, "rules": rules, "warnings": warnings}
+    return load_permissions()
 
 
 @router.put("/mode")
@@ -887,9 +602,7 @@ async def set_mode(request: Request):
             status_code=400,
             media_type="application/json",
         )
-    data = load_permissions()
-    data["mode"] = mode
-    save_permissions(data)
+    save_mode(mode)
     return {"mode": mode}
 
 
@@ -910,32 +623,3 @@ async def resume_auto_mode_route(request: Request):
         )
     resumed = resume_auto_mode(session_id)
     return {"resumed": resumed}
-
-
-# ── Folder access grants ───────────────────────────────────────────────────
-# The ask-once-remember-after store (server/security/folder_grants.py). Listed
-# and revocable here so a grant is never a one-way door the user can't see or
-# undo. Granting itself is NOT exposed as a route, it only ever happens
-# through the approval card, so a page (or a prompt-injected fetch) can't mint
-# itself filesystem reach.
-
-
-@router.get("/folder-grants")
-async def list_folder_grants():
-    from server.security.folder_grants import load_grants
-
-    return {"granted": load_grants()}
-
-
-@router.delete("/folder-grants")
-async def delete_folder_grant(request: Request):
-    from server.security.folder_grants import revoke
-
-    path = request.query_params.get("path", "")
-    if not path:
-        return Response(
-            content=json.dumps({"error": "path required"}),
-            status_code=400,
-            media_type="application/json",
-        )
-    return {"revoked": revoke(path)}

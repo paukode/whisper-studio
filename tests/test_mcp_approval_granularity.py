@@ -8,16 +8,8 @@ Two schema additions to mcp_servers.json, tested here:
   override of the mode): decide whether call_tool() executes a tool
   immediately or defers it to the [WS_APPROVAL] pipeline via the "mcp"
   category resolve_static_decision now understands. The per-server setting
-  sits ON TOP of the existing global/category permission system — session
-  approvals, permission mode, and custom rules still apply for anything
-  short of the "approve" hard floor.
-
-NOTE: as of this writing, server/security/permissions.py has no
-`category_modes` concept at all (grepped — only MODE_* global permission
-modes exist). The interaction this file actually verifies is therefore with
-the existing `mode` / `session_approvals` / custom-rule machinery in
-resolve_static_decision, not a `category_modes` feature (there isn't one to
-interact with).
+  sits ON TOP of the permission mode: session approvals and the mode still
+  apply for anything short of the "approve" hard floor.
 """
 
 import asyncio

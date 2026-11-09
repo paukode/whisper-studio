@@ -62,7 +62,7 @@ def _isolated(tmp_path, monkeypatch):
     monkeypatch.setenv("WHISPER_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setattr(
         "server.security.permissions.load_permissions",
-        lambda: {"mode": MODE_DEFAULT, "rules": [], "category_modes": {}},
+        lambda: {"mode": MODE_DEFAULT},
     )
     monkeypatch.setattr(
         tool_approvals, "classify_tool_call", AsyncMock(return_value={"decision": "confirm"})

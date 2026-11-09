@@ -87,8 +87,8 @@ _LAUNCH_KEYS = ("command", "args", "env", "url", "bearer_token_env_var")
 #            default for a server with no approval_mode.
 #   prompt:  every call goes through the normal approval pipeline (category
 #            "mcp" in resolve_static_decision): subject to the user's
-#            permission mode, session approvals, and custom rules, same as
-#            any other approval-gated tool.
+#            permission mode and session approvals, same as any other
+#            approval-gated tool.
 #   writes:  tool calls that look read-only (name starts with get_/list_/
 #            search_/etc.) auto-execute; anything else goes through the
 #            normal approval pipeline like "prompt".
@@ -785,8 +785,8 @@ class MCPManager:
         # behavior change for existing servers. Anything else defers the
         # actual decision to the SAME [WS_APPROVAL] pipeline every other
         # approval-gated tool uses (resolve_static_decision's "mcp" category),
-        # so session approvals / permission mode / custom rules all still
-        # apply on top of this per-server setting, not instead of it.
+        # so session approvals and the permission mode still apply on top of
+        # this per-server setting, not instead of it.
         tier = self.get_tool_approval_tier(server_name, original_name)
         if tier != "auto":
             needs_ask = not (tier == "writes" and not _looks_like_write_tool(original_name))
