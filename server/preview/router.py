@@ -11,6 +11,10 @@ the preview it starts is recorded as that chat's, and the ownership checks in
 manager.py read it back when the action runs. A named preview_start also
 carries the launch config it resolves to, pinned here the same way.
 
+Every tool first checks that Playwright and Chromium are present. The tools
+are always in the catalog, so a broken install answers with the fix
+(server/preview/capability.py) instead of the tools going missing.
+
 Called from an async branch in server/tool_router.py (NOT via the
 @register_executor/EXECUTORS sync-dispatch path) because Playwright's async
 API must stay bound to the single running event loop; a thread-pool-executed
@@ -33,6 +37,11 @@ def _clean_input(tool_input: dict) -> dict:
 
 async def execute_preview_tool(tool_name: str, tool_input: dict) -> str:
     from server.preview import manager as m
+    from server.preview.capability import missing_browser_message
+
+    missing = missing_browser_message()
+    if missing:
+        return missing
 
     session_id = str(tool_input.get("__session_id__") or "")
     tool_input = _clean_input(tool_input)

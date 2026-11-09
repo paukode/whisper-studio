@@ -67,9 +67,8 @@ lint/format and the build always run whole — they are cheap and catch drift.
 
 Additionally drive the live preview to prove the UI renders and behaves:
 
-1. Start (or reuse) the dev server via the preview tools; if `preview_list`
-   shows nothing and `preview_start` is unavailable, note that preview tooling
-   is off and continue with the CI gate only.
+1. Start (or reuse) the dev server via the preview tools. If a preview tool
+   says the browser is missing, note it and continue with the CI gate only.
 2. Load the relevant view, then check `preview_console_logs` for errors,
    `preview_snapshot` (or `preview_inspect`) for the expected
    content/structure, and drive any changed interaction (`preview_click`,

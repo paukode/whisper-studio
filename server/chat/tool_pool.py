@@ -194,19 +194,12 @@ def assemble_full_catalog(*, ultracode: bool = False) -> list[dict]:
 
     builtin_tools += RULES_TOOLS
 
-    # Live preview tools: flag AND capability probe must both pass, so the
-    # tools are genuinely absent from the catalog (not just disabled) until
-    # the user has both opted in AND completed the Playwright/Chromium
-    # install. Checked live (cheap, no subprocess), not cached at
-    # flag-toggle time, so a corrupted/deleted install hides the tools again
-    # automatically.
-    if _ff_enabled("preview_tools"):
-        from server.preview.capability import preview_capability_ok
+    # Live preview tools: always in the catalog (setup.sh and the app bundle
+    # ship Playwright and Chromium). A missing browser is refused when a tool
+    # runs (server/preview/router.py), so the catalog never changes with it.
+    from server.preview.tools import PREVIEW_TOOLS
 
-        if preview_capability_ok():
-            from server.preview.tools import PREVIEW_TOOLS
-
-            builtin_tools += PREVIEW_TOOLS
+    builtin_tools += PREVIEW_TOOLS
 
     mcp_tools = list(mcp_manager.get_bedrock_tools())
 

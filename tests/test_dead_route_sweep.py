@@ -23,6 +23,8 @@ def test_flags_registry_holds_only_live_flags():
         "latched_config",
         "secret_scanning",
         "companion",
+        # Live preview is always on: no flag, no Settings toggle.
+        "preview_tools",
     }
     live = {
         "git_context",
@@ -34,7 +36,6 @@ def test_flags_registry_holds_only_live_flags():
         "auto_memory",
         "session_memory",
         "dream_consolidation",
-        "preview_tools",
         "goal_loop",
         "cron_verify",
         "deliverable_check",
@@ -63,6 +64,7 @@ def test_deleted_routes_stay_deleted_and_kept_routes_remain():
     from server.git.router import router as git_router
     from server.hooks.routes import router as hooks_router
     from server.infrastructure.sessions import router as sessions_router
+    from server.preview.routes import router as preview_router
     from server.security.permissions import router as perm_router
     from server.workspace import routes as _  # noqa: F401 — populates the shared router
 
@@ -96,6 +98,16 @@ def test_deleted_routes_stay_deleted_and_kept_routes_remain():
 
     assert not any(p.endswith("/validate") for p, _m in paths(perm_router))
     assert not any(p.endswith("/fire") for p, _m in paths(hooks_router))
+
+    # Live preview is always on: the Settings install, disable and status
+    # routes are gone. The Live pane keeps its session routes.
+    import importlib.util
+
+    assert importlib.util.find_spec("server.preview.install_routes") is None
+    preview = paths(preview_router)
+    assert not any(p.endswith(("/install", "/disable", "/status")) for p, _m in preview)
+    assert ("/api/preview/sessions", "GET") in preview
+    assert ("/api/preview/sessions/{name}", "DELETE") in preview
 
     # The deprecated name-based cron delete was dead; it stays deleted. The
     # id-based delete is the live path and remains.
