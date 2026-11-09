@@ -39,6 +39,10 @@ log = logging.getLogger("whisper-studio")
 # The feature name every Local-mode refusal of a scheduled run shows the user.
 SCHEDULED_RUNS = "Scheduled runs"
 
+# History text for a run whose outcome write failed: the backstop at the end
+# of _execute_cron_prompt closes its lease with this.
+UNRECORDED_OUTCOME = "[interrupted] the run ended without recording its outcome"
+
 # Dedicated pool for cron's blocking calls — the adapter's Bedrock invoke and
 # the synchronous completion-verifier (server.goals.cron_verify.verify).
 # Mirrors server.agents.runtime._agent_executor: its own pool so a burst of
@@ -576,6 +580,17 @@ async def _execute_cron_prompt(job_id: str) -> None:
             duration_ms=_elapsed_ms(),
         )
     finally:
+        # Backstop: every exit path above records the outcome through
+        # _push_result, which logs and swallows a failed history write. Close
+        # the lease here if it is still open, BEFORE the job leaves the
+        # in-progress set, so history never says 'running' for a run that
+        # is gone. A lease already closed is left as it is (first writer wins).
+        try:
+            from server import cron_history
+
+            cron_history.finish_run(run_id, status="failed", text=UNRECORDED_OUTCOME)
+        except Exception as exc:
+            log.warning("cron: failed to close run lease %s: %s", run_id, exc)
         cron_events.close_run(job_id)
         with _cs._IN_PROGRESS_LOCK:
             _cs._in_progress.discard(job_id)

@@ -17,6 +17,7 @@ import os
 import uuid
 from datetime import UTC, datetime
 
+from server.infrastructure.run_lease import finish_if_running
 from server.workflows import journal as jnl
 from server.workflows.runtime import WorkflowRun
 
@@ -577,31 +578,30 @@ def _finalize(run: WorkflowRun, outcome: dict) -> None:
     run the user deliberately stopped shows up as failed, and the completion
     event fires twice.
 
-    The ``WHERE status='running'`` clause makes the claim atomic in SQLite:
-    exactly one writer's UPDATE touches a row, and only that one announces
-    the run's end.
+    The claim goes through server.infrastructure.run_lease.finish_if_running,
+    atomic in SQLite: exactly one writer's UPDATE touches a row, and only that
+    one announces the run's end.
     """
     status = outcome.get("status", "failed")
     with _conn() as conn:
         _ensure_table(conn)
-        cur = conn.execute(
-            "UPDATE workflow_runs SET status=?, agents_spawned=?, tokens_in=?, tokens_out=?, "
-            "cost_usd=?, cap_reached=?, error=?, result_json=?, finished_at=? "
-            "WHERE run_id=? AND status='running'",
-            (
-                status,
-                outcome.get("agents_spawned", 0),
-                outcome.get("tokens_in", 0),
-                outcome.get("tokens_out", 0),
-                outcome.get("cost_usd", 0.0),
-                1 if outcome.get("cap_reached") else 0,
-                outcome.get("error", ""),
-                json.dumps(outcome.get("result")),
-                _now(),
-                run.run_id,
-            ),
+        claimed = finish_if_running(
+            conn,
+            "workflow_runs",
+            "run_id",
+            run.run_id,
+            {
+                "status": status,
+                "agents_spawned": outcome.get("agents_spawned", 0),
+                "tokens_in": outcome.get("tokens_in", 0),
+                "tokens_out": outcome.get("tokens_out", 0),
+                "cost_usd": outcome.get("cost_usd", 0.0),
+                "cap_reached": 1 if outcome.get("cap_reached") else 0,
+                "error": outcome.get("error", ""),
+                "result_json": json.dumps(outcome.get("result")),
+                "finished_at": _now(),
+            },
         )
-        claimed = cur.rowcount > 0
     if not claimed:
         # Someone else (stop_run, or a boot reconcile that flipped this to
         # 'stale') already recorded the end. Their status stands and their
@@ -635,12 +635,9 @@ async def stop_run(run_id: str) -> bool:
     await run.cancel()
     with _conn() as conn:
         _ensure_table(conn)
-        cur = conn.execute(
-            "UPDATE workflow_runs SET status='stopped', finished_at=? "
-            "WHERE run_id=? AND status='running'",
-            (_now(), run_id),
+        claimed = finish_if_running(
+            conn, "workflow_runs", "run_id", run_id, {"status": "stopped", "finished_at": _now()}
         )
-        claimed = cur.rowcount > 0
     if claimed:
         # Only the winner closes the mirrored background task, so the run's
         # end is announced exactly once.

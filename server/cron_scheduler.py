@@ -565,6 +565,25 @@ def on_session_deleted(session_id: str) -> None:
 # ── Public job shape (API) ───────────────────────────────────────────────────
 
 
+def run_state(job_id: str) -> str | None:
+    """'running' only while this process runs the job, else the last recorded
+    outcome (None when it never ran).
+
+    Stop acts on the live run, so the history row alone never makes a job
+    'running': a lease left open with no live run (its outcome write failed)
+    reads as 'failed', the status boot reconcile gives it. Decided under the
+    in-progress lock: a run marks itself in progress before it opens its
+    lease, so a new run cannot open one between the two checks.
+    """
+    from server import cron_history
+
+    with _IN_PROGRESS_LOCK:
+        if job_id in _in_progress:
+            return "running"
+        status = cron_history.last_status(job_id)
+    return "failed" if status == "running" else status
+
+
 def _job_public(job: dict) -> dict:
     """Enrich a stored job for the API: schedule label, next run, run state,
     and owning-session presence/title."""
@@ -579,14 +598,7 @@ def _job_public(job: dict) -> dict:
         out["old_format"] = True
     out["next_run"] = _next_run_iso(job)
     jid = job.get("id", "")
-    with _IN_PROGRESS_LOCK:
-        running = jid in _in_progress
-    if running:
-        out["run_state"] = "running"
-    else:
-        from server import cron_history
-
-        out["run_state"] = cron_history.last_status(jid)
+    out["run_state"] = run_state(jid)
     sid = job.get("session_id", "")
     from server.infrastructure.sessions import get_session_meta
 
