@@ -1,10 +1,25 @@
 /** REST client for the workflow runtime (WS-D). */
 import { get, post } from '@/api/client';
 
+export type WorkflowRunStatus = 'running' | 'done' | 'failed' | 'stopped' | 'stale';
+
+// The statuses a run does not leave (server/workflows/manager.TERMINAL_STATUSES).
+const TERMINAL_RUN_STATUSES: ReadonlySet<string> = new Set<WorkflowRunStatus>(['done', 'failed', 'stopped', 'stale']);
+
+/** Whether a run will not change any more. */
+export function isTerminalRun(status: string | undefined): boolean {
+  return status !== undefined && TERMINAL_RUN_STATUSES.has(status);
+}
+
+/** Whether a finished run ended without its result (failed, stopped, stale). */
+export function endedEarly(status: string | undefined): boolean {
+  return isTerminalRun(status) && status !== 'done';
+}
+
 export interface WorkflowRun {
   run_id: string;
   name: string;
-  status: 'running' | 'done' | 'failed' | 'stopped' | 'stale';
+  status: WorkflowRunStatus;
   agents_spawned: number;
   tokens_in: number;
   tokens_out: number;

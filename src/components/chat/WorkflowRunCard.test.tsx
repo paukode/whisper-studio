@@ -5,7 +5,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { WorkflowRunCard, phaseBreakdown } from './WorkflowRunCard';
 import { useWorkflowStore } from '@/stores/workflowStore';
 
-vi.mock('@/api/workflows', () => ({
+vi.mock('@/api/workflows', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/api/workflows')>()),
   getRun: vi.fn(),
   stopRun: vi.fn(),
   subscribeRun: vi.fn(() => () => {}),
