@@ -120,8 +120,7 @@
           <td><span class="badge badge--muted">unset</span></td>
           <td>Web-search key for a server started from your shell. Overrides the
             <code>tavily_api_key</code> config value; when both are set, the env var wins. A change needs
-            a server restart. In the Mac app, set the key in Settings &gt; Keys and permissions &gt; API
-            keys. Stripped from MCP child environments.</td>
+            a server restart. In the Mac app, set the key in Settings &gt; General. Stripped from MCP child environments.</td>
         </tr>
       </tbody>
     </table></div>
@@ -208,7 +207,7 @@ HOST=0.0.0.0 PORT=8080 python -m server.main</code></pre></div>
 
     <h2 id="secrets">Secrets</h2>
     <p><code>TAVILY_API_KEY</code> enables the <code>web_search</code> tool (<code>web_fetch</code> needs
-      no key at all). Set the key in Settings &gt; Keys and permissions &gt; API keys, which works for
+      no key at all). Set the key in Settings &gt; General, which works for
       every install. For a source install you can instead export it in the shell that starts the
       server, which keeps the key off disk; that value wins over the one in Settings. With no key,
       <code>web_search</code> tells the assistant to use an enabled Amazon Bedrock AgentCore browser MCP

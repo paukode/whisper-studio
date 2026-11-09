@@ -151,8 +151,7 @@
         <em>before</em> dispatching each agent, not only inside its own round loop, so agent N+1 never
         starts once the combined spend of agents 1 through N has already cleared a cap.</li>
     </ul>
-    <p>Every agent runs on the one round limit and time limit in Settings &gt; Usage and advanced
-      &gt; Costs, in the Budgets card (<code>round_limit</code>, <code>time_limit_minutes</code>); see <a href="#agent-types">Agent
+    <p>Every agent runs on the one round limit and time limit in Settings &gt; Costs, in the Budgets card (<code>round_limit</code>, <code>time_limit_minutes</code>); see <a href="#agent-types">Agent
       types</a>.</p>
 
     <div class="callout">
@@ -228,7 +227,7 @@
       A config sets the token budget per response and how the shared tool pool is filtered (a
       whitelist and a read-only flag that strips the write tools). No type carries a round or time
       limit of its own: <code>get_agent_config</code> fills both from the one round limit and time
-      limit in Settings &gt; Usage and advanced &gt; Costs, Budgets card (<code>round_limit</code>, default 120, and
+      limit in Settings &gt; Costs, Budgets card (<code>round_limit</code>, default 120, and
       <code>time_limit_minutes</code>, default 15; <code class="path">server/infrastructure/run_limits.py</code>),
       the way every model call takes its region from Settings. The time limit covers the agent's own
       work: a call that waits on agents it started (<code>spawn_agent</code>, <code>team_create</code>,
