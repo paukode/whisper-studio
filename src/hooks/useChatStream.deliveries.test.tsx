@@ -197,6 +197,7 @@ describe('deliveries frames in a turn', () => {
 
 describe('deliveries frames in an approval continuation', () => {
   const approval: PendingApproval = {
+    cardId: 'card-1',
     toolUseId: 'tu_push',
     action: 'git_push',
     category: 'cli',

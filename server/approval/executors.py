@@ -3,7 +3,7 @@
 Split out of bootstrap.py (which keeps register_defaults and the spec
 declarations) so both stay under the repo's per-file line budget. Each function
 delegates to the sibling executor/endpoint logic; the frontend never knows which
-one runs, it POSTs {action, payload} to /api/approval/execute.
+one runs, it POSTs the card's id to /api/approval/execute.
 
 Bodies that can block for long (commands, git, gh, python, aws, worktrees,
 a tree delete, a cross-volume move) run in a worker thread (asyncio.to_thread), so

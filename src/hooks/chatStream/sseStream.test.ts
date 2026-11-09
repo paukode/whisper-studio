@@ -280,6 +280,7 @@ describe('readSSEStream', () => {
  */
 describe('sendApprovalContinuation', () => {
   const approval: PendingApproval = {
+    cardId: 'card-1',
     toolUseId: 'tu_branch',
     action: 'git_create_branch',
     category: 'cli',
@@ -1079,6 +1080,7 @@ describe('readSSEStream activity_label', () => {
       { text: 'The migration adds one column.' },
     ]));
     const approval: PendingApproval = {
+      cardId: 'card-1',
       toolUseId: 'tu_w', action: 'ws_write_file', category: 'write', preview: 'diff',
       summary: 'Write a.ts', payload: { path: 'a.ts' }, sessionId: 'sess-label-final',
       alwaysAsks: false, turnSettings: SETTINGS,

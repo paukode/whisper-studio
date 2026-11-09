@@ -51,14 +51,12 @@ export interface ApprovalStats {
 }
 
 /**
- * Single executor for any approval action. The backend looks up the
- * action's ApprovalSpec in its registry and runs the registered function.
- * `tool_use_id` is the paused call's id: a write keeps its edit under it.
+ * Run the action of the approval card the user said Yes to. The server
+ * keeps every card it showed (server/approval/cards.py) and runs the action,
+ * payload and sandbox scope it recorded for `card_id`, at most once; a card
+ * it no longer knows, or one already answered, comes back as a failed
+ * outcome saying so.
  */
-export function executeApproval(req: {
-  action: string;
-  payload: Record<string, unknown>;
-  tool_use_id?: string;
-}): Promise<ApprovalOutcome> {
-  return post<ApprovalOutcome>('/api/approval/execute', req);
+export function executeApproval(cardId: string): Promise<ApprovalOutcome> {
+  return post<ApprovalOutcome>('/api/approval/execute', { card_id: cardId });
 }

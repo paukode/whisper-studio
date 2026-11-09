@@ -119,6 +119,8 @@ export const SSEEventDataSchema = z.object({
 
   // Approvals — generic shape; `preview` selects the renderer.
   approval_request: z.object({
+    /** The server's id for the card (server/approval/cards.py). */
+    card_id: z.string(),
     tool_use_id: z.string(),
     action: z.string(),
     category: z.string(),

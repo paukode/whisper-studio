@@ -247,6 +247,7 @@ async def _run_grounding(
 # tool_results keyed by session_id (see server/chat/engine/pause.py: one
 # store shared by every provider path). The continuation turn pops this state,
 # substitutes the approved tool_use_id's real result, and resumes the loop.
+from server.approval import cards as approval_cards  # noqa: E402
 from server.chat.engine.pause import paused_sessions  # noqa: E402
 
 
@@ -348,18 +349,22 @@ async def reset_chat_session(session_id: str):
 
     cleared_stream = stream_slot.drop(session_id)
     cleared_paused = paused_sessions.pop(session_id, None) is not None
+    # A card of the wedged turn must not run after the reset.
+    cleared_cards = approval_cards.forget_session(session_id)
     # Text queued for the wedged turn must not surface in the next one.
     midturn_inbox.clear(session_id)
     log.info(
-        "Session %s reset (cleared_stream=%s, cleared_paused=%s)",
+        "Session %s reset (cleared_stream=%s, cleared_paused=%s, cleared_cards=%d)",
         session_id,
         cleared_stream,
         cleared_paused,
+        cleared_cards,
     )
     return {
         "reset": True,
         "cleared_stream": cleared_stream,
         "cleared_paused": cleared_paused,
+        "cleared_cards": cleared_cards,
     }
 
 
@@ -1264,6 +1269,11 @@ async def chat_endpoint(request: Request):
         )
     stream_token: float = _now
     stream_slot.claim(session_id, stream_token, fresh=is_new_turn)
+    if is_new_turn:
+        # A new turn ends the turn a card paused: a later answer to that card
+        # resumes over the history the client sends, which holds this turn
+        # too, never over the paused turn's older messages.
+        paused_sessions.pop(session_id, None)
 
     def _heartbeat() -> None:
         stream_slot.beat(session_id, stream_token)
@@ -1654,6 +1664,10 @@ async def chat_endpoint(request: Request):
                 answers = [approved_tool_result]
 
             paused = paused_sessions.pop(session_id, None)
+            # The answer closes its approval cards: a denied card cannot run later.
+            approval_cards.close_answered(
+                session_id, [str(a.get("tool_use_id") or "") for a in answers]
+            )
             asked = (paused or {}).get("asked")
             if not paused:
                 log.warning(

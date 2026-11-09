@@ -41,6 +41,9 @@ export type TurnPhase = 'idle' | 'preparing' | 'approvedAction' | 'streaming';
  */
 
 export interface PendingApproval {
+  /** The server's id for this card (server/approval/cards.py): the Yes runs
+   *  what the server recorded under it, once. */
+  cardId: string;
   toolUseId: string;
   action: string;
   category: string;

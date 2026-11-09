@@ -11,6 +11,7 @@ path."""
 import asyncio
 import time
 
+from server.approval import cards as approval_cards
 from server.chat import routes, stream_slot
 from server.chat.engine import pause
 
@@ -165,6 +166,8 @@ def test_reset_endpoint_clears_wedged_state():
     sid = "wedged-session"
     stream_slot.active_streams[sid] = time.monotonic()
     pause.paused_sessions[sid] = {"messages": [], "pending_tool_results": []}
+    # The wedged turn's card must not run after the reset.
+    card_id = approval_cards.issue(session_id=sid, action="x", payload={}, tool_use_id="tu")
     try:
         r = client.post(f"/api/chat/sessions/{sid}/reset")
         assert r.status_code == 200
@@ -172,7 +175,9 @@ def test_reset_endpoint_clears_wedged_state():
             "reset": True,
             "cleared_stream": True,
             "cleared_paused": True,
+            "cleared_cards": 1,
         }
+        assert approval_cards.take(card_id) == approval_cards.UNKNOWN
         assert sid not in stream_slot.active_streams
         assert sid not in pause.paused_sessions
 
@@ -182,6 +187,7 @@ def test_reset_endpoint_clears_wedged_state():
             "reset": True,
             "cleared_stream": False,
             "cleared_paused": False,
+            "cleared_cards": 0,
         }
     finally:
         stream_slot.active_streams.clear()
@@ -224,6 +230,27 @@ def test_continuation_turn_claims_the_slot_too():
         assert "resume-sess" in stream_slot.active_streams
         assert "resume-sess" in stream_slot.heartbeats
     finally:
+        stream_slot.active_streams.clear()
+        stream_slot.heartbeats.clear()
+
+
+def test_a_new_turn_ends_the_turn_a_card_paused():
+    """A message sent instead of answering a card starts a new turn. Answering
+    that card later must resume over the history the client sends (which holds
+    the new turn), not over the paused turn's older messages, so the new turn
+    drops the paused state; a continuation keeps it."""
+    stream_slot.active_streams.clear()
+    stream_slot.heartbeats.clear()
+    pause.paused_sessions["paused-sess"] = {"messages": [], "pending_tool_results": []}
+
+    async def _call(body):
+        return await routes.chat_endpoint(_FakeRequest({"session_id": "paused-sess", **body}))
+
+    try:
+        asyncio.run(_call({"question": "something else first", "history": []}))
+        assert "paused-sess" not in pause.paused_sessions
+    finally:
+        pause.paused_sessions.pop("paused-sess", None)
         stream_slot.active_streams.clear()
         stream_slot.heartbeats.clear()
 

@@ -585,6 +585,7 @@ export async function readSSEStream(
             }
 
             const approval: PendingApproval = {
+              cardId: req.card_id,
               toolUseId: req.tool_use_id,
               action: req.action,
               category: req.category,

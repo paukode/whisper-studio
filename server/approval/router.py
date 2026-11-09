@@ -2,8 +2,11 @@
 
 One endpoint:
 - POST /api/approval/execute, single hub the frontend calls when the
-  user clicks Yes on an approval card. Looks up the spec by action,
-  runs its executor, returns {ok, output?, error?}.
+  user clicks Yes on an approval card. It names the card by its id, and the
+  hub runs the action and payload the server recorded for that card, once
+  (server/approval/cards.py). Only a `direct` action (one a person starts
+  from the app's own UI, with no card) is named by action and payload.
+  Returns {ok, output?, error?}.
 
 The frontend does not fetch the category list from the backend. It
 seeds its session-memory approval state from a small hardcoded default
@@ -18,7 +21,7 @@ import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from . import registry
+from . import cards, registry
 from .spec import execute_approved_by_human
 
 log = logging.getLogger("whisper-studio")
@@ -27,22 +30,47 @@ router = APIRouter(prefix="/api/approval", tags=["approval"])
 
 
 class ExecuteRequest(BaseModel):
-    action: str
+    # The card the user said Yes to (server/approval/cards.py).
+    card_id: str | None = None
+    # A `direct` action only: what to run, with no card behind it.
+    action: str | None = None
     payload: dict = {}
-    # The provider's id of the call the card paused on. A write keeps the
-    # edit under it for the diff dialog (server/workspace/edits.py).
-    tool_use_id: str | None = None
 
 
 @router.post("/execute")
 async def approval_execute(req: ExecuteRequest):
-    spec = registry.get(req.action)
+    if req.card_id:
+        taken = cards.take(req.card_id)
+        if isinstance(taken, str):
+            log.info("approval/execute: card %s refused: %s", req.card_id, taken)
+            return {"ok": False, "error": taken}
+        try:
+            return await _execute(taken.action, _card_payload(taken))
+        finally:
+            cards.finish(taken.card_id)
+    spec = registry.get(req.action or "")
+    if spec is None or not spec.direct:
+        # Every other action runs only from a card the server showed: a
+        # payload posted here is not what any person was asked about.
+        log.warning("approval/execute: %r posted without a card", req.action)
+        raise HTTPException(status_code=403, detail="This action runs only from an approval card.")
+    return await _execute(req.action or "", dict(req.payload or {}))
+
+
+def _card_payload(card: cards.Card) -> dict:
+    payload = dict(card.payload)
+    # The provider's id of the call the card paused on. A write keeps the
+    # edit under it for the diff dialog (server/workspace/edits.py).
+    if card.tool_use_id:
+        payload["__tool_use_id__"] = card.tool_use_id
+    return payload
+
+
+async def _execute(action: str, payload: dict) -> dict:
+    spec = registry.get(action)
     if not spec:
-        log.warning("approval/execute: unknown action %r", req.action)
-        raise HTTPException(status_code=404, detail=f"Unknown approval action: {req.action}")
-    payload = dict(req.payload or {})
-    if req.tool_use_id:
-        payload["__tool_use_id__"] = req.tool_use_id
+        log.warning("approval/execute: unknown action %r", action)
+        raise HTTPException(status_code=404, detail=f"Unknown approval action: {action}")
 
     # Snapshot the connected workspace so we can tell the frontend to switch
     # panels if this action changed it (e.g. git_clone with open=true). We
@@ -57,7 +85,7 @@ async def approval_execute(req: ExecuteRequest):
     try:
         outcome = await execute_approved_by_human(spec, payload)
     except Exception as e:  # noqa: BLE001 - executor is user-registered
-        log.exception("approval/execute: %s failed", req.action)
+        log.exception("approval/execute: %s failed", action)
         return {"ok": False, "error": f"Executor crashed: {e}"}
 
     # Invalidate /api/git/changes cache for write-class categories so the

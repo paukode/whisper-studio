@@ -465,6 +465,8 @@ export type PreviewKind = 'diff' | 'command' | 'text';
 export type RiskHint = 'low' | 'medium' | 'high';
 
 export interface ApprovalRequest {
+  /** The server's id for the card (server/approval/cards.py). */
+  card_id: string;
   tool_use_id: string;
   action: string;
   category: string;

@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 
 from server import file_state, workspace
 from server import tool_executor as te
+from server.approval import cards as approval_cards
 from server.approval import registry
 from server.approval.executors import _do_write
 from server.approval.markers import approval_request
@@ -225,8 +226,9 @@ def test_the_card_post_returns_the_note_for_the_continuation():
     app = FastAPI()
     app.include_router(approval_router)
     with TestClient(app) as client:
-        res = client.post(
-            "/api/approval/execute", json={"action": "test_note_card", "payload": {"path": "a"}}
+        card_id = approval_cards.issue(
+            session_id="s", action="test_note_card", payload={"path": "a"}, tool_use_id=None
         )
+        res = client.post("/api/approval/execute", json={"card_id": card_id})
     assert res.json()["output"] == "Wrote a.py (2 bytes)."
     assert res.json()["model_note"] == "[eslint] 1 issue left"

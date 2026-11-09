@@ -141,6 +141,7 @@ describe('eviction', () => {
     useRecordingStore.setState({ recordingSessionId: 'rec' });
     entries[3].chat.setState({
       currentApproval: {
+        cardId: 'card-1',
         toolUseId: 'x', action: 'write', category: 'write', preview: 'text',
         summary: 's', payload: {}, sessionId: 'appr',
         alwaysAsks: false,

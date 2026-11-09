@@ -124,6 +124,7 @@ describe('chatStore: updateStreamToolUse', () => {
 
 describe('chatStore — approval queue', () => {
   const make = (id: string, action = 'write'): PendingApproval => ({
+    cardId: 'card-1',
     toolUseId: id,
     action,
     category: action === 'cli' || action === 'command' ? 'cli' : action === 'delete' ? 'delete' : 'write',

@@ -39,6 +39,7 @@ const SID = 'sess-leg';
 
 function approval(): PendingApproval {
   return {
+    cardId: 'card-1',
     toolUseId: 'tu_dev',
     action: 'terminal_run',
     category: 'cli',
@@ -412,7 +413,7 @@ describe('approval leg', () => {
     ]);
     const rows = () => getChatStore(SID).getState().messages[1].toolUse ?? [];
 
-    it('sends the call id and writes the outcome and the stats onto the row, then saves', async () => {
+    it('runs the card by its id and writes the outcome and the stats onto the row, then saves', async () => {
       seed();
       // What the row said, and whether the turn had resumed, at each save.
       const saves: Array<{ result?: string; resumed: number }> = [];
@@ -424,11 +425,8 @@ describe('approval leg', () => {
         answered = answerApproval(writeApproval(), true, false);
         await tick();
       });
-      expect(executeApproval).toHaveBeenCalledWith({
-        action: 'ws_write_file',
-        payload: { path: 'a.py', content: 'x = 1\n' },
-        tool_use_id: 'tu_dev',
-      });
+      // Only the card's id: the server runs the action and payload it recorded.
+      expect(executeApproval).toHaveBeenCalledWith(writeApproval().cardId);
 
       await act(async () => {
         finishAction!({

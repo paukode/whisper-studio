@@ -219,14 +219,10 @@ function patchDeniedRow(chat: StoreApi<ChatState>, sessionId: string, approval: 
 async function runApprovedAction(approval: PendingApproval): Promise<ApprovalOutcome> {
   let outcome: ApprovalOutcome;
   try {
-    // Single executor: the backend looks up the spec and runs its registered
-    // function. No per-action switch on the frontend.
-    // The call's id lets a write keep its edit for the diff dialog.
-    outcome = await executeApproval({
-      action: approval.action,
-      payload: approval.payload,
-      tool_use_id: approval.toolUseId,
-    });
+    // The server runs what it recorded for this card (no per-action switch
+    // here), and the paused call's id it kept lets a write keep its edit
+    // for the diff dialog.
+    outcome = await executeApproval(approval.cardId);
   } catch (err) {
     console.error('Approval execution failed:', err);
     outcome = { ok: false, error: toError(err).message };

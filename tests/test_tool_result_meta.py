@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 
 from server import file_state, tool_approvals
 from server import tool_executor as te
+from server.approval import cards as approval_cards
 from server.approval import registry
 from server.approval.markers import approval_request, preview_image
 from server.approval.router import router as approval_router
@@ -430,14 +431,10 @@ def test_the_card_post_stamps_the_id_and_returns_the_stats():
     app = FastAPI()
     app.include_router(approval_router)
     with TestClient(app) as client:
-        res = client.post(
-            "/api/approval/execute",
-            json={
-                "action": "test_meta_card",
-                "payload": {"path": "a.py"},
-                "tool_use_id": "toolu_c",
-            },
+        card_id = approval_cards.issue(
+            session_id="s", action="test_meta_card", payload={"path": "a.py"}, tool_use_id="toolu_c"
         )
+        res = client.post("/api/approval/execute", json={"card_id": card_id})
     assert res.status_code == 200
     assert res.json()["ok"] is True
     assert res.json()["stats"] == stats
@@ -451,8 +448,9 @@ def test_the_card_post_without_an_id_stamps_nothing():
     app = FastAPI()
     app.include_router(approval_router)
     with TestClient(app) as client:
-        res = client.post(
-            "/api/approval/execute", json={"action": "test_meta_card_noid", "payload": {"p": 1}}
+        card_id = approval_cards.issue(
+            session_id="s", action="test_meta_card_noid", payload={"p": 1}, tool_use_id=None
         )
+        res = client.post("/api/approval/execute", json={"card_id": card_id})
     assert res.json()["stats"] is None
     assert "__tool_use_id__" not in captured[0]
