@@ -113,8 +113,7 @@ def finish_run(
 
     Only a lease that is still 'running' is closed (first writer wins, see
     server/infrastructure/run_lease.py): a later writer for the same run, such
-    as the backstop at the end of server.cron_run._execute_cron_prompt,
-    changes nothing.
+    as the backstop in server.cron_scheduler.mark_done, changes nothing.
     Returns True when this call closed the lease.
     """
     with _get_conn() as conn:

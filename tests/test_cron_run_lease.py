@@ -66,13 +66,13 @@ def test_run_state_never_reports_an_orphan_lease_as_running(hist):
     # History says running, but no run of j3 is live in this process: Stop
     # would refuse, so the list must not offer it.
     assert C.run_state("j3") == "failed"
-    with C._IN_PROGRESS_LOCK:
-        C._in_progress.add("j3")
+    assert C.mark_running("j3", None) is True
     try:
         assert C.run_state("j3") == "running"
     finally:
-        with C._IN_PROGRESS_LOCK:
-            C._in_progress.discard("j3")
+        C.mark_done("j3", "r3")
+    # mark_done closed the orphan lease it was handed.
+    assert _status("r3", "j3")["status"] == "failed"
     assert C.run_state("never-ran") is None
 
 
@@ -83,7 +83,6 @@ def test_failed_outcome_write_is_closed_by_the_backstop(monkeypatch, hist):
     import server.infrastructure.config as CFG
     import server.prompts.rules as R
     import server.workspace as WS
-    from server.cron_run import UNRECORDED_OUTCOME
 
     job = {
         "id": "job-lease",
@@ -132,5 +131,5 @@ def test_failed_outcome_write_is_closed_by_the_backstop(monkeypatch, hist):
     runs = H.list_runs("job-lease")
     assert len(runs) == 1
     assert runs[0]["status"] == "failed"
-    assert runs[0]["text"] == UNRECORDED_OUTCOME
+    assert runs[0]["text"] == C.UNRECORDED_OUTCOME
     assert C.run_state("job-lease") == "failed"

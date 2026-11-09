@@ -107,18 +107,15 @@ def test_stop_endpoint_running_job(cron_client):
     client, cs = cron_client
     jobs = [{"id": "j5", "name": "busy", "prompt": "p", "schedule": {}, "enabled": True}]
     cs.save_cron_jobs(jobs)
-    with cs._IN_PROGRESS_LOCK:
-        cs._in_progress.add("j5")
     task = _FakeTask()
-    cron_events.open_run("j5", task)
+    assert cs.mark_running("j5", task) is True
     try:
         r = client.post("/api/cron/j5/stop")
         assert r.status_code == 200
         assert r.json() == {"stopping": True}
         assert task.cancelled is True
     finally:
-        with cs._IN_PROGRESS_LOCK:
-            cs._in_progress.discard("j5")
+        cs.mark_done("j5", "no-such-run")
 
 
 def test_session_events_forwards_cron_progress_as_team_progress():
@@ -176,15 +173,33 @@ def test_stop_endpoint_reaches_deleted_but_running_job(cron_client):
     the live registry is consulted before the jobs file."""
     client, cs = cron_client
     cs.save_cron_jobs([])  # job no longer on disk
-    with cs._IN_PROGRESS_LOCK:
-        cs._in_progress.add("ghost")
     task = _FakeTask()
-    cron_events.open_run("ghost", task)
+    assert cs.mark_running("ghost", task) is True
     try:
         r = client.post("/api/cron/ghost/stop")
         assert r.status_code == 200
         assert r.json() == {"stopping": True}
         assert task.cancelled is True
     finally:
-        with cs._IN_PROGRESS_LOCK:
-            cs._in_progress.discard("ghost")
+        cs.mark_done("ghost", "no-such-run")
+
+
+def test_in_progress_claim_is_exclusive_and_released(cron_client):
+    """One owner for a job's live run: a second claim is refused, Stop and
+    run-now see the claim, and mark_done releases both the claim and the stop
+    handle."""
+    client, cs = cron_client
+    cs.save_cron_jobs(
+        [{"id": "j7", "name": "solo", "prompt": "p", "schedule": {}, "enabled": True}]
+    )
+    first, second = _FakeTask(), _FakeTask()
+    assert cs.mark_running("j7", first) is True
+    try:
+        assert cs.mark_running("j7", second) is False
+        assert cs.is_running("j7") is True
+        assert cs.run_job_now("j7") == {"error": "job is already running"}
+    finally:
+        cs.mark_done("j7", "no-such-run")
+    assert cs.is_running("j7") is False
+    assert cron_events.request_stop("j7") is False
+    assert client.post("/api/cron/j7/stop").status_code == 409

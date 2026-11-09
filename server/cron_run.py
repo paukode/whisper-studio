@@ -39,10 +39,6 @@ log = logging.getLogger("whisper-studio")
 # The feature name every Local-mode refusal of a scheduled run shows the user.
 SCHEDULED_RUNS = "Scheduled runs"
 
-# History text for a run whose outcome write failed: the backstop at the end
-# of _execute_cron_prompt closes its lease with this.
-UNRECORDED_OUTCOME = "[interrupted] the run ended without recording its outcome"
-
 # Dedicated pool for cron's blocking calls — the adapter's Bedrock invoke and
 # the synchronous completion-verifier (server.goals.cron_verify.verify).
 # Mirrors server.agents.runtime._agent_executor: its own pool so a burst of
@@ -107,16 +103,11 @@ async def _execute_cron_prompt(job_id: str) -> None:
 
     from server import cron_events
 
-    with _cs._IN_PROGRESS_LOCK:
-        if job_id in _cs._in_progress:
-            log.info("Cron '%s' already running; skipping duplicate", job.get("name"))
-            return
-        _cs._in_progress.add(job_id)
-        # Register the stop flag AND this task at the same instant the job is
-        # marked in-progress: a stop request in the setup window (config/
-        # tool-pool assembly) must not be silently lost. asyncio.current_task()
-        # is this coroutine's own task, whichever way it was scheduled.
-        cron_events.open_run(job_id, asyncio.current_task())
+    # The stop handle is this coroutine's own task, whichever way it was
+    # scheduled; mark_running registers it with the claim.
+    if not _cs.mark_running(job_id, asyncio.current_task()):
+        log.info("Cron '%s' already running; skipping duplicate", job.get("name"))
+        return
 
     run_id = str(uuid.uuid4())[:8]
     started = datetime.now(UTC)
@@ -580,17 +571,4 @@ async def _execute_cron_prompt(job_id: str) -> None:
             duration_ms=_elapsed_ms(),
         )
     finally:
-        # Backstop: every exit path above records the outcome through
-        # _push_result, which logs and swallows a failed history write. Close
-        # the lease here if it is still open, BEFORE the job leaves the
-        # in-progress set, so history never says 'running' for a run that
-        # is gone. A lease already closed is left as it is (first writer wins).
-        try:
-            from server import cron_history
-
-            cron_history.finish_run(run_id, status="failed", text=UNRECORDED_OUTCOME)
-        except Exception as exc:
-            log.warning("cron: failed to close run lease %s: %s", run_id, exc)
-        cron_events.close_run(job_id)
-        with _cs._IN_PROGRESS_LOCK:
-            _cs._in_progress.discard(job_id)
+        _cs.mark_done(job_id, run_id)
