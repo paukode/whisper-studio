@@ -32,7 +32,6 @@ function makeOpts(): UseSlashCommandsOptions {
     chatStream: { send: vi.fn(), sendMidTurn: vi.fn(), abort: vi.fn() },
     slashCommands: [],
     attachWorkspaceFileAsChip: vi.fn(),
-    uploadWorkspaceFile: vi.fn(),
   } as unknown as UseSlashCommandsOptions;
 }
 

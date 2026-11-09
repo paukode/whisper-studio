@@ -1,14 +1,16 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { renderHook, waitFor } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
+import { renderHook } from '@testing-library/react';
 
 // /file:path question keeps the path's case (case-sensitive volumes) and the
-// question's line breaks, and a failed upload says why.
+// question's line breaks, and hands both to the one workspace-file turn
+// (chatStream/workspaceFileTurn, tested there).
 vi.mock('@/providers/ThemeProvider', () => ({
   useTheme: () => ({ setTheme: vi.fn(), themeKey: 'light', resolvedTheme: 'light', themes: [] }),
 }));
+vi.mock('@/hooks/chatStream/workspaceFileTurn', () => ({ askAboutWorkspaceFile: vi.fn() }));
 
 import { useSlashCommands, type UseSlashCommandsOptions } from './useSlashCommands';
-import { getChatStore } from '@/stores/sessionRuntimes';
+import { askAboutWorkspaceFile } from '@/hooks/chatStream/workspaceFileTurn';
 
 function makeOpts(overrides: Partial<UseSlashCommandsOptions>): UseSlashCommandsOptions {
   return {
@@ -26,89 +28,27 @@ function makeOpts(overrides: Partial<UseSlashCommandsOptions>): UseSlashCommands
     chatStream: { send: vi.fn(), sendMidTurn: vi.fn(), abort: vi.fn() },
     slashCommands: [],
     attachWorkspaceFileAsChip: vi.fn(),
-    uploadWorkspaceFile: vi.fn(),
     ...overrides,
   } as unknown as UseSlashCommandsOptions;
 }
 
-describe('useSlashCommands: /file:path question', () => {
-  afterEach(() => {
-    getChatStore('file-sess').getState().setMessages([]);
-    getChatStore('file-sess').getState().finishStream();
-  });
-
-  it('keeps the path case and the question line breaks', async () => {
-    const uploadWorkspaceFile = vi.fn().mockResolvedValue({ id: 'att1', filename: 'App.tsx' });
-    const send = vi.fn();
-    const { result } = renderHook(() =>
-      useSlashCommands(makeOpts({
-        uploadWorkspaceFile,
-        chatStream: { send, sendMidTurn: vi.fn(), abort: vi.fn() } as unknown as UseSlashCommandsOptions['chatStream'],
-      })),
-    );
+describe('useSlashCommands: /file:path', () => {
+  it('asks about the file with the path case and the question line breaks kept', () => {
+    const { result } = renderHook(() => useSlashCommands(makeOpts({})));
 
     result.current.handleSlashCommand('/file:src/App.tsx Explain\n\nline two');
 
-    expect(uploadWorkspaceFile).toHaveBeenCalledWith('src/App.tsx');
-    await waitFor(() => expect(send).toHaveBeenCalled());
-    expect(send.mock.calls[0][0]).toBe('Explain\n\nline two');
+    expect(askAboutWorkspaceFile).toHaveBeenCalledWith('file-sess', 'src/App.tsx', 'Explain\n\nline two');
   });
 
-  it('a failed upload shows the reason', async () => {
-    const uploadWorkspaceFile = vi.fn().mockRejectedValue(new Error('File App.tsx exceeds 50MB limit'));
-    const addToast = vi.fn();
-    const { result } = renderHook(() => useSlashCommands(makeOpts({ uploadWorkspaceFile, addToast })));
+  it('with no question attaches the file as a chip and sends nothing', () => {
+    const attachWorkspaceFileAsChip = vi.fn();
+    vi.mocked(askAboutWorkspaceFile).mockClear();
+    const { result } = renderHook(() => useSlashCommands(makeOpts({ attachWorkspaceFileAsChip })));
 
-    result.current.handleSlashCommand('/file:src/App.tsx Explain');
+    result.current.handleSlashCommand('/file:src/App.tsx');
 
-    await waitFor(() =>
-      expect(addToast).toHaveBeenCalledWith({
-        type: 'error',
-        message: 'Could not attach App.tsx: File App.tsx exceeds 50MB limit',
-      }),
-    );
-  });
-
-  it('shows the turn as starting while the file uploads', async () => {
-    let finishUpload: (v: { id: string; filename: string }) => void = () => {};
-    const uploadWorkspaceFile = vi.fn(() => new Promise<{ id: string; filename: string }>((r) => { finishUpload = r; }));
-    const send = vi.fn().mockResolvedValue(true);
-    const { result } = renderHook(() =>
-      useSlashCommands(makeOpts({
-        uploadWorkspaceFile,
-        chatStream: { send, sendMidTurn: vi.fn(), abort: vi.fn() } as unknown as UseSlashCommandsOptions['chatStream'],
-      })),
-    );
-
-    result.current.handleSlashCommand('/file:src/App.tsx Explain');
-
-    expect(getChatStore('file-sess').getState().turnPhase).toBe('starting');
-    expect(getChatStore('file-sess').getState().isStreaming).toBe(true);
-    finishUpload({ id: 'att1', filename: 'App.tsx' });
-    await waitFor(() => expect(send).toHaveBeenCalled());
-    // The send goes to the session that started it.
-    expect(send.mock.calls[0][1]).toEqual(expect.objectContaining({ sessionId: 'file-sess' }));
-  });
-
-  it('a Stop while the file uploads sends nothing once the upload lands', async () => {
-    let finishUpload: (v: { id: string; filename: string }) => void = () => {};
-    const uploadWorkspaceFile = vi.fn(() => new Promise<{ id: string; filename: string }>((r) => { finishUpload = r; }));
-    const send = vi.fn().mockResolvedValue(true);
-    const { result } = renderHook(() =>
-      useSlashCommands(makeOpts({
-        uploadWorkspaceFile,
-        chatStream: { send, sendMidTurn: vi.fn(), abort: vi.fn() } as unknown as UseSlashCommandsOptions['chatStream'],
-      })),
-    );
-
-    result.current.handleSlashCommand('/file:src/App.tsx Explain');
-    // What the Stop button does to the session's state.
-    getChatStore('file-sess').getState().finishStream();
-    finishUpload({ id: 'att1', filename: 'App.tsx' });
-
-    await waitFor(() => expect(uploadWorkspaceFile).toHaveBeenCalled());
-    await new Promise((r) => setTimeout(r, 20));
-    expect(send).not.toHaveBeenCalled();
-    expect(getChatStore('file-sess').getState().turnPhase).toBe('idle');
+    expect(attachWorkspaceFileAsChip).toHaveBeenCalledWith('src/App.tsx');
+    expect(askAboutWorkspaceFile).not.toHaveBeenCalled();
   });
 });

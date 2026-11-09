@@ -4,6 +4,7 @@ import { getChatStore } from '@/stores/sessionRuntimes';
 import { runCompact } from '@/hooks/compactCommand';
 import { useSubagentStore } from '@/stores/subagentStore';
 import { applyTeamProgressToMessage } from '@/hooks/chatStream/teamProgress';
+import { askAboutWorkspaceFile } from '@/hooks/chatStream/workspaceFileTurn';
 import type { ChatMessage, TeamAgentReport, TeamProgressEvent } from '@/types/chat';
 import { useUIStore, type UIState } from '@/stores/uiStore';
 import { useSessionStore } from '@/stores/sessionStore';
@@ -48,9 +49,6 @@ export interface UseSlashCommandsOptions {
   /** Attach a workspace file to the composer as a chip (background upload, no
    *  send) — used by `/file:path` with no trailing question. */
   attachWorkspaceFileAsChip: (path: string) => Promise<void> | void;
-  /** Fetch + upload a workspace file and return its attachment record (no
-   *  chip) — used by the non-blocking `/file:path question` auto-send. */
-  uploadWorkspaceFile: (path: string) => Promise<{ id: string; filename: string }>;
 }
 
 export interface UseSlashCommandsResult {
@@ -81,7 +79,6 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
     chatStream,
     slashCommands: SLASH_COMMANDS,
     attachWorkspaceFileAsChip,
-    uploadWorkspaceFile,
   } = opts;
 
   // In-tab theme setter — the same one the Settings/Header theme picker uses.
@@ -110,56 +107,13 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
         addToast({ type: 'info', message: 'Usage: /file:path [question]', duration: 3000, persist: false });
         return true;
       }
-      const fileName = filePath.split('/').pop() || filePath;
-
       if (!question) {
         // Attach only — chip + background upload, no send.
         void attachWorkspaceFileAsChip(filePath);
         return true;
       }
 
-      // Show the user message + thinking indicator immediately so the
-      // conversation visibly starts; the model call fires once the file is
-      // uploaded (PDF→text conversion can take a moment).
-      const ts = new Date().toISOString();
-      const chat = () => getChatStore(sessionId).getState();
-      chat().addMessage({ role: 'user', content: question, timestamp: ts, attachmentNames: [fileName] });
-      const leg = chat().startTurn('starting');
-      // Stopped (or replaced by another send) while the file uploads: the
-      // turn no longer waits for it.
-      const stillStarting = () => chat().turnSeq === leg && chat().turnPhase === 'starting';
-
-      const patchMessage = (patch: Partial<ChatMessage>) => {
-        const st = chat();
-        const idx = st.messages.findIndex((m) => m.timestamp === ts);
-        if (idx < 0) return;
-        const updated = [...st.messages];
-        updated[idx] = { ...updated[idx], ...patch };
-        st.setMessages(updated);
-      };
-
-      void (async () => {
-        let att: { id: string; filename: string };
-        try {
-          att = await uploadWorkspaceFile(filePath);
-        } catch (e) {
-          const why = toError(e).message;
-          chat().finishStream(undefined, leg);
-          patchMessage({ content: `${question}\n\n_[Could not attach ${fileName}: ${why}]_` });
-          addToast({ type: 'error', message: `Could not attach ${fileName}: ${why}` });
-          return;
-        }
-        // Record the real id on the already-shown message so a later
-        // regenerate re-attaches the same file (mirrors the /subagent patch).
-        patchMessage({ attachmentIds: [att.id], attachmentNames: [att.filename] });
-        if (!stillStarting()) return;
-        await chatStream.send(question, {
-          attachmentIds: [att.id],
-          attachmentNames: [att.filename],
-          hideUserMessage: true,
-          sessionId: sessionId ?? undefined,
-        });
-      })();
+      askAboutWorkspaceFile(sessionId, filePath, question);
       return true;
     }
 
@@ -730,7 +684,7 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
       default:
         return false;
     }
-  }, [setVerbosity, setEffortLevel, setTheme, openSettings, addToast, selectedModel, autoMemory, setAutoMemory, sessionId, handleNativeBrowse, handlePlanToggle, chatStream, SLASH_COMMANDS, models, attachWorkspaceFileAsChip, uploadWorkspaceFile]);
+  }, [setVerbosity, setEffortLevel, setTheme, openSettings, addToast, selectedModel, autoMemory, setAutoMemory, sessionId, handleNativeBrowse, handlePlanToggle, chatStream, SLASH_COMMANDS, models, attachWorkspaceFileAsChip]);
 
   return { handleSlashCommand };
 }

@@ -14,10 +14,12 @@ import { useUIStore } from '@/stores/uiStore';
 import { stubExecCommand } from '@/test/clipboardCopy';
 import type { SessionTask } from '@/stores/taskStore';
 import type { ChatMessage, Delivery, ToolUseEvent } from '@/types/chat';
+import { resendUserMessage } from '@/hooks/chatStream/resend';
 
 // Patched where pausedAnswer reads it: a card's answer resumes through sendChatTurn.
 const sendChatTurn = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => true));
 vi.mock('@/hooks/useChatStream', () => ({ sendChatTurn }));
+vi.mock('@/hooks/chatStream/resend', () => ({ resendUserMessage: vi.fn() }));
 const resumedWith = () => sendChatTurn.mock.calls.map((c) => c[1]);
 
 const REPORT: Delivery = { kind: 'file', target: '/Users/me/Downloads/report.html', label: 'report.html', detail: '12.4 KB' };
@@ -139,19 +141,12 @@ describe('TurnBubble', () => {
   });
 
   it('regenerates from the user message the turn answers', () => {
-    const regenerate = vi.fn();
-    window.addEventListener('whisper-regenerate', regenerate);
-    try {
-      render(<TurnBubble rows={turn} indices={indices} />);
-      fireEvent.click(screen.getByTitle('Regenerate'));
-    } finally {
-      window.removeEventListener('whisper-regenerate', regenerate);
-    }
-    expect(regenerate).toHaveBeenCalledTimes(1);
-    const detail = (regenerate.mock.calls[0][0] as CustomEvent).detail;
+    render(<TurnBubble rows={turn} indices={indices} />);
+    fireEvent.click(screen.getByTitle('Regenerate'));
     // The question's own index: the history is cut at it and the send adds
     // it again.
-    expect(detail).toMatchObject({ index: 0, content: question.content });
+    expect(resendUserMessage).toHaveBeenCalledTimes(1);
+    expect(resendUserMessage).toHaveBeenCalledWith(0);
   });
 
   it('draws the live tail inside the same bubble, with the committed chips, and no timestamp or actions yet', () => {

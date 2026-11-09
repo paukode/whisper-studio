@@ -28,7 +28,6 @@ function makeOpts(overrides: Partial<UseSlashCommandsOptions> = {}): UseSlashCom
     chatStream: { send: vi.fn(), sendMidTurn: vi.fn(), abort: vi.fn() },
     slashCommands: [],
     attachWorkspaceFileAsChip: vi.fn(),
-    uploadWorkspaceFile: vi.fn(),
     ...overrides,
   } as unknown as UseSlashCommandsOptions;
 }

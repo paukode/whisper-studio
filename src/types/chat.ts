@@ -183,6 +183,10 @@ export interface ChatMessage {
    * each question with its answer (chatStream/history.ts), so it does not
    * ask again.
    */
+  /** On a `/file:path question` message: the workspace path it attached. A
+   *  resend whose upload never finished uploads this file again
+   *  (chatStream/resend.ts). */
+  workspaceFile?: string;
   userQuestion?: {
     question: string;
     options: string[];

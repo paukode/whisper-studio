@@ -1,13 +1,12 @@
 /**
  * Regenerate on an assistant turn sends the question again once: the
- * history is cut at the user message (useComposerChatEvents) and the send
+ * history is cut at the user message (resendUserMessage) and the send
  * adds it back. Cut after it, the transcript showed the question twice and
  * the model received it twice, once as history and once as the question.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, renderHook, screen } from '@testing-library/react';
 import { useChatStream } from '@/hooks/useChatStream';
-import { useComposerChatEvents } from '@/hooks/useComposerChatEvents';
 import { dropRuntime, getActiveChatStore, useRuntimeIndex } from '@/stores/sessionRuntimes';
 import { useSessionStore } from '@/stores/sessionStore';
 import { TurnBubble } from '@/components/chat/TurnBubble';
@@ -46,11 +45,7 @@ afterEach(() => {
 describe('Regenerate on an assistant turn', () => {
   it('sends the question again once and replaces the answer', async () => {
     streamReplies('First answer.');
-    const { result } = renderHook(() => {
-      const stream = useChatStream();
-      useComposerChatEvents(stream);
-      return stream;
-    });
+    const { result } = renderHook(() => useChatStream());
     await act(async () => { await result.current.send('Fix the flaky test'); });
     expect(transcript()).toEqual(['user:Fix the flaky test', 'assistant:First answer.']);
 

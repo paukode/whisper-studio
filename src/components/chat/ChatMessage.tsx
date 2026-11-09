@@ -7,6 +7,7 @@ import { CompactSummaryCard } from './CompactSummaryCard';
 import { CronEventCard } from '@/components/chat/CronEventCard';
 import { SessionMessageCard } from '@/components/chat/SessionMessageCard';
 import { getActiveChatStore } from '@/stores/sessionRuntimes';
+import { resendUserMessage } from '@/hooks/chatStream/resend';
 import { formatMessageTimestamp } from '@/utils/formatTimestamp';
 
 export interface ChatMessageProps {
@@ -64,30 +65,14 @@ const ChatMessageView: React.FC<ChatMessageProps> = ({ message, index }) => {
     const trimmed = editText.trim();
     setIsEditing(false);
     if (!trimmed || trimmed === message.content) return;
-    window.dispatchEvent(new CustomEvent('whisper-regenerate', {
-      detail: {
-        index,
-        content: trimmed,
-        attachmentIds: message.attachmentIds,
-        attachmentNames: message.attachmentNames,
-      },
-    }));
-  }, [editText, message.content, message.attachmentIds, message.attachmentNames, index]);
+    resendUserMessage(index, trimmed);
+  }, [editText, message.content, index]);
 
   const handleEditCancel = useCallback(() => {
     setIsEditing(false);
   }, []);
 
-  const handleRegenerate = useCallback(() => {
-    window.dispatchEvent(new CustomEvent('whisper-regenerate', {
-      detail: {
-        index,
-        content: message.content,
-        attachmentIds: message.attachmentIds,
-        attachmentNames: message.attachmentNames,
-      },
-    }));
-  }, [index, message.content, message.attachmentIds, message.attachmentNames]);
+  const handleRegenerate = useCallback(() => resendUserMessage(index), [index]);
 
   // A user message deletes from here: the turn it started goes with it.
   const handleDelete = useCallback(() => {

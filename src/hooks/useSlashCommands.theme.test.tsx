@@ -32,7 +32,6 @@ function makeOpts(overrides: Partial<UseSlashCommandsOptions> = {}): UseSlashCom
     chatStream: {} as UseSlashCommandsOptions['chatStream'],
     slashCommands: [],
     attachWorkspaceFileAsChip: vi.fn(),
-    uploadWorkspaceFile: vi.fn(),
     ...overrides,
   };
   return opts as unknown as UseSlashCommandsOptions;

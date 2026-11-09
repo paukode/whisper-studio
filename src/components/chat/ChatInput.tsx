@@ -9,7 +9,6 @@ import { useChatStream } from '@/hooks/useChatStream';
 import { useChatAutocomplete } from '@/hooks/useChatAutocomplete';
 import { useSlashCommands } from '@/hooks/useSlashCommands';
 import { useComposerDragDrop } from '@/hooks/useComposerDragDrop';
-import { useComposerChatEvents } from '@/hooks/useComposerChatEvents';
 import { useDictationInput } from '@/hooks/useDictationInput';
 import { useComposerAttachments } from '@/hooks/useComposerAttachments';
 import { useComposerDraft } from '@/hooks/useComposerDraft';
@@ -49,7 +48,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
     attachmentsRef,
     uploadFilesAsChips,
     attachWorkspaceFileAsChip,
-    uploadWorkspaceFile,
     removeAttachment,
     waitForUploads,
   } = useComposerAttachments(sessionId);
@@ -82,7 +80,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
     handleDrop,
     handlePaste,
   } = useComposerDragDrop(uploadFilesAsChips);
-  useComposerChatEvents(chatStream);
 
   /* ── Workspace dropdown helpers ── */
   // Every saved recent (the backend keeps ten); the panel scrolls within the window.
@@ -392,7 +389,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
     chatStream,
     slashCommands: SLASH_COMMANDS,
     attachWorkspaceFileAsChip,
-    uploadWorkspaceFile,
   });
 
   // Core send logic, parameterized by the raw message text. Both the form

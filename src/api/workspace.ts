@@ -1,4 +1,4 @@
-import { get, post, put } from './client';
+import { get, post, put, readErrorBody } from './client';
 import type { FileTreeEntry } from '@/types/workspace';
 
 interface ListDirResponse {
@@ -331,3 +331,26 @@ export function clearUnindexedRecents(): Promise<{ recent: string[] }> {
   return post<{ recent: string[] }>('/api/workspace/recent/clear-unindexed', {});
 }
 
+
+/** A workspace file's raw bytes as a browser File, named after its path. */
+export async function fetchWorkspaceFile(path: string): Promise<File> {
+  const resp = await fetch(`/api/workspace/file?path=${encodeURIComponent(path)}&raw=true`);
+  if (!resp.ok) throw new Error(`Could not read ${path}: ${await readErrorBody(resp)}`);
+  const blob = await resp.blob();
+  const name = path.split('/').pop() || path;
+  return new File([blob], name, { type: blob.type || 'application/octet-stream' });
+}
+
+/** Upload a workspace file as a chat attachment (no composer chip). Rejects
+ *  with the server's reason, for example a size limit. The server reads a
+ *  document into text before it answers, so a large PDF takes a while. */
+export async function uploadWorkspaceFile(path: string): Promise<{ id: string; filename: string }> {
+  const formData = new FormData();
+  formData.append('files', await fetchWorkspaceFile(path));
+  const response = await fetch('/api/upload', { method: 'POST', body: formData });
+  if (!response.ok) throw new Error(await readErrorBody(response));
+  const data = (await response.json()) as { attachments: Array<{ id: string; filename: string }> };
+  const att = data.attachments[0];
+  if (!att) throw new Error('The upload returned no attachment.');
+  return att;
+}

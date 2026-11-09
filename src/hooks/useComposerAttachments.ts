@@ -6,6 +6,7 @@ import {
 } from '@/stores/composerAttachmentsStore';
 import { DRAFT_SESSION } from '@/stores/sessionRuntimes';
 import { readErrorBody } from '@/api/client';
+import { fetchWorkspaceFile } from '@/api/workspace';
 
 /**
  * Owns the chat composer's attachment chips and every way a file gets onto
@@ -31,7 +32,6 @@ export interface UseComposerAttachmentsResult {
   attachmentsRef: React.MutableRefObject<ComposerAttachment[]>;
   uploadFilesAsChips: (files: File[]) => Promise<void>;
   attachWorkspaceFileAsChip: (path: string) => Promise<void>;
-  uploadWorkspaceFile: (path: string) => Promise<ComposerAttachment>;
   removeAttachment: (idx: number) => void;
   /** Resolve once no chip is mid-upload (or after a safety timeout). */
   waitForUploads: () => Promise<boolean>;
@@ -124,19 +124,9 @@ export function useComposerAttachments(sessionId: string | null): UseComposerAtt
     }
   }, [update, key]);
 
-  // Fetch a workspace file's raw bytes and wrap them in a File so it can go
-  // through the same /api/upload path as a user-picked file.
-  const fetchWorkspaceFile = useCallback(async (path: string): Promise<File> => {
-    const url = `/api/workspace/file?path=${encodeURIComponent(path)}&raw=true`;
-    const resp = await fetch(url);
-    if (!resp.ok) throw new Error(`Could not read ${path}: ${await readErrorBody(resp)}`);
-    const blob = await resp.blob();
-    const name = path.split('/').pop() || path;
-    return new File([blob], name, { type: blob.type || 'application/octet-stream' });
-  }, []);
-
   // /file: dropdown select (and /file:path with no question) → attach a
-  // workspace file to the composer as a chip and upload in the background.
+  // workspace file to the composer as a chip and upload in the background,
+  // through the same /api/upload path as a user-picked file.
   const attachWorkspaceFileAsChip = useCallback(async (path: string) => {
     try {
       const file = await fetchWorkspaceFile(path);
@@ -148,25 +138,8 @@ export function useComposerAttachments(sessionId: string | null): UseComposerAtt
         duration: 3000,
       });
     }
-  }, [fetchWorkspaceFile, uploadFilesAsChips]);
+  }, [uploadFilesAsChips]);
 
-  // Fetch + upload a workspace file WITHOUT a composer chip and return the
-  // attachment record. Rejects with the reason (the server's, e.g. a size
-  // limit). Used by the non-blocking "/file:path question" auto-send path.
-  const uploadWorkspaceFile = useCallback(
-    async (path: string): Promise<ComposerAttachment> => {
-      const file = await fetchWorkspaceFile(path);
-      const formData = new FormData();
-      formData.append('files', file);
-      const response = await fetch('/api/upload', { method: 'POST', body: formData });
-      if (!response.ok) throw new Error(await readErrorBody(response));
-      const data = (await response.json()) as { attachments: ComposerAttachment[] };
-      const att = data.attachments[0];
-      if (!att) throw new Error('The upload returned no attachment.');
-      return att;
-    },
-    [fetchWorkspaceFile],
-  );
 
   // Remove a chip. If it's an in-flight upload, abort its request first so the
   // network task is cancelled, not just the chip (the catch handler then drops
@@ -198,7 +171,6 @@ export function useComposerAttachments(sessionId: string | null): UseComposerAtt
     attachmentsRef,
     uploadFilesAsChips,
     attachWorkspaceFileAsChip,
-    uploadWorkspaceFile,
     removeAttachment,
     waitForUploads,
   };
