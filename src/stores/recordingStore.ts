@@ -149,15 +149,46 @@ export interface RecordingState {
    *  fighting the OS for device exclusivity. */
   acquireMic: (owner: string) => Promise<{ stream: MediaStream; context: AudioContext }>;
   /** Drops the owner's refcount. When the count hits zero the tracks
-   *  are stopped and the AudioContext is closed. */
+   *  are stopped and the AudioContext is closed; when the device is still
+   *  opening, the open stops them as it lands. */
   releaseMic: (owner: string) => Promise<void>;
+}
+
+interface MicPair {
+  stream: MediaStream;
+  context: AudioContext;
 }
 
 // Module-level shared state. Lives outside the zustand `set` because
 // it's reference-counted and we want a single instance no matter how
 // many `useRecordingStore` subscribers React mounts.
-let _micPromise: Promise<{ stream: MediaStream; context: AudioContext }> | null = null;
+//
+// One device open at a time: `_micPromise` is the open from the first
+// owner's getUserMedia until the last owner lets go. An owner that arrives
+// while it is still resolving shares it (also after every earlier owner
+// released mid-open), so a second getUserMedia never runs beside a pending
+// one and every stream that opens has exactly one place that stops it.
+let _micPromise: Promise<MicPair> | null = null;
 const _owners = new Set<string>();
+
+function closeMicPair({ stream, context }: MicPair): Promise<void> {
+  stream.getTracks().forEach((track) => track.stop());
+  if (context.state === 'closed') return Promise.resolve();
+  return context.close().catch(() => {
+    // Already closed elsewhere: ignore.
+  });
+}
+
+async function openMicPair(): Promise<MicPair> {
+  const stream = await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS);
+  try {
+    return { stream, context: new AudioContext({ sampleRate: MIC_SAMPLE_RATE }) };
+  } catch (err) {
+    // The device is open but unusable: stop it, nobody will ever own it.
+    stream.getTracks().forEach((track) => track.stop());
+    throw err;
+  }
+}
 
 export const useRecordingStore = create<RecordingState>()((set, get) => ({
   isRecording: false,
@@ -282,89 +313,53 @@ export const useRecordingStore = create<RecordingState>()((set, get) => ({
   acquireMic: async (owner: string) => {
     _owners.add(owner);
 
-    if (_micPromise) {
-      // Already opening (or already open). Await and return the shared
-      // pair. If the in-flight open is still resolving, subsequent
-      // owners share the same promise so getUserMedia is only called
-      // once.
-      try {
-        return await _micPromise;
-      } catch (err) {
-        // The original opener failed — drop our owner so the refcount
-        // doesn't lock the store into a broken state.
-        _owners.delete(owner);
-        throw err;
-      }
+    let opening = _micPromise;
+    if (!opening) {
+      const open = openMicPair();
+      opening = open;
+      _micPromise = open;
+      // Registered before any owner awaits the open, so it runs first: the
+      // pair is in state by the time acquireMic returns it.
+      open.then(
+        (pair) => {
+          if (_micPromise === open && _owners.size > 0) {
+            set({ micStream: pair.stream, audioContext: pair.context });
+            return;
+          }
+          // Every owner let go while the device was opening (or cleanup()
+          // dropped this open): no release will ever reach this stream.
+          if (_micPromise === open) _micPromise = null;
+          void closeMicPair(pair);
+        },
+        () => {
+          // Open failed: the next acquire retries from scratch.
+          if (_micPromise === open) _micPromise = null;
+        },
+      );
     }
 
-    _micPromise = (async () => {
-      const stream = await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS);
-      const context = new AudioContext({ sampleRate: MIC_SAMPLE_RATE });
-      set({ micStream: stream, audioContext: context });
-      return { stream, context };
-    })();
-
     try {
-      return await _micPromise;
+      return await opening;
     } catch (err) {
-      // Open failed — wipe state so the next acquire retries cleanly.
+      // Drop our owner so the refcount doesn't lock the store into a
+      // broken state.
       _owners.delete(owner);
-      _micPromise = null;
-      set({ micStream: null, audioContext: null });
       throw err;
     }
   },
 
   releaseMic: async (owner: string) => {
-    if (!_owners.has(owner)) return;
-    _owners.delete(owner);
-    if (_owners.size > 0) {
-      // Other consumers still need the stream — leave it running.
-      return;
-    }
+    if (!_owners.delete(owner)) return;
+    // Other consumers still need the stream: leave it running.
+    if (_owners.size > 0) return;
 
     const { micStream, audioContext } = get();
+    // Still opening: the open stops the stream itself when it lands with
+    // no owner, and an owner that arrives first keeps it (see acquireMic).
+    if (!micStream || !audioContext) return;
 
-    // Last owner released while the device is still opening: state has no
-    // stream yet (micStream/audioContext are only populated once the
-    // getUserMedia promise resolves). The synchronous teardown below would
-    // find nothing to stop and then null `_micPromise`, orphaning the
-    // MediaStream that getUserMedia is about to hand back — a permanently
-    // live mic (the recording indicator never turns off). Instead, chain
-    // the teardown onto the pending open and only stop if no new owner has
-    // re-acquired by the time it resolves.
-    if (!micStream && _micPromise) {
-      const pending = _micPromise;
-      _micPromise = null;
-      void pending
-        .then(({ stream, context }) => {
-          // A new owner may have acquired mid-open — if so, keep it live.
-          if (_owners.size > 0) return;
-          stream.getTracks().forEach((track) => track.stop());
-          if (context && context.state !== 'closed') {
-            void context.close().catch(() => {
-              // Already closed elsewhere — ignore.
-            });
-          }
-          set({ micStream: null, audioContext: null });
-        })
-        .catch(() => {
-          // The in-flight open failed; acquireMic already reset state.
-        });
-      return;
-    }
-
-    if (micStream) {
-      micStream.getTracks().forEach((track) => track.stop());
-    }
-    if (audioContext && audioContext.state !== 'closed') {
-      try {
-        await audioContext.close();
-      } catch {
-        // Already closed elsewhere — ignore.
-      }
-    }
     _micPromise = null;
     set({ micStream: null, audioContext: null });
+    await closeMicPair({ stream: micStream, context: audioContext });
   },
 }));
