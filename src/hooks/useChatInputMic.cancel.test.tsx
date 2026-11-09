@@ -150,6 +150,42 @@ describe('useChatInputMic — cancel during connect', () => {
     expect(closeSpy).toHaveBeenCalled();
   });
 
+  it('a cancelled start that resumes late leaves the next start running', async () => {
+    const gum = deferred<MediaStream>();
+    const { stream, track } = makeStream();
+    setGetUserMedia(() => gum.promise);
+
+    const { result } = renderHook(() => useChatInputMic({ onTranscript: vi.fn() }));
+
+    // Start, let the socket open, then cancel while the mic is opening.
+    await act(async () => {
+      void result.current.start();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    act(() => result.current.stop());
+
+    // Start again before the first mic open lands; it joins the same open.
+    await act(async () => {
+      void result.current.start();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    const closesBefore = closeSpy.mock.calls.length;
+
+    await act(async () => {
+      gum.resolve(stream);
+    });
+    await tick();
+
+    // The first start unwound without touching the second one's socket or mic.
+    expect(result.current.isRecording).toBe(true);
+    expect(closeSpy.mock.calls.length).toBe(closesBefore);
+    expect(track.stop).not.toHaveBeenCalled();
+
+    act(() => result.current.stop());
+    await tick();
+    expect(track.stop).toHaveBeenCalled();
+  });
+
   it('happy path still works: start records, stop tears down and releases the mic', async () => {
     const { stream, track } = makeStream();
     setGetUserMedia(() => Promise.resolve(stream));
