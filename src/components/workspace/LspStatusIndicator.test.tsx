@@ -6,7 +6,7 @@ import { useUIStore } from '@/stores/uiStore';
 const REASON = 'typescript-language-server is not installed. Install it with npm.';
 
 beforeEach(() => {
-  useUIStore.setState({ settingsOpen: false, settingsTab: 'apikeys' });
+  useUIStore.setState({ settingsOpen: false, settingsTab: 'general' });
 });
 
 describe('LspStatusIndicator', () => {

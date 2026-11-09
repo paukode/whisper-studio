@@ -794,7 +794,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
               onClose={() => setPermOpen(false)}
               permissionMode={permissionMode}
               onSelectMode={handleSelectMode}
-              onManage={() => { setPermOpen(false); openSettings('permissions'); }}
             />
 
             <WorkspaceGroup

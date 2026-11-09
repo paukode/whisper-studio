@@ -8,11 +8,10 @@ import { STORAGE_KEYS } from '@/utils/storageKeys';
 // through TanStack Query. Stub them all so this suite exercises only the modal
 // shell's dismissal behaviour, not any panel's data-fetching. Factories are
 // hoisted above imports, so each must be self-contained (no shared helper).
-vi.mock('./APISettings', () => ({ APISettings: () => <div>APISettings</div> }));
+vi.mock('./GeneralSettings', () => ({ GeneralSettings: () => <div>GeneralSettings</div> }));
 vi.mock('./MCPSettings', () => ({ MCPSettings: () => <div>MCPSettings</div> }));
 vi.mock('./ImportPanel', () => ({ ImportPanel: () => <div>ImportPanel</div> }));
 vi.mock('./SkillsPanel', () => ({ SkillsPanel: () => <div>SkillsPanel</div> }));
-vi.mock('./PermissionsPanel', () => ({ PermissionsPanel: () => <div>PermissionsPanel</div> }));
 vi.mock('./CostsPanel', () => ({ CostsPanel: () => <div>CostsPanel</div> }));
 vi.mock('./HooksPanel', () => ({ HooksPanel: () => <div>HooksPanel</div> }));
 vi.mock('./CronPanel', () => ({ CronPanel: () => <div>CronPanel</div> }));
@@ -20,12 +19,11 @@ vi.mock('./PluginsPanel', () => ({ PluginsPanel: () => <div>PluginsPanel</div> }
 vi.mock('./ModelModePanel', () => ({ ModelModePanel: () => <div>ModelModePanel</div> }));
 vi.mock('./ModelsPanel', () => ({ ModelsPanel: () => <div>ModelsPanel</div> }));
 vi.mock('./FeatureFlagsPanel', () => ({ FeatureFlagsPanel: () => <div>FeatureFlagsPanel</div> }));
-vi.mock('./PreviewSettings', () => ({ PreviewSettings: () => <div>PreviewSettings</div> }));
 
 const isOpen = () => useUIStore.getState().settingsOpen;
 
 beforeEach(() => {
-  useUIStore.setState({ settingsOpen: true, settingsTab: 'apikeys' });
+  useUIStore.setState({ settingsOpen: true, settingsTab: 'general' });
 });
 
 describe('SettingsModal — dismissal', () => {
@@ -45,7 +43,7 @@ describe('SettingsModal — dismissal', () => {
   it('does NOT close when a selection drag starts inside and releases on the backdrop', () => {
     const { container } = render(<SettingsModal />);
     const overlay = container.querySelector('.settings-overlay') as HTMLElement;
-    const contentPanel = screen.getByText('APISettings');
+    const contentPanel = screen.getByText('GeneralSettings');
 
     // Press begins on the content; the resulting click (on release outside)
     // targets the overlay — the historical "select text, release outside" bug.
@@ -97,19 +95,18 @@ describe('SettingsModal — deep-link routing', () => {
     expect(screen.getByRole('tab', { name: 'Skills' })).toHaveAttribute('aria-selected', 'true');
   });
 
-  it('old id "costs" opens Usage and advanced → Costs', () => {
+  it('"costs" opens Costs as its own panel with no sub-tab strip', () => {
     openAt('costs');
     expect(screen.getByText('CostsPanel')).toBeInTheDocument();
-    expect(
-      screen.getByRole('button', { name: /Usage and advanced/i }),
-    ).toHaveAttribute('aria-current', 'page');
-    expect(screen.getByRole('tab', { name: 'Costs' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('button', { name: 'Costs' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.queryAllByRole('tab')).toHaveLength(0);
   });
 
-  it('Usage and advanced opens on Costs', () => {
-    openAt('usage-advanced');
-    expect(screen.getAllByRole('tab')[0]).toHaveTextContent('Costs');
-    expect(screen.getByText('CostsPanel')).toBeInTheDocument();
+  it('"feature-flags" opens Feature flags as its own panel with no sub-tab strip', () => {
+    openAt('feature-flags');
+    expect(screen.getByText('FeatureFlagsPanel')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Feature flags' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.queryAllByRole('tab')).toHaveLength(0);
   });
 
   it('old id "hooks" opens Tasks and hooks → Hooks', () => {
@@ -121,13 +118,18 @@ describe('SettingsModal — deep-link routing', () => {
     expect(screen.getByRole('tab', { name: 'Hooks' })).toHaveAttribute('aria-selected', 'true');
   });
 
-  it('old id "apikeys" opens Keys and permissions → API keys', () => {
-    openAt('apikeys');
-    expect(screen.getByText('APISettings')).toBeInTheDocument();
-    expect(
-      screen.getByRole('button', { name: /Keys and permissions/i }),
-    ).toHaveAttribute('aria-current', 'page');
-    expect(screen.getByRole('tab', { name: 'API keys' })).toHaveAttribute('aria-selected', 'true');
+  it('"general" opens the General panel first in the rail', () => {
+    openAt('general');
+    expect(screen.getByText('GeneralSettings')).toBeInTheDocument();
+    const general = screen.getByRole('button', { name: 'General' });
+    expect(general).toHaveAttribute('aria-current', 'page');
+    expect(screen.getAllByRole('button').find((b) => b.classList.contains('settings-rail-item'))).toBe(general);
+  });
+
+  it('has no Permissions or Live preview destination', () => {
+    openAt('general');
+    expect(screen.queryByRole('button', { name: /Permissions/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Live preview/i })).toBeNull();
   });
 
   it('old id "mcp" opens the single MCP servers panel with no sub-tab strip', () => {
@@ -151,16 +153,14 @@ describe('SettingsModal — deep-link routing', () => {
     expect(screen.queryAllByRole('tab')).toHaveLength(0);
   });
 
-  it('an unknown tab id falls back to Keys and permissions → API keys', () => {
+  it('an unknown tab id falls back to General', () => {
     openAt('no-such-tab');
-    expect(screen.getByText('APISettings')).toBeInTheDocument();
-    expect(
-      screen.getByRole('button', { name: /Keys and permissions/i }),
-    ).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByText('GeneralSettings')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'General' })).toHaveAttribute('aria-current', 'page');
   });
 
   it('clicking a rail item then a sub-tab swaps the visible panel', () => {
-    openAt('apikeys');
+    openAt('general');
     // Jump to the Skills and plugins section via the rail.
     fireEvent.click(screen.getByRole('button', { name: /Skills and plugins/i }));
     expect(screen.getByText('SkillsPanel')).toBeInTheDocument();

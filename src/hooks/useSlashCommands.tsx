@@ -579,7 +579,7 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
         return true;
       }
       case 'settings': {
-        openSettings('apikeys');
+        openSettings('general');
         return true;
       }
       case 'workspace': {

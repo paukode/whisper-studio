@@ -2172,10 +2172,6 @@ input.segment-speaker {
 .cg-mode.tone-calm .cg-mode-icon { color: var(--text-muted); }
 .cg-mode.tone-warn .cg-mode-icon { color: var(--risk-warn); }
 .cg-mode.tone-danger .cg-mode-icon { color: var(--danger); }
-.cg-link {
-    justify-self: start; border: none; background: none; padding: 2px 9px; cursor: pointer;
-    font: 600 var(--fs-caption) var(--font-sans); color: var(--link);
-}
 
 /* The round More button and its count badge (MoreMenu.tsx). */
 .more-btn {

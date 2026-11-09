@@ -22,9 +22,10 @@ interface ConfigData {
 }
 
 /**
- * API / Keys settings tab.
+ * The General settings tab: the web search key, the speech models
+ * (transcription and translation) and the Bedrock region.
  */
-export const APISettings: React.FC = () => {
+export const GeneralSettings: React.FC = () => {
   const [tavilyKey, setTavilyKey] = useState('');
   const [tavilyHint, setTavilyHint] = useState('');
   const [bedrockRegion, setBedrockRegion] = useState('');

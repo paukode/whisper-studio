@@ -41,7 +41,6 @@ function renderPerm(props: Partial<React.ComponentProps<typeof PermissionGroup>>
       onClose={vi.fn()}
       permissionMode="default"
       onSelectMode={vi.fn()}
-      onManage={vi.fn()}
       {...props}
     />,
   );
@@ -152,9 +151,9 @@ describe('PermissionGroup', () => {
   it('tints risky modes amber and red, and safe ones green', () => {
     const { rerender } = renderPerm({ open: false, permissionMode: 'acceptEdits' });
     expect(screen.getByTitle('Permission mode: Accept edits').className).toContain('tone-warn');
-    rerender(<PermissionGroup open={false} onToggle={vi.fn()} onClose={vi.fn()} permissionMode="bypassPermissions" onSelectMode={vi.fn()} onManage={vi.fn()} />);
+    rerender(<PermissionGroup open={false} onToggle={vi.fn()} onClose={vi.fn()} permissionMode="bypassPermissions" onSelectMode={vi.fn()} />);
     expect(screen.getByTitle('Permission mode: Bypass').className).toContain('tone-danger');
-    rerender(<PermissionGroup open={false} onToggle={vi.fn()} onClose={vi.fn()} permissionMode="default" onSelectMode={vi.fn()} onManage={vi.fn()} />);
+    rerender(<PermissionGroup open={false} onToggle={vi.fn()} onClose={vi.fn()} permissionMode="default" onSelectMode={vi.fn()} />);
     expect(screen.getByTitle('Permission mode: Asks first').className).toContain('tone-safe');
   });
 
@@ -173,13 +172,6 @@ describe('PermissionGroup', () => {
     fireEvent.click(screen.getByTestId('mode-option-plan'));
     expect(onSelectMode).toHaveBeenCalledWith('plan');
     expect(onSelectMode).toHaveBeenCalledTimes(1);
-  });
-
-  it('keeps Manage rules as its own link', () => {
-    const onManage = vi.fn();
-    renderPerm({ onManage });
-    fireEvent.click(screen.getByTestId('mode-option-manage'));
-    expect(onManage).toHaveBeenCalledTimes(1);
   });
 });
 

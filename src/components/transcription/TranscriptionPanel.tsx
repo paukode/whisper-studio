@@ -28,7 +28,7 @@ const SET_SPEAKERS_EVENT = 'whisper-set-speakers';
 const SET_TRANSLATE_EVENT = 'whisper-set-translate';
 
 /** The unified model list: one option per concrete model, shared verbatim by
- *  Settings (APISettings.tsx). value === the transcription_backend config. */
+ *  Settings > General (GeneralSettings.tsx). value === the transcription_backend config. */
 export const MODEL_OPTIONS = [
   { value: 'whisper', label: 'Whisper Large v3', backend: 'whisper' },
   { value: 'streaming', label: 'Parakeet (live)', backend: 'streaming' },

@@ -201,11 +201,10 @@ interface PermissionGroupProps {
   onClose: () => void;
   permissionMode: string;
   onSelectMode: (mode: string) => void;
-  onManage: () => void;
 }
 
 export const PermissionGroup: React.FC<PermissionGroupProps> = ({
-  open, onToggle, onClose, permissionMode, onSelectMode, onManage,
+  open, onToggle, onClose, permissionMode, onSelectMode,
 }) => {
   const ref = useRef<HTMLDivElement>(null);
   useDismiss(ref, onClose, { enabled: open });
@@ -246,7 +245,6 @@ export const PermissionGroup: React.FC<PermissionGroupProps> = ({
                 </button>
               ))}
             </div>
-            <button type="button" className="cg-link" data-testid="mode-option-manage" onClick={onManage}>Manage rules…</button>
           </div>
         </div>
       )}
