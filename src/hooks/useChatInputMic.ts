@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRecordingStore } from '@/stores/recordingStore';
-import { useUIStore } from '@/stores/uiStore';
+import { useUIStore, type ModelBannerFlow } from '@/stores/uiStore';
 import { createStartGuard, StartCancelled } from '@/utils/startGuard';
 
 /**
@@ -50,6 +50,8 @@ export function useChatInputMic(opts: UseChatInputMicOptions): UseChatInputMicRe
   const [error, setError] = useState<string | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
+  // The socket's run on the shared model banner: teardown ends it.
+  const bannerRef = useRef<ModelBannerFlow | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const workletRef = useRef<AudioWorkletNode | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
@@ -116,6 +118,10 @@ export function useChatInputMic(opts: UseChatInputMicOptions): UseChatInputMicRe
     }
     pcmBufferRef.current = [];
     pcmBufferLenRef.current = 0;
+    // A Stop while the model loads: nothing on the closed socket would clear
+    // its banner any more.
+    bannerRef.current?.done();
+    bannerRef.current = null;
     // Safe while acquireMic is still opening the device: the store stops a
     // stream that lands with no owner.
     void useRecordingStore.getState().releaseMic('chat-input-mic');
@@ -158,6 +164,7 @@ export function useChatInputMic(opts: UseChatInputMicOptions): UseChatInputMicRe
       wsRef.current = ws;
       // This socket's run on the shared model banner (see onmessage).
       const banner = useUIStore.getState().openModelBanner('dictation');
+      bannerRef.current = banner;
       ws.onmessage = (event: MessageEvent) => {
         try {
           const msg = JSON.parse(event.data as string) as {

@@ -16,6 +16,7 @@ import { renderHook, act } from '@testing-library/react';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { WebSocketMock } from '@/test/mocks/webSocket';
 import { useRecordingStore } from '@/stores/recordingStore';
+import { useUIStore } from '@/stores/uiStore';
 import { useChatInputMic } from './useChatInputMic';
 
 // --- Minimal Web Audio mocks (jsdom has none) --------------------------------
@@ -210,6 +211,30 @@ describe('useChatInputMic — cancel during connect', () => {
 
     expect(result.current.isRecording).toBe(false);
     expect(track.stop).toHaveBeenCalled();
+  });
+
+  it('a Stop while the model loads takes its loading banner down', async () => {
+    // Nothing on the closed socket clears the banner after a Stop, so the
+    // teardown ends dictation's run on it.
+    const { stream } = makeStream();
+    setGetUserMedia(() => Promise.resolve(stream));
+    const listen = vi.spyOn(WebSocketMock.prototype, 'addEventListener');
+    const { result } = renderHook(() => useChatInputMic({ onTranscript: vi.fn() }));
+    await act(async () => {
+      await result.current.start();
+    });
+    const socket = listen.mock.contexts[0] as WebSocketMock;
+
+    act(() => socket._receiveMessage({ type: 'model_loading', label: 'Parakeet', progress: 0.4, stage: 'loading' }));
+    expect(useUIStore.getState().modelLoading?.producer).toBe('dictation');
+
+    act(() => {
+      result.current.stop();
+    });
+    await tick();
+
+    expect(useUIStore.getState().modelLoading).toBeNull();
+    listen.mockRestore();
   });
 });
 
