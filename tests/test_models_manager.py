@@ -504,6 +504,98 @@ def test_failed_worker_drops_early_sentinel(client, home, fake_spawn):
     assert not os.path.exists(sentinel)
 
 
+class SlowDyingProc(FakeProc):
+    """A worker that takes its time to exit after terminate(): ``during_wait``
+    runs while cancel() is waiting for it, the window a concurrent request
+    can land in."""
+
+    def __init__(self, during_wait=None):
+        super().__init__()
+        self.during_wait = during_wait
+
+    def terminate(self):
+        self.terminated = True  # rc stays None until wait() observes the exit
+
+    def wait(self, timeout=None):
+        if self.rc is None:
+            if self.during_wait is not None:
+                self.during_wait()
+            self.rc = -15
+        return self.rc
+
+
+def test_cancel_keeps_the_job_until_its_worker_exits(client, monkeypatch, fake_spawn):
+    """While cancel() waits for the worker to exit, the key is still a job:
+    a new start is a duplicate (no second worker writing the same files),
+    the slot is not handed on, and a stall check never turns the cancel into
+    an error. Once the worker is gone the job ends silently."""
+    seen: dict = {}
+    entry = get_entry("whisper_large_v3")
+
+    def during_wait():
+        seen["start"] = manager.start_download(entry)
+        seen["state"] = manager.state_of(entry)[0]
+        monkeypatch.setattr(manager, "STALL_TIMEOUT_SEC", 0.0)
+        monkeypatch.setattr(manager, "_pid_alive", lambda pid: True)
+        manager.reap()
+        seen["error_during"] = manager._errors.get("whisper_large_v3")
+
+    proc = SlowDyingProc(during_wait)
+    monkeypatch.setattr(manager, "_spawn_worker", lambda key, log_path: proc)
+    assert manager.start_download(entry) == "started"
+    assert manager.cancel(entry) == "cancelled"
+
+    assert proc.terminated is True
+    assert seen == {"start": "already_downloading", "state": "downloading", "error_during": None}
+    assert "whisper_large_v3" not in manager._jobs
+    assert manager.state_of(entry) == ("absent", None)
+
+
+def test_cancel_frees_the_slot_only_after_the_worker_exits(client, monkeypatch):
+    spawned: list[str] = []
+    started_during_wait: dict = {}
+
+    def spawn(key, log_path):
+        spawned.append(key)
+        if key == "whisper_large_v3":
+            return SlowDyingProc(lambda: started_during_wait.setdefault("keys", list(spawned)))
+        return FakeProc()
+
+    monkeypatch.setattr(manager, "_spawn_worker", spawn)
+    client.post("/api/models/whisper_large_v3/download")
+    client.post("/api/models/parakeet/download")
+    client.post("/api/models/qwen3_embed/download")  # queued
+    assert client.post("/api/models/whisper_large_v3/cancel").status_code == 200
+    # The queued key did not start while the cancelled worker was still alive,
+    assert started_during_wait["keys"] == ["whisper_large_v3", "parakeet"]
+    # and started as soon as it was gone.
+    assert spawned[-1] == "qwen3_embed"
+
+
+def test_cancelled_worker_that_vanishes_unseen_ends_silently(client, monkeypatch):
+    """A cancelled worker whose exit poll() never observes is folded by the
+    PID backstop as a cancel, not reported as a failure."""
+
+    class Unobservable(FakeProc):
+        def terminate(self):
+            self.terminated = True  # the process is gone from now on
+
+        def kill(self):
+            self.killed = True
+
+        def wait(self, timeout=None):
+            raise manager.subprocess.TimeoutExpired("worker", timeout)
+
+    proc = Unobservable()
+    monkeypatch.setattr(manager, "_spawn_worker", lambda key, log_path: proc)
+    monkeypatch.setattr(manager, "_pid_alive", lambda pid: not proc.terminated)
+    entry = get_entry("parakeet")
+    manager.start_download(entry)
+    assert manager.cancel(entry) == "cancelled"
+    assert proc.killed is True
+    assert manager.state_of(entry) == ("absent", None)
+
+
 # ── delete ───────────────────────────────────────────────────────────────
 
 
