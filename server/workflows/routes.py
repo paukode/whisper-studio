@@ -234,7 +234,7 @@ async def run_events(run_id: str, request: Request):
             # If the run already finished before this subscription, its completion
             # event fired earlier and will never arrive — end the stream now
             # instead of hanging until the client disconnects.
-            if snap.get("status") in ("done", "failed", "stopped", "stale"):
+            if snap.get("status") in manager.TERMINAL_STATUSES:
                 event_bus.unsubscribe(f"workflow:{run_id}", queue)
                 return
         try:

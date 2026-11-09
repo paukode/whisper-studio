@@ -30,10 +30,16 @@ _live: dict[str, WorkflowRun] = {}
 # missing entry just means "nothing to close".
 _task_ids: dict[str, str] = {}
 
+# A run's status: 'running' until exactly one terminal write. The runtime
+# ends a run 'done' or 'failed' (WorkflowRun._result), stop_run writes
+# 'stopped', and boot reconcile flips an orphan to 'stale'. Every caller that
+# asks "has this run ended" reads this one set.
+DONE = "done"
+TERMINAL_STATUSES = frozenset({DONE, "failed", "stopped", "stale"})
+
 # Workflow status (this module's vocabulary) -> registry status + its event.
 _TASK_TERMINAL = {
-    "done": ("completed", "task_completed"),
-    "completed": ("completed", "task_completed"),
+    DONE: ("completed", "task_completed"),
     "stopped": ("stopped", "task_stopped"),
 }
 
@@ -525,9 +531,6 @@ async def _drive(run: WorkflowRun, unsandboxed: bool = False) -> None:
         _finalize(run, outcome)
 
 
-_COMPLETED_STATUSES = ("done", "completed")
-
-
 def verify_deliverables(outcome: dict, workspace_path: str | None) -> dict:
     """Refuse to call a run 'completed' when a file it says it produced is
     not there.
@@ -542,7 +545,7 @@ def verify_deliverables(outcome: dict, workspace_path: str | None) -> dict:
     empty file downgrades the run to failed with an error naming it, which
     is what the card shows and what the model reads next turn.
     """
-    if outcome.get("status") not in _COMPLETED_STATUSES:
+    if outcome.get("status") != DONE:
         return outcome
     result = outcome.get("result")
     if not isinstance(result, dict):

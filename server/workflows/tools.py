@@ -483,7 +483,7 @@ def _wait_view(run_id: str) -> dict:
         return {"run_id": run_id, "status": "not_found", "finished": True}
     view = _status_view(run)
     view.pop("journal_tail", None)
-    view["finished"] = run.get("status") != "running"
+    view["finished"] = run.get("status") in manager.TERMINAL_STATUSES
     return view
 
 
