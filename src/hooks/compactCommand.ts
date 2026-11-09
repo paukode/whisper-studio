@@ -12,6 +12,11 @@ import type { ChatMessage } from '@/types/chat';
 import { toError } from '@/utils/toError';
 import { buildHistoryPayload } from './chatStream/history';
 
+/** Sessions with a /compact request in flight. A second /compact in the
+ *  same session waits for the first: two would each summarize the same
+ *  history and add two summary rows. */
+const compacting = new Set<string>();
+
 export async function runCompact(
   sessionId: string,
   note: string,
@@ -19,6 +24,10 @@ export async function runCompact(
   addToast: UIState['addToast'],
 ): Promise<void> {
   const chat = () => getChatStore(sessionId).getState();
+  if (compacting.has(sessionId)) {
+    addToast({ type: 'info', message: 'The conversation is already being compacted.', duration: 2500, persist: false });
+    return;
+  }
   if (chat().isStreaming) {
     addToast({ type: 'info', message: 'Wait for the reply to finish, then run /compact.', duration: 3000, persist: false });
     return;
@@ -28,6 +37,7 @@ export async function runCompact(
     addToast({ type: 'info', message: 'There is nothing to compact yet.', duration: 2500, persist: false });
     return;
   }
+  compacting.add(sessionId);
   addToast({ type: 'info', message: 'Compacting the conversation...', duration: 2500, persist: false });
   try {
     const row = await post<ChatMessage>(
@@ -38,5 +48,7 @@ export async function runCompact(
     addToast({ type: 'success', message: 'Conversation compacted.', duration: 2500, persist: false });
   } catch (e) {
     addToast({ type: 'error', message: `Could not compact: ${toError(e).message}` });
+  } finally {
+    compacting.delete(sessionId);
   }
 }

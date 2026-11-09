@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 
 const { getMock } = vi.hoisted(() => ({ getMock: vi.fn() }));
 vi.mock('@/api/client', () => ({ get: getMock }));
@@ -148,6 +148,27 @@ describe('UpdateNotice', () => {
       window.dispatchEvent(new Event(CHECK_FOR_UPDATES_EVENT));
       await waitFor(() => expect(toastMessages()).toContain('Whisper Studio is up to date (v2.16.0).'));
       expect(screen.queryByTestId('update-notice')).toBeNull();
+    });
+
+    it('a slow cached answer never overwrites the fresh one from the menu', async () => {
+      let answerCached!: (v: unknown) => void;
+      getMock.mockImplementation((url: string) =>
+        url.endsWith('fresh=true')
+          ? Promise.resolve(check())
+          : new Promise((r) => { answerCached = r; }),
+      );
+      render(<UpdateNotice />);
+      await waitFor(() => expect(getMock).toHaveBeenCalledWith('/api/update-check'));
+
+      window.dispatchEvent(new Event(CHECK_FOR_UPDATES_EVENT));
+      expect(await screen.findByTestId('update-notice')).toBeInTheDocument();
+
+      // The cached check from before the menu click answers last, with an
+      // older picture: the notice stays.
+      await act(async () => {
+        answerCached(check({ current: '2.16.0', update_available: false }));
+      });
+      expect(screen.getByTestId('update-notice')).toBeInTheDocument();
     });
 
     it('says the check could not run when GitHub gives no answer', async () => {
