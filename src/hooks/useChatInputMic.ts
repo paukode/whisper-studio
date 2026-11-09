@@ -156,6 +156,8 @@ export function useChatInputMic(opts: UseChatInputMicOptions): UseChatInputMicRe
       const wsUrl = `${protocol}//${window.location.host}/ws?${params.toString()}`;
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
+      // This socket's run on the shared model banner (see onmessage).
+      const banner = useUIStore.getState().openModelBanner('dictation');
       ws.onmessage = (event: MessageEvent) => {
         try {
           const msg = JSON.parse(event.data as string) as {
@@ -176,24 +178,17 @@ export function useChatInputMic(opts: UseChatInputMicOptions): UseChatInputMicRe
             // Local mode: dictation forces the Parakeet ASR engine, which on a
             // cold start must load (or first-run download) into memory. Without
             // surfacing this the mic just seems stuck. Drive the shared
-            // model-loading banner (same store the meeting recorder uses via
-            // recordingController) so the user sees the progress; 'ready'
-            // auto-hides after a brief beat.
-            const stage = (msg.stage ?? 'loading') as 'start' | 'downloading' | 'loading' | 'ready';
-            useUIStore.getState().setModelLoading({
+            // model-loading banner (the meeting recorder drives it the same
+            // way) so the user sees the progress; 'ready' hides itself after
+            // a brief beat.
+            banner.show({
               label: msg.label ?? 'Model',
               progress: typeof msg.progress === 'number' ? msg.progress : 0,
-              stage,
+              stage: (msg.stage ?? 'loading') as 'start' | 'downloading' | 'loading' | 'ready',
             });
-            if (stage === 'ready') {
-              setTimeout(() => {
-                const cur = useUIStore.getState().modelLoading;
-                if (cur && cur.stage === 'ready') useUIStore.getState().setModelLoading(null);
-              }, 700);
-            }
           } else if (msg.type === 'model_unloaded') {
-            // Engine freed on switch — clear any stale banner.
-            useUIStore.getState().setModelLoading(null);
+            // Engine freed on switch: clear the stale banner if it is ours.
+            banner.clear();
           }
         } catch { /* ignore */ }
       };

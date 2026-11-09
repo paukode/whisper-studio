@@ -23,6 +23,47 @@ export type ExplorerTarget =
   | { kind: 'entity'; name: string; label?: string }
   | { kind: 'file'; file: string };
 
+/** What the shared model load/download banner shows (ModelLoadingBanner).
+ * The progress bar fills to `progress` (0..1); stage 'ready' hides itself
+ * after a short beat and stage 'error' renders the failure (detail carries
+ * the message) with a Dismiss affordance. While downloading, `detail` is an
+ * optional second clause on the label line (e.g. "1.1 GB of 2.5 GB · model
+ * 1 of 2"). */
+export interface ModelBanner {
+  label: string;
+  progress: number;
+  stage: 'start' | 'downloading' | 'loading' | 'ready' | 'error';
+  detail?: string;
+  onCancel?: () => void;
+}
+
+/** Who drives the model banner: the local chat model flows (api/localModel),
+ * the pre-recording model gate (services/recordingModels), and the recording
+ * and dictation sockets' model_loading events. */
+export type ModelBannerProducer = 'local-model' | 'speech-models' | 'recording' | 'dictation';
+
+/** One run of a producer on the model banner, from openModelBanner(). Opening
+ * a new flow retires the producer's older ones: a retired flow neither shows
+ * nor clears. A flow only clears its own producer's banner, never another's
+ * (or that one's Cancel). */
+export interface ModelBannerFlow {
+  /** Show `banner`, replacing what the banner shows. */
+  show: (banner: ModelBanner) => void;
+  /** Hide the banner if it is this producer's. */
+  clear: () => void;
+  /** The flow shows nothing more: its 'ready' banner keeps its beat, any
+   * other banner of this producer hides now. */
+  done: () => void;
+}
+
+/** How long a 'ready' banner stays before it hides itself. */
+export const MODEL_BANNER_READY_MS = 700;
+
+// The newest flow per producer (openModelBanner). Module-level like the
+// recording store's mic refcount: it is bookkeeping, not rendered state.
+let modelBannerFlowSeq = 0;
+const newestModelBannerFlow = new Map<ModelBannerProducer, number>();
+
 export interface Toast {
   id: string;
   type: 'success' | 'error' | 'warning' | 'info';
@@ -133,21 +174,9 @@ export interface UIState {
   memoryEditorOpen: boolean;
   memoryViewerOpen: boolean;
 
-  /* Shared model load/download banner. null when idle. The progress bar
-   * fills to `progress` (0..1); stage 'ready' triggers the auto-hide and
-   * stage 'error' renders the failure (detail carries the message) with a
-   * Dismiss affordance. While downloading, `detail` is an optional second
-   * clause on the label line (e.g. "1.1 GB of 2.5 GB · model 1 of 2").
-   * Driven by websocket model_loading/model_unloaded events, the local chat
-   * model flows (api/localModel), and the pre-recording model gate
-   * (services/recordingModels). */
-  modelLoading: {
-    label: string;
-    progress: number;
-    stage: 'start' | 'downloading' | 'loading' | 'ready' | 'error';
-    detail?: string;
-    onCancel?: () => void;
-  } | null;
+  /* Shared model load/download banner, and the producer showing it. null
+   * when idle. Written only through openModelBanner(). */
+  modelLoading: (ModelBanner & { producer: ModelBannerProducer }) | null;
 
   /* Dialog stack */
   dialogStack: DialogEntry[];
@@ -189,7 +218,9 @@ export interface UIState {
   openMemoryViewer: () => void;
   closeMemoryViewer: () => void;
 
-  setModelLoading: (m: UIState['modelLoading']) => void;
+  /** Start a run of `producer` on the shared model banner (see
+   *  ModelBannerFlow). The only way to show or clear the banner. */
+  openModelBanner: (producer: ModelBannerProducer) => ModelBannerFlow;
 
   /* Dialog helpers */
   pushDialog: (entry: Omit<DialogEntry, 'id'>) => string;
@@ -257,7 +288,7 @@ function _osNotify(_type: string, message: string): void {
   }
 }
 
-export const useUIStore = create<UIState>()((set) => ({
+export const useUIStore = create<UIState>()((set, get) => ({
   sidebarCollapsed: loadSidebarCollapsed(),
   sessionGroupsCollapsed: loadSessionGroupsCollapsed(),
   settingsOpen: false,
@@ -464,8 +495,30 @@ export const useUIStore = create<UIState>()((set) => ({
     set({ memoryViewerOpen: false });
   },
 
-  setModelLoading: (m) => {
-    set({ modelLoading: m });
+  openModelBanner: (producer) => {
+    const flow = ++modelBannerFlowSeq;
+    newestModelBannerFlow.set(producer, flow);
+    const live = () => newestModelBannerFlow.get(producer) === flow;
+    const clear = () => {
+      if (live() && get().modelLoading?.producer === producer) set({ modelLoading: null });
+    };
+    return {
+      show: (banner) => {
+        if (!live()) return;
+        const shown = { ...banner, producer };
+        set({ modelLoading: shown });
+        if (banner.stage !== 'ready') return;
+        setTimeout(() => {
+          // Only this exact 'ready' banner: a newer one (any producer's)
+          // stays.
+          if (get().modelLoading === shown) set({ modelLoading: null });
+        }, MODEL_BANNER_READY_MS);
+      },
+      clear,
+      done: () => {
+        if (get().modelLoading?.stage !== 'ready') clear();
+      },
+    };
   },
 
   /* Dialog stack */

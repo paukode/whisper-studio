@@ -212,10 +212,6 @@ let activeBackend = 'streaming';
 /** True while a live engine switch is gating the new engine's download, so a
  *  second switch can't race a set_model relay past a half-finished one. */
 let liveSwitchActive = false;
-/** The user dismissed the server-driven "loading into memory" banner. A native
- *  MLX load can't be aborted mid-flight, so we simply stop re-showing its ramp
- *  until the next load starts or finishes. */
-let loadModelBannerDismissed = false;
 
 const engineOf = (backend: string): 'whisper' | 'parakeet' =>
   backend === 'whisper' ? 'whisper' : 'parakeet';
@@ -483,6 +479,12 @@ function connectWS(t: Take): void {
   // starts fresh.
   let lastLanguage = '';
   let numbered = false;
+  // This socket's run on the model banner. The user can dismiss the
+  // server-driven "loading into memory" banner: a native MLX load can't be
+  // aborted mid-flight, so the socket stops re-showing its ramp until the
+  // next load starts or this one finishes.
+  const banner = useUIStore.getState().openModelBanner('recording');
+  let bannerDismissed = false;
   newWs.onopen = () => {
     useRecordingStore.getState().setConnected(true);
     startPing();
@@ -624,11 +626,11 @@ function connectWS(t: Take): void {
         // is loading into memory. Drive the banner; 'ready' auto-hides.
         const stage = String(msg.stage ?? 'loading') as 'start' | 'loading' | 'ready';
         // A fresh load re-arms the banner even if the last one was dismissed.
-        if (stage === 'start') loadModelBannerDismissed = false;
+        if (stage === 'start') bannerDismissed = false;
         // Once dismissed, let the (uncancelable) native load finish silently
         // rather than letting the ramp re-open the banner on every tick.
-        if (loadModelBannerDismissed && stage !== 'ready') return;
-        useUIStore.getState().setModelLoading({
+        if (bannerDismissed && stage !== 'ready') return;
+        banner.show({
           label: String(msg.label ?? 'Model'),
           progress: typeof msg.progress === 'number' ? msg.progress : 0,
           stage,
@@ -641,21 +643,16 @@ function connectWS(t: Take): void {
             stage === 'ready'
               ? undefined
               : () => {
-                  loadModelBannerDismissed = true;
-                  useUIStore.getState().setModelLoading(null);
+                  bannerDismissed = true;
+                  banner.clear();
                 },
         });
-        if (stage === 'ready') {
-          loadModelBannerDismissed = false;
-          setTimeout(() => {
-            const cur = useUIStore.getState().modelLoading;
-            if (cur && cur.stage === 'ready') useUIStore.getState().setModelLoading(null);
-          }, 700);
-        }
+        if (stage === 'ready') bannerDismissed = false;
       } else if (msg.type === 'model_unloaded') {
-        // The outgoing engine was freed on switch — clear any stale banner.
-        loadModelBannerDismissed = false;
-        useUIStore.getState().setModelLoading(null);
+        // The outgoing engine was freed on switch: clear its stale banner
+        // (only the recording's own, never another flow's download).
+        bannerDismissed = false;
+        banner.clear();
       }
     } catch { /* ignore */ }
   };
