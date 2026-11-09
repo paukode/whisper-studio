@@ -123,24 +123,10 @@ out the three main claims.</code></pre></div>
       cannot run scripts in the app. The <a href="ref-security.html">security model</a> shows how the
       app handles <code>web_fetch</code> output as untrusted data.</p>
 
-    <h2 id="outbound-domains">Limit the network of commands</h2>
-    <p>The network of a <em>shell command</em> is separate from the two web tools. It has its own
-      setting in Settings &gt; Keys and permissions &gt; Permissions. The setting has three tiers:</p>
-    <div class="table-wrap"><table>
-      <thead><tr><th>Tier</th><th>What a command in the sandbox can connect to</th></tr></thead>
-      <tbody>
-        <tr><td><code>permissive</code></td><td>All hosts. This is the default.</td></tr>
-        <tr><td><code>curated</code></td><td>A list of frequent package registries, documentation sites, and developer APIs, and the domains that you added.</td></tr>
-        <tr><td><code>restrictive</code></td><td>Only the domains that you added.</td></tr>
-      </tbody>
-    </table></div>
-    <p>The domains that you add are <code>custom_allowed_domains</code>, one domain on each line in
-      that panel. An entry also allows its subdomains. For example, <code>githubusercontent.com</code>
-      also allows <code>objects.githubusercontent.com</code>.</p>
-    <p>A tier change applies to the next
-      command, without a restart. The app reads the hostname from the TLS handshake and does not
-      decrypt data. Thus this control is a strong default, but not a complete boundary. See
-      <a href="arch-sandbox.html">Sandbox &amp; security</a> for its limits.</p>
+    <h2 id="outbound-domains">The network of commands</h2>
+    <p>The network of a <em>shell command</em> is separate from the two web tools. A command in
+      the sandbox can connect to all hosts. The app does not limit the network of commands. See
+      <a href="arch-sandbox.html">Sandbox &amp; security</a> for the limits of the sandbox.</p>
 
     <h2 id="related-skills">Other tools in research</h2>
     <p>Research can use other functions also when you do not name them. Each call shows in the

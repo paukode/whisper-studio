@@ -69,7 +69,7 @@
 
     <h2 id="approval-legend">Approval at a glance</h2>
     <p>Three badges appear in the tables. Read the <a href="arch-approval.html">Approval &amp;
-      permissions</a> page for the full pause-and-resume flow and per-tool rules.</p>
+      permissions</a> page for the full pause-and-resume flow and the permission modes.</p>
     <div class="cols-2">
       <div class="card">
         <h3><span class="badge badge--muted">read</span> Runs freely</h3>
@@ -549,7 +549,7 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Tool</th><th>What it does</th><th>Approval</th></tr></thead>
       <tbody>
-        <tr><td><code>workflow_run</code> <span class="badge">★ Core</span></td><td>Launch a deterministic multi-agent workflow from a JS orchestration script (or a saved workflow by name). A new script follows the <code>workflow</code> category mode (card, launch, or refusal); a trusted saved workflow launches directly. Runs detached from the turn.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>workflow_run</code> <span class="badge">★ Core</span></td><td>Launch a deterministic multi-agent workflow from a JS orchestration script (or a saved workflow by name). A new script follows the permission mode (card, launch, or refusal). A trusted saved workflow launches directly. Runs detached from the turn.</td><td><span class="badge">approval</span></td></tr>
         <tr><td><code>workflow_status</code> <span class="badge">★ Core</span></td><td>Get a run's status, phase/agent journal tail, and spend. Omit the run id to list this session's runs.</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>workflow_wait</code> <span class="badge">★ Core</span></td><td>Wait until workflow runs end, then return their status, spend, result, and the agents that stopped at a limit. Mode <code>all</code> (the default) or <code>any</code>. One call waits for 600 seconds by default and 1800 seconds at most. The time in a wait does not count against an agent's time limit. In a cron or headless run, the wait stops at the run's time limit. When you send a message during the wait, the wait stops and returns <code>interrupted: "user_message"</code>.</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>workflow_save</code> <span class="badge">★ Core</span></td><td>Save a named, reusable workflow script. Saving itself asks nothing: a script you already approved this session is saved trusted, and any other is saved untrusted, so the first run by name shows the preview card and approving it trusts the workflow durably.</td><td><span class="badge badge--muted">no prompt</span></td></tr>

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Approval &amp; permissions - Whisper Studio Docs</title>
-  <meta name="description" content="Whisper Studio's consent boundary: the six permission modes, per-category overrides, the pause-and-execute approval flow, declarative approval specs, the auto-mode classifier and its circuit breaker.">
+  <meta name="description" content="Whisper Studio's consent boundary: the six permission modes, the pause-and-execute approval flow, declarative approval specs, the auto-mode classifier and its circuit breaker.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -15,8 +15,8 @@
 <body>
   <main class="doc" data-page="arch-approval">
     <h1>Approval &amp; permissions</h1>
-    <p class="subtitle">Every tool the assistant runs passes a consent check first. A permission mode
-      and a set of rules decide allow, ask, or deny; an <em>ask</em> pauses the whole turn on the
+    <p class="subtitle">Every tool the assistant runs passes a consent check first. The permission
+      mode decides allow, ask, or deny. An <em>ask</em> pauses the whole turn on the
       server, and nothing executes until a real user click sends the approval back.</p>
 
     <p>This page covers the <em>decision</em> layer - which tools may run, and how a human confirms the
@@ -27,7 +27,7 @@
 
     <figure class="diagram-figure wide">
       <div id="approval-diagram" class="diagram"></div>
-      <figcaption>A tool call is evaluated against the mode and rules, then either auto-allows,
+      <figcaption>A tool call is evaluated against the permission mode, then either auto-allows,
         denies, or pauses the turn until the user approves. On Yes the client posts the action to
         <em>POST /api/approval/execute</em>, which dispatches the registered approval spec.</figcaption>
     </figure>
@@ -42,14 +42,12 @@
     <p>The current mode lives in <code class="path">~/.whisper/data/permissions.json</code> and is read by
       <code class="path">server/security/permissions.py</code>. It is a single dial that sets the
       baseline for every tool call in a turn. Read-only tools (reading files, listing directories,
-      searching) run without approval in every mode - custom rules only apply to approval-gated
-      tools, so a rule cannot gate a read. A <code>ws_run_command</code> that the read-only
+      searching) run without approval in every mode. A <code>ws_run_command</code> that the read-only
       classifier accepts also runs with no card, inside the read-only sandbox, so a write the
       classifier missed is refused by the OS. The one exception is a read of a credential store (see
       <a href="#secret-reads">Reads of credential stores</a>). The modes differ in how they treat
-      <em>write</em> and <em>command</em> tools. You set the mode in the permission mode chip in the composer or in
-      Settings &gt; Keys and permissions &gt; Permissions; the label column shows the name the UI
-      uses.</p>
+      <em>write</em> and <em>command</em> tools. You set the mode in the Mode menu of the composer.
+      The mode is the only permission setting. The label column shows the name the UI uses.</p>
 
     <div class="table-wrap"><table>
       <thead><tr><th>Mode</th><th>UI label</th><th>Reads</th><th>Writes &amp; commands</th></tr></thead>
@@ -82,7 +80,7 @@
           <td><code>bypassPermissions</code></td>
           <td>Bypass</td>
           <td>Auto-allow</td>
-          <td>Every action runs with no card, inside the workspace and outside it (the user's decision of 2026-11-02). Only the github-destructive and MCP-approve floors ask, and a category row of the user's that names another mode still decides that category.</td>
+          <td>Every action runs with no card, inside the workspace and outside it (the user's decision of 2026-11-02). Only the github-destructive and MCP-approve floors ask.</td>
         </tr>
         <tr>
           <td><code>dontAsk</code></td>
@@ -92,11 +90,12 @@
       </tbody>
     </table></div>
 
-    <p>The mode is validated against <code>VALID_MODES</code> on every
-      <code>PUT /api/permissions</code> and <code>PUT /api/permissions/mode</code>, so an unknown
-      mode is rejected with a 400 rather than silently accepted. A saved config carrying an
-      unrecognized mode fails safe: no auto-allow branch matches, so every gated tool falls back
-      to an approval card.</p>
+    <p><code>PUT /api/permissions/mode</code> examines the mode against <code>VALID_MODES</code>.
+      The server refuses an unknown mode with a 400 error. <code>GET /api/permissions</code>
+      returns <code>{"mode": ...}</code> and nothing else. The file holds only the mode. The server
+      reads only the <code>mode</code> key, so a key from an older version has no effect, and the
+      next save removes it. An unknown mode in the file reads as <code>default</code> (Asks
+      first).</p>
 
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
@@ -207,14 +206,14 @@
       <li><h4>A request to leave the sandbox</h4><p>A call asking for
         <code>sandbox_permissions: "danger-full-access"</code> returns ask in every mode except
         <code>bypassPermissions</code>. That parameter is a request to drop the sandbox's write
-        confinement for one command, so outside Bypass it can never be covered by a mode, a rule, or
-        a session approval. In Bypass, commands run with no sandbox, so the request has no meaning:
+        confinement for one command, so outside Bypass no mode or session approval can cover
+        it. In Bypass, commands run with no sandbox, so the request has no meaning:
         the app accepts it and ignores it, with no card. In a read-only scope under Bypass (plan mode
         or a read-only agent), the executor refuses it.</p></li>
       <li><h4>A command in the visible terminal</h4><p>A <code>terminal_run</code> call with
         <code>mode: "visible"</code> returns ask in every mode except <code>bypassPermissions</code>.
         The command goes into the user's own shell, and the OS does not limit the writes of that
-        shell. No rule or session approval can cover it. In <code>bypassPermissions</code>, the
+        shell. No session approval can cover it. In <code>bypassPermissions</code>, the
         command runs with no card, a delete included. An unattended agent cannot use visible
         mode.</p></li>
       <li><h4>MCP approve tier</h4><p>An MCP tool whose server or tool is marked
@@ -223,7 +222,7 @@
         they do not fully trust, so nothing downstream may skip it.</p></li>
       <li><h4>The app's own grant and config files</h4><p>A write, save, or delete of one of the
         app's grant or config files (<code>permissions.json</code>, <code>mcp_servers.json</code>,
-        <code>hooks.json</code>, <code>hooks_trust.json</code>, <code>folder_grants.json</code>,
+        <code>hooks.json</code>, <code>hooks_trust.json</code>,
         <code>cron_jobs.json</code>, <code>launch_trust.json</code>, <code>config.user.json</code>
         and the others in <code>APP_CONFIG_FILES</code>), or of the plugins and custom agents
         folders, follows the mode table: <code>bypassPermissions</code> allows,
@@ -234,13 +233,9 @@
         (rules, profile, scratch, memory, data) runs with no card in every mode. A delete there is
         silent only in <code>bypassPermissions</code>; other modes apply their normal delete
         rule.</p></li>
-      <li><h4>Per-category mode override</h4><p>A <code>category_modes</code> entry in
-        <code>permissions.json</code> replaces the global mode for everything that follows,
-        including the <code>bypassPermissions</code> check right below. That is the point: "always
-        confirm deletes" can hold even when the global mode is more permissive.</p></li>
-      <li><h4>bypassPermissions</h4><p>If the effective mode is <code>bypassPermissions</code>,
-        allow. This includes a save to a path the user named (<code>save</code>) and reach into a
-        folder they have not granted (<code>folder-access</code>). The ws_* file tools and the write
+      <li><h4>bypassPermissions</h4><p>If the mode is <code>bypassPermissions</code>,
+        allow. This includes a save to a path the user named (<code>save</code>) and a folder
+        outside the workspace (<code>folder-access</code>). The ws_* file tools and the write
         and delete executors also change a file at any path in Bypass
         (<code class="path">server/workspace/paths.py</code> <code>ws_path_changeable</code>),
         except in the scratch folder of another session. An unattended run (a subagent, a workflow
@@ -252,10 +247,6 @@
       <li><h4>Session approvals</h4><p>If you clicked "Yes, all write" (or "Block write") earlier
         this session, the stored decision for that <em>category</em> applies. This is the
         <code>session_approvals</code> map keyed by category.</p></li>
-      <li><h4>Custom rules</h4><p><code>evaluate_rules()</code> walks your
-        <code>permissions.json</code> rules; the first matching rule's action wins. A rule matches by
-        <code>tool</code> (or <code>*</code>) plus a glob <code>pattern</code> or a
-        <code>prefix</code> against a per-tool field.</p></li>
       <li><h4>An approved named preview config</h4><p>A <code>preview_start</code> that names a
         <code class="path">.whisper/launch.json</code> config (no <code>runtimeExecutable</code> in
         the input, and any <code>cwd</code> inside the workspace) returns allow when a person has
@@ -265,58 +256,18 @@
         recorded only by a person's answer to the card (<code>execute_approved_by_human</code> in
         <code class="path">server/approval/spec.py</code>, used by the Yes button);
         a config nobody approved, or one whose command changed, skips this step and follows the
-        mode. It sits below the checks above on purpose: outside bypass a deny rule or a session "Block
+        mode. It sits below the checks above on purpose: outside bypass a session "Block
         preview" still refuses it, and the rm-class floor is checked against
         the command the config resolves to. It also requires the config pinned into the call at
         dispatch to match the file, and the executor runs that pin, so what was decided and shown is
         what runs. An ad-hoc preview command skips this step. The predicates live in
         <code class="path">server/preview/start_policy.py</code>; the per-tool denial counter in
         <code>execute_tool_batch</code> reads <code>never_prompts</code>, which also requires no
-        floor and no asking rule, so a named start that still shows a card keeps counting.</p></li>
+        floor, so a named start that still shows a card keeps counting.</p></li>
       <li><h4>Mode fallbacks</h4><p><code>dontAsk</code> returns deny; <code>acceptEdits</code>
         returns allow for the <code>write</code> category; <code>auto</code> returns
         <code>None</code> (defer to the classifier); otherwise the default is ask.</p></li>
     </ol>
-
-    <h3 id="category-modes">Per-category defaults (category_modes)</h3>
-    <p>Beyond the single global dial, <code>permissions.json</code> can carry a
-      <code>category_modes</code> map that pins a different mode per approval category, for example
-      <code>{"delete": "default", "write": "acceptEdits"}</code>. Each entry is validated against
-      <code>VALID_MODES</code> per key on <code>PUT /api/permissions</code>, and the override is
-      applied before the mode checks run, so it holds even over a global
-      <code>bypassPermissions</code>. The one category it can never touch is
-      <code>github-destructive</code>: an override never lets it run with no card, and only a
-      <code>dontAsk</code> row changes it, to deny. A category with no entry
-      follows the global mode.</p>
-    <p>One key in that map is not an approval category at all. <code>workflow</code> is read outside
-      this resolver by <code class="path">server/workflows/launch_policy.py</code>, which gates
-      launching a new <a href="arch-ultracode.html">ultracode workflow</a> script rather than a tool
-      call: it resolves the same <code>category_modes</code> entry (falling back to the global mode)
-      to launch with no card, show the phase-preview card, or decline. It is stored, validated, and
-      rendered in Settings like any other category row.</p>
-
-    <h3 id="custom-rules">Custom rules</h3>
-    <p>Rules let you carve fine-grained exceptions out of a mode. Each is a small JSON object; the
-      pattern or prefix is matched against a tool-specific field (the command for
-      <code>ws_run_command</code>, the path for <code>ws_write_file</code>, the branch for
-      <code>git_push</code>, and so on - see <code>_RULE_MATCH_FIELDS</code>). Unlisted tools fall
-      back to matching the JSON-encoded input, which is mainly useful with a <code>*</code> pattern.</p>
-    <div class="code-block"><pre><code>{"tool": "ws_run_command", "prefix": "git ", "action": "allow"}
-{"tool": "ws_write_file",  "pattern": "*.md",  "action": "allow"}
-{"tool": "ws_delete_file", "pattern": "*",     "action": "deny"}</code></pre></div>
-    <p>Rules are managed over <code>POST /api/permissions/rules</code> and
-      <code>DELETE /api/permissions/rules/{index}</code>. Because a broad rule can silently mask a
-      narrower one, the server runs <code>detect_shadowed_rules()</code> on every save and returns any
-      <code>warnings</code> alongside the updated list, so the Settings UI can flag redundant or
-      unreachable rules.</p>
-    <p>Two smaller affordances round the rule system out. A rule can carry an optional
-      <code>justification</code> string: purely additive audit metadata, never consulted by
-      evaluation, persisted and returned so the UI can show why a rule exists. And
-      <code>POST /api/permissions/rules/test</code> is a dry-run endpoint: give it a tool name and a
-      sample input and it runs the exact same <code>_match_rule</code> logic as the live path,
-      against the persisted rules or a supplied draft <code>rules</code> list, returning
-      <code>{decision, matched_index, matched_rule}</code>. That is what backs the rule editor's
-      "Test this rule" button, so you can check a rule before saving it.</p>
 
     <h3 id="auto-classifier">The auto-mode classifier</h3>
     <p>In <code>auto</code> mode, an approval-gated tool that nothing static resolved is handed to a
@@ -346,16 +297,14 @@
       one-click resume; the breaker is turn-scoped, in-memory state that never touches the persisted
       mode and resets at the start of each new turn.</p>
 
-    <h3 id="folder-grants">Folder grants</h3>
-    <p>A tool that reaches into a folder outside the connected workspace raises a
-      <code>folder-access</code> card. A Yes on that card is stored in
-      <code class="path">~/.whisper/data/folder_grants.json</code>
-      (<code class="path">server/security/folder_grants.py</code>), so the app asks once per folder.
-      A grant is stored by its real path and covers the folder and everything below it, never a
-      parent or a sibling. A credential store (see <a href="#secret-reads">Reads of credential
-      stores</a>) can never be granted. Settings &gt; Keys and permissions &gt; Permissions &gt;
-      Folder Access lists the grants and lets you revoke each one
-      (<code>GET</code> and <code>DELETE /api/permissions/folder-grants</code>).</p>
+    <h3 id="folder-access">Folders outside the workspace</h3>
+    <p><code>ws_open_folder</code> opens a folder outside the connected workspace only through a
+      <code>folder-access</code> card. The card follows the permission mode each time. The app
+      does not keep a record of the folders you approved. A Yes on the card connects the folder
+      as the workspace. The executor refuses a credential store and each folder that holds one
+      (see <a href="#secret-reads">Reads of credential stores</a>), because a workspace exposes
+      all the files below it. A workflow run can only use a folder inside the connected workspace,
+      except in <code>bypassPermissions</code>.</p>
 
     <h2 id="pause-flow">The pause-and-execute flow</h2>
     <p>An <em>ask</em> decision does not block the server thread waiting on a person. Instead the turn
@@ -535,11 +484,11 @@
       mid-call <em>elicitation</em> (an MCP server asking the user a question part-way through a
       tool call). You answer it in Settings &gt; MCP servers, which posts
       <code>mcp_elicit_respond</code> to <code>POST /api/approval/execute</code>. There is no chat
-      card, and no mode or rule applies, so the answer is always your own decision and never
+      card, and no mode applies, so the answer is always your own decision and never
       something the model invents. Its spec is marked <code>refuse_if_agent</code>, so an
       unattended agent can never answer an elicitation on your behalf.</p>
     <p>For <b>GitHub</b>, ordinary mutations live in the <code>github</code> category and follow the
-      normal mode and rule pipeline, while <code>github-destructive</code> (deletes, merges,
+      normal mode pipeline, while <code>github-destructive</code> (deletes, merges,
       archive or rename, raw API DELETE) always asks, as the very first check in the decision order
       (in <code>dontAsk</code> it is denied).
       <code>refuse_if_agent</code> (<code class="path">server/approval/spec.py</code>) additionally
@@ -552,11 +501,7 @@
         (<code>write</code>, <code>delete</code>, <code>cli</code>) and treats any category it has
         not seen as <code>ask</code> lazily. That seeding has no dynamic fetch, so a brand-new
         backend category needs a matching frontend default before it surfaces as a remembered
-        "Yes, all" choice. Separately, <code>GET /api/permissions</code> does return a computed
-        <code>categories</code> list (from <code>registry.all_categories()</code>, plus the
-        policy-only <code>workflow</code> entry appended for the settings UI) - that one exists
-        so Settings can render a <code>category_modes</code> row per category, not to drive the
-        session-memory seeding.</p></div>
+        "Yes, all" choice.</p></div>
     </div>
 
     <h2 id="defence-in-depth">Defence in depth: the command validator</h2>
@@ -596,7 +541,7 @@
 
     <h2 id="key-files">Key files</h2>
     <div class="spec">
-      <dt><code class="path">server/security/permissions.py</code></dt><dd>Modes, <code>category_modes</code>, custom rules, the static decision resolver, and the auto-mode circuit breaker.</dd>
+      <dt><code class="path">server/security/permissions.py</code></dt><dd>The permission mode, the static decision resolver, and the auto-mode circuit breaker.</dd>
       <dt><code class="path">server/tool_executor.py</code></dt><dd>Runs each tool and holds <code>_PLAN_MODE_BLOCKED</code>.</dd>
       <dt><code class="path">server/tool_approvals.py</code></dt><dd>Applies the decision per tool and emits the <code>approval_request</code> pause.</dd>
       <dt><code class="path">server/tool_meta.py</code></dt><dd>The <code>meta</code> of each <code>skill_result</code> frame: the duration, the output size, the lines of a read, and the counts of a write.</dd>
@@ -606,18 +551,12 @@
       <dt><code class="path">server/approval/spec.py</code></dt><dd>The <code>ApprovalSpec</code> and <code>ApprovalOutcome</code> dataclasses, including <code>refuse_if_agent</code>.</dd>
       <dt><code class="path">server/approval/bootstrap.py</code></dt><dd>Declares and registers specs for every built-in workspace tool.</dd>
       <dt><code class="path">server/approval/executors.py</code></dt><dd>The executors the specs run, including <code>_do_save_to_path</code> and the approved-command path with its <code>_validate_command</code> gate.</dd>
-      <dt><code class="path">server/approval/registry.py</code></dt><dd>The action-keyed registry and category walk.</dd>
+      <dt><code class="path">server/approval/registry.py</code></dt><dd>The action-keyed registry.</dd>
       <dt><code class="path">server/approval/markers.py</code></dt><dd>The app markers, <code>AppRequest</code>, and the functions that make a request.</dd>
-      <dt><code class="path">server/approval/router.py</code></dt><dd>The single <code>POST /api/approval/execute</code> endpoint. (The categories list is served by <code>GET /api/permissions</code>.)</dd>
+      <dt><code class="path">server/approval/router.py</code></dt><dd>The single <code>POST /api/approval/execute</code> endpoint.</dd>
       <dt><code class="path">server/security/explainer.py</code></dt><dd><code>explain_permission</code>, the time-capped Haiku risk explanation on cards.</dd>
       <dt><code class="path">server/security/command_validator.py</code></dt><dd>The shell-command deny-list run before the sandbox.</dd>
     </div>
-
-    <p>One adjacent field worth knowing about: <code>PUT /api/permissions</code> also validates and
-      merges a <code>network_policy</code> object (<code>tier</code>,
-      <code>custom_allowed_domains</code>, <code>methods_only_safe</code>). That is the opt-in egress
-      policy for sandboxed commands, covered on the
-      <a href="arch-sandbox.html#egress-policy">sandbox page</a>.</p>
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
