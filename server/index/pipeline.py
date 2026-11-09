@@ -18,6 +18,7 @@ import time
 from datetime import UTC, datetime
 
 from . import (
+    build_state,
     contextualize,
     descriptions,
     embedder,
@@ -79,54 +80,8 @@ _INDEXABLE = (
 # (a Python "# comment" is not a heading) and data files.
 _HEADING_DOC_EXTS = {".md", ".mdx", ".rst"} | RICH_DOC_EXTENSIONS
 
-# One lock per workspace so a scheduled refresh and a user-triggered build never
-# run concurrently on the same index and race the SQLite write transactions.
-_build_locks: dict[str, threading.Lock] = {}
-_build_locks_guard = threading.Lock()
-
-# Cooperative cancel: a per-workspace Event the build loop checks between files.
-_cancel_events: dict[str, threading.Event] = {}
-_cancel_guard = threading.Lock()
-
-
 # Base64 image blobs MarkItDown inlines for DOCX/HTML are huge embedding noise.
 _DATA_URI_RE = re.compile(r"data:[\w.+-]+/[\w.+-]+;base64,[A-Za-z0-9+/=]+")
-
-
-def _ws_lock(ws_root: str) -> threading.Lock:
-    with _build_locks_guard:
-        lk = _build_locks.get(ws_root)
-        if lk is None:
-            lk = threading.Lock()
-            _build_locks[ws_root] = lk
-        return lk
-
-
-def _cancel_event(ws_root: str) -> threading.Event:
-    with _cancel_guard:
-        ev = _cancel_events.get(ws_root)
-        if ev is None:
-            ev = threading.Event()
-            _cancel_events[ws_root] = ev
-        return ev
-
-
-def is_building(ws_path: str) -> bool:
-    """True if a build currently holds this workspace's lock (e.g. the daily
-    scheduled refresh is running), so callers can avoid queuing behind it."""
-    ws_root = os.path.abspath(os.path.expanduser(ws_path))
-    lk = _build_locks.get(ws_root)
-    return bool(lk and lk.locked())
-
-
-def request_cancel(ws_path: str) -> bool:
-    """Ask an in-progress build for this workspace to stop after the current
-    file. Returns True if a build was running to signal."""
-    if not is_building(ws_path):
-        return False
-    ws_root = os.path.abspath(os.path.expanduser(ws_path))
-    _cancel_event(ws_root).set()
-    return True
 
 
 def _iter_files(ws_root: str):
@@ -334,26 +289,61 @@ def _extract_text(path: str, ext: str, rel: str) -> str | None:
 
 
 def build(ws_path: str, progress=None) -> dict:
-    """Incrementally (re)index ``ws_path``. Returns final stats.
+    """Incrementally (re)index ``ws_path``. Returns final stats, or
+    ``{"skipped": "already building"}`` when a build of it already runs.
 
     ``progress(done, total, current_path)`` is called as files are processed.
-    Serialized per workspace so a scheduled refresh and a manual build can't
-    race the same index.
     """
-    ws_root = os.path.abspath(os.path.expanduser(ws_path))
-    with _ws_lock(ws_root):
-        return _build_locked(ws_path, ws_root, progress)
+    ws_root = build_state.ws_root(ws_path)
+    if not build_state.claim(ws_root):
+        return {"skipped": "already building"}
+    return _run_claimed_build(ws_path, ws_root, progress)
 
 
-def _build_locked(ws_path: str, ws_root: str, progress) -> dict:
+def start_build(ws_path: str) -> bool:
+    """Claim the workspace and build it in a daemon thread (a full index can
+    take minutes). False when a build of it already runs."""
+    ws_root = build_state.ws_root(ws_path)
+    if not build_state.claim(ws_root):
+        return False
+
+    def _run() -> None:
+        try:
+            _run_claimed_build(ws_path, ws_root, None)
+        except Exception as e:  # noqa: BLE001 - recorded in build_state for the UI
+            log.error("Index build failed for %s: %s", ws_path, e)
+
+    threading.Thread(target=_run, daemon=True, name="index-build").start()
+    return True
+
+
+def _run_claimed_build(ws_path: str, ws_root: str, progress) -> dict:
+    """Run a build its caller claimed, recording progress and the outcome."""
+
+    def _progress(done: int, total: int, current: str) -> None:
+        build_state.note(ws_root, done=done, total=total, current=current)
+        if progress is not None:
+            progress(done, total, current)
+
+    try:
+        stats = _build_claimed(ws_path, ws_root, _progress)
+    except BaseException as e:
+        build_state.note(ws_root, building=False, error=str(e) or type(e).__name__)
+        raise
+    build_state.note(ws_root, building=False, error=None)
+    return stats
+
+
+def _build_claimed(ws_path: str, ws_root: str, progress) -> dict:
     manifest = store.get_manifest(ws_path)
     # Record the workspace path up front so even an interrupted build is
     # discoverable by list_indexed_workspaces / the scheduler / migration.
     # last_indexed_at is only written on completion (below) — an index with no
     # last_indexed_at is one that never finished.
     store.set_meta(ws_path, workspace=ws_root)
-    cancel = _cancel_event(ws_root)
-    cancel.clear()
+    # Cleared when the build was claimed (build_state.claim), not here: a
+    # cancel that landed since then must stop this build.
+    cancel = build_state.cancel_event(ws_root)
     candidates = list(_iter_files(ws_root))
     total = len(candidates)
     seen: set[str] = set()
@@ -551,7 +541,6 @@ def _build_locked(ws_path: str, ws_root: str, progress) -> dict:
         # Kept on a cancel too: the files it did index are what they owe.
         store.set_meta(ws_path, local_skipped={p: sorted(v) for p, v in owed.items() if v})
     finally:
-        cancel.clear()
         # Free the heavy models — an index run shouldn't hold RAM afterward.
         embedder.unload()
         extractor.unload()

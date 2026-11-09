@@ -12,7 +12,6 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
-import threading
 from datetime import datetime, timedelta
 
 from . import store
@@ -30,20 +29,16 @@ def _job_id(ws_path: str) -> str:
     return _JOB_PREFIX + hashlib.sha1(norm).hexdigest()[:16]
 
 
-def _build_one(ws_path: str) -> None:
-    try:
-        from .pipeline import build
-
-        log.info("Scheduled index refresh: %s", ws_path)
-        build(ws_path)
-    except Exception as e:  # noqa: BLE001
-        log.error("Scheduled index refresh failed for %s: %s", ws_path, e)
-
-
 def _run_one(ws_path: str) -> None:
-    # Offload the (multi-minute) build to a daemon thread so the scheduler loop
-    # returns immediately, mirroring cron_scheduler's pattern.
-    threading.Thread(target=_build_one, args=(ws_path,), daemon=True, name="index-refresh").start()
+    """Start the scheduled refresh the same way the Build button does
+    (pipeline.start_build): a daemon thread, so the scheduler loop returns at
+    once, recorded in build_state, so the UI shows its progress."""
+    from .pipeline import start_build
+
+    if start_build(ws_path):
+        log.info("Scheduled index refresh: %s", ws_path)
+    else:
+        log.info("Scheduled index refresh skipped, a build is running: %s", ws_path)
 
 
 def apply_workspace(ws_path: str) -> None:
