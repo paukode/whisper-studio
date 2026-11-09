@@ -312,8 +312,7 @@ def test_a_terminal_cwd_that_is_not_a_directory_is_workspace_bound(ws_a, ws_b):
 
 def test_a_released_turn_cannot_reopen_the_folder_the_user_let_go_of(ws_a, monkeypatch):
     """ws_open_folder is how a model recovers from "No workspace connected",
-    and under a folder grant it connects silently, undoing the disconnect."""
-    monkeypatch.setattr("server.security.folder_grants.needs_grant", lambda *a, **k: False)
+    and in Bypass it connects with no card, undoing the disconnect."""
     connect_workspace(str(ws_a))
     latch = latch_workspace()
     state.disconnect_workspace()

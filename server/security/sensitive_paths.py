@@ -133,6 +133,19 @@ def is_sensitive_path(path: str) -> bool:
     return False
 
 
+def holds_sensitive_path(path: str) -> bool:
+    """True if `path` is a denylisted location (is_sensitive_path) or a folder
+    that holds one. A folder opened as the workspace exposes everything below
+    it, so opening ``~`` would hand over ``~/.ssh``: a prompt-injected "open my
+    home folder" must be refused like "open ~/.ssh".
+    """
+    real = os.path.realpath(os.path.expanduser(path))
+    if is_sensitive_path(real):
+        return True
+    root = real.rstrip(os.sep) + os.sep
+    return any(os.path.realpath(denied).startswith(root) for denied in expanded_sandbox_paths())
+
+
 def validator_path_patterns() -> list[re.Pattern]:
     """Compiled regexes for command-text matching.
 
