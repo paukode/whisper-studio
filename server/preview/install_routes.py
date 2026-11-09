@@ -43,11 +43,31 @@ router = APIRouter(prefix="/api/preview", tags=["preview"])
 _BUNDLE_MISSING_MSG = "Preview browser missing from the app bundle, reinstall the app."
 
 # Single global install job, there's only ever one Playwright/Chromium
-# install for the whole app.
+# install for the whole app. Written only through _transition.
 _INSTALL: dict = {"installing": False, "stage": None, "error": None, "log_tail": []}
 _lock = threading.Lock()
 
 _MAX_LOG_LINES = 200
+
+QUEUED = "queued"
+DONE = "done"
+
+
+def _transition(stage: str | None, error: str | None = None) -> None:
+    """The one writer of the install job's state; the caller holds ``_lock``.
+
+    ``stage`` is the running step (QUEUED, then each step's name), DONE after
+    a successful install, or None when the job is idle: after a failure or a
+    refusal, which carry ``error``. ``installing`` follows from the stage, so
+    a failed install never keeps the name of the step it failed on, and a
+    running one never shows an old error. Entering QUEUED starts a new log.
+    """
+    installing = stage not in (None, DONE)
+    if installing and error:
+        raise ValueError("a running install step carries no error")
+    _INSTALL.update(installing=installing, stage=stage, error=error)
+    if stage == QUEUED:
+        _INSTALL["log_tail"] = []
 
 
 def _append_log(line: str) -> None:
@@ -69,33 +89,29 @@ def _run_install() -> None:
         # playwright itself is pinned in requirements.txt (setup.sh installs
         # it); only its Chromium builds are downloaded here.
         with _lock:
-            _INSTALL.update(stage="playwright install chromium", error=None)
+            _transition("playwright install chromium")
         if not _run_step([sys.executable, "-m", "playwright", "install", "chromium"]):
             with _lock:
-                _INSTALL.update(
-                    installing=False,
-                    error="chromium download failed, check disk space and network connectivity",
+                _transition(
+                    None, "chromium download failed, check disk space and network connectivity"
                 )
             return
 
         if not is_chromium_installed():
             with _lock:
-                _INSTALL.update(
-                    installing=False,
-                    error="Install reported success but Chromium was not found afterward",
-                )
+                _transition(None, "Install reported success but Chromium was not found afterward")
             return
 
         from server.infrastructure.config import set_feature_flag
 
         set_feature_flag("preview_tools", True)
         with _lock:
-            _INSTALL.update(installing=False, stage="done", error=None)
+            _transition(DONE)
         log.info("Live preview: Chromium install complete; preview_tools enabled")
     except Exception as e:  # noqa: BLE001 (surface to the UI, don't crash the thread)
         log.exception("Live preview install failed")
         with _lock:
-            _INSTALL.update(installing=False, error=str(e))
+            _transition(None, str(e) or type(e).__name__)
 
 
 @router.get("/status")
@@ -139,9 +155,9 @@ async def preview_install():
             # browser downloads into Resources/pw-browsers would fail (and
             # would break the code-signing seal if they didn't). The browser
             # ships with the app; if it is missing the install is broken.
-            _INSTALL.update(installing=False, stage=None, error=_BUNDLE_MISSING_MSG)
+            _transition(None, _BUNDLE_MISSING_MSG)
             return {"started": False, "reason": "packaged install", "error": _BUNDLE_MISSING_MSG}
-        _INSTALL.update(installing=True, stage="queued", error=None, log_tail=[])
+        _transition(QUEUED)
     threading.Thread(target=_run_install, daemon=True, name="preview-install").start()
     return {"started": True}
 

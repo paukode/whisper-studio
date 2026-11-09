@@ -196,7 +196,7 @@ def test_dev_install_path_preserved(tmp_path, monkeypatch, client):
 
     def fake_install():
         with install_routes._lock:
-            install_routes._INSTALL.update(installing=False, stage="done")
+            install_routes._transition(install_routes.DONE)
         ran.set()
 
     monkeypatch.setattr(install_routes, "_run_install", fake_install)
@@ -214,3 +214,55 @@ def test_dev_status_has_no_bundle_error(tmp_path, monkeypatch, client):
     assert status["packaged"] is False
     assert status["chromium_installed"] is False
     assert status["error"] is None
+
+
+# ---------------------------------------------------------------------------
+# One transition function: the record is always consistent
+# ---------------------------------------------------------------------------
+
+
+def _run_install_with(monkeypatch, *, step_ok: bool, chromium_after: bool, raises=None):
+    def fake_step(args):
+        install_routes._append_log("downloading")
+        if raises is not None:
+            raise raises
+        return step_ok
+
+    monkeypatch.setattr(install_routes, "_run_step", fake_step)
+    monkeypatch.setattr(install_routes, "is_chromium_installed", lambda: chromium_after)
+    with install_routes._lock:
+        install_routes._transition(install_routes.QUEUED)
+    install_routes._run_install()
+    with install_routes._lock:
+        return dict(install_routes._INSTALL)
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {"step_ok": False, "chromium_after": False},
+        {"step_ok": True, "chromium_after": False},
+        {"step_ok": True, "chromium_after": True, "raises": OSError("disk full")},
+    ],
+)
+def test_a_failed_install_keeps_no_step_name(monkeypatch, kw):
+    state = _run_install_with(monkeypatch, **kw)
+    assert state["installing"] is False
+    assert state["error"]
+    assert state["stage"] is None
+    assert state["log_tail"] == ["downloading"]  # the log of the failed run stays
+
+
+def test_a_successful_install_ends_done_without_error(monkeypatch):
+    state = _run_install_with(monkeypatch, step_ok=True, chromium_after=True)
+    assert (state["installing"], state["stage"], state["error"]) == (False, "done", None)
+
+
+def test_a_new_install_clears_the_last_failure_and_log():
+    with install_routes._lock:
+        install_routes._transition(None, "chromium download failed")
+        install_routes._INSTALL["log_tail"] = ["old line"]
+        install_routes._transition(install_routes.QUEUED)
+        state = dict(install_routes._INSTALL)
+    assert (state["installing"], state["stage"], state["error"]) == (True, "queued", None)
+    assert state["log_tail"] == []
