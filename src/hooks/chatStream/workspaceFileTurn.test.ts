@@ -21,6 +21,7 @@ function pendingUpload(): (att: { id: string; filename: string }) => void {
 }
 
 beforeEach(() => {
+  vi.mocked(uploadWorkspaceFile).mockReset();
   vi.mocked(sendChatTurn).mockClear();
   chat().setMessages([]);
 });
@@ -45,7 +46,7 @@ describe('askAboutWorkspaceFile', () => {
     ]);
     expect(chat().turnPhase).toBe('starting');
     expect(chat().streamStatus).toBe('Uploading big.pdf…');
-    expect(uploadWorkspaceFile).toHaveBeenCalledWith('docs/big.pdf');
+    expect(uploadWorkspaceFile).toHaveBeenCalledWith('docs/big.pdf', expect.any(AbortSignal));
   });
 
   it('sends the question with the uploaded file to the session that asked', async () => {
@@ -63,16 +64,34 @@ describe('askAboutWorkspaceFile', () => {
     expect(chat().messages[0].attachmentIds).toEqual(['att1']);
   });
 
-  it('a Stop while the file uploads sends nothing once the upload lands', async () => {
+  it('a Stop while the file uploads cancels the upload and sends nothing', async () => {
     const finish = pendingUpload();
     askAboutWorkspaceFile(SID, 'docs/big.pdf', 'Summarize this file.');
+    const signal = vi.mocked(uploadWorkspaceFile).mock.calls[0][1] as AbortSignal;
+    expect(signal.aborted).toBe(false);
     // What the Stop button does to the session's state.
     chat().finishStream();
+    // The upload request holds a browser connection: it must not outlive the turn.
+    expect(signal.aborted).toBe(true);
     finish({ id: 'att1', filename: 'big.pdf' });
 
     await new Promise((r) => setTimeout(r, 20));
     expect(sendChatTurn).not.toHaveBeenCalled();
     expect(chat().turnPhase).toBe('idle');
+  });
+
+  it('a cancelled upload is not reported as a failure', async () => {
+    const addToast = vi.spyOn(useUIStore.getState(), 'addToast');
+    vi.mocked(uploadWorkspaceFile).mockImplementation((_path, signal) => new Promise((_resolve, reject) => {
+      signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+    }));
+    askAboutWorkspaceFile(SID, 'docs/big.pdf', 'Summarize this file.');
+    chat().finishStream();
+
+    await new Promise((r) => setTimeout(r, 20));
+    expect(addToast).not.toHaveBeenCalled();
+    expect(chat().messages[0].content).toBe('Summarize this file.');
+    addToast.mockRestore();
   });
 
   it('a failed upload ends the turn and says why', async () => {
