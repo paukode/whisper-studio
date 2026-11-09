@@ -1109,17 +1109,13 @@ async def subagent_stream_endpoint(request: Request):
                 yield _frame({"team_progress": queue.get_nowait()})
 
             result = agent_task.result()
-            output = getattr(result, "output", "") or ""
-            status = getattr(result, "status", "completed")
+            output = result.output or ""
+            status = result.status
             # No cost row here: the turn engine already recorded every one of
             # the agent's rounds under this session as it ran.
             yield _frame({"team_progress": {"phase": "team_completed", "team_id": team_id}})
             yield _frame({"subagent_done": {"output": output, "status": status}})
-            _task_registry.finish_task(
-                registry_task_id,
-                status="completed" if status == "completed" else "failed",
-                result_text=(output or "")[-2000:],
-            )
+            _task_registry.finish_task(registry_task_id, status=status, result_text=output[-2000:])
         except Exception as e:  # noqa: BLE001 - surface any failure to the UI
             log.error("Subagent stream error: %s", e, exc_info=True)
             yield _frame({"team_progress": {"phase": "team_completed", "team_id": team_id}})
@@ -1156,12 +1152,8 @@ async def subagent_stream_endpoint(request: Request):
                 # closes the would-be phantom row otherwise.
                 try:
                     _result = agent_task.result()
-                    _status = (
-                        "completed"
-                        if getattr(_result, "status", "completed") == "completed"
-                        else "failed"
-                    )
-                    _text = (getattr(_result, "output", "") or "")[-2000:]
+                    _status = _result.status
+                    _text = (_result.output or "")[-2000:]
                 except Exception:
                     _status, _text = "failed", "[Subagent Error] stream aborted"
                 _task_registry.finish_task(registry_task_id, status=_status, result_text=_text)

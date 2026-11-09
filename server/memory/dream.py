@@ -155,6 +155,16 @@ async def dream_consolidate(memory_dir: str, *, scope: str) -> None:
             cost_source="memory",
         )
 
+        if result.stopped_early:
+            # A limit stopped it before it finished (server.agents.outcome):
+            # not done, so the counters stay and the next trigger runs again.
+            log.warning(
+                "Dream consolidation (%s) stopped at a limit (%s): not counted as done",
+                scope,
+                result.stop_reason,
+            )
+            return
+
         # Update metadata
         meta = _load_meta(memory_dir)
         meta["last_consolidated_at"] = time.time()

@@ -26,34 +26,19 @@ import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer';
 import { ICON } from '@/components/chat/activityIcons';
 import { useDockStore } from '@/stores/dockStore';
 import { STORAGE_KEYS } from '@/utils/storageKeys';
+import { outcomeOf, type OutcomeTone } from '@/utils/agentOutcome';
 
 interface Props {
   report: AgentReportPayload;
 }
 
-type Tone = 'done' | 'err' | 'neutral';
-
-/** How an agent stopped, as a chip: by its stop reason, or its status when
- *  none was recorded. A finished run takes the done tone and a failure the
- *  error tone; a limit or a cancel stays neutral (its report was written). */
-const OUTCOME: Record<string, { text: string; tone: Tone }> = {
-  completed: { text: 'finished', tone: 'done' },
-  turn_limit: { text: 'turn limit', tone: 'neutral' },
-  deadline: { text: 'time limit', tone: 'neutral' },
-  cost_cap: { text: 'cost cap', tone: 'neutral' },
-  refused_calls: { text: 'refused calls', tone: 'neutral' },
-  cancelled: { text: 'cancelled', tone: 'neutral' },
-  error: { text: 'failed', tone: 'err' },
-  failed: { text: 'failed', tone: 'err' },
-  stopped: { text: 'stopped', tone: 'neutral' },
-};
-
-function agentOutcome(agent: AgentReportRow): { text: string; tone: Tone } {
-  const key = agent.stop_reason ?? agent.status;
-  return OUTCOME[key] ?? { text: key, tone: 'neutral' };
+/** How an agent stopped, as a chip (utils/agentOutcome). */
+function agentOutcome(agent: AgentReportRow): { text: string; tone: OutcomeTone } {
+  const outcome = outcomeOf(agent.status, agent.stop_reason);
+  return { text: outcome.chip, tone: outcome.tone };
 }
 
-function chipClass(tone: Tone): string {
+function chipClass(tone: OutcomeTone): string {
   return tone === 'neutral' ? 'activity-chip' : `activity-chip ${tone}`;
 }
 

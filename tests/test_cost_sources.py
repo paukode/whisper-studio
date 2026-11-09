@@ -3,7 +3,6 @@
 import asyncio
 import importlib
 import sqlite3
-from types import SimpleNamespace
 
 import pytest
 
@@ -86,16 +85,9 @@ def test_a_workflow_agent_is_tagged_workflow(monkeypatch):
 
     async def _fake_run_agent(task, **kwargs):
         seen.update(kwargs)
-        return SimpleNamespace(
-            agent_id="a",
-            status="completed",
-            output="x",
-            structured_output=None,
-            usage={},
-            turns_used=1,
-            stop_reason="completed",
-            tools_called=[],
-        )
+        from server.agents.runtime import AgentResult
+
+        return AgentResult(agent_id="a", agent_type="general", output="x", turns_used=1)
 
     monkeypatch.setattr("server.agents.runtime.run_agent", _fake_run_agent)
     asyncio.run(

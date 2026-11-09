@@ -8,7 +8,7 @@ import asyncio
 import json
 import uuid
 
-from server.agents.journal import RELAY_NOTE, REPORT_CHARS
+from server.agents.journal import RELAY_NOTE, REPORT_CHARS, record_outcome
 from server.agents.journal import load as load_journal
 from server.tasks.events import emit_agent_report
 
@@ -95,9 +95,7 @@ def _reports_from_journals(
                 "agent_type": spec.get("agent_type", "general"),
                 "task": spec.get("task", ""),
                 "result": report[:REPORT_CHARS],
-                "status": "completed" if meta.get("status") == "completed" else "stopped",
-                "stop_reason": meta.get("stop_reason") or "cancelled",
-                "turns_used": int(meta.get("rounds") or 0),
+                **record_outcome(meta),
             }
         )
     return rows

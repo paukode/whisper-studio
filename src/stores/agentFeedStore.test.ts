@@ -51,8 +51,12 @@ describe('metaAfter', () => {
     expect(m).toMatchObject({ status: 'running', rounds: 4, max_turns: 140 });
     m = metaAfter(m, ev({ phase: 'stopped' }));
     expect(m).toMatchObject({ status: 'stopped', stop_reason: 'cancelled' });
-    m = metaAfter(meta(), ev({ phase: 'turn_limit', stop_reason: 'deadline', turns_used: 9 }));
-    expect(m).toMatchObject({ status: 'completed', stop_reason: 'deadline', rounds: 9 });
+    // A limit stop is stopped, named by its limit: live, or replayed from an
+    // older record's turn_limit phase.
+    m = metaAfter(meta(), ev({ phase: 'stopped', stop_reason: 'deadline', turns_used: 9 }));
+    expect(m).toMatchObject({ status: 'stopped', stop_reason: 'deadline', rounds: 9 });
+    m = metaAfter(meta(), ev({ phase: 'turn_limit', turns_used: 9 }));
+    expect(m).toMatchObject({ status: 'stopped', stop_reason: 'turn_limit', rounds: 9 });
     m = metaAfter(meta(), ev({ phase: 'finished', status: 'failed', stop_reason: 'error', turns_used: 2 }));
     expect(m).toMatchObject({ status: 'failed', stop_reason: 'error', rounds: 2 });
   });

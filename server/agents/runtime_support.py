@@ -70,11 +70,10 @@ def _spawned_by_released_turn(workspace_path: str | None) -> bool:
 
 
 def _agent_finished(result: AgentResult) -> bool:
-    """True only when the agent genuinely completed its goal — so its worktree
-    work is applied. A turn/deadline limit reports status='completed' (kept that
-    way for memory/subagent callers) but sets stopped_early, meaning the work is
-    partial and the worktree is kept for inspection instead of applied."""
-    return result.status == "completed" and not result.stopped_early
+    """True only when the agent genuinely completed its goal, so its worktree
+    work is applied. A limit stop is "stopped" (server.agents.outcome): the
+    work is partial and the worktree is kept for inspection instead."""
+    return result.status == "completed"
 
 
 async def _harvest_worktree(wt_session, agent_id: str, apply_changes: bool) -> str:

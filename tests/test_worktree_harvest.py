@@ -329,7 +329,7 @@ def test_run_agent_applies_only_on_genuine_finish(monkeypatch, repo):
     monkeypatch.setattr("server.git.worktree_harvest.harvest_agent_worktree", _fake_harvest)
 
     async def _finish(**kw):
-        return rt.AgentResult(agent_id="x", agent_type="general", output="ok", status="completed")
+        return rt.AgentResult(agent_id="x", agent_type="general", output="ok")
 
     monkeypatch.setattr(rt, "_run_agent_loop", _finish)
     asyncio.run(rt.run_agent("t", session_id="", model_id_override="m", isolation="worktree"))
@@ -341,8 +341,7 @@ def test_run_agent_applies_only_on_genuine_finish(monkeypatch, repo):
             agent_id="x",
             agent_type="general",
             output="ran out",
-            status="completed",
-            stopped_early=True,
+            stop_reason="turn_limit",
         )
 
     monkeypatch.setattr(rt, "_run_agent_loop", _limited)

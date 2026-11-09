@@ -11,8 +11,7 @@ export const TeamProgressEventSchema = z.object({
   parent_agent_id: z.string().nullable().optional(),
   phase: z.enum([
     'team_started', 'team_completed', 'started', 'turn_start', 'text',
-    'tool_call', 'tool_result', 'completed', 'turn_limit', 'failed',
-    'stopped', 'finished',
+    'tool_call', 'tool_result', 'completed', 'failed', 'stopped', 'finished',
   ]),
   task: z.string().optional(),
   model: z.string().nullable().optional(),

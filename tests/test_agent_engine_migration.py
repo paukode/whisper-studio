@@ -263,7 +263,7 @@ def test_worktree_kept_not_applied_on_turn_limit_exit(monkeypatch, tmp_path):
         )
     )
 
-    assert result.status == "completed"
+    assert result.status == "stopped"  # a limit stop: partial work
     assert result.stopped_early is True
     # The write really ran, in the agent's worktree: a refused call would
     # leave the repo clean too and prove nothing below.

@@ -58,7 +58,7 @@ def test_events_carry_their_line_number_as_seq():
 def test_resumed_record_continues_the_numbering():
     j = _open("a2")
     j.event("text", text="first run")
-    j.finish(status="completed", stop_reason="completed", report="done", turns_used=1)
+    j.finish(stop_reason="completed", report="done", turns_used=1)
     again = _open("a2", resumed=True)
     seq = again.event("text", text="second run")
     lines = [json.loads(line) for line in open(again.events_path)]
@@ -74,7 +74,7 @@ def test_journal_announces_its_row_live(monkeypatch):
 
     monkeypatch.setattr(bus_mod.event_bus, "publish", lambda s, ev: published.append((s, ev)))
     j = _open("a6", session_id="s7")
-    j.finish(status="stopped", stop_reason="cancelled", report="salvaged", turns_used=2)
+    j.finish(stop_reason="cancelled", report="salvaged", turns_used=2)
     frames = [(sid, ev["taskEvent"]) for sid, ev in published if ev.get("type") == "task_event"]
     assert [(sid, f["event_type"], f["kind"]) for sid, f in frames] == [
         ("s7", "task_started", "agent"),
@@ -96,7 +96,7 @@ def test_a_named_agent_carries_its_name_to_the_task_list(monkeypatch):
 
     monkeypatch.setattr(bus_mod.event_bus, "publish", lambda s, ev: published.append(ev))
     j = _open("a8", agent_name="planner-audit")
-    j.finish(status="completed", stop_reason="completed", report="done", turns_used=1)
+    j.finish(stop_reason="completed", report="done", turns_used=1)
     # A resume passes no name; the row and the record keep the first one.
     _open("a8", resumed=True)
     _open("a9")
@@ -117,7 +117,7 @@ def test_a_named_agent_carries_its_name_to_the_task_list(monkeypatch):
 def test_load_feed_returns_meta_events_and_report():
     j = _open("a3")
     j.event("tool_call", tool_name="ws_grep")
-    j.finish(status="completed", stop_reason="completed", report="FINDINGS: x", turns_used=1)
+    j.finish(stop_reason="completed", report="FINDINGS: x", turns_used=1)
     feed = journal_mod.load_feed("a3")
     assert feed["agent_id"] == "a3"
     assert feed["meta"]["status"] == "completed"
@@ -193,7 +193,13 @@ def test_the_workflow_adapter_records_the_run_on_each_agent(monkeypatch):
     async def _fake_run_agent(task, **kwargs):
         seen.update(kwargs)
         return SimpleNamespace(
-            agent_id="a", status="completed", output="x", structured_output=None, usage={}
+            agent_id="a",
+            status="completed",
+            stop_reason="completed",
+            stopped_early=False,
+            output="x",
+            structured_output=None,
+            usage={},
         )
 
     monkeypatch.setattr("server.agents.runtime.run_agent", _fake_run_agent)

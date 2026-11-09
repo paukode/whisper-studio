@@ -37,7 +37,7 @@ describe('AgentRow', () => {
   it('names the outcome and the rounds spent', () => {
     expect(agentStatusText(agent({ status: 'completed', turns_used: 5 }))).toBe('done · 5 rounds');
     expect(agentStatusText(agent({ status: 'completed', turns_used: 1 }))).toBe('done · 1 round');
-    expect(agentStatusText(agent({ status: 'turn_limit', stop_reason: 'deadline', turns_used: 9 }))).toBe('stopped at the time limit · 9 rounds');
+    expect(agentStatusText(agent({ status: 'stopped', stop_reason: 'deadline', turns_used: 9 }))).toBe('stopped at the time limit · 9 rounds');
     expect(agentStatusText(agent({ status: 'stopped', stop_reason: 'cancelled' }))).toBe('stopped');
     expect(agentStatusText(agent({ status: 'pending' }))).toBe('starting');
   });

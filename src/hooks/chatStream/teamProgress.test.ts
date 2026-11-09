@@ -22,13 +22,13 @@ function makeStore(initial: ChatMessage[]) {
 }
 
 describe('foldTeamResultsInto', () => {
-  it('keeps a stopped or turn-limited agent as such, live row or not', () => {
+  it('keeps a stopped agent as such, live row or not, also an older turn_limit row', () => {
     const fresh = foldTeamResultsInto(undefined, {
       team_id: 't9',
       agents: [{ name: 'a', status: 'stopped' }, { name: 'b', status: 'turn_limit' }],
     });
     expect(fresh.t9.agents.a.status).toBe('stopped');
-    expect(fresh.t9.agents.b.status).toBe('turn_limit');
+    expect(fresh.t9.agents.b.status).toBe('stopped');
     const again = foldTeamResultsInto(fresh, { team_id: 't9', agents: [{ name: 'a', status: 'stopped' }] });
     expect(again.t9.agents.a.status).toBe('stopped');
   });
@@ -170,11 +170,11 @@ describe('foldTeamProgressIntoMap', () => {
       } as TeamProgressEvent)!;
     }
     map = foldTeamProgressIntoMap(map, {
-      phase: 'turn_limit', team_id: 't6', agent_id: 'a1', turns_used: 450, stop_reason: 'deadline',
+      phase: 'stopped', team_id: 't6', agent_id: 'a1', turns_used: 450, stop_reason: 'deadline',
     } as TeamProgressEvent)!;
     expect(map.t6.agents.a1).toEqual({
       name: 'a1', task: '', agent_type: 'general', role: 'team',
-      agent_id: 'a1', status: 'turn_limit', turns_used: 450, stop_reason: 'deadline',
+      agent_id: 'a1', status: 'stopped', turns_used: 450, stop_reason: 'deadline',
     });
   });
 });
