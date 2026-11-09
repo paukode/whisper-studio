@@ -1,10 +1,11 @@
-"""Session status API for the Live pane and the Settings "Live preview" panel.
+"""Session status API for the chat Live pane.
 
 Each row carries ``owner``, the chat session that started the preview. The
 Live pane shows and stops only its own chat's preview: its Restart and Stop
 send ``session_id``, and a preview another chat owns is refused with 409
-naming that chat. The Settings panel is the human kill switch for whatever is
-running and sends no session, so it can stop any preview.
+naming that chat. Every preview stops when the app quits
+(``preview_manager.stop_all`` in server/main.py), so no route stops a preview
+without naming its chat.
 """
 
 from __future__ import annotations
@@ -73,10 +74,13 @@ async def start_session(request: Request):
 
 @router.delete("/sessions/{name}")
 async def stop_session(name: str, session_id: str = ""):
-    """Stop a preview. With ``session_id`` (the Live pane) only that chat's
-    own preview is stopped; without it (Settings) any preview is."""
+    """Stop the preview of the chat in ``session_id`` (the Live pane). A
+    preview another chat owns is refused."""
+    caller = session_id.strip()
+    if not caller:
+        return _error(400, "session_id required")
     try:
-        stopped = await preview_manager.stop_session(name, caller=session_id.strip())
+        stopped = await preview_manager.stop_session(name, caller=caller)
     except PreviewNotOwned as e:
         return await _owned_elsewhere(name, e.owner)
     if not stopped:

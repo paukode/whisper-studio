@@ -47,7 +47,7 @@
     <dl class="spec">
       <dt><code class="path">PreviewSession</code></dt><dd>One named unit: a <code>DevServerProcess | None</code>, a <code>BrowserSession</code>, plus <code>port</code>, <code>url</code>, <code>created_at</code>, and <code>owner</code> (the starting chat's session id, empty when none was known). A session can be browser-only (no subprocess) if you point it at an already-running server.</dd>
       <dt><code class="path">start_session(name, command, cwd, port, url, env, owner)</code></dt><dd>Under an async lock: refuse a duplicate name (with <code>PreviewNotOwned</code> when another chat owns it), replace a session whose dev server has exited, spawn the dev server if a command was given, register the session under its owner, and return it. Spawning is separate from loading a page.</dd>
-      <dt><code class="path">stop_session(name, caller)</code></dt><dd>Under the same lock, refuse a <code>caller</code> chat that is not the owner (<code>PreviewNotOwned</code>); an empty caller, the Settings kill switch, may stop any preview. Then pop the session and tear it down: kill the process group first, then close the browser. The teardown runs as its own task awaited under a shield, so a caller cancelled mid-stop cannot leave a server running that nothing can reach any more. Returns whether anything was actually stopped.</dd>
+      <dt><code class="path">stop_session(name, caller)</code></dt><dd>Under the same lock, refuse a <code>caller</code> chat that is not the owner (<code>PreviewNotOwned</code>). An empty caller (app shutdown, <code>stop_all()</code>) can stop any preview. Then pop the session and tear it down: kill the process group first, then close the browser. The teardown runs as its own task awaited under a shield, so a caller cancelled mid-stop cannot leave a server running that nothing can reach any more. Returns whether anything was actually stopped.</dd>
       <dt><code class="path">list_sessions()</code></dt><dd>A status snapshot per session: id, url, port, <code>process_alive</code>, <code>browser_started</code>, <code>created_at</code>, and <code>owner</code>.</dd>
     </dl>
 
@@ -179,15 +179,15 @@
 
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg></span>
-      <div class="callout__body"><p>Two honest limits. The check only runs when the preview tools are
-        <em>available</em>, gated by the <code>preview_tools</code> flag and a live capability probe
-        (<code>preview_capability_ok()</code> in <code class="path">server/preview/capability.py</code>:
-        Playwright importable, and Chromium installed). "Installed" means Playwright's own
-        <code>INSTALLATION_COMPLETE</code> marker is present for both builds a headless launch needs, at
-        the revisions this Playwright version pins, so a stale browser cache cannot report ready and then
-        fail at launch. The probe runs on every call, so deleting the browsers makes the tools disappear
-        from the catalog without a restart; if either check fails, the tools hide themselves and
-        verify-change falls back to the CI gate (tsc, tests, build) only. (Under <a href="arch-tools.html">progressive tool disclosure</a> the preview tools are also
+      <div class="callout__body"><p>Two limits. The preview tools are always in the catalog, because
+        <code>setup.sh</code> installs Playwright and Chromium, and the Mac app includes them in its bundle.
+        Each tool call first does a live probe (<code>missing_browser_message()</code> in
+        <code class="path">server/preview/capability.py</code>: Playwright importable, and Chromium
+        installed). "Installed" means that Playwright's own <code>INSTALLATION_COMPLETE</code> marker is
+        present for the two builds that a headless launch uses. The builds must have the revisions that
+        this Playwright version pins, so an old browser cache cannot report ready and then fail at launch.
+        If the probe fails, the tool returns the repair step: run <code>setup.sh</code> again, or, in the
+        Mac app, install the app again. Then verify-change continues with the CI gate (tsc, tests, build) only. (Under <a href="arch-tools.html">progressive tool disclosure</a> the preview tools are also
         not in the core set, so they are advertised in the deferred index and activated via
         <code>tool_search</code>.) And in a <a href="arch-ultracode.html">parallel workflow</a>, each agent
         that verifies UI spins <em>its own</em> dev server on a distinct port, fine for a few, but fanning
@@ -236,31 +236,27 @@
       handshake failure. See <a href="arch-frontend.html">Frontend architecture</a> for how the dock and its
       SSE/WebSocket runtimes are wired.</p>
 
-    <h2 id="the-kill-switch">The status API and kill switch</h2>
-    <p><code class="path">server/preview/routes.py</code> is a small status API for the Live pane and the
-      Settings "Live preview" panel. The Settings panel is the user-visible kill switch for whatever the
-      model has spun up, in any chat. It is intentionally
-      not a full remote-control surface (the page actions above are agent tools, not REST endpoints).
-      The same panel's enable/install flow lives in
-      <code class="path">server/preview/install_routes.py</code>.</p>
+    <h2 id="status-api">The status API</h2>
+    <p><code class="path">server/preview/routes.py</code> is a small status API for the Live pane. It is
+      not a full remote-control surface: the page actions above are agent tools, not REST endpoints.
+      Live preview has no setting: it is always on. Each preview stops when the app quits
+      (see <a href="#lifecycle">Lifecycle and cleanup</a>).</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Method + path</th><th>Purpose</th></tr></thead>
       <tbody>
-        <tr><td><code>GET /api/preview/sessions</code></td><td>List sessions and their status. Each row carries <code>owner</code>, the chat session id that started the preview: the Live pane uses it to show only its own chat's server, and Settings to say which chat each preview belongs to.</td></tr>
+        <tr><td><code>GET /api/preview/sessions</code></td><td>List sessions and their status. Each row carries <code>owner</code>, the chat session id that started the preview. The Live pane uses it to show only the server of its own chat.</td></tr>
         <tr><td><code>POST /api/preview/sessions</code></td><td>Start (or reuse) a session by <code>name</code> for the chat in <code>session_id</code>, resolving its command from <code>.whisper/launch.json</code>. Both fields are required (400 otherwise). A name another chat's preview holds is refused with 409 naming that chat. Powers the Live pane's Restart button, so a stopped dev server can come back without the assistant.</td></tr>
-        <tr><td><code>DELETE /api/preview/sessions/{name}?session_id=</code></td><td>Stop a session; 404 if there is no such session. With <code>session_id</code> (the Live pane) only that chat's own preview is stopped, and another chat's is refused with 409 naming the owner. Without it (the Settings kill switch) any preview is stopped; Settings asks for confirmation first when the preview belongs to another chat.</td></tr>
+        <tr><td><code>DELETE /api/preview/sessions/{name}?session_id=</code></td><td>Stop the preview of the chat in <code>session_id</code> (the Live pane). The request must include this field (400 otherwise). A preview that another chat owns is refused with 409, which names the owner. 404 if there is no such session.</td></tr>
         <tr><td><code>WS /ws/preview/{name}/screencast</code></td><td>The view-only live screencast described above.</td></tr>
-        <tr><td><code>GET /api/preview/status</code></td><td>Install-flow status for the same panel: whether Playwright is importable, Chromium is present, an install is running, and the <code>preview_tools</code> flag is on (<code class="path">server/preview/install_routes.py</code>).</td></tr>
-        <tr><td><code>POST /api/preview/install</code></td><td>In a source install, download the Chromium builds (<code>playwright install chromium</code>) on a background thread; Playwright itself is pinned in <code class="path">requirements.txt</code> and installed by <code>setup.sh</code>. The panel polls <code>status</code> until it completes and the <code>preview_tools</code> flag flips on. The Mac app downloads nothing: its browsers are bundled (<code>PLAYWRIGHT_BROWSERS_PATH</code>), so Enable just flips the flag, and a missing bundled browser is reported as a broken install.</td></tr>
-        <tr><td><code>POST /api/preview/disable</code></td><td>Turn the <code>preview_tools</code> feature flag back off.</td></tr>
       </tbody>
     </table></div>
 
     <h2 id="lifecycle">Lifecycle and cleanup</h2>
-    <p>Stopping a session (via the tool, the Settings panel, or a full shutdown) cancels the reader tasks,
+    <p>When a session stops (with the tool, the Live pane, or app shutdown), the manager cancels the reader tasks,
       kills the dev server's process group, closes the browser context and browser, stops Playwright, and
-      unlinks the temporary sandbox profile. <code>PreviewManager.stop_all()</code> tears down every session
-      at once. Because the context is ephemeral and the profile is temporary, nothing survives a session,
+      unlinks the temporary sandbox profile. When the app quits, <code>PreviewManager.stop_all()</code>
+      stops every session. Each dev server leads its own process group, so the stop also ends the
+      processes that the server started. A force quit does not run this shutdown step. Because the context is ephemeral and the profile is temporary, nothing survives a session,
       which keeps the preview browser cleanly isolated from your real one.</p>
 
     <div class="callout callout--tip">

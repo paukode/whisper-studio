@@ -176,11 +176,11 @@ def test_live_pane_stop_only_reaches_its_own_chats_preview(previews):
     assert previews.get("dev") is None
 
 
-def test_settings_kill_switch_still_stops_any_preview(previews):
+def test_a_stop_without_its_chat_is_refused(previews):
     _start_browser_only(previews, "dev", CHAT_A)
     r = _client().delete("/api/preview/sessions/dev")
-    assert r.status_code == 200
-    assert previews.get("dev") is None
+    assert r.status_code == 400
+    assert previews.get("dev") is not None
 
 
 def test_live_pane_restart_is_scoped_to_its_chat(previews):

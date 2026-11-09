@@ -58,7 +58,6 @@ from server.onboarding.routes import router as onboarding_router
 from server.plans.routes import router as plans_router
 from server.plugins import init_plugins
 from server.plugins import router as plugins_router
-from server.preview.install_routes import router as preview_install_router
 from server.preview.manager import preview_manager
 from server.preview.routes import router as preview_router
 from server.preview.screencast import router as preview_screencast_router
@@ -555,7 +554,6 @@ app.include_router(feature_flags_router)
 app.include_router(cost_router)
 app.include_router(approval_router)
 app.include_router(preview_router)
-app.include_router(preview_install_router)
 app.include_router(preview_screencast_router)
 app.include_router(plans_router)
 

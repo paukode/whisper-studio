@@ -91,3 +91,66 @@ def test_cancel_during_the_browser_close_has_already_signalled_the_server():
         assert browser.closed
 
     asyncio.run(scenario())
+
+
+def _alive(pid: int) -> bool:
+    import os
+    import subprocess
+
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    # A reparented zombie still answers kill(0); ps knows better.
+    out = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True)
+    return bool(out.stdout.strip()) and not out.stdout.strip().startswith("Z")
+
+
+def _wait_dead(pid: int, timeout: float = 5.0) -> bool:
+    import time
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not _alive(pid):
+            return True
+        time.sleep(0.05)
+    return not _alive(pid)
+
+
+def test_app_quit_stops_every_preview_and_the_children_it_started(tmp_path):
+    """Quit runs preview_manager.stop_all (the lifespan in server/main.py).
+    Each dev server leads its own process group, so the stop also reaches
+    what the server started (a bundler, a watcher), not only its own pid."""
+    from server.preview.process import DevServerProcess
+
+    async def scenario():
+        manager = PreviewManager()
+        started = []
+        for name in ("web", "docs"):
+            pidfile = tmp_path / f"{name}.pid"
+            proc = await asyncio.create_subprocess_exec(
+                "sh",
+                "-c",
+                f'sleep 60 & echo $! > "{pidfile}"; wait',
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                start_new_session=True,
+            )
+            server = DevServerProcess(proc, ["sh"], str(tmp_path), None)
+            manager._sessions[name] = PreviewSession(id=name, process=server)
+            started.append((proc.pid, pidfile))
+        for _pid, pidfile in started:
+            for _ in range(100):
+                if pidfile.exists() and pidfile.read_text().strip():
+                    break
+                await asyncio.sleep(0.02)
+        children = [int(pidfile.read_text()) for _pid, pidfile in started]
+        await manager.stop_all()
+        return [pid for pid, _f in started], children, manager.list_sessions()
+
+    leaders, children, left = asyncio.run(scenario())
+    assert left == []
+    for pid in leaders + children:
+        assert _wait_dead(pid), f"pid {pid} survived the quit"

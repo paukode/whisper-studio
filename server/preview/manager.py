@@ -4,8 +4,8 @@ sessions. Mirrors server/mcp.py's MCPManager shape.
 A preview belongs to the chat session that started it (``owner``). Names stay
 global (they resolve against the workspace's .whisper/launch.json), so another
 chat can see and inspect a running preview, but only its owner may stop,
-replace or drive it, and the refusal names the owning chat. The human kill
-switch in Settings (a REST DELETE with no chat attached) is not restricted.
+replace or drive it, and the refusal names the owning chat. App shutdown
+(``stop_all``) stops every preview.
 
 Also hosts the thin per-tool wrapper functions the approval executors call
 (start_preview_session, stop_preview_session, navigate_in_preview, ...),
@@ -113,7 +113,7 @@ class PreviewManager:
     async def stop_session(self, name: str, *, caller: str = "") -> bool:
         """Stop and forget a preview. ``caller`` is the chat asking: one that
         does not own the preview gets PreviewNotOwned, checked under the same
-        lock as the removal. Empty (the Settings kill switch) stops any."""
+        lock as the removal. Empty (app shutdown, ``stop_all``) stops any."""
         async with self._get_lock():
             session = self._sessions.get(name)
             if session is not None and owned_by_other(session, caller):

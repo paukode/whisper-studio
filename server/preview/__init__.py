@@ -1,6 +1,7 @@
 """Live preview: assistant-controllable dev-server + browser automation tools.
 
-Fully opt-in, see server/preview/capability.py and install_routes.py. Until
-the `preview_tools` feature flag is on AND Playwright's Chromium is actually
-installed, nothing in this package is reachable from the tool catalog.
+Always on: setup.sh and the app bundle ship Playwright and Chromium, and the
+preview tools are always in the catalog. A broken install is refused when a
+tool runs (server/preview/capability.py). Every preview stops when the app
+quits.
 """

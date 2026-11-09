@@ -77,7 +77,6 @@
   },
   "feature_flags": {
     "auto_memory": true,
-    "preview_tools": true,
     "rag_hybrid_search": true,
     "rag_query_rewrite": false,
     "rag_reranker": false
