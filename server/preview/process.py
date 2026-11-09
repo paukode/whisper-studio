@@ -88,8 +88,7 @@ class DevServerProcess:
                     *argv,
                     cwd=cwd,
                     # The same env as every other sandboxed child: no GitHub
-                    # token, and the egress proxy vars under a non-permissive
-                    # tier (the profile denies direct 80/443). Caller env last.
+                    # token. Caller env last.
                     env=_merged_env(env),
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
