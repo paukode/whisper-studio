@@ -31,6 +31,10 @@ class AudioContextMock {
 }
 
 class AudioWorkletNodeMock {
+  static instances: AudioWorkletNodeMock[] = [];
+  constructor() {
+    AudioWorkletNodeMock.instances.push(this);
+  }
   port: { onmessage: ((e: MessageEvent) => void) | null; postMessage: (m: unknown) => void } = {
     onmessage: null,
     postMessage: vi.fn(),
@@ -150,6 +154,42 @@ describe('useChatInputMic — cancel during connect', () => {
     expect(closeSpy).toHaveBeenCalled();
   });
 
+  it('a cancelled start that resumes late leaves the next start running', async () => {
+    const gum = deferred<MediaStream>();
+    const { stream, track } = makeStream();
+    setGetUserMedia(() => gum.promise);
+
+    const { result } = renderHook(() => useChatInputMic({ onTranscript: vi.fn() }));
+
+    // Start, let the socket open, then cancel while the mic is opening.
+    await act(async () => {
+      void result.current.start();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    act(() => result.current.stop());
+
+    // Start again before the first mic open lands; it joins the same open.
+    await act(async () => {
+      void result.current.start();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    const closesBefore = closeSpy.mock.calls.length;
+
+    await act(async () => {
+      gum.resolve(stream);
+    });
+    await tick();
+
+    // The first start unwound without touching the second one's socket or mic.
+    expect(result.current.isRecording).toBe(true);
+    expect(closeSpy.mock.calls.length).toBe(closesBefore);
+    expect(track.stop).not.toHaveBeenCalled();
+
+    act(() => result.current.stop());
+    await tick();
+    expect(track.stop).toHaveBeenCalled();
+  });
+
   it('happy path still works: start records, stop tears down and releases the mic', async () => {
     const { stream, track } = makeStream();
     setGetUserMedia(() => Promise.resolve(stream));
@@ -169,6 +209,80 @@ describe('useChatInputMic — cancel during connect', () => {
     await tick();
 
     expect(result.current.isRecording).toBe(false);
+    expect(track.stop).toHaveBeenCalled();
+  });
+});
+
+describe('useChatInputMic: the server closes the socket', () => {
+  const RealWebSocket = globalThis.WebSocket;
+  let sockets: WebSocketMock[] = [];
+
+  beforeEach(() => {
+    (globalThis as unknown as { AudioContext: unknown }).AudioContext = AudioContextMock;
+    (globalThis as unknown as { AudioWorkletNode: unknown }).AudioWorkletNode = AudioWorkletNodeMock;
+    sockets = [];
+    class Capturing extends WebSocketMock {
+      constructor(url: string) {
+        super(url);
+        sockets.push(this);
+      }
+    }
+    globalThis.WebSocket = Capturing as unknown as typeof WebSocket;
+  });
+
+  afterEach(() => {
+    globalThis.WebSocket = RealWebSocket;
+    useRecordingStore.getState().cleanup();
+  });
+
+  /** What a server-side close looks like to the page: the socket is closed
+   *  and its close event fires, with no stop() from the user. */
+  const serverClose = (ws: WebSocketMock) => {
+    ws.readyState = WebSocketMock.CLOSED;
+    ws.onclose?.(new CloseEvent('close', { code: 1011 }));
+  };
+
+  it('ends dictation the way Stop does: not recording, mic released, no audio piling up', async () => {
+    const { stream, track } = makeStream();
+    setGetUserMedia(() => Promise.resolve(stream));
+    const { result } = renderHook(() => useChatInputMic({ onTranscript: vi.fn() }));
+    await act(async () => {
+      await result.current.start();
+    });
+    expect(result.current.isRecording).toBe(true);
+    const node = AudioWorkletNodeMock.instances[AudioWorkletNodeMock.instances.length - 1];
+    expect(node.port.onmessage).not.toBeNull();
+
+    act(() => serverClose(sockets[0]));
+    await tick();
+
+    expect(result.current.isRecording).toBe(false);
+    expect(result.current.isConnecting).toBe(false);
+    expect(track.stop).toHaveBeenCalled();
+    // The worklet no longer feeds a buffer nobody will send.
+    expect(node.port.onmessage).toBeNull();
+    expect(node.disconnect).toHaveBeenCalled();
+  });
+
+  it('a close while the mic is still opening cancels the start', async () => {
+    const gum = deferred<MediaStream>();
+    const { stream, track } = makeStream();
+    setGetUserMedia(() => gum.promise);
+    const { result } = renderHook(() => useChatInputMic({ onTranscript: vi.fn() }));
+    await act(async () => {
+      void result.current.start();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(result.current.isConnecting).toBe(true);
+
+    act(() => serverClose(sockets[0]));
+    await act(async () => {
+      gum.resolve(stream);
+    });
+    await tick();
+
+    expect(result.current.isRecording).toBe(false);
+    expect(result.current.isConnecting).toBe(false);
     expect(track.stop).toHaveBeenCalled();
   });
 });

@@ -69,7 +69,7 @@ const postedUrls = () => api.post.mock.calls.map((c) => c[0] as string);
 beforeEach(() => {
   vi.clearAllMocks();
   api.post.mockResolvedValue({ started: true });
-  useUIStore.getState().setModelLoading(null);
+  useUIStore.setState({ modelLoading: null });
   setBackend('streaming');
 });
 

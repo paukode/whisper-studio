@@ -41,8 +41,6 @@ const POLL_MS = 1000;
 const MAX_FAILED_STARTS = 5;
 /** How long the error banner stays up before auto-hiding. */
 const ERROR_BANNER_MS = 8000;
-/** Brief "ready" beat before the banner hides, mirroring the local chat flow. */
-const READY_BANNER_MS = 700;
 
 /** Catalog keys a recording session needs: the active engine's weights plus
  *  the configured speaker encoder (diarization always runs). Both come from
@@ -93,7 +91,8 @@ export async function ensureRecordingModels(): Promise<EnsureModelsResult> {
   }
   const labelOf = (key: string) => labels.get(key) ?? key;
 
-  const ui = useUIStore.getState;
+  // This gate's run on the shared banner: it clears only its own banner.
+  const banner = useUIStore.getState().openModelBanner('speech-models');
   const total = missing.length;
   let remaining = [...missing];
   /** Keys whose download we know is in flight — running OR queued (started by
@@ -116,7 +115,7 @@ export async function ensureRecordingModels(): Promise<EnsureModelsResult> {
   const onCancel = () => {
     if (cancelRequested) return;
     cancelRequested = true;
-    ui().setModelLoading(null);
+    banner.clear();
     void cancelAll();
   };
 
@@ -126,7 +125,7 @@ export async function ensureRecordingModels(): Promise<EnsureModelsResult> {
     if (s?.state === 'queued') {
       // Waiting for a download slot (the server runs at most two at a time
       // and queues the rest) — no bytes are moving yet.
-      ui().setModelLoading({
+      banner.show({
         label: labelOf(key),
         progress: 0,
         stage: 'downloading',
@@ -143,7 +142,7 @@ export async function ensureRecordingModels(): Promise<EnsureModelsResult> {
     const done = bytes > 0 ? humanSize(bytes) : '0 MB';
     const size = est > 0 ? `${done} of ${humanSize(est)}` : done;
     const position = total > 1 ? ` · model ${total - remaining.length + 1} of ${total}` : '';
-    ui().setModelLoading({
+    banner.show({
       label: labelOf(key),
       progress,
       stage: 'downloading',
@@ -153,18 +152,15 @@ export async function ensureRecordingModels(): Promise<EnsureModelsResult> {
   };
 
   const failGate = (key: string, message: string | null) => {
-    ui().setModelLoading({
+    banner.show({
       label: labelOf(key),
       progress: 0,
       stage: 'error',
       detail: message ?? 'The download failed. See Settings > Models for details.',
       // The banner renders the cancel slot as Dismiss on errors.
-      onCancel: () => ui().setModelLoading(null),
+      onCancel: banner.clear,
     });
-    setTimeout(() => {
-      const cur = useUIStore.getState().modelLoading;
-      if (cur && cur.stage === 'error') useUIStore.getState().setModelLoading(null);
-    }, ERROR_BANNER_MS);
+    setTimeout(banner.clear, ERROR_BANNER_MS);
   };
 
   const tryStart = async (key: string): Promise<'ok' | 'wait' | 'fail'> => {
@@ -241,15 +237,12 @@ export async function ensureRecordingModels(): Promise<EnsureModelsResult> {
     }
 
     if (remaining.length === 0) {
-      ui().setModelLoading({
+      // A 'ready' banner hides itself after a brief beat.
+      banner.show({
         label: total === 1 ? labelOf(missing[0]) : 'Speech models',
         progress: 1,
         stage: 'ready',
       });
-      setTimeout(() => {
-        const cur = useUIStore.getState().modelLoading;
-        if (cur && cur.stage === 'ready') useUIStore.getState().setModelLoading(null);
-      }, READY_BANNER_MS);
       return 'ready';
     }
     updateBanner(st);
