@@ -67,7 +67,7 @@ describe('verified deliveries across a save and a reload', () => {
     const id = useSessionStore.getState().createSession();
     const chat = getChatStore(id).getState();
     chat.addMessage({ role: 'user', content: 'write the report and push it', timestamp: 't1' });
-    chat.setStreaming(true);
+    chat.startTurn('streaming');
     chat.addLiveDeliveries([REPORT]);
     chat.addLiveDeliveries([PUSH]);
     chat.finishStream({ role: 'assistant', content: 'Saved report.html and pushed main.', timestamp: 't2' });

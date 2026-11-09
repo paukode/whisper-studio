@@ -61,7 +61,7 @@ function workspaceOf(id: string): string | undefined {
 async function runTurn(id: string) {
   const chat = getChatStore(id).getState();
   chat.addMessage({ role: 'user', content: 'split the parser', timestamp: 't1' });
-  chat.setStreaming(true);
+  chat.startTurn('streaming');
   chat.finishStream({ role: 'assistant', content: 'Done.', timestamp: 't2' });
   // The runtime registry syncs the row shortly after the stream ends.
   await vi.advanceTimersByTimeAsync(300);
@@ -109,7 +109,7 @@ describe("a session's sidebar row after a turn", () => {
     useUIStore.getState().setWsConnected(true, '/Users/me/code/parser');
     const chat = getChatStore('s1').getState();
     chat.addMessage({ role: 'user', content: 'split the parser', timestamp: 't1' });
-    chat.setStreaming(true);
+    chat.startTurn('streaming');
     // Another folder connected mid-turn, from this chat or another one.
     useUIStore.getState().setWsConnected(true, '/Users/me/code/lexer');
     chat.finishStream({ role: 'assistant', content: 'Done.', timestamp: 't2' });
@@ -122,7 +122,7 @@ describe("a session's sidebar row after a turn", () => {
     useUIStore.getState().setWsConnected(true, '/Users/me/code/parser');
     const s1 = getChatStore('s1').getState();
     s1.addMessage({ role: 'user', content: 'split the parser', timestamp: 't1' });
-    s1.setStreaming(true);
+    s1.startTurn('streaming');
     // The user moves on to s2 and connects its folder there.
     useUIStore.getState().setWsConnected(true, '/Users/me/code/lexer');
     await runTurn('s2');

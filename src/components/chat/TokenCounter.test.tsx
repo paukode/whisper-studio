@@ -63,7 +63,7 @@ describe('TokenCounter', () => {
   it('shows session totals, not the current turn', () => {
     const store = primeActiveSession();
     // Two turns: the store resets the per-turn fields between them, exactly as
-    // setStreaming does at the head of a stream.
+    // startTurn does at the head of a stream.
     store.getState().setUsage(60_000, 2_000, 0.3, 60_000, 200_000);
     store.setState({ inputTokens: 0, outputTokens: 0, estimatedCost: 0 });
     store.getState().setUsage(58_400, 2_012, 0.1679, 58_400, 200_000);

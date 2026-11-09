@@ -296,7 +296,7 @@ describe('sendApprovalContinuation', () => {
     vi.restoreAllMocks();
   });
 
-  it('a continuation that pauses on another card keeps nothing in the live tail, so a Stop adds no copy', async () => {
+  it('a continuation that pauses on another card ends idle like a fresh turn, so a Stop adds no copy', async () => {
     const sid = 'sess-pause-again';
     vi.spyOn(useSessionStore.getState(), 'debouncedSave').mockImplementation(() => {});
     getChatStore(sid).getState().setMessages([
@@ -318,8 +318,11 @@ describe('sendApprovalContinuation', () => {
     await sendApprovalContinuation({ ...approval, sessionId: sid }, sid, true, undefined, { ok: true, output: 'Wrote a.py' });
 
     const state = getChatStore(sid).getState();
-    // The second card waits, so the session is still streaming...
-    expect(state.isStreaming).toBe(true);
+    // The second card waits on the user with no stream open: the same state a
+    // fresh turn leaves when it pauses on a card, so the composer starts a
+    // turn instead of steering one that no longer runs...
+    expect(state.turnPhase).toBe('idle');
+    expect(state.isStreaming).toBe(false);
     expect(state.currentApproval?.toolUseId).toBe('tu_2');
     // ...with the leg's rows committed once and nothing left in the tail.
     expect(state.currentStreamToolUse).toEqual([]);
@@ -666,7 +669,7 @@ describe('readSSEStream question grouping', () => {
       ...m,
       userQuestions: m.userQuestions?.map((q) => ({ ...q, answered: true })),
     })));
-    store.getState().setStreaming(false);
+    store.getState().finishStream();
 
     await readSSEStream(sseResponse([question('tu_2', 'Two?')]), 'sess-q-later', signal(), SETTINGS);
 

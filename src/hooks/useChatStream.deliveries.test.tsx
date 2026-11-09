@@ -172,7 +172,7 @@ describe('deliveries frames in a turn', () => {
       });
     });
     const { result } = renderHook(() => useChatStream());
-    let sending: Promise<void> = Promise.resolve();
+    let sending: Promise<boolean> = Promise.resolve(true);
     await act(async () => {
       sending = result.current.send('write the report and the slides');
       await new Promise((r) => setTimeout(r, 50));

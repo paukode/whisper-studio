@@ -80,7 +80,7 @@ describe('ChatPanel while a reply streams', () => {
       { role: 'assistant', content: 'answer', timestamp: '2026-09-25T10:00:05Z' },
       { role: 'user', content: 'next', timestamp: '2026-09-25T10:01:00Z' },
     ]);
-    chat.getState().setStreaming(true);
+    chat.getState().startTurn('streaming');
     render(<ChatPanel />);
     const rendersBefore = h.messageRenders;
 
@@ -103,7 +103,7 @@ describe('ChatPanel while a reply streams', () => {
       { role: 'user', content: 'question', timestamp: '2026-09-25T10:00:00Z' },
       { role: 'assistant', content: 'Reading the files first.', timestamp: '2026-09-25T10:00:05Z' },
     ]);
-    chat.getState().setStreaming(true);
+    chat.getState().startTurn('streaming');
     render(<ChatPanel />);
     const turnRendersBefore = h.turnRenders;
     const messageRendersBefore = h.messageRenders;
@@ -133,7 +133,7 @@ describe('ChatPanel while a reply streams', () => {
       { role: 'assistant', content: 'loaded', timestamp: '2026-09-25T09:00:05Z' },
       { role: 'user', content: 'question', timestamp: '2026-09-25T10:00:00Z' },
     ]);
-    chat.getState().setStreaming(true);
+    chat.getState().startTurn('streaming');
     render(<ChatPanel />);
     // History keeps its normal entrance.
     expect(h.turns[h.turns.length - 1]).toEqual({ noEnter: false, live: false, rows: 1 });
@@ -158,7 +158,7 @@ describe('ChatPanel while a reply streams', () => {
     useSessionStore.setState({ currentSessionId: 'stream-render-batch', liveSessions: {}, sessions: [] });
     const chat = getChatStore('stream-render-batch');
     chat.getState().setMessages([{ role: 'user', content: 'question', timestamp: '2026-09-25T10:00:00Z' }]);
-    chat.getState().setStreaming(true);
+    chat.getState().startTurn('streaming');
     render(<ChatPanel />);
 
     const watch: ChatMessage = {

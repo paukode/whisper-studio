@@ -65,7 +65,7 @@ export async function sendApprovalContinuation(
   // every store() call below must keep landing in the same session no
   // matter what the user is viewing.
   const store = () => getChatStore(sessionId).getState();
-  store().setStreaming(true);
+  const leg = store().startTurn('streaming');
 
   const target = approvalTarget(approval);
   // Nouns stay action-neutral: this text is what the MODEL reasons from, and
@@ -197,12 +197,11 @@ export async function sendApprovalContinuation(
 
     // Tool traces are committed even with no text (mirroring the fresh path's
     // approval-pause commit) so the work the continuation did survives the
-    // streaming state being cleared. The live rows clear in the same update:
-    // a continuation that paused on another card stays streaming until that
-    // card is answered, and its committed rows must not draw a second time
-    // in the live tail (nor be committed again by a Stop meanwhile).
+    // streaming state being cleared. The same exit as the fresh path: the
+    // message lands and the leg ends idle in one update, with the live
+    // deliveries its text claimed.
     if (contText || result.pendingArtifact || result.pendingVisuals.length > 0 || result.pendingPlan || contTeamReports || contToolUse.length > 0) {
-      store().flushStreamSegment(labelCommit({
+      store().finishStream(labelCommit({
         role: 'assistant',
         content: contText,
         timestamp: new Date().toISOString(),
@@ -222,10 +221,7 @@ export async function sendApprovalContinuation(
           ? { input_tokens: result.inputTokens, output_tokens: result.outputTokens }
           : undefined,
         grounding: result.grounding,
-        // Taken here, not left for setStreaming(false): that waits while
-        // another approval is pending.
-        deliveries: store().takeDeliveries(),
-      }, store().messages, result.activityLabels));
+      }, store().messages, result.activityLabels), leg);
     }
 
     // Refresh workspace tree after approval
@@ -255,9 +251,9 @@ export async function sendApprovalContinuation(
     return { resumed: false, reason: toError(err).message };
   } finally {
     if (ownController) releaseStreamController(sessionId, ownController);
-    // Only clear streaming if no more approvals pending
-    if (!store().currentApproval && store().approvalQueue.length === 0) {
-      store().setStreaming(false);
-    }
+    // Every leg ends idle, also one that paused on another card: the card
+    // waits on the user with no stream open, the same as after a fresh turn
+    // pauses on one (a newer leg that took over keeps its own phase).
+    if (store().isStreaming) store().finishStream(undefined, leg);
   }
 }

@@ -11,10 +11,11 @@
  * evict the session so the continuation's reply landed in a store nobody saved.
  *
  * The leg therefore claims its session for the whole window, before the card
- * goes away: it marks the session streaming (with a status line saying what
- * is happening) and registers a controller, so the Stop button, ESC, the
- * composer's steer routing, the parallel ceiling and eviction all see a busy
- * session through the same state they already read for a streaming turn.
+ * goes away: it moves the session to the `approvedAction` turn phase (with a
+ * status line saying what is happening) and registers a controller, so the
+ * Stop button, ESC, the composer's steer routing, the parallel ceiling and
+ * eviction all see a busy session through the same state they already read
+ * for a streaming turn.
  */
 import type { StoreApi } from 'zustand/vanilla';
 import { executeApproval, type ApprovalOutcome } from '@/api/approval';
@@ -51,9 +52,24 @@ export async function answerApproval(
   accepted: boolean,
   rememberForSession: boolean,
 ): Promise<boolean> {
-  const sessionId = approval.sessionId;
   // Bound once: a session deleted mid-leg must not be recreated by a late write.
-  const chat = getChatStore(sessionId);
+  const chat = getChatStore(approval.sessionId);
+  try {
+    return await answer(chat, approval, accepted, rememberForSession);
+  } finally {
+    // The next queued card shows once this answer is done, failed or not:
+    // skipping this on a failure left queued approvals unshown for good.
+    if (!chat.getState().currentApproval) chat.getState().showNextApproval();
+  }
+}
+
+async function answer(
+  chat: StoreApi<ChatState>,
+  approval: PendingApproval,
+  accepted: boolean,
+  rememberForSession: boolean,
+): Promise<boolean> {
+  const sessionId = approval.sessionId;
   if (hasLiveStream(sessionId)) {
     useUIStore.getState().addToast({
       type: 'error',
@@ -94,7 +110,7 @@ export async function answerApproval(
   // The outcome row is still to be written after a Stop lets go of the
   // stream, so the session stays busy (never evicted) until the action returns.
   const releaseAction = holdForApprovedAction(sessionId);
-  chat.getState().setStreaming(true);
+  chat.getState().startTurn('approvedAction');
   chat.getState().setStreamStatus(APPROVED_ACTION_STATUS);
   registerStreamController(sessionId, leg);
   chat.getState().clearCurrentApproval();

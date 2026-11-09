@@ -37,7 +37,9 @@ const renderChatInput = () => {
 
 const streaming = (on: boolean) => {
   useSessionStore.setState({ currentSessionId: 'mid', liveSessions: {}, sessions: [] });
-  getChatStore('mid').getState().setStreaming(on);
+  const chat = getChatStore('mid').getState();
+  if (on) chat.startTurn('streaming');
+  else chat.finishStream();
 };
 
 const type = async (el: HTMLTextAreaElement, value: string) => {

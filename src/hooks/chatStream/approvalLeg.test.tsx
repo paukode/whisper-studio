@@ -101,6 +101,7 @@ describe('approval leg', () => {
     // The card is gone, and every reader of "is this session working" says yes.
     const s = getChatStore(SID).getState();
     expect(s.currentApproval).toBeNull();
+    expect(s.turnPhase).toBe('approvedAction');
     expect(s.isStreaming).toBe(true);
     expect(s.streamStatus).toBe(APPROVED_ACTION_STATUS);
     expect(hasLiveStream(SID)).toBe(true);
