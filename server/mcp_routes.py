@@ -131,14 +131,20 @@ def _editable_config() -> dict | Response:
     return config
 
 
+# A configured server with no connection record is stopped (disabled, not
+# started yet, or stopped); MCPManager._set_state writes every other state
+# (connecting, connected, error).
+_STOPPED = {"status": "stopped", "tools": [], "error": None}
+
+
 def _live_status(name: str, enabled: bool) -> dict:
-    status = mcp_manager.get_status().get(name, {})
+    status = mcp_manager.get_status().get(name, _STOPPED)
     return {
         "name": name,
         "enabled": enabled,
-        "status": status.get("status", "stopped"),
-        "tools": status.get("tools", []),
-        "error": status.get("error"),
+        "status": status["status"],
+        "tools": status["tools"],
+        "error": status["error"],
     }
 
 
@@ -164,15 +170,15 @@ async def mcp_servers_status():
     for name, conf in config.items():
         if not isinstance(conf, dict):
             continue
-        s = status.get(name, {"status": "stopped", "tools": [], "error": None})
+        s = status.get(name, _STOPPED)
         servers[name] = {
             "command": str(conf.get("command") or ""),
             "args": _str_list(conf.get("args")),
             "env": _str_map(conf.get("env")),
             "enabled": bool(conf.get("enabled", True)),
             "status": s["status"],
-            "tools": s.get("tools", []),
-            "error": s.get("error"),
+            "tools": s["tools"],
+            "error": s["error"],
             # Remote transport. bearer_token_env_var is the env var NAME
             # only, never the token value, which is never persisted.
             "url": str(conf.get("url") or ""),

@@ -130,6 +130,24 @@ describe('mcpStore.setEnabled', () => {
     );
   });
 
+  it('does not let an older failed toggle undo a newer click', async () => {
+    let failFirst!: (e: unknown) => void;
+    patchMock.mockReturnValueOnce(new Promise((_, reject) => { failFirst = reject; }));
+    // The newer requests are still pending.
+    patchMock.mockReturnValueOnce(new Promise(() => {}));
+    patchMock.mockReturnValueOnce(new Promise(() => {}));
+    const first = useMcpStore.getState().setEnabled('echo', false);
+    void useMcpStore.getState().setEnabled('echo', true);
+    void useMcpStore.getState().setEnabled('echo', false);
+
+    failFirst(new Error('HTTP 500'));
+    await first;
+
+    // The last click (off) stands; the failure is still reported.
+    expect(useMcpStore.getState().servers[0].enabled).toBe(false);
+    expect(addToast).toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
+  });
+
   it('keeps the switch on but surfaces a failed connect', async () => {
     useMcpStore.setState({ servers: [{ name: 'echo', ...server({ enabled: false, status: 'stopped' }) }] });
     patchMock.mockResolvedValue({ name: 'echo', enabled: true, status: 'error', tools: [], error: 'spawn failed' });

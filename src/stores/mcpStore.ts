@@ -3,6 +3,11 @@ import { get, patch } from '@/api/client';
 import { MCPServersResponseSchema } from '@/types/schemas';
 import { useUIStore } from './uiStore';
 
+/** A server's connection state (MCPManager._set_state in server/mcp.py):
+ *  `connecting` while its handshake runs, `stopped` when it has no
+ *  connection (disabled, or not started yet). */
+export type MCPServerStatus = 'connecting' | 'connected' | 'error' | 'stopped';
+
 /** One configured MCP server with its live status, as GET /api/mcp/servers
  *  reports it (server/mcp_routes.py). */
 export interface MCPServerInfo {
@@ -11,7 +16,7 @@ export interface MCPServerInfo {
   args: string[];
   env: Record<string, string>;
   enabled: boolean;
-  status: string;
+  status: MCPServerStatus;
   /** Registry keys (mcp__server__tool) of the tools the server advertises. */
   tools: string[];
   error: string | null;
@@ -59,12 +64,16 @@ interface McpState {
    *  restart starts counting again. */
   applyChange: (revision: number) => void;
   /** Persist a server's enabled flag. The switch moves at once and rolls
-   *  back with an error toast if the request fails. */
+   *  back with an error toast if the request fails, unless a newer toggle
+   *  of the same server was made meanwhile (that click is what shows). */
   setEnabled: (name: string, enabled: boolean) => Promise<void>;
 }
 
 let inFlight: Promise<void> | null = null;
 let again = false;
+/** Per server, the number of the latest setEnabled call. A failed request
+ *  rolls the switch back only while it is still the latest one. */
+const toggleGeneration = new Map<string, number>();
 
 async function fetchOnce(): Promise<void> {
   try {
@@ -121,13 +130,15 @@ export const useMcpStore = create<McpState>((set, getState) => ({
   setEnabled: async (name, enabled) => {
     const flip = (value: boolean) =>
       set((s) => ({ servers: s.servers.map((srv) => (srv.name === name ? { ...srv, enabled: value } : srv)) }));
+    const generation = (toggleGeneration.get(name) ?? 0) + 1;
+    toggleGeneration.set(name, generation);
     flip(enabled);
-    let live: { status?: string; error?: string | null };
+    let live: { status?: MCPServerStatus; error?: string | null };
     try {
       live = await patch(`/api/mcp/servers/${encodeURIComponent(name)}`, { enabled });
     } catch (err) {
       console.warn('Failed to toggle MCP server:', err);
-      flip(!enabled);
+      if (toggleGeneration.get(name) === generation) flip(!enabled);
       useUIStore.getState().addToast({
         type: 'error',
         message: `Failed to ${enabled ? 'enable' : 'disable'} MCP server "${name}"`,

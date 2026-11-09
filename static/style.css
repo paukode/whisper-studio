@@ -2559,6 +2559,10 @@ input.segment-speaker {
 .mcp-status-dot.connected { background: var(--accent-live); box-shadow: 0 0 0 3px var(--accent-dim); }
 .mcp-status-dot.error { background: var(--accent-record); box-shadow: 0 0 0 3px var(--accent-record-dim); }
 .mcp-status-dot.stopped { background: var(--text-muted); }
+.mcp-status-dot.connecting { background: var(--text-muted); animation: pulse 1.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+    .mcp-status-dot.connecting { animation: none; }
+}
 
 /* Editor area */
 .settings-editor {

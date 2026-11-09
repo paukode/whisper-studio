@@ -122,3 +122,57 @@ def test_a_server_without_the_resources_capability_is_not_asked(monkeypatch):
         assert mgr._sessions["srv"]["resources"] == {}
 
     asyncio.run(scenario())
+
+
+def test_a_server_reads_connecting_until_its_handshake_ends(monkeypatch):
+    """For up to CONNECT_TIMEOUT_S a starting server used to read 'stopped'
+    (no record yet). It now reads 'connecting' everywhere the list is
+    served, then 'connected'."""
+    from server import mcp_routes
+
+    record: dict = {}
+    _install_fakes(monkeypatch, record)
+    handshake = asyncio.Event()
+
+    async def slow_initialize(self):
+        await handshake.wait()
+        return SimpleNamespace(capabilities=SimpleNamespace(resources=None))
+
+    monkeypatch.setattr(_FakeSession, "initialize", slow_initialize)
+    mgr = MCPManager()
+    monkeypatch.setattr(mgr, "load_config", lambda: {"srv": {"command": "fake"}})
+    monkeypatch.setattr(mcp_routes, "mcp_manager", mgr)
+
+    async def scenario():
+        before = mgr.revision
+        start = asyncio.create_task(mgr.start_server("srv", {"command": "fake"}))
+        for _ in range(100):
+            if mgr._sessions.get("srv"):
+                break
+            await asyncio.sleep(0)
+        listed = (await mcp_routes.mcp_servers_status())["servers"]["srv"]
+        during = (mgr.get_status()["srv"]["status"], listed["status"], mgr.revision > before)
+        handshake.set()
+        await start
+        await mgr.stop_server("srv")
+        return during, listed
+
+    (status, listed_status, bumped), listed = asyncio.run(scenario())
+    assert (status, listed_status, bumped) == ("connecting", "connecting", True)
+    assert listed["tools"] == [] and listed["error"] is None
+
+
+def test_a_server_reads_connected_after_its_handshake(monkeypatch):
+    record: dict = {}
+    _install_fakes(monkeypatch, record)
+    mgr = MCPManager()
+
+    async def scenario():
+        await mgr.start_server("srv", {"command": "fake"})
+        status = mgr.get_status()["srv"]
+        await mgr.stop_server("srv")
+        return status
+
+    status = asyncio.run(scenario())
+    assert status["status"] == "connected"
+    assert status["tools"] == ["mcp__srv__ping"]

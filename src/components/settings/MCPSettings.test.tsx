@@ -154,6 +154,15 @@ describe('MCPSettings: one live list', () => {
     expect(screen.getByText('python3 · Command "aim" was not found.')).toBeInTheDocument();
   });
 
+  it('shows a server that is still connecting as connecting, not stopped', () => {
+    seed([server('slow', { command: 'uvx', args: ['slow-mcp'], status: 'connecting' })]);
+    const { container } = renderWithClient(<MCPSettings />);
+
+    expect(screen.getByText('uvx slow-mcp · connecting…')).toBeInTheDocument();
+    expect(container.querySelector('.mcp-status-dot.connecting')).not.toBeNull();
+    expect(container.querySelector('.mcp-status-dot.stopped')).toBeNull();
+  });
+
   it('reports an unreadable mcp_servers.json', () => {
     seed([ECHO], { configError: 'mcp_servers.json is not a valid server list' });
     renderWithClient(<MCPSettings />);

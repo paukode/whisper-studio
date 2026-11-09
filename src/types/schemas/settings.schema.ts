@@ -62,7 +62,7 @@ export const MCPServersResponseSchema = z.object({
     args: z.array(z.string()),
     env: z.record(z.string(), z.string()),
     enabled: z.boolean(),
-    status: z.string(),
+    status: z.enum(['connecting', 'connected', 'error', 'stopped']),
     tools: z.array(z.string()),
     error: z.string().nullable(),
     url: z.string(),

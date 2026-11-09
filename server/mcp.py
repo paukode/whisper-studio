@@ -365,12 +365,7 @@ class MCPManager:
                 )
                 log.error("MCP server '%s': %s", name, msg)
                 async with self._get_lock():
-                    self._sessions[name] = {
-                        "status": "error",
-                        "error": msg,
-                        "config": config,
-                        "tools": {},
-                    }
+                    self._set_state(name, "error", config, error=msg)
                 return
             params = StdioServerParameters(command=resolved, args=args, env=env)
 
@@ -392,6 +387,10 @@ class MCPManager:
             existing = self._sessions.get(name)
             if existing is not None and existing.get("status") == "connected":
                 return
+            # Up to CONNECT_TIMEOUT_S can pass before the handshake ends:
+            # every window shows the server as connecting, not stopped.
+            self._set_state(name, "connecting", config)
+            self._bump()
             task = asyncio.create_task(self._serve(name, params, config, ready, stop_event))
             try:
                 await asyncio.wait_for(asyncio.shield(ready), timeout=CONNECT_TIMEOUT_S)
@@ -401,12 +400,7 @@ class MCPManager:
                 task.cancel()
                 msg = f"The server did not finish starting within {CONNECT_TIMEOUT_S}s."
                 log.error("MCP server '%s' failed to start: %s", name, msg)
-                self._sessions[name] = {
-                    "status": "error",
-                    "error": msg,
-                    "config": config,
-                    "tools": {},
-                }
+                self._set_state(name, "error", config, error=msg)
                 return
             except Exception as e:
                 # Unwrap the anyio ExceptionGroup so the stored error is the real
@@ -414,12 +408,7 @@ class MCPManager:
                 # what get_status() surfaces to the UI.
                 msg = _unwrap_exc(e)
                 log.error("MCP server '%s' failed to start: %s", name, msg)
-                self._sessions[name] = {
-                    "status": "error",
-                    "error": msg,
-                    "config": config,
-                    "tools": {},
-                }
+                self._set_state(name, "error", config, error=msg)
                 return
             # Record the lifecycle handles so stop_server can signal + join.
             info = self._sessions.get(name)
@@ -514,14 +503,15 @@ class MCPManager:
 
                     # Publish (start_server holds the lock while awaiting `ready`,
                     # so no other mutator interleaves with this).
-                    self._sessions[name] = {
-                        "session": session,
-                        "config": config,
-                        "tools": server_tools,
-                        "resources": server_resources,
-                        "status": "connected",
-                        "stop_event": stop_event,
-                    }
+                    self._set_state(
+                        name,
+                        "connected",
+                        config,
+                        session=session,
+                        tools=server_tools,
+                        resources=server_resources,
+                        stop_event=stop_event,
+                    )
                     self._tools.update(tool_registrations)
                     log.info(
                         "MCP server '%s' connected: %d tools, %d resources",
@@ -552,13 +542,15 @@ class MCPManager:
             if info is not None and info.get("stop_event") is stop_event:
                 for tool_key in list(info.get("tools", {}).keys()):
                     self._tools.pop(tool_key, None)
-                self._sessions[name] = {
-                    "status": "error",
-                    "error": f"Connection ended: {ended}",
-                    "config": config,
-                    "tools": {},
-                }
+                self._set_state(name, "error", config, error=f"Connection ended: {ended}")
                 self._bump()
+
+    def _set_state(self, name: str, status: str, config: dict, **fields) -> None:
+        """The one writer of a server's connection record: 'connecting' while
+        start_server waits for the handshake, 'connected' with the live
+        session, 'error' with the reason. stop_server drops the record, and a
+        server with none reads 'stopped' (server/mcp_routes.py)."""
+        self._sessions[name] = {"status": status, "config": config, "tools": {}, **fields}
 
     def _tool_entries(self, name: str, tools: list) -> tuple[dict, dict]:
         """One server's tools keyed for this registry: the per-session map
@@ -1157,7 +1149,7 @@ class MCPManager:
         result = {}
         for name, info in self._sessions.items():
             result[name] = {
-                "status": info.get("status", "unknown"),
+                "status": info["status"],
                 "tools": list(info.get("tools", {}).keys()),
                 "error": info.get("error"),
             }
