@@ -62,7 +62,7 @@ export const SETTINGS_TABS: SettingsTab[] = [
 
 /* ────────────────────────────────────────────────────────────────────────
    Grouped left rail. Each rail item renders one or more panels under a
-   secondary sub-tab strip. Single-panel items (Model mode, MCP servers)
+   secondary sub-tab strip. Single-panel items (every item but Models)
    render their one panel with no sub-tab strip.
    ──────────────────────────────────────────────────────────────────────── */
 
@@ -70,11 +70,13 @@ type RailItemId =
   | 'general'
   | 'model-mode'
   | 'models'
+  | 'skills'
+  | 'plugins'
   | 'mcp'
-  | 'import'
   | 'code-tools'
-  | 'skills-plugins'
-  | 'workflows-tasks'
+  | 'hooks'
+  | 'cron'
+  | 'import'
   | 'appearance'
   | 'costs'
   | 'feature-flags';
@@ -157,18 +159,27 @@ const RAIL_GROUPS: RailGroup[] = [
   },
   {
     label: 'Tools and automation',
+    // What the assistant can use (skills, plugins, MCP servers, code tools),
+    // then what runs on its own (hooks around tool calls, scheduled tasks),
+    // then the one-time import that brings skills and MCP servers in.
     items: [
+      {
+        id: 'skills',
+        label: 'Skills',
+        icon: icon(<><path d="M12 2l2.4 4.9 5.4.8-3.9 3.8.9 5.4L12 14.8 7.2 17.3l.9-5.4L4.2 8.1l5.4-.8z" /></>),
+        subTabs: [{ id: 'skills', label: 'Skills', render: () => <SkillsPanel /> }],
+      },
+      {
+        id: 'plugins',
+        label: 'Plugins',
+        icon: icon(<><path d="M9 2v6M15 2v6" /><path d="M6 8h12v3a6 6 0 0 1-12 0z" /><path d="M12 17v5" /></>),
+        subTabs: [{ id: 'plugins', label: 'Plugins', render: () => <PluginsPanel /> }],
+      },
       {
         id: 'mcp',
         label: 'MCP servers',
         icon: icon(<><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /></>),
         subTabs: [{ id: 'mcp', label: 'MCP servers', render: () => <MCPSettings /> }],
-      },
-      {
-        id: 'import',
-        label: 'Import project',
-        icon: icon(<><path d="M12 3v12" /><path d="M7 10l5 5 5-5" /><path d="M4 21h16" /></>),
-        subTabs: [{ id: 'import', label: 'Import project', render: () => <ImportPanel /> }],
       },
       {
         id: 'code-tools',
@@ -177,22 +188,22 @@ const RAIL_GROUPS: RailGroup[] = [
         subTabs: [{ id: 'code-tools', label: 'Code tools', render: () => <CodeToolsPanel /> }],
       },
       {
-        id: 'skills-plugins',
-        label: 'Skills and plugins',
-        icon: icon(<><path d="M12 2l2.4 4.9 5.4.8-3.9 3.8.9 5.4L12 14.8 7.2 17.3l.9-5.4L4.2 8.1l5.4-.8z" /></>),
-        subTabs: [
-          { id: 'skills', label: 'Skills', render: () => <SkillsPanel /> },
-          { id: 'plugins', label: 'Plugins', render: () => <PluginsPanel /> },
-        ],
+        id: 'hooks',
+        label: 'Hooks',
+        icon: icon(<><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7" /><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7" /></>),
+        subTabs: [{ id: 'hooks', label: 'Hooks', render: () => <HooksPanel /> }],
       },
       {
-        id: 'workflows-tasks',
-        label: 'Tasks and hooks',
-        icon: icon(<><path d="M4 4h6v6H4zM14 14h6v6h-6z" /><path d="M10 7h4a2 2 0 0 1 2 2v5" /></>),
-        subTabs: [
-          { id: 'cron', label: 'Scheduled tasks', render: () => <CronPanel /> },
-          { id: 'hooks', label: 'Hooks', render: () => <HooksPanel /> },
-        ],
+        id: 'cron',
+        label: 'Scheduled tasks',
+        icon: icon(<><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>),
+        subTabs: [{ id: 'cron', label: 'Scheduled tasks', render: () => <CronPanel /> }],
+      },
+      {
+        id: 'import',
+        label: 'Import project',
+        icon: icon(<><path d="M12 3v12" /><path d="M7 10l5 5 5-5" /><path d="M4 21h16" /></>),
+        subTabs: [{ id: 'import', label: 'Import project', render: () => <ImportPanel /> }],
       },
     ],
   },

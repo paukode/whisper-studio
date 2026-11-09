@@ -83,16 +83,26 @@ describe('SettingsModal — deep-link routing', () => {
     return render(<SettingsModal />);
   };
 
-  it('old id "skills" opens Tools and automation → Skills', () => {
-    openAt('skills');
-    // The merged panel renders under its sub-tab strip.
-    expect(screen.getByText('SkillsPanel')).toBeInTheDocument();
-    // The rail item that owns it is the active section.
-    expect(
-      screen.getByRole('button', { name: /Skills and plugins/i }),
-    ).toHaveAttribute('aria-current', 'page');
-    // The Skills sub-tab is the selected tab.
-    expect(screen.getByRole('tab', { name: 'Skills' })).toHaveAttribute('aria-selected', 'true');
+  it('"skills", "plugins", "hooks" and "cron" each open their own panel', () => {
+    for (const [id, panel, label] of [
+      ['skills', 'SkillsPanel', 'Skills'],
+      ['plugins', 'PluginsPanel', 'Plugins'],
+      ['hooks', 'HooksPanel', 'Hooks'],
+      ['cron', 'CronPanel', 'Scheduled tasks'],
+    ] as const) {
+      const { unmount } = openAt(id);
+      expect(screen.getByText(panel)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: label })).toHaveAttribute('aria-current', 'page');
+      expect(screen.queryAllByRole('tab')).toHaveLength(0);
+      unmount();
+    }
+  });
+
+  it('keeps related tools together: what the assistant uses, then what runs on its own', () => {
+    openAt('general');
+    const group = screen.getByRole('group', { name: 'Tools and automation' });
+    const items = [...group.querySelectorAll('.settings-rail-item')].map((b) => b.textContent?.trim());
+    expect(items).toEqual(['Skills', 'Plugins', 'MCP servers', 'Code tools', 'Hooks', 'Scheduled tasks', 'Import project']);
   });
 
   it('"costs" opens Costs as its own panel with no sub-tab strip', () => {
@@ -107,15 +117,6 @@ describe('SettingsModal — deep-link routing', () => {
     expect(screen.getByText('FeatureFlagsPanel')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Feature flags' })).toHaveAttribute('aria-current', 'page');
     expect(screen.queryAllByRole('tab')).toHaveLength(0);
-  });
-
-  it('old id "hooks" opens Tasks and hooks → Hooks', () => {
-    openAt('hooks');
-    expect(screen.getByText('HooksPanel')).toBeInTheDocument();
-    expect(
-      screen.getByRole('button', { name: /Tasks and hooks/i }),
-    ).toHaveAttribute('aria-current', 'page');
-    expect(screen.getByRole('tab', { name: 'Hooks' })).toHaveAttribute('aria-selected', 'true');
   });
 
   it('"general" opens the General panel first in the rail', () => {
@@ -161,13 +162,11 @@ describe('SettingsModal — deep-link routing', () => {
 
   it('clicking a rail item then a sub-tab swaps the visible panel', () => {
     openAt('general');
-    // Jump to the Skills and plugins section via the rail.
-    fireEvent.click(screen.getByRole('button', { name: /Skills and plugins/i }));
-    expect(screen.getByText('SkillsPanel')).toBeInTheDocument();
-    // Switch to the Plugins sub-tab.
-    fireEvent.click(screen.getByRole('tab', { name: 'Plugins' }));
-    expect(screen.getByText('PluginsPanel')).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Plugins' })).toHaveAttribute('aria-selected', 'true');
+    // Jump to Models via the rail, then to its Discover sub-tab.
+    fireEvent.click(screen.getByRole('button', { name: 'Models' }));
+    expect(screen.getByRole('tab', { name: 'Chat' })).toHaveAttribute('aria-selected', 'true');
+    fireEvent.click(screen.getByRole('tab', { name: 'Discover' }));
+    expect(screen.getByRole('tab', { name: 'Discover' })).toHaveAttribute('aria-selected', 'true');
   });
 });
 
