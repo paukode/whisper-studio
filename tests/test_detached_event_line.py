@@ -44,11 +44,15 @@ def test_text_line():
 def test_turn_start_and_completed():
     assert _event_line({"phase": "turn_start", "turn": 3}) == "[turn_start] turn 3"
     assert _event_line({"phase": "completed", "turns_used": 5}) == "[completed] turns_used=5"
-    assert _event_line({"phase": "turn_limit", "turns_used": 30}) == "[turn_limit] turns_used=30"
 
 
 def test_stopped_phase_rendered():
     assert _event_line({"phase": "stopped"}) == "[stopped] stopped by user"
+    # A limit stop is a stopped phase that names its limit.
+    assert (
+        _event_line({"phase": "stopped", "stop_reason": "turn_limit", "turns_used": 30})
+        == "[stopped] turn_limit turns_used=30"
+    )
 
 
 def test_unknown_or_metadata_phases_return_empty():

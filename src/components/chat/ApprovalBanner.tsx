@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { getChatStore, useActiveChatStore } from '@/stores/sessionRuntimes';
+import { useActiveChatStore } from '@/stores/sessionRuntimes';
 import type { PendingApproval } from '@/stores/chatStore';
 import { answerApproval } from '@/hooks/chatStream/approvalLeg';
 import { DiffPreview } from './previews/DiffPreview';
@@ -28,17 +28,13 @@ export function ApprovalBanner() {
   const handleAnswer = useCallback(async (approval: PendingApproval, accepted: boolean, forSession: boolean) => {
     const sessionId = approval.sessionId;
     setAnswering((prev) => new Set(prev).add(sessionId));
-    const chat = getChatStore(sessionId);
     try {
+      // The leg also shows the next queued card when it is done.
       await answerApproval(approval, accepted, forSession);
     } finally {
       // Always recover the card UI. Skipping this on the failure path left
       // the session marked answering, which disabled every button on its NEXT
-      // approval card ("Running...") until a reload, and left queued approvals
-      // permanently unshown.
-      if (!chat.getState().currentApproval) {
-        chat.getState().showNextApproval();
-      }
+      // approval card ("Running...") until a reload.
       setAnswering((prev) => {
         const next = new Set(prev);
         next.delete(sessionId);

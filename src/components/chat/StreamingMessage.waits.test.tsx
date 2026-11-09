@@ -18,7 +18,7 @@ describe('StreamingMessage wait summary', () => {
   it('keeps the waited time once text streams', () => {
     useSessionStore.setState({ currentSessionId: sid });
     const chat = getChatStore(sid);
-    chat.getState().setStreaming(true);
+    chat.getState().startTurn('streaming');
     const now = performance.now();
     // Thinking began 20 minutes ago, and an approval card waited 18 of them.
     chat.setState({

@@ -39,7 +39,7 @@ describe('useSlashCommands – /goal', () => {
       new Response('{"ok":true}', { status: 200, headers: { 'Content-Type': 'application/json' } }),
     );
     useGoalStore.getState().clearGoal('goal-sess');
-    getChatStore('goal-sess').getState().setStreaming(false);
+    getChatStore('goal-sess').getState().finishStream();
   });
   afterEach(() => vi.restoreAllMocks());
 
@@ -61,7 +61,7 @@ describe('useSlashCommands – /goal', () => {
   });
 
   it('while a turn is streaming, steers that turn instead of starting a second one', async () => {
-    getChatStore('goal-sess').getState().setStreaming(true);
+    getChatStore('goal-sess').getState().startTurn('streaming');
     const chatStream = { send: vi.fn(), sendMidTurn: vi.fn(), abort: vi.fn() };
     const { result } = renderHook(() =>
       useSlashCommands(makeOpts({ chatStream: chatStream as unknown as UseSlashCommandsOptions['chatStream'] })),
@@ -130,7 +130,7 @@ describe('useSlashCommands – /goal gate', () => {
       new Response('{"ok":true,"gates":[{"command":"npm test","failures":0}]}', { status: 200 }),
     );
     useGoalStore.getState().clearGoal('goal-sess');
-    getChatStore('goal-sess').getState().setStreaming(false);
+    getChatStore('goal-sess').getState().finishStream();
   });
   afterEach(() => vi.restoreAllMocks());
 

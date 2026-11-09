@@ -3,7 +3,8 @@ import type { ChatMessage as ChatMessageType } from '@/types/chat';
 import { get } from '@/api/client';
 import { useUIStore } from '@/stores/uiStore';
 import { toError } from '@/utils/toError';
-import { getActiveChatStore } from '@/stores/sessionRuntimes';
+import { useSessionStore } from '@/stores/sessionStore';
+import { answerPausedTurn, markQuestionsAnswered } from '@/hooks/chatStream/pausedAnswer';
 
 /** Match only the conventional "Other"/"Other (please specify)" sentinel — not
  *  any real choice that merely begins with the word (e.g. "Otherton, Jane",
@@ -72,33 +73,19 @@ export const UserQuestionCard: React.FC<{
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
   const isAnswered = answered || selectedOption !== null;
 
+  // The session that owns this card (see UserQuestionGroupCard).
+  const sessionId = useSessionStore((s) => s.currentSessionId);
+
+  // Resume through the continuation path (answerPausedTurn) so Bedrock sees
+  // a proper tool_result for the ask_user_question tool_use, not a fresh user
+  // message that leaves the tool_use unmatched.
   const submitAnswer = useCallback((answer: string) => {
-    setSelectedOption(answer);
-
-    // Mark as answered in the store
-    const messages = getActiveChatStore().getState().messages;
-    const idx = messages.indexOf(message);
-    if (idx >= 0 && message.userQuestion) {
-      const updated = [...messages];
-      updated[idx] = {
-        ...message,
-        userQuestion: { ...message.userQuestion, answered: true },
-      };
-      getActiveChatStore().getState().setMessages(updated);
-    }
-
-    // Submit via the continuation path (approvedToolResult) so Bedrock
-    // sees a proper tool_result for the ask_user_question tool_use, not a
-    // fresh user message that leaves the tool_use unmatched.
-    window.dispatchEvent(new CustomEvent('whisper-submit-answer', {
-      detail: {
-        answers: [{
-          tool_use_id: message.userQuestion?.toolUseId ?? '',
-          content: answer,
-        }],
-      },
-    }));
-  }, [message]);
+    const toolUseId = message.userQuestion?.toolUseId ?? '';
+    void answerPausedTurn(sessionId, [{ tool_use_id: toolUseId, content: answer }], (answered) => {
+      setSelectedOption(answered ? answer : null);
+      markQuestionsAnswered(sessionId, [toolUseId], answered);
+    });
+  }, [message, sessionId]);
 
   const handleOtherSubmit = useCallback(() => {
     const val = otherText.trim();
@@ -246,6 +233,9 @@ export const UserQuestionGroupCard: React.FC<{ message: ChatMessageType }> = ({ 
   // Hard idempotency guard: a ref (not the `submitted` state) so an async
   // Browse-picker resolution can't fire a second submit through a stale closure.
   const submittedRef = useRef(alreadyAnswered);
+  // The session that owns this card, read when it renders: the answer goes
+  // there even if the user switches sessions before an async pick resolves.
+  const sessionId = useSessionStore((s) => s.currentSessionId);
   const uid = useId();
 
   const total = questions.length;
@@ -257,32 +247,21 @@ export const UserQuestionGroupCard: React.FC<{ message: ChatMessageType }> = ({ 
   const onLast = active === total - 1;
 
   // Batch every answer into ONE continuation so Bedrock receives a tool_result
-  // for each ask_user_question tool_use it emitted. Idempotent.
+  // for each ask_user_question tool_use it emitted. Idempotent while it is
+  // answered; a refused resume re-enables the card (answerPausedTurn).
   const submit = useCallback((finalAnswers: Record<string, string>) => {
     if (submittedRef.current) return;
-    submittedRef.current = true;
-    setSubmitted(true);
-    // Persist answered:true so a later re-render / restore keeps the card
-    // disabled instead of re-enabling it and allowing a duplicate continuation.
-    const msgs = getActiveChatStore().getState().messages;
-    const idx = msgs.indexOf(message);
-    if (idx >= 0 && message.userQuestions) {
-      const updated = [...msgs];
-      updated[idx] = {
-        ...message,
-        userQuestions: message.userQuestions.map((q) => ({ ...q, answered: true })),
-      };
-      getActiveChatStore().getState().setMessages(updated);
-    }
-    window.dispatchEvent(new CustomEvent('whisper-submit-answer', {
-      detail: {
-        answers: questions.map((q) => ({
-          tool_use_id: q.toolUseId,
-          content: finalAnswers[q.toolUseId] ?? '',
-        })),
+    const ids = questions.map((q) => q.toolUseId);
+    void answerPausedTurn(
+      sessionId,
+      questions.map((q) => ({ tool_use_id: q.toolUseId, content: finalAnswers[q.toolUseId] ?? '' })),
+      (answered) => {
+        submittedRef.current = answered;
+        setSubmitted(answered);
+        markQuestionsAnswered(sessionId, ids, answered);
       },
-    }));
-  }, [questions, message]);
+    );
+  }, [questions, sessionId]);
 
   const setAnswer = useCallback((toolUseId: string, value: string) => {
     setAnswers((prev) => ({ ...prev, [toolUseId]: value }));

@@ -9,27 +9,10 @@ import React from 'react';
 import type { TeamAgentReport, TeamReportData } from '@/types/chat';
 import { useDockStore } from '@/stores/dockStore';
 import { RobotIcon } from '@/components/common/icons';
-
-const STATUS_TEXT: Record<TeamAgentReport['status'], string> = {
-  pending: 'starting',
-  running: 'running',
-  completed: 'done',
-  failed: 'failed',
-  turn_limit: 'stopped at the turn limit',
-  stopped: 'stopped',
-};
-
-const STOP_REASON_TEXT: Record<string, string> = {
-  turn_limit: 'stopped at the turn limit',
-  deadline: 'stopped at the time limit',
-  cost_cap: 'stopped at the cost cap',
-  refused_calls: 'stopped after repeated refused calls',
-  cancelled: 'stopped',
-};
+import { outcomeOf } from '@/utils/agentOutcome';
 
 export function agentStatusText(agent: TeamAgentReport): string {
-  const reason = agent.stop_reason ? STOP_REASON_TEXT[agent.stop_reason] : undefined;
-  const base = reason ?? STATUS_TEXT[agent.status];
+  const base = outcomeOf(agent.status, agent.stop_reason).line;
   const rounds = agent.turns_used ? ` · ${agent.turns_used} round${agent.turns_used === 1 ? '' : 's'}` : '';
   return base + rounds;
 }

@@ -33,7 +33,6 @@ import { emptyResponseFallback } from './chatStream/emptyResponse';
 import { autoTitleFailed, requestAutoTitle } from './chatStream/autoTitle';
 import { pausedTurnSettings, turnModelSettings } from './chatStream/turnSettings';
 import { buildHistoryPayload } from './chatStream/history';
-import { APPROVED_ACTION_STATUS } from './chatStream/approvalLeg';
 import {
   abortSessionStream,
   buildStoppedMessage,
@@ -68,7 +67,9 @@ export interface SendOptions {
 }
 
 export interface UseChatStreamReturn {
-  send: (question: string, opts?: SendOptions) => Promise<void>;
+  /** Resolves to false when the turn was refused before the server ran it
+   *  (consent declined, the parallel ceiling, a busy session), else true. */
+  send: (question: string, opts?: SendOptions) => Promise<boolean>;
   /** Send a message while a turn for this session is ALREADY streaming.
    *  Delivered into that running turn instead of starting (or being
    *  refused by) a second one — see server/chat/engine/midturn_inbox.py.
@@ -157,13 +158,25 @@ function toastQueuedIntoReplacedTurn(): void {
 const midTurnInFlight = new Set<string>();
 
 
+/** A send refused before its stream opened. A leg still preparing for it (a
+ *  /file upload) ends with it, or the session would look busy with nothing
+ *  running. */
+function refuseSend(sessionId: string | null | undefined): false {
+  if (sessionId) {
+    const chat = getChatStore(sessionId).getState();
+    if (chat.turnPhase === 'preparing') chat.finishStream();
+  }
+  return false;
+}
+
 /**
  * Send one chat turn and stream its answer into the owning session (the one
  * active at call time, or `opts.sessionId`). Everything after the call is
  * bound to that session. A module function, not only the hook's, so the
  * background wake (./chatStream/backgroundWake) can start a turn too.
+ * Resolves to false when the turn was refused before the server ran it.
  */
-export async function sendChatTurn(question: string, opts?: SendOptions): Promise<void> {
+export async function sendChatTurn(question: string, opts?: SendOptions): Promise<boolean> {
   const sessionStore = useSessionStore.getState;
   const settings = useSettingsStore.getState();
 
@@ -173,9 +186,9 @@ export async function sendChatTurn(question: string, opts?: SendOptions): Promis
   const selModel = settings.models.find((m) => m.key === settings.selectedModel);
   if (selModel?.requires_data_retention && !settings.dataRetentionEnabled) {
     // A wake asks nothing of the user: without consent it does not run.
-    if (opts?.runtimeWake) return;
+    if (opts?.runtimeWake) return false;
     const ok = await ensureRetentionEnabled();
-    if (!ok) return;
+    if (!ok) return refuseSend(opts?.sessionId ?? sessionStore().currentSessionId);
   }
 
   // Resolve the owning session ONCE — every store access below goes
@@ -194,7 +207,7 @@ export async function sendChatTurn(question: string, opts?: SendOptions): Promis
   const alreadyActive = store().isStreaming || store().currentApproval !== null;
   if (!alreadyActive && countActiveSessions(activeSessionId) >= MAX_ACTIVE_SESSIONS) {
     // A wake checks the ceiling itself and waits for a free slot.
-    if (opts?.runtimeWake) return;
+    if (opts?.runtimeWake) return false;
     useUIStore.getState().addToast({
       type: 'error',
       message: `${MAX_ACTIVE_SESSIONS} sessions are already active. Wait for one to finish (or stop it) before starting another.`,
@@ -202,7 +215,7 @@ export async function sendChatTurn(question: string, opts?: SendOptions): Promis
       key: 'parallel-cap',
       source: 'chat',
     });
-    return;
+    return false;
   }
 
   // Abort any in-flight stream FOR THIS SESSION only. Remember whether
@@ -211,7 +224,7 @@ export async function sendChatTurn(question: string, opts?: SendOptions): Promis
   // may queue this send into the very turn just cancelled here. (A leg
   // still running its approved action holds no server slot.)
   const replacesLiveStream =
-    hasLiveStream(activeSessionId) && store().streamStatus !== APPROVED_ACTION_STATUS;
+    hasLiveStream(activeSessionId) && store().turnPhase !== 'approvedAction';
   abortSessionStream(activeSessionId);
 
   const isContinuation = !!opts?.approvedToolResult;
@@ -237,7 +250,7 @@ export async function sendChatTurn(question: string, opts?: SendOptions): Promis
     store().clearAutoModeBreaker();
   }
 
-  store().setStreaming(true);
+  const leg = store().startTurn('streaming');
 
   const controller = new AbortController();
   // An answered question or folder card resumes the turn that asked; only a
@@ -322,10 +335,10 @@ export async function sendChatTurn(question: string, opts?: SendOptions): Promis
       // suspended/abandoned). Surface the server's actionable guidance: the
       // slot auto-reclaims after a short timeout, or the user can reset it
       // immediately from the chat ⋯ menu.
-      store().finishStream();
+      store().finishStream(undefined, leg);
       // A wake that found a turn running has nothing to say: that turn
       // carries the results in its history.
-      if (opts?.runtimeWake) return;
+      if (opts?.runtimeWake) return false;
       let msg = 'This session is busy. If it looks stuck, reset it from the chat ⋯ menu.';
       try {
         const data = await response.json() as { error?: string };
@@ -338,7 +351,7 @@ export async function sendChatTurn(question: string, opts?: SendOptions): Promis
         key: 'parallel-409',
         source: 'chat',
       });
-      return;
+      return false;
     }
     // A JSON body is never an SSE stream. The server answers a send that
     // lands while a turn is still running in this session by queueing the
@@ -349,7 +362,7 @@ export async function sendChatTurn(question: string, opts?: SendOptions): Promis
       const data = await readJsonReply(response);
       if (response.ok && data?.queued_into_running_turn === true) {
         // The user's bubble stays and the thinking indicator ends here.
-        store().finishStream();
+        store().finishStream(undefined, leg);
         if (replacesLiveStream) {
           // The running turn the server queued into is the one this send
           // just aborted: it ends on the disconnect and nothing answers.
@@ -358,7 +371,7 @@ export async function sendChatTurn(question: string, opts?: SendOptions): Promis
           // Delivered into a turn that really runs; say where it went.
           toastQueuedIntoRunningTurn();
         }
-        return;
+        return true;
       }
       throw new Error(jsonReplyError(data, response.status));
     }
@@ -370,7 +383,7 @@ export async function sendChatTurn(question: string, opts?: SendOptions): Promis
     // A kill switch may have finalized this stream while the read loop was
     // draining (signal.aborted exits the loop NORMALLY, landing here on the
     // success path) — appending anything now would resurrect the answer.
-    if (wasKillFinalized(controller)) return;
+    if (wasKillFinalized(controller)) return true;
     fullResponse = result.fullResponse;
 
     // Empty-answer message: see ./chatStream/emptyResponse (shared with the
@@ -460,6 +473,7 @@ export async function sendChatTurn(question: string, opts?: SendOptions): Promis
     // The captions that landed for the traces it commits ride along.
     store().finishStream(
       assistantMsg && labelCommit(assistantMsg, store().messages, result.activityLabels),
+      leg,
     );
 
     // Auto-generate the title ONCE, after the first exchange (fire-and-forget,
@@ -494,7 +508,7 @@ export async function sendChatTurn(question: string, opts?: SendOptions): Promis
         // Same commit as the kill switch: partial prose, the tool activity
         // shown so far and any live team card land as one "(Stopped)"
         // message in the same pass that clears the streaming state.
-        store().finishStream(buildStoppedMessage(store()));
+        store().finishStream(buildStoppedMessage(store()), leg);
       }
     } else {
       console.error('[Chat] Error:', err);
@@ -503,12 +517,13 @@ export async function sendChatTurn(question: string, opts?: SendOptions): Promis
         role: 'assistant',
         content: `*Error: ${errorMsg}*`,
         timestamp: new Date().toISOString(),
-      });
+      }, leg);
     }
   } finally {
     releaseStreamController(activeSessionId, controller);
-    // Ensure streaming is cleared (no-op if finishStream already ran)
-    if (store().isStreaming) store().setStreaming(false);
+    // Ensure this leg is closed (no-op if finishStream already ran, or a
+    // newer leg took the session over).
+    if (store().isStreaming) store().finishStream(undefined, leg);
     // The recorded rounds now include this turn's: their pricing note (a
     // GPT round's dated list-rate note) and estimate count reach the readout.
     void refreshSessionUsage(activeSessionId);
@@ -519,6 +534,7 @@ export async function sendChatTurn(question: string, opts?: SendOptions): Promis
       chatInput?.focus();
     }
   }
+  return true;
 }
 
 /**
@@ -564,14 +580,16 @@ export function useChatStream(): UseChatStreamReturn {
       return false;
     }
 
-    // An approved action is still running: no turn holds the server's slot
-    // until its continuation starts, so the server would refuse this anyway.
-    // Say what is actually happening instead of "no longer running".
-    if (getChatStore(activeSessionId).getState().streamStatus === APPROVED_ACTION_STATUS) {
+    // No stream is open yet, so no turn holds the server's slot and the server
+    // would refuse this anyway. Say what is actually happening instead of "no
+    // longer running".
+    const phase = getChatStore(activeSessionId).getState().turnPhase;
+    if (phase === 'approvedAction' || phase === 'preparing') {
       useUIStore.getState().addToast({
         type: 'error',
-        message:
-          'Not sent: the approved action is still running, and the turn resumes as soon as it finishes. Send your message once the reply is streaming, or press Stop.',
+        message: phase === 'approvedAction'
+          ? 'Not sent: the approved action is still running, and the turn resumes as soon as it finishes. Send your message once the reply is streaming, or press Stop.'
+          : 'Not sent: the turn is still getting ready (uploading a file). Send your message once the reply is streaming, or press Stop.',
         duration: 5000,
       });
       return false;

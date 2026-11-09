@@ -8,7 +8,8 @@ here, no frontend changes, no tool_executor edits.
 
 Each executor is a thin async wrapper around the existing workspace
 endpoint logic. The frontend never knows which endpoint actually runs
-the work, it just POSTs to /api/approval/execute with {action, payload}.
+the work, it just POSTs the card's id to /api/approval/execute, which runs
+the action and payload the server recorded for it (server/approval/cards.py).
 """
 
 from __future__ import annotations
@@ -782,9 +783,9 @@ def register_defaults() -> None:
 
     # MCP elicitations, an MCP server asking the human for input mid tool
     # call. Its own category (not "mcp") since it is answered directly via
-    # POST /api/approval/execute from Settings → MCP rather than through the
-    # [WS_APPROVAL] pause-a-chat-turn pipeline the rest of this file uses;
-    # resolve_static_decision never sees this category.
+    # POST /api/approval/execute from Settings > MCP (a `direct` action, no
+    # card) rather than through the [WS_APPROVAL] pause-a-chat-turn pipeline
+    # the rest of this file uses; resolve_static_decision never sees it.
     register(
         "mcp_elicit_respond",
         ApprovalSpec(
@@ -794,6 +795,7 @@ def register_defaults() -> None:
             executor=_do_mcp_elicit_respond,
             risk_hint="medium",
             payload_fields=["elicitation_id", "response_action", "content"],
+            direct=True,
         ),
     )
 

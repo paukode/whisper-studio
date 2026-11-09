@@ -124,7 +124,10 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
       const ts = new Date().toISOString();
       const chat = () => getChatStore(sessionId).getState();
       chat().addMessage({ role: 'user', content: question, timestamp: ts, attachmentNames: [fileName] });
-      chat().setStreaming(true);
+      const leg = chat().startTurn('preparing');
+      // Stopped (or replaced by another send) while the file uploads: the
+      // turn no longer waits for it.
+      const stillPreparing = () => chat().turnSeq === leg && chat().turnPhase === 'preparing';
 
       const patchMessage = (patch: Partial<ChatMessage>) => {
         const st = chat();
@@ -141,7 +144,7 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
           att = await uploadWorkspaceFile(filePath);
         } catch (e) {
           const why = toError(e).message;
-          chat().setStreaming(false);
+          chat().finishStream(undefined, leg);
           patchMessage({ content: `${question}\n\n_[Could not attach ${fileName}: ${why}]_` });
           addToast({ type: 'error', message: `Could not attach ${fileName}: ${why}` });
           return;
@@ -149,10 +152,12 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
         // Record the real id on the already-shown message so a later
         // regenerate re-attaches the same file (mirrors the /subagent patch).
         patchMessage({ attachmentIds: [att.id], attachmentNames: [att.filename] });
+        if (!stillPreparing()) return;
         await chatStream.send(question, {
           attachmentIds: [att.id],
           attachmentNames: [att.filename],
           hideUserMessage: true,
+          sessionId: sessionId ?? undefined,
         });
       })();
       return true;

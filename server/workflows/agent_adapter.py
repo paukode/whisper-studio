@@ -125,21 +125,15 @@ async def run_workflow_agent(
         "usage": res.usage or {},
         "status": agent_status(res),
         "agent_id": res.agent_id or "",
-        "stop_reason": getattr(res, "stop_reason", "") or "completed",
-        "stopped_early": bool(getattr(res, "stopped_early", False)),
+        "stop_reason": res.stop_reason,
+        "stopped_early": res.stopped_early,
     }
 
 
 def agent_status(res) -> str:
-    """The status a script reads for one finished agent.
-
-    run_agent keeps ``status="completed"`` for an agent a limit stopped (its
-    memory and subagent callers branch on that), and marks the stop only in
-    ``stopped_early``. A script that read only ``status`` took a half-done
-    agent for a finished one, so here a limit stop is ``"incomplete"``. A
-    failure stays ``"failed"``.
+    """The status a script reads for one finished agent: the run's status
+    (server.agents.outcome), with a limit stop named ``"incomplete"``, the
+    script API's word for partial work a script must not take as finished.
+    A cancel stays ``"stopped"`` and a failure ``"failed"``.
     """
-    status = res.status or "completed"
-    if status == "completed" and getattr(res, "stopped_early", False):
-        return "incomplete"
-    return status
+    return "incomplete" if res.stopped_early else res.status

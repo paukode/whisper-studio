@@ -334,6 +334,7 @@ export interface TeamProgressEvent {
     | 'tool_call'
     | 'tool_result'
     | 'completed'
+    // Records written before a limit stop became 'stopped' (utils/agentOutcome).
     | 'turn_limit'
     | 'failed'
     | 'stopped'
@@ -433,7 +434,8 @@ export interface TeamAgentReport {
   task: string;
   agent_type: string;
   role: 'team' | 'orchestrator';
-  status: 'pending' | 'running' | 'completed' | 'turn_limit' | 'failed' | 'stopped';
+  /** See utils/agentOutcome: a limit stop is 'stopped', its stop_reason names the limit. */
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'stopped';
   model?: string | null;
   /** Set when this row is a spawn_agent child of another agent. */
   parent_agent_id?: string | null;
@@ -463,6 +465,8 @@ export type PreviewKind = 'diff' | 'command' | 'text';
 export type RiskHint = 'low' | 'medium' | 'high';
 
 export interface ApprovalRequest {
+  /** The server's id for the card (server/approval/cards.py). */
+  card_id: string;
   tool_use_id: string;
   action: string;
   category: string;

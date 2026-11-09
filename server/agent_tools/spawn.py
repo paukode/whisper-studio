@@ -10,7 +10,7 @@ import json
 import logging
 import uuid
 
-from server.agents.journal import RELAY_NOTE, REPORT_CHARS
+from server.agents.journal import RELAY_NOTE, REPORT_CHARS, record_outcome
 
 log = logging.getLogger("whisper-studio")
 
@@ -120,7 +120,7 @@ def _persist_agent_result(
             meta={"agent_type": agent_type, "model": model_id or ""},
             task_id=agent_id,
         )
-        status = {"completed": "completed", "stopped": "stopped"}.get(result.status, "failed")
+        status = result.status
         registry.finish_task(
             agent_id,
             status=status,
@@ -185,9 +185,7 @@ async def _deliver_orphaned_spawn(
                         (rec.get("report") or "").strip()
                         or "[No record was written before the stop]"
                     )[:REPORT_CHARS],
-                    "status": "completed" if meta.get("status") == "completed" else "stopped",
-                    "stop_reason": meta.get("stop_reason") or "cancelled",
-                    "turns_used": int(meta.get("rounds") or 0),
+                    **record_outcome(meta),
                 }
             ],
         },

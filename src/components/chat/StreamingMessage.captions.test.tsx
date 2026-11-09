@@ -58,7 +58,7 @@ describe('StreamingMessage live captions', () => {
   it('shows a caption on the live row as it lands, and the same caption on the committed row', async () => {
     useSessionStore.setState({ currentSessionId: sid });
     const chat = getChatStore(sid);
-    chat.getState().setStreaming(true);
+    chat.getState().startTurn('streaming');
     const live = liveResponse();
     const reading = readSSEStream(live.response, sid, new AbortController().signal, SETTINGS);
     const view = render(<StreamingMessage content="" isStreaming />);
@@ -97,7 +97,7 @@ describe('StreamingMessage live captions', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true } as Response));
     useSessionStore.setState({ currentSessionId: sid });
     const chat = getChatStore(sid);
-    chat.getState().setStreaming(true);
+    chat.getState().startTurn('streaming');
     const controller = new AbortController();
     registerStreamController(sid, controller, { startsTurn: true });
     const live = liveResponse();
@@ -130,7 +130,7 @@ describe('StreamingMessage live captions', () => {
   it('a later caption for the same live group replaces the earlier one, and the end of the stream clears them', () => {
     useSessionStore.setState({ currentSessionId: sid });
     const chat = getChatStore(sid).getState();
-    chat.setStreaming(true);
+    chat.startTurn('streaming');
     for (const id of ['tu_1', 'tu_2']) {
       chat.addStreamToolUse({ toolId: id, toolName: 'ws_read_file', input: { path: `${id}.ts` }, status: 'complete', result: 'ok' });
     }

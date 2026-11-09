@@ -43,7 +43,7 @@ describe('readSSEStream pacing', () => {
 
   it('paints the first token at once and the whole reply by the end', async () => {
     const chat = getChatStore('paced-end');
-    chat.getState().setStreaming(true);
+    chat.getState().startTurn('streaming');
     const live = liveResponse();
     const done = readSSEStream(live.response, 'paced-end', new AbortController().signal, SETTINGS);
 
@@ -64,7 +64,7 @@ describe('readSSEStream pacing', () => {
 
   it('keeps words still draining when Stop is pressed', async () => {
     const chat = getChatStore('paced-stop');
-    chat.getState().setStreaming(true);
+    chat.getState().startTurn('streaming');
     const controller = new AbortController();
     registerStreamController('paced-stop', controller, { startsTurn: true });
     const live = liveResponse();

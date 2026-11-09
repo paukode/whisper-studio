@@ -261,7 +261,6 @@ def test_team_summary_carries_the_whole_report_and_the_relay_rule(monkeypatch):
             agent_id=kwargs["agent_id"],
             agent_type="general",
             output=long_report,
-            status="completed",
             stop_reason="turn_limit",
             turns_used=7,
         )

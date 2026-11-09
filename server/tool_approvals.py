@@ -18,6 +18,7 @@ import logging
 import time
 from typing import NamedTuple
 
+from server.approval import cards
 from server.approval.markers import APPROVAL
 from server.approval.spec import WORKSPACE_ROOT_KEY, ApprovalOutcome, turn_workspace_refusal
 from server.auto_mode import classify_tool_call
@@ -388,8 +389,15 @@ async def gate_approval(
     summary = spec.render_summary(ws_parsed)
     if secret == "ask" and spec.category != secret_reads.SECRET_READ_CATEGORY:
         summary = f"READS THE KEYCHAIN AND CREDENTIAL STORES: {summary}"
+    # The card's Yes runs exactly this action and payload, once: the server
+    # keeps them under the card's id (server/approval/cards.py) and never runs
+    # a payload a client posts back.
+    card_id = cards.issue(
+        session_id=cost_session_id, action=action, payload=payload, tool_use_id=state.tool_id
+    )
     event = {
         "approval_request": {
+            "card_id": card_id,
             "tool_use_id": state.tool_id,
             "action": action,
             "category": category,

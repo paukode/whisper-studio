@@ -9,6 +9,7 @@
  * pre-creates its message and targets it by timestamp. No React here.
  */
 import type { StoreGetter } from '@/stores/chatStore';
+import { agentStatusOf } from '@/utils/agentOutcome';
 import type {
   ChatMessage,
   TeamAgentReport,
@@ -24,24 +25,14 @@ function _agentKey(ev: TeamProgressEvent): string | null {
   return (ev.agent_name ?? ev.agent_id) || null;
 }
 
-/** The settled status a team_results agent reports (completed, failed or
- *  error, stopped, turn_limit); null for anything else. */
+/** The settled status a team_results agent reports; null for anything else. */
 function _resultStatus(status: string | undefined): TeamAgentReport['status'] | null {
-  if (status === 'completed') return 'completed';
-  if (status === 'failed' || status === 'error') return 'failed';
-  if (status === 'stopped') return 'stopped';
-  if (status === 'turn_limit') return 'turn_limit';
-  return null;
+  const s = agentStatusOf(status);
+  return s === 'completed' || s === 'stopped' || s === 'failed' ? s : null;
 }
 
 function _phaseToStatus(phase: TeamProgressEvent['phase']): TeamAgentReport['status'] {
-  if (phase === 'completed') return 'completed';
-  if (phase === 'turn_limit') return 'turn_limit';
-  if (phase === 'failed') return 'failed';
-  if (phase === 'stopped') return 'stopped';
-  if (phase === 'started' || phase === 'turn_start' || phase === 'text'
-      || phase === 'tool_call' || phase === 'tool_result') return 'running';
-  return 'pending';
+  return agentStatusOf(phase) ?? 'pending';
 }
 
 /** Merge the final team_results side-effect payload into the rolling

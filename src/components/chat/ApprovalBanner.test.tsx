@@ -30,6 +30,7 @@ const SID = 'sess-approval';
 
 function approval(toolUseId: string): PendingApproval {
   return {
+    cardId: 'card-1',
     toolUseId,
     action: 'git_create_branch',
     category: 'cli',

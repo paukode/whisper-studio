@@ -13,6 +13,7 @@ import logging
 import os
 
 from server.agents.journal import REPORT_CHARS
+from server.agents.outcome import TASK_EVENTS
 from server.tasks import registry, shell
 from server.tasks.events import emit_agent_report, emit_task_event
 from server.tasks.owner import run_owned
@@ -135,7 +136,7 @@ async def _run_detached(
                 resume_agent_id=resume_agent_id,
             )
         result_text = (result.output or "").strip()
-        status = {"completed": "completed", "stopped": "stopped"}.get(result.status, "failed")
+        status = result.status
         stop_reason = result.stop_reason
         turns_used = result.turns_used
     except asyncio.CancelledError:
@@ -150,7 +151,7 @@ async def _run_detached(
         log.error("detached agent %s failed: %s", task_id, e)
     finally:
         # Orderly pump shutdown: cancelling immediately dropped whatever was
-        # still queued — including the agent's FINAL completed/turn_limit event,
+        # still queued, including the agent's FINAL completed or stopped event,
         # so the output file ended mid-run. Publish a stop sentinel so the pump
         # drains everything ahead of it in order, then falls out of its loop;
         # cancel only as a backstop if it doesn't finish promptly.
@@ -167,12 +168,7 @@ async def _run_detached(
             task_id, status=status, exit_code=None, result_text=result_text
         )
         if finished:
-            event_name = {
-                "completed": "task_completed",
-                "stopped": "task_stopped",
-                "failed": "task_failed",
-            }[status]
-            emit_task_event(session_id, event_name, finished)
+            emit_task_event(session_id, TASK_EVENTS[status], finished)
         # The launching turn did not wait for this result (detached) or has
         # long ended (resumed): deliver the report as a session row the next
         # turn reads, so the parent still gets to act on it.
@@ -303,7 +299,6 @@ def _event_line(ev: dict) -> str:
         "tool_result",
         "turn_start",
         "completed",
-        "turn_limit",
         "failed",
         "stopped",
     ):
@@ -318,10 +313,15 @@ def _event_line(ev: dict) -> str:
         detail = ev.get("text", "")
     elif phase == "turn_start":
         detail = f"turn {ev.get('turn', '')}"
-    elif phase in ("completed", "turn_limit"):
+    elif phase == "completed":
         detail = f"turns_used={ev.get('turns_used', '')}"
     elif phase == "stopped":
-        detail = "stopped by user"
+        # A cancel, or a limit (server.agents.outcome) named by its reason.
+        reason = ev.get("stop_reason") or "cancelled"
+        if reason == "cancelled":
+            detail = "stopped by user"
+        else:
+            detail = f"{reason} turns_used={ev.get('turns_used', '')}"
     else:  # failed
         detail = ev.get("error") or ev.get("text") or ""
     if isinstance(detail, dict):

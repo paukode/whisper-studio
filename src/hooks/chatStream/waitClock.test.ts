@@ -69,7 +69,7 @@ describe('chat store wait tracking', () => {
     const now = vi.spyOn(performance, 'now');
     now.mockReturnValue(100);
     const store = createChatStore();
-    store.getState().setStreaming(true);
+    store.getState().startTurn('streaming');
     now.mockReturnValue(1_000);
     store.getState().enqueueApproval(approval);
     now.mockReturnValue(601_000);
@@ -85,7 +85,7 @@ describe('chat store wait tracking', () => {
     const now = vi.spyOn(performance, 'now');
     now.mockReturnValue(0);
     const store = createChatStore();
-    store.getState().setStreaming(true);
+    store.getState().startTurn('streaming');
     store.getState().addStreamToolUse({ toolId: 't1', toolName: 'sleep', input: {}, status: 'running' });
     now.mockReturnValue(30_000);
     store.getState().updateStreamToolUse('t1', { status: 'complete' });
@@ -96,7 +96,7 @@ describe('chat store wait tracking', () => {
 
   it('a tool that works is thinking time', () => {
     const store = createChatStore();
-    store.getState().setStreaming(true);
+    store.getState().startTurn('streaming');
     store.getState().addStreamToolUse({ toolId: 't1', toolName: 'read_file', input: {}, status: 'running' });
     expect(store.getState().waitSpans).toEqual([]);
   });

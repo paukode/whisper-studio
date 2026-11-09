@@ -98,7 +98,7 @@ describe('self-saving subscriptions', () => {
 
     const chat = getChatStore('streamer');
     chat.getState().addMessage({ role: 'user', content: 'q', timestamp: 't' });
-    chat.getState().setStreaming(true);
+    chat.getState().startTurn('streaming');
     chat.getState().finishStream({ role: 'assistant', content: 'done', timestamp: 't2' });
     await vi.advanceTimersByTimeAsync(300);
 
@@ -137,10 +137,11 @@ describe('eviction', () => {
       return e;
     });
     useSessionStore.setState({ currentSessionId: 'cur' });
-    entries[1].chat.getState().setStreaming(true);
+    entries[1].chat.getState().startTurn('streaming');
     useRecordingStore.setState({ recordingSessionId: 'rec' });
     entries[3].chat.setState({
       currentApproval: {
+        cardId: 'card-1',
         toolUseId: 'x', action: 'write', category: 'write', preview: 'text',
         summary: 's', payload: {}, sessionId: 'appr',
         alwaysAsks: false,

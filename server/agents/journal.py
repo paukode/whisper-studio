@@ -27,19 +27,11 @@ import re
 from collections import Counter
 from datetime import UTC, datetime
 
+from server.agents.outcome import TASK_EVENTS, known_reason, run_status
 from server.infrastructure.paths import storage_root
 
 log = logging.getLogger("whisper-studio")
 
-STOP_REASONS = (
-    "completed",
-    "turn_limit",
-    "deadline",
-    "cost_cap",
-    "refused_calls",
-    "cancelled",
-    "error",
-)
 
 # What the parent reads per member and what the registry keeps as result_text.
 REPORT_CHARS = 6000
@@ -425,18 +417,20 @@ class AgentJournal:
     def finish(
         self,
         *,
-        status: str,
         stop_reason: str,
         report: str,
         turns_used: int,
         usage: dict | None = None,
         messages: list | None = None,
     ) -> None:
-        """Write the report and the terminal state. Idempotent: the first
+        """Write the report and the terminal state; the status follows from
+        ``stop_reason`` (server.agents.outcome). Idempotent: the first
         terminal write wins (a cancelled run's salvage must not be overwritten
         by a later teardown)."""
         if self._closed:
             return
+        stop_reason = known_reason(stop_reason)
+        status = run_status(stop_reason)
         self._closed = True
         if messages is not None:
             try:
@@ -451,7 +445,7 @@ class AgentJournal:
             self._warn("report", e)
         self._meta.update(
             status=status,
-            stop_reason=stop_reason if stop_reason in STOP_REASONS else "error",
+            stop_reason=stop_reason,
             finished_at=_now(),
             rounds=max(int(self._meta.get("rounds") or 0), turns_used),
             usage=usage or self._meta.get("usage") or {},
@@ -462,18 +456,16 @@ class AgentJournal:
             from server.tasks import registry
             from server.tasks.events import emit_task_event
 
-            row_status = {"completed": "completed", "stopped": "stopped"}.get(status, "failed")
             finished = registry.finish_task(
                 self.agent_id,
-                status=row_status,
+                status=status,
                 exit_code=None,
                 result_text=(report or "")[:REPORT_CHARS],
             )
             if finished:
-                event = {"completed": "task_completed", "stopped": "task_stopped"}.get(
-                    row_status, "task_failed"
+                emit_task_event(
+                    str(self._meta.get("session_id") or ""), TASK_EVENTS[status], finished
                 )
-                emit_task_event(str(self._meta.get("session_id") or ""), event, finished)
         except Exception as e:  # noqa: BLE001 - mirror only
             log.warning("agent journal: registry finish for %s failed: %s", self.agent_id, e)
 
@@ -488,9 +480,21 @@ class AgentJournal:
             self._warn("meta", e)
 
 
+def record_outcome(meta: dict) -> dict:
+    """``status``, ``stop_reason`` and ``turns_used`` of a record, for a report
+    row built from it. A record with no stop reason was cut off by a cancel.
+    The status follows the stop reason, so a record written before the
+    status did (a limit stop then read "completed") reads right too."""
+    reason = known_reason(meta.get("stop_reason") or "cancelled")
+    return {
+        "status": run_status(reason),
+        "stop_reason": reason,
+        "turns_used": int(meta.get("rounds") or 0),
+    }
+
+
 def close_quietly(
     journal: AgentJournal | None,
-    status: str,
     stop_reason: str,
     report: str,
     *,
@@ -503,7 +507,6 @@ def close_quietly(
         return
     try:
         journal.finish(
-            status=status,
             stop_reason=stop_reason,
             report=report,
             turns_used=turns_used,

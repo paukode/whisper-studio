@@ -15,6 +15,7 @@
 import { create } from 'zustand';
 import type { WorkflowAgentCall, WorkflowRun } from '@/api/workflows';
 import type { TeamAgentReport } from '@/types/chat';
+import { agentStatusOf, settledStatus } from '@/utils/agentOutcome';
 
 export interface LiveActivity {
   phase: string;
@@ -78,8 +79,7 @@ export function peakConcurrency(calls: readonly WorkflowAgentCall[]): number {
 
 function journalStatus(status: string | undefined): TeamAgentReport['status'] {
   // 'running': a live run's snapshot lists the calls that have not ended.
-  if (status === 'failed' || status === 'stopped' || status === 'turn_limit' || status === 'running') return status;
-  return 'completed';
+  return agentStatusOf(status) === 'running' ? 'running' : settledStatus(status);
 }
 
 function countPhase(act: Pick<LiveActivity, 'phaseCounts' | 'phaseOrder'>, phase: string, by = 1) {
@@ -145,20 +145,7 @@ const DETAIL_PHASES = new Set([
 ]);
 
 function phaseToStatus(phase: string): TeamAgentReport['status'] {
-  if (phase === 'completed') return 'completed';
-  if (phase === 'turn_limit') return 'turn_limit';
-  if (phase === 'failed') return 'failed';
-  if (phase === 'stopped') return 'stopped';
-  if (
-    phase === 'started' ||
-    phase === 'turn_start' ||
-    phase === 'text' ||
-    phase === 'tool_call' ||
-    phase === 'tool_result'
-  ) {
-    return 'running';
-  }
-  return 'pending';
+  return agentStatusOf(phase) ?? 'pending';
 }
 
 /** Fold one per-agent detail event into the activity's agent map. Keyed by

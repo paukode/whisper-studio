@@ -407,8 +407,8 @@
         <tr><td><code>turn_start</code></td><td>A new loop iteration starts, stamped with the budget readout below.</td></tr>
         <tr><td><code>text</code></td><td>The agent produced text this turn (including its self-check). Buffered per round and flushed once, not once per streamed delta.</td></tr>
         <tr><td><code>tool_call</code> / <code>tool_result</code></td><td>A tool was invoked, then returned. Each carries a short preview and a fuller one, so a row can expand to the whole input or output.</td></tr>
-        <tr><td><code>completed</code> / <code>turn_limit</code></td><td>The agent finished, or stopped at a limit. <code>turn_limit</code> carries the <code>stop_reason</code> that names which limit.</td></tr>
-        <tr><td><code>stopped</code> / <code>failed</code></td><td>The agent was cancelled by the user, or raised an error.</td></tr>
+        <tr><td><code>completed</code></td><td>The agent completed its task.</td></tr>
+        <tr><td><code>stopped</code> / <code>failed</code></td><td>The agent stopped before the end of its task, or an error stopped the agent. A <code>stopped</code> phase has a <code>stop_reason</code>. The value is <code>cancelled</code> when a person or a shutdown stopped the agent. If not, the value is the limit that stopped the agent: <code>turn_limit</code>, <code>deadline</code>, <code>cost_cap</code>, or <code>refused_calls</code>. Old records can show a <code>turn_limit</code> phase for a limit stop.</td></tr>
         <tr><td><code>team_completed</code></td><td>Every member of a team has finished.</td></tr>
       </tbody>
     </table></div>

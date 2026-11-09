@@ -161,8 +161,8 @@ def ensure_running_task(
     meta: dict | None = None,
 ) -> str:
     """Create the row if it does not exist, otherwise put it back into the
-    running state (a resumed agent keeps its id and its record). Returns the
-    task id."""
+    running state (a resumed agent keeps its id and its record), owned by
+    this process like a new row. Returns the task id."""
     _ensure_table()
     now = _utc_now_iso()
     try:
@@ -175,7 +175,7 @@ def ensure_running_task(
             else:
                 conn.execute(
                     "UPDATE agent_tasks SET status='running', exit_code=NULL, result_text='', "
-                    "finished_at=NULL, updated_at=?, pid=?, title=COALESCE(?, title), "
+                    "finished_at=NULL, updated_at=?, owner_pid=?, title=COALESCE(?, title), "
                     "output_path=COALESCE(?, output_path), meta=COALESCE(?, meta) "
                     "WHERE task_id=?",
                     (

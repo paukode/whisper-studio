@@ -124,6 +124,7 @@ describe('chatStore: updateStreamToolUse', () => {
 
 describe('chatStore — approval queue', () => {
   const make = (id: string, action = 'write'): PendingApproval => ({
+    cardId: 'card-1',
     toolUseId: id,
     action,
     category: action === 'cli' || action === 'command' ? 'cli' : action === 'delete' ? 'delete' : 'write',
@@ -193,9 +194,9 @@ describe('chatStore — session usage totals', () => {
     expect(store.getState().sessionOutputTokens).toBe(2_000);
     expect(store.getState().sessionCost).toBeCloseTo(0.3, 6);
 
-    // Turn 2 — setStreaming clears the per-turn fields, so the next frame's
+    // Turn 2: startTurn clears the per-turn fields, so the next frame's
     // totals must add to the session rather than replace it.
-    store.getState().setStreaming(true);
+    store.getState().startTurn('streaming');
     store.getState().setUsage(58_400, 2_012, 0.1679, 58_400, 200_000);
     expect(store.getState().inputTokens).toBe(58_400);
     expect(store.getState().sessionInputTokens).toBe(118_400);
@@ -236,7 +237,7 @@ describe('chatStore: live deliveries', () => {
 
   it('go to the last assistant message when a stream ends with no message to take them', () => {
     store.getState().addMessage(userMessage('write it'));
-    store.getState().setStreaming(true);
+    store.getState().startTurn('streaming');
     store.getState().flushStreamSegment(reply('Saved report.html.'));
     // The frame came after its text was committed, and no text followed.
     store.getState().addLiveDeliveries([report]);
@@ -249,11 +250,11 @@ describe('chatStore: live deliveries', () => {
   });
 
   it('never carry over into the next stream: what one left is settled on its reply first', () => {
-    store.getState().setStreaming(true);
+    store.getState().startTurn('streaming');
     store.getState().addMessage(reply('Pushed main.'));
     store.getState().addLiveDeliveries([push]);
     store.getState().addMessage(userMessage('and tag it'));
-    store.getState().setStreaming(true);
+    store.getState().startTurn('streaming');
     expect(store.getState().messages[0].deliveries).toEqual([push]);
     expect(store.getState().liveDeliveries).toEqual([]);
 
@@ -262,7 +263,7 @@ describe('chatStore: live deliveries', () => {
   });
 
   it('read after their stream was finalized go straight to its reply', () => {
-    store.getState().setStreaming(true);
+    store.getState().startTurn('streaming');
     store.getState().finishStream({ ...reply('Saved report.html. (Stopped)'), stopped: true });
     store.getState().addLiveDeliveries([report]);
     expect(store.getState().messages[0].deliveries).toEqual([report]);
@@ -270,7 +271,7 @@ describe('chatStore: live deliveries', () => {
   });
 
   it('are taken once: a message built outside the store gets them, the next commit does not', () => {
-    store.getState().setStreaming(true);
+    store.getState().startTurn('streaming');
     store.getState().addLiveDeliveries([report]);
     expect(store.getState().takeDeliveries()).toEqual([report]);
     expect(store.getState().takeDeliveries()).toBeUndefined();
@@ -310,5 +311,33 @@ describe('chatStore: wait tools close their wait', () => {
     store.getState().addStreamToolUse(tool('tu_read', 'ws_read_file'));
     store.getState().updateStreamToolUse('tu_read', { status: 'complete', result: 'A' });
     expect(openSpans()).toHaveLength(1);
+  });
+
+  describe('turn phase', () => {
+    it('isStreaming follows the phase, and every startTurn counts a new leg', () => {
+      const store = createChatStore();
+      expect(store.getState().turnPhase).toBe('idle');
+      const a = store.getState().startTurn('preparing');
+      expect(store.getState()).toEqual(expect.objectContaining({ turnPhase: 'preparing', isStreaming: true }));
+      const b = store.getState().startTurn('streaming');
+      expect(b).toBeGreaterThan(a);
+      store.getState().finishStream();
+      expect(store.getState()).toEqual(expect.objectContaining({ turnPhase: 'idle', isStreaming: false }));
+    });
+
+    it('a replaced leg adds its last message but cannot end the leg that replaced it', () => {
+      const store = createChatStore();
+      const old = store.getState().startTurn('streaming');
+      const newer = store.getState().startTurn('streaming');
+      store.getState().appendStreamToken('the newer reply');
+
+      store.getState().finishStream({ role: 'assistant', content: '(Stopped)', timestamp: 't1' }, old);
+
+      expect(store.getState().turnPhase).toBe('streaming');
+      expect(store.getState().currentStreamContent).toBe('the newer reply');
+      expect(store.getState().messages.map((m) => m.content)).toEqual(['(Stopped)']);
+      store.getState().finishStream(undefined, newer);
+      expect(store.getState().turnPhase).toBe('idle');
+    });
   });
 });

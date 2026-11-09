@@ -50,7 +50,7 @@ describe('ChatInput with no usable chat model', () => {
   beforeEach(() => {
     h.send.mockClear();
     useSessionStore.setState({ currentSessionId: 'nomodel', liveSessions: {}, sessions: [] });
-    getChatStore('nomodel').getState().setStreaming(false);
+    getChatStore('nomodel').getState().finishStream();
     useUIStore.setState({ toasts: [] });
   });
 

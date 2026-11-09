@@ -20,6 +20,20 @@ function firstToolWaitReason(reasons: Record<string, WaitKind>, toolId: string):
 }
 
 /**
+ * Where a session's turn is. ONE field, written only by `startTurn` and
+ * `finishStream`; `isStreaming` is derived from it in the same update.
+ *
+ * - `idle`: nothing runs. A card may still wait on the user (currentApproval),
+ *   whichever leg of the turn raised it.
+ * - `preparing`: a send is getting ready (a /file upload) and opens its stream
+ *   next. The code that started it either starts the stream or finishes it.
+ * - `approvedAction`: an action the user approved runs; its continuation
+ *   streams next (hooks/chatStream/approvalLeg).
+ * - `streaming`: a stream is open.
+ */
+export type TurnPhase = 'idle' | 'preparing' | 'approvedAction' | 'streaming';
+
+/**
  * Generic pending approval. The shape is the same regardless of action —
  * `preview` tells the banner which renderer to use, `payload` carries
  * preview-specific fields (e.g. {path, original, content} for diff,
@@ -27,6 +41,9 @@ function firstToolWaitReason(reasons: Record<string, WaitKind>, toolId: string):
  */
 
 export interface PendingApproval {
+  /** The server's id for this card (server/approval/cards.py): the Yes runs
+   *  what the server recorded under it, once. */
+  cardId: string;
   toolUseId: string;
   action: string;
   category: string;
@@ -65,6 +82,12 @@ export interface AutoModeBreaker {
 
 export interface ChatState {
   messages: ChatMessage[];
+  /** See TurnPhase. */
+  turnPhase: TurnPhase;
+  /** Counts startTurn calls, so a leg that awaited something can tell that
+   *  its turn was stopped or replaced meanwhile. */
+  turnSeq: number;
+  /** turnPhase !== 'idle'. Derived: never written on its own. */
   isStreaming: boolean;
   currentStreamContent: string;
   currentThinkingContent: string;
@@ -181,11 +204,15 @@ export interface ChatState {
   /** Return the live deliveries (undefined when none) and clear them, for a
    *  commit site that builds its message outside the store. */
   takeDeliveries: () => Delivery[] | undefined;
-  setStreaming: (streaming: boolean) => void;
-  /** Atomically stop streaming and add the final message in one render pass.
-   *  The final message takes the live deliveries; without one, the last
-   *  assistant message does. */
-  finishStream: (message?: ChatMessage) => void;
+  /** Enter a turn phase other than idle, with fresh per-turn live state.
+   *  Returns the new turnSeq. */
+  startTurn: (phase: Exclude<TurnPhase, 'idle'>) => number;
+  /** Back to idle, adding the final message in the same render pass. The
+   *  final message takes the live deliveries; without one, the last
+   *  assistant message does. The only way out of a turn phase. `leg` is the
+   *  turnSeq the caller's startTurn returned: when a newer leg started since,
+   *  only the message is added. Stop passes none: it always ends the turn. */
+  finishStream: (message?: ChatMessage, leg?: number) => void;
   /** Commit what the turn has streamed SO FAR as its own assistant message and
    *  reset the live accumulators, WITHOUT ending the turn. Used right before a
    *  standalone card (workflow approval, workspace picker, CI status) is
@@ -297,6 +324,8 @@ function settleDeliveries(messages: ChatMessage[], live: Delivery[]): ChatMessag
  */
 export const createChatStore = () => createStore<ChatState>()((set, get) => ({
   messages: [],
+  turnPhase: 'idle',
+  turnSeq: 0,
   isStreaming: false,
   currentStreamContent: '',
   currentThinkingContent: '',
@@ -435,65 +464,58 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
     return live;
   },
 
-  setStreaming: (streaming: boolean) => {
+  startTurn: (phase: Exclude<TurnPhase, 'idle'>) => {
     // Deliveries a stream left untaken belong to the text it committed, never
     // to the next stream's. Messages the model never read were still sent:
     // they follow the stream's last row.
-    const { messages, liveDeliveries, pendingMidTurn } = get();
-    const settled = {
+    const { messages, liveDeliveries, pendingMidTurn, turnSeq } = get();
+    const seq = turnSeq + 1;
+    set({
       messages: withPendingNotes(settleDeliveries(messages, liveDeliveries), pendingMidTurn),
       liveDeliveries: [],
       pendingMidTurn: [],
-    };
-    if (streaming) {
-      set({
-        ...settled,
-        isStreaming: true,
-        currentStreamContent: '',
-        currentThinkingContent: '',
-        thinkingOpen: false,
-        streamStatus: null,
-        currentStreamToolUse: [],
-        currentStreamLabels: [],
-        // A fresh turn starts with a clean live report — a prior turn that
-        // errored before its commit site could take them must not leak here.
-        liveTeamReports: {},
-        thinkingStartTime: performance.now(),
-        thinkingElapsedMs: 0,
-        // A card still on screen from the last stream keeps waiting.
-        ...(get().currentApproval
-          ? beginWait({ waitSpans: [], waitReasons: {} }, 'approval', 'user', performance.now())
-          : { waitSpans: [], waitReasons: {} }),
-        inputTokens: 0,
-        outputTokens: 0,
-        estimatedCost: 0,
-        contextUsed: 0,
-        contextMax: 0,
-        sseEventCount: 0,
-        lastToolName: null,
-        lastToolOutput: null,
-        lastToolError: null,
-      });
-    } else {
-      set({
-        ...settled,
-        isStreaming: false,
-        streamStatus: null,
-        currentStreamContent: '',
-        currentThinkingContent: '',
-        thinkingOpen: false,
-        currentStreamToolUse: [],
-        currentStreamLabels: [],
-        thinkingStartTime: null,
-        ...endAllWaits(get(), performance.now()),
-      });
-    }
+      turnPhase: phase,
+      turnSeq: seq,
+      isStreaming: true,
+      currentStreamContent: '',
+      currentThinkingContent: '',
+      thinkingOpen: false,
+      streamStatus: null,
+      currentStreamToolUse: [],
+      currentStreamLabels: [],
+      // A fresh turn starts with a clean live report: a prior turn that
+      // errored before its commit site could take them must not leak here.
+      liveTeamReports: {},
+      thinkingStartTime: performance.now(),
+      thinkingElapsedMs: 0,
+      // A card still on screen from the last stream keeps waiting.
+      ...(get().currentApproval
+        ? beginWait({ waitSpans: [], waitReasons: {} }, 'approval', 'user', performance.now())
+        : { waitSpans: [], waitReasons: {} }),
+      inputTokens: 0,
+      outputTokens: 0,
+      estimatedCost: 0,
+      contextUsed: 0,
+      contextMax: 0,
+      sseEventCount: 0,
+      lastToolName: null,
+      lastToolOutput: null,
+      lastToolError: null,
+    });
+    return seq;
   },
 
-  finishStream: (message?: ChatMessage) => {
+  finishStream: (message?: ChatMessage, leg?: number) => {
     set((state) => {
+      // A newer leg took the session over (a re-send replaced this stream):
+      // this leg's final message still lands, the newer leg keeps its phase
+      // and live state.
+      if (leg !== undefined && leg !== state.turnSeq) {
+        return message ? { messages: [...state.messages, message] } : {};
+      }
       const live = state.liveDeliveries;
       return {
+        turnPhase: 'idle',
         isStreaming: false,
         streamStatus: null,
         currentStreamContent: '',
@@ -566,6 +588,7 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
       currentStreamContent: '',
       currentThinkingContent: '',
       thinkingOpen: false,
+      turnPhase: 'idle',
       isStreaming: false,
     });
   },
@@ -672,7 +695,7 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
 
   setUsage: (input: number, output: number, cost?: number, contextUsed?: number, contextMax?: number) => {
     // Usage frames carry running totals for the CURRENT turn, and every stream
-    // start resets the per-turn fields (see setStreaming), so the growth since
+    // start resets the per-turn fields (see startTurn), so the growth since
     // the last frame is what the session totals accrue. Clamped at 0: a turn
     // that ends and restarts (approval resume, retry) begins its own count
     // again, and that must never subtract from the session.

@@ -114,9 +114,11 @@
     </div>
 
     <h3 id="stop-reasons">Stop reasons</h3>
-    <p>Run status stays coarse (<code>completed</code>, <code>failed</code>, <code>stopped</code>) for
-      callers that branch on it. The stop reason names the limit that actually ended the run, and it is
-      what the cards and the parent's summary show:</p>
+    <p>The stop reason is the only result that a run records. The run status (<code>completed</code>,
+      <code>stopped</code>, or <code>failed</code>) comes from the stop reason. The status is
+      <code>completed</code> when the agent completed its task. The status is <code>stopped</code> after
+      a limit or a cancel. The status is <code>failed</code> after an error. The cards, the task list, and
+      the summary for the parent agent use the same status:</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Stop reason</th><th>Meaning</th></tr></thead>
       <tbody>

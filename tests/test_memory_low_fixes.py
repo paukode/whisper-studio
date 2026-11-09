@@ -160,13 +160,10 @@ def test_a_summary_run_cut_short_keeps_the_last_summary(monkeypatch, tmp_path):
     run.update(
         output="[Agent stopped - reached turn limit (5)]\n\n## Goals\n- partial",
         stop_reason="turn_limit",
-        stopped_early=True,
     )
     asyncio.run(session_memory._run_session_update(messages, "sess-cap", model))
     assert session_memory.load_session_memory("sess-cap") == good
 
-    run.update(
-        output="## Goals\n- ship the release tonight", stop_reason="completed", stopped_early=False
-    )
+    run.update(output="## Goals\n- ship the release tonight", stop_reason="completed")
     asyncio.run(session_memory._run_session_update(messages, "sess-cap", model))
     assert session_memory.load_session_memory("sess-cap") == run["output"]

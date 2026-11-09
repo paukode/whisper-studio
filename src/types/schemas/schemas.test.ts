@@ -175,6 +175,7 @@ describe('SSEEventDataSchema', () => {
   it('parses approval event', () => {
     const input = {
       approval_request: {
+        card_id: 'card_1',
         tool_use_id: 'tu_1',
         action: 'file_write',
         category: 'write',
@@ -186,6 +187,7 @@ describe('SSEEventDataSchema', () => {
     const result = SSEEventDataSchema.safeParse(input);
     expect(result.success).toBe(true);
     if (result.success) {
+      expect(result.data.approval_request?.card_id).toBe('card_1');
       expect(result.data.approval_request?.action).toBe('file_write');
       expect(result.data.approval_request?.preview).toBe('diff');
     }
