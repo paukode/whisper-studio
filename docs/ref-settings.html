@@ -439,13 +439,11 @@
       pipeline uses these values.</p>
 
     <h2 id="permission-modes">Permission modes</h2>
-    <p>The permission mode controls how the assistant is gated when it wants to run a tool. The live
-      value is the <code>mode</code> key in <code class="path">permissions.json</code>, written by both
-      the permission mode chip in the chat input and Settings &gt; Keys and permissions &gt; Permissions. An unattended run
-      (scheduled or headless) always uses <code>default</code>. Per-tool rules under Settings &gt; Keys and permissions &gt;
-      Permissions decide only after the always-ask floors, Bypass, trusted skills and your session
-      approvals, so a rule has no effect in Bypass. <a href="#category-modes">Per-category
-      defaults</a> below pin a mode for one kind of action.</p>
+    <p>The permission mode decides which tool calls run, which ask first and which the app refuses. The live
+      value is the <code>mode</code> key in <code class="path">permissions.json</code>. Only the
+      permission mode chip in the composer writes it, and the file holds no other key. The mode is
+      the only permission setting: there are no per-category rows, no custom rules and no network
+      tiers. An unattended run (scheduled or headless) always uses <code>default</code>.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Value</th><th>Behavior</th></tr></thead>
       <tbody>
@@ -466,49 +464,35 @@
       opt-in: the classifier runs on every call that would otherwise ask. See
       <a href="arch-approval.html">Approval &amp; permissions</a> for the classifier and the pause-and-resume flow.</p>
 
-    <h3 id="category-modes">Per-category approval defaults</h3>
-    <p>Beyond the single global mode above, <code class="path">permissions.json</code> can carry a
-      <code>category_modes</code> object: a per-category override keyed by the approval categories
-      the app declares (the Permissions panel shows a row for each: <code>write</code>,
-      <code>delete</code>, <code>cli</code>, <code>save</code>, <code>worktree</code>,
-      <code>preview</code>, <code>folder-access</code>, <code>github</code>,
-      <code>github-destructive</code>, <code>mcp</code>, <code>mcp-elicit</code>,
-      <code>office-script</code>, <code>cron</code>, <code>config</code> and
-      <code>secret-read</code>), plus the policy-only <code>workflow</code> entry described below. A
-      category with no entry uses the global mode, so you can, for example, leave the global mode at
-      <code>default</code> while setting <code>category_modes.cli</code> to
-      <code>bypassPermissions</code> so shell commands stop asking while file writes and deletes
-      still ask. The always-ask floors below still apply.</p>
-    <p>Two things always ask, no matter what the global mode, a category override, a bypass mode,
-      a custom rule or a blanket session approval says: <b><code>github-destructive</code></b> (repo
-      or ref deletion, PR merge, archive or rename, a raw API DELETE), and a call to an MCP server
-      configured with <code>approval_mode: "approve"</code>. In <code>dontAsk</code> (the global mode
-      or the <code>github-destructive</code> row) a destructive GitHub action is denied instead,
-      because that mode never shows a card. Three more ask in every mode except
-      <code>bypassPermissions</code>: any command that is <b><code>rm</code></b> or a close cousin
-      of it and deletes outside the connected workspace and the app's own folders (a delete inside
-      them follows the mode), any tool call asking for
-      <b><code>sandbox_permissions: "danger-full-access"</code></b>, and a
-      <code>terminal_run</code> typed into your visible terminal. Bypass has no workspace boundary:
-      a file saved to a path outside the workspace and the first reach into a new folder run with no
-      card. A category row that names another mode still decides that category in Bypass. The
-      command validator refuses <code>rm -rf /</code> in every mode.</p>
-    <p><code>workflow</code> is the one entry that is not an approval-card category. It is read by
-      <code class="path">server/workflows/launch_policy.py</code> when the model launches a new
-      <a href="arch-ultracode.html">ultracode workflow</a> script: <code>bypassPermissions</code>
-      launches with no card, <code>auto</code> launches a run whose budget is within the 600,000
-      output-token default and cards anything larger, <code>dontAsk</code> declines the launch, and any
-      other mode shows the phase-preview card. Trusted saved workflows and resumes skip the gate, and
-      no mode relaxes the runtime's server-side caps.</p>
-
-    <h3 id="rule-testing">Rule justification and dry-run testing</h3>
-    <p>Each permission rule can carry an optional <code>justification</code> string, an audit-trail
-      note with no effect on evaluation, useful for remembering why a rule exists. Before saving a new
-      rule, the rule editor's <b>Test this rule</b> button dry-runs a draft rule list against
-      <code>POST /api/permissions/rules/test</code> without persisting anything, so you can check its
-      effect first. Every rule change (add, edit, or the dry-run) also returns <b>shadowed-rule
-      warnings</b> when an earlier rule in the list already matches everything a later one would, so a
-      rule that can never fire gets flagged instead of silently doing nothing.</p>
+    <h3 id="floors">The always-ask floors</h3>
+    <p>Two actions always ask, in every mode and after a session approval:
+      <b><code>github-destructive</code></b> (repository or ref deletion, PR merge, archive or
+      rename, a raw API DELETE), and a call to an MCP server configured with
+      <code>approval_mode: "approve"</code>. In <code>dontAsk</code>, the app denies a destructive
+      GitHub action, because that mode never shows a card.</p>
+    <p>Three more actions ask in every mode except <code>bypassPermissions</code>:</p>
+    <ul>
+      <li>A command that is <b><code>rm</code></b> or a close cousin of it and deletes outside the
+        connected workspace and the app's own folders. A delete inside them follows the mode.</li>
+      <li>A tool call that asks for <b><code>sandbox_permissions: "danger-full-access"</code></b>.</li>
+      <li>A <code>terminal_run</code> typed into your visible terminal.</li>
+    </ul>
+    <p>Bypass has no workspace boundary: a file saved to a path outside the workspace and a folder
+      opened outside it run with no card. The command validator refuses <code>rm -rf /</code> in
+      every mode.</p>
+    <p>A folder outside the workspace follows the mode each time. The app does not remember an
+      earlier Yes for a folder.</p>
+    <p>The mode also decides the start of a new <a href="arch-ultracode.html">ultracode workflow</a>
+      script (<code class="path">server/workflows/launch_policy.py</code>):</p>
+    <ul>
+      <li><code>bypassPermissions</code> starts it with no card.</li>
+      <li><code>auto</code> starts a run with no card when its budget is in the 600,000
+        output-token default, and shows a card for a larger budget.</li>
+      <li><code>dontAsk</code> refuses the start.</li>
+      <li>Each other mode shows the phase-preview card.</li>
+    </ul>
+    <p>Trusted saved workflows and resumes skip this gate. No mode changes the server-side caps of
+      the runtime.</p>
 
     <h3 id="auto-mode-breaker">The auto-mode circuit breaker</h3>
     <p>Because the <code>auto</code> classifier judges one tool call at a time, it can drift over a
@@ -517,18 +501,6 @@
       classifier denials or <b>5 denials in the last 10</b> classifier calls. A tripped breaker surfaces
       as an <code>AutoModeBreakerBanner</code> in the UI with a one-click <b>resume</b>; the breaker
       itself resets automatically at the start of the next new turn.</p>
-
-    <h3 id="network-policy">Network egress policy</h3>
-    <p>Sandboxed commands (<code>ws_run_command</code>, <code>terminal_run</code>, and friends) are
-      network-open by default, matching the app's single-trusted-user assumption. An opt-in
-      <code>network_policy</code> object in <code class="path">permissions.json</code> tightens that:
-      a <code>tier</code> of <code>permissive</code> (default, unrestricted), <code>curated</code>, or
-      <code>restrictive</code>, plus a <code>custom_allowed_domains</code> list and a
-      <code>methods_only_safe</code> flag. In a non-permissive tier, sandboxed commands are forced
-      through a local SNI-filtering proxy (it never decrypts traffic, only reads the TLS ClientHello
-      hostname) that enforces the domain allowlist; see
-      <a href="ref-security.html#egress">the egress policy</a> for the enforcement details and
-      documented limitations.</p>
 
     <h2 id="mcp-fields">Per-server MCP fields</h2>
     <p>Each connected MCP server (Settings &gt; Tools and automation &gt; MCP servers) carries its own

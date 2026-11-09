@@ -214,7 +214,7 @@ def exec_web_search(tool_input, transcript, current_attachments):
         )
     # Tier 3: nothing set up — guide the user to configure a provider.
     return (
-        "Web search isn't set up. Add a Tavily API key in Settings → API Keys, or add and "
+        "Web search isn't set up. Add a Tavily API key in Settings → General, or add and "
         "enable an Amazon Bedrock AgentCore MCP server (browser tools) in Settings → MCP to "
         "search the web using your AWS account."
     )
