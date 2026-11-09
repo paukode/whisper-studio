@@ -209,6 +209,13 @@ export function useChatInputMic(opts: UseChatInputMicOptions): UseChatInputMicRe
           ws.addEventListener('close', () => reject(new Error('WebSocket closed')), { once: true });
         }),
       );
+      // Open: from here a close of this socket is the server ending the
+      // session (teardown() takes it out of wsRef before closing it). It ends
+      // dictation through the Stop button's path, so the hook never shows a
+      // recording on a dead socket while unsent audio piles up.
+      ws.onclose = () => {
+        if (wsRef.current === ws) stop();
+      };
 
       // 2. Mic + AudioWorklet — shared refcounted acquisition. If the
       // meeting recorder is already running, this returns the same
@@ -251,7 +258,7 @@ export function useChatInputMic(opts: UseChatInputMicOptions): UseChatInputMicRe
       setIsConnecting(false);
       setIsRecording(false);
     }
-  }, [isRecording, isConnecting, startGuard, flushPcm, teardown, sessionId]);
+  }, [isRecording, isConnecting, startGuard, flushPcm, teardown, stop, sessionId]);
 
   const toggle = useCallback(() => {
     if (isRecording || isConnecting) stop();
