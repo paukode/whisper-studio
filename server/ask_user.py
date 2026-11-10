@@ -28,7 +28,8 @@ ASK_USER_TOOL = {
         "approved a plan or told you to go on. "
         "When real decisions remain, batch them into one numbered list at the end of a stage, "
         "and keep working on everything that does not depend on them. "
-        "Always include an 'Other (please specify)' option."
+        "Give exactly the options the user asked for, each one a real answer. The card always "
+        "shows a text field for an answer of the user's own, so do not add an 'Other' option."
     ),
     "input_schema": {
         "type": "object",
@@ -40,7 +41,10 @@ ASK_USER_TOOL = {
             "options": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "List of choices. Always add 'Other (please specify)' as the last option.",
+                "description": (
+                    "The choices, each one a real answer. Do not add 'Other': the card has its "
+                    "own text field."
+                ),
             },
         },
         "required": ["question", "options"],

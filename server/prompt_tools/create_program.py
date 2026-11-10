@@ -53,7 +53,6 @@ Call `ask_user_question` with:
 - options:
   - "Single HTML page (preview and download inline)"
   - "Modular app (separate HTML, CSS, JS files saved to a folder)"
-  - "Other (please specify)"
 
 Wait for the user's response before continuing.
 
@@ -100,7 +99,7 @@ most of the file.
 
 1. **Location.** If the user has not already named a target folder, ask with
    `ask_user_question` where the project should be saved (offer the connected
-   workspace when one is present, plus "Other (please specify)"). Never write
+   workspace when one is present; the card's text field takes any other path). Never write
    files without a confirmed destination.
 2. **Plan the file layout.** Keep it minimal and conventional: `index.html`,
    `css/styles.css`, `js/main.js` (or `app.js`), plus extra modules only when

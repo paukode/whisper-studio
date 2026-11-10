@@ -59,7 +59,8 @@ Run these checks sequentially:
 
 Call `ask_user_question`:
 - question: "Which GitHub repository should I set up? (format: owner/repo)"
-- options: [the detected repo from step 1 (if found), "Other (please specify)"]
+- options: [the detected repo from step 1], or [] when step 1 found none (the card's
+  text field takes any other repo)
 
 Wait for the answer. Use it as `REPO`.
 
@@ -114,7 +115,7 @@ gh secret set {SECRET_NAME} --app actions --repo {REPO}
 For OAuth, first run `claude setup-token` to obtain the token.
 
 **If they paste it**: collect it with `ask_user_question` ("Paste the value:",
-options: ["Other (please specify)"]). Then store it via stdin, never inline:
+options: [], so the card shows only its text field). Then store it via stdin, never inline:
 1. `ws_create_file` a temp file `.claude_secret_tmp` containing only the value
 2. `ws_run_command("gh secret set {SECRET_NAME} --app actions --repo {REPO} < .claude_secret_tmp")`
 3. `ws_delete_file` the temp file immediately, regardless of success
