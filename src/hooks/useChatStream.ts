@@ -94,8 +94,13 @@ export function buildDisplayQuestion(
 }
 
 /** The user-facing parallelism ceiling: how many sessions may be ACTIVE
- *  (streaming / mid-approval / recording) at once. */
-export const MAX_ACTIVE_SESSIONS = 3;
+ *  (streaming / mid-approval / recording) at once. The transport sets no
+ *  lower bound: each active session's stream is a WebSocket
+ *  (src/api/streamSocket.ts), which the web view's 6-connection limit does
+ *  not count, and on the server each model call runs on a thread of its own
+ *  (server/infrastructure/own_thread.py). The chat tool pool
+ *  (server/chat/__init__.py) is sized from this number. */
+export const MAX_ACTIVE_SESSIONS = 8;
 
 /** A JSON answer from /api/chat: the "queued into the running turn" reply
  *  (server/chat/routes.py) or a refusal carrying its reason. */

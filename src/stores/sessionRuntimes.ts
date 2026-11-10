@@ -37,9 +37,10 @@ import type { AgentProgressEvent } from './agentFeedStore';
  *  Never saved, never evicted, never event-sourced. */
 export const DRAFT_SESSION = '__draft__';
 
-/** How many session runtimes stay in memory (the user-facing "3 active
- *  sessions"). The cap is soft: busy sessions are never evicted, so the
- *  registry may transiently exceed it until one goes idle. */
+/** How many idle session runtimes stay in memory. It does not limit how
+ *  many sessions run (MAX_ACTIVE_SESSIONS in useChatStream.ts does): the cap
+ *  is soft, busy sessions are never evicted, so the registry may exceed it
+ *  until they go idle. */
 export const MAX_LIVE_RUNTIMES = 3;
 
 export interface RuntimeEntry {
