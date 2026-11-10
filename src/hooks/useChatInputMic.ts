@@ -247,7 +247,7 @@ export function useChatInputMic(opts: UseChatInputMicOptions): UseChatInputMicRe
           () => void releaseNativeMic(MIC_OWNER),
         );
       } else {
-        // 2. Mic + AudioWorklet — shared refcounted acquisition. If the
+        // 2. Mic + AudioWorklet: shared refcounted acquisition. If the
         // meeting recorder is already running, this returns the same
         // MediaStream + AudioContext rather than spawning a competing
         // getUserMedia call (which the OS often resolves with a silent
