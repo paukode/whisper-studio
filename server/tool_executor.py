@@ -43,14 +43,14 @@ from server.utils import ndjson_dumps
 
 # What a paused ask_user_question's tool_result says until the answer arrives,
 # and what the continuation puts there when it brought no answer for it
-# (server/chat/routes._resume_messages).
+# (server/chat/resume.resume_messages).
 ASK_PAUSE_MARKER = "[ASK_USER_PAUSE] Awaiting answer; will be replaced on continuation."
 ASK_UNANSWERED = (
     "[No answer] The user did not answer this question. Ask it again if you still need the answer."
 )
 # What the row of a call that needed a workspace says while the folder card
 # waits: the call never ran. The model's own placeholder for it is replaced
-# by the card's answer on the continuation (routes._resume_messages).
+# by the card's answer on the continuation (server/chat/resume.resume_messages).
 WS_PROMPT_NOT_RUN = "[Not executed] No workspace was connected, so this call did not run."
 
 log = logging.getLogger("whisper-studio")

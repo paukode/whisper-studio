@@ -127,6 +127,10 @@ export interface ChatState {
   approvalQueue: PendingApproval[];
   /** Currently displayed approval */
   currentApproval: PendingApproval | null;
+  /** tool_use_ids of cards the user closed by sending a message instead of
+   *  answering them (chatStream/waitingCards). The next request names them,
+   *  so the server resumes their paused turn with them closed. */
+  skippedCards: string[];
 
   /** Session approval memory — per-category allow/deny/ask */
   sessionApprovals: SessionApprovals;
@@ -246,6 +250,9 @@ export interface ChatState {
    *  queued ones: their turn is gone (Clear, Reset session) or a new message
    *  answered them. */
   dropApprovals: () => void;
+  addSkippedCards: (ids: readonly string[]) => void;
+  /** Forget these closed cards: a request carrying them was accepted. */
+  clearSkippedCards: (ids: readonly string[]) => void;
   setSessionApproval: (category: ApprovalCategory, mode: SessionApprovalMode) => void;
   resetSessionApprovals: () => void;
 
@@ -342,6 +349,7 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
   pendingMidTurn: [],
   approvalQueue: [],
   currentApproval: null,
+  skippedCards: [],
   sessionApprovals: { ...DEFAULT_SESSION_APPROVALS },
   sessionDenials: {},
   autoModeBreaker: null,
@@ -589,6 +597,7 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
       messages: [],
       liveDeliveries: [],
       pendingMidTurn: [],
+      skippedCards: [],
       currentStreamContent: '',
       currentThinkingContent: '',
       thinkingOpen: false,
@@ -662,6 +671,14 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
       approvalQueue: [],
       ...endWait(state, 'approval', performance.now()),
     }));
+  },
+
+  addSkippedCards: (ids: readonly string[]) => {
+    set((state) => ({ skippedCards: [...state.skippedCards, ...ids.filter((id) => !state.skippedCards.includes(id))] }));
+  },
+
+  clearSkippedCards: (ids: readonly string[]) => {
+    set((state) => ({ skippedCards: state.skippedCards.filter((id) => !ids.includes(id)) }));
   },
 
   setSessionApproval: (category: ApprovalCategory, mode: SessionApprovalMode) => {

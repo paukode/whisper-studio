@@ -12,6 +12,7 @@ import { useSessionStore } from '@/stores/sessionStore';
 import { useUIStore } from '@/stores/uiStore';
 import { toError } from '@/utils/toError';
 import { killSessionStream } from './streamControl';
+import { dropWaitingCards } from './waitingCards';
 
 /**
  * End the server side of the session's turn (stream slot, paused turn,
@@ -20,7 +21,7 @@ import { killSessionStream } from './streamControl';
  * refuses to run a card of a reset turn.
  */
 export async function resetSession(sessionId: string): Promise<boolean> {
-  getChatStore(sessionId).getState().dropApprovals();
+  dropWaitingCards(sessionId);
   try {
     await resetChatSession(sessionId);
     return true;

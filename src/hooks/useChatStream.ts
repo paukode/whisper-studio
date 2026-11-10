@@ -42,6 +42,7 @@ import {
   releaseStreamController,
   wasKillFinalized,
 } from './chatStream/streamControl';
+import { closeWaitingCards } from './chatStream/waitingCards';
 
 export interface SendOptions {
   forceSkill?: string;
@@ -229,6 +230,12 @@ export async function sendChatTurn(question: string, opts?: SendOptions): Promis
 
   const isContinuation = !!opts?.approvedToolResult;
 
+  // A new message closes the cards the session waits on and continues
+  // their paused turn (./chatStream/waitingCards). A wake is the app's own
+  // turn, not the user's answer, so it leaves them.
+  if (!isContinuation && !opts?.runtimeWake) closeWaitingCards(activeSessionId);
+  const skippedCards = isContinuation || opts?.runtimeWake ? [] : [...store().skippedCards];
+
   // Add user message (unless hidden or continuation)
   if (!opts?.hideUserMessage && !isContinuation) {
     const displayQuestion = buildDisplayQuestion(question, opts);
@@ -304,6 +311,7 @@ export async function sendChatTurn(question: string, opts?: SendOptions): Promis
     session_denials: store().sessionDenials,
     session_approvals: store().sessionApprovals,
     approved_tool_result: opts?.approvedToolResult ?? null,
+    ...(skippedCards.length > 0 ? { skipped_cards: skippedCards } : {}),
     // Indexes the user selected for this session. Send the stored
     // selection verbatim; when there's no entry yet (a brand-new session whose
     // id was just minted here, so ChatInput's seeding effect hasn't run), send
@@ -378,6 +386,8 @@ export async function sendChatTurn(question: string, opts?: SendOptions): Promis
     if (!response.ok || !response.body) {
       throw new Error(`Chat request failed: ${response.status}`);
     }
+    // The server resumed their turn: the closed cards are spent.
+    if (skippedCards.length > 0) store().clearSkippedCards(skippedCards);
 
     const result = await readSSEStream(response, activeSessionId, controller.signal, settingsForTurn);
     // A kill switch may have finalized this stream while the read loop was

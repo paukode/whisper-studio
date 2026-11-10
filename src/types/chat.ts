@@ -193,6 +193,8 @@ export interface ChatMessage {
     toolUseId: string;
     answered?: boolean;
     answer?: string;
+    /** Closed unanswered: the user sent a message instead (chatStream/waitingCards). */
+    skipped?: boolean;
   };
   userQuestions?: Array<{
     question: string;
@@ -200,6 +202,8 @@ export interface ChatMessage {
     toolUseId: string;
     answered?: boolean;
     answer?: string;
+    /** Closed unanswered: the user sent a message instead (chatStream/waitingCards). */
+    skipped?: boolean;
   }>;
   /** On the message that carries a question card or a workspace-folder
    *  prompt: the settings of the turn that paused on it. The answer resumes

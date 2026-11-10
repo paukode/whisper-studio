@@ -27,7 +27,7 @@ import { useChatStream } from '@/hooks/useChatStream';
 import { ACTIVITY_MIN_RUN, groupAgentTools, groupForActivity, isActivityEntry } from '@/components/chat/AgentCard';
 import { captionIn, traceRuns, turnEntries } from '@/components/chat/turnEntries';
 import { APPROVED_ACTION_STATUS, answerApproval } from './approvalLeg';
-import { hasLiveStream, killSessionStream, registerStreamController } from './streamControl';
+import { hasLiveStream, killSessionStream } from './streamControl';
 
 let finishAction: ((outcome: ApprovalOutcome) => void) | null = null;
 const executeApproval = vi.fn();
@@ -619,17 +619,21 @@ describe('approval leg', () => {
     });
   });
 
-  it('refuses to resume into a session another stream owns, and keeps the card', async () => {
-    registerStreamController(SID, new AbortController());
+  it.each(['streaming', 'starting'] as const)(
+    'refuses to resume while the session is busy (%s), and keeps the card',
+    async (phase) => {
+      // 'starting' is a /file turn uploading its file: no stream is open yet.
+      const leg = getChatStore(SID).getState().startTurn(phase);
 
-    let answered: boolean | undefined;
-    await act(async () => {
-      answered = await answerApproval(approval(), true, false);
-    });
+      let answered: boolean | undefined;
+      await act(async () => {
+        answered = await answerApproval(approval(), true, false);
+      });
 
-    expect(answered).toBe(false);
-    expect(executeApproval).not.toHaveBeenCalled();
-    expect(getChatStore(SID).getState().currentApproval?.toolUseId).toBe('tu_dev');
-    killSessionStream(SID);
-  });
+      expect(answered).toBe(false);
+      expect(executeApproval).not.toHaveBeenCalled();
+      expect(getChatStore(SID).getState().currentApproval?.toolUseId).toBe('tu_dev');
+      getChatStore(SID).getState().finishStream(undefined, leg);
+    },
+  );
 });

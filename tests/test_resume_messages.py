@@ -1,5 +1,5 @@
 """How a continuation turn (approval decision / ask_user answer) rebuilds its
-message list — server/chat/routes._resume_messages.
+message list: server/chat/resume.resume_messages.
 
 Two paths, and the second one used to be broken in a way that never surfaced:
 
@@ -18,7 +18,7 @@ Two paths, and the second one used to be broken in a way that never surfaced:
 """
 
 from server.chat.compaction import sanitize_tool_pairs
-from server.chat.routes import _resume_messages
+from server.chat.resume import resume_messages as _resume_messages
 
 
 def _paused():
@@ -171,4 +171,59 @@ def test_a_question_left_unanswered_gets_a_plain_note_not_the_pause_marker():
 
     blocks = {b["tool_use_id"]: b["content"] for b in out[-1]["content"]}
     assert blocks == {"tu_1": "capacity-planner", "tu_2": ASK_UNANSWERED}
+    assert sanitize_tool_pairs(out) == out
+
+
+# A new message sent while the cards waited (server/chat/resume.resume_with_message).
+
+
+def test_a_new_message_closes_the_waiting_approval_and_joins_the_same_turn():
+    """The user typed instead of answering the card: the paused call is closed
+    as not run, and the message sits after its tool_result in one user turn."""
+    from server.chat.resume import CARD_SKIPPED, resume_with_message
+
+    history = [{"role": "user", "content": "client history, without the tool call"}]
+    new_message = {"role": "user", "content": "Stop here. Tell me what two.txt contains."}
+
+    out = resume_with_message([*history, new_message], ["tu_1"], _paused())
+
+    assert out[:-1] == _paused()["messages"]
+    tool_result, text = out[-1]["content"]
+    assert tool_result == {"type": "tool_result", "tool_use_id": "tu_1", "content": CARD_SKIPPED}
+    assert text == {"type": "text", "text": new_message["content"]}
+    assert sanitize_tool_pairs(out) == out
+
+
+def test_a_skipped_question_says_not_answered_and_keeps_the_message_files():
+    from server.chat.resume import resume_with_message
+    from server.tool_executor import ASK_PAUSE_MARKER, ASK_UNANSWERED
+
+    paused = _paused()
+    paused["pending_tool_results"] = [
+        {"type": "tool_result", "tool_use_id": "tu_1", "content": ASK_PAUSE_MARKER}
+    ]
+    image = {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "x"}}
+    new_message = {"role": "user", "content": [image, {"type": "text", "text": "What is this?"}]}
+
+    out = resume_with_message([new_message], ["tu_1"], paused)
+
+    assert out[-1]["content"] == [
+        {"type": "tool_result", "tool_use_id": "tu_1", "content": ASK_UNANSWERED},
+        image,
+        {"type": "text", "text": "What is this?"},
+    ]
+
+
+def test_a_skipped_card_after_a_restart_is_replayed_as_text_before_the_message():
+    from server.chat.resume import CARD_SKIPPED, resume_with_message
+
+    history = [{"role": "user", "content": "make me a branch"}]
+    new_message = {"role": "user", "content": "Never mind, list the branches."}
+
+    out = resume_with_message([*history, new_message], ["tu_1"], None)
+
+    assert out[0] == history[0]
+    replay, text = out[-1]["content"]
+    assert CARD_SKIPPED in replay["text"]
+    assert text["text"] == new_message["content"]
     assert sanitize_tool_pairs(out) == out

@@ -8,11 +8,14 @@
  * finished uploads its workspace file again (./workspaceFileTurn). A message
  * that names a file the app has no copy of is not sent without it: the user
  * is told instead, because the model would answer about some other file.
+ * The cut also ends the turn a card waits on, so its cards go without
+ * resuming it (./waitingCards).
  */
 import { getChatStore } from '@/stores/sessionRuntimes';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useUIStore } from '@/stores/uiStore';
 import { sendChatTurn } from '../useChatStream';
+import { dropWaitingCards } from './waitingCards';
 import { askAboutWorkspaceFile } from './workspaceFileTurn';
 
 export function resendUserMessage(index: number, content?: string): void {
@@ -32,11 +35,13 @@ export function resendUserMessage(index: number, content?: string): void {
       });
       return;
     }
+    if (sessionId) dropWaitingCards(sessionId);
     chat.deleteMessagesFrom(index);
     askAboutWorkspaceFile(sessionId, message.workspaceFile, text);
     return;
   }
 
+  if (sessionId) dropWaitingCards(sessionId);
   chat.deleteMessagesFrom(index);
   void sendChatTurn(text, {
     attachmentIds: message.attachmentIds,

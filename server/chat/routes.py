@@ -249,68 +249,7 @@ async def _run_grounding(
 # substitutes the approved tool_use_id's real result, and resumes the loop.
 from server.approval import cards as approval_cards  # noqa: E402
 from server.chat.engine.pause import paused_sessions  # noqa: E402
-
-
-def _resume_messages(messages: list, answers: list[dict], paused: dict | None) -> list:
-    """The message list for a continuation turn (approval decision / answer).
-
-    With paused state: restore the stashed messages — which already carry the
-    assistant message holding every tool_use block — and fill the pre-computed
-    placeholder tool_results in by tool_use_id, so every tool_use is answered.
-    Bedrock rejects the whole request otherwise. An id with no placeholder is
-    appended (the tool that triggered the pause may not have one).
-
-    WITHOUT paused state (the backend restarted while the card sat on screen):
-    the assistant message carrying the tool_use is gone with it, so a
-    tool_result block here would be an orphan — sanitize_tool_pairs strips it
-    and the model would answer a turn with neither the tool call nor its
-    outcome in context, which reads as a confident non-answer rather than an
-    error. Replay the outcome as plain text
-    instead: well-formed for every provider, and the client-rebuilt `history`
-    in ``messages`` gives it the conversation it belongs to.
-    """
-    if paused:
-        from server.tool_executor import ASK_PAUSE_MARKER, ASK_UNANSWERED
-
-        blocks = list(paused["pending_tool_results"])
-        for ans in answers:
-            tool_use_id = ans.get("tool_use_id", "")
-            replaced = False
-            for block in blocks:
-                if block.get("tool_use_id") == tool_use_id:
-                    block["content"] = ans.get("content", "")
-                    replaced = True
-                    break
-            if not replaced:
-                blocks.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": tool_use_id,
-                        "content": ans.get("content", ""),
-                    }
-                )
-        # A question the continuation brought no answer for must not keep a
-        # marker that promises one. The model is told plainly and may ask again.
-        for block in blocks:
-            if block.get("content") == ASK_PAUSE_MARKER:
-                block["content"] = ASK_UNANSWERED
-        return [*paused["messages"], {"role": "user", "content": blocks}]
-
-    outcomes = "\n\n".join(str(a.get("content", "")) for a in answers if a.get("content"))
-    return [
-        *messages,
-        {
-            "role": "user",
-            "content": (
-                "[The tool call you were waiting on is no longer in context — the "
-                "app restarted while it awaited the user's decision. What the user "
-                "decided:]\n\n"
-                f"{outcomes}\n\n"
-                "Continue from here. Re-issue that call only if the outcome above "
-                "says it did not happen."
-            ),
-        },
-    ]
+from server.chat.resume import resume_messages, resume_with_message  # noqa: E402
 
 
 async def _record_turn_workspace(session_id: str, latch) -> None:
@@ -1192,6 +1131,14 @@ async def chat_endpoint(request: Request):
     # finished (server/tasks/wake.py): their results are task_report rows in
     # the history, and the server words the request, not the client.
     runtime_wake = bool(body.get("runtime_wake")) and approved_tool_result is None
+    # A new message the user sent while cards of the paused turn waited: the
+    # client closed those cards and names them here, and this turn resumes
+    # the paused one with them closed plus the message (server/chat/resume.py).
+    skipped_cards = (
+        [str(i) for i in body.get("skipped_cards") or [] if isinstance(i, str) and i]
+        if approved_tool_result is None and not runtime_wake
+        else []
+    )
     if runtime_wake:
         from server.tasks.wake import WAKE_PROMPT
 
@@ -1269,11 +1216,13 @@ async def chat_endpoint(request: Request):
         )
     stream_token: float = _now
     stream_slot.claim(session_id, stream_token, fresh=is_new_turn)
+    superseded_pause = None
     if is_new_turn:
-        # A new turn ends the turn a card paused: a later answer to that card
-        # resumes over the history the client sends, which holds this turn
-        # too, never over the paused turn's older messages.
-        paused_sessions.pop(session_id, None)
+        # A new turn ends the turn a card paused. With skipped_cards it
+        # continues that turn (kept here); otherwise a later answer to the
+        # card resumes over the history the client sends, which holds this
+        # turn too, never over the paused turn's older messages.
+        superseded_pause = paused_sessions.pop(session_id, None)
 
     def _heartbeat() -> None:
         stream_slot.beat(session_id, stream_token)
@@ -1676,7 +1625,7 @@ async def chat_endpoint(request: Request):
                     session_id,
                     len(answers),
                 )
-            messages = _resume_messages(messages, answers, paused)
+            messages = resume_messages(messages, answers, paused)
         else:
             parts = []
             if attachment_texts:
@@ -1811,6 +1760,10 @@ async def chat_endpoint(request: Request):
             # Presence detection is by filename marker, so the live message we just
             # appended (and every rebuilt history row) is never duplicated.
             messages = ensure_attachments_present(messages, session_id)
+            if skipped_cards:
+                # The skipped approval cards cannot run later either.
+                approval_cards.close_answered(session_id, skipped_cards)
+                messages = resume_with_message(messages, skipped_cards, superseded_pause)
 
         # On-device models bypass Bedrock entirely (isolated local runtime). Branch
         # BEFORE compaction — compaction itself calls Bedrock, so a local turn must

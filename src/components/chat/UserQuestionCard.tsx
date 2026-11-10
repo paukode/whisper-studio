@@ -224,6 +224,8 @@ export const UserQuestionGroupCard: React.FC<{ message: ChatMessageType }> = ({ 
   // Restored-from-persistence guard: if already answered, start submitted so
   // the card can't fire a duplicate continuation after a re-render / reload.
   const alreadyAnswered = questions.length > 0 && questions.every((q) => q.answered);
+  // Closed unanswered: the user sent a message instead (chatStream/waitingCards).
+  const skipped = questions.some((q) => q.skipped);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   // Always-visible "type your own" text, keyed by toolUseId.
   const [customText, setCustomText] = useState<Record<string, string>>({});
@@ -250,7 +252,7 @@ export const UserQuestionGroupCard: React.FC<{ message: ChatMessageType }> = ({ 
   // for each ask_user_question tool_use it emitted. Idempotent while it is
   // answered; a refused resume re-enables the card (answerPausedTurn).
   const submit = useCallback((finalAnswers: Record<string, string>) => {
-    if (submittedRef.current) return;
+    if (submittedRef.current || questions.some((q) => q.skipped)) return;
     const batch = questions.map((q) => ({ tool_use_id: q.toolUseId, content: finalAnswers[q.toolUseId] ?? '' }));
     void answerPausedTurn(sessionId, batch, (answered) => {
       submittedRef.current = answered;
@@ -269,6 +271,7 @@ export const UserQuestionGroupCard: React.FC<{ message: ChatMessageType }> = ({ 
   }, [allAnswered, submitted, answers, submit]);
 
   if (total === 0) return null;
+  const closed = submitted || skipped;
 
   const renderQuestion = (q: UserQuestion, qi: number) => {
     // The always-visible "Or type your own" input replaces the explicit
@@ -295,9 +298,9 @@ export const UserQuestionGroupCard: React.FC<{ message: ChatMessageType }> = ({ 
                 key={opt}
                 type="button"
                 className={`uq-opt${isSelected ? ' selected' : ''}`}
-                disabled={submitted}
+                disabled={closed}
                 onClick={() => {
-                  if (submitted) return;
+                  if (closed) return;
                   if (isBrowse) {
                     void (async () => {
                       try {
@@ -334,7 +337,7 @@ export const UserQuestionGroupCard: React.FC<{ message: ChatMessageType }> = ({ 
             placeholder="Or type your own answer…"
             aria-label="Type your own answer"
             value={custom}
-            disabled={submitted}
+            disabled={closed}
             onChange={(e) => setCustomText((p) => ({ ...p, [q.toolUseId]: e.target.value }))}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
@@ -346,7 +349,7 @@ export const UserQuestionGroupCard: React.FC<{ message: ChatMessageType }> = ({ 
           <button
             type="button"
             className="uq-custom-send"
-            disabled={submitted || !custom.trim()}
+            disabled={closed || !custom.trim()}
             onClick={() => { const v = custom.trim(); if (v) setAnswer(q.toolUseId, v); }}
             aria-label="Submit your answer"
           >
@@ -356,12 +359,13 @@ export const UserQuestionGroupCard: React.FC<{ message: ChatMessageType }> = ({ 
           </button>
         </div>
         {showAnsweredNote && <span className="uq-answered">Answered: {answered}</span>}
+        {q.skipped && <span className="uq-answered">Not answered: you sent a new message instead.</span>}
       </div>
     );
   };
 
   return (
-    <div className={`user-question-card${submitted ? ' submitted' : ''}`}>
+    <div className={`user-question-card${closed ? ' submitted' : ''}`}>
       <div className="user-question-card-head">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <circle cx="12" cy="12" r="10" /><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3" /><line x1="12" y1="17" x2="12.01" y2="17" />
@@ -417,10 +421,10 @@ export const UserQuestionGroupCard: React.FC<{ message: ChatMessageType }> = ({ 
               <button
                 type="button"
                 className="uq-submit-btn"
-                disabled={!allAnswered || submitted}
+                disabled={!allAnswered || closed}
                 onClick={submitAll}
               >
-                {submitted ? 'Submitted' : allAnswered ? `Submit ${total} answers` : `Answer all ${total} to submit`}
+                {skipped ? 'Not answered' : submitted ? 'Submitted' : allAnswered ? `Submit ${total} answers` : `Answer all ${total} to submit`}
               </button>
             ) : (
               <button

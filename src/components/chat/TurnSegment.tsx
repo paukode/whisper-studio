@@ -227,6 +227,7 @@ const TurnSegmentView: React.FC<TurnSegmentProps> = ({ rows, indices, taskCheckp
                   // stashed this pause under (see sseStream.ts): resuming
                   // must answer that exact id, not a hardcoded placeholder.
                   toolUseId={tool.toolId}
+                  closedAs={tool.status === 'pending' ? undefined : tool.result ?? ''}
                 />
               );
             }
@@ -275,7 +276,7 @@ const TurnSegmentView: React.FC<TurnSegmentProps> = ({ rows, indices, taskCheckp
         <UserQuestionCard
           question={tail.userQuestion.question}
           options={tail.userQuestion.options}
-          answered={tail.userQuestion.answered}
+          answered={tail.userQuestion.answered || tail.userQuestion.skipped}
           message={tail}
         />
       ) : null}

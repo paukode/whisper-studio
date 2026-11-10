@@ -34,3 +34,20 @@ describe('UserQuestionGroupCard — malformed options render, never crash', () =
     expect(container.querySelector('input')).toBeTruthy();
   });
 });
+
+describe('UserQuestionGroupCard: closed by a message the user sent instead', () => {
+  it('says it was not answered and takes no answer', () => {
+    const message = {
+      role: 'assistant',
+      content: '',
+      userQuestions: [
+        { question: 'Which fruit?', options: ['Apple', 'Banana', 'Cherry'], toolUseId: 't1', skipped: true },
+      ],
+    } as unknown as ChatMessageType;
+    const { container } = render(<UserQuestionGroupCard message={message} />);
+
+    expect(screen.getByText('Not answered: you sent a new message instead.')).toBeTruthy();
+    expect((screen.getByText('Apple').closest('button') as HTMLButtonElement).disabled).toBe(true);
+    expect((container.querySelector('input') as HTMLInputElement).disabled).toBe(true);
+  });
+});

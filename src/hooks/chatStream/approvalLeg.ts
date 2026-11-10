@@ -29,7 +29,6 @@ import { approvalTarget, sendApprovalContinuation } from './approvalContinuation
 import { patchCommittedRows } from './committedRows';
 import { toolMetaWithStats } from './toolMeta';
 import {
-  hasLiveStream,
   registerStreamController,
   releaseStreamController,
   wasKillFinalized,
@@ -43,9 +42,9 @@ export const APPROVED_ACTION_STATUS = 'Running the approved action';
  * with its outcome, otherwise the turn resumes with the denial.
  * `rememberForSession` is the card's "Yes, all" / "Block" choice.
  *
- * Returns false, and leaves the card where it is, when the session already
- * has a live stream: resuming now would write a second turn into the store
- * that stream is streaming into.
+ * Returns false, and leaves the card where it is, when the session is busy
+ * (any turn phase but idle, a /file upload included): resuming now would
+ * write a second turn into the store that turn writes into.
  */
 export async function answerApproval(
   approval: PendingApproval,
@@ -70,7 +69,7 @@ async function answer(
   rememberForSession: boolean,
 ): Promise<boolean> {
   const sessionId = approval.sessionId;
-  if (hasLiveStream(sessionId)) {
+  if (chat.getState().turnPhase !== 'idle') {
     useUIStore.getState().addToast({
       type: 'error',
       message: 'Another turn is running in this session. Stop it first, then answer the approval.',
