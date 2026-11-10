@@ -28,7 +28,7 @@ describe('/compact', () => {
       history: [{ role: 'user', content: 'q' }, { role: 'assistant', content: 'a' }],
       note: 'keep x',
       model: 'opus',
-    });
+    }, { longLived: true });
     const { messages } = getChatStore(SID).getState();
     expect(messages[messages.length - 1]).toEqual(summary);
   });

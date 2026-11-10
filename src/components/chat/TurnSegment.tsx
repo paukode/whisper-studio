@@ -227,7 +227,8 @@ const TurnSegmentView: React.FC<TurnSegmentProps> = ({ rows, indices, taskCheckp
                   // stashed this pause under (see sseStream.ts): resuming
                   // must answer that exact id, not a hardcoded placeholder.
                   toolUseId={tool.toolId}
-                  closedAs={tool.status === 'pending' ? undefined : tool.result ?? ''}
+                  // The outcome its row records once the card closed.
+                  closedAs={tool.result || undefined}
                 />
               );
             }

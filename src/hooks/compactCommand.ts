@@ -43,6 +43,7 @@ export async function runCompact(
     const row = await post<ChatMessage>(
       `/api/sessions/${encodeURIComponent(sessionId)}/compact`,
       { history, note, model },
+      { longLived: true },
     );
     chat().addMessage(row);
     addToast({ type: 'success', message: 'Conversation compacted.', duration: 2500, persist: false });

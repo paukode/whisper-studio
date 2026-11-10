@@ -1,5 +1,6 @@
 import React, { useCallback } from 'react';
 import { get } from '@/api/client';
+import { streamFetch } from '@/api/streamSocket';
 import { getChatStore } from '@/stores/sessionRuntimes';
 import { runCompact } from '@/hooks/compactCommand';
 import { useSubagentStore } from '@/stores/subagentStore';
@@ -612,7 +613,7 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
 
         void (async () => {
           try {
-            const response = await fetch('/api/subagent/stream', {
+            const response = await streamFetch('/api/subagent/stream', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               // effort_level so the subagent reasons at the composer's depth,

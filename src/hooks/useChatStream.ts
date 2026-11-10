@@ -14,6 +14,7 @@
  * to component state.
  */
 import { useCallback, useEffect } from 'react';
+import { streamFetch } from '@/api/streamSocket';
 import {
   countActiveSessions,
   getChatStore,
@@ -330,7 +331,8 @@ export async function sendChatTurn(question: string, opts?: SendOptions): Promis
   let fullResponse = '';
 
   try {
-    const response = await fetch('/api/chat', {
+    // A reply streams for minutes: over a WebSocket (@/api/streamSocket).
+    const response = await streamFetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),

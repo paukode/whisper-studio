@@ -9,6 +9,7 @@
  * first) lives in ./approvalLeg and calls in here.
  */
 import type { ApprovalOutcome } from '@/api/approval';
+import { streamFetch } from '@/api/streamSocket';
 import { getChatStore } from '@/stores/sessionRuntimes';
 import type { PendingApproval } from '@/stores/chatStore';
 import type { ToolUseEvent } from '@/types/chat';
@@ -153,7 +154,7 @@ export async function sendApprovalContinuation(
   const continuationSignal = ownController.signal;
 
   try {
-    const response = await fetch('/api/chat', {
+    const response = await streamFetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),

@@ -1,5 +1,6 @@
 /** REST client for the workflow runtime (WS-D). */
 import { get, post } from '@/api/client';
+import { SocketEventSource } from './streamSocket';
 
 export type WorkflowRunStatus = 'running' | 'done' | 'failed' | 'stopped' | 'stale';
 
@@ -61,12 +62,12 @@ export const launchRun = (body: { script?: string; name?: string; session_id: st
 export const stopRun = (runId: string) => post<{ stopped: boolean }>(`/api/workflows/runs/${encodeURIComponent(runId)}/stop`, {});
 
 /** Subscribe to a run's live SSE events. Returns an unsubscribe fn.
- *  On a transient drop we let EventSource auto-reconnect (it resumes with a
- *  fresh snapshot) rather than force-closing, so one network blip no longer
+ *  On a transient drop the stream reconnects (it resumes with a fresh
+ *  snapshot) rather than closing, so one network blip no longer
  *  freezes the run card. The caller owns teardown: WorkflowRunCard closes the
  *  stream once the run is terminal (and on unmount) via the returned fn. */
 export function subscribeRun(runId: string, onEvent: (ev: Record<string, unknown>) => void): () => void {
-  const es = new EventSource(`/api/workflows/runs/${encodeURIComponent(runId)}/events`);
+  const es = new SocketEventSource(`/api/workflows/runs/${encodeURIComponent(runId)}/events`);
   es.onmessage = (e) => {
     try {
       onEvent(JSON.parse(e.data));
@@ -74,7 +75,6 @@ export function subscribeRun(runId: string, onEvent: (ev: Record<string, unknown
       /* ignore keepalives / malformed */
     }
   };
-  // Default EventSource behavior reconnects on error unless we close(); leave it
-  // to reconnect. Terminal teardown happens in the caller's effect cleanup.
+  // It reconnects on error unless we close(); leave it to reconnect. Terminal teardown happens in the caller's effect cleanup.
   return () => es.close();
 }

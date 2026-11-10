@@ -1,6 +1,7 @@
 import { useUIStore } from '@/stores/uiStore';
 import type { ModelBanner } from '@/stores/uiStore';
 import { useSettingsStore } from '@/stores/settingsStore';
+import { streamFetch } from './streamSocket';
 
 /**
  * Load an on-device model into memory, driving the shared "loading model into
@@ -72,7 +73,7 @@ async function doLoadLocalModel(model: string, label: string, nCtx?: number): Pr
   try {
     const params = new URLSearchParams({ model });
     if (typeof nCtx === 'number') params.set('n_ctx', String(nCtx));
-    const res = await fetch(`/api/local-model/load?${params.toString()}`, {
+    const res = await streamFetch(`/api/local-model/load?${params.toString()}`, {
       signal: controller.signal,
     });
     if (!res.ok || !res.body) throw new Error(`load failed (${res.status})`);
@@ -154,7 +155,7 @@ export async function downloadLocalModel(model: string, label: string): Promise<
   banner.show({ label, progress: 0, stage: 'downloading', onCancel: () => controller.abort() });
   let result: 'ready' | 'cancelled' | 'error' = 'error';
   try {
-    const res = await fetch(`/api/local-model/download?model=${encodeURIComponent(model)}`, { signal: controller.signal });
+    const res = await streamFetch(`/api/local-model/download?model=${encodeURIComponent(model)}`, { signal: controller.signal });
     if (!res.ok || !res.body) throw new Error(`download failed (${res.status})`);
     const reader = res.body.getReader();
     const decoder = new TextDecoder();

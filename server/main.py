@@ -64,6 +64,7 @@ from server.preview.screencast import router as preview_screencast_router
 from server.security.permissions import router as permissions_router
 from server.skills import init_skills, whisper_md_router
 from server.skills import router as skills_router
+from server.stream_tunnel import router as stream_tunnel_router
 from server.tasks.routes import router as background_tasks_router
 from server.tasks_tracker import router as tasks_router
 from server.terminal import router as terminal_router
@@ -525,6 +526,7 @@ app.include_router(attachments_router)
 app.include_router(chat_router)
 app.include_router(sessions_router)
 app.include_router(ws_router)
+app.include_router(stream_tunnel_router)
 app.include_router(capture_helper_router)
 app.include_router(speakers_router)
 app.include_router(permissions_router)

@@ -1,13 +1,13 @@
 import { useEffect } from 'react';
+import { SocketEventSource } from '@/api/streamSocket';
 
 /**
  * Single shared subscription to the global `/api/git/events` SSE.
  *
  * The status bar, the Git Changes panel, and the terminal panel all react to
- * the same global `git-changed` frame through ONE ref-counted EventSource,
- * fanned out to every listener in-process. On a single-origin HTTP/1.1 app
- * each long-lived socket takes one of the browser's ~6 per-origin slots, and
- * extra ones would starve uploads and a second session's chat stream.
+ * the same global `git-changed` frame through ONE ref-counted stream
+ * (SocketEventSource, over a WebSocket), fanned out to every listener
+ * in-process.
  *
  * Each consumer still keeps its own debounce and refetch, so the fan-out only
  * replaces the transport, not the per-consumer behaviour.
@@ -15,11 +15,11 @@ import { useEffect } from 'react';
 type GitChangedListener = () => void;
 
 const listeners = new Set<GitChangedListener>();
-let source: EventSource | null = null;
+let source: SocketEventSource | null = null;
 
 function openSource(): void {
   if (source || typeof EventSource === 'undefined') return; // vitest/jsdom
-  source = new EventSource('/api/git/events');
+  source = new SocketEventSource('/api/git/events');
   source.onmessage = (e) => {
     try {
       const parsed = JSON.parse(e.data) as { type?: string };
@@ -32,8 +32,8 @@ function openSource(): void {
       /* keep-alive comment or malformed frame */
     }
   };
-  // EventSource auto-reconnects on a transient drop and the backend re-emits
-  // an immediate `git-changed` on reconnect, so no onerror handling is needed.
+  // The stream reconnects on a transient drop and the backend re-emits an
+  // immediate `git-changed` on reconnect, so no onerror handling is needed.
 }
 
 function closeSource(): void {

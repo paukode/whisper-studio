@@ -1,11 +1,16 @@
 import type { ZodType } from 'zod';
 import { ApiError } from '@/types/api';
+import { streamFetch } from './streamSocket';
 
 export interface RequestOptions {
   signal?: AbortSignal;
   headers?: Record<string, string>;
   /** Optional Zod schema to validate the response. On failure, logs a warning and returns raw data. */
   schema?: ZodType;
+  /** A request that can take long (a model call): it goes over a WebSocket
+   *  (./streamSocket), so it never holds one of the web view's 6 HTTP
+   *  connections while it runs. */
+  longLived?: boolean;
 }
 
 /** The reason in a failed response: its JSON `detail`, `message` or `error`,
@@ -47,12 +52,8 @@ async function request<T>(
 
   let response: Response;
   try {
-    response = await fetch(url, {
-      method,
-      headers,
-      body: fetchBody,
-      signal: options?.signal,
-    });
+    const init = { method, headers, body: fetchBody, signal: options?.signal };
+    response = options?.longLived ? await streamFetch(url, init) : await fetch(url, init);
   } catch (error: unknown) {
     // Network error or abort. fetch() rejects with a TypeError ("Failed to
     // fetch") when the server is unreachable — surface that as a clear,
