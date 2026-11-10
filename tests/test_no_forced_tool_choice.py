@@ -92,8 +92,6 @@ def test_the_chat_engines_claude_body_never_forces(monkeypatch):
                 caching_on=caching,
                 cache_ttl="1h",
                 effort_label=effort,
-                loop=None,
-                executor=None,
                 meta=entry,
             )
             body = adapter._build_body(list(_MESSAGES), list(_TOOLS), None, round_num, last)

@@ -349,8 +349,8 @@ async def summarize_messages(
     if len(summary_system) + len(summary_prompt) + 40 > thresholds_for(summary_key)[1]:
         raise CompactionError()
 
-    from server.chat import executor
     from server.infrastructure.oneshot import one_shot
+    from server.infrastructure.own_thread import run_on_own_thread
     from server.local.runtime import is_local_model
 
     local = is_local_model(summary_key)
@@ -367,7 +367,7 @@ async def summarize_messages(
             session_id=session_id or "",
         )
 
-    summary = await asyncio.get_running_loop().run_in_executor(executor, call)
+    summary = await run_on_own_thread(call, name="compaction-summary")
     if not isinstance(summary, str) or not summary.strip():
         raise CompactionError()
     return f"{SUMMARY_HEADER}\n{summary.strip()}\n\n{extras}".rstrip()

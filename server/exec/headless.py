@@ -102,10 +102,11 @@ from datetime import UTC, datetime
 
 log = logging.getLogger("whisper-studio")
 
-# Dedicated small pool for headless Bedrock calls, mirrors
+# Dedicated small pool for the blocking tool calls of headless runs, mirrors
 # server.agents.runtime._agent_executor (its own dedicated pool), so a
-# headless run's blocking provider calls never head-of-line-block the chat
-# route's or the agent runtime's own executors.
+# headless run never head-of-line-blocks the chat route's or the agent
+# runtime's own executors. Model calls run on threads of their own
+# (server/infrastructure/own_thread.py).
 _HEADLESS_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="headless-exec")
 
 
@@ -365,8 +366,6 @@ async def run_headless_turn(
                 system_prompt=system,
                 **agent_cache_args(system),
                 effort_label=_effort_label,
-                loop=loop,
-                executor=_HEADLESS_EXECUTOR,
             )
 
         from server.chat.engine.policy import TurnPolicy

@@ -38,8 +38,6 @@ def _adapter(monkeypatch, body):
         caching_on=False,
         cache_ttl="5m",
         effort_label=None,
-        loop=asyncio.get_running_loop(),
-        executor=None,
         meta={},
     )
     return adapter, client

@@ -33,6 +33,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from server.attachments import attachments
 from server.hooks import run_hooks
 from server.infrastructure.config import latch_session
+from server.infrastructure.own_thread import run_on_own_thread
 from server.security.permissions import get_mode
 from server.utils import ndjson_dumps
 from server.whisper_md import get_whisper_md_context
@@ -874,7 +875,6 @@ async def generate_title_endpoint(request: Request):
         models=chat_models,
     )
     bedrock_client = _get_bedrock_client()
-    loop = asyncio.get_event_loop()
     title_session = str(body.get("session_id") or "")
 
     def _call():
@@ -903,7 +903,7 @@ async def generate_title_endpoint(request: Request):
         return _clean_title(text)
 
     try:
-        title = await loop.run_in_executor(executor, _call)
+        title = await run_on_own_thread(_call, name="bedrock-title")
     except Exception as e:
         # A failed title is an error the client sees, never a fake title. The
         # client logs it, keeps its current title and does not ask again for
@@ -1909,8 +1909,6 @@ async def chat_endpoint(request: Request):
                 caching_on=_caching_on,
                 cache_ttl=_cache_ttl,
                 effort_label=effort_label,
-                loop=loop,
-                executor=executor,
                 # The SAME metadata the effort was resolved from, so the label and the
                 # wire value cannot come from two different config snapshots.
                 meta=_model_meta,

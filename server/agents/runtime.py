@@ -44,11 +44,12 @@ from server.chat.engine.runner import SOFT_LIMIT_FRACTION
 
 log = logging.getLogger("whisper-studio")
 
-# Shared executor for agent bedrock calls. Sized from the ONE concurrency
-# knob (server/agents/providers/base.py) rather than its own literal: this
-# pool is what actually gates how many agent model calls can be in flight on
-# the chat/engine path, so a smaller number here silently capped the
-# workflow runtime's 16-way fan-out no matter what the scheduler admitted.
+# Shared executor for the blocking tool calls and side calls of agent runs.
+# Sized from the ONE concurrency knob (server/agents/providers/base.py) rather
+# than its own literal, so the workflow runtime's 16-way fan-out has a worker
+# for each agent. Agent model calls do not use it: each runs on a thread of
+# its own (server/infrastructure/own_thread.py), so 16 answers in flight no
+# longer hold every worker while the agents' tools wait.
 _agent_executor = ThreadPoolExecutor(max_workers=AGENT_CALL_CONCURRENCY)
 # Ambient nesting context for a spawn_agent/send_message/receive_messages/
 # complete_coordination tool call dispatched from INSIDE this unattended
@@ -742,8 +743,6 @@ async def _run_agent_loop(
             # Checkpoints on the tools, the system prompt and the last message.
             **agent_cache_args(system),
             effort_label=effort_label,
-            loop=loop,
-            executor=_agent_executor,
         )
 
     tools_called: list[str] = []

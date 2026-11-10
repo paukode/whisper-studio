@@ -39,8 +39,9 @@ log = logging.getLogger("whisper-studio")
 # The feature name every Local-mode refusal of a scheduled run shows the user.
 SCHEDULED_RUNS = "Scheduled runs"
 
-# Dedicated pool for cron's blocking calls — the adapter's Bedrock invoke and
-# the synchronous completion-verifier (server.goals.cron_verify.verify).
+# Dedicated pool for cron's blocking calls: its tool calls and the
+# synchronous completion-verifier (server.goals.cron_verify.verify). Model
+# calls run on threads of their own (server/infrastructure/own_thread.py).
 # Mirrors server.agents.runtime._agent_executor: its own pool so a burst of
 # cron fires never head-of-line-blocks (or is blocked by) chat's per-
 # connection executor or the agent runtime's.
@@ -301,8 +302,6 @@ async def _execute_cron_prompt(job_id: str) -> None:
                 caching_on=_caching_on,
                 cache_ttl=CACHE_TTL,
                 effort_label=_effort_label,
-                loop=loop,
-                executor=_CRON_EXECUTOR,
             )
 
         from server.chat.engine.policy import TurnPolicy
