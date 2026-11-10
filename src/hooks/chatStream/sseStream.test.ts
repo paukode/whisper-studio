@@ -244,6 +244,7 @@ describe('readSSEStream', () => {
   });
 
   it('surfaces a status frame (mid-turn compaction notice) as an info toast', async () => {
+    useSessionStore.setState({ currentSessionId: 'sess-status' });
     const res = sseResponse([
       { status: 'Compacting context (prompt too long)...' },
     ]);
@@ -256,6 +257,37 @@ describe('readSSEStream', () => {
     expect(toast).toBeTruthy();
     expect(toast!.type).toBe('info');
     expect(toast!.message).toContain('Compacting context');
+  });
+
+  it('raises no toast for a setup stage word: the bubble names it', async () => {
+    useSessionStore.setState({ currentSessionId: 'sess-stage' });
+    useUIStore.setState({ toasts: [] });
+    let shown: string | null = null;
+    const unsub = getChatStore('sess-stage').subscribe((s) => { shown ??= s.streamStatus; });
+
+    await readSSEStream(sseResponse([{ status: 'connecting' }]), 'sess-stage', new AbortController().signal, SETTINGS);
+    unsub();
+
+    expect(shown).toBe('connecting');
+    expect(useUIStore.getState().toasts.find((t) => t.key === 'stream-status')).toBeUndefined();
+  });
+
+  it('keeps a background session\'s notice in its own bubble, not in a toast on screen', async () => {
+    useSessionStore.setState({ currentSessionId: 'sess-on-screen' });
+    useUIStore.setState({ toasts: [] });
+    let shown: string | null = null;
+    const unsub = getChatStore('sess-behind').subscribe((s) => { shown ??= s.streamStatus; });
+
+    await readSSEStream(
+      sseResponse([{ status: 'Compacting context (prompt too long)...' }]),
+      'sess-behind',
+      new AbortController().signal,
+      SETTINGS,
+    );
+    unsub();
+
+    expect(shown).toContain('Compacting context');
+    expect(useUIStore.getState().toasts.find((t) => t.key === 'stream-status')).toBeUndefined();
   });
 
   it('clears the setup status when the first tool call arrives', async () => {
