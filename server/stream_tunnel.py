@@ -30,6 +30,9 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from server.infrastructure.security import is_ws_origin_present_and_allowed
 
 log = logging.getLogger("whisper-studio")
+# One access line per tunnelled request, in uvicorn's own format (its access
+# log never sees them), marked "HTTP/ws" so a log reader knows the transport.
+_access = logging.getLogger("uvicorn.access")
 
 router = APIRouter()
 
@@ -100,6 +103,15 @@ async def stream_tunnel(ws: WebSocket) -> None:
             return
         try:
             if message["type"] == "http.response.start":
+                client = ws.scope.get("client")
+                _access.info(
+                    '%s - "%s %s HTTP/%s" %d',
+                    f"{client[0]}:{client[1]}" if client else "-",
+                    scope["method"],
+                    target,
+                    "ws",
+                    message["status"],
+                )
                 await ws.send_json(
                     {
                         "status": message["status"],
