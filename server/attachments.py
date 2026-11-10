@@ -6,11 +6,12 @@ import logging
 import time
 import uuid
 
-from fastapi import APIRouter, File, UploadFile
+from fastapi import APIRouter, File, Request, UploadFile
 from fastapi.responses import Response
 
 from server import attachment_store
 from server.extract import build_outline, convert_document, ocr_image_bytes
+from server.extract.child import convert_in_child
 from server.extract.media import extract_media, is_media_ext
 
 log = logging.getLogger("whisper-studio")
@@ -173,7 +174,7 @@ def _upload_error(message: str, status_code: int) -> Response:
 
 
 @router.post("/api/upload")
-async def upload_endpoint(files: list[UploadFile] = File(...)):
+async def upload_endpoint(request: Request, files: list[UploadFile] = File(...)):
     results = []
     for f in files:
         content = await f.read()
@@ -236,7 +237,14 @@ async def upload_endpoint(files: list[UploadFile] = File(...)):
                 }
             )
         elif ext in MARKITDOWN_EXTENSIONS or ext in CODE_EXTENSIONS:
-            text = await asyncio.to_thread(convert_document, content, ext, filename)
+            if ext == ".pdf":
+                # Minutes for a large PDF: a child process, so the server
+                # keeps its interpreter and a cancelled upload stops it.
+                text = await convert_in_child(content, ext, filename, request.is_disconnected)
+                if text is None:
+                    return _upload_error(f"Upload of {filename} was cancelled", 499)
+            else:
+                text = await asyncio.to_thread(convert_document, content, ext, filename)
             # Only Markdown/prose formats get a heading outline; code and data
             # dumps (where "#" is a comment or literal) skip it.
             record = _make_document_record(filename, text, outline=ext in OUTLINE_EXTENSIONS)
