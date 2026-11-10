@@ -242,6 +242,10 @@ export interface ChatState {
   enqueueApproval: (approval: PendingApproval) => void;
   showNextApproval: () => void;
   clearCurrentApproval: () => void;
+  /** Drop every approval card of the session, the one on screen and the
+   *  queued ones: their turn is gone (Clear, Reset session) or a new message
+   *  answered them. */
+  dropApprovals: () => void;
   setSessionApproval: (category: ApprovalCategory, mode: SessionApprovalMode) => void;
   resetSessionApprovals: () => void;
 
@@ -650,6 +654,14 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
 
   clearCurrentApproval: () => {
     set((state) => ({ currentApproval: null, ...endWait(state, 'approval', performance.now()) }));
+  },
+
+  dropApprovals: () => {
+    set((state) => ({
+      currentApproval: null,
+      approvalQueue: [],
+      ...endWait(state, 'approval', performance.now()),
+    }));
   },
 
   setSessionApproval: (category: ApprovalCategory, mode: SessionApprovalMode) => {

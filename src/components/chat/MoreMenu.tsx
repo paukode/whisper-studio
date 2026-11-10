@@ -2,7 +2,7 @@ import React, { useCallback } from 'react';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useUIStore } from '@/stores/uiStore';
 import { useSessionStore } from '@/stores/sessionStore';
-import { post } from '@/api/client';
+import { resetSession } from '@/hooks/chatStream/clearConversation';
 import type { IndexInfo } from '@/api/workspace';
 
 export type MoreSection = 'skills' | 'index' | null;
@@ -57,10 +57,9 @@ export const MoreMenu: React.FC<MoreMenuProps> = ({
   const resetStuckSession = useCallback(async () => {
     onClose();
     if (!currentSessionId) return;
-    try {
-      await post(`/api/chat/sessions/${encodeURIComponent(currentSessionId)}/reset`, {});
+    if (await resetSession(currentSessionId)) {
       addToast({ type: 'success', message: 'Session reset. You can send a new message now.', duration: 4000, persist: false });
-    } catch {
+    } else {
       addToast({ type: 'error', message: 'Could not reset the session.', duration: 4000 });
     }
   }, [currentSessionId, addToast, onClose]);

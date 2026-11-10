@@ -5,6 +5,7 @@ import { runCompact } from '@/hooks/compactCommand';
 import { useSubagentStore } from '@/stores/subagentStore';
 import { applyTeamProgressToMessage } from '@/hooks/chatStream/teamProgress';
 import { askAboutWorkspaceFile } from '@/hooks/chatStream/workspaceFileTurn';
+import { clearConversation } from '@/hooks/chatStream/clearConversation';
 import type { ChatMessage, TeamAgentReport, TeamProgressEvent } from '@/types/chat';
 import { useUIStore, type UIState } from '@/stores/uiStore';
 import { useSessionStore } from '@/stores/sessionStore';
@@ -528,7 +529,7 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
         return true;
       }
       case 'clear': {
-        getChatStore(sessionId).getState().clearMessages();
+        if (sessionId) void clearConversation(sessionId);
         addToast({ type: 'info', message: 'Chat cleared', duration: 2000, persist: false });
         return true;
       }
