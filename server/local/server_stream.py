@@ -252,57 +252,62 @@ async def _stream_round(base_url: str, payload: dict):
     """
     import httpx
 
+    from server.local import serving
+
     acc = _CallAccumulator()
     finish_reason = None
     usage: dict = {}
     completed = False
-    async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT) as client:
-        async with client.stream(
-            "POST",
-            f"{base_url}/v1/chat/completions",
-            # include_usage is what makes the server append a final chunk
-            # carrying prompt/completion token counts; without it the stream
-            # ends with only a `timings` object and no counts.
-            json={**payload, "stream": True, "stream_options": {"include_usage": True}},
-        ) as resp:
-            if resp.status_code != 200:
-                body = (await resp.aread()).decode(errors="replace")
-                raise RuntimeError(f"model server returned {resp.status_code}: {body[:500]}")
-            async for line in resp.aiter_lines():
-                if not line or not line.startswith("data:"):
-                    continue
-                data = line[5:].strip()
-                if data == "[DONE]":
-                    completed = True
-                    break
-                try:
-                    obj = json.loads(data)
-                except json.JSONDecodeError as e:
-                    # A dropped line can hold text or a tool-call delta, so the
-                    # round fails instead of going on with a hole in it.
-                    raise RuntimeError(
-                        f"model server sent a stream line that is not JSON: {data[:200]!r}"
-                    ) from e
-                if obj.get("error"):
-                    raise RuntimeError(f"model server error: {str(obj['error'])[:400]}")
-                # The usage chunk arrives last and carries an EMPTY choices list,
-                # so it must be read before the delta handling below.
-                if isinstance(obj.get("usage"), dict):
-                    usage = obj["usage"]
-                choices = obj.get("choices") or [{}]
-                choice = choices[0] if choices else {}
-                delta = choice.get("delta") or {}
-                # llama-server puts reasoning on `reasoning_content`; mlx_lm
-                # server puts it on `reasoning`. Same channel either way.
-                reasoning = delta.get("reasoning_content") or delta.get("reasoning")
-                if reasoning:
-                    yield ("thinking", reasoning)
-                if delta.get("content"):
-                    yield ("text", delta["content"])
-                if delta.get("tool_calls"):
-                    acc.feed(delta["tool_calls"])
-                if choice.get("finish_reason"):
-                    finish_reason = choice["finish_reason"]
+    # Counted while the server answers it (serving.requests_in_flight), so a
+    # round sent behind it can say it waits.
+    with serving.counted_request():
+        async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT) as client:
+            async with client.stream(
+                "POST",
+                f"{base_url}/v1/chat/completions",
+                # include_usage is what makes the server append a final chunk
+                # carrying prompt/completion token counts; without it the stream
+                # ends with only a `timings` object and no counts.
+                json={**payload, "stream": True, "stream_options": {"include_usage": True}},
+            ) as resp:
+                if resp.status_code != 200:
+                    body = (await resp.aread()).decode(errors="replace")
+                    raise RuntimeError(f"model server returned {resp.status_code}: {body[:500]}")
+                async for line in resp.aiter_lines():
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        completed = True
+                        break
+                    try:
+                        obj = json.loads(data)
+                    except json.JSONDecodeError as e:
+                        # A dropped line can hold text or a tool-call delta, so the
+                        # round fails instead of going on with a hole in it.
+                        raise RuntimeError(
+                            f"model server sent a stream line that is not JSON: {data[:200]!r}"
+                        ) from e
+                    if obj.get("error"):
+                        raise RuntimeError(f"model server error: {str(obj['error'])[:400]}")
+                    # The usage chunk arrives last and carries an EMPTY choices list,
+                    # so it must be read before the delta handling below.
+                    if isinstance(obj.get("usage"), dict):
+                        usage = obj["usage"]
+                    choices = obj.get("choices") or [{}]
+                    choice = choices[0] if choices else {}
+                    delta = choice.get("delta") or {}
+                    # llama-server puts reasoning on `reasoning_content`; mlx_lm
+                    # server puts it on `reasoning`. Same channel either way.
+                    reasoning = delta.get("reasoning_content") or delta.get("reasoning")
+                    if reasoning:
+                        yield ("thinking", reasoning)
+                    if delta.get("content"):
+                        yield ("text", delta["content"])
+                    if delta.get("tool_calls"):
+                        acc.feed(delta["tool_calls"])
+                    if choice.get("finish_reason"):
+                        finish_reason = choice["finish_reason"]
     if not completed and finish_reason is None:
         # Both engines end a successful stream with a finish_reason chunk and
         # then [DONE]. mlx_lm's HTTP/1.0 body is close-delimited, so a
