@@ -123,6 +123,18 @@
       runs of this session. Turns in other sessions continue. If the turn did not make text or tool
       steps, the app adds nothing to the conversation.</p>
 
+    <h2 id="parallel-sessions">Run sessions at the same time</h2>
+    <p>You can start a turn in a session, open a different session, and start a turn there too.
+      A maximum of 8 sessions can work at the same time. A session works when it streams a reply,
+      shows an approval card, or records. If 8 sessions work and you send a message in a different
+      session, the app shows "8 sessions are already active". Wait until a session completes its
+      work, or stop a session. Then send the message again.</p>
+    <p>A GGUF on-device model answers one request at a time. When two sessions use it, the second
+      reply waits and shows "Waiting for the on-device model to finish another request...". An MLX on-device model answers requests together. A cloud model
+      does not wait for other sessions, but Amazon Bedrock limits the tokens and requests per minute
+      for your AWS account. When many sessions use one cloud model, Bedrock can return a throttling
+      error. The app then sends the request again, and the replies can be slower.</p>
+
     <h2 id="switch-models">Change the model during a conversation</h2>
     <p>The <b>How it thinks</b> control below the composer shows the model, the thinking level, and
       the answer length. Click it to open its panel. The panel has these rows:</p>

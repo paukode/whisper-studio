@@ -74,10 +74,15 @@
     </table></div>
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
-      <div class="callout__body"><p>Only one stream may be in flight per session, and up to three
+      <div class="callout__body"><p>Only one stream may be in flight per session, and up to eight
         sessions may be busy at once. A second message to a busy session is not refused: it is queued
         into the running turn. See <a href="#mid-turn">Sending while it works</a> below and
-        <a href="arch-frontend.html">Frontend architecture</a>.</p></div>
+        <a href="arch-frontend.html">Frontend architecture</a>.</p>
+        <p>On the server, each Claude model call runs on a thread of its own
+        (<code class="path">server/infrastructure/own_thread.py</code>): the start of a reply, its
+        stream, the title and the compaction summary. A reply holds its thread for as long as it
+        streams. The shared pools keep only the tool calls, so a reply never waits behind the tools
+        of a different session, and the tools never wait behind replies.</p></div>
     </div>
 
     <h3 id="mid-turn">Sending while it works</h3>

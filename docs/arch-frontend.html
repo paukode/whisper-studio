@@ -113,9 +113,10 @@
       to another, and come back to find the first one finished.</p>
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
-      <div class="callout__body"><p>Two different caps, both set to <b>3</b>, do two different jobs.
-        <code>MAX_LIVE_RUNTIMES</code> (in <code class="path">sessionRuntimes.ts</code>) is how many
-        runtimes stay resident in memory. <code>MAX_ACTIVE_SESSIONS</code> (in
+      <div class="callout__body"><p>Two different caps do two different jobs.
+        <code>MAX_LIVE_RUNTIMES</code> (<b>3</b>, in <code class="path">sessionRuntimes.ts</code>) is how many
+        idle runtimes stay resident in memory. A busy session is never evicted, so this cap does not
+        limit how many sessions run. <code>MAX_ACTIVE_SESSIONS</code> (<b>8</b>, in
         <code class="path">useChatStream.ts</code>) is the user-facing ceiling on how many sessions may be
         <em>busy</em> (streaming, mid-approval, or recording) at once.</p></div>
     </div>
@@ -151,7 +152,9 @@
       through the app in the same way as uvicorn, with the same routes, middleware and origin guard.
       When the socket closes, the request gets the same signal as from an HTTP client that went
       away. The HTTP connections then serve only
-      short requests and uploads, so a session loads at once while three replies run.</p>
+      short requests and uploads, so a session loads at once while eight replies run. In a WKWebView
+      with 12 long streams open on WebSockets, a short request got its answer in 6 ms (measured on
+      2026-11-10).</p>
 
     <h2 id="stores">The store layer</h2>
     <p>State is <b>Zustand v5</b>. Two kinds of store live side by side. <em>Per-session factories</em>
