@@ -15,14 +15,11 @@ import logging
 import os
 import sys
 import tempfile
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable
 
 from server.infrastructure.paths import repo_root
 
 log = logging.getLogger("whisper-studio")
-
-# How often the wait checks whether the client is still there.
-_POLL_S = 0.5
 
 
 def _worker_cmd(src: str, ext: str, filename: str, out: str) -> list[str]:
@@ -34,36 +31,39 @@ async def convert_in_child(
     content: bytes,
     ext: str,
     filename: str,
-    client_gone: Callable[[], Awaitable[bool]],
+    client_gone: Awaitable[object],
 ) -> str | None:
-    """The document's text, or None when ``client_gone`` turned true first:
+    """The document's text, or None when ``client_gone`` finished first:
     the upload was cancelled, so the child is killed and nothing is kept.
     A conversion that fails returns the same ``[Error extracting ...]``
     marker convert_document writes."""
-    with tempfile.TemporaryDirectory(prefix="ws-extract-") as tmp:
-        src = os.path.join(tmp, "in" + ext)
-        out = os.path.join(tmp, "out.txt")
-        await asyncio.to_thread(_write, src, content)
-        proc = await asyncio.create_subprocess_exec(
-            *_worker_cmd(src, ext, filename, out),
-            cwd=repo_root(),
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.DEVNULL,
-        )
-        exited = asyncio.ensure_future(proc.wait())
-        try:
-            while not exited.done():
-                await asyncio.wait({exited}, timeout=_POLL_S)
-                if not exited.done() and await client_gone():
+    gone = asyncio.ensure_future(client_gone)
+    try:
+        with tempfile.TemporaryDirectory(prefix="ws-extract-") as tmp:
+            src = os.path.join(tmp, "in" + ext)
+            out = os.path.join(tmp, "out.txt")
+            await asyncio.to_thread(_write, src, content)
+            proc = await asyncio.create_subprocess_exec(
+                *_worker_cmd(src, ext, filename, out),
+                cwd=repo_root(),
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.DEVNULL,
+            )
+            exited = asyncio.ensure_future(proc.wait())
+            try:
+                await asyncio.wait({exited, gone}, return_when=asyncio.FIRST_COMPLETED)
+                if not exited.done():
                     log.info("Upload of %s cancelled; stopping its conversion", filename)
                     return None
-            if proc.returncode != 0 or not os.path.exists(out):
-                return f"[Error extracting {filename}: the conversion exited with code {proc.returncode}]"
-            return await asyncio.to_thread(_read, out)
-        finally:
-            if proc.returncode is None:
-                proc.kill()
-            await exited
+                if proc.returncode != 0 or not os.path.exists(out):
+                    return f"[Error extracting {filename}: the conversion exited with code {proc.returncode}]"
+                return await asyncio.to_thread(_read, out)
+            finally:
+                if proc.returncode is None:
+                    proc.kill()
+                await exited
+    finally:
+        gone.cancel()
 
 
 def _write(path: str, content: bytes) -> None:

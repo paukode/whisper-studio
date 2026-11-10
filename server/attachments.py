@@ -173,6 +173,15 @@ def _upload_error(message: str, status_code: int) -> Response:
     )
 
 
+async def _client_left(request: Request) -> None:
+    """Return when the client of ``request`` goes away (its body is read).
+    Waits on receive(), as Starlette's own streaming response does:
+    request.is_disconnected() never sees the disconnect through the app's
+    HTTP middleware."""
+    while (await request.receive())["type"] != "http.disconnect":
+        pass
+
+
 @router.post("/api/upload")
 async def upload_endpoint(request: Request, files: list[UploadFile] = File(...)):
     results = []
@@ -240,7 +249,7 @@ async def upload_endpoint(request: Request, files: list[UploadFile] = File(...))
             if ext == ".pdf":
                 # Minutes for a large PDF: a child process, so the server
                 # keeps its interpreter and a cancelled upload stops it.
-                text = await convert_in_child(content, ext, filename, request.is_disconnected)
+                text = await convert_in_child(content, ext, filename, _client_left(request))
                 if text is None:
                     return _upload_error(f"Upload of {filename} was cancelled", 499)
             else:
