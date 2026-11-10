@@ -35,7 +35,9 @@
     <h2 id="the-sequence">The sequence at a glance</h2>
     <p>A turn is a single <code>POST /api/chat</code> whose response is a long-lived SSE stream, not a
       one-shot JSON body. Tokens, tool activity, and control events all arrive over that one
-      connection as they happen. The high-level shape is:</p>
+      connection as they happen. The request travels over a WebSocket of its own
+      (<code>/ws/stream</code>, see <a href="arch-frontend.html#transport">the frontend</a>), and the
+      server runs it through the app exactly as an HTTP request. The high-level shape is:</p>
     <ol class="steps">
       <li><h4>The user types and clicks Send</h4><p>The SPA adds the user bubble, marks the session
         streaming, and opens a <code>fetch</code> to <code>/api/chat</code>.</p></li>
@@ -66,6 +68,7 @@
         <tr><td><code>attachment_ids</code></td><td>Any files dropped into the composer, resolved server-side into the prompt.</td></tr>
         <tr><td><code>session_approvals</code> / <code>session_denials</code></td><td>The categories you have already pre-approved or blocked for this session, for example <code>{"write": "allow"}</code>. The client re-sends them on every turn; the server never stores them.</td></tr>
         <tr><td><code>approved_tool_result</code></td><td>Present only on an approval continuation. Its presence is what makes the server resume a paused turn instead of starting a fresh one.</td></tr>
+        <tr><td><code>skipped_cards</code></td><td>The <code>tool_use_id</code>s of the cards that this message closed: you sent it instead of an answer. The server then resumes the paused turn. Each approval or folder call gets a "not run" result, and each question gets a "not answered" result. Your message joins the same user turn (<code class="path">server/chat/resume.py</code>).</td></tr>
         <tr><td><code>midturn</code></td><td>Set by the composer when you send while the assistant is still working. It marks the message as "steer the running turn", never "start a new one".</td></tr>
       </tbody>
     </table></div>
@@ -271,6 +274,10 @@
       <li><b>An <code>ask_user_question</code></b> collapses one or more question calls into a single
         tabbed card; the card <em>is</em> the response, and your answer re-enters the endpoint as a
         continuation, exactly like an approval.</li>
+      <li><b>A new message while a card waits</b> closes the card. The card does not stay on
+        screen. The request names the closed cards in <code>skipped_cards</code>. The paused turn
+        continues with them closed and with your message after them. Thus the model gets a record
+        of each card that you skipped.</li>
       <li><b>The completion gate refuses to end the turn.</b> A Stop-hook block, a check that fails, or an active goal
         the evaluator judges not-yet-achieved (the <code>goal_loop</code> flag), re-injects feedback
         and loops again instead of ending. These decisions surface over SSE as <code>goal_eval</code>,

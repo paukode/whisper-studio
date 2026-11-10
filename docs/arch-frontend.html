@@ -131,14 +131,27 @@
       <dt><code class="path">countActiveSessions(excluding?)</code></dt><dd>Counts busy sessions for the parallelism ceiling; viewing idle sessions is never counted.</dd>
       <dt><code class="path">dropRuntime(sessionId)</code></dt><dd>Teardown: aborts the in-flight stream and unsubscribes. The app's event channel stays open.</dd>
     </div>
-    <p>Out-of-band events reach every session through one multiplexed <code>EventSource</code> on
+    <p>Out-of-band events reach every session through one multiplexed event stream on
       <code>/api/sessions/events</code>, opened at startup. Each frame carries its
       <code>session_id</code> and is routed to that session's live runtime, so a background session
       still receives its <a href="arch-cron.html">cron events</a> and raises an unread badge on its
       sidebar row. A frame for a session with no live runtime is dropped; its rows are durable and
-      replay on the next hydrate. One connection instead of one per session keeps the browser's
-      per-origin connection limit free for <code>/api/chat</code> requests. A stale channel (after a
-      laptop wake or a network restore) is recycled on <code>online</code> and tab refocus.</p>
+      replay on the next hydrate. A stale channel (after a laptop wake or a network restore) is
+      recycled on <code>online</code> and tab refocus.</p>
+
+    <h3 id="transport">Long requests travel over WebSockets</h3>
+    <p>The Mac app's web view keeps at most 6 HTTP connections to the app. A 7th request waits until
+      one is free. WebSockets do not count against this limit (measured in a WKWebView on 2026-11-10).
+      Thus each long request goes over a WebSocket of its own. These are the chat replies and
+      approval resumes, the event streams (session, git and workflow), model loads,
+      <code>/compact</code> and the subagent stream. <code class="path">src/api/streamSocket.ts</code> gives
+      <code>streamFetch</code> (the <code>fetch</code> interface, with a streamed body and an abort
+      signal) and <code>SocketEventSource</code> (the <code>EventSource</code> interface, with its
+      reconnect). On the server, <code class="path">server/stream_tunnel.py</code> runs each request
+      through the app in the same way as uvicorn, with the same routes, middleware and origin guard.
+      When the socket closes, the request gets the same signal as from an HTTP client that went
+      away. The HTTP connections then serve only
+      short requests and uploads, so a session loads at once while three replies run.</p>
 
     <h2 id="stores">The store layer</h2>
     <p>State is <b>Zustand v5</b>. Two kinds of store live side by side. <em>Per-session factories</em>
@@ -186,7 +199,8 @@
         entries, and UI-only rows (<code>role='cron_event'</code>) are filtered out before the wire. The
         body carries the question, transcript, model, effort level, verbosity, session id, attachment
         ids, and the selected search indexes.</p></li>
-      <li><h4>POST and consume</h4><p>A <code>fetch('/api/chat')</code> streams the response into
+      <li><h4>POST and consume</h4><p>A <code>streamFetch('/api/chat')</code> (over a WebSocket, see
+        <a href="#transport">Long requests</a>) streams the response into
         <code>readSSEStream</code>. A <code>409</code> means the server refused the turn; the hook
         surfaces the server's guidance as a toast instead of stacking two streams.</p></li>
       <li><h4>Commit atomically</h4><p>On stream end, streaming state is cleared and the final assistant

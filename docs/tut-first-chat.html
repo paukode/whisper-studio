@@ -206,7 +206,7 @@
         <tr><td><code>/goal &lt;text&gt;</code></td><td>Sets a goal and sends the goal text as your next message. If a turn runs, the app adds the text to that turn. The assistant continues until a completion gate accepts the goal. <code>/goal clear</code> ends the goal. <code>/goal gate add &lt;command&gt;</code> adds a shell command that must return exit code 0. See <a href="tut-goals.html">Goals &amp; autopilot</a>.</td></tr>
         <tr><td><code>/subagent &lt;task&gt;</code></td><td>Starts a subagent for one task. The subagent operates in the background with all the tools, and a card shows its progress. See <a href="tut-subagents.html">Sub-agents &amp; teams</a>.</td></tr>
         <tr><td><code>/export</code></td><td>Downloads the conversation as a text file.</td></tr>
-        <tr><td><code>/clear</code></td><td>Removes all the messages of this session from the screen and from the saved session. The session stays in the sidebar.</td></tr>
+        <tr><td><code>/clear</code></td><td>Removes all the messages of this session from the screen and from the saved session. It also stops a reply that runs and closes the cards that wait. The session stays in the sidebar.</td></tr>
         <tr><td><code>/compact [note]</code></td><td>Replaces the earlier messages with a short summary in what the model reads. The note tells the summary what to keep.</td></tr>
         <tr><td><code>/rename &lt;title&gt;</code></td><td>Gives the current session a new title in the sidebar.</td></tr>
         <tr><td><code>/doctor</code></td><td>Runs the diagnostic checks and shows the results. Use it when chat does not answer. <code>/doctor context</code> makes the system prompt smaller.</td></tr>
