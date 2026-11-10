@@ -10,6 +10,12 @@
  * processing off and streams 16 kHz mono Int16 chunks, the same shape as
  * the system audio tap. A plain browser has no shell and keeps getUserMedia.
  *
+ * The recorder and the composer's dictation share the shell's one mic: each
+ * acquires it under its own owner name, every owner gets every chunk, and the
+ * mic closes when the last owner releases it. Dictation used to open the
+ * web view's mic instead, in the voice processing mode that turns other
+ * sound on the Mac down for a few seconds.
+ *
  * Bridge contract (pinned; the shell mirrors it):
  *  - marker at documentStart: window.__WHISPER_NATIVE_MIC = { available }
  *  - page -> shell: window.webkit.messageHandlers.nativeMic.postMessage
@@ -44,10 +50,22 @@ declare global {
 
 const STOP_TIMEOUT_MS = 2000;
 
+/** Who holds the mic, each with its handlers. */
+const owners = new Map<string, NativeMicHandlers>();
+/** The shell's start, until it reports onStarted (or fails). */
+let opening: Promise<string> | null = null;
 let pendingStart: { resolve: (device: string) => void; reject: (err: Error) => void } | null =
   null;
 let pendingStop: { resolve: () => void; timer: ReturnType<typeof setTimeout> } | null = null;
-let activeHandlers: NativeMicHandlers | null = null;
+/** The open mic's device name; null while it is closed or still opening. */
+let device: string | null = null;
+
+/** Hand the owners over and forget them: the mic ended for all of them. */
+function takeOwners(): NativeMicHandlers[] {
+  const all = [...owners.values()];
+  owners.clear();
+  return all;
+}
 
 /** True only inside the macOS shell. */
 export function isNativeMicAvailable(): boolean {
@@ -69,77 +87,97 @@ function postToShell(message: unknown): void {
 function ensureCallbacksInstalled(): void {
   if (window.__whisperNativeMic) return;
   window.__whisperNativeMic = {
-    onStarted(device) {
+    onStarted(name) {
       const pending = pendingStart;
       pendingStart = null;
-      pending?.resolve(typeof device === 'string' ? device : '');
+      opening = null;
+      device = typeof name === 'string' ? name : '';
+      pending?.resolve(device);
+      // Every owner left while it opened.
+      if (owners.size === 0) void closeShellMic();
     },
     onAudio(base64, sampleCount, rms) {
-      const handlers = activeHandlers;
-      if (!handlers) return;
+      if (owners.size === 0) return;
       try {
         const level = typeof rms === 'number' && Number.isFinite(rms) ? rms : 0;
-        handlers.onAudio(decodeNativeAudioChunk(base64, sampleCount), level);
+        const samples = decodeNativeAudioChunk(base64, sampleCount);
+        for (const handlers of owners.values()) handlers.onAudio(samples, level);
       } catch (err) {
         console.error('[native-mic] failed to decode chunk:', err);
       }
     },
     onError(message) {
       const text = typeof message === 'string' && message ? message : 'Microphone error.';
+      device = null;
       if (pendingStart) {
         const pending = pendingStart;
         pendingStart = null;
-        activeHandlers = null;
+        opening = null;
+        owners.clear();
         pending.reject(new Error(text));
         return;
       }
-      const handlers = activeHandlers;
-      activeHandlers = null;
-      handlers?.onError(text);
+      for (const handlers of takeOwners()) handlers.onError(text);
     },
     onStopped() {
       const stop = pendingStop;
       pendingStop = null;
-      if (stop) clearTimeout(stop.timer);
-      stop?.resolve();
-      const handlers = activeHandlers;
-      activeHandlers = null;
-      handlers?.onStopped?.();
+      if (stop) {
+        // Our own close: its owners were gone. An owner that joined since
+        // waits on the start queued after it, so it stays.
+        clearTimeout(stop.timer);
+        device = null;
+        stop.resolve();
+        return;
+      }
+      // The shell stopped it (the device went away): every owner hears it.
+      device = null;
+      for (const handlers of takeOwners()) handlers.onStopped?.();
     },
   };
 }
 
-/** Open the microphone. Resolves with the device name once the shell's
- *  engine runs; rejects on a permission denial or a missing input device.
+/** Open the microphone for `owner`, or join it when it is open already.
+ *  Resolves with the device name once the shell's engine runs; rejects on a
+ *  permission denial or a missing input device (and the owner is let go).
  *  No timeout: the first start can wait on the OS permission prompt. */
-export function startNativeMic(handlers: NativeMicHandlers): Promise<string> {
+export function acquireNativeMic(owner: string, handlers: NativeMicHandlers): Promise<string> {
   ensureCallbacksInstalled();
-  if (pendingStart || activeHandlers) {
-    return Promise.reject(new Error('The native microphone is already open.'));
-  }
-  return new Promise<string>((resolve, reject) => {
+  owners.set(owner, handlers);
+  if (device !== null && !pendingStop) return Promise.resolve(device);
+  if (opening) return opening;
+  // Closing (or closed): open it again. The shell runs the start after the stop.
+  opening = new Promise<string>((resolve, reject) => {
     pendingStart = { resolve, reject };
-    activeHandlers = handlers;
     try {
       postToShell({ cmd: 'start' });
     } catch (err) {
       pendingStart = null;
-      activeHandlers = null;
+      opening = null;
+      owners.delete(owner);
       reject(err instanceof Error ? err : new Error(String(err)));
     }
   });
+  return opening;
 }
 
-/** Close the microphone. Resolves on the shell's onStopped, or after a short
- *  timeout so teardown never hangs. The shell flushes its last partial chunk
- *  through onAudio before it reports onStopped. */
-export function stopNativeMic(): Promise<void> {
+/** Let go of the microphone for `owner`. The last owner closes it: resolves
+ *  on the shell's onStopped, or after a short timeout so teardown never
+ *  hangs. The shell flushes its last partial chunk through onAudio first. */
+export function releaseNativeMic(owner: string): Promise<void> {
+  if (!owners.delete(owner) || owners.size > 0) return Promise.resolve();
+  // Still opening: onStarted closes it, since no owner is left.
+  if (opening) return Promise.resolve();
+  return closeShellMic();
+}
+
+function closeShellMic(): Promise<void> {
   ensureCallbacksInstalled();
   if (pendingStop) return Promise.resolve();
   return new Promise<void>((resolve) => {
     const timer = setTimeout(() => {
       pendingStop = null;
-      activeHandlers = null;
+      device = null;
       resolve();
     }, STOP_TIMEOUT_MS);
     pendingStop = { resolve, timer };
@@ -148,7 +186,7 @@ export function stopNativeMic(): Promise<void> {
     } catch {
       clearTimeout(timer);
       pendingStop = null;
-      activeHandlers = null;
+      device = null;
       resolve();
     }
   });
@@ -159,6 +197,8 @@ export function __resetNativeMicForTests(): void {
   if (pendingStop) clearTimeout(pendingStop.timer);
   pendingStart = null;
   pendingStop = null;
-  activeHandlers = null;
+  opening = null;
+  device = null;
+  owners.clear();
   if (typeof window !== 'undefined') delete window.__whisperNativeMic;
 }

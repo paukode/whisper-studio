@@ -26,7 +26,7 @@ import {
   stopNativeCapture,
 } from '@/services/nativeAudioSource';
 import { NativeAudioMixer } from '@/services/nativeAudioMixer';
-import { isNativeMicAvailable, startNativeMic, stopNativeMic } from '@/services/nativeMicSource';
+import { acquireNativeMic, isNativeMicAvailable, releaseNativeMic } from '@/services/nativeMicSource';
 import { isNativeTranslationAvailable, translateNative } from '@/services/nativeTranslation';
 import { countActiveSessions, getTranscriptionStore } from '@/stores/sessionRuntimes';
 import { nextChunkId, type TranscriptionState } from '@/stores/transcriptionStore';
@@ -222,6 +222,8 @@ let nativeMixer: NativeAudioMixer | null = null;
 let nativeCaptureRunning = false;
 /** The shell's native microphone is open for this recording (Mac app). */
 let nativeMicRunning = false;
+/** The recorder's name on the shared native mic (dictation has its own). */
+const RECORDER_MIC_OWNER = 'header-recorder';
 
 function flushPcmBuffer(): void {
   if (pcmBufferLen === 0) return;
@@ -776,14 +778,14 @@ async function start(sessionId: string): Promise<void> {
     // mixer never builds a start-up backlog it would have to drop.
     if (micWanted && isNativeMicAvailable()) {
       const device = await attempt.hold(
-        startNativeMic({
+        acquireNativeMic(RECORDER_MIC_OWNER, {
           onAudio: (samples) => handleMicFrame(samples),
           onError: handleNativeMicError,
           onStopped: () => {
             nativeMicRunning = false;
           },
         }),
-        () => void stopNativeMic(),
+        () => void releaseNativeMic(RECORDER_MIC_OWNER),
       );
       nativeMicRunning = true;
       mark('mic_ready', { device, source: 'native mic' });
@@ -956,7 +958,7 @@ function releaseSources(): void {
   // native chunks above and is dropped the same way.
   if (nativeMicRunning) {
     nativeMicRunning = false;
-    void stopNativeMic();
+    void releaseNativeMic(RECORDER_MIC_OWNER);
   }
   nativeMixer = null;
   const rec = useRecordingStore.getState();

@@ -2,14 +2,19 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRecordingStore } from '@/stores/recordingStore';
 import { useUIStore, type ModelBannerFlow } from '@/stores/uiStore';
 import { createStartGuard, StartCancelled } from '@/utils/startGuard';
+import { acquireNativeMic, isNativeMicAvailable, releaseNativeMic } from '@/services/nativeMicSource';
 
 /**
  * useChatInputMic — push-to-talk style microphone capture for the chat input.
  *
  * Independent of the meeting transcription pipeline (recordingController /
- * useRecordingStore). Opens its own WebSocket to /ws, captures mic audio via
- * the existing pcm-processor AudioWorklet, streams PCM16 chunks, and invokes
- * `onTranscript` for every transcript message the server emits.
+ * useRecordingStore). Opens its own WebSocket to /ws, captures mic audio,
+ * streams PCM16 chunks, and invokes `onTranscript` for every transcript
+ * message the server emits. Inside the Mac app the audio comes from the
+ * shell's own mic, the one the recorder uses (services/nativeMicSource), with
+ * Apple's voice processing off: the web view's mic turned other sound on the
+ * Mac down for a few seconds. A plain browser captures through the
+ * pcm-processor AudioWorklet.
  *
  * Each session of recording is short and self-contained: a fresh WS, a fresh
  * AudioContext, fully torn down on stop().
@@ -33,6 +38,9 @@ export interface UseChatInputMicResult {
   stop: () => void;
   toggle: () => void;
 }
+
+/** Dictation's name on the shared native mic (the recorder has its own). */
+const MIC_OWNER = 'chat-input-mic';
 
 const SAMPLE_RATE = 16000;
 // Short chunk so trailing audio (and a spoken submit command) reaches the server
@@ -122,9 +130,10 @@ export function useChatInputMic(opts: UseChatInputMicOptions): UseChatInputMicRe
     // its banner any more.
     bannerRef.current?.done();
     bannerRef.current = null;
-    // Safe while acquireMic is still opening the device: the store stops a
-    // stream that lands with no owner.
-    void useRecordingStore.getState().releaseMic('chat-input-mic');
+    // Safe while either mic is still opening (each closes a mic that opens
+    // with no owner left), and a no-op for the one this start did not use.
+    void releaseNativeMic(MIC_OWNER);
+    void useRecordingStore.getState().releaseMic(MIC_OWNER);
   }, []);
 
   const stop = useCallback(() => {
@@ -219,33 +228,49 @@ export function useChatInputMic(opts: UseChatInputMicOptions): UseChatInputMicRe
         if (wsRef.current === ws) stop();
       };
 
-      // 2. Mic + AudioWorklet — shared refcounted acquisition. If the
-      // meeting recorder is already running, this returns the same
-      // MediaStream + AudioContext rather than spawning a competing
-      // getUserMedia call (which the OS often resolves with a silent
-      // stream when the device is already in use).
-      const { stream, context: ctx } = await attempt.hold(
-        useRecordingStore.getState().acquireMic('chat-input-mic'),
-      );
-      micStreamRef.current = stream;
-      audioCtxRef.current = ctx;
-
-      // BASE_URL resolves correctly in both dev (Vite serves /public
-      // at '/') and prod ('/static/dist/'). services/recordingController.ts
-      // loads the worklet the same way.
-      await attempt.hold(ctx.audioWorklet.addModule(`${import.meta.env.BASE_URL}pcm-processor.js`));
-
-      const node = new AudioWorkletNode(ctx, 'pcm-processor');
-      workletRef.current = node;
-
-      node.port.onmessage = (e: MessageEvent<Float32Array>) => {
-        pcmBufferRef.current.push(e.data);
-        pcmBufferLenRef.current += e.data.length;
+      const takeSamples = (samples: Float32Array) => {
+        pcmBufferRef.current.push(samples);
+        pcmBufferLenRef.current += samples.length;
         if (pcmBufferLenRef.current >= CHUNK_SAMPLES) flushPcm();
       };
 
-      ctx.createMediaStreamSource(stream).connect(node);
-      node.connect(ctx.destination);
+      if (isNativeMicAvailable()) {
+        // 2. The shell's mic, shared with the recorder: already 16 kHz mono.
+        await attempt.hold(
+          acquireNativeMic(MIC_OWNER, {
+            onAudio: (samples) => takeSamples(samples),
+            onError: (message) => {
+              setError(message);
+              stop();
+            },
+          }),
+          () => void releaseNativeMic(MIC_OWNER),
+        );
+      } else {
+        // 2. Mic + AudioWorklet — shared refcounted acquisition. If the
+        // meeting recorder is already running, this returns the same
+        // MediaStream + AudioContext rather than spawning a competing
+        // getUserMedia call (which the OS often resolves with a silent
+        // stream when the device is already in use).
+        const { stream, context: ctx } = await attempt.hold(
+          useRecordingStore.getState().acquireMic(MIC_OWNER),
+        );
+        micStreamRef.current = stream;
+        audioCtxRef.current = ctx;
+
+        // BASE_URL resolves correctly in both dev (Vite serves /public
+        // at '/') and prod ('/static/dist/'). services/recordingController.ts
+        // loads the worklet the same way.
+        await attempt.hold(ctx.audioWorklet.addModule(`${import.meta.env.BASE_URL}pcm-processor.js`));
+
+        const node = new AudioWorkletNode(ctx, 'pcm-processor');
+        workletRef.current = node;
+
+        node.port.onmessage = (e: MessageEvent<Float32Array>) => takeSamples(e.data);
+
+        ctx.createMediaStreamSource(stream).connect(node);
+        node.connect(ctx.destination);
+      }
 
       setIsConnecting(false);
       setIsRecording(true);

@@ -17,6 +17,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { WebSocketMock } from '@/test/mocks/webSocket';
 import { useRecordingStore } from '@/stores/recordingStore';
 import { useUIStore } from '@/stores/uiStore';
+import { __resetNativeMicForTests } from '@/services/nativeMicSource';
 import { useChatInputMic } from './useChatInputMic';
 
 // --- Minimal Web Audio mocks (jsdom has none) --------------------------------
@@ -309,5 +310,66 @@ describe('useChatInputMic: the server closes the socket', () => {
     expect(result.current.isRecording).toBe(false);
     expect(result.current.isConnecting).toBe(false);
     expect(track.stop).toHaveBeenCalled();
+  });
+});
+
+describe('useChatInputMic in the Mac app', () => {
+  const sockets: WebSocketMock[] = [];
+  let RealWS: typeof WebSocket;
+  class TrackedSocket extends WebSocketMock {
+    constructor(url: string) {
+      super(url);
+      sockets.push(this);
+    }
+  }
+
+  beforeEach(() => {
+    sockets.length = 0;
+    RealWS = globalThis.WebSocket;
+    globalThis.WebSocket = TrackedSocket as unknown as typeof WebSocket;
+    __resetNativeMicForTests();
+    window.__WHISPER_NATIVE_MIC = { available: true };
+    (window as unknown as { webkit: unknown }).webkit = {
+      messageHandlers: {
+        nativeMic: {
+          postMessage: (msg: { cmd: string }) => {
+            if (msg.cmd === 'start') queueMicrotask(() => window.__whisperNativeMic!.onStarted('Mic'));
+            if (msg.cmd === 'stop') queueMicrotask(() => window.__whisperNativeMic!.onStopped());
+          },
+        },
+      },
+    };
+    setGetUserMedia(() => Promise.reject(new Error('getUserMedia must not be used')));
+  });
+
+  afterEach(() => {
+    globalThis.WebSocket = RealWS;
+    __resetNativeMicForTests();
+    delete window.__WHISPER_NATIVE_MIC;
+  });
+
+  it('dictates from the shell mic, never the web view mic, and sends its audio', async () => {
+    const { result } = renderHook(() => useChatInputMic({ onTranscript: vi.fn() }));
+    await act(async () => {
+      void result.current.start();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    await tick();
+    expect(result.current.isRecording).toBe(true);
+    expect(navigator.mediaDevices.getUserMedia).not.toHaveBeenCalled();
+
+    // Half a second of 16 kHz audio fills one chunk.
+    const pcm = new Int16Array(8000).fill(1000);
+    let binary = '';
+    for (const byte of new Uint8Array(pcm.buffer)) binary += String.fromCharCode(byte);
+    act(() => window.__whisperNativeMic!.onAudio(btoa(binary), 8000, 0.1));
+
+    const ws = sockets[sockets.length - 1];
+    const audio = ws._getSentMessages().filter((m): m is ArrayBuffer => typeof m !== 'string');
+    expect(audio).toHaveLength(1);
+    expect(audio[0].byteLength).toBe(16000);
+
+    act(() => result.current.stop());
+    expect(result.current.isRecording).toBe(false);
   });
 });
