@@ -176,3 +176,36 @@ def test_a_server_reads_connected_after_its_handshake(monkeypatch):
     status = asyncio.run(scenario())
     assert status["status"] == "connected"
     assert status["tools"] == ["mcp__srv__ping"]
+
+
+def test_a_server_with_prompts_lists_them_at_connect_and_again_when_they_change(monkeypatch):
+    """The composer offers each prompt as /server:prompt, so the list must be
+    there from the connect and follow the server's prompts/list_changed."""
+    import mcp.types as types
+
+    record: dict = {}
+    _install_fakes(monkeypatch, record)
+    prompts = [types.Prompt(name="review")]
+
+    async def initialize(self):
+        return SimpleNamespace(capabilities=SimpleNamespace(resources=None, prompts=True))
+
+    async def list_prompts(self, params=None):
+        return SimpleNamespace(prompts=list(prompts), next_cursor=None)
+
+    monkeypatch.setattr(_FakeSession, "initialize", initialize)
+    monkeypatch.setattr(_FakeSession, "list_prompts", list_prompts, raising=False)
+    mgr = MCPManager()
+
+    async def scenario():
+        await mgr.start_server("srv", {"command": "x"})
+        assert list(mgr._sessions["srv"]["prompts"]) == ["review"]
+
+        prompts.append(types.Prompt(name="summarize"))
+        ready = asyncio.get_running_loop().create_future()
+        ready.set_result(True)
+        await mgr._relist("srv", ready, "prompts")
+        assert list(mgr._sessions["srv"]["prompts"]) == ["review", "summarize"]
+        await mgr.stop_server("srv")
+
+    asyncio.run(scenario())

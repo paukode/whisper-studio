@@ -180,7 +180,7 @@ def _file_signature(path: str) -> tuple[int, int, int] | None:
 
 
 async def _list_all(fetch, field: str) -> list:
-    """Every item of a paginated MCP listing (tools/list, resources/list).
+    """Every item of a paginated MCP listing (tools, resources or prompts).
     Follows next_cursor until the server stops returning one; a cursor seen
     twice ends the walk so a buggy server cannot loop it forever."""
     import mcp.types as types
@@ -480,6 +480,8 @@ class MCPManager:
                 spawn(self._relist(name, ready, "tools"), name=f"mcp-relist-tools:{name}")
             elif isinstance(message, types.ResourceListChangedNotification):
                 spawn(self._relist(name, ready, "resources"), name=f"mcp-relist-resources:{name}")
+            elif isinstance(message, types.PromptListChangedNotification):
+                spawn(self._relist(name, ready, "prompts"), name=f"mcp-relist-prompts:{name}")
 
         ended = "the server closed the connection"
         try:
@@ -500,6 +502,12 @@ class MCPManager:
                     if getattr(init.capabilities, "resources", None):
                         for resource in await _list_all(session.list_resources, "resources"):
                             server_resources[str(resource.uri)] = resource
+                    # Prompts, the same way: the composer runs each one as
+                    # /server:prompt (server/mcp_catalog.py).
+                    server_prompts: dict = {}
+                    if getattr(init.capabilities, "prompts", None):
+                        for prompt in await _list_all(session.list_prompts, "prompts"):
+                            server_prompts[prompt.name] = prompt
 
                     # Publish (start_server holds the lock while awaiting `ready`,
                     # so no other mutator interleaves with this).
@@ -510,14 +518,16 @@ class MCPManager:
                         session=session,
                         tools=server_tools,
                         resources=server_resources,
+                        prompts=server_prompts,
                         stop_event=stop_event,
                     )
                     self._tools.update(tool_registrations)
                     log.info(
-                        "MCP server '%s' connected: %d tools, %d resources",
+                        "MCP server '%s' connected: %d tools, %d resources, %d prompts",
                         name,
                         len(server_tools),
                         len(server_resources),
+                        len(server_prompts),
                     )
                     if not ready.done():
                         ready.set_result(True)
@@ -573,7 +583,7 @@ class MCPManager:
         return server_tools, registrations
 
     async def _relist(self, name: str, ready: asyncio.Future, what: str) -> None:
-        """Re-read one server's tools or resources after it announced that
+        """Re-read one server's tools, resources or prompts after it announced that
         they changed (a server that registers its tools after startup, or
         adds some later), so the model and every window see the new list.
         A notification that arrives mid-handshake waits for the connection
@@ -586,10 +596,12 @@ class MCPManager:
         if session is None:
             return
         try:
-            if what == "tools":
-                items = await _list_all(session.list_tools, "tools")
-            else:
-                items = await _list_all(session.list_resources, "resources")
+            fetch = {
+                "tools": session.list_tools,
+                "resources": session.list_resources,
+                "prompts": session.list_prompts,
+            }[what]
+            items = await _list_all(fetch, what)
         except Exception as e:
             log.warning("MCP server '%s': re-listing %s failed: %s", name, what, _unwrap_exc(e))
             return
@@ -602,8 +614,10 @@ class MCPManager:
                 self._tools.pop(tool_key, None)
             info["tools"] = server_tools
             self._tools.update(registrations)
-        else:
+        elif what == "resources":
             info["resources"] = {str(r.uri): r for r in items}
+        else:
+            info["prompts"] = {p.name: p for p in items}
         log.info("MCP server '%s' %s changed: now %d", name, what, len(items))
         self._bump()
 
@@ -1108,42 +1122,11 @@ class MCPManager:
             self._sanitize_tool_name(k) == tool_name for k in self._tools
         )
 
-    def get_all_resources(self) -> list[dict]:
-        """Every resource of every connected server (list_mcp_resources)."""
-        resources = []
-        for server_name, info in self._sessions.items():
-            if info.get("status") != "connected":
-                continue
-            for uri, resource in info.get("resources", {}).items():
-                resources.append(
-                    {
-                        "uri": uri,
-                        "name": getattr(resource, "name", str(uri)),
-                        "description": getattr(resource, "description", ""),
-                        "server": server_name,
-                    }
-                )
-        return resources
-
-    async def read_resource(self, server_name: str, uri: str) -> str:
-        """Read one MCP resource by URI (read_mcp_resource)."""
-        info = self._sessions.get(server_name)
-        if not info or info.get("status") != "connected":
-            return f"[MCP server '{server_name}' not connected]"
-        session = info.get("session")
-        try:
-            result = await session.read_resource(uri)
-            parts = []
-            for content in result.contents:
-                if hasattr(content, "text"):
-                    parts.append(content.text)
-                elif hasattr(content, "blob"):
-                    parts.append(f"[Binary: {len(content.blob)} bytes]")
-                else:
-                    parts.append(str(content))
-            return "\n".join(parts)
-        except Exception as e:
-            return f"[MCP Resource Error] {e}"
+    def connected_sessions(self) -> dict[str, dict]:
+        """The connection record of every connected server, by name: its live
+        session and what it offers. server/mcp_catalog.py reads prompts and
+        resources through this."""
+        return {n: i for n, i in self._sessions.items() if i.get("status") == "connected"}
 
     def get_status(self) -> dict:
         result = {}

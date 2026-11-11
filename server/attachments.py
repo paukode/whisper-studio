@@ -165,6 +165,14 @@ async def _store(aid: str, record: dict) -> None:
     await asyncio.to_thread(attachment_store.save_attachment, aid, record)
 
 
+async def add_text_document(filename: str, text: str) -> str:
+    """Store generated text (an MCP prompt, a folder listing) as a document
+    attachment, the same record an uploaded text file gets, and return its id."""
+    aid = str(uuid.uuid4())
+    await _store(aid, _make_document_record(filename, text, outline=False))
+    return aid
+
+
 def _upload_error(message: str, status_code: int) -> Response:
     return Response(
         content=json.dumps({"error": message}),

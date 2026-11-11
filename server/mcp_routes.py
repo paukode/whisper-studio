@@ -11,6 +11,7 @@ import json
 from fastapi import APIRouter, Request
 from fastapi.responses import Response
 
+from server import mcp_catalog
 from server.mcp import _VALID_APPROVAL_MODES, effective_approval_mode, mcp_manager
 
 router = APIRouter(prefix="/api/mcp", tags=["mcp"])
@@ -187,6 +188,10 @@ async def mcp_servers_status():
             "tool_overrides": _str_map(conf.get("tool_overrides")),
             "enabled_tools": _str_list(conf.get("enabled_tools")),
             "disabled_tools": _str_list(conf.get("disabled_tools")),
+            # What the composer offers from a connected server: each prompt
+            # as /server:prompt, each resource as @server:uri.
+            "prompts": mcp_catalog.server_prompts(name),
+            "resources": mcp_catalog.server_resources(name),
         }
     return {
         "servers": servers,
@@ -196,6 +201,22 @@ async def mcp_servers_status():
         # connected server; Settings > MCP renders a form for each.
         "pending_elicitations": mcp_manager.get_pending_elicitations(),
     }
+
+
+@router.post("/prompt")
+async def mcp_run_prompt(request: Request):
+    """Run one MCP prompt, ``/server:prompt args`` from the composer, and store
+    its text as a document attachment the message carries. Body:
+    ``{"command": "server:prompt", "arguments": "the words after it"}``."""
+    from server.attachments import add_text_document
+
+    body = await request.json()
+    command = str(body.get("command") or "")
+    try:
+        filename, text = await mcp_catalog.render_prompt(command, str(body.get("arguments") or ""))
+    except mcp_catalog.CatalogError as e:
+        return _bad_request(str(e))
+    return {"id": await add_text_document(filename, text), "filename": filename}
 
 
 @router.post("/servers")
