@@ -1,4 +1,4 @@
-import { get, post, put } from './client';
+import { get, post, put, readErrorBody } from './client';
 import type { FileTreeEntry } from '@/types/workspace';
 
 interface ListDirResponse {
@@ -331,3 +331,47 @@ export function clearUnindexedRecents(): Promise<{ recent: string[] }> {
   return post<{ recent: string[] }>('/api/workspace/recent/clear-unindexed', {});
 }
 
+
+/** A workspace file's raw bytes as a browser File, named after its path. */
+export async function fetchWorkspaceFile(path: string, signal?: AbortSignal): Promise<File> {
+  const resp = await fetch(`/api/workspace/file?path=${encodeURIComponent(path)}&raw=true`, { signal });
+  if (!resp.ok) throw new Error(`Could not read ${path}: ${await readErrorBody(resp)}`);
+  const blob = await resp.blob();
+  const name = path.split('/').pop() || path;
+  return new File([blob], name, { type: blob.type || 'application/octet-stream' });
+}
+
+/** Attach a workspace folder: the server stores the folder's listing as a
+ *  document attachment and returns it, like an uploaded file. */
+export async function attachWorkspaceFolder(
+  path: string,
+  signal?: AbortSignal,
+): Promise<{ id: string; filename: string }> {
+  const response = await fetch('/api/workspace/attach-folder', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+    signal,
+  });
+  if (!response.ok) throw new Error(await readErrorBody(response));
+  return (await response.json()) as { id: string; filename: string };
+}
+
+/** Upload a workspace file as a chat attachment (no composer chip). Rejects
+ *  with the server's reason, for example a size limit. The server reads a
+ *  document into text before it answers, so a large PDF holds the request
+ *  (and one of the browser's 6 connections to the app) for minutes: abort it
+ *  with `signal` when nothing waits for it any more. */
+export async function uploadWorkspaceFile(
+  path: string,
+  signal?: AbortSignal,
+): Promise<{ id: string; filename: string }> {
+  const formData = new FormData();
+  formData.append('files', await fetchWorkspaceFile(path, signal));
+  const response = await fetch('/api/upload', { method: 'POST', body: formData, signal });
+  if (!response.ok) throw new Error(await readErrorBody(response));
+  const data = (await response.json()) as { attachments: Array<{ id: string; filename: string }> };
+  const att = data.attachments[0];
+  if (!att) throw new Error('The upload returned no attachment.');
+  return att;
+}

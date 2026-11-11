@@ -11,10 +11,11 @@
  * evict the session so the continuation's reply landed in a store nobody saved.
  *
  * The leg therefore claims its session for the whole window, before the card
- * goes away: it marks the session streaming (with a status line saying what
- * is happening) and registers a controller, so the Stop button, ESC, the
- * composer's steer routing, the parallel ceiling and eviction all see a busy
- * session through the same state they already read for a streaming turn.
+ * goes away: it moves the session to the `approvedAction` turn phase (with a
+ * status line saying what is happening) and registers a controller, so the
+ * Stop button, ESC, the composer's steer routing, the parallel ceiling and
+ * eviction all see a busy session through the same state they already read
+ * for a streaming turn.
  */
 import type { StoreApi } from 'zustand/vanilla';
 import { executeApproval, type ApprovalOutcome } from '@/api/approval';
@@ -28,7 +29,6 @@ import { approvalTarget, sendApprovalContinuation } from './approvalContinuation
 import { patchCommittedRows } from './committedRows';
 import { toolMetaWithStats } from './toolMeta';
 import {
-  hasLiveStream,
   registerStreamController,
   releaseStreamController,
   wasKillFinalized,
@@ -42,19 +42,34 @@ export const APPROVED_ACTION_STATUS = 'Running the approved action';
  * with its outcome, otherwise the turn resumes with the denial.
  * `rememberForSession` is the card's "Yes, all" / "Block" choice.
  *
- * Returns false, and leaves the card where it is, when the session already
- * has a live stream: resuming now would write a second turn into the store
- * that stream is streaming into.
+ * Returns false, and leaves the card where it is, when the session is busy
+ * (any turn phase but idle, a /file upload included): resuming now would
+ * write a second turn into the store that turn writes into.
  */
 export async function answerApproval(
   approval: PendingApproval,
   accepted: boolean,
   rememberForSession: boolean,
 ): Promise<boolean> {
-  const sessionId = approval.sessionId;
   // Bound once: a session deleted mid-leg must not be recreated by a late write.
-  const chat = getChatStore(sessionId);
-  if (hasLiveStream(sessionId)) {
+  const chat = getChatStore(approval.sessionId);
+  try {
+    return await answer(chat, approval, accepted, rememberForSession);
+  } finally {
+    // The next queued card shows once this answer is done, failed or not:
+    // skipping this on a failure left queued approvals unshown for good.
+    if (!chat.getState().currentApproval) chat.getState().showNextApproval();
+  }
+}
+
+async function answer(
+  chat: StoreApi<ChatState>,
+  approval: PendingApproval,
+  accepted: boolean,
+  rememberForSession: boolean,
+): Promise<boolean> {
+  const sessionId = approval.sessionId;
+  if (chat.getState().turnPhase !== 'idle') {
     useUIStore.getState().addToast({
       type: 'error',
       message: 'Another turn is running in this session. Stop it first, then answer the approval.',
@@ -94,7 +109,7 @@ export async function answerApproval(
   // The outcome row is still to be written after a Stop lets go of the
   // stream, so the session stays busy (never evicted) until the action returns.
   const releaseAction = holdForApprovedAction(sessionId);
-  chat.getState().setStreaming(true);
+  chat.getState().startTurn('approvedAction');
   chat.getState().setStreamStatus(APPROVED_ACTION_STATUS);
   registerStreamController(sessionId, leg);
   chat.getState().clearCurrentApproval();
@@ -203,14 +218,10 @@ function patchDeniedRow(chat: StoreApi<ChatState>, sessionId: string, approval: 
 async function runApprovedAction(approval: PendingApproval): Promise<ApprovalOutcome> {
   let outcome: ApprovalOutcome;
   try {
-    // Single executor: the backend looks up the spec and runs its registered
-    // function. No per-action switch on the frontend.
-    // The call's id lets a write keep its edit for the diff dialog.
-    outcome = await executeApproval({
-      action: approval.action,
-      payload: approval.payload,
-      tool_use_id: approval.toolUseId,
-    });
+    // The server runs what it recorded for this card (no per-action switch
+    // here), and the paused call's id it kept lets a write keep its edit
+    // for the diff dialog.
+    outcome = await executeApproval(approval.cardId);
   } catch (err) {
     console.error('Approval execution failed:', err);
     outcome = { ok: false, error: toError(err).message };

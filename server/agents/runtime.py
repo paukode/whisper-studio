@@ -26,6 +26,7 @@ from server.agents.event_bus import event_bus
 from server.agents.journal import REPORT_TEMPLATE, AgentJournal, salvage_report
 from server.agents.journal import close_quietly as _close_journal
 from server.agents.messaging import message_bus
+from server.agents.outcome import RunStatus, hit_limit, run_status
 from server.agents.providers.base import AGENT_CALL_CONCURRENCY
 from server.agents.registry import agent_registry
 from server.agents.runtime_support import (  # noqa: F401 - re-exported for callers/tests
@@ -43,11 +44,12 @@ from server.chat.engine.runner import SOFT_LIMIT_FRACTION
 
 log = logging.getLogger("whisper-studio")
 
-# Shared executor for agent bedrock calls. Sized from the ONE concurrency
-# knob (server/agents/providers/base.py) rather than its own literal: this
-# pool is what actually gates how many agent model calls can be in flight on
-# the chat/engine path, so a smaller number here silently capped the
-# workflow runtime's 16-way fan-out no matter what the scheduler admitted.
+# Shared executor for the blocking tool calls and side calls of agent runs.
+# Sized from the ONE concurrency knob (server/agents/providers/base.py) rather
+# than its own literal, so the workflow runtime's 16-way fan-out has a worker
+# for each agent. Agent model calls do not use it: each runs on a thread of
+# its own (server/infrastructure/own_thread.py), so 16 answers in flight no
+# longer hold every worker while the agents' tools wait.
 _agent_executor = ThreadPoolExecutor(max_workers=AGENT_CALL_CONCURRENCY)
 # Ambient nesting context for a spawn_agent/send_message/receive_messages/
 # complete_coordination tool call dispatched from INSIDE this unattended
@@ -74,10 +76,8 @@ class AgentResult:
     agent_id: str
     agent_type: str
     output: str
-    status: str = "completed"  # completed | failed | stopped
-    # Why the run ended: completed | turn_limit | deadline | cost_cap |
-    # cancelled | error. status stays coarse for callers that branch on it;
-    # this names the limit that ended the run, never silently.
+    # Why the run ended (server.agents.outcome.STOP_REASONS). The only outcome
+    # a run sets: status and stopped_early are read from it.
     stop_reason: str = "completed"
     turns_used: int = 0
     tools_called: list[str] = field(default_factory=list)
@@ -86,11 +86,17 @@ class AgentResult:
     usage: dict = field(default_factory=dict)
     # Schema-validated result object when the caller passed structured_schema.
     structured_output: dict | None = None
-    # True when the loop exited on a turn/time limit rather than a clean finish.
-    # status stays "completed" (memory/subagent callers branch on it), but the
-    # work is partial — the worktree harvest keeps the worktree instead of
-    # applying it. See _agent_finished.
-    stopped_early: bool = False
+
+    @property
+    def status(self) -> RunStatus:
+        """completed | stopped | failed, from stop_reason (outcome.run_status)."""
+        return run_status(self.stop_reason)
+
+    @property
+    def stopped_early(self) -> bool:
+        """A limit ended the run: its work is partial, so the worktree harvest
+        keeps the worktree instead of applying it (see _agent_finished)."""
+        return hit_limit(self.stop_reason)
 
 
 async def run_agent(
@@ -145,7 +151,7 @@ async def run_agent(
             agent_id="",
             agent_type=agent_type,
             output=f"[Agent Error] Maximum nesting depth ({MAX_DEPTH}) exceeded.",
-            status="failed",
+            stop_reason="error",
         )
 
     # Resolve config; a config passed in takes the limits it leaves unset from
@@ -157,14 +163,13 @@ async def run_agent(
             agent_id="",
             agent_type=agent_type,
             output=f"[Agent Error] {e}",
-            status="failed",
             stop_reason="error",
         )
     # Agents approve their own writes, so an agent may only read when it is
     # started from a plan-mode turn or by a read-only agent (a resume through
     # send_message included; server.agents.tool_access.read_only_scope), the
     # app's own memory agents too: send_message resumes any agent by id. While
-    # the app is in plan mode (a workflow approved from its card, /subagent)
+    # the app is in plan mode (a workflow approved from its card)
     # every other agent starts read-only; the memory agents keep their tools
     # for their post-turn runs, which never start under the scope.
     from server.agents.tool_access import read_only_scope, started_read_only
@@ -189,7 +194,7 @@ async def run_agent(
             agent_id="",
             agent_type=config.agent_type,
             output=f"[Agent Error] {why_not}",
-            status="failed",
+            stop_reason="error",
         )
 
     from server.agents.providers import model_key_for_id as _model_key_for_id
@@ -217,7 +222,7 @@ async def run_agent(
                 agent_id="",
                 agent_type=config.agent_type,
                 output=f"[Agent Error] {_why}",
-                status="failed",
+                stop_reason="error",
             )
 
     # Pre-flight data-retention gate. Mythos-class models (e.g. Fable 5) reject
@@ -246,7 +251,7 @@ async def run_agent(
             agent_id="",
             agent_type=config.agent_type,
             output=f"[Data retention required] {_dr_reason}",
-            status="failed",
+            stop_reason="error",
         )
 
     # Generate agent ID and register. A caller may pre-assign the id (team
@@ -263,7 +268,6 @@ async def run_agent(
                 agent_id=resume_agent_id,
                 agent_type=agent_type,
                 output=f"[Agent Error] No stored record for agent {resume_agent_id}; nothing to resume.",
-                status="failed",
                 stop_reason="error",
             )
         agent_id = resume_agent_id
@@ -446,9 +450,7 @@ async def run_agent(
         # re-raise so the cancellation propagates normally.
         log.info("Agent %s cancelled", agent_id)
         agent_registry.update_status(agent_id, "stopped", "Cancelled by user")
-        _close_journal(
-            journal, "stopped", "cancelled", "[Agent cancelled before it started working]"
-        )
+        _close_journal(journal, "cancelled", "[Agent cancelled before it started working]")
         stop_channel = event_channel or session_id
         if stop_channel:
             event_bus.publish(
@@ -460,13 +462,14 @@ async def run_agent(
                     "team_id": team_id,
                     "parent_agent_id": parent_agent_id,
                     "phase": "stopped",
+                    "stop_reason": "cancelled",
                 },
             )
         raise
     except Exception as e:
         log.error("Agent %s failed: %s", agent_id, e, exc_info=True)
         agent_registry.update_status(agent_id, "failed", str(e))
-        _close_journal(journal, "failed", "error", f"[Agent Error] {e}")
+        _close_journal(journal, "error", f"[Agent Error] {e}")
         fail_channel = event_channel or session_id
         if fail_channel:
             event_bus.publish(
@@ -477,6 +480,7 @@ async def run_agent(
                     "agent_type": config.agent_type,
                     "team_id": team_id,
                     "phase": "failed",
+                    "stop_reason": "error",
                     "error": str(e),
                 },
             )
@@ -484,7 +488,6 @@ async def run_agent(
             agent_id=agent_id,
             agent_type=config.agent_type,
             output=f"[Agent Error] {e}",
-            status="failed",
             stop_reason="error",
         )
     finally:
@@ -740,8 +743,6 @@ async def _run_agent_loop(
             # Checkpoints on the tools, the system prompt and the last message.
             **agent_cache_args(system),
             effort_label=effort_label,
-            loop=loop,
-            executor=_agent_executor,
         )
 
     tools_called: list[str] = []
@@ -830,7 +831,7 @@ async def _run_agent_loop(
                 agent_id=agent_id,
                 agent_type=config.agent_type,
                 output=f"[Agent Error] On-device model '{model_key}' could not be served: {e}",
-                status="failed",
+                stop_reason="error",
             )
         _local_turn_marked = True
         adapter = LocalAdapter(
@@ -1023,7 +1024,6 @@ async def _run_agent_loop(
         _flush_round_text()
         _close_journal(
             journal,
-            "stopped",
             "cancelled",
             salvage_report(
                 "cancelled",
@@ -1041,7 +1041,6 @@ async def _run_agent_loop(
         _flush_round_text()
         _close_journal(
             journal,
-            "failed",
             "error",
             salvage_report(
                 "error",
@@ -1141,13 +1140,11 @@ async def _run_agent_loop(
                 agent_id=agent_id,
             )
         final_output = f"{stop_note}\n\n{body_text}"
-        # Keep status="completed" for backward compatibility (memory/subagent
-        # callers branch on it); the emitted turn_limit phase drives the UI
-        # badge, and stopped_early is what gates the worktree harvest.
-        _emit("turn_limit", turns_used=rounds_used, status="turn_limit", stop_reason=stop_reason)
+        # A limit stop is "stopped" (outcome.run_status): its work is partial.
+        # The stop reason names the limit for the UI and the parent.
+        _emit("stopped", turns_used=rounds_used, status="stopped", stop_reason=stop_reason)
         _close_journal(
             journal,
-            "completed",
             stop_reason,
             final_output,
             turns_used=rounds_used,
@@ -1158,20 +1155,18 @@ async def _run_agent_loop(
             agent_id=agent_id,
             agent_type=config.agent_type,
             output=final_output,
-            status="completed",
             stop_reason=stop_reason,
             turns_used=rounds_used,
             tools_called=tools_called,
             usage=final_usage,
             structured_output=structured,
-            stopped_early=True,
         )
 
-    status, reason = ("failed", "error") if failed else ("completed", "completed")
-    _emit(status, turn=rounds_used, turns_used=rounds_used, status=status)
+    reason = "error" if failed else "completed"
+    status = run_status(reason)
+    _emit(status, turn=rounds_used, turns_used=rounds_used, status=status, stop_reason=reason)
     _close_journal(
         journal,
-        status,
         reason,
         body_text,
         turns_used=rounds_used,
@@ -1182,7 +1177,6 @@ async def _run_agent_loop(
         agent_id=agent_id,
         agent_type=config.agent_type,
         output=body_text,
-        status=status,
         stop_reason=reason,
         turns_used=rounds_used,
         tools_called=tools_called,

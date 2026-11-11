@@ -3,7 +3,7 @@
 Split out of bootstrap.py (which keeps register_defaults and the spec
 declarations) so both stay under the repo's per-file line budget. Each function
 delegates to the sibling executor/endpoint logic; the frontend never knows which
-one runs, it POSTs {action, payload} to /api/approval/execute.
+one runs, it POSTs the card's id to /api/approval/execute.
 
 Bodies that can block for long (commands, git, gh, python, aws, worktrees,
 a tree delete, a cross-volume move) run in a worker thread (asyncio.to_thread), so
@@ -163,61 +163,48 @@ def _write_stats(
 
 
 async def _do_folder_access(payload: dict) -> ApprovalOutcome:
-    """Persist an ask-once grant for a folder OUTSIDE the connected workspace.
+    """Open a folder OUTSIDE the connected workspace as the workspace.
 
-    Approving this is the user saying "yes, this app may read that folder",
-    recorded permanently (server/security/folder_grants.py) so the same
-    folder is never asked about again. Refused outright for credential
-    stores and for any ancestor of one, no matter what the prompt said:
-    that refusal is the whole reason a prompt-injected "approve my ~/.ssh
-    access" can't become a durable grant.
+    The card follows the permission mode every time: nothing is remembered, so
+    the next folder outside the workspace asks (or not) by the mode again.
+    Refused outright for credential stores and for any folder that holds one,
+    no matter what the prompt said: opening ``~`` would expose ``~/.ssh``.
 
-    Never auto-approvable by an unattended agent, granting the app new
-    filesystem reach is exactly the decision that needs a human.
+    Never auto-approvable by an unattended agent: giving the app a new
+    workspace is exactly the decision that needs a human.
     """
-    refusal = refuse_if_agent(payload, what="Granting access to a new folder")
+    refusal = refuse_if_agent(payload, what="Opening a new folder")
     if refusal:
         return refusal
-    from server.security.folder_grants import _canonical, grant, is_sensitive
+    from server.security.sensitive_paths import holds_sensitive_path
 
-    raw = payload.get("path") or ""
-    real = _canonical(raw)
-    if not real:
-        return ApprovalOutcome(ok=False, error="No folder path given, nothing to grant.")
+    raw = (payload.get("path") or "").strip()
+    if not raw:
+        return ApprovalOutcome(ok=False, error="No folder path given, nothing to open.")
+    real = os.path.realpath(os.path.expanduser(raw))
+    if real == "/":
+        return ApprovalOutcome(ok=False, error="Refusing to open the filesystem root.")
 
-    # Refuse protected paths BEFORE creating anything. grant() would reject
-    # them anyway, but only after makedirs had already put a directory inside
-    # a credential store.
-    if is_sensitive(real):
-        return ApprovalOutcome(ok=False, error=f"{real} is protected and can never be granted.")
+    # Refuse protected paths BEFORE creating anything, so no directory is ever
+    # made inside a credential store.
+    if holds_sensitive_path(real):
+        return ApprovalOutcome(ok=False, error=f"{real} is protected and can never be opened.")
 
     # ws_open_folder has always been allowed to create the folder it opens, and
-    # that is what the user just approved. Create it BEFORE granting so grant()
-    # keeps its own rule (never pre-authorize a path that does not exist) for
-    # every other caller.
+    # that is what the user just approved.
     if payload.get("create") and not os.path.isdir(real):
         try:
             os.makedirs(real, exist_ok=True)
         except Exception as e:  # noqa: BLE001
             return ApprovalOutcome(ok=False, error=f"Could not create folder: {e}")
+    if not os.path.isdir(real):
+        return ApprovalOutcome(ok=False, error=f"'{raw}' does not exist or is not a directory.")
 
-    ok, err = grant(raw)
-    if not ok:
-        return ApprovalOutcome(ok=False, error=err)
-
-    # Finish the action the user actually approved. The card says "open this
-    # folder as the workspace", so recording the grant and stopping there left
-    # the workspace disconnected, the user clicked Approve and nothing opened.
-    # Connecting here also makes /api/approval/execute's before/after diff fire
+    # Connecting here makes /api/approval/execute's before/after diff fire
     # ws_folder_opened, so the panel switches to the new root.
-    if payload.get("connect"):
-        from server.workspace.executors import open_folder_now
+    from server.workspace.executors import open_folder_now
 
-        return ApprovalOutcome(ok=True, output=open_folder_now(real))
-
-    # Report the CANONICAL path, not the raw input, the user should see the
-    # folder that was actually recorded, not "~/x" or a relative spelling.
-    return ApprovalOutcome(ok=True, output=f"Access granted to {real}")
+    return ApprovalOutcome(ok=True, output=open_folder_now(real))
 
 
 async def _do_delete(payload: dict) -> ApprovalOutcome:

@@ -18,7 +18,7 @@ const api = vi.hoisted(() => ({
 }));
 vi.mock('@/api/client', () => api);
 
-import { APISettings } from '@/components/settings/APISettings';
+import { GeneralSettings } from '@/components/settings/GeneralSettings';
 import {
   APPLE_TRANSLATE_REQUIREMENT,
   TRANSLATOR_UNAVAILABLE_BADGE,
@@ -50,7 +50,7 @@ function renderSettings() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={qc}>
-      <APISettings />
+      <GeneralSettings />
     </QueryClientProvider>,
   );
 }
@@ -100,7 +100,7 @@ describe('translatorOptions', () => {
   });
 });
 
-describe('APISettings translation picker', () => {
+describe('General settings translation picker', () => {
   it('leaves Apple selectable and says nothing extra inside the Mac app', async () => {
     setNativeBridge(true);
     renderSettings();

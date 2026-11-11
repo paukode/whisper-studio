@@ -103,6 +103,35 @@ describe('buildHistoryPayload', () => {
     ]);
   });
 
+  it('ships question cards with what was asked and the answer, so the model does not ask again', () => {
+    const rows = buildHistoryPayload(
+      [
+        msg({ content: 'ask me' }),
+        msg({
+          role: 'assistant',
+          content: '',
+          userQuestions: [
+            { question: 'Which color?', options: ['Blue', 'Green'], toolUseId: 't1', answered: true, answer: 'Green' },
+            { question: 'Which size?', options: [], toolUseId: 't2' },
+          ],
+        }),
+        msg({ role: 'assistant', content: 'one card', userQuestion: { question: 'Why?', options: ['A'], toolUseId: 't3' } }),
+        msg({ content: 'just sent' }),
+      ],
+      false,
+    );
+    expect(rows[1]).toEqual({
+      role: 'assistant',
+      content: '',
+      userQuestions: [
+        { question: 'Which color?', options: ['Blue', 'Green'], answered: true, answer: 'Green' },
+        { question: 'Which size?', options: [], answered: false },
+      ],
+    });
+    expect(rows[2]).toMatchObject({ userQuestions: [{ question: 'Why?', options: ['A'], answered: false }] });
+    expect('toolUseId' in (rows[1].userQuestions as Array<Record<string, unknown>>)[0]).toBe(false);
+  });
+
   it('caps to the last 40 rows', () => {
     const many = Array.from({ length: 50 }, (_, i) => msg({ content: `m${i}` }));
     const rows = buildHistoryPayload(many, true);

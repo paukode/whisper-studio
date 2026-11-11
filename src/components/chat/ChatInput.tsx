@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { useActiveChatStore, getActiveChatStore } from '@/stores/sessionRuntimes';
 import { useSessionStore } from '@/stores/sessionStore';
-import { useMcpStore } from '@/stores/mcpStore';
+import { connectedPrompts, connectedResources, useMcpStore } from '@/stores/mcpStore';
 import { chatModelBlockReason, useSettingsStore } from '@/stores/settingsStore';
 import { useUIStore } from '@/stores/uiStore';
 import { ICON } from '@/components/chat/activityIcons';
@@ -9,7 +9,6 @@ import { useChatStream } from '@/hooks/useChatStream';
 import { useChatAutocomplete } from '@/hooks/useChatAutocomplete';
 import { useSlashCommands } from '@/hooks/useSlashCommands';
 import { useComposerDragDrop } from '@/hooks/useComposerDragDrop';
-import { useComposerChatEvents } from '@/hooks/useComposerChatEvents';
 import { useDictationInput } from '@/hooks/useDictationInput';
 import { useComposerAttachments } from '@/hooks/useComposerAttachments';
 import { useComposerDraft } from '@/hooks/useComposerDraft';
@@ -24,11 +23,14 @@ import { CHAT_INSERT_EVENT } from '@/utils/uiEvents';
 import { PermissionGroup, ThinkGroup, WorkspaceGroup } from './ComposerGroups';
 import {
   BASE_SLASH_COMMANDS,
-  parseSkillMention,
   SUPPORTED_ATTACHMENT_SUMMARY,
   VOICE_SUBMIT_TRIGGERS,
   type SlashCommand,
 } from './chatInputConstants';
+import { parseSlashSend, SKILL_COMMAND_PLACEHOLDER } from './composerMenus';
+import { fetchAgentTypes, type AgentTypeInfo } from '@/api/agents';
+import { runMcpPrompt } from '@/api/mcp';
+import { sendWithWorkspaceRefs } from '@/hooks/chatStream/workspaceFileTurn';
 import { MoreMenu, type MoreSection } from './MoreMenu';
 import { reportConnectWarnings, settleWorkspaceOps } from '@/services/workspaceConnection';
 
@@ -48,8 +50,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
     setAttachments,
     attachmentsRef,
     uploadFilesAsChips,
-    attachWorkspaceFileAsChip,
-    uploadWorkspaceFile,
+    attachWorkspacePath,
     removeAttachment,
     waitForUploads,
   } = useComposerAttachments(sessionId);
@@ -82,7 +83,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
     handleDrop,
     handlePaste,
   } = useComposerDragDrop(uploadFilesAsChips);
-  useComposerChatEvents(chatStream);
 
   /* ── Workspace dropdown helpers ── */
   // Every saved recent (the backend keeps ten); the panel scrolls within the window.
@@ -231,18 +231,17 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
     return () => window.removeEventListener(CHAT_INSERT_EVENT, handler);
   }, [setText]);
 
-  // Listen for "Add to Chat" events from context menu
+  // "Add to Chat" from the workspace tree: the same path chip as a file or
+  // folder picked from the @ menu.
   useEffect(() => {
     const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail as { files?: File[] } | undefined;
-      if (!detail?.files?.length) return;
-      // Route through the shared uploader so the chip shows "(uploading…)"
-      // and uses the `_uploading_` id prefix the submit guard recognizes.
-      void uploadFilesAsChips(detail.files);
+      const detail = (e as CustomEvent).detail as { path?: string; folder?: boolean } | undefined;
+      if (!detail?.path) return;
+      attachWorkspacePath(detail.path, !!detail.folder);
     };
     window.addEventListener('whisper-add-to-chat', handler);
     return () => window.removeEventListener('whisper-add-to-chat', handler);
-  }, [uploadFilesAsChips]);
+  }, [attachWorkspacePath]);
 
   const isStreaming = useActiveChatStore((s) => s.isStreaming);
 
@@ -317,6 +316,20 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
   const setAutoMemory = useSettingsStore((s) => s.setAutoMemory);
   const skills = useSettingsStore((s) => s.skills);
   const mcpServers = useMcpStore((s) => s.servers);
+  // What the connected MCP servers offer the menus: prompts for `/`,
+  // resources for `@`.
+  const mcpPrompts = useMemo(() => connectedPrompts(mcpServers), [mcpServers]);
+  const mcpResources = useMemo(() => connectedResources(mcpServers), [mcpServers]);
+  // The agent types `@agent-<type>` can name: the built-in presets and the
+  // workspace's own (.whisper/agents/), so they follow the connected folder.
+  const [agentTypes, setAgentTypes] = useState<AgentTypeInfo[]>([]);
+  useEffect(() => {
+    let current = true;
+    fetchAgentTypes()
+      .then((types) => { if (current) setAgentTypes(types); })
+      .catch((err: unknown) => console.warn('Failed to load agent types:', err));
+    return () => { current = false; };
+  }, [wsPath]);
 
   const openWorkspaceConnect = useUIStore((s) => s.openWorkspaceConnect);
   const openSettings = useUIStore((s) => s.openSettings);
@@ -371,9 +384,12 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
     textareaRef,
     slashCommands: SLASH_COMMANDS,
     skills,
-    mcpServers,
+    mcpPrompts,
+    mcpResources,
     sessions: mentionableSessions,
-    onAttachWorkspaceFile: attachWorkspaceFileAsChip,
+    agents: agentTypes,
+    workspace: wsConnected,
+    onAttachWorkspacePath: attachWorkspacePath,
   });
 
   // Slash-command dispatcher (/effort, /model, /doctor, /help, …).
@@ -391,8 +407,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
     handlePlanToggle,
     chatStream,
     slashCommands: SLASH_COMMANDS,
-    attachWorkspaceFileAsChip,
-    uploadWorkspaceFile,
   });
 
   // Core send logic, parameterized by the raw message text. Both the form
@@ -480,7 +494,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
       // and have no real backend record. Sending them anyway makes the
       // backend's attachments.get() miss every one, the model receives the
       // bare question with no file context, and replies "I don't see a
-      // file". Since uploads now start at attach time (paperclip or /file:),
+      // file". Since uploads now start at attach time (paperclip, drag-drop),
       // wait for them to settle instead of dropping the send — the
       // conversation starts the moment the upload finishes.
       if (attachments.some(a => a.id.startsWith('_uploading_'))) {
@@ -495,11 +509,30 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
         }
       }
 
+      // `/skill-name` and `/server:prompt` (composerMenus.parseSlashSend). An
+      // MCP prompt runs first: its text becomes an attachment of the message,
+      // and a prompt that cannot run keeps the text in the composer.
+      const slashSend = trimmed.startsWith('/')
+        ? parseSlashSend(trimmed, { skills, prompts: mcpPrompts })
+        : null;
+      let promptAttachment: { id: string; filename: string } | null = null;
+      if (slashSend?.kind === 'prompt') {
+        try {
+          promptAttachment = await runMcpPrompt(slashSend.command, slashSend.args);
+        } catch (err) {
+          useUIStore.getState().addToast({ type: 'error', message: toError(err).message, duration: 6000 });
+          return;
+        }
+      }
+
       // Read the freshest attachments (uploads may have resolved during the
-      // wait above) and drop any that still failed to settle.
+      // wait above) and drop any that still failed to settle. A workspace
+      // file or folder chip holds only its path: it uploads with the message.
       const settled = attachmentsRef.current.filter(a => !a.id.startsWith('_uploading_'));
-      const currentAttachmentIds = settled.map(a => a.id);
-      const currentAttachmentNames = settled.map(a => a.filename);
+      const uploaded = [...settled.filter(a => !a.workspacePath), ...(promptAttachment ? [promptAttachment] : [])];
+      const refs = settled.flatMap(a => (a.workspacePath ? [{ path: a.workspacePath, folder: a.folder }] : []));
+      const currentAttachmentIds = uploaded.map(a => a.id);
+      const currentAttachmentNames = uploaded.map(a => a.filename);
       inputTextRef.current = '';
       setText('');
       setAttachments([]);
@@ -510,29 +543,26 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
       // Slash commands and the early-return guards (empty/streaming/uploading)
       // skip this on purpose so the mic stays on through ephemeral states.
 
-      // Pull an @skills:<name> or @<name> prefix off the front of
-      // the message and send it as force_skill: the server activates that
-      // skill's tool and asks the model plainly to call it (no provider is
-      // sent a forced tool_choice; several models reject one). Without this
-      // the prefix is just literal text the model can easily ignore. The
-      // submenu autocomplete already inserts ``@skills:<name>``;
-      // the bare ``@<name>`` form is supported as a convenience for
-      // users who type it without the helper.
-      const { forceSkill, messageToSend, displayText } = parseSkillMention(
-        trimmed,
-        skills.map((s) => s.name),
-      );
-
-      // Delegate to the unified SSE stream handler
-      await chatStream.send(messageToSend, {
+      // A `/skill-name` message goes as force_skill: the server activates
+      // that skill's tool and asks the model plainly to call it (no provider
+      // is sent a forced tool_choice; several models reject one). The bubble
+      // shows the command and the user's own text.
+      const skill = slashSend?.kind === 'skill' ? slashSend : null;
+      const messageToSend = skill ? skill.rest || SKILL_COMMAND_PLACEHOLDER : trimmed;
+      const send = {
         attachmentIds: currentAttachmentIds,
         attachmentNames: currentAttachmentNames,
-        forceSkill,
-        displayText,
-      });
+        forceSkill: skill?.name,
+        displayText: skill ? skill.rest : undefined,
+      };
+      if (refs.length > 0) {
+        sendWithWorkspaceRefs(sessionId, messageToSend, { refs, ...send });
+      } else {
+        await chatStream.send(messageToSend, send);
+      }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- inputTextRef/stopMic are stable (refs/callback from useDictationInput)
-    [handleSlashCommand, closeAc, attachments, chatStream, waitForUploads, attachmentsRef, setAttachments, approvePlan, skills, sessionId, setText],
+    [handleSlashCommand, closeAc, attachments, chatStream, waitForUploads, attachmentsRef, setAttachments, approvePlan, skills, mcpPrompts, sessionId, setText],
   );
 
   const handleSubmit = useCallback(
@@ -794,7 +824,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
               onClose={() => setPermOpen(false)}
               permissionMode={permissionMode}
               onSelectMode={handleSelectMode}
-              onManage={() => { setPermOpen(false); openSettings('permissions'); }}
             />
 
             <WorkspaceGroup
@@ -828,7 +857,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
               toggleIndex={toggleIndex}
               wsConnected={wsConnected}
               onInsertSkill={(name) => {
-                setText((prev) => `@${name} ${prev}`);
+                setText((prev) => `/${name} ${prev}`);
                 setMoreOpen(false);
                 textareaRef.current?.focus();
               }}

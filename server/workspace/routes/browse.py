@@ -10,7 +10,7 @@ from fastapi import Request
 from fastapi.responses import Response
 
 from .. import router
-from ..filesystem import _ws_list_dir, _ws_search_files
+from ..filesystem import _ws_folder_listing, _ws_list_dir, _ws_search_files
 from ..paths import _resolve_path, _ws_validate_path
 from ..state import get_workspace_path
 
@@ -177,8 +177,9 @@ async def ws_list_dir_endpoint(path: str = ""):
 
 
 @router.get("/search-files")
-async def ws_search_files_endpoint(q: str = "", limit: int = 100):
-    """Search for files matching a query across the entire workspace."""
+async def ws_search_files_endpoint(q: str = "", limit: int = 100, folders: bool = False):
+    """Search for files matching a query across the entire workspace, and
+    for folders too with ``folders=true`` (the composer's @ menu)."""
     ws = get_workspace_path()
     if not ws:
         return Response(
@@ -190,8 +191,39 @@ async def ws_search_files_endpoint(q: str = "", limit: int = 100):
         return {"results": []}
     # A walk of the whole workspace, fired per keystroke by the @-mention
     # autocomplete and the panel's file search, often while a turn streams.
-    results = await asyncio.to_thread(_ws_search_files, ws, q.strip(), max_results=min(limit, 500))
+    results = await asyncio.to_thread(
+        _ws_search_files, ws, q.strip(), max_results=min(limit, 500), folders=folders
+    )
     return {"results": results}
+
+
+@router.post("/attach-folder")
+async def ws_attach_folder(request: Request):
+    """Store a workspace folder's listing as a document attachment: what a
+    folder picked from the composer's @ menu sends. Body: ``{"path": rel}``."""
+    from server.attachments import add_text_document
+
+    ws = get_workspace_path()
+    if not ws:
+        return Response(
+            content=json.dumps({"error": "No workspace"}),
+            status_code=400,
+            media_type="application/json",
+        )
+    rel = str((await request.json()).get("path") or "").strip("/")
+    full = os.path.join(ws, rel)
+    if not rel or not _ws_validate_path(full, ws) or not os.path.isdir(full):
+        return Response(
+            content=json.dumps({"error": "Folder not found"}),
+            status_code=404,
+            media_type="application/json",
+        )
+    try:
+        text = await asyncio.to_thread(_ws_folder_listing, ws, rel)
+    except PermissionError as e:
+        return _permission_denied(e)
+    filename = f"{os.path.basename(rel)}/"
+    return {"id": await add_text_document(filename, text), "filename": filename}
 
 
 _PICK_FOLDER_TIMEOUT_S = 120

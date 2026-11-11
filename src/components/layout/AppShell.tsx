@@ -10,7 +10,6 @@ import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
 import { useSessionPersistence } from '@/hooks/useSessionPersistence';
 import { killSessionStream } from '@/hooks/chatStream/streamControl';
 import { openEventChannel, useActiveChatStore } from '@/stores/sessionRuntimes';
-import { hasRunningSubagent, useSubagentStore } from '@/stores/subagentStore';
 import { initRecordingControllerEvents } from '@/services/recordingController';
 import { syncWorkspaceStatus } from '@/services/workspaceConnection';
 import { Sidebar } from './Sidebar';
@@ -203,17 +202,15 @@ const AppShell: React.FC = () => {
   useKeyboardShortcut('mod+k', () => {
     useUIStore.getState().openCommandPalette();
   });
-  // ESC = instant kill switch for the viewed session's stream + its own
-  // /subagent runs. Armed only while the viewed session has something to
-  // stop, so ESC keeps its normal meaning everywhere else; overlay dismissers
-  // that consume ESC (preventDefault) always win, and the next ESC stops it.
-  const viewedSessionId = useSessionStore((s) => s.currentSessionId);
+  // ESC = instant kill switch for the viewed session's stream. Armed only
+  // while it streams, so ESC keeps its normal meaning everywhere else;
+  // overlay dismissers that consume ESC (preventDefault) always win, and the
+  // next ESC stops it.
   const isActiveStreaming = useActiveChatStore((s) => s.isStreaming);
-  const hasRunningSubagents = useSubagentStore((s) => hasRunningSubagent(s, viewedSessionId));
   useKeyboardShortcut(
     'escape',
     () => killSessionStream(useSessionStore.getState().currentSessionId),
-    isActiveStreaming || hasRunningSubagents,
+    isActiveStreaming,
   );
 
   // ── Workspace collapse / expand ──

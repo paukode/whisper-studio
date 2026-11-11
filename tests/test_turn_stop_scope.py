@@ -299,55 +299,6 @@ def test_stopping_a_run_kills_only_the_commands_it_owns(tmp_path):
     assert other["result"].returncode == 0 and chat["result"].returncode == 0
 
 
-def test_aborting_a_subagent_run_kills_the_command_it_is_running(tmp_path, monkeypatch):
-    """ESC or the card's Stop aborts the /subagent stream. Cancelling the
-    agent cannot stop a command in a worker thread; the route kills the run's
-    own commands, and nothing of the chat's."""
-    from server.chat import routes
-    from tests.local_chat_stack import FakeRequest
-
-    sid = "s-subagent-abort"
-    box: dict = {}
-    started = threading.Event()
-
-    async def _fake_run_agent(task, **kwargs):
-        def run():
-            started.set()
-            box["result"] = handoff.run_with_handoff(
-                "sleep 30", "sleep 30", cwd=str(tmp_path), session_id=sid, timeout=30
-            )
-
-        await asyncio.to_thread(run)
-
-    monkeypatch.setattr("server.agents.runtime.run_agent", _fake_run_agent)
-    monkeypatch.setattr(routes, "subagent_refusal", lambda key: None)
-    monkeypatch.setattr(routes, "_get_chat_models", lambda *a: {"m": "model-id"})
-
-    async def go():
-        resp = await routes.subagent_stream_endpoint(
-            FakeRequest({"task": "start the dev server", "model": "m", "session_id": sid})
-        )
-
-        async def consume():
-            async for _chunk in resp.body_iterator:
-                pass
-
-        consumer = asyncio.create_task(consume())
-        await asyncio.to_thread(started.wait, 5)
-        await asyncio.sleep(0.3)
-        t0 = time.monotonic()
-        consumer.cancel()  # the client aborted the stream
-        with contextlib.suppress(asyncio.CancelledError):
-            await consumer
-        while "result" not in box and time.monotonic() - t0 < 10:
-            await asyncio.sleep(0.05)
-        return time.monotonic() - t0
-
-    elapsed = asyncio.run(go())
-    assert handoff._STOPPED_NOTE in box["result"].output
-    assert elapsed < 8
-
-
 def test_an_approved_command_that_stop_ended_says_so(tmp_path, monkeypatch):
     """The approval card's outcome row must say Stop ended the command, not
     that it failed with a signal exit code."""

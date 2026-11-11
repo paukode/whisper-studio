@@ -15,6 +15,7 @@ import type { VizArtifact } from '@/types/chat';
 import { TOAST_PRIORITY, useUIStore } from '@/stores/uiStore';
 import { useTaskStore, normalizeTasks } from '@/stores/taskStore';
 import { useDockStore } from '@/stores/dockStore';
+import { useSessionStore } from '@/stores/sessionStore';
 import type {
   ChatMessage,
   SkillTrace,
@@ -50,6 +51,10 @@ export const _sseEventLog: SSEEventData[] = [];
 /** The key a trace's live row is updated under (see
  *  chatStore.updateStreamToolUse): the provider's id, else the name. */
 const rowKey = (t: SkillTrace): string => t.id || t.name;
+
+/** The setup stages server/chat/routes.py sends as a bare `status` word while a
+ *  turn is built. The streaming bubble names them (StreamingMessage). */
+const SETUP_STAGES: ReadonlySet<string> = new Set(['preparing', 'searching', 'connecting']);
 
 export { NOT_RUN_RESULT };
 
@@ -585,6 +590,7 @@ export async function readSSEStream(
             }
 
             const approval: PendingApproval = {
+              cardId: req.card_id,
               toolUseId: req.tool_use_id,
               action: req.action,
               category: req.category,
@@ -724,9 +730,16 @@ export async function readSSEStream(
           // through the Zod passthrough (not on the SSEEventData type), so read
           // it off a narrowed view. Surface a transient info toast keyed so
           // repeated notices coalesce instead of stacking, and keep draining
-          // the stream — the turn continues after the notice.
+          // the stream: the turn continues after the notice. The streaming
+          // bubble shows every status of its own session, so the toast is only
+          // for a free-text notice in the session on screen: a setup stage word
+          // is no notice, and another session's notice is not about this one.
           const statusMsg = (parsed as SSEEventData & { status?: string }).status;
-          if (typeof statusMsg === 'string' && statusMsg) {
+          if (
+            typeof statusMsg === 'string' && statusMsg
+            && !SETUP_STAGES.has(statusMsg)
+            && useSessionStore.getState().currentSessionId === sessionId
+          ) {
             useUIStore.getState().addToast({
               type: 'info',
               message: statusMsg,

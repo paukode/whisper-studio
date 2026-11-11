@@ -1,14 +1,12 @@
 /**
- * releaseMic must not orphan an in-flight getUserMedia.
+ * The shared mic stops every stream it opens once no owner holds it.
  *
- * The shared mic is refcounted: the first acquireMic() opens the device
- * lazily and every owner shares the same pending promise. If the LAST
- * owner releases while that open is still resolving, the store used to
- * null `_micPromise` and find nothing to stop (state has no stream yet) —
- * so the MediaStream getUserMedia eventually handed back stayed live
- * forever (the recording indicator never turned off). These tests pin the
- * fix: the eventual stream is torn down when nobody is left, but preserved
- * when a new owner re-acquires mid-open.
+ * The mic is refcounted: the first acquireMic() opens the device lazily and
+ * every owner shares the same pending open. Owners can let go while that
+ * open is still resolving, and a new owner can arrive in the same window.
+ * These tests pin the contract for each order: an owner that holds the mic
+ * keeps a live stream, and once nobody holds it, every stream getUserMedia
+ * handed back has been stopped (none is left live with no owner to stop it).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useRecordingStore } from './recordingStore';
@@ -78,7 +76,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('recordingStore.releaseMic — in-flight open', () => {
+describe('recordingStore.releaseMic: in-flight open', () => {
   it('stops the orphaned mic when the last owner releases before getUserMedia resolves', async () => {
     const store = useRecordingStore.getState();
 
@@ -105,31 +103,76 @@ describe('recordingStore.releaseMic — in-flight open', () => {
     expect(useRecordingStore.getState().audioContext).toBeNull();
   });
 
-  it('keeps the mic alive when a new owner acquires before the open resolves', async () => {
+  it('a new owner arriving mid-open shares the open, and its release stops the stream', async () => {
     const store = useRecordingStore.getState();
 
     const acquire1 = store.acquireMic('owner-1');
     await store.releaseMic('owner-1');
 
-    // A different consumer grabs the mic before the first open lands.
-    // `_micPromise` was nulled on release, so this starts a fresh open.
+    // A different consumer grabs the mic before the first open lands. It
+    // joins the pending open instead of starting a second getUserMedia.
+    const acquire2 = store.acquireMic('owner-2');
+    const stream = makeStream();
+    gumCalls[0].resolve(stream);
+    const [{ stream: got1 }, { stream: got2 }] = await Promise.all([acquire1, acquire2]);
+    await flush();
+
+    expect(getUserMediaMock).toHaveBeenCalledTimes(1);
+    expect(got2).toBe(got1);
+    // Held by owner-2: live.
+    expect(stream._track.stop).not.toHaveBeenCalled();
+    expect(useRecordingStore.getState().micStream).toBe(stream);
+
+    await store.releaseMic('owner-2');
+    expect(stream._track.stop).toHaveBeenCalledTimes(1);
+    expect(useRecordingStore.getState().micStream).toBeNull();
+  });
+
+  it('a second getUserMedia stream is stopped too: no stream outlives its owners', async () => {
+    const store = useRecordingStore.getState();
+
+    // cleanup() drops a pending open, so the next owner opens the device
+    // again: two getUserMedia calls are in flight at once.
+    const acquire1 = store.acquireMic('owner-1');
+    store.cleanup();
     const acquire2 = store.acquireMic('owner-2');
     expect(getUserMediaMock).toHaveBeenCalledTimes(2);
 
-    // Resolve the FIRST open. A new owner is now live, so its stream must
-    // survive — releasing owner-1 must not stop it.
-    const stream1 = makeStream();
-    gumCalls[0].resolve(stream1);
-    const { stream: resolved1 } = await acquire1;
+    // The dropped open lands after the second, while owner-2 holds the mic.
+    const streams = [makeStream(), makeStream()];
+    gumCalls[1].resolve(streams[1]);
+    gumCalls[0].resolve(streams[0]);
+    await Promise.all([acquire1, acquire2]);
     await flush();
 
-    expect(resolved1).toBe(stream1);
-    expect(stream1._track.stop).not.toHaveBeenCalled();
+    // owner-2's stream is the live one; the dropped open's stream is not.
+    expect(useRecordingStore.getState().micStream).toBe(streams[1]);
+    expect(streams[1]._track.stop).not.toHaveBeenCalled();
+    expect(streams[0]._track.stop).toHaveBeenCalledTimes(1);
 
-    // Settle the second open so nothing dangles.
-    const stream2 = makeStream();
-    gumCalls[1].resolve(stream2);
-    await acquire2;
+    await store.releaseMic('owner-2');
+    for (const s of streams) expect(s._track.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops the stream when the AudioContext cannot be made', async () => {
+    vi.stubGlobal(
+      'AudioContext',
+      class {
+        constructor() {
+          throw new Error('no audio context');
+        }
+      },
+    );
+    const store = useRecordingStore.getState();
+    const acquire = store.acquireMic('recorder');
+    const stream = makeStream();
+    gumCalls[0].resolve(stream);
+
+    await expect(acquire).rejects.toThrow('no audio context');
+    expect(stream._track.stop).toHaveBeenCalledTimes(1);
+    // The failed open does not lock the store: the next acquire opens again.
+    void store.acquireMic('recorder');
+    expect(getUserMediaMock).toHaveBeenCalledTimes(2);
   });
 
   it('still stops tracks on the normal path (release after the stream is resolved)', async () => {

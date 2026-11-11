@@ -130,8 +130,8 @@ for Claude and GPT on Bedrock. For Bedrock, click the gear icon to set your
 **Bedrock Region**:
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/img/settings-api-keys-dark.png">
-  <img src="docs/assets/img/settings-api-keys.png" alt="Settings on Keys and permissions, API keys sub-tab, showing Bedrock Region">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/img/settings-general-dark.png">
+  <img src="docs/assets/img/settings-general.png" alt="Settings on the General tab, showing Bedrock Region">
 </picture>
 
 Pick the model in the **How it thinks** chip in the composer (its **Model** row)
@@ -232,12 +232,17 @@ server uses only that copy. It does not use a llama.cpp build from Homebrew.
 
 ## Usage
 
-Type `/` in the chat input for slash commands, `@file:path` to pull a file
-into the prompt, `@docs` to ground an answer in the documentation, and the
-microphone icon to dictate (say "okay send", "send now", "fire away", or
-"send the message" to submit hands-free; a bare "send" never fires). You can
-send another message while the assistant is working, and it is folded into
-the running turn. When a workspace is connected, the assistant can read and
+Type `/` in the chat input to run a command, a skill, or an MCP prompt. Type
+`@` to add context: a workspace file or folder, a different session, or an
+MCP resource. Type `@agent-` and a type to give the task to an agent. Use
+`@docs` to get an answer from the documentation.
+
+To dictate, click the microphone icon. To send by voice, say "okay send",
+"send now", "fire away", or "send the message". The word "send" alone does
+not send the message.
+
+You can send another message while the assistant is working, and it is
+folded into the running turn. When a workspace is connected, the assistant can read and
 edit files, run sandboxed commands, use Git, search the web, remember things
 across sessions, schedule jobs, and spawn sub-agents, all gated by the
 current permission mode.

@@ -6,6 +6,7 @@ import { traceRuns } from '@/components/chat/turnEntries';
 import { DeliveryChips } from '@/components/chat/DeliveryChips';
 import { mergeDeliveries } from '@/hooks/chatStream/deliveries';
 import { getActiveChatStore } from '@/stores/sessionRuntimes';
+import { resendUserMessage } from '@/hooks/chatStream/resend';
 import { useUIStore } from '@/stores/uiStore';
 import { formatMessageTimestamp } from '@/utils/formatTimestamp';
 import { exportTurn, copyRichText, turnText } from '@/components/chat/messageActions';
@@ -68,22 +69,14 @@ const TurnBubbleView: React.FC<TurnBubbleProps> = ({
   const runs = useMemo(() => traceRuns(rows), [rows]);
 
   const handleRegenerate = useCallback(() => {
-    // Re-send the user message this turn answers, with its attachments, so
-    // the regenerate sees the same files. The history is cut AT that message
-    // (useComposerChatEvents), since the send adds it again: cut after it,
-    // the question stood in the transcript twice and reached the model twice.
+    // Re-send the user message this turn answers, with its files. The
+    // history is cut AT that message (resendUserMessage), since the send adds
+    // it again: cut after it, the question stood in the transcript twice and
+    // reached the model twice.
     const messages = getActiveChatStore().getState().messages;
     const prevUserMsg = messages.slice(0, first).reverse().find((m) => m.role === 'user');
     if (!prevUserMsg) return;
-    const prevIndex = messages.indexOf(prevUserMsg);
-    window.dispatchEvent(new CustomEvent('whisper-regenerate', {
-      detail: {
-        index: prevIndex,
-        content: prevUserMsg.content,
-        attachmentIds: prevUserMsg.attachmentIds,
-        attachmentNames: prevUserMsg.attachmentNames,
-      },
-    }));
+    resendUserMessage(messages.indexOf(prevUserMsg));
   }, [first]);
 
   const handleCopyRich = useCallback(() => {

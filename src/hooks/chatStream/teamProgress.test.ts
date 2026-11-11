@@ -1,34 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import {
-  applyTeamProgressToMessage,
   findMatchingTeamReports,
   foldTeamProgressIntoMap,
   foldTeamResultsInto,
   spawnLabel,
 } from './teamProgress';
-import type { ChatState } from '@/stores/chatStore';
-import type { ChatMessage, TeamProgressEvent, ToolUseEvent } from '@/types/chat';
-
-type Store = ChatState;
-
-/** Minimal mutable stand-in for the chat store — only `messages` and
- *  `setMessages` are touched by applyTeamProgressToMessage. */
-function makeStore(initial: ChatMessage[]) {
-  const store = {
-    messages: initial as ChatMessage[],
-    setMessages(next: ChatMessage[]) { this.messages = next; },
-  };
-  return { getter: () => store as unknown as Store, current: () => store.messages };
-}
+import type { TeamProgressEvent, ToolUseEvent } from '@/types/chat';
 
 describe('foldTeamResultsInto', () => {
-  it('keeps a stopped or turn-limited agent as such, live row or not', () => {
+  it('keeps a stopped agent as such, live row or not, also an older turn_limit row', () => {
     const fresh = foldTeamResultsInto(undefined, {
       team_id: 't9',
       agents: [{ name: 'a', status: 'stopped' }, { name: 'b', status: 'turn_limit' }],
     });
     expect(fresh.t9.agents.a.status).toBe('stopped');
-    expect(fresh.t9.agents.b.status).toBe('turn_limit');
+    expect(fresh.t9.agents.b.status).toBe('stopped');
     const again = foldTeamResultsInto(fresh, { team_id: 't9', agents: [{ name: 'a', status: 'stopped' }] });
     expect(again.t9.agents.a.status).toBe('stopped');
   });
@@ -170,11 +156,11 @@ describe('foldTeamProgressIntoMap', () => {
       } as TeamProgressEvent)!;
     }
     map = foldTeamProgressIntoMap(map, {
-      phase: 'turn_limit', team_id: 't6', agent_id: 'a1', turns_used: 450, stop_reason: 'deadline',
+      phase: 'stopped', team_id: 't6', agent_id: 'a1', turns_used: 450, stop_reason: 'deadline',
     } as TeamProgressEvent)!;
     expect(map.t6.agents.a1).toEqual({
       name: 'a1', task: '', agent_type: 'general', role: 'team',
-      agent_id: 'a1', status: 'turn_limit', turns_used: 450, stop_reason: 'deadline',
+      agent_id: 'a1', status: 'stopped', turns_used: 450, stop_reason: 'deadline',
     });
   });
 });
@@ -240,68 +226,5 @@ describe('findMatchingTeamReports (spawn_agent one-member teams)', () => {
     const reports = { p1: spawnReport('p1', 'same'), p2: spawnReport('p2', 'same') };
     const out = findMatchingTeamReports(tools, reports);
     expect(new Set(out.map((r) => r.team_id)).size).toBe(2);
-  });
-});
-
-describe('applyTeamProgressToMessage', () => {
-  const SUB_TS = '2026-06-07T00:00:00.000Z';
-
-  it('folds events into the message matched by timestamp, even when it is not last', () => {
-    const { getter, current } = makeStore([
-      { role: 'user', content: 'do it', timestamp: 'u1' },
-      { role: 'assistant', content: '', timestamp: SUB_TS },
-      // A later turn the user started while the subagent runs — the subagent
-      // message is no longer last, but progress must still land on it.
-      { role: 'user', content: 'meanwhile', timestamp: 'u2' },
-    ]);
-
-    applyTeamProgressToMessage(getter, SUB_TS, {
-      phase: 'team_started', team_id: 'sub', team_name: 'Subagent',
-      agents: [{ name: 'Subagent', task: 't', agent_type: 'general', role: 'team' }],
-    } as TeamProgressEvent);
-    applyTeamProgressToMessage(getter, SUB_TS, {
-      phase: 'tool_call', team_id: 'sub', agent_name: 'Subagent', tool_name: 'web_fetch',
-    } as TeamProgressEvent);
-
-    const target = current().find((m) => m.timestamp === SUB_TS)!;
-    expect(target.teamReports?.sub).toBeDefined();
-    expect(target.teamReports!.sub.agents.Subagent.status).toBe('running');
-    // The other messages are untouched.
-    expect(current().find((m) => m.timestamp === 'u2')!.teamReports).toBeUndefined();
-  });
-
-  it('ignores events for a timestamp that does not exist', () => {
-    const { getter, current } = makeStore([
-      { role: 'assistant', content: '', timestamp: SUB_TS },
-    ]);
-    applyTeamProgressToMessage(getter, 'missing', {
-      phase: 'team_started', team_id: 'x', agents: [],
-    } as TeamProgressEvent);
-    expect(current()[0].teamReports).toBeUndefined();
-  });
-
-  it('folds into the assistant message when a user message shares the timestamp', () => {
-    // The /subagent handler can add a user + assistant message on the same
-    // millisecond; progress must still land on the assistant message.
-    const { getter, current } = makeStore([
-      { role: 'user', content: 'do it', timestamp: SUB_TS },
-      { role: 'assistant', content: '', timestamp: SUB_TS },
-    ]);
-    applyTeamProgressToMessage(getter, SUB_TS, {
-      phase: 'team_started', team_id: 'subagent-x', team_name: 'Subagent',
-      agents: [{ name: 'Subagent', task: 't', agent_type: 'general', role: 'team' }],
-    } as TeamProgressEvent);
-    expect(current().find((m) => m.role === 'user')!.teamReports).toBeUndefined();
-    expect(current().find((m) => m.role === 'assistant')!.teamReports?.['subagent-x']).toBeDefined();
-  });
-
-  it('ignores a non-assistant target message', () => {
-    const { getter, current } = makeStore([
-      { role: 'user', content: 'x', timestamp: SUB_TS },
-    ]);
-    applyTeamProgressToMessage(getter, SUB_TS, {
-      phase: 'team_started', team_id: 'x', agents: [],
-    } as TeamProgressEvent);
-    expect(current()[0].teamReports).toBeUndefined();
   });
 });

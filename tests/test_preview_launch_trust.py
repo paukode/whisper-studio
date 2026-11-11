@@ -62,7 +62,7 @@ def _isolated(tmp_path, monkeypatch):
     monkeypatch.setenv("WHISPER_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setattr(
         "server.security.permissions.load_permissions",
-        lambda: {"mode": MODE_DEFAULT, "rules": [], "category_modes": {}},
+        lambda: {"mode": MODE_DEFAULT},
     )
     monkeypatch.setattr(
         tool_approvals, "classify_tool_call", AsyncMock(return_value={"decision": "confirm"})
@@ -148,14 +148,11 @@ def _process(parsed: dict, mode: str, session_approvals=None, *, unattended=Fals
 
 
 def _click_yes(request: dict) -> dict:
-    """The card's Yes button: POST /api/approval/execute with the card's payload."""
+    """The card's Yes button: POST /api/approval/execute with the card's id."""
     app = FastAPI()
     app.include_router(approval_router)
     with TestClient(app) as client:
-        res = client.post(
-            "/api/approval/execute",
-            json={"action": request["action"], "payload": request["payload"]},
-        )
+        res = client.post("/api/approval/execute", json={"card_id": request["card_id"]})
     assert res.status_code == 200
     return res.json()
 

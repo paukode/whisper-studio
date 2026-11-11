@@ -124,6 +124,13 @@ describe('MCPServersResponseSchema', () => {
     tool_overrides: {},
     enabled_tools: [],
     disabled_tools: [],
+    prompts: [{
+      name: 'review',
+      command: 'myServer:review',
+      description: 'Review a PR',
+      arguments: [{ name: 'number', description: '', required: true }],
+    }],
+    resources: [{ uri: 'issue://1', mention: 'myServer:issue://1', name: 'Issue 1', description: '' }],
   };
 
   it('parses the server list with its revision and pending elicitations', () => {
@@ -136,6 +143,8 @@ describe('MCPServersResponseSchema', () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.servers.myServer.tools).toEqual(['mcp__myServer__ping']);
+      expect(result.data.servers.myServer.prompts[0].command).toBe('myServer:review');
+      expect(result.data.servers.myServer.resources[0].mention).toBe('myServer:issue://1');
       expect(result.data.revision).toBe(4);
     }
   });
@@ -175,6 +184,7 @@ describe('SSEEventDataSchema', () => {
   it('parses approval event', () => {
     const input = {
       approval_request: {
+        card_id: 'card_1',
         tool_use_id: 'tu_1',
         action: 'file_write',
         category: 'write',
@@ -186,6 +196,7 @@ describe('SSEEventDataSchema', () => {
     const result = SSEEventDataSchema.safeParse(input);
     expect(result.success).toBe(true);
     if (result.success) {
+      expect(result.data.approval_request?.card_id).toBe('card_1');
       expect(result.data.approval_request?.action).toBe('file_write');
       expect(result.data.approval_request?.preview).toBe('diff');
     }

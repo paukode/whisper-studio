@@ -150,7 +150,7 @@ def test_plan_mode_card_asks_and_other_modes_write_directly(monkeypatch):
 
     monkeypatch.setattr(
         "server.security.permissions.load_permissions",
-        lambda: {"mode": MODE_PLAN, "rules": [], "category_modes": {}},
+        lambda: {"mode": MODE_PLAN},
     )
     payload = _approval(
         _in_plan_mode(execute_rules_write, {"target": "global_rules", "content": "Never guess"})

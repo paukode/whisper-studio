@@ -52,6 +52,7 @@ from .state import (
     _workspace_prompt_payload,
     connect_workspace,
     get_workspace_path,
+    inside_workspace,
     resolve_write_destination,
     workspace_lost_message,
 )
@@ -135,9 +136,9 @@ def open_folder_now(path: str) -> str:
     """Create the folder if needed, connect it, and return connection info.
 
     The part of ws_open_folder that actually DOES the thing, split out so the
-    approval executor (server/approval/executors.py::_do_folder_access) can
-    complete the very action the user approved instead of only recording the
-    permission for it. ``path`` must already be expanded and realpath'd.
+    approval executor (server/approval/executors.py::_do_folder_access) runs
+    the very action the user approved. ``path`` must already be expanded and
+    realpath'd.
 
     Refused in a turn whose workspace the user let go of (see
     connect_workspace): reconnecting that folder would undo their disconnect.
@@ -184,8 +185,8 @@ def execute_ws_open_folder(tool_input: dict) -> str:
     if not raw:
         return json.dumps({"error": "path is required"})
     # The user disconnected (or switched away from) this turn's workspace
-    # mid-turn. Opening a folder now, silently when it is under a grant, would
-    # undo that, so the turn tells the user instead.
+    # mid-turn. Opening a folder now would undo that, so the turn tells the
+    # user instead.
     lost = workspace_lost_message()
     if lost:
         return json.dumps({"error": lost})
@@ -205,7 +206,8 @@ def execute_ws_open_folder(tool_input: dict) -> str:
                     "candidates": candidates,
                     "hint": (
                         "Ask the user which one they meant (ask_user_question, options = these "
-                        "exact names), then call ws_open_folder again with that path. Never "
+                        "exact names; for a single name, ask whether they meant it, with the "
+                        "options Yes and No), then call ws_open_folder again with that path. Never "
                         "offer names that are not in this list. Pass create=true only if the "
                         "user asks for a new folder."
                     ),
@@ -218,8 +220,8 @@ def execute_ws_open_folder(tool_input: dict) -> str:
                     "available": browse_names(raw, recents=recents),
                     "hint": (
                         "The name was probably misheard or mistyped. Ask the user which of the "
-                        "available folders they meant (ask_user_question with those exact "
-                        "names, or the closest few), or for the full path. Never invent folder "
+                        "available folders they meant (ask_user_question with two or more of "
+                        "those exact names, the closest ones), or for the full path. Never invent folder "
                         "names, and never create a folder unless the user asked for a new one "
                         "(then pass create=true with the full path)."
                     ),
@@ -242,25 +244,19 @@ def execute_ws_open_folder(tool_input: dict) -> str:
                 "resolved_path": path,
             }
         )
-    # Ask the user once before reaching into a folder they have not already
-    # approved, then remember the answer forever (folder_grants). Approving
-    # the card OPENS the folder as well as recording the grant, the user
-    # approved "open this folder", so granting without opening would leave
-    # them staring at a still-disconnected workspace. From then on this check
-    # passes silently, including for every folder beneath the granted one.
-    from server.security.folder_grants import needs_grant
-
-    if needs_grant(path, existing):
+    # A folder outside the connected workspace goes through the folder_access
+    # card, which follows the permission mode every time (Bypass opens it with
+    # no card). Approving the card opens the folder. Nothing is remembered.
+    if not inside_workspace(path, existing):
         payload = json.dumps(
             {
                 "action": "folder_access",
                 "path": path,
                 "reason": "open this folder as the workspace",
-                # The approval executor finishes the job: create the folder if
-                # it does not exist yet (ws_open_folder has always been allowed
-                # to), then connect it.
+                # The approval executor creates the folder if it does not
+                # exist yet (ws_open_folder has always been allowed to), then
+                # connects it.
                 "create": True,
-                "connect": True,
             }
         )
         return approval_request(payload)

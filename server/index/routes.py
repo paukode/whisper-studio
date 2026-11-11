@@ -1,30 +1,24 @@
-"""HTTP API for the workspace index — status, build, remove, and schedule.
+"""HTTP API for the workspace index: status, build, remove, and schedule.
 
 Builds run in a daemon thread (a full index can take seconds to minutes) with
-live progress tracked in-process, so the UI can poll ``/status`` and show a
-"% done" / "last indexed" badge without blocking the request. Mounted under
-``/api/workspace/index``.
+live progress recorded in server/index/build_state.py, the one record every
+build writes (the scheduled refresh too), so the UI can poll ``/status`` and
+show a "% done" / "last indexed" badge without blocking the request. Mounted
+under ``/api/workspace/index``.
 """
 
 from __future__ import annotations
 
 import logging
-import threading
 
 from fastapi import APIRouter, Request
 
-from . import paths, scheduler, store
-from .pipeline import build as _build
-from .pipeline import is_building, request_cancel
+from . import build_state, paths, scheduler, store
+from .pipeline import start_build
 
 log = logging.getLogger("whisper-studio")
 
 router = APIRouter(prefix="/api/workspace/index")
-
-# In-progress builds, keyed by absolute workspace path:
-#   {building: bool, done: int, total: int, current: str, error: str|None}
-_BUILDS: dict[str, dict] = {}
-_lock = threading.Lock()
 
 
 def _abspath(path: str) -> str:
@@ -33,50 +27,25 @@ def _abspath(path: str) -> str:
     return os.path.normpath(os.path.abspath(os.path.expanduser(path)))
 
 
-def _run_build(ws_path: str) -> None:
-    key = _abspath(ws_path)
-
-    def _progress(done: int, total: int, current: str) -> None:
-        with _lock:
-            st = _BUILDS.get(key)
-            if st is not None:
-                st.update(done=done, total=total, current=current)
-
-    try:
-        _build(ws_path, progress=_progress)
-        with _lock:
-            st = _BUILDS.get(key)  # may be gone if /remove landed mid-build
-            if st is not None:
-                st.update(building=False, error=None)
-    except Exception as e:  # noqa: BLE001 — surface to the UI, don't crash the thread
-        log.error("Index build failed for %s: %s", ws_path, e)
-        with _lock:
-            st = _BUILDS.get(key)
-            if st is not None:
-                st.update(building=False, error=str(e))
-
-
 @router.get("/status")
 async def index_status(path: str = ""):
     """Index status for a workspace path (defaults to the connected one)."""
     path = _connected_or(path)
     if not path:
         return {"indexed": False, "building": False}
-    key = _abspath(path)
-    with _lock:
-        build = dict(_BUILDS.get(key, {}))
+    build = build_state.status(path)
     out = {
         "path": path,
         "indexed": paths.is_indexed(path),
-        "building": bool(build.get("building")),
+        "building": build["building"],
         "progress": {
-            "done": build.get("done", 0),
-            "total": build.get("total", 0),
-            "current": build.get("current"),
+            "done": build["done"],
+            "total": build["total"],
+            "current": build["current"],
         }
-        if build.get("building")
+        if build["building"]
         else None,
-        "error": build.get("error"),
+        "error": build["error"],
     }
     if out["indexed"]:
         out.update(store.stats(path))
@@ -90,13 +59,9 @@ async def index_build(request: Request):
     path = (body.get("path") or "").strip()
     if not path:
         return {"error": "path is required"}
-    key = _abspath(path)
-    with _lock:
-        # Already building here, or the scheduled refresh holds the build lock.
-        if _BUILDS.get(key, {}).get("building") or is_building(path):
-            return {"started": False, "reason": "already building"}
-        _BUILDS[key] = {"building": True, "done": 0, "total": 0, "current": None, "error": None}
-    threading.Thread(target=_run_build, args=(path,), daemon=True, name="index-build").start()
+    # Refused while any build of it runs, this button's or the scheduled one.
+    if not start_build(path):
+        return {"started": False, "reason": "already building"}
     return {"started": True}
 
 
@@ -195,7 +160,7 @@ async def index_cancel(request: Request):
     path = (body.get("path") or "").strip()
     if not path:
         return {"error": "path is required"}
-    return {"cancelling": request_cancel(path)}
+    return {"cancelling": build_state.request_cancel(path)}
 
 
 @router.post("/remove")
@@ -205,8 +170,7 @@ async def index_remove(request: Request):
     if not path:
         return {"error": "path is required"}
     store.remove_index(path)
-    with _lock:
-        _BUILDS.pop(_abspath(path), None)
+    build_state.forget(path)
     # Drop this folder's scheduled job and re-sync the background agent — its
     # settings/DB are gone now, so a lingering job would silently re-create it.
     scheduler.apply_workspace(_abspath(path))

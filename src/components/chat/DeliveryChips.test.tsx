@@ -161,7 +161,7 @@ describe('the Verified row in a conversation', () => {
     it('shows each delivery as soon as it is verified', () => {
       useSessionStore.setState({ currentSessionId: sid });
       const chat = getChatStore(sid);
-      chat.getState().setStreaming(true);
+      chat.getState().startTurn('streaming');
       chat.getState().addLiveDeliveries([REPORT]);
       render(<StreamingMessage content="Saved report.html to Downloads." isStreaming />);
       expect(screen.getByRole('link', { name: /report\.html/ })).toHaveAttribute('href', REPORT.href);

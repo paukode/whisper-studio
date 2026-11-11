@@ -347,19 +347,6 @@ register_flag(
     category="agent",
 )
 
-register_flag(
-    "preview_tools",
-    description=(
-        "Assistant-controllable browser preview tools (preview_start/stop/click/"
-        "fill/eval/screenshot/etc.) — spawns a dev-server subprocess and drives it "
-        "with a headless Playwright browser. On by default; the tools only surface "
-        "once Playwright + Chromium are present (setup.sh installs them) and hide "
-        "themselves automatically if that install is missing. Toggle off in Settings."
-    ),
-    default=True,
-    category="preview",
-)
-
 
 # ── API ──────────────────────────────────────────────────────────────
 

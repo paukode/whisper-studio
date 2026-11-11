@@ -58,7 +58,7 @@
       You do not enable them. Ask for the result, and the model selects the tool. Refer to
       <a href="ref-tools.html#builtin-tools">Agent tools → Built-in core tools</a>.</p>
     <p>The skills below are the bundled set. They load when they match the request. You can edit,
-      rename, disable, or delete them in "Settings", "Skills and plugins", "Skills", as your own
+      rename, disable, or delete them in "Settings", "Skills", as your own
       skills.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Skill</th><th>Function</th><th>Example request</th></tr></thead>
@@ -76,7 +76,7 @@
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
       <div class="callout__body"><p>The web search tool uses a Tavily API key. Add the key in
-        "Settings", "API keys", in the field "Tavily API Key (for web search)". The app saves the
+        "Settings", "General", in the field "Tavily API Key (for web search)". The app saves the
         key in <code class="path">config.user.json</code>. The <code>TAVILY_API_KEY</code>
         environment variable has priority over the saved key.</p>
         <p>With no Tavily key, the tool does not return search results. If an Amazon Bedrock
@@ -92,7 +92,7 @@
       trace. Thus, a skill does not run without a record.</p>
 
     <h2 id="managing">Enable and disable skills</h2>
-    <p>"Settings", "Skills and plugins", "Skills" lists each skill. You can enable or disable each
+    <p>"Settings", "Skills" lists each skill. You can enable or disable each
       skill and read its definition. When you disable a skill, the app removes it from the
       catalog, and Claude cannot select it.</p>
     <p>The app keeps the on and off state in <code class="path">skills_config.json</code> in the
@@ -157,9 +157,11 @@ under Blockers even if it was not labelled that way. Keep it terse.</code></pre>
         triggers.</p></li>
       <li><h4>Ask for the result</h4><p>Write a request that matches the description, for example
         "clean up these standup notes". Claude selects the skill. You do not type its name.</p></li>
-      <li><h4>Optional: call the skill by name</h4><p>Ask Claude to use the skill by its name.
-        Claude then calls <code>skill_invoke</code> with the <code>name</code> of the skill and your
-        <code>input</code>.</p></li>
+      <li><h4>Optional: call the skill by name</h4><p>Type <code>/</code> and the name of the
+        skill, and then your text. For example, type <code>/standup_notes</code> and paste the
+        notes after it. With no text, the skill runs on the current conversation. You can also ask Claude to use the skill
+        by its name. Claude then calls <code>skill_invoke</code> with the <code>name</code> of the
+        skill and your <code>input</code>.</p></li>
     </ol>
 
     <div class="callout callout--tip">

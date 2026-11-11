@@ -151,8 +151,7 @@
         <em>before</em> dispatching each agent, not only inside its own round loop, so agent N+1 never
         starts once the combined spend of agents 1 through N has already cleared a cap.</li>
     </ul>
-    <p>Every agent runs on the one round limit and time limit in Settings &gt; Usage and advanced
-      &gt; Costs, in the Budgets card (<code>round_limit</code>, <code>time_limit_minutes</code>); see <a href="#agent-types">Agent
+    <p>Every agent runs on the one round limit and time limit in Settings &gt; Costs, in the Budgets card (<code>round_limit</code>, <code>time_limit_minutes</code>); see <a href="#agent-types">Agent
       types</a>.</p>
 
     <div class="callout">
@@ -228,7 +227,7 @@
       A config sets the token budget per response and how the shared tool pool is filtered (a
       whitelist and a read-only flag that strips the write tools). No type carries a round or time
       limit of its own: <code>get_agent_config</code> fills both from the one round limit and time
-      limit in Settings &gt; Usage and advanced &gt; Costs, Budgets card (<code>round_limit</code>, default 120, and
+      limit in Settings &gt; Costs, Budgets card (<code>round_limit</code>, default 120, and
       <code>time_limit_minutes</code>, default 15; <code class="path">server/infrastructure/run_limits.py</code>),
       the way every model call takes its region from Settings. The time limit covers the agent's own
       work: a call that waits on agents it started (<code>spawn_agent</code>, <code>team_create</code>,
@@ -279,10 +278,10 @@
       <code>plan</code> agent cannot mutate your project. An agent runs read-only whatever its type
       when it is started from a plan-mode turn or by a read-only agent (a resume through
       <code>send_message</code> included), and a detached one keeps it. That holds for the app's
-      own memory agents too, since <code>send_message</code> can resume one by id. While the app
-      is in plan mode (a workflow approved from its card, <code>/subagent</code>) every other agent
-      starts read-only, and the memory agents keep their tools for their own post-turn runs. A
-      read-only agent
+      own memory agents too, since <code>send_message</code> can resume one by id. When the app
+      is in plan mode, every other agent starts read-only (for example, the agents of a workflow
+      approved from its card). The memory agents keep their tools for their own runs after the
+      turn. A read-only agent
       runs an MCP tool only when it is marked read-only: by the server's <code>readOnlyHint</code>
       annotation, or in <code>mcp_servers.json</code> (<code>"read_only": true</code> for a whole
       server, <code>"read_only_tools"</code> for some of its tools, <code>"read_only": false</code> to
@@ -301,8 +300,9 @@
         (<code class="path">~/.whisper/agents/</code> in the Mac app, the checkout's own
         <code>.whisper/agents/</code> in a source install), with project winning name collisions,
         and they resolve before the built-in <code>AGENT_TYPES</code>, so a custom type can shadow a
-        built-in name. The frontmatter keys that are read are <code>name</code>, <code>tools</code>,
-        <code>read_only</code> and <code>model</code>; the markdown body is the system prompt. The
+        built-in name. The app reads the frontmatter keys <code>name</code>,
+        <code>description</code>, <code>tools</code>, <code>read_only</code>, and
+        <code>model</code>. The markdown body is the system prompt. The
         <code>model</code> key is stored but has no effect: the agent runs on the session model
         unless the <code>spawn_agent</code> call passes <code>model</code>. The round and time limits
         come from Settings.</li>
@@ -317,6 +317,18 @@
     <p>Every custom or ephemeral config passes through the exact same <code>WRITE_TOOLS</code> plus
       registry-backstop filtering as the built-in presets, so a file- or model-authored type cannot
       grant itself write tools its <code>read_only</code> flag forbids.</p>
+    <p>The composer shows each type as an <code>@agent-&lt;type&gt;</code> mention.
+      <code>spawnable_agent_types</code> in <code class="path">server/agents/config.py</code> makes
+      the list: the built-in presets that are not internal (<code>general</code>,
+      <code>explore</code>, <code>plan</code>, <code>verify</code>, <code>coordinator</code>), and
+      then the custom types of the user and of the connected workspace. A custom type with the name of a preset
+      replaces the preset. <code>GET /api/agents/types</code> returns the list with the
+      <code>description</code> of each type.</p>
+    <p>When the turn starts, <code class="path">server/chat/mentions.py</code> finds each mention of
+      a known type and keeps the mention in the text. Then <code>agent_hint</code> adds a line that
+      asks the model to call <code>spawn_agent</code> with that <code>agent_type</code>. No provider
+      gets a forced <code>tool_choice</code>, and the model writes the task of the agent from the
+      message of the user.</p>
 
     <h2 id="teams">Teams</h2>
     <p><code>team_create</code> (in <code class="path">server/agent_tools/</code>) spawns several agents
@@ -407,8 +419,8 @@
         <tr><td><code>turn_start</code></td><td>A new loop iteration starts, stamped with the budget readout below.</td></tr>
         <tr><td><code>text</code></td><td>The agent produced text this turn (including its self-check). Buffered per round and flushed once, not once per streamed delta.</td></tr>
         <tr><td><code>tool_call</code> / <code>tool_result</code></td><td>A tool was invoked, then returned. Each carries a short preview and a fuller one, so a row can expand to the whole input or output.</td></tr>
-        <tr><td><code>completed</code> / <code>turn_limit</code></td><td>The agent finished, or stopped at a limit. <code>turn_limit</code> carries the <code>stop_reason</code> that names which limit.</td></tr>
-        <tr><td><code>stopped</code> / <code>failed</code></td><td>The agent was cancelled by the user, or raised an error.</td></tr>
+        <tr><td><code>completed</code></td><td>The agent completed its task.</td></tr>
+        <tr><td><code>stopped</code> / <code>failed</code></td><td>The agent stopped before the end of its task, or an error stopped the agent. A <code>stopped</code> phase has a <code>stop_reason</code>. The value is <code>cancelled</code> when a person or a shutdown stopped the agent. If not, the value is the limit that stopped the agent: <code>turn_limit</code>, <code>deadline</code>, <code>cost_cap</code>, or <code>refused_calls</code>. Old records can show a <code>turn_limit</code> phase for a limit stop.</td></tr>
         <tr><td><code>team_completed</code></td><td>Every member of a team has finished.</td></tr>
       </tbody>
     </table></div>

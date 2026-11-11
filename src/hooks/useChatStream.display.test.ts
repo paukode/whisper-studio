@@ -1,35 +1,35 @@
 import { describe, expect, it } from 'vitest';
 import { buildDisplayQuestion } from './useChatStream';
-import { SKILL_MENTION_PLACEHOLDER } from '@/components/chat/chatInputConstants';
+import { SKILL_COMMAND_PLACEHOLDER } from '@/components/chat/composerMenus';
 
-// Regression: a bare `@skill` send carries a synthetic anchor sentence as its
+// Regression: a bare `/skill` send carries a synthetic anchor sentence as its
 // payload (so the API message is non-empty and the model's call of the
 // requested skill has something to anchor on), but the bubble must show only
 // what the user typed.
 describe('buildDisplayQuestion', () => {
-  it('renders a bare skill mention as just @skill, hiding the placeholder payload', () => {
+  it('renders a bare skill command as just /skill, hiding the placeholder payload', () => {
     expect(
-      buildDisplayQuestion(SKILL_MENTION_PLACEHOLDER, {
+      buildDisplayQuestion(SKILL_COMMAND_PLACEHOLDER, {
         forceSkill: 'summarize',
         displayText: '',
       }),
-    ).toBe('@summarize');
+    ).toBe('/summarize');
   });
 
-  it('renders mention plus the user text when they typed some', () => {
+  it('renders the command plus the user text when they typed some', () => {
     expect(
       buildDisplayQuestion('with action items', {
         forceSkill: 'meeting_notes',
         displayText: 'with action items',
       }),
-    ).toBe('@meeting_notes with action items');
+    ).toBe('/meeting_notes with action items');
   });
 
   it('falls back to the payload question when no displayText is given', () => {
     // Callers that never split payload from display (e.g. programmatic sends)
     // keep today's behavior.
     expect(buildDisplayQuestion('catch me up', { forceSkill: 'catch_up' })).toBe(
-      '@catch_up catch me up',
+      '/catch_up catch me up',
     );
   });
 

@@ -245,7 +245,7 @@
       <thead><tr><th>Flag</th><th>Why</th></tr></thead>
       <tbody>
         <tr><td><code>--jinja</code></td><td>Activates the model's own chat template <em>and</em> upstream's per-family tool-call parser. Without it, tools are not parsed at all.</td></tr>
-        <tr><td><code>--parallel 1</code></td><td>One slot. The default is 4, and each slot gets its own KV cache, so the default quadruples KV memory for a single-user desktop app and can OOM Metal at a large context.</td></tr>
+        <tr><td><code>--parallel 1</code></td><td>One slot. The default is 4, and each slot gets its own KV cache, so the default quadruples KV memory for a single-user desktop app and can OOM Metal at a large context. A request that comes while the slot answers a different request waits. <code class="path">server/local/serving.py</code> counts the requests that the server answers, and a chat round sent while the count is above 0 first sends the status "Waiting for the on-device model to finish another request..." (<code class="path">server/chat/engine/local.py</code>). The first token clears it. mlx_lm answers requests together in a batch, so an MLX round does not wait like this.</td></tr>
         <tr><td><code>--cache-reuse 256</code></td><td>Reuses cached prompt prefixes across turns, so a follow-up does not re-prefill the whole system plus tools prompt.</td></tr>
         <tr><td><code>--reasoning-format auto</code></td><td>Puts reasoning on its own channel (<code>reasoning_content</code>) instead of leaking raw thought markers into the answer.</td></tr>
         <tr><td><code>--ctx-checkpoints 3</code></td><td>Keeps a maximum of 3 context checkpoints in the slot (the llama-server default is 32). A checkpoint is a copy of the sliding-window state or the recurrent state. Near the end of each prompt, llama-server makes 3 checkpoints. With these checkpoints, a turn that changes the last tokens of the previous prompt does not process the full prompt again. A new prompt with the same system prompt can also use them. One checkpoint is 320 MiB on Gemma 4 12B.</td></tr>
@@ -346,7 +346,7 @@
         <code>AttributeError</code>. Parallel tool calls work here, matching how the cloud paths batch
         reads.</li>
     </ul>
-    <p>The loop itself matches the cloud paths: up to the round limit in Settings &gt; Usage and advanced &gt; Costs,
+    <p>The loop itself matches the cloud paths: up to the round limit in Settings &gt; Costs,
       Budgets card (120 by default), with calls forbidden on the last round so the model must synthesize an
       answer from what it has. Tool execution goes through the
       engine's shared <code>execute_tool_batch</code> and <code>process_tool_results</code> pipeline, so
@@ -463,7 +463,7 @@
       offers to return the account to zero retention (mode <code>none</code>).</p>
 
     <h3 id="model-fallback">Falling back to a cheaper model</h3>
-    <p>Settings &gt; Usage and advanced &gt; Costs has a checkbox, <b>Enable model fallback (downgrade model when approaching
+    <p>Settings &gt; Costs has a checkbox, <b>Enable model fallback (downgrade model when approaching
       budget)</b>. It is off by default. With it on, the chat endpoint resolves the session's model
       through <code class="path">server/infrastructure/model_fallback.py</code> before the turn starts:
       once the session or daily spend reaches 80 percent of its cap, the turn runs on the next cheaper

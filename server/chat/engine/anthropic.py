@@ -22,6 +22,7 @@ from server.infrastructure.errors import (
     WhisperAPIError,
     classify_bedrock_error,
 )
+from server.infrastructure.own_thread import run_on_own_thread
 
 from .events import (
     TOOL_ARGS_PROGRESS_STEP,
@@ -90,8 +91,6 @@ class AnthropicAdapter:
         caching_on: bool,
         cache_ttl: str,
         effort_label: str | None,
-        loop,
-        executor,
         meta: dict | None = None,
     ):
         self.model_key = model_key
@@ -102,8 +101,6 @@ class AnthropicAdapter:
         self.caching_on = caching_on
         self.cache_ttl = cache_ttl
         self.effort_label = effort_label
-        self._loop = loop
-        self._executor = executor
         self._client = _get_bedrock_client()
         # The round in flight, for inflight_usage: (meter, label) and the
         # characters of content received so far.
@@ -200,7 +197,7 @@ class AnthropicAdapter:
             else:
                 body["tools"] = tools
             # No tool_choice: the model always decides which tool to call. A
-            # requested skill (@skills:) is asked for in the user message
+            # requested skill (/skill-name) is asked for in the user message
             # (server/chat/routes.py), since Opus 5.5, Sonnet 5.5, Fable 5.1
             # and Mythos 5.1 reject a forced tool_choice with a 400.
         return body
@@ -247,11 +244,7 @@ class AnthropicAdapter:
                 body=body,
             )
 
-        response = await invoke_with_retry(
-            call_fn=_call,
-            loop=self._loop,
-            executor=self._executor,
-        )
+        response = await invoke_with_retry(call_fn=_call)
 
         q: asyncio.Queue = asyncio.Queue()
         stop_reading = threading.Event()
@@ -292,7 +285,9 @@ class AnthropicAdapter:
                 if not stop_reading.is_set():
                     _post(e)
 
-        self._loop.run_in_executor(self._executor, _read_stream)
+        # The reader holds its thread for the whole answer, so it gets one of
+        # its own and never waits behind tool calls (see own_thread.py).
+        run_on_own_thread(_read_stream, name="bedrock-stream")
 
         from server.tool_inputs import ToolInputError, parse_tool_arguments, validate_call_ids
 

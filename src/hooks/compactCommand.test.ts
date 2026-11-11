@@ -28,9 +28,26 @@ describe('/compact', () => {
       history: [{ role: 'user', content: 'q' }, { role: 'assistant', content: 'a' }],
       note: 'keep x',
       model: 'opus',
-    });
+    }, { longLived: true });
     const { messages } = getChatStore(SID).getState();
     expect(messages[messages.length - 1]).toEqual(summary);
+  });
+
+  it('runs one compaction at a time per session', async () => {
+    let finish!: (v: ChatMessage) => void;
+    postMock.mockReturnValueOnce(new Promise((r) => { finish = r; }));
+    const first = runCompact(SID, '', 'opus', addToast);
+    await runCompact(SID, '', 'opus', addToast);
+    expect(postMock).toHaveBeenCalledTimes(1);
+    expect(addToast).toHaveBeenLastCalledWith(expect.objectContaining({ message: expect.stringContaining('already') }));
+
+    finish(row('compact_summary', 'summary'));
+    await first;
+    // Once it ended, /compact runs again (on a conversation that went on).
+    getChatStore(SID).getState().addMessage(row('user', 'more'));
+    postMock.mockResolvedValueOnce(row('compact_summary', 'again'));
+    await runCompact(SID, '', 'opus', addToast);
+    expect(postMock).toHaveBeenCalledTimes(2);
   });
 
   it('waits while a reply is streaming and changes nothing on failure', async () => {

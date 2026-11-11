@@ -5,7 +5,7 @@
  * dock). Offers Stop while running and Refresh when terminal.
  */
 import React, { useEffect } from 'react';
-import { getRun, stopRun, subscribeRun } from '@/api/workflows';
+import { endedEarly, getRun, isTerminalRun, stopRun, subscribeRun } from '@/api/workflows';
 import { useUIStore } from '@/stores/uiStore';
 import { toError } from '@/utils/toError';
 import { useWorkflowStore } from '@/stores/workflowStore';
@@ -25,7 +25,7 @@ export const WorkflowRunCard: React.FC<{ runId: string; name?: string }> = ({ ru
   const act = useWorkflowStore((s) => s.activity[runId]);
 
   const status = run?.status ?? act?.status ?? 'running';
-  const terminal = status === 'done' || status === 'failed' || status === 'stopped' || status === 'stale';
+  const terminal = isTerminalRun(status);
 
   useEffect(() => {
     // The SSE stream sends an authoritative snapshot as its first frame, then
@@ -94,7 +94,7 @@ export const WorkflowRunCard: React.FC<{ runId: string; name?: string }> = ({ ru
         {status === 'running' && (
           <button type="button" className="btn btn-sm" onClick={stop}>Stop</button>
         )}
-        {(status === 'failed' || status === 'stopped' || status === 'stale') && (
+        {endedEarly(status) && (
           <button type="button" className="btn btn-sm" onClick={refresh}>Refresh</button>
         )}
       </div>

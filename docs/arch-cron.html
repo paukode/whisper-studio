@@ -115,7 +115,7 @@
         The system prompt tells the model it is running an unattended scheduled task with no user to
         prompt and should act autonomously, and passes the
         global prompt rules through <code>append_rules()</code>. The run takes the round limit and
-        the time limit from Settings &gt; Usage and advanced &gt; Costs (the Budgets card), shared by every verify continuation
+        the time limit from Settings &gt; Costs (the Budgets card), shared by every verify continuation
         below (each gets what is left, never a fresh budget), and <code>ask_user_question</code> is
         dropped from the tool list, because an unattended run cannot answer it.</p></li>
       <li><h4>Verifies the finish</h4><p>Every natural finish is judged by the completion verifier

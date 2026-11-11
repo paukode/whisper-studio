@@ -39,8 +39,9 @@ log = logging.getLogger("whisper-studio")
 # The feature name every Local-mode refusal of a scheduled run shows the user.
 SCHEDULED_RUNS = "Scheduled runs"
 
-# Dedicated pool for cron's blocking calls — the adapter's Bedrock invoke and
-# the synchronous completion-verifier (server.goals.cron_verify.verify).
+# Dedicated pool for cron's blocking calls: its tool calls and the
+# synchronous completion-verifier (server.goals.cron_verify.verify). Model
+# calls run on threads of their own (server/infrastructure/own_thread.py).
 # Mirrors server.agents.runtime._agent_executor: its own pool so a burst of
 # cron fires never head-of-line-blocks (or is blocked by) chat's per-
 # connection executor or the agent runtime's.
@@ -103,16 +104,11 @@ async def _execute_cron_prompt(job_id: str) -> None:
 
     from server import cron_events
 
-    with _cs._IN_PROGRESS_LOCK:
-        if job_id in _cs._in_progress:
-            log.info("Cron '%s' already running; skipping duplicate", job.get("name"))
-            return
-        _cs._in_progress.add(job_id)
-        # Register the stop flag AND this task at the same instant the job is
-        # marked in-progress: a stop request in the setup window (config/
-        # tool-pool assembly) must not be silently lost. asyncio.current_task()
-        # is this coroutine's own task, whichever way it was scheduled.
-        cron_events.open_run(job_id, asyncio.current_task())
+    # The stop handle is this coroutine's own task, whichever way it was
+    # scheduled; mark_running registers it with the claim.
+    if not _cs.mark_running(job_id, asyncio.current_task()):
+        log.info("Cron '%s' already running; skipping duplicate", job.get("name"))
+        return
 
     run_id = str(uuid.uuid4())[:8]
     started = datetime.now(UTC)
@@ -306,8 +302,6 @@ async def _execute_cron_prompt(job_id: str) -> None:
                 caching_on=_caching_on,
                 cache_ttl=CACHE_TTL,
                 effort_label=_effort_label,
-                loop=loop,
-                executor=_CRON_EXECUTOR,
             )
 
         from server.chat.engine.policy import TurnPolicy
@@ -576,6 +570,4 @@ async def _execute_cron_prompt(job_id: str) -> None:
             duration_ms=_elapsed_ms(),
         )
     finally:
-        cron_events.close_run(job_id)
-        with _cs._IN_PROGRESS_LOCK:
-            _cs._in_progress.discard(job_id)
+        _cs.mark_done(job_id, run_id)

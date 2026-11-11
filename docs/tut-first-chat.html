@@ -119,9 +119,21 @@
       the text that you saw. The partial answer stays in the conversation with a
       <em>(Stopped)</em> marker. The app keeps each tool step that it showed, and marks an incomplete
       step as stopped. The turn stays in your history.</p>
-    <p>Stop also stops the shell commands that this turn started, and the <code>/subagent</code>
-      runs of this session. Turns in other sessions continue. If the turn did not make text or tool
+    <p>Stop also stops the shell commands and the agents that this turn started. Turns in other
+      sessions continue. If the turn did not make text or tool
       steps, the app adds nothing to the conversation.</p>
+
+    <h2 id="parallel-sessions">Run sessions at the same time</h2>
+    <p>You can start a turn in a session, open a different session, and start a turn there too.
+      A maximum of 8 sessions can work at the same time. A session works when it streams a reply,
+      shows an approval card, or records. If 8 sessions work and you send a message in a different
+      session, the app shows "8 sessions are already active". Wait until a session completes its
+      work, or stop a session. Then send the message again.</p>
+    <p>A GGUF on-device model answers one request at a time. When two sessions use it, the second
+      reply waits and shows "Waiting for the on-device model to finish another request...". An MLX on-device model answers requests together. A cloud model
+      does not wait for other sessions, but Amazon Bedrock limits the tokens and requests per minute
+      for your AWS account. When many sessions use one cloud model, Bedrock can return a throttling
+      error. The app then sends the request again, and the replies can be slower.</p>
 
     <h2 id="switch-models">Change the model during a conversation</h2>
     <p>The <b>How it thinks</b> control below the composer shows the model, the thinking level, and
@@ -204,19 +216,20 @@
         <tr><td><code>/plan</code></td><td>Turns plan mode on or off. In plan mode, the model only reads and gives a plan before it changes or runs something. See <a href="tut-permissions.html">Permissions &amp; approvals</a>.</td></tr>
         <tr><td><code>/verbosity &lt;level&gt;</code></td><td>Sets the answer length: <code>brief</code>, <code>normal</code>, or <code>detailed</code>. It sets the same value as the <b>Answers</b> row.</td></tr>
         <tr><td><code>/goal &lt;text&gt;</code></td><td>Sets a goal and sends the goal text as your next message. If a turn runs, the app adds the text to that turn. The assistant continues until a completion gate accepts the goal. <code>/goal clear</code> ends the goal. <code>/goal gate add &lt;command&gt;</code> adds a shell command that must return exit code 0. See <a href="tut-goals.html">Goals &amp; autopilot</a>.</td></tr>
-        <tr><td><code>/subagent &lt;task&gt;</code></td><td>Starts a subagent for one task. The subagent operates in the background with all the tools, and a card shows its progress. See <a href="tut-subagents.html">Sub-agents &amp; teams</a>.</td></tr>
         <tr><td><code>/export</code></td><td>Downloads the conversation as a text file.</td></tr>
-        <tr><td><code>/clear</code></td><td>Removes all the messages of this session from the screen and from the saved session. The session stays in the sidebar.</td></tr>
+        <tr><td><code>/clear</code></td><td>Removes all the messages of this session from the screen and from the saved session. It also stops a reply that runs and closes the cards that wait. The session stays in the sidebar.</td></tr>
         <tr><td><code>/compact [note]</code></td><td>Replaces the earlier messages with a short summary in what the model reads. The note tells the summary what to keep.</td></tr>
         <tr><td><code>/rename &lt;title&gt;</code></td><td>Gives the current session a new title in the sidebar.</td></tr>
         <tr><td><code>/doctor</code></td><td>Runs the diagnostic checks and shows the results. Use it when chat does not answer. <code>/doctor context</code> makes the system prompt smaller.</td></tr>
         <tr><td><code>/help</code></td><td>Opens a dialog with all the commands in categories.</td></tr>
+        <tr><td><code>/skill-name [text]</code></td><td>Runs an enabled skill on your text, for example <code>/meeting_notes tidy these</code>. With no text, the skill runs on the current conversation. See <a href="tut-skills.html">Skills</a>.</td></tr>
+        <tr><td><code>/server:prompt [arguments]</code></td><td>Runs a prompt of a connected MCP server. The app sends the text of the prompt as an attachment of your message. See <a href="ref-slash-commands.html#mcp-prompt">MCP prompts</a>.</td></tr>
       </tbody>
     </table></div>
     <p>The app has more commands: <code>/workflow</code> and <code>/ci</code> for
       <a href="arch-ultracode.html">workflows and CI</a>, <code>/memory</code>, <code>/theme</code>,
-      <code>/notify</code>, <code>/settings</code>, <code>/skills:</code>, <code>/workspace</code>, and
-      the <code>/file:</code> and <code>/mcp:</code> menus. For the full list, see
+      <code>/notify</code>, <code>/settings</code>, <code>/skills</code>, <code>/mcp</code>, and
+      <code>/workspace</code>. For the full list, see
       <a href="ref-slash-commands.html">Slash commands reference</a>. In the app, <code>/help</code>
       shows the current list.</p>
 
@@ -230,13 +243,15 @@
     <h2 id="attachments-and-mentions">Attachments and @ mentions</h2>
     <p>To attach documents and images, drop the files on the composer or click the paperclip. The
       app extracts the text of each document. The app sends each image to the model as vision input.
-      The <code>@</code> key opens a menu of context sources:</p>
+      The <code>/</code> menu runs something. The <code>@</code> menu points at something that the
+      model uses as context. Type <code>@</code> at any position in the message to open the
+      "Mentions" menu:</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Mention</th><th>What it adds</th></tr></thead>
       <tbody>
-        <tr><td><code>@file:</code></td><td>One file from the connected workspace. The <code>/file:</code> menu does the same.</td></tr>
-        <tr><td><code>@skills:</code></td><td>Runs a named skill for this message. <code>@&lt;name&gt;</code> also operates.</td></tr>
-        <tr><td><code>@mcp:</code></td><td>Shows the tools of your connected MCP servers.</td></tr>
+        <tr><td>A file or a folder</td><td>A file or a folder from the connected workspace. Type part of the name to search. The app adds a chip with the path, and uploads the file when you send the message. A folder chip adds the list of the entries in the folder.</td></tr>
+        <tr><td><code>@agent-&lt;type&gt;</code></td><td>Gives the task to an agent of that type, for example <code>@agent-explore</code>. The model writes the task of the agent from your message. See <a href="tut-subagents.html">Sub-agents &amp; teams</a>.</td></tr>
+        <tr><td><code>@server:uri</code></td><td>Adds a resource of a connected MCP server to the message, for example <code>@github:issue://12</code>.</td></tr>
         <tr><td><code>@index</code></td><td>Finds text in your indexed folders for this message. The answer uses the results.</td></tr>
         <tr><td><code>@docs</code></td><td>Answers only from this documentation, and gives the pages that it used.</td></tr>
         <tr><td><code>@&lt;session title&gt;</code></td><td>Adds the recent conversation of a different session to this message as context.</td></tr>
@@ -244,7 +259,7 @@
     </table></div>
     <div class="cols-2">
       <a class="card card--link" href="tut-documents.html"><h3>Working with documents</h3><p>Attach a contract, a deck, or a PDF and ask questions about it.</p></a>
-      <a class="card card--link" href="tut-workspace.html"><h3>The workspace IDE</h3><p>Connect a repository. Then refer to files with <code>@file:</code>, and let the assistant read and edit them.</p></a>
+      <a class="card card--link" href="tut-workspace.html"><h3>The workspace IDE</h3><p>Connect a repository. Then add files with <code>@</code>, and let the assistant read and edit them.</p></a>
     </div>
 
     <h2 id="what-next">What next</h2>

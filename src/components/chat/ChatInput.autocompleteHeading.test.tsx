@@ -62,6 +62,8 @@ describe('ChatInput autocomplete heading', () => {
           tool_overrides: {},
           enabled_tools: [],
           disabled_tools: [],
+          prompts: [{ name: 'review', command: 'github:review', description: 'Review a PR', arguments: [] }],
+          resources: [],
         },
       ],
       revision: 1,
@@ -70,26 +72,19 @@ describe('ChatInput autocomplete heading', () => {
 
   it.each([
     ['/', 'Commands'],
-    ['/sk', 'Commands'],
+    ['/trans', 'Commands'],
+    ['/github', 'Commands'],
     ['/effort ', 'Options'],
-    ['/file:', 'Files'],
-    ['/skills:', 'Skills'],
-    ['/mcp:', 'MCP servers'],
     ['@', 'Mentions'],
-    ['@file:', 'Files'],
-    ['@skills:', 'Skills'],
-    ['@mcp:', 'MCP servers'],
+    ['@doc', 'Mentions'],
   ])('typing %s opens a menu headed %s', async (input, expected) => {
     const { textarea, heading } = renderChatInput();
     await type(textarea, input);
-    // The file menus list their placeholder row after the 200ms search debounce.
     await waitFor(() => expect(heading()).toBe(expected));
   });
 
   it.each([
-    ['/sk', 'Commands', 'Skills'],
     ['/eff', 'Commands', 'Options'],
-    ['@mc', 'Mentions', 'MCP servers'],
   ])('picking the match for %s turns the %s heading into %s', async (input, before, after) => {
     const { textarea, heading } = renderChatInput();
     await type(textarea, input);

@@ -3,12 +3,11 @@ import { useUIStore } from '@/stores/uiStore';
 import { useDismiss, useFocusTrap } from '@/hooks/useDismiss';
 import { useResizableDialog, type ResizeEdges } from '@/hooks/useResizableDialog';
 import { STORAGE_KEYS } from '@/utils/storageKeys';
-import { APISettings } from './APISettings';
+import { GeneralSettings } from './GeneralSettings';
 import { MCPSettings } from './MCPSettings';
 import { CodeToolsPanel } from './CodeToolsPanel';
 import { ImportPanel } from './ImportPanel';
 import { SkillsPanel } from './SkillsPanel';
-import { PermissionsPanel } from './PermissionsPanel';
 import { CostsPanel } from './CostsPanel';
 import { HooksPanel } from './HooksPanel';
 import { CronPanel } from './CronPanel';
@@ -16,7 +15,6 @@ import { PluginsPanel } from './PluginsPanel';
 import { ModelModePanel } from './ModelModePanel';
 import { ModelsPanel } from './ModelsPanel';
 import { FeatureFlagsPanel } from './FeatureFlagsPanel';
-import { PreviewSettings } from './PreviewSettings';
 import { AppearancePanel } from './AppearancePanel';
 
 /** The flat tab ids. Each is a valid `settingsTab` value: every
@@ -24,20 +22,18 @@ import { AppearancePanel } from './AppearancePanel';
  *  slash commands, tests) lands on its rail item + sub-tab through
  *  {@link TAB_ROUTE}. An unknown id opens the default. */
 export type SettingsTabId =
-  | 'apikeys'
+  | 'general'
   | 'model-mode'
   | 'models'
   | 'feature-flags'
   | 'skills'
   | 'mcp'
   | 'import'
-  | 'permissions'
   | 'hooks'
   | 'code-tools'
   | 'cron'
   | 'plugins'
   | 'costs'
-  | 'preview'
   | 'appearance';
 
 interface SettingsTab {
@@ -49,40 +45,41 @@ interface SettingsTab {
  *  entries from this, so every one of these ids still resolves to a real place
  *  in the dialog (via {@link TAB_ROUTE}) and stays reachable in one click. */
 export const SETTINGS_TABS: SettingsTab[] = [
-  { id: 'apikeys', label: 'API keys' },
+  { id: 'general', label: 'General' },
   { id: 'model-mode', label: 'Model mode' },
   { id: 'models', label: 'Models' },
   { id: 'feature-flags', label: 'Feature flags' },
   { id: 'skills', label: 'Skills' },
   { id: 'mcp', label: 'MCP servers' },
   { id: 'import', label: 'Import project' },
-  { id: 'permissions', label: 'Permissions' },
   { id: 'hooks', label: 'Hooks' },
   { id: 'code-tools', label: 'Code tools' },
   { id: 'cron', label: 'Scheduled tasks' },
   { id: 'plugins', label: 'Plugins' },
   { id: 'costs', label: 'Costs' },
-  { id: 'preview', label: 'Live preview' },
   { id: 'appearance', label: 'Appearance' },
 ];
 
 /* ────────────────────────────────────────────────────────────────────────
    Grouped left rail. Each rail item renders one or more panels under a
-   secondary sub-tab strip. Single-panel items (Model mode, MCP servers)
+   secondary sub-tab strip. Single-panel items (every item but Models)
    render their one panel with no sub-tab strip.
    ──────────────────────────────────────────────────────────────────────── */
 
 type RailItemId =
+  | 'general'
   | 'model-mode'
   | 'models'
+  | 'skills'
+  | 'plugins'
   | 'mcp'
-  | 'import'
   | 'code-tools'
-  | 'skills-plugins'
-  | 'workflows-tasks'
-  | 'keys-permissions'
-  | 'usage-advanced'
-  | 'appearance';
+  | 'hooks'
+  | 'cron'
+  | 'import'
+  | 'appearance'
+  | 'costs'
+  | 'feature-flags';
 
 interface SubTab {
   /** A `settingsTab` value: deep-linking to this id opens this exact sub-tab. */
@@ -122,6 +119,23 @@ const icon = (paths: React.ReactNode): React.ReactNode => (
 
 const RAIL_GROUPS: RailGroup[] = [
   {
+    label: 'General',
+    items: [
+      {
+        id: 'general',
+        label: 'General',
+        icon: icon(<><circle cx="7.5" cy="15.5" r="4.5" /><path d="M10.7 12.3L20 3M17 6l2 2M14 9l2 2" /></>),
+        subTabs: [{ id: 'general', label: 'General', render: () => <GeneralSettings /> }],
+      },
+      {
+        id: 'appearance',
+        label: 'Appearance',
+        icon: icon(<><circle cx="13.5" cy="6.5" r="1.5" /><circle cx="17.5" cy="10.5" r="1.5" /><circle cx="8.5" cy="7.5" r="1.5" /><circle cx="6.5" cy="12.5" r="1.5" /><path d="M12 2a10 10 0 0 0 0 20c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.3 0-1.1.9-2 2-2h2.3A5.7 5.7 0 0 0 22 9.7C22 5.4 17.5 2 12 2z" /></>),
+        subTabs: [{ id: 'appearance', label: 'Appearance', render: () => <AppearancePanel /> }],
+      },
+    ],
+  },
+  {
     label: 'Chat and models',
     items: [
       {
@@ -145,18 +159,27 @@ const RAIL_GROUPS: RailGroup[] = [
   },
   {
     label: 'Tools and automation',
+    // What the assistant can use (skills, plugins, MCP servers, code tools),
+    // then what runs on its own (hooks around tool calls, scheduled tasks),
+    // then the one-time import that brings skills and MCP servers in.
     items: [
+      {
+        id: 'skills',
+        label: 'Skills',
+        icon: icon(<><path d="M12 2l2.4 4.9 5.4.8-3.9 3.8.9 5.4L12 14.8 7.2 17.3l.9-5.4L4.2 8.1l5.4-.8z" /></>),
+        subTabs: [{ id: 'skills', label: 'Skills', render: () => <SkillsPanel /> }],
+      },
+      {
+        id: 'plugins',
+        label: 'Plugins',
+        icon: icon(<><path d="M9 2v6M15 2v6" /><path d="M6 8h12v3a6 6 0 0 1-12 0z" /><path d="M12 17v5" /></>),
+        subTabs: [{ id: 'plugins', label: 'Plugins', render: () => <PluginsPanel /> }],
+      },
       {
         id: 'mcp',
         label: 'MCP servers',
         icon: icon(<><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /></>),
         subTabs: [{ id: 'mcp', label: 'MCP servers', render: () => <MCPSettings /> }],
-      },
-      {
-        id: 'import',
-        label: 'Import project',
-        icon: icon(<><path d="M12 3v12" /><path d="M7 10l5 5 5-5" /><path d="M4 21h16" /></>),
-        subTabs: [{ id: 'import', label: 'Import project', render: () => <ImportPanel /> }],
       },
       {
         id: 'code-tools',
@@ -165,57 +188,39 @@ const RAIL_GROUPS: RailGroup[] = [
         subTabs: [{ id: 'code-tools', label: 'Code tools', render: () => <CodeToolsPanel /> }],
       },
       {
-        id: 'skills-plugins',
-        label: 'Skills and plugins',
-        icon: icon(<><path d="M12 2l2.4 4.9 5.4.8-3.9 3.8.9 5.4L12 14.8 7.2 17.3l.9-5.4L4.2 8.1l5.4-.8z" /></>),
-        subTabs: [
-          { id: 'skills', label: 'Skills', render: () => <SkillsPanel /> },
-          { id: 'plugins', label: 'Plugins', render: () => <PluginsPanel /> },
-        ],
+        id: 'hooks',
+        label: 'Hooks',
+        icon: icon(<><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7" /><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7" /></>),
+        subTabs: [{ id: 'hooks', label: 'Hooks', render: () => <HooksPanel /> }],
       },
       {
-        id: 'workflows-tasks',
-        label: 'Tasks and hooks',
-        icon: icon(<><path d="M4 4h6v6H4zM14 14h6v6h-6z" /><path d="M10 7h4a2 2 0 0 1 2 2v5" /></>),
-        subTabs: [
-          { id: 'cron', label: 'Scheduled tasks', render: () => <CronPanel /> },
-          { id: 'hooks', label: 'Hooks', render: () => <HooksPanel /> },
-        ],
+        id: 'cron',
+        label: 'Scheduled tasks',
+        icon: icon(<><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>),
+        subTabs: [{ id: 'cron', label: 'Scheduled tasks', render: () => <CronPanel /> }],
+      },
+      {
+        id: 'import',
+        label: 'Import project',
+        icon: icon(<><path d="M12 3v12" /><path d="M7 10l5 5 5-5" /><path d="M4 21h16" /></>),
+        subTabs: [{ id: 'import', label: 'Import project', render: () => <ImportPanel /> }],
       },
     ],
   },
   {
-    label: 'Access and usage',
+    label: 'Usage and advanced',
     items: [
       {
-        id: 'keys-permissions',
-        label: 'Keys and permissions',
-        icon: icon(<><circle cx="7.5" cy="15.5" r="4.5" /><path d="M10.7 12.3L20 3M17 6l2 2M14 9l2 2" /></>),
-        subTabs: [
-          { id: 'apikeys', label: 'API keys', render: () => <APISettings /> },
-          { id: 'permissions', label: 'Permissions', render: () => <PermissionsPanel /> },
-        ],
-      },
-      {
-        id: 'usage-advanced',
-        label: 'Usage and advanced',
+        id: 'costs',
+        label: 'Costs',
         icon: icon(<><path d="M3 3v18h18" /><path d="M7 14l3-3 3 3 5-6" /></>),
-        subTabs: [
-          { id: 'costs', label: 'Costs', render: () => <CostsPanel /> },
-          { id: 'feature-flags', label: 'Feature flags', render: () => <FeatureFlagsPanel /> },
-          { id: 'preview', label: 'Live preview', render: () => <PreviewSettings /> },
-        ],
+        subTabs: [{ id: 'costs', label: 'Costs', render: () => <CostsPanel /> }],
       },
-    ],
-  },
-  {
-    label: 'Look and feel',
-    items: [
       {
-        id: 'appearance',
-        label: 'Appearance',
-        icon: icon(<><circle cx="13.5" cy="6.5" r="1.5" /><circle cx="17.5" cy="10.5" r="1.5" /><circle cx="8.5" cy="7.5" r="1.5" /><circle cx="6.5" cy="12.5" r="1.5" /><path d="M12 2a10 10 0 0 0 0 20c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.3 0-1.1.9-2 2-2h2.3A5.7 5.7 0 0 0 22 9.7C22 5.4 17.5 2 12 2z" /></>),
-        subTabs: [{ id: 'appearance', label: 'Appearance', render: () => <AppearancePanel /> }],
+        id: 'feature-flags',
+        label: 'Feature flags',
+        icon: icon(<><path d="M4 21V4" /><path d="M4 4h12l-2 4 2 4H4" /></>),
+        subTabs: [{ id: 'feature-flags', label: 'Feature flags', render: () => <FeatureFlagsPanel /> }],
       },
     ],
   },
@@ -226,7 +231,7 @@ const ALL_RAIL_ITEMS: RailItem[] = RAIL_GROUPS.flatMap((g) => g.items);
 /** Resolve any `settingsTab` value to its rail item + sub-tab. Built from the
  *  rail so it can never drift: every rail id and every sub-tab id (which
  *  include every flat tab id) is routable. Unknown values fall back to the
- *  first destination (API keys). */
+ *  first destination (General). */
 export const TAB_ROUTE: Record<string, { rail: RailItemId; sub: string }> = (() => {
   const map: Record<string, { rail: RailItemId; sub: string }> = {};
   for (const item of ALL_RAIL_ITEMS) {
@@ -239,7 +244,7 @@ export const TAB_ROUTE: Record<string, { rail: RailItemId; sub: string }> = (() 
   return map;
 })();
 
-const DEFAULT_ROUTE = TAB_ROUTE['apikeys'];
+const DEFAULT_ROUTE = TAB_ROUTE['general'];
 
 /** Every edge and corner resizes the dialog; corners sit above the edges. */
 const RESIZE_HANDLES: ReadonlyArray<{ side: string; edges: ResizeEdges }> = [

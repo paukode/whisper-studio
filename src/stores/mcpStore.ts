@@ -3,6 +3,11 @@ import { get, patch } from '@/api/client';
 import { MCPServersResponseSchema } from '@/types/schemas';
 import { useUIStore } from './uiStore';
 
+/** A server's connection state (MCPManager._set_state in server/mcp.py):
+ *  `connecting` while its handshake runs, `stopped` when it has no
+ *  connection (disabled, or not started yet). */
+export type MCPServerStatus = 'connecting' | 'connected' | 'error' | 'stopped';
+
 /** One configured MCP server with its live status, as GET /api/mcp/servers
  *  reports it (server/mcp_routes.py). */
 export interface MCPServerInfo {
@@ -11,7 +16,7 @@ export interface MCPServerInfo {
   args: string[];
   env: Record<string, string>;
   enabled: boolean;
-  status: string;
+  status: MCPServerStatus;
   /** Registry keys (mcp__server__tool) of the tools the server advertises. */
   tools: string[];
   error: string | null;
@@ -21,6 +26,28 @@ export interface MCPServerInfo {
   tool_overrides: Record<string, string>;
   enabled_tools: string[];
   disabled_tools: string[];
+  /** The server's prompts, each run from the composer as `/<command>`. */
+  prompts: MCPPrompt[];
+  /** The server's resources, each mentioned as `@<mention>`. */
+  resources: MCPResource[];
+}
+
+/** One MCP prompt: `command` is `server:prompt`, spelled as the composer
+ *  types it (server/mcp_catalog.py). */
+export interface MCPPrompt {
+  name: string;
+  command: string;
+  description: string;
+  arguments: Array<{ name: string; description: string; required: boolean }>;
+}
+
+/** One MCP resource: `mention` is `server:uri`, spelled as the composer
+ *  types it after the `@`. */
+export interface MCPResource {
+  uri: string;
+  mention: string;
+  name: string;
+  description: string;
 }
 
 /** An MCP server asking the human for input mid tool-call. */
@@ -59,12 +86,26 @@ interface McpState {
    *  restart starts counting again. */
   applyChange: (revision: number) => void;
   /** Persist a server's enabled flag. The switch moves at once and rolls
-   *  back with an error toast if the request fails. */
+   *  back with an error toast if the request fails, unless a newer toggle
+   *  of the same server was made meanwhile (that click is what shows). */
   setEnabled: (name: string, enabled: boolean) => Promise<void>;
+}
+
+/** The prompts of the connected servers: the composer's `/` menu. */
+export function connectedPrompts(servers: MCPServerInfo[]): MCPPrompt[] {
+  return servers.filter((m) => m.status === 'connected').flatMap((m) => m.prompts ?? []);
+}
+
+/** The resources of the connected servers: the composer's `@` menu. */
+export function connectedResources(servers: MCPServerInfo[]): MCPResource[] {
+  return servers.filter((m) => m.status === 'connected').flatMap((m) => m.resources ?? []);
 }
 
 let inFlight: Promise<void> | null = null;
 let again = false;
+/** Per server, the number of the latest setEnabled call. A failed request
+ *  rolls the switch back only while it is still the latest one. */
+const toggleGeneration = new Map<string, number>();
 
 async function fetchOnce(): Promise<void> {
   try {
@@ -83,8 +124,8 @@ async function fetchOnce(): Promise<void> {
   }
 }
 
-/** The one MCP server list: Settings > MCP, the composer's `/mcp:` and
- *  `@mcp:` menus, and the import panel all read it. The backend pushes
+/** The one MCP server list: Settings > MCP, the composer's `/` menu (MCP
+ *  prompts) and `@` menu (MCP resources), and the import panel all read it. The backend pushes
  *  `mcp_changed` on the shared session-events stream whenever the list
  *  changes (sessionRuntimes.ts), so a server added from anywhere, including
  *  by the assistant mid-session, shows up everywhere without a restart. */
@@ -121,13 +162,15 @@ export const useMcpStore = create<McpState>((set, getState) => ({
   setEnabled: async (name, enabled) => {
     const flip = (value: boolean) =>
       set((s) => ({ servers: s.servers.map((srv) => (srv.name === name ? { ...srv, enabled: value } : srv)) }));
+    const generation = (toggleGeneration.get(name) ?? 0) + 1;
+    toggleGeneration.set(name, generation);
     flip(enabled);
-    let live: { status?: string; error?: string | null };
+    let live: { status?: MCPServerStatus; error?: string | null };
     try {
       live = await patch(`/api/mcp/servers/${encodeURIComponent(name)}`, { enabled });
     } catch (err) {
       console.warn('Failed to toggle MCP server:', err);
-      flip(!enabled);
+      if (toggleGeneration.get(name) === generation) flip(!enabled);
       useUIStore.getState().addToast({
         type: 'error',
         message: `Failed to ${enabled ? 'enable' : 'disable'} MCP server "${name}"`,

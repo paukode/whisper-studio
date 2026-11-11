@@ -95,6 +95,13 @@ export interface TurnModelSettings {
   brief_mode: boolean;
 }
 
+/** A workspace file or folder picked from the composer's @ menu. It uploads
+ *  when the message is sent (chatStream/workspaceFileTurn.ts). */
+export interface WorkspaceRef {
+  path: string;
+  folder?: boolean;
+}
+
 export interface ChatMessage {
   role:
     | 'user'
@@ -164,7 +171,7 @@ export interface ChatMessage {
    *  running carries status 'stopped'. */
   stopped?: true;
   /** An assistant row appended outside the chat stream, while a turn may be
-   *  streaming: a slash command's card or intro (/workflow, /ci, /subagent)
+   *  streaming: a slash command's card or intro (/workflow, /ci)
    *  and the CI card's Autofix rows. It draws as a bubble of its own and no
    *  later row joins it (turnEntries), so a running turn's rows and live
    *  reply never land in it. */
@@ -178,19 +185,32 @@ export interface ChatMessage {
    * and 2+ questions stacked into one form with a single submit. Both fields
    * can coexist for back-compat — the renderer prefers `userQuestions` when it
    * has at least one entry. `answered` is persisted on submit so a re-render
-   * or session restore keeps the card disabled (no duplicate continuation).
+   * or session restore keeps the card disabled (no duplicate continuation),
+   * and `answer` holds what the user answered: later turns send the model
+   * each question with its answer (chatStream/history.ts), so it does not
+   * ask again.
    */
+  /** The workspace files and folders this message attached from the @ menu.
+   *  A resend whose uploads never finished uploads them again
+   *  (chatStream/resend.ts). */
+  workspaceRefs?: WorkspaceRef[];
   userQuestion?: {
     question: string;
     options: string[];
     toolUseId: string;
     answered?: boolean;
+    answer?: string;
+    /** Closed unanswered: the user sent a message instead (chatStream/waitingCards). */
+    skipped?: boolean;
   };
   userQuestions?: Array<{
     question: string;
     options: string[];
     toolUseId: string;
     answered?: boolean;
+    answer?: string;
+    /** Closed unanswered: the user sent a message instead (chatStream/waitingCards). */
+    skipped?: boolean;
   }>;
   /** On the message that carries a question card or a workspace-folder
    *  prompt: the settings of the turn that paused on it. The answer resumes
@@ -334,6 +354,7 @@ export interface TeamProgressEvent {
     | 'tool_call'
     | 'tool_result'
     | 'completed'
+    // Records written before a limit stop became 'stopped' (utils/agentOutcome).
     | 'turn_limit'
     | 'failed'
     | 'stopped'
@@ -433,7 +454,8 @@ export interface TeamAgentReport {
   task: string;
   agent_type: string;
   role: 'team' | 'orchestrator';
-  status: 'pending' | 'running' | 'completed' | 'turn_limit' | 'failed' | 'stopped';
+  /** See utils/agentOutcome: a limit stop is 'stopped', its stop_reason names the limit. */
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'stopped';
   model?: string | null;
   /** Set when this row is a spawn_agent child of another agent. */
   parent_agent_id?: string | null;
@@ -463,6 +485,8 @@ export type PreviewKind = 'diff' | 'command' | 'text';
 export type RiskHint = 'low' | 'medium' | 'high';
 
 export interface ApprovalRequest {
+  /** The server's id for the card (server/approval/cards.py). */
+  card_id: string;
   tool_use_id: string;
   action: string;
   category: string;

@@ -4,9 +4,9 @@ Two independent, cheap checks (no subprocess spawn on the hot path):
   1. the `playwright` package is importable
   2. its Chromium browser binary is present on disk
 
-Both must pass. Checked live on every call so a corrupted/deleted install
-makes the preview tools disappear from the catalog again automatically,
-without waiting for a restart or a flag re-toggle.
+Both must pass. setup.sh installs both and the app bundle ships both, so a
+failed check means a broken install: each preview tool call checks live and
+refuses with :func:`missing_browser_message`, which names the fix.
 """
 
 from __future__ import annotations
@@ -25,9 +25,9 @@ def is_packaged_install() -> bool:
 
     The macOS shell always sets ``WHISPER_HOME`` before spawning the backend
     (the same signal :func:`server.infrastructure.paths.app_home` keys on); a
-    dev checkout never does. In a packaged install the code tree is signed and
-    read-only, so runtime pip installs / browser downloads are impossible,
-    the Playwright browser ships inside the bundle instead."""
+    dev checkout never does. In a packaged install the Playwright browser ships
+    inside the signed, read-only bundle, so a missing browser means the app
+    must be installed again."""
     return bool(os.environ.get("WHISPER_HOME", "").strip())
 
 
@@ -106,3 +106,19 @@ def is_chromium_installed() -> bool:
 def preview_capability_ok() -> bool:
     """Both checks must pass for preview_* tools to be offered at all."""
     return is_playwright_importable() and is_chromium_installed()
+
+
+def missing_browser_message() -> str | None:
+    """None when live preview can run, else the refusal a preview tool
+    returns: what is missing and how to repair the install."""
+    if preview_capability_ok():
+        return None
+    if is_packaged_install():
+        return (
+            "Live preview cannot run: the browser is missing from the app bundle. "
+            "Install Whisper Studio again."
+        )
+    return (
+        "Live preview cannot run: Playwright or its Chromium browser is missing. "
+        "Run setup.sh again to install them."
+    )

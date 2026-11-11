@@ -31,7 +31,7 @@ NON_BYPASS = (MODE_DEFAULT, MODE_ACCEPT_EDITS, MODE_DONT_ASK)
 @pytest.fixture
 def perms(monkeypatch):
     """The user's permissions.json, as resolve_static_decision reads it."""
-    data = {"mode": MODE_DEFAULT, "rules": [], "category_modes": {}}
+    data = {"mode": MODE_DEFAULT}
     monkeypatch.setattr("server.security.permissions.load_permissions", lambda: data)
     return data
 
@@ -99,17 +99,6 @@ def test_rm_of_the_filesystem_root_is_still_refused_in_bypass():
     from server.security.command_validator import validate_command
 
     assert validate_command("rm -rf /", secret_reads=True)
-
-
-def test_a_category_row_that_names_another_mode_still_asks_in_bypass(perms, tmp_path):
-    perms["category_modes"] = {"cli": MODE_DEFAULT, "folder-access": MODE_DEFAULT}
-    escalate = {"command": "touch ~/x", "sandbox_permissions": "danger-full-access"}
-    assert approval_floor("terminal_run", escalate, "cli", MODE_BYPASS) == "sandbox-escalation"
-    assert resolve_static_decision("terminal_run", escalate, "cli", {}, MODE_BYPASS) == "ask"
-    folder = {"action": "folder_access", "path": str(tmp_path / "other")}
-    assert (
-        resolve_static_decision("ws_open_folder", folder, "folder-access", {}, MODE_BYPASS) == "ask"
-    )
 
 
 # ── The cards that are gone in Bypass ────────────────────────────────────────
@@ -275,19 +264,3 @@ def test_bypass_does_not_write_the_credential_stores(workspace, fake_home):
         {"path": str(keys), "content": "x", "__session_id__": "s1", SECRET_READS_KEY: True}, [], []
     )
     assert out.startswith("Error:")
-
-
-def test_a_bypass_category_row_lifts_no_floor_under_another_mode(perms, workspace):
-    # A row can tighten Bypass, never loosen another mode: the ws_* executors
-    # read the session's mode, so the gate does too.
-    perms["category_modes"] = {"cli": MODE_BYPASS}
-    calls = (
-        ("ws_run_command", {"command": "rm -rf ~/Documents"}),
-        ("terminal_run", {"command": "touch ~/x", "sandbox_permissions": "danger-full-access"}),
-        ("terminal_run", {"command": "npm test", "mode": "visible"}),
-    )
-    for tool, payload in calls:
-        for mode in NON_BYPASS:
-            assert approval_floor(tool, payload, "cli", mode) is not None, (payload, mode)
-            assert resolve_static_decision(tool, payload, "cli", {}, mode) in ("ask", "deny")
-        assert approval_floor(tool, payload, "cli", MODE_BYPASS) is None, payload

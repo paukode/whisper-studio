@@ -16,6 +16,7 @@ engine stays a one-module change.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import threading
@@ -56,6 +57,30 @@ _stopping = 0
 # for the local server again first (ensure_serving clears it). Guarded by
 # _busy_lock.
 _release_when_idle: str | None = None
+# Requests the model server answers now or holds in its queue: chat rounds,
+# side calls and one-shot completions. llama-server answers one at a time
+# (``--parallel 1``), so a request sent while this is above zero waits for
+# the others to finish. A live turn that runs its tools sends none.
+_requests_lock = threading.Lock()
+_requests = 0
+
+
+@contextlib.contextmanager
+def counted_request():
+    """Count one request to the model server for as long as it runs."""
+    global _requests
+    with _requests_lock:
+        _requests += 1
+    try:
+        yield
+    finally:
+        with _requests_lock:
+            _requests -= 1
+
+
+def requests_in_flight() -> int:
+    with _requests_lock:
+        return _requests
 
 
 def begin_turn() -> None:
@@ -545,9 +570,10 @@ async def complete_on_resident(
                 "json_schema": {"name": "answer", "strict": True, "schema": json_schema},
             }
         try:
-            async with asyncio.timeout(limit):
-                async with httpx.AsyncClient(timeout=limit) as client:
-                    r = await client.post(f"{base}/v1/chat/completions", json=body)
+            with counted_request():
+                async with asyncio.timeout(limit):
+                    async with httpx.AsyncClient(timeout=limit) as client:
+                        r = await client.post(f"{base}/v1/chat/completions", json=body)
         except (TimeoutError, httpx.TimeoutException):
             if shared:
                 raise ResidentCallError(
@@ -602,5 +628,6 @@ def complete(
     }
     if thinking.caps_for(key).can_think:
         body.update(thinking.off_fields(mlx=engine_of(key) == "mlx"))
-    r = httpx.post(f"{url}/v1/chat/completions", json=body, timeout=_ONESHOT_TIMEOUT)
+    with counted_request():
+        r = httpx.post(f"{url}/v1/chat/completions", json=body, timeout=_ONESHOT_TIMEOUT)
     return _resident_answer(r, max_tokens, allow_truncated=allow_truncated)

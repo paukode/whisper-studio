@@ -160,11 +160,9 @@
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
       <div class="callout__body"><p><b>Accepted residual.</b> Because the default is <em>allow</em>,
-        the sandbox by default does not restrict network access (sandboxed <code>git</code>/<code>npm</code>/<code>pip</code>/<code>aws</code>/build
-        commands need it) and does not block reads of secret files that aren't on the deny-list. An
-        opt-in egress policy (Settings → Keys and permissions → Permissions; <code>network_policy</code>, enforced by an
-        SNI-filtering proxy in <code class="path">server/security/egress_policy.py</code>) can pin
-        sandboxed commands to curated or user-allowed domains. This is the boundary you should trust
+        the sandbox does not restrict network access (sandboxed <code>git</code>/<code>npm</code>/<code>pip</code>/<code>aws</code>/build
+        commands need it) and does not block reads of secret files that are not on the deny-list.
+        This is the boundary to trust
         last and most: everything above it is layered defence.</p></div>
     </div>
 
@@ -185,7 +183,7 @@
         <tr><td>Add an HTTP endpoint</td><td>one of the routers in <code>server/</code>, mounted in <code>server/main.py</code></td></tr>
         <tr><td>Add a frontend component</td><td><code>src/components/&lt;area&gt;/</code>, wired into <code>src/App.tsx</code> for a new top-level surface</td></tr>
         <tr><td>Add a session-scoped event</td><td><code>server/agents/event_bus.py</code> (publisher) + <code>src/stores/sessionRuntimes.ts</code> (consumer)</td></tr>
-        <tr><td>Change a permission rule</td><td><code>server/security/permissions.py</code> (rules, per-category defaults, network policy) + <code>server/security/command_validator.py</code> (deny patterns); the auto-mode classifier lives in <code>server/auto_mode.py</code></td></tr>
+        <tr><td>Change how a permission mode decides</td><td><code>server/security/permissions.py</code> (the modes and the decision order) + <code>server/security/command_validator.py</code> (deny patterns). The auto-mode classifier lives in <code>server/auto_mode.py</code></td></tr>
         <tr><td>Add a setting</td><td><code>server/infrastructure/config.py</code> (<code>DEFAULTS</code>) + the relevant Settings panel</td></tr>
       </tbody>
     </table>
@@ -194,8 +192,11 @@
     <ul>
       <li>The <b>companion</b> subsystem: an optional sidecar that can be toggled off entirely.</li>
       <li><b>Background tasks</b>: used to run long commands without holding an HTTP connection.</li>
-      <li>The <b>skill autocomplete</b> and <b>@-mention</b> paths in the chat input: small lookups
-        (the <code>@file:</code> completion queries the backend file search).</li>
+      <li>The <b><code>/</code> and <code>@</code> menus</b> of the chat input: small lookups. The
+        <code>@</code> menu searches the workspace with
+        <code>GET /api/workspace/search-files?folders=true</code>, and
+        <code class="path">server/chat/mentions.py</code> resolves the mentions when the turn
+        starts.</li>
     </ul>
     <p>These are real parts of the system but aren't on the critical path for "how does a chat turn
       complete and stay safe?", which is what this page is for. Every box above is also a link into a

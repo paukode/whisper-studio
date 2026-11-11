@@ -15,9 +15,10 @@ resumes instead of restarting.
 
 Requests beyond the concurrency cap are QUEUED (FIFO), not refused: the key
 goes into ``_queue`` and the next free slot starts it. The queue is pumped by
-``reap()``, which every endpoint (including the 1s status poll) calls first,
-and directly by ``cancel()``, so a freed slot is refilled on the very next
-poll at the latest and queued items can never stall.
+``reap()``, which every endpoint (including the 1s status poll) calls first
+and ``cancel()`` calls again once its worker is gone, so a freed slot is
+refilled on the very next poll at the latest and queued items can never
+stall.
 """
 
 from __future__ import annotations
@@ -242,10 +243,12 @@ def reap() -> None:
     """Fold finished, dead, or stalled workers into terminal states (called
     before every read), then pump the queue, a reaped job frees a slot.
 
-    A job leaves ``downloading`` three ways, and only a clean success (or an
-    explicit cancel) is silent; every other exit records an actionable error:
+    This is the ONE place a job leaves ``_jobs``. A job leaves
+    ``downloading`` three ways, and only a clean success or an explicit
+    cancel is silent; every other exit records an actionable error:
 
-      1. the worker exited on its own, ``poll()`` returns an exit code;
+      1. the worker exited, ``poll()`` returns an exit code (a cancelled job
+         exits this way once cancel() has terminated it);
       2. the worker is gone even though ``poll()`` never saw the exit, the PID
          liveness backstop (``os.kill(pid, 0)``) catches it;
       3. the worker is wedged, no new bytes for ``STALL_TIMEOUT_SEC``, so it is
@@ -256,6 +259,7 @@ def reap() -> None:
     """
     failed: list[str] = []
     finished: list[str] = []
+    cancelled: list[str] = []
     to_terminate: list[_Job] = []
     now = time.time()
     with _lock:
@@ -264,12 +268,19 @@ def reap() -> None:
             rc = job.proc.poll()
 
             if rc is not None:
-                # (1) The worker exited on its own.
+                # (1) The worker exited.
                 del _jobs[key]
-                if job.cancelled or rc == 0:
+                if job.cancelled:
                     _errors.pop(key, None)
-                    if rc == 0 and not job.cancelled:
-                        finished.append(key)
+                    _progress_max.pop(key, None)
+                    # rc == 0: the download completed before the terminate
+                    # landed, so its sentinel is legitimate and stays.
+                    if rc != 0:
+                        cancelled.append(key)
+                    continue
+                if rc == 0:
+                    _errors.pop(key, None)
+                    finished.append(key)
                     continue
                 _errors[key] = _failure_message(job.log_path, rc)
                 _progress_max.pop(key, None)  # run over, next run re-measures
@@ -285,8 +296,19 @@ def reap() -> None:
                 # yet. Leave it for the rc==0 sweep on the next poll.
                 continue
 
-            grew = _note_byte_progress(job, entry, now)
             alive = _pid_alive(job.pid)
+            if job.cancelled:
+                # cancel() is stopping this worker. It stays a job (its slot
+                # stays taken, a new start of the key is a duplicate) until it
+                # exits; a worker that vanished unseen is folded right here.
+                if not alive:
+                    del _jobs[key]
+                    _errors.pop(key, None)
+                    _progress_max.pop(key, None)
+                    cancelled.append(key)
+                continue
+
+            grew = _note_byte_progress(job, entry, now)
             stalled = (not grew) and (now - job.last_progress_at) >= STALL_TIMEOUT_SEC
             if alive and not stalled:
                 continue  # genuinely downloading (or still within the stall grace)
@@ -308,10 +330,12 @@ def reap() -> None:
 
     for job in to_terminate:
         _terminate(job)
-    for key in failed:
+    for key in failed + cancelled:
         entry = get_entry(key)
         if entry is not None:
             _drop_partial_sentinel(entry)
+    for key in cancelled:
+        log.info("Model download cancelled: %s.", key)
     for key in finished:
         _check_tool_calls(key)
     _pump()
@@ -335,9 +359,10 @@ def _check_tool_calls(key: str) -> None:
 def _pump() -> None:
     """Start queued downloads while slots are free, in FIFO order.
 
-    Runs after every ``reap()`` (so the 1s status poll refills slots) and from
-    ``cancel()`` (a terminated job frees its slot immediately). Keys whose
-    entry vanished (config edit) or that turned out installed are dropped.
+    Runs after every ``reap()``: the 1s status poll refills slots, and
+    cancel() reaps once its worker is gone, so the freed slot is refilled at
+    once. Keys whose entry vanished (config edit) or that turned out
+    installed are dropped.
     """
     with _lock:
         while len(_jobs) < MAX_CONCURRENT and _queue:
@@ -461,26 +486,25 @@ def _dequeue_locked(key: str) -> bool:
 def cancel(entry: ModelEntry) -> str:
     """Cancel a running download (terminate the worker; partial files stay on
     disk so a retry resumes) or a queued one (just dequeue it). Returns
-    ``"cancelled"`` or ``"dequeued"``."""
+    ``"cancelled"`` or ``"dequeued"``.
+
+    A running job is only MARKED cancelled here and stays in ``_jobs`` while
+    its worker is terminated, so the key cannot start a second worker and
+    the slot is not handed on while the first is still writing. reap() then
+    folds it like any exited worker: the one path that ends a job, drops a
+    partial sentinel and pumps the queue.
+    """
     reap()
     with _lock:
         if _dequeue_locked(entry.key):
             log.info("Model download dequeued: %s.", entry.key)
             return "dequeued"
-        job = _jobs.pop(entry.key, None)
-    if job is None:
-        raise Conflict("This model is not downloading or queued.")
-    job.cancelled = True
+        job = _jobs.get(entry.key)
+        if job is None:
+            raise Conflict("This model is not downloading or queued.")
+        job.cancelled = True
     _terminate(job)
-    # rc == 0 means the download actually completed before the terminate
-    # landed, then the sentinel is legitimate and stays.
-    if job.proc.poll() != 0:
-        _drop_partial_sentinel(entry)
-    _errors.pop(entry.key, None)
-    with _lock:
-        _progress_max.pop(entry.key, None)
-    log.info("Model download cancelled: %s.", entry.key)
-    _pump()  # the terminated job freed a slot, start the next queued download
+    reap()
     return "cancelled"
 
 

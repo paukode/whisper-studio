@@ -5,7 +5,7 @@ stubbed so no model loads (fast, deterministic, offline)."""
 import numpy as np
 import pytest
 
-from server.index import paths, pipeline, salience, store
+from server.index import build_state, paths, pipeline, salience, store
 from server.index.chunker import chunk_text
 from server.index.config import EMBED_DIM
 
@@ -1897,7 +1897,7 @@ def test_build_cancel_keeps_partial(tmp_path, _stub_models):
     def prog(done, total, rel):
         seen.append(rel)
         if len(seen) == 1:
-            pipeline.request_cancel(str(ws))  # cancel right after the first file
+            build_state.request_cancel(str(ws))  # cancel right after the first file
 
     s = pipeline.build(str(ws), progress=prog)
     assert s["cancelled"] is True

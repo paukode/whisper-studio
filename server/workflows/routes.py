@@ -12,8 +12,9 @@ import json
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from server.security.permissions import bypass_now
 from server.workflows import manager, store
-from server.workflows.launch_policy import grant_session, is_bypass, is_session_granted
+from server.workflows.launch_policy import grant_session, is_session_granted
 
 router = APIRouter(prefix="/api/workflows", tags=["workflows"])
 
@@ -127,7 +128,9 @@ async def launch_run(request: Request):
     if "workspace_path" in body:
         raw_ws = (body.get("workspace_path") or "").strip()
         workspace_path, ws_error = (
-            manager.resolve_workflow_workspace(raw_ws, bypass=is_bypass()) if raw_ws else (None, "")
+            manager.resolve_workflow_workspace(raw_ws, bypass=bypass_now())
+            if raw_ws
+            else (None, "")
         )
     else:
         workspace_path, ws_error = manager.resolve_workflow_workspace(None)
@@ -234,7 +237,7 @@ async def run_events(run_id: str, request: Request):
             # If the run already finished before this subscription, its completion
             # event fired earlier and will never arrive — end the stream now
             # instead of hanging until the client disconnects.
-            if snap.get("status") in ("done", "failed", "stopped", "stale"):
+            if snap.get("status") in manager.TERMINAL_STATUSES:
                 event_bus.unsubscribe(f"workflow:{run_id}", queue)
                 return
         try:

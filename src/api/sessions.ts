@@ -31,6 +31,12 @@ export function updateSession(id: string, data: Partial<Session>): Promise<{ ok:
   return put<{ ok: boolean }>(`/api/sessions/${encodeURIComponent(id)}`, data);
 }
 
+/** End the server side of a session's turn: its stream slot, the paused turn
+ *  a card waits on, its approval cards and queued mid-turn notes. */
+export function resetChatSession(id: string): Promise<unknown> {
+  return post<unknown>(`/api/chat/sessions/${encodeURIComponent(id)}/reset`, {});
+}
+
 export function deleteSession(id: string): Promise<void> {
   return del<void>(`/api/sessions/${encodeURIComponent(id)}`);
 }

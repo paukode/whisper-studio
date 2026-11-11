@@ -3,6 +3,7 @@ import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer';
 import { ChevronIcon } from '@/components/common/icons';
 import { useNow } from '@/hooks/useNow';
 import { useUIStore } from '@/stores/uiStore';
+import { outcomeOf } from '@/utils/agentOutcome';
 import {
   formatSeconds,
   recordReadout,
@@ -305,13 +306,6 @@ export function waitingFor(events: AgentProgressEvent[]): string {
   return pending[0] ?? '';
 }
 
-const END_TEXT: Record<string, string> = {
-  completed: 'done',
-  turn_limit: 'stopped at the turn limit',
-  failed: 'failed',
-  stopped: 'stopped',
-};
-
 const FeedRow: React.FC<{ item: FeedItem }> = ({ item }) => {
   if (item.kind === 'text') {
     return (
@@ -325,7 +319,7 @@ const FeedRow: React.FC<{ item: FeedItem }> = ({ item }) => {
   }
   if (item.kind === 'end') {
     const ev = item.ev;
-    const words = ev.phase === 'finished' ? (ev.stop_reason === 'completed' ? 'done' : ev.stop_reason ?? ev.status ?? 'done') : END_TEXT[ev.phase];
+    const words = outcomeOf(ev.phase === 'finished' ? ev.status ?? 'completed' : ev.phase, ev.stop_reason).line;
     const rounds = ev.turns_used ? ` · ${ev.turns_used} round${ev.turns_used === 1 ? '' : 's'}` : '';
     return (
       <div className="agent-ev agent-ev-end">

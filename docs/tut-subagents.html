@@ -36,11 +36,12 @@
     <h2 id="two-ways">Two ways to start agents</h2>
     <div class="cols-2">
       <div class="card">
-        <h3><code>/subagent</code>: one focused helper</h3>
-        <p>Type <code>/subagent &lt;task&gt;</code> in the chat box. One agent starts in the
-          background, in its own message. The chat box stays available, and you can continue to
-          chat. The agent writes its result into that message. To stop it, use the tasks pill in the
-          header.</p>
+        <h3><code>@agent-&lt;type&gt;</code>: one agent of a type</h3>
+        <p>Type <code>@agent-</code> in the chat box and select a type, for example
+          <code>@agent-explore</code>. Then write the task. The mention stays in your message. The
+          server asks the model to call <code>spawn_agent</code> with that type. The model writes
+          the task of the agent from your message, and the turn waits for the result of the
+          agent.</p>
       </div>
       <div class="card">
         <h3>Agents that the assistant starts</h3>
@@ -142,8 +143,9 @@
     <ul>
       <li><b>Permanent custom types</b> are Markdown files. The file has YAML frontmatter, and the
         body is the system prompt of the agent. The app reads the keys <code>name</code>,
-        <code>tools</code>, and <code>read_only</code>. The app also reads <code>model</code>, but
-        the agent does not use it. The limits come from "Settings", "Costs", "Budget".</li>
+        <code>description</code>, <code>tools</code>, and <code>read_only</code>. The
+        <code>@</code> menu shows the <code>description</code> of each type. The app also reads
+        <code>model</code>, but the agent does not use it. The limits come from "Settings", "Costs", "Budget".</li>
       <li>The files are in your user folder or in the project. The user folder is <code
         class="path">~/.whisper/agents/&lt;name&gt;.md</code> for the Mac app, and <code
         class="path">.whisper/agents/</code> in the checkout for a source install. The project
@@ -278,8 +280,7 @@
       header of the agent pane. "Stop" cancels the run. It sends <code>POST
       /api/background-tasks/{id}/stop</code>. The agent row and the pane then show the stopped state.</p>
     <p> <kbd>Esc</kbd> and the main "Stop" button of the chat also stop the agents of the
-      current turn. They do not stop an agent from <code>/subagent</code>. Refer to
-      <a href="tut-permissions.html">Permissions &amp; approvals</a>.</p>
+      current turn. Refer to <a href="tut-permissions.html">Permissions &amp; approvals</a>.</p>
     <p>A stopped agent still gives a report. The app writes the record of each agent to disk
       during the run. When an agent stops early, the app makes a report from the last text and the
       tool calls of the agent. The report says that the app made it.</p>

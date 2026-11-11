@@ -15,7 +15,7 @@ WSDiagram.mount("sandbox-diagram", {
     { id: "sbox", group: "security", col: 3, row: 0, label: "sandbox-exec", sub: "macOS profile", desc: "The OS sandbox: a generated macOS sandbox-exec profile, applied by run_sandboxed, popen_sandboxed, or the PTY wrapper. When sandbox-exec cannot be used, nothing runs. The strongest layer, and the one to trust last and most." },
     { id: "deny", group: "security", col: 3, row: 1, label: "Deny secret paths", sub: "_DENIED_PATHS", desc: "The sandbox is allow-default plus deny rules for a curated secret-store list: SSH/GPG keys, cloud creds, git creds, browser cookies, shell history, password stores. Outside Bypass, writes are always denied, and reads are denied unless a person approved the read (secret_access). In Bypass, commands run with no sandbox, so nothing is denied." },
     { id: "proc", group: "tools", col: 2, row: 1, label: "Subprocess", sub: "runs", desc: "The command runs with the deny-list applied. Reads of files not on the list still succeed, since default is allow." },
-    { id: "net", group: "external", kind: "external", col: 1, row: 1, label: "Network (open by default)", sub: "opt-in egress policy", desc: "Network is open by default: sandboxed git, pip, npm, aws, and build commands all need it. The opt-in network_policy tiers (curated / restrictive) restrict egress via an SNI-filtering proxy plus profile deny rules." }
+    { id: "net", group: "external", kind: "external", col: 1, row: 1, label: "Network (open)", sub: "no limit", desc: "The network is open: sandboxed git, pip, npm, aws, and build commands need it." }
   ],
   edges: [
     { from: "cmd", to: "appr" },

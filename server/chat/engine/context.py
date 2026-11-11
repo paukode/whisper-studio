@@ -96,8 +96,8 @@ class TurnContext:
     turn_scope_id: str | None = None
     # Channel the turn's agent progress is published on and drained from.
     # None means the session id (typed chat). A run that must not mix its
-    # agent cards into a concurrent chat turn (a /subagent stream) uses its
-    # own channel.
+    # agent cards into a concurrent chat turn (a workflow run, a detached
+    # agent) uses its own channel.
     event_channel: str | None = None
     # Per-round tool catalog override. When set, called instead of
     # _assemble_round_tools(ctx) to get (tools, core_count): lets a caller

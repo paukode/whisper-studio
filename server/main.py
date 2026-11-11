@@ -58,13 +58,13 @@ from server.onboarding.routes import router as onboarding_router
 from server.plans.routes import router as plans_router
 from server.plugins import init_plugins
 from server.plugins import router as plugins_router
-from server.preview.install_routes import router as preview_install_router
 from server.preview.manager import preview_manager
 from server.preview.routes import router as preview_router
 from server.preview.screencast import router as preview_screencast_router
 from server.security.permissions import router as permissions_router
 from server.skills import init_skills, whisper_md_router
 from server.skills import router as skills_router
+from server.stream_tunnel import router as stream_tunnel_router
 from server.tasks.routes import router as background_tasks_router
 from server.tasks_tracker import router as tasks_router
 from server.terminal import router as terminal_router
@@ -526,6 +526,7 @@ app.include_router(attachments_router)
 app.include_router(chat_router)
 app.include_router(sessions_router)
 app.include_router(ws_router)
+app.include_router(stream_tunnel_router)
 app.include_router(capture_helper_router)
 app.include_router(speakers_router)
 app.include_router(permissions_router)
@@ -555,7 +556,6 @@ app.include_router(feature_flags_router)
 app.include_router(cost_router)
 app.include_router(approval_router)
 app.include_router(preview_router)
-app.include_router(preview_install_router)
 app.include_router(preview_screencast_router)
 app.include_router(plans_router)
 

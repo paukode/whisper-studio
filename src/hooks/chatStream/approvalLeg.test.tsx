@@ -27,7 +27,7 @@ import { useChatStream } from '@/hooks/useChatStream';
 import { ACTIVITY_MIN_RUN, groupAgentTools, groupForActivity, isActivityEntry } from '@/components/chat/AgentCard';
 import { captionIn, traceRuns, turnEntries } from '@/components/chat/turnEntries';
 import { APPROVED_ACTION_STATUS, answerApproval } from './approvalLeg';
-import { hasLiveStream, killSessionStream, registerStreamController } from './streamControl';
+import { hasLiveStream, killSessionStream } from './streamControl';
 
 let finishAction: ((outcome: ApprovalOutcome) => void) | null = null;
 const executeApproval = vi.fn();
@@ -39,6 +39,7 @@ const SID = 'sess-leg';
 
 function approval(): PendingApproval {
   return {
+    cardId: 'card-1',
     toolUseId: 'tu_dev',
     action: 'terminal_run',
     category: 'cli',
@@ -101,6 +102,7 @@ describe('approval leg', () => {
     // The card is gone, and every reader of "is this session working" says yes.
     const s = getChatStore(SID).getState();
     expect(s.currentApproval).toBeNull();
+    expect(s.turnPhase).toBe('approvedAction');
     expect(s.isStreaming).toBe(true);
     expect(s.streamStatus).toBe(APPROVED_ACTION_STATUS);
     expect(hasLiveStream(SID)).toBe(true);
@@ -411,7 +413,7 @@ describe('approval leg', () => {
     ]);
     const rows = () => getChatStore(SID).getState().messages[1].toolUse ?? [];
 
-    it('sends the call id and writes the outcome and the stats onto the row, then saves', async () => {
+    it('runs the card by its id and writes the outcome and the stats onto the row, then saves', async () => {
       seed();
       // What the row said, and whether the turn had resumed, at each save.
       const saves: Array<{ result?: string; resumed: number }> = [];
@@ -423,11 +425,8 @@ describe('approval leg', () => {
         answered = answerApproval(writeApproval(), true, false);
         await tick();
       });
-      expect(executeApproval).toHaveBeenCalledWith({
-        action: 'ws_write_file',
-        payload: { path: 'a.py', content: 'x = 1\n' },
-        tool_use_id: 'tu_dev',
-      });
+      // Only the card's id: the server runs the action and payload it recorded.
+      expect(executeApproval).toHaveBeenCalledWith(writeApproval().cardId);
 
       await act(async () => {
         finishAction!({
@@ -620,17 +619,21 @@ describe('approval leg', () => {
     });
   });
 
-  it('refuses to resume into a session another stream owns, and keeps the card', async () => {
-    registerStreamController(SID, new AbortController());
+  it.each(['streaming', 'starting'] as const)(
+    'refuses to resume while the session is busy (%s), and keeps the card',
+    async (phase) => {
+      // 'starting' is a /file turn uploading its file: no stream is open yet.
+      const leg = getChatStore(SID).getState().startTurn(phase);
 
-    let answered: boolean | undefined;
-    await act(async () => {
-      answered = await answerApproval(approval(), true, false);
-    });
+      let answered: boolean | undefined;
+      await act(async () => {
+        answered = await answerApproval(approval(), true, false);
+      });
 
-    expect(answered).toBe(false);
-    expect(executeApproval).not.toHaveBeenCalled();
-    expect(getChatStore(SID).getState().currentApproval?.toolUseId).toBe('tu_dev');
-    killSessionStream(SID);
-  });
+      expect(answered).toBe(false);
+      expect(executeApproval).not.toHaveBeenCalled();
+      expect(getChatStore(SID).getState().currentApproval?.toolUseId).toBe('tu_dev');
+      getChatStore(SID).getState().finishStream(undefined, leg);
+    },
+  );
 });

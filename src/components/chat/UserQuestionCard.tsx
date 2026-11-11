@@ -3,7 +3,8 @@ import type { ChatMessage as ChatMessageType } from '@/types/chat';
 import { get } from '@/api/client';
 import { useUIStore } from '@/stores/uiStore';
 import { toError } from '@/utils/toError';
-import { getActiveChatStore } from '@/stores/sessionRuntimes';
+import { useSessionStore } from '@/stores/sessionStore';
+import { answerPausedTurn, markQuestionsAnswered } from '@/hooks/chatStream/pausedAnswer';
 
 /** Match only the conventional "Other"/"Other (please specify)" sentinel — not
  *  any real choice that merely begins with the word (e.g. "Otherton, Jane",
@@ -72,33 +73,19 @@ export const UserQuestionCard: React.FC<{
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
   const isAnswered = answered || selectedOption !== null;
 
+  // The session that owns this card (see UserQuestionGroupCard).
+  const sessionId = useSessionStore((s) => s.currentSessionId);
+
+  // Resume through the continuation path (answerPausedTurn) so Bedrock sees
+  // a proper tool_result for the ask_user_question tool_use, not a fresh user
+  // message that leaves the tool_use unmatched.
   const submitAnswer = useCallback((answer: string) => {
-    setSelectedOption(answer);
-
-    // Mark as answered in the store
-    const messages = getActiveChatStore().getState().messages;
-    const idx = messages.indexOf(message);
-    if (idx >= 0 && message.userQuestion) {
-      const updated = [...messages];
-      updated[idx] = {
-        ...message,
-        userQuestion: { ...message.userQuestion, answered: true },
-      };
-      getActiveChatStore().getState().setMessages(updated);
-    }
-
-    // Submit via the continuation path (approvedToolResult) so Bedrock
-    // sees a proper tool_result for the ask_user_question tool_use, not a
-    // fresh user message that leaves the tool_use unmatched.
-    window.dispatchEvent(new CustomEvent('whisper-submit-answer', {
-      detail: {
-        answers: [{
-          tool_use_id: message.userQuestion?.toolUseId ?? '',
-          content: answer,
-        }],
-      },
-    }));
-  }, [message]);
+    const answers = [{ tool_use_id: message.userQuestion?.toolUseId ?? '', content: answer }];
+    void answerPausedTurn(sessionId, answers, (answered) => {
+      setSelectedOption(answered ? answer : null);
+      markQuestionsAnswered(sessionId, answers, answered);
+    });
+  }, [message, sessionId]);
 
   const handleOtherSubmit = useCallback(() => {
     const val = otherText.trim();
@@ -237,6 +224,8 @@ export const UserQuestionGroupCard: React.FC<{ message: ChatMessageType }> = ({ 
   // Restored-from-persistence guard: if already answered, start submitted so
   // the card can't fire a duplicate continuation after a re-render / reload.
   const alreadyAnswered = questions.length > 0 && questions.every((q) => q.answered);
+  // Closed unanswered: the user sent a message instead (chatStream/waitingCards).
+  const skipped = questions.some((q) => q.skipped);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   // Always-visible "type your own" text, keyed by toolUseId.
   const [customText, setCustomText] = useState<Record<string, string>>({});
@@ -246,6 +235,9 @@ export const UserQuestionGroupCard: React.FC<{ message: ChatMessageType }> = ({ 
   // Hard idempotency guard: a ref (not the `submitted` state) so an async
   // Browse-picker resolution can't fire a second submit through a stale closure.
   const submittedRef = useRef(alreadyAnswered);
+  // The session that owns this card, read when it renders: the answer goes
+  // there even if the user switches sessions before an async pick resolves.
+  const sessionId = useSessionStore((s) => s.currentSessionId);
   const uid = useId();
 
   const total = questions.length;
@@ -257,32 +249,17 @@ export const UserQuestionGroupCard: React.FC<{ message: ChatMessageType }> = ({ 
   const onLast = active === total - 1;
 
   // Batch every answer into ONE continuation so Bedrock receives a tool_result
-  // for each ask_user_question tool_use it emitted. Idempotent.
+  // for each ask_user_question tool_use it emitted. Idempotent while it is
+  // answered; a refused resume re-enables the card (answerPausedTurn).
   const submit = useCallback((finalAnswers: Record<string, string>) => {
-    if (submittedRef.current) return;
-    submittedRef.current = true;
-    setSubmitted(true);
-    // Persist answered:true so a later re-render / restore keeps the card
-    // disabled instead of re-enabling it and allowing a duplicate continuation.
-    const msgs = getActiveChatStore().getState().messages;
-    const idx = msgs.indexOf(message);
-    if (idx >= 0 && message.userQuestions) {
-      const updated = [...msgs];
-      updated[idx] = {
-        ...message,
-        userQuestions: message.userQuestions.map((q) => ({ ...q, answered: true })),
-      };
-      getActiveChatStore().getState().setMessages(updated);
-    }
-    window.dispatchEvent(new CustomEvent('whisper-submit-answer', {
-      detail: {
-        answers: questions.map((q) => ({
-          tool_use_id: q.toolUseId,
-          content: finalAnswers[q.toolUseId] ?? '',
-        })),
-      },
-    }));
-  }, [questions, message]);
+    if (submittedRef.current || questions.some((q) => q.skipped)) return;
+    const batch = questions.map((q) => ({ tool_use_id: q.toolUseId, content: finalAnswers[q.toolUseId] ?? '' }));
+    void answerPausedTurn(sessionId, batch, (answered) => {
+      submittedRef.current = answered;
+      setSubmitted(answered);
+      markQuestionsAnswered(sessionId, batch, answered);
+    });
+  }, [questions, sessionId]);
 
   const setAnswer = useCallback((toolUseId: string, value: string) => {
     setAnswers((prev) => ({ ...prev, [toolUseId]: value }));
@@ -294,6 +271,7 @@ export const UserQuestionGroupCard: React.FC<{ message: ChatMessageType }> = ({ 
   }, [allAnswered, submitted, answers, submit]);
 
   if (total === 0) return null;
+  const closed = submitted || skipped;
 
   const renderQuestion = (q: UserQuestion, qi: number) => {
     // The always-visible "Or type your own" input replaces the explicit
@@ -320,9 +298,9 @@ export const UserQuestionGroupCard: React.FC<{ message: ChatMessageType }> = ({ 
                 key={opt}
                 type="button"
                 className={`uq-opt${isSelected ? ' selected' : ''}`}
-                disabled={submitted}
+                disabled={closed}
                 onClick={() => {
-                  if (submitted) return;
+                  if (closed) return;
                   if (isBrowse) {
                     void (async () => {
                       try {
@@ -359,7 +337,7 @@ export const UserQuestionGroupCard: React.FC<{ message: ChatMessageType }> = ({ 
             placeholder="Or type your own answer…"
             aria-label="Type your own answer"
             value={custom}
-            disabled={submitted}
+            disabled={closed}
             onChange={(e) => setCustomText((p) => ({ ...p, [q.toolUseId]: e.target.value }))}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
@@ -371,7 +349,7 @@ export const UserQuestionGroupCard: React.FC<{ message: ChatMessageType }> = ({ 
           <button
             type="button"
             className="uq-custom-send"
-            disabled={submitted || !custom.trim()}
+            disabled={closed || !custom.trim()}
             onClick={() => { const v = custom.trim(); if (v) setAnswer(q.toolUseId, v); }}
             aria-label="Submit your answer"
           >
@@ -381,12 +359,13 @@ export const UserQuestionGroupCard: React.FC<{ message: ChatMessageType }> = ({ 
           </button>
         </div>
         {showAnsweredNote && <span className="uq-answered">Answered: {answered}</span>}
+        {q.skipped && <span className="uq-answered">Not answered: you sent a new message instead.</span>}
       </div>
     );
   };
 
   return (
-    <div className={`user-question-card${submitted ? ' submitted' : ''}`}>
+    <div className={`user-question-card${closed ? ' submitted' : ''}`}>
       <div className="user-question-card-head">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <circle cx="12" cy="12" r="10" /><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3" /><line x1="12" y1="17" x2="12.01" y2="17" />
@@ -442,10 +421,10 @@ export const UserQuestionGroupCard: React.FC<{ message: ChatMessageType }> = ({ 
               <button
                 type="button"
                 className="uq-submit-btn"
-                disabled={!allAnswered || submitted}
+                disabled={!allAnswered || closed}
                 onClick={submitAll}
               >
-                {submitted ? 'Submitted' : allAnswered ? `Submit ${total} answers` : `Answer all ${total} to submit`}
+                {skipped ? 'Not answered' : submitted ? 'Submitted' : allAnswered ? `Submit ${total} answers` : `Answer all ${total} to submit`}
               </button>
             ) : (
               <button

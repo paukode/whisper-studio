@@ -32,7 +32,7 @@ from server.approval.markers import approval_request
 # The run loop lives in cron_run.py (kept out of this file for the size
 # budget): an asyncio coroutine over the shared chat/engine turn loop,
 # scheduled as a tracked task via _spawn_cron_run below. cron_run reaches back
-# for load_cron_jobs / _push_result / _server_loop / the in-progress state
+# for load_cron_jobs / _push_result / _server_loop / mark_running / mark_done
 # LAZILY, so this module-level import is not a cycle.
 from server.cron_run import _execute_cron_prompt
 from server.cron_schedule import (
@@ -72,10 +72,59 @@ _server_loop: asyncio.AbstractEventLoop | None = None
 # toggle+delete+create can't last-write-wins over each other.
 _CRON_FILE_LOCK = threading.Lock()
 
-# Guards against a run-now firing on top of a still-running execution (the
-# scheduled path is already guarded by APScheduler max_instances=1).
+# The jobs with a live run in this process. Only the functions below touch
+# it (mark_running, mark_done, is_running, run_state): it guards against a
+# run-now firing on top of a still-running execution (the scheduled path is
+# already guarded by APScheduler max_instances=1) and is what Stop and the
+# Settings list read.
 _IN_PROGRESS_LOCK = threading.Lock()
 _in_progress: set[str] = set()
+
+# History text for a run whose outcome write failed: mark_done closes its
+# lease with this.
+UNRECORDED_OUTCOME = "[interrupted] the run ended without recording its outcome"
+
+
+def mark_running(job_id: str, task: asyncio.Task | None) -> bool:
+    """Claim ``job_id`` for one run driven by ``task``. False when a run of
+    it is already live.
+
+    The stop handle is registered at the same instant, so a stop request in
+    the run's setup window is never lost.
+    """
+    from server import cron_events
+
+    with _IN_PROGRESS_LOCK:
+        if job_id in _in_progress:
+            return False
+        _in_progress.add(job_id)
+        cron_events.open_run(job_id, task)
+    return True
+
+
+def mark_done(job_id: str, run_id: str) -> None:
+    """Release a run claimed by mark_running, on every exit path.
+
+    Backstop first: every exit path records the outcome through
+    _push_result, which logs and swallows a failed history write. The lease
+    is closed here if it is still open, BEFORE the job leaves the set, so
+    history never says 'running' for a run that is gone. A lease already
+    closed is left as it is (first writer wins).
+    """
+    from server import cron_events, cron_history
+
+    try:
+        cron_history.finish_run(run_id, status="failed", text=UNRECORDED_OUTCOME)
+    except Exception as exc:
+        log.warning("cron: failed to close run lease %s: %s", run_id, exc)
+    cron_events.close_run(job_id)
+    with _IN_PROGRESS_LOCK:
+        _in_progress.discard(job_id)
+
+
+def is_running(job_id: str) -> bool:
+    with _IN_PROGRESS_LOCK:
+        return job_id in _in_progress
 
 
 def _utc_now_iso() -> str:
@@ -525,9 +574,8 @@ def run_job_now(job_id: str) -> dict:
         return {"error": "job not found"}
     if not _has_schedule(job):
         return {"error": OLD_JOB_ERROR}
-    with _IN_PROGRESS_LOCK:
-        if job_id in _in_progress:
-            return {"error": "job is already running"}
+    if is_running(job_id):
+        return {"error": "job is already running"}
     _spawn_cron_run(job_id)
     return {"started": True, "job_id": job_id}
 
@@ -565,6 +613,25 @@ def on_session_deleted(session_id: str) -> None:
 # ── Public job shape (API) ───────────────────────────────────────────────────
 
 
+def run_state(job_id: str) -> str | None:
+    """'running' only while this process runs the job, else the last recorded
+    outcome (None when it never ran).
+
+    Stop acts on the live run, so the history row alone never makes a job
+    'running': a lease left open with no live run (its outcome write failed)
+    reads as 'failed', the status boot reconcile gives it. Decided under the
+    in-progress lock: a run marks itself in progress before it opens its
+    lease, so a new run cannot open one between the two checks.
+    """
+    from server import cron_history
+
+    with _IN_PROGRESS_LOCK:
+        if job_id in _in_progress:
+            return "running"
+        status = cron_history.last_status(job_id)
+    return "failed" if status == "running" else status
+
+
 def _job_public(job: dict) -> dict:
     """Enrich a stored job for the API: schedule label, next run, run state,
     and owning-session presence/title."""
@@ -579,14 +646,7 @@ def _job_public(job: dict) -> dict:
         out["old_format"] = True
     out["next_run"] = _next_run_iso(job)
     jid = job.get("id", "")
-    with _IN_PROGRESS_LOCK:
-        running = jid in _in_progress
-    if running:
-        out["run_state"] = "running"
-    else:
-        from server import cron_history
-
-        out["run_state"] = cron_history.last_status(jid)
+    out["run_state"] = run_state(jid)
     sid = job.get("session_id", "")
     from server.infrastructure.sessions import get_session_meta
 

@@ -2,9 +2,7 @@ import React, { useCallback } from 'react';
 import { get } from '@/api/client';
 import { getChatStore } from '@/stores/sessionRuntimes';
 import { runCompact } from '@/hooks/compactCommand';
-import { useSubagentStore } from '@/stores/subagentStore';
-import { applyTeamProgressToMessage } from '@/hooks/chatStream/teamProgress';
-import type { ChatMessage, TeamAgentReport, TeamProgressEvent } from '@/types/chat';
+import { clearConversation } from '@/hooks/chatStream/clearConversation';
 import { useUIStore, type UIState } from '@/stores/uiStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useGoalStore } from '@/stores/goalStore';
@@ -45,12 +43,6 @@ export interface UseSlashCommandsOptions {
   chatStream: UseChatStreamReturn;
   /** Already-hydrated slash command list. */
   slashCommands: SlashCommand[];
-  /** Attach a workspace file to the composer as a chip (background upload, no
-   *  send) — used by `/file:path` with no trailing question. */
-  attachWorkspaceFileAsChip: (path: string) => Promise<void> | void;
-  /** Fetch + upload a workspace file and return its attachment record (no
-   *  chip) — used by the non-blocking `/file:path question` auto-send. */
-  uploadWorkspaceFile: (path: string) => Promise<{ id: string; filename: string }>;
 }
 
 export interface UseSlashCommandsResult {
@@ -60,9 +52,10 @@ export interface UseSlashCommandsResult {
 }
 
 /**
- * Slash-command dispatcher for the chat composer: interprets `/effort`,
- * `/model`, `/doctor`, `/help`, `/rename`, `/subagent`, `/file:…`,
- * and the rest. Side effects go through the store actions and the chat
+ * Slash-command dispatcher for the chat composer: interprets the built-in
+ * commands (`/effort`, `/model`, `/doctor`, `/help`, `/rename` and the
+ * rest). Skills and MCP prompts are no commands here: ChatInput sends them
+ * (src/components/chat/composerMenus.ts). Side effects go through the store actions and the chat
  * stream; this hook owns the (large) switch so ChatInput stays readable.
  */
 export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommandsResult {
@@ -80,8 +73,6 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
     handlePlanToggle,
     chatStream,
     slashCommands: SLASH_COMMANDS,
-    attachWorkspaceFileAsChip,
-    uploadWorkspaceFile,
   } = opts;
 
   // In-tab theme setter — the same one the Settings/Header theme picker uses.
@@ -94,69 +85,6 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
     const parts = input.slice(1).split(/\s+/);
     const cmd = parts[0]?.toLowerCase();
     const arg = parts[1]?.toLowerCase();
-
-    // /file:path [question] — attach a workspace file. With NO trailing
-    // question it just attaches a composer chip (upload in the background) and
-    // the user keeps composing. With a question it sends right away, but
-    // non-blocking: the message + working indicator appear immediately while
-    // the file is fetched/converted/uploaded in the background.
-    if (cmd?.startsWith('file:')) {
-      // Read the path and question from the raw input: the path keeps its
-      // case (case-sensitive volumes) and the question its line breaks.
-      const fileMatch = /^\/file:(\S*)(?:\s+([\s\S]*))?$/i.exec(input);
-      const filePath = fileMatch?.[1] ?? '';
-      const question = (fileMatch?.[2] ?? '').trim();
-      if (!filePath) {
-        addToast({ type: 'info', message: 'Usage: /file:path [question]', duration: 3000, persist: false });
-        return true;
-      }
-      const fileName = filePath.split('/').pop() || filePath;
-
-      if (!question) {
-        // Attach only — chip + background upload, no send.
-        void attachWorkspaceFileAsChip(filePath);
-        return true;
-      }
-
-      // Show the user message + thinking indicator immediately so the
-      // conversation visibly starts; the model call fires once the file is
-      // uploaded (PDF→text conversion can take a moment).
-      const ts = new Date().toISOString();
-      const chat = () => getChatStore(sessionId).getState();
-      chat().addMessage({ role: 'user', content: question, timestamp: ts, attachmentNames: [fileName] });
-      chat().setStreaming(true);
-
-      const patchMessage = (patch: Partial<ChatMessage>) => {
-        const st = chat();
-        const idx = st.messages.findIndex((m) => m.timestamp === ts);
-        if (idx < 0) return;
-        const updated = [...st.messages];
-        updated[idx] = { ...updated[idx], ...patch };
-        st.setMessages(updated);
-      };
-
-      void (async () => {
-        let att: { id: string; filename: string };
-        try {
-          att = await uploadWorkspaceFile(filePath);
-        } catch (e) {
-          const why = toError(e).message;
-          chat().setStreaming(false);
-          patchMessage({ content: `${question}\n\n_[Could not attach ${fileName}: ${why}]_` });
-          addToast({ type: 'error', message: `Could not attach ${fileName}: ${why}` });
-          return;
-        }
-        // Record the real id on the already-shown message so a later
-        // regenerate re-attaches the same file (mirrors the /subagent patch).
-        patchMessage({ attachmentIds: [att.id], attachmentNames: [att.filename] });
-        await chatStream.send(question, {
-          attachmentIds: [att.id],
-          attachmentNames: [att.filename],
-          hideUserMessage: true,
-        });
-      })();
-      return true;
-    }
 
     switch (cmd) {
       case 'effort': {
@@ -318,6 +246,10 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
       }
       case 'skills': {
         openSettings('skills');
+        return true;
+      }
+      case 'mcp': {
+        openSettings('mcp');
         return true;
       }
       case 'rename': {
@@ -569,12 +501,12 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
         return true;
       }
       case 'clear': {
-        getChatStore(sessionId).getState().clearMessages();
+        if (sessionId) void clearConversation(sessionId);
         addToast({ type: 'info', message: 'Chat cleared', duration: 2000, persist: false });
         return true;
       }
       case 'settings': {
-        openSettings('apikeys');
+        openSettings('general');
         return true;
       }
       case 'workspace': {
@@ -600,132 +532,10 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
         void handlePlanToggle();
         return true;
       }
-      case 'subagent': {
-        // Run a background agent with the full tool loop (web fetch/search,
-        // workspace, code, and all enabled MCP tools incl. the AgentCore
-        // browser). It streams live progress into the agent row (Open shows
-        // the full feed in the dock) and does NOT block the composer — the
-        // user can keep chatting while it works.
-        const task = input.slice('/subagent '.length).trim();
-        if (!task) {
-          addToast({ type: 'info', message: 'Usage: /subagent <task>', duration: 3000, persist: false });
-          return true;
-        }
-        const chat = () => getChatStore(sessionId).getState();
-        // The request as a normal user message + a dedicated assistant message
-        // that hosts the live progress card and (later) the final answer. The
-        // assistant message opens with an intro so the user knows work is
-        // happening in the background and that they can keep chatting.
-        const INTRO = '**Subagent started**: working on this in the background. '
-          + 'Keep chatting; **Open** on its row below shows everything it does, and it will post '
-          + 'the result here when done. Stop it from the tasks pill in the header.';
-        // Distinct timestamps: two synchronous toISOString() calls land on the
-        // same millisecond, and timestamps double as message ids — a collision
-        // would make the progress locator match the user message and drop the
-        // card's data.
-        const baseTs = Date.now();
-        chat().addMessage({ role: 'user', content: task, timestamp: new Date(baseTs).toISOString() });
-        const subTs = new Date(baseTs + 1).toISOString();
-        // Its own bubble: a turn streaming meanwhile goes on below it.
-        chat().addMessage({ role: 'assistant', content: INTRO, timestamp: subTs, standalone: true });
-
-        // Stable id so the backend stream and the card's Stop button refer to
-        // the same run.
-        const teamId = `subagent-${crypto.randomUUID()}`;
-        const controller = new AbortController();
-        let stopped = false;
-        // Owned by this session: Stop and ESC elsewhere leave it running, and
-        // the session is never evicted while the run can still deliver.
-        useSubagentStore.getState().register(teamId, sessionId, () => {
-          stopped = true;
-          controller.abort();
-        });
-
-        const patch = (fn: (m: ChatMessage) => ChatMessage) => {
-          const st = chat();
-          const idx = st.messages.findIndex((m) => m.timestamp === subTs && m.role === 'assistant');
-          if (idx < 0) return;
-          const next = [...st.messages];
-          next[idx] = fn(next[idx]);
-          st.setMessages(next);
-        };
-
-        void (async () => {
-          try {
-            const response = await fetch('/api/subagent/stream', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              // effort_level so the subagent reasons at the composer's depth,
-              // like every other agent the session spawns.
-              body: JSON.stringify({ task, model: selectedModel, session_id: sessionId ?? '', team_id: teamId, effort_level: activeEffortLevel(useSettingsStore.getState()) }),
-              signal: controller.signal,
-            });
-            if (!response.ok || !response.body) throw new Error(`subagent HTTP ${response.status}`);
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder();
-            let buffer = '';
-            let finalOutput = '';
-            for (;;) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              buffer += decoder.decode(value, { stream: true });
-              const lines = buffer.split('\n');
-              buffer = lines.pop() ?? '';
-              for (const line of lines) {
-                const trimmedLine = line.trim();
-                if (!trimmedLine.startsWith('data: ')) continue;
-                const payload = trimmedLine.slice(6);
-                if (payload === '[DONE]') continue;
-                let evt: Record<string, unknown>;
-                try { evt = JSON.parse(payload); } catch { continue; }
-                if (evt.team_progress) {
-                  applyTeamProgressToMessage(chat, subTs, evt.team_progress as TeamProgressEvent);
-                } else if (evt.subagent_done) {
-                  const d = evt.subagent_done as { output?: string };
-                  finalOutput = (d.output ?? '').trim();
-                } else if (typeof evt.error === 'string') {
-                  finalOutput = `[Subagent error] ${evt.error}`;
-                }
-              }
-            }
-            patch((m) => ({ ...m, content: finalOutput || '[subagent returned no output]' }));
-          } catch (err) {
-            if (stopped) {
-              // User pressed Stop — mark the team done and flip any still-running
-              // agent rows to "stopped" so they don't spin forever, and note it.
-              patch((m) => {
-                const tr = m.teamReports?.[teamId];
-                if (!tr) return { ...m, content: 'Subagent stopped.' };
-                const agents: Record<string, TeamAgentReport> = {};
-                for (const [k, a] of Object.entries(tr.agents)) {
-                  agents[k] = (a.status === 'running' || a.status === 'pending')
-                    ? { ...a, status: 'stopped' }
-                    : a;
-                }
-                return {
-                  ...m,
-                  content: 'Subagent stopped.',
-                  teamReports: { ...m.teamReports, [teamId]: { ...tr, status: 'completed', agents } },
-                };
-              });
-            } else {
-              const msg = err instanceof Error ? err.message : String(err);
-              patch((m) => ({ ...m, content: `[Subagent error] ${msg}` }));
-              addToast({ type: 'error', message: `Subagent failed: ${msg}`, duration: 4000 });
-            }
-          } finally {
-            useSubagentStore.getState().unregister(teamId);
-            // The final patch keeps the message count, which the runtime's
-            // own save trigger keys on, so persist the outcome explicitly.
-            if (sessionId) useSessionStore.getState().debouncedSave(sessionId);
-          }
-        })();
-        return true;
-      }
       default:
         return false;
     }
-  }, [setVerbosity, setEffortLevel, setTheme, openSettings, addToast, selectedModel, autoMemory, setAutoMemory, sessionId, handleNativeBrowse, handlePlanToggle, chatStream, SLASH_COMMANDS, models, attachWorkspaceFileAsChip, uploadWorkspaceFile]);
+  }, [setVerbosity, setEffortLevel, setTheme, openSettings, addToast, selectedModel, autoMemory, setAutoMemory, sessionId, handleNativeBrowse, handlePlanToggle, chatStream, SLASH_COMMANDS, models]);
 
   return { handleSlashCommand };
 }

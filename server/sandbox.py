@@ -45,7 +45,7 @@ import stat
 import subprocess
 import tempfile
 
-from server.security import bypass_sandbox, egress_policy
+from server.security import bypass_sandbox
 from server.security.sensitive_env import GITHUB_ENV_VARS
 from server.security.sensitive_paths import expanded_sandbox_paths
 
@@ -261,14 +261,6 @@ def _generate_macos_profile(
     PTY shell must still write to its own slave tty device, and /dev/null is
     universally assumed writable. Everything else, including the workspace and
     temp, stays read-only.
-
-    When the active network_policy tier is non-permissive, this ALSO appends
-    rules forcing outbound HTTP(S) through the egress proxy (see
-    `_macos_network_restriction_rules`). With write_mode="open" the output is
-    byte-for-byte identical to the output without an egress policy when the
-    tier is permissive (the default), verified by
-    tests/test_sandbox_egress_wiring.py: no rules are appended in that case,
-    not even an empty line.
     """
     deny_rules = []
     denied = "file-write*" if secret_reads else "file-read* file-write*"
@@ -335,49 +327,7 @@ def _generate_macos_profile(
         if control_denies:
             profile += "\n".join(control_denies) + "\n"
 
-    network_rules = _macos_network_restriction_rules()
-    if network_rules:
-        profile += "\n".join(network_rules) + "\n"
-
     return profile
-
-
-def _macos_network_restriction_rules() -> list[str]:
-    """Network-egress rules appended to the macOS profile ONLY when the
-    active network_policy tier is non-permissive. Returns [] (no rules,
-    hence no change to the profile at all) when permissive.
-
-    Why this exists: HTTPS_PROXY/HTTP_PROXY (injected via `_merged_env`
-    below) is an env var CONVENTION — a command that ignores it (a raw
-    `socket.connect`, or any tool that doesn't consult those variables)
-    would bypass server/security/egress_policy.py's domain allowlist
-    entirely and reach the internet directly. These rules close that hole
-    at the kernel level: deny all direct outbound connections on the two
-    ports virtually everything HTTP-shaped uses (80, 443), so the ONLY way
-    out is through the (allowlist-enforcing) local proxy.
-
-    The proxy always binds to an OS-assigned ephemeral port (never 80/443 —
-    see egress_policy.EgressProxy.__init__), so it is never itself caught by
-    these deny rules; no explicit loopback allow-rule is needed alongside
-    them (verified manually with `sandbox-exec` against this exact
-    (allow default) + (deny ... 443) combination: the deny only matches
-    connections whose remote port is 443, so an ephemeral-port loopback
-    connection is unaffected and stays allowed by the general default).
-
-    Residual gaps, spelled out rather than glossed over:
-      - DNS (port 53) is untouched — see egress_policy.py's module
-        docstring, point 3.
-      - A command using a non-standard HTTPS port (rare) would bypass this
-        specific port-443 deny; only 80/443 are covered, matching what the
-        proxy itself listens for via HTTPS_PROXY/HTTP_PROXY.
-    """
-    policy = egress_policy.get_active_policy()
-    if policy.get("tier", egress_policy.TIER_PERMISSIVE) == egress_policy.TIER_PERMISSIVE:
-        return []
-    return [
-        '(deny network-outbound (remote ip "*:443"))',
-        '(deny network-outbound (remote ip "*:80"))',
-    ]
 
 
 def _is_sandbox_exec_available() -> bool:
@@ -425,37 +375,15 @@ def _require_sandbox_exec() -> None:
 _SANDBOX_ENV_DENYLIST = GITHUB_ENV_VARS
 
 
-def _network_proxy_env_vars() -> dict[str, str]:
-    """HTTPS_PROXY/HTTP_PROXY vars pointing at the local egress-filtering
-    proxy (server/security/egress_policy.py), or {} when the active
-    network_policy tier is "permissive" (the default: no proxy is even
-    started in that case, let alone injected). Both-case variable names are
-    set since different tools check different casings."""
-    policy = egress_policy.get_active_policy()
-    if policy.get("tier", egress_policy.TIER_PERMISSIVE) == egress_policy.TIER_PERMISSIVE:
-        return {}
-    host, port = egress_policy.ensure_proxy_running()
-    proxy_url = f"http://{host}:{port}"
-    return {
-        "HTTPS_PROXY": proxy_url,
-        "https_proxy": proxy_url,
-        "HTTP_PROXY": proxy_url,
-        "http_proxy": proxy_url,
-    }
-
-
 def _merged_env(env_extra: dict | None) -> dict:
     """The subprocess environment: os.environ (minus credentials that must never
-    reach a sandboxed child, see _SANDBOX_ENV_DENYLIST), plus proxy env vars
-    when a non-permissive network_policy is active (see
-    _network_proxy_env_vars — a no-op dict when permissive), plus any caller
-    extras (applied last, so a caller can still override either of the above
-    if it ever needs to).
+    reach a sandboxed child, see _SANDBOX_ENV_DENYLIST), plus any caller
+    extras (applied last, so a caller can still override the above if it
+    ever needs to).
 
     Always returns an explicit dict rather than None-to-inherit, so the denylist
     is enforced even when the caller passes no extras."""
     base = {k: v for k, v in os.environ.items() if k not in _SANDBOX_ENV_DENYLIST}
-    base.update(_network_proxy_env_vars())
     if env_extra:
         base.update({str(k): str(v) for k, v in env_extra.items()})
     return base
@@ -653,13 +581,9 @@ def popen_sandboxed(
     cannot be used (outside a Bypass turn, which runs with no sandbox and
     returns no profile path).
 
-    Environment and egress: the child gets the same ``_merged_env`` as a
+    Environment: the child gets the same ``_merged_env`` as a
     ``run_sandboxed`` child, so the credential denylist holds (no GH_TOKEN for
-    a prompt-injected ``curl "...?t=$GH_TOKEN"``) and, under a non-permissive
-    network tier, the HTTPS_PROXY/HTTP_PROXY vars point at the allowlisting
-    proxy. It also picks up the same network-restriction rules (the profile
-    via ``_generate_macos_profile``), so the proxy is the only way out on
-    ports 80 and 443. Approved and read-only ws_run_command runs, their 30 s handoff and every background shell task
+    a prompt-injected ``curl "...?t=$GH_TOKEN"``). Approved and read-only ws_run_command runs, their 30 s handoff and every background shell task
     start here, so this is where the parity has to hold.
 
     ``write_mode`` is the ``run_sandboxed`` one: a read-only ws_run_command
@@ -727,8 +651,8 @@ def build_pty_sandbox_wrap(
     (``write_mode="workspace"``), the same default-deny write confinement,
     with the session's own ``scratch_dir`` writable. The caller starts the
     shell with the ``run_sandboxed`` environment (``_merged_env`` over
-    ``_scratch_env``), so the credential denylist, the egress proxy vars and
-    the package caches hold there too.
+    ``_scratch_env``), so the credential denylist and the package caches hold
+    there too.
 
     ``write_root`` is the tree a "workspace" shell may write in, not the
     folder it starts in: a shell started outside the workspace still writes

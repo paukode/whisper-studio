@@ -23,7 +23,23 @@ if (typeof Element.prototype.scrollIntoView !== 'function') {
 // Composer drafts live in a store that outlives a component (per-session
 // drafts, src/stores/composerDraftStore.ts). Every test starts with none, as
 // a freshly mounted composer did when the text was component state.
-import { beforeEach } from 'vitest';
+import { beforeEach, vi } from 'vitest';
+
+// The app's long requests travel over a WebSocket (src/api/streamSocket.ts),
+// behind the same Response and EventSource interfaces. Tests drive them
+// through those interfaces with fetch and EventSource stand-ins; the
+// transport itself is tested in src/api/streamSocket.test.ts.
+vi.mock('@/api/streamSocket', () => ({
+  streamFetch: (path: string, init?: RequestInit) => globalThis.fetch(path, init),
+  SocketEventSource: class {
+    static readonly CONNECTING = 0;
+    static readonly OPEN = 1;
+    static readonly CLOSED = 2;
+    constructor(url: string) {
+      return new globalThis.EventSource(url);
+    }
+  },
+}));
 import { useComposerDraftStore } from '@/stores/composerDraftStore';
 
 beforeEach(() => {

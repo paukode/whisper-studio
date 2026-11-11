@@ -8,7 +8,7 @@ WSDiagram.mount("chat-pipeline-diagram", {
   },
   nodes: [
     { id: "req", group: "transport", col: 0, row: 0, label: "POST /api/chat", sub: "SSE response", desc: "A chat turn arrives: question, history, model, session, attachments." },
-    { id: "setup", group: "server", col: 0, row: 1, label: "Build the turn", sub: "prompt · memory · @files", desc: "Latch session config, assemble the system prompt (WHISPER.md + memory), resolve @file mentions, expand attachments, add index grounding, compact an oversized history, and add SessionStart and UserPromptSubmit hook context." },
+    { id: "setup", group: "server", col: 0, row: 1, label: "Build the turn", sub: "prompt · memory · @ mentions", desc: "Latch session config, assemble the system prompt (WHISPER.md + memory), resolve @ mentions (MCP resources, sessions, agents), expand attachments, add index grounding, compact an oversized history, and add SessionStart and UserPromptSubmit hook context." },
     { id: "route", group: "model", col: 1, row: 0.5, label: "Model routing", sub: "Anthropic / OpenAI / on-device", desc: "is_local_model() picks the local adapter; otherwise provider decides Anthropic (Claude) or OpenAI (GPT), both on Amazon Bedrock. One shared engine loop runs the rest, whichever adapter was picked." },
     { id: "condense", group: "server", col: 1, row: 1.25, label: "Condense transcript", sub: "map-reduce if oversized", desc: "An oversized transcript is condensed to per-chunk extracts before it enters the prompt. See Transcript summarization." },
     { id: "stream", group: "server", col: 2, row: 0.5, label: "Streaming loop", sub: "up to the round limit", desc: "Per round: check the budget, invoke the model, stream chunks, act on the stop reason." },

@@ -254,9 +254,6 @@ def _launch(monkeypatch, mode, folder):
 
 @pytest.mark.parametrize("mode", ["bypassPermissions", "default"])
 def test_workflow_run_pins_an_outside_folder_only_in_bypass(tmp_path, monkeypatch, mode):
-    from server.security import folder_grants as fg
-
-    monkeypatch.setattr(fg, "GRANTS_PATH", str(tmp_path / "grants.json"))
     ws = tmp_path / "ws"
     other = tmp_path / "elsewhere"
     ws.mkdir()

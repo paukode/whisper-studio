@@ -258,7 +258,7 @@ def connected_repo(git_repo, monkeypatch):
     )
     monkeypatch.setattr(
         "server.security.permissions.load_permissions",
-        lambda: {"mode": MODE_DEFAULT, "rules": [], "category_modes": {}},
+        lambda: {"mode": MODE_DEFAULT},
     )
     return git_repo
 

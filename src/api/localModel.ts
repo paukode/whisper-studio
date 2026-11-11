@@ -1,5 +1,7 @@
 import { useUIStore } from '@/stores/uiStore';
+import type { ModelBanner } from '@/stores/uiStore';
 import { useSettingsStore } from '@/stores/settingsStore';
+import { streamFetch } from './streamSocket';
 
 /**
  * Load an on-device model into memory, driving the shared "loading model into
@@ -15,10 +17,11 @@ import { useSettingsStore } from '@/stores/settingsStore';
  * only one local model can be resident, so the older load is dead weight.
  *
  * Banner ownership: several streams can be alive for a moment (a superseded
- * load winding down while its replacement starts). Every banner write is
- * guarded by a generation token so only the NEWEST load/download paints it —
- * without this, a stale stream kept resurrecting its banner after the model
- * was deleted or replaced.
+ * load winding down while its replacement starts). Each load or download
+ * opens its own 'local-model' flow on the banner (uiStore.openModelBanner),
+ * which retires the older ones, so only the NEWEST paints it. Without this,
+ * a stale stream kept resurrecting its banner after the model was deleted or
+ * replaced.
  */
 // Coalesce concurrent identical loads. Several paths can ask for the same model
 // at once (selecting a local model in the composer, the context-window slider
@@ -27,9 +30,6 @@ import { useSettingsStore } from '@/stores/settingsStore';
 // once per request, so every spawn was killed ~1s in and none became ready. One
 // in-flight promise per model+ctx means duplicates share the first load.
 const inFlightLoads = new Map<string, Promise<boolean>>();
-
-// Banner ownership token (see module docstring).
-let bannerGen = 0;
 
 // The load currently in flight, so a new load for a different model can cancel
 // it instead of racing it for the single resident-model slot.
@@ -59,24 +59,21 @@ export function loadLocalModel(model: string, label: string, nCtx?: number): Pro
 
 async function doLoadLocalModel(model: string, label: string, nCtx?: number): Promise<boolean> {
   const ui = useUIStore.getState;
-  const my = ++bannerGen;
+  const banner = ui().openModelBanner('local-model');
   const controller = new AbortController();
   const cancel = () => {
     cancelLoadOnServer(model);
     controller.abort();
-    if (my === bannerGen) ui().setModelLoading(null);
+    banner.clear();
   };
   activeLoad = { model, cancel };
-  const setBanner = (m: Parameters<ReturnType<typeof ui>['setModelLoading']>[0]) => {
-    if (my === bannerGen) ui().setModelLoading(m ? { ...m, onCancel: cancel } : null);
-  };
+  const setBanner = (m: ModelBanner) => banner.show({ ...m, onCancel: cancel });
   setBanner({ label, progress: 0, stage: 'start' });
   let ok = true;
-  let cancelled = false;
   try {
     const params = new URLSearchParams({ model });
     if (typeof nCtx === 'number') params.set('n_ctx', String(nCtx));
-    const res = await fetch(`/api/local-model/load?${params.toString()}`, {
+    const res = await streamFetch(`/api/local-model/load?${params.toString()}`, {
       signal: controller.signal,
     });
     if (!res.ok || !res.body) throw new Error(`load failed (${res.status})`);
@@ -98,7 +95,6 @@ async function doLoadLocalModel(model: string, label: string, nCtx?: number): Pr
         try { msg = JSON.parse(payload); } catch { continue; }
         if (msg.stage === 'cancelled') {
           ok = false;
-          cancelled = true;
         } else if (msg.stage === 'error') {
           ok = false;
           ui().addToast({
@@ -118,9 +114,8 @@ async function doLoadLocalModel(model: string, label: string, nCtx?: number): Pr
     }
   } catch (e) {
     ok = false;
-    if (controller.signal.aborted) {
-      cancelled = true; // user (or a superseding load) cancelled — not an error
-    } else {
+    // An abort is the user (or a superseding load) cancelling: not an error.
+    if (!controller.signal.aborted) {
       ui().addToast({ type: 'error', message: `Failed to load ${label}`, duration: 6000, source: 'local-model' });
       console.warn('loadLocalModel failed:', e);
     }
@@ -129,12 +124,8 @@ async function doLoadLocalModel(model: string, label: string, nCtx?: number): Pr
   // Record residency so the UI knows this model is now loaded (and a re-select
   // of the same key is a no-op instead of a redundant load).
   if (ok) useSettingsStore.getState().setLoadedLocalModel(model);
-  // Clear the banner: briefly show "ready" on success, immediately otherwise.
-  setTimeout(() => {
-    if (my === bannerGen && useUIStore.getState().modelLoading) {
-      useUIStore.getState().setModelLoading(null);
-    }
-  }, ok && !cancelled ? 700 : 0);
+  // A "ready" banner keeps its brief beat; a cancel or a failure hides now.
+  banner.done();
   return ok;
 }
 
@@ -159,15 +150,12 @@ export async function localModelDownloaded(model: string): Promise<boolean> {
  */
 export async function downloadLocalModel(model: string, label: string): Promise<'ready' | 'cancelled' | 'error'> {
   const ui = useUIStore.getState;
-  const my = ++bannerGen;
+  const banner = ui().openModelBanner('local-model');
   const controller = new AbortController();
-  const setBanner = (m: Parameters<ReturnType<typeof ui>['setModelLoading']>[0]) => {
-    if (my === bannerGen) ui().setModelLoading(m);
-  };
-  setBanner({ label, progress: 0, stage: 'downloading', onCancel: () => controller.abort() });
+  banner.show({ label, progress: 0, stage: 'downloading', onCancel: () => controller.abort() });
   let result: 'ready' | 'cancelled' | 'error' = 'error';
   try {
-    const res = await fetch(`/api/local-model/download?model=${encodeURIComponent(model)}`, { signal: controller.signal });
+    const res = await streamFetch(`/api/local-model/download?model=${encodeURIComponent(model)}`, { signal: controller.signal });
     if (!res.ok || !res.body) throw new Error(`download failed (${res.status})`);
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
@@ -190,7 +178,7 @@ export async function downloadLocalModel(model: string, label: string): Promise<
           ui().addToast({ type: 'error', message: `Failed to download ${label}: ${String(msg.error ?? 'unknown error')}`, duration: 8000, source: 'model-download' });
         } else {
           if (msg.stage === 'ready') result = 'ready';
-          setBanner({
+          banner.show({
             label: String(msg.label ?? label),
             progress: typeof msg.progress === 'number' ? (msg.progress as number) : 0,
             stage: (msg.stage as 'downloading' | 'ready') ?? 'downloading',
@@ -208,11 +196,8 @@ export async function downloadLocalModel(model: string, label: string): Promise<
       console.warn('downloadLocalModel failed:', e);
     }
   }
-  setTimeout(() => {
-    if (my === bannerGen && useUIStore.getState().modelLoading) {
-      useUIStore.getState().setModelLoading(null);
-    }
-  }, result === 'ready' ? 700 : 0);
+  // A "ready" banner keeps its brief beat; a cancel or a failure hides now.
+  banner.done();
   return result;
 }
 

@@ -112,8 +112,6 @@ def test_anthropic_body_sends_sonnet5s_own_top_rung_for_ultracode(monkeypatch):
         caching_on=False,
         cache_ttl="5m",
         effort_label="ultracode",
-        loop=None,
-        executor=None,
     )
     body = adapter._build_body([{"role": "user", "content": "hi"}], None, 0, 1, True)
     assert body["thinking"] == {"type": "adaptive", "display": "summarized"}
@@ -148,8 +146,6 @@ def test_thinking_asks_for_a_visible_summary(monkeypatch):
             caching_on=False,
             cache_ttl="5m",
             effort_label=effort_label,
-            loop=None,
-            executor=None,
         )
         return adapter._build_body([{"role": "user", "content": "hi"}], None, 0, 1, True)
 
@@ -425,22 +421,10 @@ def test_adapter_uses_the_metadata_the_effort_was_resolved_from(monkeypatch):
         caching_on=False,
         cache_ttl="5m",
         effort_label="ultracode",
-        loop=None,
-        executor=None,
         meta={"id": "global.anthropic.claude-opus-5", "effort_tier": "full"},
     )
     body = adapter._build_body([{"role": "user", "content": "hi"}], None, 0, 1, True)
     assert body["output_config"] == {"effort": "xhigh"}
-
-
-def test_subagent_endpoint_resolves_an_effort():
-    """/subagent was the last agent entry point passing nothing at all."""
-    import inspect
-
-    from server.chat import routes
-
-    src = inspect.getsource(routes.subagent_stream_endpoint)
-    assert "effort_for_model(model_key" in src
 
 
 def test_cron_and_headless_no_longer_hardcode_no_effort():

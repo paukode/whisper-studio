@@ -90,14 +90,13 @@
         file tools refuse the same folders in every mode.</li>
       <li><b>Bypass has no workspace boundary.</b> Since 2026-11-02 <code>bypassPermissions</code>
         works like Claude Code's bypass: it shows no card, inside the workspace or outside it. A save
-        to a path outside it, the first reach into a folder outside it, a delete outside it, and a
+        to a path outside it, a new workspace folder outside it, a delete outside it, and a
         ws_* file write, edit, or delete at any path run with no card. The subagents and workflow
         scripts of a Bypass session delete without a card too, and Undo puts back a Bypass write
-        outside the workspace. A category row of yours that names another mode still decides that
-        category; a row that names Bypass removes no floor under another session mode. The scratch
+        outside the workspace. The scratch
         folders of other sessions, the kernel pseudo-filesystems, and the credential stores stay out
         of reach of the ws_* file tools. In the other modes a change outside the
-        workspace asks, unless a session "yes to all" or a rule of yours covers it, or the path is
+        workspace asks, unless a session "yes to all" covers it, or the path is
         under <code class="path">~/.whisper</code>. Reading never asks anywhere, apart from the
         credential stores below.</li>
       <li><b>Reads of credential stores follow the mode.</b> The credential stores are the deny-list
@@ -176,8 +175,8 @@
         <code>Math.random</code>, <code>Date.now</code>, and the timers; the node flag
         <code>--disallow-code-generation-from-strings</code> makes <code>eval</code> / <code>new Function</code>
         throw (so a script cannot reach the host through <code>constructor.constructor</code>); the env is
-        scrubbed; and a new, untrusted script launches only as the <code>workflow</code> category mode
-        allows (a phase-preview card, a launch with no card, or a refusal), while a trusted saved
+        scrubbed; and a new, untrusted script launches only as the permission mode allows (a
+        phase-preview card, a launch with no card, or a refusal), while a trusted saved
         workflow launches directly. Real side effects
         flow through <code>agent()</code> into <code>run_agent</code> tools, which stay permission-gated
         and sandboxed. See <a href="arch-ultracode.html">The ultracode workflow runtime</a>.</li>
@@ -254,8 +253,8 @@
           <td>Whatever the command itself sends</td>
           <td>Wherever it goes: package registries for <code>npm</code> or <code>pip</code>, your git
             remote, the GitHub API through <code>gh</code></td>
-          <td>When a tool call you approved runs such a command. The sandbox leaves the network open by
-            default; the opt-in <a href="#egress">egress policy</a> narrows it.</td>
+          <td>When a tool call you approved runs such a command. The sandbox leaves the network
+            open.</td>
         </tr>
         <tr>
           <td>An update check: one GET request with a fixed User-Agent and no user data (no version, no
@@ -387,10 +386,10 @@
             read-only scope (plan mode or a read-only agent) keeps the sandbox in Bypass.</td>
         </tr>
         <tr>
-          <td>Workflow-launch category mode
+          <td>Workflow-launch mode gate
             (<code class="path">server/workflows/launch_policy.py</code>)</td>
-          <td>Reads the <code>workflow</code> entry in <code>category_modes</code> to decide whether a
-            new, not-yet-trusted ultracode script launches, cards, or is declined.</td>
+          <td>Reads the permission mode to decide whether a new, not-yet-trusted ultracode script
+            launches, cards, or is declined.</td>
           <td><b>Defence-in-depth</b> - a policy dial in front of the vm harness, not a containment
             layer. It never relaxes the runtime's own caps.</td>
         </tr>
@@ -407,7 +406,7 @@
             <code>vm.createContext</code> with Node globals absent, determinism guards, a scrubbed env,
             and <code>--disallow-code-generation-from-strings</code>.</td>
           <td><b>Defence-in-depth, not a certified boundary.</b> Its anchor is the
-            <code>workflow</code> category mode for each new script plus absent globals, a scrubbed env,
+            permission mode gate for each new script plus absent globals, a scrubbed env,
             and the no-code-from-strings flag; it is not <code>sandbox-exec</code>. Real side effects go through <code>agent()</code> tools, which
             stay permission-gated and sandboxed.</td>
         </tr>
@@ -517,43 +516,17 @@
       allow-by-default: the deny-list is broad but not exhaustive, and a secret file that is not on it
       can still be read. That shapes the accepted risks below.</p>
 
-    <h2 id="egress">Network egress policy</h2>
-    <p>The sandbox's network access is open by default, matching the residual risk above. For anyone who
-      wants to restrict it, <code class="path">server/security/egress_policy.py</code> adds an opt-in,
-      <b>default-off</b> control. You set it in Settings &gt; Keys and permissions &gt; Permissions &gt;
-      Sandbox Network Policy, which writes <code>network_policy.tier</code> in
-      <code class="path">permissions.json</code> (see
-      <a href="ref-settings.html#network-policy">the config field</a>): <code>permissive</code> (the
-      default, no restriction), <code>curated</code> (a seed allowlist of common
-      package-registry/docs/API domains plus your own <code>custom_allowed_domains</code>), or
-      <code>restrictive</code> (nothing outbound except domains you explicitly added).</p>
-    <p>Enforcement is a small local proxy that never terminates TLS. For HTTPS traffic tunneled through
-      it, the proxy reads only the one message every TLS client sends in cleartext before any encryption
-      keys exist - the ClientHello's Server Name Indication (SNI) - checks the hostname against the
-      active tier's allowlist, and either relays the connection untouched or refuses it: no certificate
-      minting, no decryption, no visibility into the payload. When a non-permissive tier is active, the
-      macOS sandbox profile also denies direct outbound connections on ports 80/443 at the kernel level,
-      forcing everything through the allowlist-checking proxy even if a command ignores the
-      <code>HTTPS_PROXY</code>/<code>HTTP_PROXY</code> environment convention.</p>
-    <p>The module documents its own limits rather than overselling itself as airtight: a raw socket that
-      never consults the proxy env vars is still caught by the kernel-level port deny, but <code>methods_only_safe</code> (block
-      POST/PUT/PATCH/DELETE) has no effect on ordinary HTTPS-over-CONNECT traffic, since the HTTP method
-      lives inside the encrypted payload the proxy never reads; and DNS (port 53) is not restricted at
-      all, so DNS-based exfiltration is out of scope for this feature.</p>
-
     <h2 id="residual-risks">Accepted residual risks</h2>
     <p>These are stated plainly rather than hidden. Each is a deliberate trade-off for a single-user
       local tool, and each has a fix that was judged not worth its cost.</p>
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
       <div class="callout__body">
-        <p><b>Network stays open by default, and non-listed secret reads are possible.</b> Reads are
+        <p><b>The network stays open, and non-listed secret reads are possible.</b> Reads are
           allow-default, so the sandbox does <em>not</em> restrict network access and does <em>not</em>
           block reads of secret files that are not on the deny-list. Network is left open
           on purpose: sandboxed <code>git</code>, <code>npm</code>, <code>pip</code>, <code>aws</code>,
-          and build commands need it. An opt-in <a href="#egress">network egress policy</a> exists
-          for anyone who wants to restrict it; the default tier does not restrict network
-          access.</p>
+          and build commands need it.</p>
         <p><b><code>HOST=0.0.0.0</code> exposes an unauthenticated API.</b> This applies only to a
           source install, since the Mac app always binds <code>127.0.0.1</code>. Enabling it puts the API on
           the LAN with no auth. The <code>Origin</code> / <code>Host</code> guard
@@ -658,7 +631,6 @@
         <tr><td>Does an MCP server see my AWS or GitHub credentials?</td><td>Not the listed AWS key and GitHub token variables, unless you forwarded one to that server yourself through its <code>env</code>. A Bedrock API key (<code>AWS_BEARER_TOKEN_BEDROCK</code>) and files such as <code class="path">~/.aws</code> are not hidden from it.</td></tr>
         <tr><td>What leaves the machine?</td><td>Your conversation to Bedrock, indexed text to Bedrock in cloud or hybrid mode, search queries to Tavily, pages you fetch, calls to remote MCP servers you added, Discover searches and model-weight downloads, and whatever a command you approved sends. No telemetry. See <a href="#what-leaves">What leaves the machine</a>.</td></tr>
         <tr><td>How is TLS verified?</td><td>Against the macOS keychain plus the bundled certifi CA list. A certificate still has to chain to a root you trust. If this cannot be set up, the server does not start.</td></tr>
-        <tr><td>Can I restrict what the sandbox reaches on the network?</td><td>Yes, opt-in in Settings &gt; Keys and permissions &gt; Permissions: <code>network_policy.tier</code> (<code>curated</code>/<code>restrictive</code>), enforced by a local SNI-filtering proxy. Default is <code>permissive</code> (unrestricted).</td></tr>
         <tr><td>Can a GitHub deletion, an <code>rm</code>, a full-access escalation, or an "approve"-tier MCP call ever skip the approval prompt?</td><td>No. All four are unconditional floors.</td></tr>
         <tr><td>Does <code>git_pull</code> run on its own?</td><td>No, it asks. <code>git_fetch</code> is read-only and does not.</td></tr>
         <tr><td>Does an MCP tool ask before it runs?</td><td>Only when its server or tool has an <code>approval_mode</code> other than <code>auto</code>, the default. See <a href="#mcp-trust">The MCP trust surface</a>.</td></tr>
@@ -671,7 +643,7 @@
       <div class="callout__body"><p><b>Related:</b> <a href="arch-sandbox.html">Sandbox &amp; security</a>
         (the mechanisms behind these rows), <a href="arch-approval.html">Approval &amp; permissions</a>
         (the pause-and-resume flow and permission modes), <a href="ref-settings.html#permission-modes">Settings &amp;
-        config keys</a> (category modes and the network policy field),
+        config keys</a> (the permission modes),
         <a href="ref-env.html">Environment variables</a>
         (<code>HOST</code>, <code>TAVILY_API_KEY</code>, and friends).</p></div>
     </div>

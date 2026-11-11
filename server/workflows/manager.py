@@ -17,6 +17,7 @@ import os
 import uuid
 from datetime import UTC, datetime
 
+from server.infrastructure.run_lease import finish_if_running
 from server.workflows import journal as jnl
 from server.workflows.runtime import WorkflowRun
 
@@ -29,10 +30,16 @@ _live: dict[str, WorkflowRun] = {}
 # missing entry just means "nothing to close".
 _task_ids: dict[str, str] = {}
 
+# A run's status: 'running' until exactly one terminal write. The runtime
+# ends a run 'done' or 'failed' (WorkflowRun._result), stop_run writes
+# 'stopped', and boot reconcile flips an orphan to 'stale'. Every caller that
+# asks "has this run ended" reads this one set.
+DONE = "done"
+TERMINAL_STATUSES = frozenset({DONE, "failed", "stopped", "stale"})
+
 # Workflow status (this module's vocabulary) -> registry status + its event.
 _TASK_TERMINAL = {
-    "done": ("completed", "task_completed"),
-    "completed": ("completed", "task_completed"),
+    DONE: ("completed", "task_completed"),
     "stopped": ("stopped", "task_stopped"),
 }
 
@@ -201,12 +208,14 @@ def resolve_workflow_workspace(raw: str | None, *, bypass: bool = False) -> tupl
     switch after launch can never redirect an already-running run's later
     agents.
 
-    ``bypass`` (the Bypass permission mode) skips the folder-grant check: in
+    Outside the Bypass permission mode a run may only be pinned inside the
+    connected workspace: a folder outside it is opened first with
+    ws_open_folder, whose card follows the mode. ``bypass`` lifts that: in
     Bypass a run may be pinned to any existing folder with no card, the way
     every other tool reaches outside the workspace in Bypass. The folder must
     still exist.
     """
-    from server.workspace.state import get_workspace_path
+    from server.workspace.state import get_workspace_path, inside_workspace
 
     connected = get_workspace_path()
     raw = (raw or "").strip()
@@ -214,17 +223,13 @@ def resolve_workflow_workspace(raw: str | None, *, bypass: bool = False) -> tupl
         resolved = os.path.realpath(os.path.expanduser(raw))
         if not os.path.isdir(resolved):
             return None, f"Error: workspace path '{raw}' does not exist or is not a directory."
-        # Pinning a run to a folder the user has not approved would give every
-        # agent in that run read/write reach into it without ever asking. The
-        # grant is asked for once (ws_open_folder's approval card) and
-        # remembered, so this only ever fires the first time.
-        from server.security.folder_grants import needs_grant
-
-        if not bypass and needs_grant(resolved, connected):
+        # Pinning a run to a folder outside the connected workspace would give
+        # every agent in that run read/write reach into it without asking.
+        if not bypass and not inside_workspace(resolved, connected):
             return None, (
-                f"Error: '{raw}' is outside the connected workspace and has not been "
-                "approved yet. Call ws_open_folder with that path first so the user "
-                "can grant access (they are only asked once), then retry."
+                f"Error: '{raw}' is outside the connected workspace. Call "
+                "ws_open_folder with that path first so the user can approve it, "
+                "then retry."
             )
         return resolved, ""
     return (os.path.realpath(connected), "") if connected else (None, "")
@@ -524,9 +529,6 @@ async def _drive(run: WorkflowRun, unsandboxed: bool = False) -> None:
         _finalize(run, outcome)
 
 
-_COMPLETED_STATUSES = ("done", "completed")
-
-
 def verify_deliverables(outcome: dict, workspace_path: str | None) -> dict:
     """Refuse to call a run 'completed' when a file it says it produced is
     not there.
@@ -541,7 +543,7 @@ def verify_deliverables(outcome: dict, workspace_path: str | None) -> dict:
     empty file downgrades the run to failed with an error naming it, which
     is what the card shows and what the model reads next turn.
     """
-    if outcome.get("status") not in _COMPLETED_STATUSES:
+    if outcome.get("status") != DONE:
         return outcome
     result = outcome.get("result")
     if not isinstance(result, dict):
@@ -577,31 +579,30 @@ def _finalize(run: WorkflowRun, outcome: dict) -> None:
     run the user deliberately stopped shows up as failed, and the completion
     event fires twice.
 
-    The ``WHERE status='running'`` clause makes the claim atomic in SQLite:
-    exactly one writer's UPDATE touches a row, and only that one announces
-    the run's end.
+    The claim goes through server.infrastructure.run_lease.finish_if_running,
+    atomic in SQLite: exactly one writer's UPDATE touches a row, and only that
+    one announces the run's end.
     """
     status = outcome.get("status", "failed")
     with _conn() as conn:
         _ensure_table(conn)
-        cur = conn.execute(
-            "UPDATE workflow_runs SET status=?, agents_spawned=?, tokens_in=?, tokens_out=?, "
-            "cost_usd=?, cap_reached=?, error=?, result_json=?, finished_at=? "
-            "WHERE run_id=? AND status='running'",
-            (
-                status,
-                outcome.get("agents_spawned", 0),
-                outcome.get("tokens_in", 0),
-                outcome.get("tokens_out", 0),
-                outcome.get("cost_usd", 0.0),
-                1 if outcome.get("cap_reached") else 0,
-                outcome.get("error", ""),
-                json.dumps(outcome.get("result")),
-                _now(),
-                run.run_id,
-            ),
+        claimed = finish_if_running(
+            conn,
+            "workflow_runs",
+            "run_id",
+            run.run_id,
+            {
+                "status": status,
+                "agents_spawned": outcome.get("agents_spawned", 0),
+                "tokens_in": outcome.get("tokens_in", 0),
+                "tokens_out": outcome.get("tokens_out", 0),
+                "cost_usd": outcome.get("cost_usd", 0.0),
+                "cap_reached": 1 if outcome.get("cap_reached") else 0,
+                "error": outcome.get("error", ""),
+                "result_json": json.dumps(outcome.get("result")),
+                "finished_at": _now(),
+            },
         )
-        claimed = cur.rowcount > 0
     if not claimed:
         # Someone else (stop_run, or a boot reconcile that flipped this to
         # 'stale') already recorded the end. Their status stands and their
@@ -635,12 +636,9 @@ async def stop_run(run_id: str) -> bool:
     await run.cancel()
     with _conn() as conn:
         _ensure_table(conn)
-        cur = conn.execute(
-            "UPDATE workflow_runs SET status='stopped', finished_at=? "
-            "WHERE run_id=? AND status='running'",
-            (_now(), run_id),
+        claimed = finish_if_running(
+            conn, "workflow_runs", "run_id", run_id, {"status": "stopped", "finished_at": _now()}
         )
-        claimed = cur.rowcount > 0
     if claimed:
         # Only the winner closes the mirrored background task, so the run's
         # end is announced exactly once.

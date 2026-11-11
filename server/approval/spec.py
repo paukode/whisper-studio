@@ -170,6 +170,11 @@ class ApprovalSpec:
     with no explicit cwd). The gate stamps such a card with the root it was
     raised in (`workspace_root`), and a Yes after that workspace was
     disconnected or replaced is refused instead of acting on the new one.
+
+    `direct` marks an action a person starts from the app's own UI with no
+    card behind it (answering an MCP elicitation in Settings). Only such an
+    action runs from POST /api/approval/execute without a card id; every
+    other one runs only from a card the server showed (server/approval/cards.py).
     """
 
     category: str
@@ -184,6 +189,7 @@ class ApprovalSpec:
     render_command: Callable[[dict], str] | None = None
     on_approved_by_human: Callable[[dict], None] | None = None
     workspace_bound: bool | Callable[[dict], bool] = False
+    direct: bool = False
 
     def binds_workspace(self, payload: dict) -> bool:
         if callable(self.workspace_bound):

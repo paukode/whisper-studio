@@ -8,9 +8,8 @@
 import type { IconName } from '@/components/chat/activityIcons';
 
 /* Human-readable summary of the file types the attach button, drag-drop, and
- * the /file: and @file: flows accept. Shown in the attach-button tooltip and
- * the file-search submenu so the supported types are discoverable at the point
- * of use. Mirrors the backend router (server/attachments.py + server/extract). */
+ * the @ menu's files accept. Shown in the attach-button tooltip and the @ menu
+ * so the supported types are discoverable at the point of use. Mirrors the backend router (server/attachments.py + server/extract). */
 export const SUPPORTED_ATTACHMENT_SUMMARY =
   'images, PDF, Office docs, audio, video, code, text';
 
@@ -33,7 +32,6 @@ export interface SlashCommand {
   desc: string;
   category?: string;
   options?: SlashOption[];
-  submenu?: boolean;
 }
 
 // Base list — the `model` entry's `options` is hydrated inside the component
@@ -51,18 +49,16 @@ export const BASE_SLASH_COMMANDS: SlashCommand[] = [
   { cmd: 'doctor context ', icon: 'ruler', desc: 'Rightsize the system prompt', category: 'debug' },
   { cmd: 'effort ', icon: 'sliders', desc: 'Set thinking depth', options: ['low', 'medium', 'high', 'extra', 'max', 'ultracode'], category: 'ai' },
   { cmd: 'export ', icon: 'arrowDown', desc: 'Export conversation as text', category: 'general' },
-  { cmd: 'file:', icon: 'fileText', desc: 'Reference a workspace file', submenu: true, category: 'workspace' },
   { cmd: 'goal ', icon: 'flag', desc: 'Set a goal and start working toward it (clear to end, gate add <cmd> for a must-pass check)', category: 'ai' },
   { cmd: 'help ', icon: 'info', desc: 'Show available commands', category: 'general' },
-  { cmd: 'mcp:', icon: 'link', desc: 'Browse MCP tools', submenu: true, category: 'workspace' },
+  { cmd: 'mcp ', icon: 'link', desc: 'Manage MCP servers in Settings', category: 'settings' },
   { cmd: 'memory ', icon: 'database', desc: 'Toggle memory (on/off/status)', options: ['on', 'off', 'status'], category: 'ai' },
   { cmd: 'model ', icon: 'sparkle', desc: 'Switch chat model', category: 'ai' },
   { cmd: 'notify ', icon: 'bell', desc: 'Toggle browser notifications', category: 'settings' },
   { cmd: 'plan ', icon: 'list', desc: 'Enable plan mode', category: 'ai' },
   { cmd: 'rename ', icon: 'pencil', desc: 'Rename this session', category: 'general' },
   { cmd: 'settings ', icon: 'wrench', desc: 'Open settings', category: 'settings' },
-  { cmd: 'skills:', icon: 'zap', desc: 'Browse available skills', submenu: true, category: 'workspace' },
-  { cmd: 'subagent ', icon: 'users', desc: 'Spawn a focused subagent for a one-shot task', category: 'ai' },
+  { cmd: 'skills ', icon: 'zap', desc: 'Manage skills in Settings', category: 'settings' },
   { cmd: 'theme ', icon: 'moon', desc: 'Switch theme', options: ['auto', 'light', 'dark'], category: 'settings' },
   { cmd: 'verbosity ', icon: 'ruler', desc: 'Set response length', options: ['brief', 'normal', 'detailed'], category: 'ai' },
   { cmd: 'workflow ', icon: 'graph', desc: 'Run a saved workflow by name', category: 'ai' },
@@ -144,126 +140,6 @@ export function resolveDictationFinal(base: string, clean: string): { text: stri
     return { text: '', submit: body || null };
   }
   return { text: combined, submit: null };
-}
-
-/* ── @skill mention parsing ── */
-
-/** Synthetic anchor sent as the payload when the user submits a bare `@skill`
- *  mention with no text of their own. Keeps the API message non-empty and
- *  gives the model's call of the requested skill something to anchor on.
- *  NEVER shown in the UI: the bubble renders `displayText` (what the user
- *  actually typed) instead. */
-export const SKILL_MENTION_PLACEHOLDER =
-  'Run the requested skill on the conversation context.';
-
-const SKILL_MENTION_RE = /^@(?:skills:)?([a-zA-Z_][\w-]*)\b\s*/;
-
-/** Split an `@skills:<name>` / `@<name>` prefix off a submitted message.
- *
- *  Returns the requested skill (sent as `force_skill`; the server asks the
- *  model to call it, nothing forces the call), the payload to send to the
- *  model (placeholder-substituted when the mention was bare), and the text
- *  the chat bubble should display (exactly what the user typed after the
- *  mention, possibly empty). Without a mention, the message passes through
- *  untouched.
- *
- *  `knownSkillNames` gates the bare `@<name>` form: only a name that's
- *  actually a loaded skill gets stripped and requested. Without this check, a
- *  leading `@my_session_b` (a session mention, resolved separately
- *  server-side) would be misread as a request for a nonexistent skill and
- *  silently swallowed before the server ever saw it. */
-export function parseSkillMention(
-  trimmed: string,
-  knownSkillNames: string[],
-): {
-  forceSkill?: string;
-  messageToSend: string;
-  displayText?: string;
-} {
-  const m = trimmed.match(SKILL_MENTION_RE);
-  if (!m || !m[1]) return { messageToSend: trimmed };
-  const known = new Set(knownSkillNames.map((n) => n.toLowerCase()));
-  if (!known.has(m[1].toLowerCase())) return { messageToSend: trimmed };
-  const stripped = trimmed.slice(m[0].length).trim();
-  return {
-    forceSkill: m[1],
-    messageToSend: stripped || SKILL_MENTION_PLACEHOLDER,
-    displayText: stripped,
-  };
-}
-
-/** Parse a colon-submenu search prefix (`/file:`, `/skills:`, `/mcp:`) from
- *  the text before the cursor.
- *
- *  Returns `{ type, query }` ONLY while the user is still typing a single-token
- *  argument (one optional leading space allowed, e.g. `/file: report`). As soon
- *  as a further space begins the message body — `/file: report.pdf summarize it`
- *  — this returns `null`, so the search popup dismisses instead of greedily
- *  swallowing the rest of the line. Returns `null` for any non-submenu text. */
-export function matchColonSubmenu(before: string): { type: string; query: string } | null {
-  const m = before.match(/^\/(file|skills|mcp):\s?(\S*)$/i);
-  if (!m) return null;
-  return { type: m[1].toLowerCase(), query: m[2] };
-}
-
-/* ── Autocomplete item type ── */
-export interface ACItem {
-  icon: IconName;
-  name: string;
-  desc: string;
-  insert: string;
-}
-
-/* ── @ mention root entries ── */
-export const AT_ROOT_ENTRIES: ACItem[] = [
-  { icon: 'folder', name: '@file:', desc: 'Reference a workspace file', insert: '@file:' },
-  { icon: 'zap', name: '@skills:', desc: 'Browse skills', insert: '@skills:' },
-  { icon: 'link', name: '@mcp:', desc: 'Browse MCP tools', insert: '@mcp:' },
-  { icon: 'search', name: '@index', desc: 'Search your indexed folders for this message', insert: '@index' },
-  { icon: 'book', name: '@docs', desc: 'Ask the app documentation (answers cite pages)', insert: '@docs' },
-];
-
-/* ── Autocomplete popup heading ── */
-const SUBMENU_HEADINGS: Partial<Record<string, string>> = {
-  'file:': 'Files',
-  'skills:': 'Skills',
-  'mcp:': 'MCP servers',
-};
-
-/** Name what the open autocomplete menu lists, for the popup's heading.
- *
- *  `subCmd` is the open submenu: a colon submenu (`file:`, or `@file:` when it
- *  was opened from an @ mention) or a slash command whose options are showing
- *  (`effort `). With no submenu open the popup lists commands or mentions. */
-export function autocompleteHeading(mode: 'slash' | 'at' | null, subCmd: string | null): string {
-  if (subCmd) return SUBMENU_HEADINGS[subCmd.replace(/^@/, '')] ?? 'Options';
-  return mode === 'at' ? 'Mentions' : 'Commands';
-}
-
-/* Structural shapes the autocomplete hook reads off the settings store.
- * Declared here (rather than imported) so the hook stays decoupled from
- * the store's internal interfaces — the store's richer types remain
- * assignable to these. */
-export interface SkillLike {
-  name: string;
-  description?: string;
-  enabled?: boolean;
-}
-
-export interface McpServerLike {
-  name: string;
-  status: string;
-  enabled: boolean;
-  tools: string[];
-}
-
-/** Row description for an MCP server in the `/mcp:` and `@mcp:` menus: its
- *  state and, once connected, how many tools it offers, so a server with
- *  nothing callable is visible where it is picked. */
-export function mcpServerDesc(s: McpServerLike): string {
-  if (!s.enabled) return 'MCP server (off)';
-  if (s.status !== 'connected') return `MCP server (${s.status})`;
-  return `MCP server (connected, ${s.tools.length} ${s.tools.length === 1 ? 'tool' : 'tools'})`;
 }
 
 export interface SessionLike {

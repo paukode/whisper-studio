@@ -18,6 +18,7 @@ import logging
 import time
 from typing import NamedTuple
 
+from server.approval import cards
 from server.approval.markers import APPROVAL
 from server.approval.spec import WORKSPACE_ROOT_KEY, ApprovalOutcome, turn_workspace_refusal
 from server.auto_mode import classify_tool_call
@@ -274,13 +275,12 @@ async def gate_approval(
 
     # Precedence: the hard floors (github-destructive, MCP-approve, and
     # outside bypass a delete outside the workspace, sandbox escalation, a
-    # visible terminal run), app storage, category mode override,
-    # bypassPermissions (allows the rest, anywhere), trusted skill, session
-    # approvals, custom rules, approved launch.json preview (allow), dontAsk,
-    # acceptEdits, auto (classifier), ask. See
+    # visible terminal run), app storage, bypassPermissions (allows the rest,
+    # anywhere), trusted skill, session approvals, approved launch.json
+    # preview (allow), dontAsk, acceptEdits, auto (classifier), ask. See
     # server.security.permissions.resolve_static_decision.
     if secret == "ask":
-        # Not the classifier, a session approval or a rule: a person, each time.
+        # Not the classifier or a session approval: a person, each time.
         decision = "ask"
     else:
         decision = resolve_static_decision(
@@ -388,8 +388,15 @@ async def gate_approval(
     summary = spec.render_summary(ws_parsed)
     if secret == "ask" and spec.category != secret_reads.SECRET_READ_CATEGORY:
         summary = f"READS THE KEYCHAIN AND CREDENTIAL STORES: {summary}"
+    # The card's Yes runs exactly this action and payload, once: the server
+    # keeps them under the card's id (server/approval/cards.py) and never runs
+    # a payload a client posts back.
+    card_id = cards.issue(
+        session_id=cost_session_id, action=action, payload=payload, tool_use_id=state.tool_id
+    )
     event = {
         "approval_request": {
+            "card_id": card_id,
             "tool_use_id": state.tool_id,
             "action": action,
             "category": category,

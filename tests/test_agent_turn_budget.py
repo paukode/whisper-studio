@@ -188,7 +188,7 @@ def test_turn_limit_distills_structured_output(monkeypatch):
         )
     )
     assert result.structured_output == {"answer": "partial but usable"}
-    assert result.status == "completed"
+    assert result.status == "stopped"
     assert result.stopped_early is True
     assert "turn limit" in result.output.lower()
     # The distillation call left the choice to the model (tool_choice auto),
@@ -228,7 +228,7 @@ def test_turn_limit_finalizes_text_when_no_schema(monkeypatch):
         )
     )
     assert "best summary" in result.output
-    assert result.status == "completed"
+    assert result.status == "stopped"
     assert result.stopped_early is True
     # The last round's request must not offer tools at all — Anthropic's
     # is_last_round handling omits the key entirely, so the model had no

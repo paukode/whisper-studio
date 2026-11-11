@@ -47,7 +47,7 @@ describe('a message read mid-turn', () => {
     const sessionId = 'sess-midturn-split';
     const chat = getChatStore(sessionId).getState();
     chat.addMessage(note('write a recognition email'));
-    chat.setStreaming(true);
+    chat.startTurn('streaming');
     const sent = note('Dana and Miles are from my team');
     chat.queueMidTurnNote(sent);
 
@@ -111,7 +111,7 @@ describe('a round stopped to read a message', () => {
     const sessionId = 'sess-midturn-restart';
     const chat = getChatStore(sessionId).getState();
     chat.addMessage(note('write a recognition email'));
-    chat.setStreaming(true);
+    chat.startTurn('streaming');
     const sent = note('Dana and Miles are from my team');
     chat.queueMidTurnNote(sent);
 
@@ -163,7 +163,7 @@ describe('a round stopped to read a message', () => {
 describe('held mid-turn messages', () => {
   it('follow the last row when the stream ends without reading them', () => {
     const chat = getChatStore('sess-held-end').getState();
-    chat.setStreaming(true);
+    chat.startTurn('streaming');
     const sent = note('and the subject line?');
     chat.queueMidTurnNote(sent);
     chat.finishStream({ role: 'assistant', content: 'Here it is.', timestamp: new Date().toISOString() });
@@ -187,7 +187,7 @@ describe('held mid-turn messages', () => {
 
   it('leave the chat when their delivery fails, wherever they are by then', () => {
     const chat = getChatStore('sess-held-drop').getState();
-    chat.setStreaming(true);
+    chat.startTurn('streaming');
     const sent = note('not delivered');
     chat.queueMidTurnNote(sent);
     // The stream ended while the request was in flight.

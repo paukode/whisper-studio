@@ -11,6 +11,7 @@ import json
 from fastapi import APIRouter, Request
 from fastapi.responses import Response
 
+from server import mcp_catalog
 from server.mcp import _VALID_APPROVAL_MODES, effective_approval_mode, mcp_manager
 
 router = APIRouter(prefix="/api/mcp", tags=["mcp"])
@@ -131,14 +132,20 @@ def _editable_config() -> dict | Response:
     return config
 
 
+# A configured server with no connection record is stopped (disabled, not
+# started yet, or stopped); MCPManager._set_state writes every other state
+# (connecting, connected, error).
+_STOPPED = {"status": "stopped", "tools": [], "error": None}
+
+
 def _live_status(name: str, enabled: bool) -> dict:
-    status = mcp_manager.get_status().get(name, {})
+    status = mcp_manager.get_status().get(name, _STOPPED)
     return {
         "name": name,
         "enabled": enabled,
-        "status": status.get("status", "stopped"),
-        "tools": status.get("tools", []),
-        "error": status.get("error"),
+        "status": status["status"],
+        "tools": status["tools"],
+        "error": status["error"],
     }
 
 
@@ -164,15 +171,15 @@ async def mcp_servers_status():
     for name, conf in config.items():
         if not isinstance(conf, dict):
             continue
-        s = status.get(name, {"status": "stopped", "tools": [], "error": None})
+        s = status.get(name, _STOPPED)
         servers[name] = {
             "command": str(conf.get("command") or ""),
             "args": _str_list(conf.get("args")),
             "env": _str_map(conf.get("env")),
             "enabled": bool(conf.get("enabled", True)),
             "status": s["status"],
-            "tools": s.get("tools", []),
-            "error": s.get("error"),
+            "tools": s["tools"],
+            "error": s["error"],
             # Remote transport. bearer_token_env_var is the env var NAME
             # only, never the token value, which is never persisted.
             "url": str(conf.get("url") or ""),
@@ -181,6 +188,10 @@ async def mcp_servers_status():
             "tool_overrides": _str_map(conf.get("tool_overrides")),
             "enabled_tools": _str_list(conf.get("enabled_tools")),
             "disabled_tools": _str_list(conf.get("disabled_tools")),
+            # What the composer offers from a connected server: each prompt
+            # as /server:prompt, each resource as @server:uri.
+            "prompts": mcp_catalog.server_prompts(name),
+            "resources": mcp_catalog.server_resources(name),
         }
     return {
         "servers": servers,
@@ -190,6 +201,22 @@ async def mcp_servers_status():
         # connected server; Settings > MCP renders a form for each.
         "pending_elicitations": mcp_manager.get_pending_elicitations(),
     }
+
+
+@router.post("/prompt")
+async def mcp_run_prompt(request: Request):
+    """Run one MCP prompt, ``/server:prompt args`` from the composer, and store
+    its text as a document attachment the message carries. Body:
+    ``{"command": "server:prompt", "arguments": "the words after it"}``."""
+    from server.attachments import add_text_document
+
+    body = await request.json()
+    command = str(body.get("command") or "")
+    try:
+        filename, text = await mcp_catalog.render_prompt(command, str(body.get("arguments") or ""))
+    except mcp_catalog.CatalogError as e:
+        return _bad_request(str(e))
+    return {"id": await add_text_document(filename, text), "filename": filename}
 
 
 @router.post("/servers")

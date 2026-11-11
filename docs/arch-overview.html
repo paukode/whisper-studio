@@ -36,7 +36,7 @@
 
     <h3>Browser (React 19 SPA)</h3>
     <p>A single-page app renders the chat, the live transcript, and the full workspace IDE. State
-      lives in Zustand stores organized as <em>per-session runtimes</em> (up to three sessions stream
+      lives in Zustand stores organized as <em>per-session runtimes</em> (up to eight sessions stream
       at once). All Markdown is sanitized through <code>marked</code> + DOMPurify before it reaches
       the DOM. See <a href="arch-frontend.html">Frontend architecture</a>.</p>
 
@@ -94,11 +94,7 @@
       Haiku) in Cloud mode, and per capability in Hybrid mode. App records (sessions, costs, cron
       runs) live in one WAL-mode <a href="arch-persistence.html">SQLite database</a>, and each
       indexed workspace has its own SQLite index database. Agent journals, request snapshots, and the
-      <a href="arch-memory.html">memory store</a> are files under the data root. Sandboxed commands can also be routed through a
-      <b>network egress policy</b> (<code class="path">server/security/egress_policy.py</code>): an
-      SNI-filtering local proxy with three tiers: <code>permissive</code> (the default, no
-      restriction), <code>curated</code>, and <code>restrictive</code>, selected by
-      <code>network_policy.tier</code> in <code>permissions.json</code>.</p>
+      <a href="arch-memory.html">memory store</a> are files under the data root.</p>
 
     <h3>External services</h3>
     <p><a href="arch-backends.html">Amazon Bedrock</a> is the only cloud LLM. It carries the Claude

@@ -11,8 +11,7 @@ export const TeamProgressEventSchema = z.object({
   parent_agent_id: z.string().nullable().optional(),
   phase: z.enum([
     'team_started', 'team_completed', 'started', 'turn_start', 'text',
-    'tool_call', 'tool_result', 'completed', 'turn_limit', 'failed',
-    'stopped', 'finished',
+    'tool_call', 'tool_result', 'completed', 'failed', 'stopped', 'finished',
   ]),
   task: z.string().optional(),
   model: z.string().nullable().optional(),
@@ -120,6 +119,8 @@ export const SSEEventDataSchema = z.object({
 
   // Approvals — generic shape; `preview` selects the renderer.
   approval_request: z.object({
+    /** The server's id for the card (server/approval/cards.py). */
+    card_id: z.string(),
     tool_use_id: z.string(),
     action: z.string(),
     category: z.string(),

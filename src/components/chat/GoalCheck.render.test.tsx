@@ -106,7 +106,7 @@ describe('streaming status set after the reply', () => {
   const status = 'Checking the goal on Gemma 4 12B (Local)...';
 
   afterEach(() => {
-    getChatStore(null).getState().setStreaming(false);
+    getChatStore(null).getState().finishStream();
   });
 
   it('shows while the reply text is on screen', () => {

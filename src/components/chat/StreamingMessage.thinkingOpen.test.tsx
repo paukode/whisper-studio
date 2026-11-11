@@ -19,7 +19,7 @@ describe('StreamingMessage thinking box', () => {
   function start() {
     useSessionStore.setState({ currentSessionId: sid });
     const chat = getChatStore(sid);
-    chat.getState().setStreaming(true);
+    chat.getState().startTurn('streaming');
     chat.setState({ currentThinkingContent: 'Reading the parser first.' });
     return chat;
   }

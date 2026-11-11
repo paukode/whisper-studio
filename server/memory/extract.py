@@ -224,13 +224,18 @@ async def maybe_extract_memory(
                     session_id=session_id,
                 )
             else:
-                await _run_extraction(
+                done = await _run_extraction(
                     new_messages,
                     global_dir=global_dir,
                     project_dir=project_dir,
                     model_id=model_id,
                     session_id=session_id,
                 )
+                if not done:
+                    # A limit stopped the run part way: the slice is not done,
+                    # so the next trigger extracts it again.
+                    _cursors[session_id] = cursor
+                    _save_state(global_dir, session_id, cursor=cursor)
         finally:
             _inflight.discard(session_id)
 
@@ -350,8 +355,10 @@ async def _run_extraction(
     project_dir: str | None,
     model_id: str,
     session_id: str,
-) -> None:
-    """Run extraction agent on new messages."""
+) -> bool:
+    """Run extraction agent on new messages. False when a limit stopped it
+    before it finished (server.agents.outcome): the caller gives the slice
+    back. A failure stays claimed, so a broken run is not repeated."""
     from server.agents.runtime import run_agent
 
     # Build transcript excerpt from new messages
@@ -432,7 +439,10 @@ async def _run_extraction(
         if writes or deletes:
             publish_memory_event(session_id, action="extracted", writes=writes, deletes=deletes)
     else:
-        log.warning("Memory extraction %s: %s", result.status, result.output[:200])
+        log.warning(
+            "Memory extraction %s (%s): %s", result.status, result.stop_reason, result.output[:200]
+        )
+    return not result.stopped_early
 
 
 def _store_snapshot(global_dir: str | None, project_dir: str | None) -> dict[str, tuple]:

@@ -32,6 +32,7 @@ import re
 from server.infrastructure.errors import PromptTooLongError
 
 from .events import (
+    Frame,
     RoundError,
     RoundResult,
     TextDelta,
@@ -46,6 +47,10 @@ from .events import (
 log = logging.getLogger("whisper-studio")
 
 _CTX_OVERFLOW_MARKERS = ("exceed_context_size", "context size", "too long", "context window")
+
+# The streaming bubble's label while a round waits for llama-server, which
+# answers one request at a time (--parallel 1). The first token clears it.
+WAITING_FOR_MODEL = "Waiting for the on-device model to finish another request..."
 
 
 def _joined_text(content: list) -> str:
@@ -369,10 +374,16 @@ class LocalAdapter:
 
     async def stream_round(self, messages, tools, core_count, round_num, is_last_round):
         from server.costs.capture import json_chars
+        from server.local import serving
         from server.local.server_stream import _stream_round
         from server.tool_inputs import ToolInputError, validate_call_ids
 
         self._inflight_usage = None
+        # Another chat, agent or side call has the model's one slot: this
+        # round queues behind it, so the user sees why nothing streams yet.
+        # mlx_lm batches requests that arrive together, so it never queues.
+        if serving.engine_of(self.model_key) == "gguf" and serving.requests_in_flight() > 0:
+            yield Frame(payload={"status": WAITING_FOR_MODEL})
         # One empty-completion or announcement retry, as before. Invalid tool
         # arguments are terminal, not an empty completion that can be nudged.
         announced = ""

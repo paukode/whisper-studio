@@ -106,7 +106,12 @@
         execution</b>: a blocked write still has its schema, and the executor explains why it will
         not run. Rewriting the tools array instead would invalidate the prompt cache on every flip.
         See <a href="arch-tools.html#progressive-disclosure">progressive tool disclosure</a>.</li>
-      <li><b>Resolve <code>@file</code> mentions</b> inline into the user message.</li>
+      <li><b>Resolve the <code>@</code> mentions</b>
+        (<code class="path">server/chat/mentions.py</code>). The text of each
+        <code>@server:uri</code> MCP resource and the recent conversation of each
+        <code>@&lt;session&gt;</code> go into the user message. An <code>@agent-&lt;type&gt;</code>
+        mention stays in the text, and <code>agent_hint</code> adds a line that asks the model to
+        call <code>spawn_agent</code>.</li>
       <li><b>Expand attachments.</b> Documents are capped (around 150K characters) and images become
         vision blocks. See <a href="arch-extraction.html">attachment extraction</a>.</li>
       <li><b>Index grounding.</b> If the turn passes the grounding intent gate (contentless
@@ -142,7 +147,7 @@
     <p>See <a href="arch-backends.html">Model backends &amp; modes</a> for the full picture.</p>
 
     <h2 id="the-streaming-loop">The streaming loop</h2>
-    <p>The engine enters a loop of up to the <b>round limit</b> in Settings &gt; Usage and advanced &gt; Costs, Budgets card
+    <p>The engine enters a loop of up to the <b>round limit</b> in Settings &gt; Costs, Budgets card
       (120 by default; the CHAT policy leaves <code>max_rounds</code> unset, so the turn reads the
       setting when it starts, and the same loop serves every provider). A policy can also carry a
       <code>deadline_seconds</code> wall-clock brake: runs nobody is watching (agents, scheduled and
@@ -250,7 +255,7 @@
         tool runs on its own. So <code>[read, read, write, read]</code> becomes
         <code>[[read, read], [write], [read]]</code>.</li>
       <li><b>Permission checks.</b> Every tool is evaluated against the current
-        <a href="arch-approval.html">permission mode</a> and per-tool rules: allow, ask, or deny.</li>
+        <a href="arch-approval.html">permission mode</a>: allow, ask, or deny.</li>
       <li><b>Approval gate.</b> A tool that needs consent pauses the turn (state is
         stashed in the unified pause store, <code class="path">server/chat/engine/pause.py</code>, keyed
         by session), and waits for the client to confirm.</li>

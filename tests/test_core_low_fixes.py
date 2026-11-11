@@ -50,15 +50,12 @@ def _budget_passthrough(_name, output):
     return output
 
 
-def _patch_rules(monkeypatch, rules):
-    monkeypatch.setattr(
-        "server.security.permissions.load_permissions",
-        lambda: {"mode": "default", "rules": rules},
-    )
+def _patch_mode(monkeypatch):
+    monkeypatch.setattr("server.security.permissions.load_permissions", lambda: {"mode": "default"})
 
 
 def test_completed_sibling_keeps_real_output_on_pause(monkeypatch):
-    _patch_rules(monkeypatch, [])
+    _patch_mode(monkeypatch)
     payload = '{"action": "ws_write_file", "path": "foo.txt", "content": "hi", "original": ""}'
     approval = _State("tu_write", "ws_write_file", approval_request(payload), status="completed")
     real_output = "print('hello world')  # already read"

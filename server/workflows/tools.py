@@ -20,9 +20,10 @@ import json
 import logging
 import os
 
+from server.security.permissions import bypass_now
 from server.workflows import manager, store
 from server.workflows.journal import run_dir
-from server.workflows.launch_policy import is_bypass, is_session_granted, launch_decision
+from server.workflows.launch_policy import is_session_granted, launch_decision
 from server.workflows.runtime import (
     DEFAULT_WORKFLOW_BUDGET_TOKENS,
     MIN_WORKFLOW_BUDGET_TOKENS,
@@ -277,9 +278,9 @@ async def execute_workflow_run(tool_input, session_id, model_id, effort_label) -
 
     def _denied() -> tuple[str, list]:
         return (
-            "Workflow launches are disabled by the current permission settings "
-            "(workflow category mode dontAsk). Not started. The user can change "
-            "this in Settings > Permissions.",
+            "Workflow launches are disabled by the current permission mode "
+            "(Don't ask). Not started. The user can change the mode in the "
+            "composer's Mode menu.",
             [],
         )
 
@@ -331,7 +332,7 @@ async def execute_workflow_run(tool_input, session_id, model_id, effort_label) -
     # resolve_workflow_workspace's docstring for why this never falls back or
     # creates one.
     workspace_path, ws_error = manager.resolve_workflow_workspace(
-        tool_input.get("workspace_path"), bypass=is_bypass()
+        tool_input.get("workspace_path"), bypass=bypass_now()
     )
     if ws_error:
         return ws_error, []
@@ -483,7 +484,7 @@ def _wait_view(run_id: str) -> dict:
         return {"run_id": run_id, "status": "not_found", "finished": True}
     view = _status_view(run)
     view.pop("journal_tail", None)
-    view["finished"] = run.get("status") != "running"
+    view["finished"] = run.get("status") in manager.TERMINAL_STATUSES
     return view
 
 

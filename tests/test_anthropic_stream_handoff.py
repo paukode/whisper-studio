@@ -10,7 +10,6 @@ of the stream here). The handoff must go through ``call_soon_threadsafe``.
 import asyncio
 import json
 import time
-from concurrent.futures import ThreadPoolExecutor
 
 import server.chat.engine.anthropic as anth
 from server.chat.engine.events import RoundResult, TextDelta
@@ -74,8 +73,6 @@ def test_each_delta_is_yielded_when_it_is_produced(monkeypatch):
             caching_on=False,
             cache_ttl="5m",
             effort_label=None,
-            loop=asyncio.get_running_loop(),
-            executor=ThreadPoolExecutor(max_workers=4),
             meta={},
         )
         monkeypatch.setattr(adapter, "_build_body", lambda *a, **k: {})

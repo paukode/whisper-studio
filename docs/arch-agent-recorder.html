@@ -114,9 +114,11 @@
     </div>
 
     <h3 id="stop-reasons">Stop reasons</h3>
-    <p>Run status stays coarse (<code>completed</code>, <code>failed</code>, <code>stopped</code>) for
-      callers that branch on it. The stop reason names the limit that actually ended the run, and it is
-      what the cards and the parent's summary show:</p>
+    <p>The stop reason is the only result that a run records. The run status (<code>completed</code>,
+      <code>stopped</code>, or <code>failed</code>) comes from the stop reason. The status is
+      <code>completed</code> when the agent completed its task. The status is <code>stopped</code> after
+      a limit or a cancel. The status is <code>failed</code> after an error. The cards, the task list, and
+      the summary for the parent agent use the same status:</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Stop reason</th><th>Meaning</th></tr></thead>
       <tbody>
@@ -218,7 +220,7 @@
         that shows the session starts a normal chat turn
         (<code class="path">src/hooks/chatStream/backgroundWake.ts</code>). This turn streams into
         the chat, uses tools, obeys the permission mode, and shows approval cards. It waits while
-        the session is busy and while three sessions are active.</p></li>
+        the session is busy and while eight sessions are active.</p></li>
     </ol>
     <p>Only a command that a chat turn started reports back. A command of an agent or a cron job
       does not report back. A command that you run does not report back, and work that a command

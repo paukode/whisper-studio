@@ -115,7 +115,7 @@ function reconcileLevels(
 
 /** The level a run on the selected model uses: the local thinking level for
  *  an on-device model, the cloud effort level otherwise. Every surface that
- *  sends a level (a turn, /subagent, a workflow launch) reads it here. */
+ *  sends a level (a turn, a workflow launch) reads it here. */
 export function activeEffortLevel(s: {
   models: ModelEntry[];
   selectedModel: string;

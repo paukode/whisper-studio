@@ -32,24 +32,19 @@ HARNESS_OK = os.path.exists(NODE) and os.path.exists(
 _NOOP = "export const meta = { name: 'noop', description: 'no agents', phases: ['a'] }\nphase('a')\nreturn { ok: 1 }\n"
 
 
-@pytest.fixture(autouse=True)
-def _grant_tmp_paths(tmp_path, monkeypatch):
-    """Pinning a workflow to a folder outside the connected workspace now
-    requires an ask-once grant (server/security/folder_grants.py). These tests
-    are about the PINNING logic, not the grant prompt, so isolate the store to
-    tmp and pre-approve the tmp tree — the grant flow has its own coverage in
-    tests/test_folder_grants.py.
-    """
-    from server.security import folder_grants as fg
-
-    monkeypatch.setattr(fg, "GRANTS_PATH", str(tmp_path / "folder_grants.json"))
-    fg.grant(str(tmp_path))
+@pytest.fixture
+def _connect_tmp_path(tmp_path, monkeypatch):
+    """Outside Bypass a workflow may only be pinned inside the connected
+    workspace. These tests are about the PINNING logic, so tmp_path is the
+    connected workspace unless a test connects another folder."""
+    monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: str(tmp_path))
     yield
 
 
 # ── resolve_workflow_workspace ───────────────────────────────────────────────
 
 
+@pytest.mark.usefixtures("_connect_tmp_path")
 def test_resolve_explicit_path_expands_and_validates(tmp_path, monkeypatch):
     from server.workflows.manager import resolve_workflow_workspace
 
@@ -60,6 +55,7 @@ def test_resolve_explicit_path_expands_and_validates(tmp_path, monkeypatch):
     assert resolved == os.path.realpath(str(real))
 
 
+@pytest.mark.usefixtures("_connect_tmp_path")
 def test_resolve_explicit_path_expands_tilde(tmp_path, monkeypatch):
     from server.workflows.manager import resolve_workflow_workspace
 
@@ -103,6 +99,7 @@ def test_resolve_omitted_with_nothing_connected_returns_none_no_error(monkeypatc
 # ── start_run persists and freezes the root ──────────────────────────────────
 
 
+@pytest.mark.usefixtures("_connect_tmp_path")
 class _ManagerDBTestBase:
     @pytest.fixture(autouse=True)
     def _isolate(self, tmp_path, monkeypatch):
@@ -187,17 +184,13 @@ class TestExecuteWorkflowRunWorkspace(_ManagerDBTestBase):
         assert side[0]["workflow_preview"]["workspace_path"] == os.path.realpath(str(ws))
 
     def test_auto_launch_stores_the_resolved_workspace(self, tmp_path, monkeypatch):
-        """The auto-approved path (permissive workflow permission mode) must
-        pin identically to the manual-approval path."""
+        """The auto-approved path (Auto permission mode) must pin identically
+        to the manual-approval path."""
         from server.security import permissions as P
         from server.workflows import manager
         from server.workflows.tools import execute_workflow_run
 
-        monkeypatch.setattr(
-            P,
-            "load_permissions",
-            lambda: {"mode": "default", "category_modes": {"workflow": "auto"}},
-        )
+        monkeypatch.setattr(P, "load_permissions", lambda: {"mode": "auto"})
         ws = tmp_path / "project1"
         ws.mkdir()
         out, side = asyncio.run(
@@ -213,11 +206,7 @@ class TestExecuteWorkflowRunWorkspace(_ManagerDBTestBase):
         from server.workflows import manager
         from server.workflows.tools import execute_workflow_run
 
-        monkeypatch.setattr(
-            P,
-            "load_permissions",
-            lambda: {"mode": "default", "category_modes": {"workflow": "auto"}},
-        )
+        monkeypatch.setattr(P, "load_permissions", lambda: {"mode": "auto"})
         original_ws = tmp_path / "original"
         original_ws.mkdir()
         _, side = asyncio.run(

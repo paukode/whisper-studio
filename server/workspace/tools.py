@@ -33,8 +33,8 @@ def get_global_workspace_tools() -> list[dict]:
                 "(ask_user_question) before calling again with the chosen path. When a DIFFERENT "
                 "workspace is already connected, pass switch=true if the user explicitly asked to "
                 "open or switch to this folder; otherwise keep using the connected one. Pass "
-                "create=true only when the user asked for a NEW folder. Opening a folder the user "
-                "has not granted before asks them once."
+                "create=true only when the user asked for a NEW folder. Opening a folder outside "
+                "the connected workspace follows the permission mode, which can ask the user."
             ),
             "input_schema": {
                 "type": "object",

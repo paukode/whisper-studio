@@ -26,12 +26,13 @@ import {
   stopNativeCapture,
 } from '@/services/nativeAudioSource';
 import { NativeAudioMixer } from '@/services/nativeAudioMixer';
-import { isNativeMicAvailable, startNativeMic, stopNativeMic } from '@/services/nativeMicSource';
+import { acquireNativeMic, isNativeMicAvailable, releaseNativeMic } from '@/services/nativeMicSource';
 import { isNativeTranslationAvailable, translateNative } from '@/services/nativeTranslation';
 import { countActiveSessions, getTranscriptionStore } from '@/stores/sessionRuntimes';
 import { nextChunkId, type TranscriptionState } from '@/stores/transcriptionStore';
 import type { StoreApi } from 'zustand/vanilla';
 import { MAX_ACTIVE_SESSIONS } from '@/hooks/useChatStream';
+import { createStartGuard, StartCancelled } from '@/utils/startGuard';
 
 const SAMPLE_RATE = 16000;
 // How much audio we buffer client-side before flushing a chunk to the server.
@@ -198,6 +199,10 @@ let stopSettled: Promise<void> | null = null;
  *  record click during the wait must not start a second gate — the
  *  banner's Cancel is the way out. */
 let modelGateActive = false;
+/** The start opening its audio sources. stop() cancels it, so a start that
+ *  resumes after a Stop releases what its pending await brought in (the
+ *  shell's mic or capture) instead of recording into a stopped take. */
+const startGuard = createStartGuard();
 /** The ASR engine the recording websocket is actually running server-side.
  *  Distinct from config.transcriptionBackend, which the header select flips
  *  the instant the user picks a new engine — BEFORE its weights are on disk.
@@ -207,10 +212,6 @@ let activeBackend = 'streaming';
 /** True while a live engine switch is gating the new engine's download, so a
  *  second switch can't race a set_model relay past a half-finished one. */
 let liveSwitchActive = false;
-/** The user dismissed the server-driven "loading into memory" banner. A native
- *  MLX load can't be aborted mid-flight, so we simply stop re-showing its ramp
- *  until the next load starts or finishes. */
-let loadModelBannerDismissed = false;
 
 const engineOf = (backend: string): 'whisper' | 'parakeet' =>
   backend === 'whisper' ? 'whisper' : 'parakeet';
@@ -221,6 +222,8 @@ let nativeMixer: NativeAudioMixer | null = null;
 let nativeCaptureRunning = false;
 /** The shell's native microphone is open for this recording (Mac app). */
 let nativeMicRunning = false;
+/** The recorder's name on the shared native mic (dictation has its own). */
+const RECORDER_MIC_OWNER = 'header-recorder';
 
 function flushPcmBuffer(): void {
   if (pcmBufferLen === 0) return;
@@ -478,6 +481,12 @@ function connectWS(t: Take): void {
   // starts fresh.
   let lastLanguage = '';
   let numbered = false;
+  // This socket's run on the model banner. The user can dismiss the
+  // server-driven "loading into memory" banner: a native MLX load can't be
+  // aborted mid-flight, so the socket stops re-showing its ramp until the
+  // next load starts or this one finishes.
+  const banner = useUIStore.getState().openModelBanner('recording');
+  let bannerDismissed = false;
   newWs.onopen = () => {
     useRecordingStore.getState().setConnected(true);
     startPing();
@@ -619,11 +628,11 @@ function connectWS(t: Take): void {
         // is loading into memory. Drive the banner; 'ready' auto-hides.
         const stage = String(msg.stage ?? 'loading') as 'start' | 'loading' | 'ready';
         // A fresh load re-arms the banner even if the last one was dismissed.
-        if (stage === 'start') loadModelBannerDismissed = false;
+        if (stage === 'start') bannerDismissed = false;
         // Once dismissed, let the (uncancelable) native load finish silently
         // rather than letting the ramp re-open the banner on every tick.
-        if (loadModelBannerDismissed && stage !== 'ready') return;
-        useUIStore.getState().setModelLoading({
+        if (bannerDismissed && stage !== 'ready') return;
+        banner.show({
           label: String(msg.label ?? 'Model'),
           progress: typeof msg.progress === 'number' ? msg.progress : 0,
           stage,
@@ -636,21 +645,16 @@ function connectWS(t: Take): void {
             stage === 'ready'
               ? undefined
               : () => {
-                  loadModelBannerDismissed = true;
-                  useUIStore.getState().setModelLoading(null);
+                  bannerDismissed = true;
+                  banner.clear();
                 },
         });
-        if (stage === 'ready') {
-          loadModelBannerDismissed = false;
-          setTimeout(() => {
-            const cur = useUIStore.getState().modelLoading;
-            if (cur && cur.stage === 'ready') useUIStore.getState().setModelLoading(null);
-          }, 700);
-        }
+        if (stage === 'ready') bannerDismissed = false;
       } else if (msg.type === 'model_unloaded') {
-        // The outgoing engine was freed on switch — clear any stale banner.
-        loadModelBannerDismissed = false;
-        useUIStore.getState().setModelLoading(null);
+        // The outgoing engine was freed on switch: clear its stale banner
+        // (only the recording's own, never another flow's download).
+        bannerDismissed = false;
+        banner.clear();
       }
     } catch { /* ignore */ }
   };
@@ -717,7 +721,9 @@ async function start(sessionId: string): Promise<void> {
   // The wait can be minutes long — make sure nothing else grabbed the mic.
   if (useRecordingStore.getState().recordingSessionId) return;
 
-  // This start goes ahead: its marks count from the press of Record.
+  // This start goes ahead: its marks count from the press of Record, and
+  // from here a Stop can land while it awaits its sources.
+  const attempt = startGuard.begin();
   markOrigin = pressedAt;
   pendingMarks = [];
   micFrameMarked = false;
@@ -771,13 +777,16 @@ async function start(sessionId: string): Promise<void> {
     // mode the mic clock is running before system audio arrives, and the
     // mixer never builds a start-up backlog it would have to drop.
     if (micWanted && isNativeMicAvailable()) {
-      const device = await startNativeMic({
-        onAudio: (samples) => handleMicFrame(samples),
-        onError: handleNativeMicError,
-        onStopped: () => {
-          nativeMicRunning = false;
-        },
-      });
+      const device = await attempt.hold(
+        acquireNativeMic(RECORDER_MIC_OWNER, {
+          onAudio: (samples) => handleMicFrame(samples),
+          onError: handleNativeMicError,
+          onStopped: () => {
+            nativeMicRunning = false;
+          },
+        }),
+        () => void releaseNativeMic(RECORDER_MIC_OWNER),
+      );
       nativeMicRunning = true;
       mark('mic_ready', { device, source: 'native mic' });
     }
@@ -789,28 +798,32 @@ async function start(sessionId: string): Promise<void> {
     let nativeName: string | null = null;
     if (nativeWanted && nativeSel) {
       try {
-        const pid = await resolveNativePid(nativeSel);
+        const pid = await attempt.hold(resolveNativePid(nativeSel));
         nativeMixer = micWanted ? new NativeAudioMixer() : null;
         mixerFailureLogged = false;
-        await startNativeCapture(
-          pid,
-          {
-            onAudio: handleNativeAudio,
-            onError: handleNativeError,
-            onWarning: handleNativeWarning,
-            onStopped: () => {
-              nativeCaptureRunning = false;
-              useRecordingStore.getState().setNativeLevel(0);
+        await attempt.hold(
+          startNativeCapture(
+            pid,
+            {
+              onAudio: handleNativeAudio,
+              onError: handleNativeError,
+              onWarning: handleNativeWarning,
+              onStopped: () => {
+                nativeCaptureRunning = false;
+                useRecordingStore.getState().setNativeLevel(0);
+              },
             },
-          },
-          // App captures re-resolve by bundle id in the shell too (the pid
-          // may be stale, and one app can span several audio processes).
-          pid >= 0 ? nativeSel.bundleID : undefined,
+            // App captures re-resolve by bundle id in the shell too (the pid
+            // may be stale, and one app can span several audio processes).
+            pid >= 0 ? nativeSel.bundleID : undefined,
+          ),
+          () => void stopNativeCapture(),
         );
         nativeCaptureRunning = true;
         nativeName = nativeSel.name;
         mark('native_started', { source: nativeSel.name });
       } catch (err) {
+        if (err instanceof StartCancelled) throw err;
         nativeMixer = null;
         mark('native_failed', { error: err instanceof Error ? err.message : String(err) });
         // Native-only: no other source can carry the recording.
@@ -831,14 +844,16 @@ async function start(sessionId: string): Promise<void> {
     if (micWanted && !nativeMicRunning) {
       // Refcounted acquisition — if the chat-input mic is already running,
       // this returns the same MediaStream + AudioContext so both pipelines
-      // tap one device instead of fighting for it.
-      const { stream: micStream, context } = await rec.acquireMic('header-recorder');
+      // tap one device instead of fighting for it. Nothing to release after
+      // a Stop: stop() let go of the owner, and the store stops a stream
+      // that lands with no owner.
+      const { stream: micStream, context } = await attempt.hold(rec.acquireMic('header-recorder'));
       mark('mic_ready', { device: micStream.getAudioTracks()[0]?.label ?? '', source: 'webkit mic' });
 
       // Vite BASE_URL so the worklet resolves in dev ('/') and prod
       // ('/static/dist/') — hardcoding '/pcm-processor.js' hits the SPA
       // fallback in prod and gets index.html back.
-      await context.audioWorklet.addModule(`${import.meta.env.BASE_URL}pcm-processor.js`);
+      await attempt.hold(context.audioWorklet.addModule(`${import.meta.env.BASE_URL}pcm-processor.js`));
       // Explicit mono: any stereo source (e.g. tab audio) is downmixed
       // (L+R) into channel 0 rather than having its right channel dropped,
       // since the worklet only forwards channel 0.
@@ -888,6 +903,9 @@ async function start(sessionId: string): Promise<void> {
 
     startWatchdog();
   } catch (err) {
+    // Stopped while opening a source: stop() already released this start's
+    // sources and freed the slot, and a later start may own them by now.
+    if (err instanceof StartCancelled) return;
     // Audio setup failed — getUserMedia denied, device gone, autoplay
     // policy, worklet load failure. Tear everything down so the next
     // click starts clean, and tell the user what actually happened.
@@ -905,47 +923,18 @@ async function start(sessionId: string): Promise<void> {
           ? 'No microphone found. Connect or select an input device in your system sound settings.'
           : `Recording failed to start: ${detail}`;
     useUIStore.getState().addToast({ type: 'error', message, duration: 8000, source: 'recording' });
-    stopWatchdog();
-    stopPing();
-    if (ws) {
-      try { ws.close(); } catch { /* ignore */ }
-      ws = null;
-    }
-    if (tabSourceNode) {
-      tabSourceNode.disconnect();
-      tabSourceNode = null;
-    }
-    if (nativeCaptureRunning) {
-      nativeCaptureRunning = false;
-      void stopNativeCapture();
-    }
-    if (nativeMicRunning) {
-      nativeMicRunning = false;
-      void stopNativeMic();
-    }
-    nativeMixer = null;
-    const store = useRecordingStore.getState();
-    store.setNativeLevel(0);
-    store.setConnected(false);
-    store.setRecording(false);
-    store.setRecordingSession(null);
-    store.setActiveSourceLabel(null);
-    endTake(t);
-    void store.releaseMic('header-recorder');
-    store.releaseTabAudio();
+    releaseSources();
+    freeSlot(t, ws);
   }
 }
 
-function stop(): void {
-  if (stopping) return; // already stopped, waiting for the server's last final
-  const rec = useRecordingStore.getState();
-  const owner = take;
-  rec.setRecording(false);
+/** Let go of everything that keeps audio flowing: the socket's timers and
+ *  every source (the worklet, the tab source, the shell's capture and
+ *  microphone, the shared mic owner, the tab stream). The first step of
+ *  stop() and of a start that failed. */
+function releaseSources(): void {
   stopWatchdog();
   stopPing();
-
-  if (pcmBufferLen > 0) flushPcmBuffer();
-
   // Detach our own worklet node — the only genuinely per-consumer piece.
   // The MediaStream/AudioContext are shared with dictation; releaseMic
   // only tears the device down when the LAST consumer lets go.
@@ -969,15 +958,41 @@ function stop(): void {
   // native chunks above and is dropped the same way.
   if (nativeMicRunning) {
     nativeMicRunning = false;
-    void stopNativeMic();
+    void releaseNativeMic(RECORDER_MIC_OWNER);
   }
   nativeMixer = null;
+  const rec = useRecordingStore.getState();
   rec.setNativeLevel(0);
   rec.setActiveSourceLabel(null);
   void rec.releaseMic('header-recorder');
   // The tab stream belongs to this recording only (not shared like the
   // mic), so tear it down here — the next recording re-arms it.
   rec.releaseTabAudio();
+}
+
+/** Give the recording slot back: close the take's socket, finish the take,
+ *  and show no recording. The last step of stop() and of a failed start. */
+function freeSlot(t: Take | null, sock: WebSocket | null): void {
+  if (sock) {
+    try { sock.close(); } catch { /* ignore */ }
+  }
+  if (ws === sock) ws = null;
+  const rec = useRecordingStore.getState();
+  rec.setConnected(false);
+  rec.setRecording(false);
+  rec.setRecordingSession(null);
+  if (t) endTake(t);
+}
+
+function stop(): void {
+  // A Stop also cancels a start still opening its sources (see start()).
+  startGuard.cancel();
+  if (stopping) return; // already stopped, waiting for the server's last final
+  const owner = take;
+  useRecordingStore.getState().setRecording(false);
+
+  if (pcmBufferLen > 0) flushPcmBuffer();
+  releaseSources();
 
   // Settle the transcript before closing the socket. On stop the server
   // decodes the in-flight utterance (Whisper takes hundreds of ms
@@ -1019,16 +1034,9 @@ function stop(): void {
       if (sock) abandonOwed(owner, sock);
     }
 
-    if (sock) {
-      try { sock.close(); } catch { /* ignore */ }
-    }
-    if (ws === sock) ws = null;
-    const store = useRecordingStore.getState();
-    store.setConnected(false);
-    store.setRecordingSession(null);
+    freeSlot(owner, sock);
     stopping = null;
     stopSettled = null;
-    if (owner) endTake(owner);
 
     // Synchronous save of the session that OWNS this recording, with every
     // final and translation line the server sent for it.

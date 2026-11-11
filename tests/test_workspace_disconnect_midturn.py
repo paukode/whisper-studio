@@ -490,9 +490,7 @@ def _raise_delete_card(ws_root) -> dict:
 
 async def _approve(card: dict) -> dict:
     async with _client() as client:
-        resp = await client.post(
-            "/api/approval/execute", json={"action": card["action"], "payload": card["payload"]}
-        )
+        resp = await client.post("/api/approval/execute", json={"card_id": card["card_id"]})
         return resp.json()
 
 
@@ -581,7 +579,7 @@ def test_a_slow_file_search_does_not_block_other_requests(ws_a, monkeypatch):
     connect_workspace(str(ws_a))
     walking = threading.Event()
 
-    def slow_search(root, query, max_results=100):
+    def slow_search(root, query, max_results=100, folders=False):
         walking.set()
         time.sleep(0.6)
         return [{"path": "a.txt", "binary": False}]

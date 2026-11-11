@@ -42,7 +42,7 @@ from server.tool_executor import process_tool_results
 register_defaults()
 
 
-ORIGINAL = '{"mode": "default", "rules": []}\n'
+ORIGINAL = '{"mode": "default"}\n'
 MODES = (MODE_DEFAULT, MODE_ACCEPT_EDITS, MODE_AUTO, MODE_PLAN, MODE_BYPASS, MODE_DONT_ASK)
 # The user's table: how a write to an app config file behaves per mode.
 TABLE = {
@@ -68,9 +68,7 @@ def home(tmp_path, monkeypatch):
     (data / "notes.txt").write_text("notes\n")
     monkeypatch.setenv("WHISPER_DATA_DIR", str(data))
     monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: str(tmp_path))
-    monkeypatch.setattr(
-        "server.security.permissions.load_permissions", lambda: {"mode": "default", "rules": []}
-    )
+    monkeypatch.setattr("server.security.permissions.load_permissions", lambda: {"mode": "default"})
     return tmp_path
 
 
@@ -79,7 +77,7 @@ def test_app_config_paths_cover_the_files_the_app_reads(home):
     from server.hooks import config_loader
     from server.infrastructure import config as cfg
     from server.preview import launch_trust
-    from server.security import folder_grants, permissions
+    from server.security import permissions
     from server.workspace import paths as wpaths
 
     # Compare by basename: the reader constants are frozen at import, while
@@ -91,7 +89,6 @@ def test_app_config_paths_cover_the_files_the_app_reads(home):
         permissions.PERMISSIONS_PATH,
         mcp.MCP_CONFIG_PATH,
         skills.SKILLS_CONFIG_PATH,
-        folder_grants.GRANTS_PATH,
         config_loader.hooks_path(),
         config_loader.trust_path(),
         wpaths.WORKSPACE_CONFIG_PATH,
@@ -217,7 +214,7 @@ def test_the_kernel_keeps_a_confined_command_off_the_config_files(home):
     # Other files in the data root stay writable for a confined command.
     assert run("echo more >> data/notes.txt").returncode == 0
     # A command a person approved on its card writes where it asks.
-    assert run("echo '{}' > data/folder_grants.json", write_mode="open").returncode == 0
+    assert run("echo '{}' > data/permissions.json", write_mode="open").returncode == 0
 
 
 # ── The tools that write config: config_set and cron ─────────────────────────
@@ -227,9 +224,7 @@ def test_config_set_always_goes_through_the_gate(monkeypatch, tmp_path):
     """config.user.json is the user's file: every key, sensitive or not, is
     written only after the permission mode (or a person) allows it."""
     monkeypatch.setenv("WHISPER_DATA_DIR", str(tmp_path))
-    monkeypatch.setattr(
-        "server.security.permissions.load_permissions", lambda: {"mode": "default", "rules": []}
-    )
+    monkeypatch.setattr("server.security.permissions.load_permissions", lambda: {"mode": "default"})
     from server.agent_tools.config_tools import execute_config_set
 
     sensitive = execute_config_set({"updates": {"data_dir": "/x"}})
@@ -245,9 +240,7 @@ def test_config_set_always_goes_through_the_gate(monkeypatch, tmp_path):
 
 def test_cron_create_follows_the_mode(monkeypatch, tmp_path):
     monkeypatch.setenv("WHISPER_DATA_DIR", str(tmp_path))
-    monkeypatch.setattr(
-        "server.security.permissions.load_permissions", lambda: {"mode": "default", "rules": []}
-    )
+    monkeypatch.setattr("server.security.permissions.load_permissions", lambda: {"mode": "default"})
     import server.cron_scheduler as cron
     from server.cron_scheduler import execute_cron_tool
 

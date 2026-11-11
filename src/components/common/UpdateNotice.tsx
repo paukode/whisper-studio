@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { getUpdateCheck, type UpdateCheck } from '@/api/updateCheck';
 import { STORAGE_KEYS } from '@/utils/storageKeys';
 import { useUIStore } from '@/stores/uiStore';
@@ -42,30 +42,42 @@ function writeDismissed(version: string): void {
   }
 }
 
+/** What runCheck resolves to when a newer check answered first. */
+const SUPERSEDED = Symbol('superseded');
+
 export const UpdateNotice: React.FC = () => {
   const [check, setCheck] = useState<UpdateCheck | null>(null);
   const [dismissed, setDismissed] = useState<string>(() => readDismissed());
+  const lastStarted = useRef(0);
+  const lastApplied = useRef(0);
+
+  /** Every check (the cached one at mount, the forced one from the menu)
+   *  sets the notice through here. An answer applies only when no newer
+   *  check has answered yet, so a slow cached answer never overwrites a
+   *  fresh forced one. Rejects when the check fails. */
+  const runCheck = useCallback(async (force: boolean): Promise<UpdateCheck | null | typeof SUPERSEDED> => {
+    const request = ++lastStarted.current;
+    const data = (await getUpdateCheck(force)) ?? null;
+    if (request < lastApplied.current) return SUPERSEDED;
+    lastApplied.current = request;
+    setCheck(data);
+    return data;
+  }, []);
 
   useEffect(() => {
-    let live = true;
-    getUpdateCheck()
-      .then((data) => {
-        if (live) setCheck(data ?? null);
-      })
-      .catch(() => {
-        // No network or an old backend: no notice.
-      });
-    return () => {
-      live = false;
-    };
-  }, []);
+    runCheck(false).catch(() => {
+      // No network or an old backend: no notice.
+    });
+  }, [runCheck]);
 
   useEffect(() => {
     const onCheck = () => {
       const { addToast } = useUIStore.getState();
-      getUpdateCheck(true)
+      const failed = () =>
+        addToast({ type: 'warning', message: 'Could not check for updates. Check the network connection, then try again.' });
+      runCheck(true)
         .then((data) => {
-          setCheck(data ?? null);
+          if (data === SUPERSEDED) return;
           if (data?.update_available && data.latest) {
             setDismissed('');
             return;
@@ -73,16 +85,14 @@ export const UpdateNotice: React.FC = () => {
           if (data?.latest) {
             addToast({ type: 'success', message: `Whisper Studio is up to date (v${data.current ?? data.latest.version}).` });
           } else {
-            addToast({ type: 'warning', message: 'Could not check for updates. Check the network connection, then try again.' });
+            failed();
           }
         })
-        .catch(() => {
-          addToast({ type: 'warning', message: 'Could not check for updates. Check the network connection, then try again.' });
-        });
+        .catch(failed);
     };
     window.addEventListener(CHECK_FOR_UPDATES_EVENT, onCheck);
     return () => window.removeEventListener(CHECK_FOR_UPDATES_EVENT, onCheck);
-  }, []);
+  }, [runCheck]);
 
   const latest = check?.latest;
   const version = latest?.version ?? '';

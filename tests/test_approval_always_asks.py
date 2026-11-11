@@ -32,7 +32,7 @@ register_defaults()
 def _no_rules(monkeypatch):
     monkeypatch.setattr(
         "server.security.permissions.load_permissions",
-        lambda: {"mode": "default", "rules": []},
+        lambda: {"mode": "default"},
     )
     monkeypatch.setattr("server.tool_approvals.explain_permission", AsyncMock(return_value=None))
     # No workspace: a relative delete has nowhere to be inside of.

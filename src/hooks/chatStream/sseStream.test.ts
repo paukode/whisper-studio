@@ -244,6 +244,7 @@ describe('readSSEStream', () => {
   });
 
   it('surfaces a status frame (mid-turn compaction notice) as an info toast', async () => {
+    useSessionStore.setState({ currentSessionId: 'sess-status' });
     const res = sseResponse([
       { status: 'Compacting context (prompt too long)...' },
     ]);
@@ -256,6 +257,37 @@ describe('readSSEStream', () => {
     expect(toast).toBeTruthy();
     expect(toast!.type).toBe('info');
     expect(toast!.message).toContain('Compacting context');
+  });
+
+  it('raises no toast for a setup stage word: the bubble names it', async () => {
+    useSessionStore.setState({ currentSessionId: 'sess-stage' });
+    useUIStore.setState({ toasts: [] });
+    let shown: string | null = null;
+    const unsub = getChatStore('sess-stage').subscribe((s) => { shown ??= s.streamStatus; });
+
+    await readSSEStream(sseResponse([{ status: 'connecting' }]), 'sess-stage', new AbortController().signal, SETTINGS);
+    unsub();
+
+    expect(shown).toBe('connecting');
+    expect(useUIStore.getState().toasts.find((t) => t.key === 'stream-status')).toBeUndefined();
+  });
+
+  it('keeps a background session\'s notice in its own bubble, not in a toast on screen', async () => {
+    useSessionStore.setState({ currentSessionId: 'sess-on-screen' });
+    useUIStore.setState({ toasts: [] });
+    let shown: string | null = null;
+    const unsub = getChatStore('sess-behind').subscribe((s) => { shown ??= s.streamStatus; });
+
+    await readSSEStream(
+      sseResponse([{ status: 'Compacting context (prompt too long)...' }]),
+      'sess-behind',
+      new AbortController().signal,
+      SETTINGS,
+    );
+    unsub();
+
+    expect(shown).toContain('Compacting context');
+    expect(useUIStore.getState().toasts.find((t) => t.key === 'stream-status')).toBeUndefined();
   });
 
   it('clears the setup status when the first tool call arrives', async () => {
@@ -280,6 +312,7 @@ describe('readSSEStream', () => {
  */
 describe('sendApprovalContinuation', () => {
   const approval: PendingApproval = {
+    cardId: 'card-1',
     toolUseId: 'tu_branch',
     action: 'git_create_branch',
     category: 'cli',
@@ -296,7 +329,7 @@ describe('sendApprovalContinuation', () => {
     vi.restoreAllMocks();
   });
 
-  it('a continuation that pauses on another card keeps nothing in the live tail, so a Stop adds no copy', async () => {
+  it('a continuation that pauses on another card ends idle like a fresh turn, so a Stop adds no copy', async () => {
     const sid = 'sess-pause-again';
     vi.spyOn(useSessionStore.getState(), 'debouncedSave').mockImplementation(() => {});
     getChatStore(sid).getState().setMessages([
@@ -318,8 +351,11 @@ describe('sendApprovalContinuation', () => {
     await sendApprovalContinuation({ ...approval, sessionId: sid }, sid, true, undefined, { ok: true, output: 'Wrote a.py' });
 
     const state = getChatStore(sid).getState();
-    // The second card waits, so the session is still streaming...
-    expect(state.isStreaming).toBe(true);
+    // The second card waits on the user with no stream open: the same state a
+    // fresh turn leaves when it pauses on a card, so the composer starts a
+    // turn instead of steering one that no longer runs...
+    expect(state.turnPhase).toBe('idle');
+    expect(state.isStreaming).toBe(false);
     expect(state.currentApproval?.toolUseId).toBe('tu_2');
     // ...with the leg's rows committed once and nothing left in the tail.
     expect(state.currentStreamToolUse).toEqual([]);
@@ -666,7 +702,7 @@ describe('readSSEStream question grouping', () => {
       ...m,
       userQuestions: m.userQuestions?.map((q) => ({ ...q, answered: true })),
     })));
-    store.getState().setStreaming(false);
+    store.getState().finishStream();
 
     await readSSEStream(sseResponse([question('tu_2', 'Two?')]), 'sess-q-later', signal(), SETTINGS);
 
@@ -1076,6 +1112,7 @@ describe('readSSEStream activity_label', () => {
       { text: 'The migration adds one column.' },
     ]));
     const approval: PendingApproval = {
+      cardId: 'card-1',
       toolUseId: 'tu_w', action: 'ws_write_file', category: 'write', preview: 'diff',
       summary: 'Write a.ts', payload: { path: 'a.ts' }, sessionId: 'sess-label-final',
       alwaysAsks: false, turnSettings: SETTINGS,

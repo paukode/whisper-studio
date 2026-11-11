@@ -5,7 +5,7 @@ import { useUIStore } from '@/stores/uiStore';
 
 describe('ModelLoadingBanner', () => {
   beforeEach(() => {
-    useUIStore.getState().setModelLoading(null);
+    useUIStore.setState({ modelLoading: null });
   });
 
   it('renders nothing when idle', () => {
@@ -15,7 +15,7 @@ describe('ModelLoadingBanner', () => {
 
   it('shows download progress with the detail clause and a working Cancel', () => {
     let cancelled = false;
-    useUIStore.getState().setModelLoading({
+    useUIStore.getState().openModelBanner('speech-models').show({
       label: 'Parakeet TDT 0.6B v3',
       progress: 0.42,
       stage: 'downloading',
@@ -34,12 +34,13 @@ describe('ModelLoadingBanner', () => {
   });
 
   it('renders the error stage with the message and a Dismiss button', () => {
-    useUIStore.getState().setModelLoading({
+    const flow = useUIStore.getState().openModelBanner('speech-models');
+    flow.show({
       label: 'Parakeet TDT 0.6B v3',
       progress: 0,
       stage: 'error',
       detail: 'disk full',
-      onCancel: () => useUIStore.getState().setModelLoading(null),
+      onCancel: flow.clear,
     });
     render(<ModelLoadingBanner />);
     expect(screen.getByRole('alert')).toBeInTheDocument();

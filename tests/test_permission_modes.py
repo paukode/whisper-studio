@@ -1,12 +1,8 @@
-"""Tests for the permission-mode precedence chain and custom rule evaluation.
+"""Tests for the permission-mode precedence chain.
 
-check_permission() used to be the only code that read the (now-deleted)
-WRITE_TOOLS set and branched on acceptEdits/bypassPermissions/dontAsk. Since
-it was never called, those three modes and the custom Permission Rules
-editor had zero effect on execution. resolve_static_decision() and
-evaluate_rules() replace it, wired into the live [WS_APPROVAL] approval flow
-(server.tool_executor.process_tool_results) via tool categories instead of
-the old tool-name lists.
+The permission mode is the only permission setting a person changes.
+resolve_static_decision() applies it, wired into the live [WS_APPROVAL]
+approval flow (server.tool_executor.process_tool_results) via tool categories.
 """
 
 import asyncio
@@ -26,7 +22,6 @@ from server.security.permissions import (
     MODE_BYPASS,
     MODE_DEFAULT,
     MODE_DONT_ASK,
-    evaluate_rules,
     is_auto_mode_tripped,
     record_classifier_verdict,
     reset_auto_mode_breaker,
@@ -38,50 +33,15 @@ from server.tool_executor import process_tool_results
 register_defaults()
 
 
-# ── evaluate_rules ──────────────────────────────────────────────────────────
-
-
-def test_pattern_match():
-    rules = [{"tool": "aws_cli", "pattern": "*", "action": "deny"}]
-    assert evaluate_rules("aws_cli", {"command": "aws s3 ls"}, rules) == "deny"
-
-
-def test_prefix_match():
-    rules = [{"tool": "ws_run_command", "prefix": "git ", "action": "allow"}]
-    assert evaluate_rules("ws_run_command", {"command": "git status"}, rules) == "allow"
-    assert evaluate_rules("ws_run_command", {"command": "rm -rf /"}, rules) is None
-
-
-def test_wildcard_tool_matches_anything():
-    rules = [{"tool": "*", "pattern": "*", "action": "ask"}]
-    assert evaluate_rules("literally_anything", {}, rules) == "ask"
-
-
-def test_first_match_wins():
-    rules = [
-        {"tool": "aws_cli", "pattern": "*", "action": "deny"},
-        {"tool": "aws_cli", "pattern": "*", "action": "allow"},
-    ]
-    assert evaluate_rules("aws_cli", {"command": "aws s3 ls"}, rules) == "deny"
-
-
-def test_no_match_returns_none():
-    rules = [{"tool": "git_push", "pattern": "*", "action": "deny"}]
-    assert evaluate_rules("aws_cli", {"command": "aws s3 ls"}, rules) is None
-
-
 # ── resolve_static_decision ─────────────────────────────────────────────────
 
 
-def _patch_rules(monkeypatch, rules):
-    monkeypatch.setattr(
-        "server.security.permissions.load_permissions",
-        lambda: {"mode": "default", "rules": rules},
-    )
+def _patch_mode(monkeypatch, mode="default"):
+    monkeypatch.setattr("server.security.permissions.load_permissions", lambda: {"mode": mode})
 
 
-def test_bypass_overrides_an_explicit_deny_rule(monkeypatch):
-    _patch_rules(monkeypatch, [{"tool": "aws_cli", "pattern": "*", "action": "deny"}])
+def test_bypass_allows_a_destructive_cloud_command(monkeypatch):
+    _patch_mode(monkeypatch)
     decision = resolve_static_decision(
         "aws_cli",
         {"command": "aws s3 rm s3://bucket --recursive"},
@@ -93,7 +53,7 @@ def test_bypass_overrides_an_explicit_deny_rule(monkeypatch):
 
 
 def test_dont_ask_denies_when_nothing_else_matches(monkeypatch):
-    _patch_rules(monkeypatch, [])
+    _patch_mode(monkeypatch)
     decision = resolve_static_decision(
         "ws_write_file",
         {"path": "foo.txt"},
@@ -105,7 +65,7 @@ def test_dont_ask_denies_when_nothing_else_matches(monkeypatch):
 
 
 def test_accept_edits_allows_write_but_defers_delete(monkeypatch):
-    _patch_rules(monkeypatch, [])
+    _patch_mode(monkeypatch)
     write_decision = resolve_static_decision(
         "ws_write_file",
         {"path": "foo.txt"},
@@ -124,22 +84,9 @@ def test_accept_edits_allows_write_but_defers_delete(monkeypatch):
     assert delete_decision == "ask"
 
 
-def test_custom_rule_beats_mode_default(monkeypatch):
-    # dontAsk would otherwise deny every write; an explicit allow rule wins.
-    _patch_rules(monkeypatch, [{"tool": "ws_write_file", "pattern": "*", "action": "allow"}])
-    decision = resolve_static_decision(
-        "ws_write_file",
-        {"path": "foo.txt"},
-        category="write",
-        session_approvals={},
-        mode=MODE_DONT_ASK,
-    )
-    assert decision == "allow"
-
-
-def test_session_approval_beats_a_rule(monkeypatch):
-    # Documented precedence: session approvals -> explicit rules -> mode defaults.
-    _patch_rules(monkeypatch, [{"tool": "aws_cli", "pattern": "*", "action": "deny"}])
+def test_a_session_yes_beats_the_mode_default(monkeypatch):
+    # Documented precedence: session approvals -> mode defaults.
+    _patch_mode(monkeypatch)
     decision = resolve_static_decision(
         "aws_cli",
         {"command": "aws s3 ls"},
@@ -151,7 +98,7 @@ def test_session_approval_beats_a_rule(monkeypatch):
 
 
 def test_auto_mode_defers_when_nothing_resolved(monkeypatch):
-    _patch_rules(monkeypatch, [])
+    _patch_mode(monkeypatch)
     decision = resolve_static_decision(
         "ws_run_command",
         {"command": "npm install"},
@@ -163,7 +110,7 @@ def test_auto_mode_defers_when_nothing_resolved(monkeypatch):
 
 
 def test_default_mode_asks(monkeypatch):
-    _patch_rules(monkeypatch, [])
+    _patch_mode(monkeypatch)
     decision = resolve_static_decision(
         "ws_write_file",
         {"path": "foo.txt"},
@@ -198,7 +145,7 @@ def _write_approval_state():
 
 
 def test_classifier_allow_skips_the_approval_banner(monkeypatch):
-    _patch_rules(monkeypatch, [])
+    _patch_mode(monkeypatch)
     monkeypatch.setattr(
         "server.tool_approvals.classify_tool_call",
         AsyncMock(return_value={"decision": "allow", "reason": "safe"}),
@@ -224,7 +171,7 @@ def test_classifier_allow_skips_the_approval_banner(monkeypatch):
 
 
 def test_classifier_confirm_still_shows_the_banner(monkeypatch):
-    _patch_rules(monkeypatch, [])
+    _patch_mode(monkeypatch)
     monkeypatch.setattr(
         "server.tool_approvals.classify_tool_call",
         AsyncMock(return_value={"decision": "confirm", "reason": "needs a human"}),
@@ -252,7 +199,7 @@ def test_classifier_and_explainer_bill_the_chat_session_not_the_turn_scope(monke
     # A scoped headless turn runs under the scope "exec:wake:..." while its
     # rounds are logged under the chat session. The side calls must land on
     # the chat session (its budget and readout), the breaker on the scope.
-    _patch_rules(monkeypatch, [])
+    _patch_mode(monkeypatch)
     classify = AsyncMock(return_value={"decision": "confirm", "reason": "needs a human"})
     explain = AsyncMock(return_value=None)
     breaker_keys = []
@@ -282,51 +229,11 @@ def test_classifier_and_explainer_bill_the_chat_session_not_the_turn_scope(monke
     assert breaker_keys == ["exec:wake:chat1"]
 
 
-# ── category_modes ───────────────────────────────────────────────────────────
+# ── permissions.json ─────────────────────────────────────────────────────────
 
 
-def _patch_permissions(monkeypatch, *, mode="default", rules=None, category_modes=None):
-    """Like _patch_rules, but lets a test also control (or omit) category_modes."""
-    data = {"mode": mode, "rules": rules if rules is not None else []}
-    if category_modes is not None:
-        data["category_modes"] = category_modes
-    monkeypatch.setattr("server.security.permissions.load_permissions", lambda: data)
-
-
-def test_category_mode_overrides_global_mode(monkeypatch):
-    # Global mode is the maximally-permissive bypass, but "delete" has its own
-    # stricter default — the override must win.
-    _patch_permissions(monkeypatch, mode=MODE_BYPASS, category_modes={"delete": MODE_DEFAULT})
-    decision = resolve_static_decision(
-        "ws_delete_file",
-        {"path": "foo.txt"},
-        category="delete",
-        session_approvals={},
-        mode=MODE_BYPASS,
-    )
-    assert decision == "ask"
-
-
-def test_category_mode_falls_back_to_global_when_unset(monkeypatch):
-    # "cli" has an override but "write" doesn't -> write falls back to the
-    # global mode passed in (bypass).
-    _patch_permissions(monkeypatch, mode=MODE_BYPASS, category_modes={"cli": MODE_DEFAULT})
-    decision = resolve_static_decision(
-        "ws_write_file",
-        {"path": "foo.txt"},
-        category="write",
-        session_approvals={},
-        mode=MODE_BYPASS,
-    )
-    assert decision == "allow"
-
-
-def test_github_destructive_always_asks_regardless_of_category_mode(monkeypatch):
-    # The one invariant that must never break: even an explicit bypass
-    # override for github-destructive itself can't loosen it.
-    _patch_permissions(
-        monkeypatch, mode=MODE_BYPASS, category_modes={"github-destructive": MODE_BYPASS}
-    )
+def test_github_destructive_asks_even_in_bypass():
+    # The one invariant that must never break: bypass cannot loosen it.
     decision = resolve_static_decision(
         "github_destructive",
         {"args": ["repo", "delete", "foo/bar"]},
@@ -337,60 +244,74 @@ def test_github_destructive_always_asks_regardless_of_category_mode(monkeypatch)
     assert decision == "ask"
 
 
-def test_category_modes_missing_key_behaves_as_no_override(monkeypatch):
-    # A legacy permissions.json (predating this feature) has no
-    # "category_modes" key at all — must not crash, must behave as if no
-    # category has an override.
-    _patch_permissions(monkeypatch, mode=MODE_DEFAULT, category_modes=None)
+def test_github_destructive_is_denied_in_dont_ask():
     decision = resolve_static_decision(
-        "ws_write_file",
-        {"path": "foo.txt"},
-        category="write",
+        "github_destructive",
+        {"args": ["repo", "delete", "foo/bar"]},
+        category="github-destructive",
         session_approvals={},
-        mode=MODE_DEFAULT,
+        mode=MODE_DONT_ASK,
     )
-    assert decision == "ask"
+    assert decision == "deny"
 
 
-def test_load_permissions_legacy_file_has_no_category_modes_key(tmp_path, monkeypatch):
-    """Integration check on load_permissions() itself (not resolve_static_decision):
-    a real on-disk permissions.json written before this feature existed must
-    load without crashing, filled in with an empty category_modes."""
+def test_an_older_file_loads_only_its_mode_and_a_save_drops_the_rest(tmp_path, monkeypatch):
+    """A permissions.json written by an older version can hold rules, category
+    rows and a network policy. Only the mode is read, and the next save of the
+    mode writes the mode alone."""
     import json
 
+    from server.security.permissions import load_permissions, save_mode
+
+    path = tmp_path / "permissions.json"
+    path.write_text(
+        json.dumps(
+            {
+                "mode": "acceptEdits",
+                "rules": [{"tool": "*", "action": "allow"}],
+                "category_modes": {"cli": "bypassPermissions"},
+                "network_policy": {"tier": "curated"},
+            }
+        )
+    )
+    monkeypatch.setattr("server.security.permissions.PERMISSIONS_PATH", str(path))
+    assert load_permissions() == {"mode": "acceptEdits"}
+    save_mode("plan")
+    assert json.loads(path.read_text()) == {"mode": "plan"}
+
+
+def test_an_unknown_mode_reads_as_the_default(tmp_path, monkeypatch):
     from server.security.permissions import load_permissions
 
-    legacy_path = tmp_path / "permissions.json"
-    legacy_path.write_text(json.dumps({"mode": "default", "rules": []}))
-    monkeypatch.setattr("server.security.permissions.PERMISSIONS_PATH", str(legacy_path))
-
-    data = load_permissions()
-    assert data["category_modes"] == {}
+    path = tmp_path / "permissions.json"
+    path.write_text('{"mode": "everythingGoes"}')
+    monkeypatch.setattr("server.security.permissions.PERMISSIONS_PATH", str(path))
+    assert load_permissions() == {"mode": MODE_DEFAULT}
 
 
 def test_a_corrupt_permissions_file_raises_and_is_not_overwritten(tmp_path, monkeypatch):
-    """A corrupt file must not read as the defaults (no rules, permissive
-    network tier), and nothing may save the defaults over it."""
+    """A corrupt file must not read as the default mode, and nothing may save
+    the default over it."""
     from server.security.permissions import PermissionsFileError, load_permissions
 
     path = tmp_path / "permissions.json"
-    path.write_text('{"mode": "default", "rules": [{"tool": "*", "action": "deny"},]}')
+    path.write_text('{"mode": "bypassPermissions",}')
     monkeypatch.setattr("server.security.permissions.PERMISSIONS_PATH", str(path))
     with pytest.raises(PermissionsFileError):
         load_permissions()
-    assert "deny" in path.read_text()
+    assert "bypassPermissions" in path.read_text()
 
 
 def test_a_missing_permissions_file_reads_as_the_defaults(tmp_path, monkeypatch):
-    from server.security.permissions import DEFAULTS, load_permissions
+    from server.security.permissions import load_permissions
 
     monkeypatch.setattr(
         "server.security.permissions.PERMISSIONS_PATH", str(tmp_path / "permissions.json")
     )
-    assert load_permissions() == DEFAULTS
+    assert load_permissions() == {"mode": MODE_DEFAULT}
 
 
-# ── HTTP routes: justification + dry-run test endpoint ──────────────────────
+# ── HTTP routes: the mode is the only setting ───────────────────────────────
 
 
 @pytest.fixture()
@@ -405,90 +326,38 @@ def client(tmp_path, monkeypatch):
     return TestClient(app)
 
 
-def test_rule_justification_round_trips_through_save_and_load(client):
-    r = client.post(
-        "/api/permissions/rules",
-        json={
-            "tool": "aws_cli",
-            "pattern": "*",
-            "action": "deny",
-            "justification": "block prod-account CLI access from this session",
-        },
-    )
-    assert r.status_code == 200
-    added_rule = r.json()["rules"][-1]
-    assert added_rule["justification"] == "block prod-account CLI access from this session"
-
-    # Reload from disk (a fresh GET), not just the echoed response.
-    reloaded = client.get("/api/permissions").json()
-    assert reloaded["rules"][-1]["justification"] == (
-        "block prod-account CLI access from this session"
-    )
+def test_the_mode_round_trips_through_the_api(client):
+    assert client.get("/api/permissions").json() == {"mode": MODE_DEFAULT}
+    r = client.put("/api/permissions/mode", json={"mode": MODE_ACCEPT_EDITS})
+    assert r.json() == {"mode": MODE_ACCEPT_EDITS}
+    assert client.get("/api/permissions").json() == {"mode": MODE_ACCEPT_EDITS}
 
 
-def test_rule_without_justification_omits_the_field(client):
-    r = client.post(
-        "/api/permissions/rules", json={"tool": "aws_cli", "pattern": "*", "action": "allow"}
-    )
-    assert "justification" not in r.json()["rules"][-1]
-
-
-def test_dry_run_endpoint_reports_deny_for_matching_rule(client):
-    client.post(
-        "/api/permissions/rules",
-        json={"tool": "aws_cli", "pattern": "*", "action": "deny"},
-    )
-    r = client.post(
-        "/api/permissions/rules/test",
-        json={"tool": "aws_cli", "input": {"command": "aws s3 rm s3://bucket --recursive"}},
-    )
-    assert r.status_code == 200
-    body = r.json()
-    assert body["decision"] == "deny"
-    assert body["matched_index"] == 0
-
-
-def test_dry_run_endpoint_reports_no_match_as_none(client):
-    r = client.post(
-        "/api/permissions/rules/test",
-        json={"tool": "ws_read_file", "input": {"path": "foo.txt"}},
-    )
-    assert r.status_code == 200
-    body = r.json()
-    assert body["decision"] is None
-    assert body["matched_index"] is None
-    assert body["matched_rule"] is None
-
-
-def test_dry_run_endpoint_tests_a_draft_rule_before_it_is_saved(client):
-    # No persisted rules at all — the draft is passed inline via "rules" and
-    # still reports a match, so the rule editor's Test button works before
-    # the user has clicked Save.
-    r = client.post(
-        "/api/permissions/rules/test",
-        json={
-            "tool": "ws_write_file",
-            "input": {"path": "secrets.env"},
-            "rules": [{"tool": "ws_write_file", "pattern": "*.env", "action": "deny"}],
-        },
-    )
-    body = r.json()
-    assert body["decision"] == "deny"
-    assert body["matched_rule"]["pattern"] == "*.env"
-    # Nothing was actually persisted.
-    assert client.get("/api/permissions").json()["rules"] == []
-
-
-def test_dry_run_endpoint_requires_tool(client):
-    r = client.post("/api/permissions/rules/test", json={"input": {}})
+def test_an_unknown_mode_is_refused(client):
+    r = client.put("/api/permissions/mode", json={"mode": "everythingGoes"})
     assert r.status_code == 400
+    assert client.get("/api/permissions").json() == {"mode": MODE_DEFAULT}
+
+
+def test_nothing_but_the_mode_can_be_changed_over_the_api(client):
+    # No rules, category rows, network policy or folder grants to edit.
+    refused = [
+        client.put("/api/permissions", json={"category_modes": {"cli": MODE_BYPASS}}),
+        client.post("/api/permissions/rules", json={"tool": "*", "action": "allow"}),
+        client.post("/api/permissions/rules/test", json={"tool": "aws_cli"}),
+        client.delete("/api/permissions/rules/0"),
+        client.get("/api/permissions/folder-grants"),
+        client.delete("/api/permissions/folder-grants?path=/tmp"),
+    ]
+    assert all(r.status_code in (404, 405) for r in refused)
+    assert client.get("/api/permissions").json() == {"mode": MODE_DEFAULT}
 
 
 def test_process_tool_results_passes_recent_messages_to_classifier(monkeypatch):
     # classify_tool_call used to see the tool call in total isolation; it now
     # receives the turn's recent (assistant) message slice unchanged, so it can
     # catch a multi-step pattern (e.g. a credentials read before this POST).
-    _patch_rules(monkeypatch, [])
+    _patch_mode(monkeypatch)
     classify_mock = AsyncMock(return_value={"decision": "allow", "reason": "ok"})
     monkeypatch.setattr("server.tool_approvals.classify_tool_call", classify_mock)
     monkeypatch.setattr(
@@ -544,7 +413,7 @@ def _run_write_approval(monkeypatch, session_id):
 
 
 def test_breaker_trips_after_three_consecutive_denials(monkeypatch):
-    _patch_rules(monkeypatch, [])
+    _patch_mode(monkeypatch)
     session_id = "breaker-consecutive"
     reset_auto_mode_breaker(session_id)
     monkeypatch.setattr("server.tool_approvals.explain_permission", AsyncMock(return_value=None))
@@ -569,7 +438,7 @@ def test_breaker_trips_after_three_consecutive_denials(monkeypatch):
 
 
 def test_breaker_does_not_trip_on_occasional_denials(monkeypatch):
-    _patch_rules(monkeypatch, [])
+    _patch_mode(monkeypatch)
     session_id = "breaker-occasional"
     reset_auto_mode_breaker(session_id)
     monkeypatch.setattr("server.tool_approvals.explain_permission", AsyncMock(return_value=None))
@@ -615,7 +484,7 @@ def test_breaker_trips_via_rolling_window_without_three_consecutive():
 
 
 def test_resume_auto_mode_restores_classifier_for_rest_of_turn(monkeypatch):
-    _patch_rules(monkeypatch, [])
+    _patch_mode(monkeypatch)
     session_id = "breaker-resume"
     reset_auto_mode_breaker(session_id)
     monkeypatch.setattr("server.tool_approvals.explain_permission", AsyncMock(return_value=None))
@@ -652,13 +521,12 @@ def test_resume_auto_mode_is_a_noop_when_nothing_tripped():
 # ── bypassPermissions has no workspace boundary ─────────────────────────────
 # The user's decision of 2026-11-02 replaces the rule of 2026-10-18 ("a change
 # outside the workspace asks even in bypass"): Bypass works like Claude Code's
-# bypass, so a save to a path the user named and reach into a folder they have
-# not granted run with no card. A category row of the user's that names
-# another mode still decides that category.
+# bypass, so a save to a path the user named and opening a folder outside the
+# workspace run with no card.
 
 
 def test_bypass_allows_a_save_outside_the_workspace(monkeypatch, tmp_path):
-    _patch_rules(monkeypatch, [])
+    _patch_mode(monkeypatch)
     decision = resolve_static_decision(
         "save_file",
         {"action": "save_to_path", "path": str(tmp_path / "Documents" / "notes.txt")},
@@ -670,7 +538,7 @@ def test_bypass_allows_a_save_outside_the_workspace(monkeypatch, tmp_path):
 
 
 def test_bypass_allows_reaching_into_a_new_folder(monkeypatch, tmp_path):
-    _patch_rules(monkeypatch, [])
+    _patch_mode(monkeypatch)
     decision = resolve_static_decision(
         "ws_open_folder",
         {"action": "folder_access", "path": str(tmp_path / "project2")},
@@ -682,7 +550,7 @@ def test_bypass_allows_reaching_into_a_new_folder(monkeypatch, tmp_path):
 
 
 def test_an_outside_save_and_folder_reach_still_ask_outside_bypass(monkeypatch, tmp_path):
-    _patch_rules(monkeypatch, [])
+    _patch_mode(monkeypatch)
     for mode in (MODE_DEFAULT, MODE_ACCEPT_EDITS):
         assert (
             resolve_static_decision(
@@ -706,19 +574,10 @@ def test_an_outside_save_and_folder_reach_still_ask_outside_bypass(monkeypatch, 
         )
 
 
-def test_a_category_row_of_the_users_still_asks_in_bypass(monkeypatch, tmp_path):
-    monkeypatch.setattr(
-        "server.security.permissions.load_permissions",
-        lambda: {"mode": MODE_BYPASS, "rules": [], "category_modes": {"save": MODE_DEFAULT}},
-    )
-    payload = {"action": "save_to_path", "path": str(tmp_path / "notes.txt")}
-    assert resolve_static_decision("save_file", payload, "save", {}, MODE_BYPASS) == "ask"
-
-
 def test_bypass_allows_a_save_under_the_apps_own_folder(monkeypatch):
     from server.infrastructure import paths
 
-    _patch_rules(monkeypatch, [])
+    _patch_mode(monkeypatch)
     rule = os.path.join(paths.user_root(), "rules", "global", "rules.md")
     decision = resolve_static_decision(
         "save_file",
@@ -730,31 +589,18 @@ def test_bypass_allows_a_save_under_the_apps_own_folder(monkeypatch):
     assert decision == "allow"
 
 
-def test_a_session_yes_or_a_rule_of_the_users_covers_an_outside_save_in_bypass(
-    monkeypatch, tmp_path
-):
+def test_a_session_yes_covers_an_outside_save(monkeypatch, tmp_path):
     path = str(tmp_path / "Documents" / "notes.txt")
     payload = {"action": "save_to_path", "path": path}
-    _patch_rules(monkeypatch, [])
+    _patch_mode(monkeypatch)
     assert (
-        resolve_static_decision("save_file", payload, "save", {"save": "allow"}, MODE_BYPASS)
+        resolve_static_decision("save_file", payload, "save", {"save": "allow"}, MODE_DEFAULT)
         == "allow"
     )
-    _patch_rules(monkeypatch, [{"tool": "save_file", "pattern": "*", "action": "allow"}])
-    assert resolve_static_decision("save_file", payload, "save", {}, MODE_BYPASS) == "allow"
-
-
-def test_a_category_row_set_to_bypass_covers_an_outside_save(monkeypatch, tmp_path):
-    monkeypatch.setattr(
-        "server.security.permissions.load_permissions",
-        lambda: {"mode": "default", "rules": [], "category_modes": {"save": MODE_BYPASS}},
-    )
-    payload = {"action": "save_to_path", "path": str(tmp_path / "notes.txt")}
-    assert resolve_static_decision("save_file", payload, "save", {}, MODE_DEFAULT) == "allow"
 
 
 def test_bypass_stays_absolute_inside_the_workspace(monkeypatch, tmp_path):
-    _patch_rules(monkeypatch, [])
+    _patch_mode(monkeypatch)
     monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: str(tmp_path))
     for tool, payload, category in (
         ("ws_write_file", {"action": "write", "path": "src/app.py"}, "write"),

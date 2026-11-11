@@ -24,7 +24,6 @@ function makeOpts(models: ModelEntry[], addToast = vi.fn()): UseSlashCommandsOpt
     chatStream: {} as UseSlashCommandsOptions['chatStream'],
     slashCommands: [],
     attachWorkspaceFileAsChip: vi.fn(),
-    uploadWorkspaceFile: vi.fn(),
   } as unknown as UseSlashCommandsOptions;
 }
 

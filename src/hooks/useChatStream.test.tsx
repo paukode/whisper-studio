@@ -16,10 +16,14 @@ import { useChatStream } from './useChatStream';
 import { killSessionStream } from './chatStream/streamControl';
 import { dropRuntime, getActiveChatStore, getChatStore, useRuntimeIndex } from '@/stores/sessionRuntimes';
 import { useSessionStore } from '@/stores/sessionStore';
-import { useSubagentStore } from '@/stores/subagentStore';
 import { useUIStore } from '@/stores/uiStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { registerStreamController } from './chatStream/streamControl';
+
+// The consent prompt for a model that requires data retention; true unless a
+// test says the user declined.
+const ensureRetentionEnabled = vi.hoisted(() => vi.fn(async () => true));
+vi.mock('@/components/chat/dataRetentionConsent', () => ({ ensureRetentionEnabled }));
 
 function emptySSEResponse(): Response {
   const stream = new ReadableStream<Uint8Array>({
@@ -42,7 +46,6 @@ describe('useChatStream', () => {
     // leak activity into this one.
     for (const id of useRuntimeIndex.getState().liveIds) dropRuntime(id);
     useSessionStore.setState({ currentSessionId: null, liveSessions: {}, sessions: [] });
-    useSubagentStore.setState({ stops: {}, owners: {} });
     vi.spyOn(globalThis, 'fetch').mockImplementation(async () => emptySSEResponse());
   });
 
@@ -90,6 +93,54 @@ describe('useChatStream', () => {
     expect(() => result.current.abort()).not.toThrow();
   });
 
+  describe('turn phase', () => {
+    it('a declined consent ends a turn still starting, and the send says it was refused', async () => {
+      // /file shows the turn as starting while it uploads, then sends. The
+      // send asked for consent and the user declined: the session used to
+      // stay "streaming" with nothing running, and Reset did not clear it.
+      useSessionStore.setState({ currentSessionId: 'consent-sess', liveSessions: {}, sessions: [] });
+      const settings = useSettingsStore.getState();
+      useSettingsStore.setState({
+        models: [{ key: 'needs-retention', requires_data_retention: true }],
+        selectedModel: 'needs-retention',
+        dataRetentionEnabled: false,
+      } as unknown as Partial<typeof settings>);
+      ensureRetentionEnabled.mockResolvedValueOnce(false);
+      const chat = getChatStore('consent-sess');
+      chat.getState().startTurn('starting');
+
+      const { result } = renderHook(() => useChatStream());
+      let ran: boolean | undefined;
+      await act(async () => {
+        ran = await result.current.send('explain the file', { sessionId: 'consent-sess', hideUserMessage: true });
+      });
+
+      expect(ran).toBe(false);
+      expect(chat.getState().turnPhase).toBe('idle');
+      expect(chat.getState().isStreaming).toBe(false);
+      useSettingsStore.setState(settings);
+    });
+
+    it('a turn still starting refuses a mid-turn message and says why', async () => {
+      useSessionStore.setState({ currentSessionId: 'prep-sess', liveSessions: {}, sessions: [] });
+      const fetchSpy = vi.spyOn(globalThis, 'fetch');
+      getChatStore('prep-sess').getState().startTurn('starting');
+      const addToast = vi.spyOn(useUIStore.getState(), 'addToast');
+
+      const { result } = renderHook(() => useChatStream());
+      let delivered: boolean | undefined;
+      await act(async () => {
+        delivered = await result.current.sendMidTurn('also check the tests');
+      });
+
+      expect(delivered).toBe(false);
+      expect(fetchSpy.mock.calls.filter(([url]) => String(url) === '/api/chat')).toEqual([]);
+      expect(addToast).toHaveBeenCalledWith(expect.objectContaining({
+        message: expect.stringContaining('still getting ready'),
+      }));
+    });
+  });
+
   describe('sendMidTurn', () => {
     it('confirmed delivery: holds the message for the running turn and resolves true, without touching isStreaming', async () => {
       useSessionStore.setState({ currentSessionId: 'mid-turn-sess', liveSessions: {}, sessions: [] });
@@ -100,7 +151,7 @@ describe('useChatStream', () => {
         }),
       );
       const store = getChatStore('mid-turn-sess');
-      store.getState().setStreaming(true); // a turn is presumed already running
+      store.getState().startTurn('streaming'); // a turn is presumed already running
 
       const { result } = renderHook(() => useChatStream());
       let delivered: boolean | undefined;
@@ -126,7 +177,7 @@ describe('useChatStream', () => {
         headers: { get: () => 'text/event-stream' },
         body: { cancel },
       } as unknown as Response);
-      getChatStore('race-sess').getState().setStreaming(true);
+      getChatStore('race-sess').getState().startTurn('streaming');
 
       const { result } = renderHook(() => useChatStream());
       let delivered: boolean | undefined;
@@ -176,7 +227,7 @@ describe('useChatStream', () => {
           : Promise.resolve(new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })),
       );
       const store = getChatStore('slow-sess');
-      store.getState().setStreaming(true);
+      store.getState().startTurn('streaming');
       const chatCalls = () => fetchSpy.mock.calls.filter((c) => String(c[0]).includes('/api/chat'));
 
       const { result } = renderHook(() => useChatStream());
@@ -276,7 +327,7 @@ describe('useChatStream', () => {
       useUIStore.setState({ toasts: [] });
       const liveReply = new AbortController();
       registerStreamController('replace-sess', liveReply);
-      getChatStore('replace-sess').getState().setStreaming(true);
+      getChatStore('replace-sess').getState().startTurn('streaming');
       chatJson(200, { queued_into_running_turn: true });
 
       const { result } = renderHook(() => useChatStream());
@@ -549,7 +600,7 @@ describe('useChatStream', () => {
     });
 
     const { result } = renderHook(() => useChatStream());
-    let sendDone: Promise<void> = Promise.resolve();
+    let sendDone: Promise<boolean> = Promise.resolve(true);
     await act(async () => {
       sendDone = result.current.send('long question');
       // Let the first token arrive.
@@ -629,7 +680,7 @@ describe('useChatStream', () => {
     });
 
     const { result } = renderHook(() => useChatStream());
-    let sendDone: Promise<void> = Promise.resolve();
+    let sendDone: Promise<boolean> = Promise.resolve(true);
     await act(async () => {
       sendDone = result.current.send('long question');
       await new Promise((r) => setTimeout(r, 50));
@@ -682,32 +733,6 @@ describe('useChatStream', () => {
     const s = getChatStore(sid).getState();
     expect(s.isStreaming).toBe(false);
     expect(s.messages.filter((m) => m.role === 'assistant')).toHaveLength(0);
-  });
-
-  it('abort stops only the subagents the viewed session started', () => {
-    const stopA = vi.fn();
-    const stopB = vi.fn();
-    useSubagentStore.getState().register('team-a', 'sess-A', stopA);
-    useSubagentStore.getState().register('team-b', 'sess-B', stopB);
-
-    const { result } = renderHook(() => useChatStream());
-    act(() => {
-      useSessionStore.setState({ currentSessionId: 'sess-B' });
-      result.current.abort(); // no main stream running: subagents alone
-    });
-
-    // Session B's run is stopped and gone; session A's keeps working.
-    expect(stopB).toHaveBeenCalledTimes(1);
-    expect(useSubagentStore.getState().stops['team-b']).toBeUndefined();
-    expect(stopA).not.toHaveBeenCalled();
-    expect(useSubagentStore.getState().stops['team-a']).toBe(stopA);
-
-    act(() => {
-      useSessionStore.setState({ currentSessionId: 'sess-A' });
-      result.current.abort();
-    });
-    expect(stopA).toHaveBeenCalledTimes(1);
-    expect(useSubagentStore.getState().stops['team-a']).toBeUndefined();
   });
 
   // Stop scopes its kill to the start of the running TURN. An answered

@@ -307,6 +307,8 @@ def test_recall_selector_bare_filename_fallback(mem_dirs, monkeypatch):
 
 class _AgentResult:
     status = "completed"
+    stop_reason = "completed"
+    stopped_early = False
     turns_used = 1
     tools_called = ["memory_write"]
     output = ""
@@ -549,6 +551,36 @@ def test_cursor_claimed_before_agent_runs(mem_dirs, fresh_extract_state, monkeyp
     assert "claim" not in XT._inflight  # released even on failure
 
 
+def test_a_run_a_limit_stopped_gives_its_slice_back(mem_dirs, fresh_extract_state, monkeypatch):
+    """A run that a limit stopped part way is not done (server.agents.outcome):
+    the next trigger extracts the same messages again. A failure stays
+    claimed (test_cursor_claimed_before_agent_runs)."""
+    import server.agents.runtime as RT
+    from server.agents.runtime import AgentResult
+
+    tasks = []
+
+    async def limited_run_agent(task, **kwargs):
+        tasks.append(task)
+        return AgentResult(
+            agent_id="x", agent_type="memory_extractor", output="", stop_reason="turn_limit"
+        )
+
+    monkeypatch.setattr(RT, "run_agent", limited_run_agent)
+
+    for turn in range(3):  # extraction fires on the third turn
+        asyncio.run(
+            XT.maybe_extract_memory(
+                messages=_messages(4 + turn), session_id="lim", ws_path=None, model_id="m"
+            )
+        )
+
+    data = json.loads((mem_dirs["global"] / ".cursor.json").read_text())
+    assert data["sessions"]["lim"] == 0
+    assert XT._cursors["lim"] == 0
+    assert len(tasks) == 1
+
+
 def test_inflight_guard_skips_overlapping_extraction(mem_dirs, fresh_extract_state, monkeypatch):
     import server.agents.runtime as RT
 
@@ -679,6 +711,32 @@ def test_dream_triggers_when_due(mem_dirs, monkeypatch, tmp_path):
     meta = DR._load_meta(gdir)
     assert meta["session_count"] == 0
     assert meta["last_consolidated_at"] > 0
+
+
+def test_a_dream_a_limit_stopped_is_not_counted_as_done(mem_dirs, monkeypatch, tmp_path):
+    """A consolidation that a limit stopped before it finished keeps the
+    counters, so the next trigger consolidates again."""
+    import server.agents.runtime as RT
+    import server.memory.dream as DR
+    from server.agents.runtime import AgentResult
+
+    monkeypatch.setattr(FF, "is_enabled", lambda flag: True)
+
+    async def limited_run_agent(task, **kwargs):
+        return AgentResult(
+            agent_id="d", agent_type="memory_consolidator", output="", stop_reason="deadline"
+        )
+
+    monkeypatch.setattr(RT, "run_agent", limited_run_agent)
+    gdir = str(mem_dirs["global"])
+    os.makedirs(gdir, exist_ok=True)
+    DR._save_meta(gdir, {"last_consolidated_at": 0, "session_count": 4})
+
+    asyncio.run(DR.dream_consolidate(gdir, scope="global"))
+
+    meta = DR._load_meta(gdir)
+    assert meta["session_count"] == 4
+    assert meta["last_consolidated_at"] == 0
 
 
 def test_dream_not_run_below_threshold(mem_dirs, monkeypatch):

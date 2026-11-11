@@ -8,7 +8,6 @@
  * sseStream — a shared leaf keeps the import graph acyclic.
  */
 import { getChatStore, getRuntime } from '@/stores/sessionRuntimes';
-import { subagentsOf, useSubagentStore } from '@/stores/subagentStore';
 import { useUIStore } from '@/stores/uiStore';
 import type { ChatState } from '@/stores/chatStore';
 import type { ChatMessage, ToolUseEvent } from '@/types/chat';
@@ -183,8 +182,8 @@ export function buildStoppedMessage(chat: ChatState): ChatMessage | undefined {
  *
  * Order matters: finalize UI state FIRST, mark the controller as
  * kill-finalized BEFORE aborting (so the stream's catch/success paths
- * no-op), then stop the session's own /subagent runs. Targets only the
- * given session: other sessions' streams and /subagent runs keep going.
+ * no-op). Targets only the given session: other sessions' streams keep
+ * going.
  */
 export function killSessionStream(sessionId: string | null): void {
   if (sessionId) {
@@ -223,11 +222,5 @@ export function killSessionStream(sessionId: string | null): void {
     }
     if (controller) killFinalized.add(controller);
     abortSessionStream(sessionId);
-  }
-
-  const subagents = useSubagentStore.getState();
-  for (const teamId of subagentsOf(subagents, sessionId)) {
-    subagents.stops[teamId]?.();
-    subagents.unregister(teamId);
   }
 }

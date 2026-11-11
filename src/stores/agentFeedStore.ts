@@ -10,6 +10,7 @@
  */
 import { create } from 'zustand';
 import type { TeamProgressEvent } from '@/types/chat';
+import { outcomeOf, settledStatus, stopReasonOf } from '@/utils/agentOutcome';
 
 export interface AgentProgressEvent extends TeamProgressEvent {
   /** The journal line number; absent on notices that are not journal lines. */
@@ -101,13 +102,19 @@ export function metaAfter(meta: AgentRecordMeta | null, ev: AgentProgressEvent):
         max_turns: ev.max_turns ?? meta.max_turns,
       };
     case 'completed':
-      return { ...meta, status: 'completed', stop_reason: 'completed', rounds: ev.turns_used ?? meta.rounds };
     case 'turn_limit':
-      return { ...meta, status: 'completed', stop_reason: ev.stop_reason ?? 'turn_limit', rounds: ev.turns_used ?? meta.rounds };
     case 'failed':
-      return { ...meta, status: 'failed', stop_reason: 'error' };
-    case 'stopped':
-      return { ...meta, status: 'stopped', stop_reason: 'cancelled' };
+    case 'stopped': {
+      // How the run ended (utils/agentOutcome): a limit stop is stopped, its
+      // reason names the limit.
+      const stopReason = stopReasonOf(ev.phase, ev.stop_reason);
+      return {
+        ...meta,
+        status: settledStatus(ev.phase, stopReason),
+        stop_reason: stopReason,
+        rounds: ev.turns_used ?? meta.rounds,
+      };
+    }
     case 'finished':
       return {
         ...meta,
@@ -202,16 +209,6 @@ export interface RecordReadout {
   costUsd: number | null;
 }
 
-const STOP_REASON_TEXT: Record<string, string> = {
-  completed: 'done',
-  turn_limit: 'stopped at the turn limit',
-  deadline: 'stopped at the time limit',
-  cost_cap: 'stopped at the cost cap',
-  refused_calls: 'stopped after repeated refused calls',
-  cancelled: 'stopped',
-  error: 'failed',
-};
-
 export function recordReadout(rec: AgentRecord, now: number): RecordReadout {
   const meta = rec.meta;
   let lastTurn: AgentProgressEvent | undefined;
@@ -224,8 +221,7 @@ export function recordReadout(rec: AgentRecord, now: number): RecordReadout {
   const running = meta?.status === 'running';
   let status: string;
   if (running) status = lastTurn?.budget_state === 'finishing' ? 'finishing up' : 'running';
-  else if (meta?.status === 'failed') status = 'failed';
-  else status = STOP_REASON_TEXT[meta?.stop_reason ?? ''] ?? (meta?.status === 'stopped' ? 'stopped' : 'done');
+  else status = outcomeOf(meta?.status ?? 'completed', meta?.stop_reason).line;
   const started = meta?.started_at ? Date.parse(meta.started_at) : NaN;
   const ended = meta?.finished_at ? Date.parse(meta.finished_at) : now;
   const elapsedS = Number.isFinite(started) && Number.isFinite(ended) ? Math.max(0, (ended - started) / 1000) : null;

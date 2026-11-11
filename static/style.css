@@ -2172,10 +2172,6 @@ input.segment-speaker {
 .cg-mode.tone-calm .cg-mode-icon { color: var(--text-muted); }
 .cg-mode.tone-warn .cg-mode-icon { color: var(--risk-warn); }
 .cg-mode.tone-danger .cg-mode-icon { color: var(--danger); }
-.cg-link {
-    justify-self: start; border: none; background: none; padding: 2px 9px; cursor: pointer;
-    font: 600 var(--fs-caption) var(--font-sans); color: var(--link);
-}
 
 /* The round More button and its count badge (MoreMenu.tsx). */
 .more-btn {
@@ -2559,6 +2555,10 @@ input.segment-speaker {
 .mcp-status-dot.connected { background: var(--accent-live); box-shadow: 0 0 0 3px var(--accent-dim); }
 .mcp-status-dot.error { background: var(--accent-record); box-shadow: 0 0 0 3px var(--accent-record-dim); }
 .mcp-status-dot.stopped { background: var(--text-muted); }
+.mcp-status-dot.connecting { background: var(--text-muted); animation: pulse 1.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+    .mcp-status-dot.connecting { animation: none; }
+}
 
 /* Editor area */
 .settings-editor {

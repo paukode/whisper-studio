@@ -1,4 +1,5 @@
-"""HTTP API for agents: GET /api/agents/{agent_id}/record is the on-disk
+"""HTTP API for agents: GET /api/agents/types lists the types the composer
+offers as @agent-<type>, GET /api/agents/{agent_id}/record is the on-disk
 record the agent pane shows (meta, progress events, report), and
 POST /api/agents/{agent_id}/extend grants a running agent more rounds or
 seconds (the pane's Extend action)."""
@@ -13,6 +14,17 @@ from fastapi.responses import JSONResponse
 from server.agents import extensions, journal
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
+
+
+@router.get("/types")
+async def agent_types():
+    """The agent types the composer offers as @agent-<type>, for the
+    connected workspace."""
+    from server.agents.config import spawnable_agent_types
+    from server.workspace import get_workspace_path
+
+    workspace = get_workspace_path()
+    return {"types": await asyncio.to_thread(spawnable_agent_types, workspace)}
 
 
 @router.get("/{agent_id}/record")

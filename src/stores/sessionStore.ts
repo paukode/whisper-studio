@@ -110,7 +110,7 @@ export interface SessionState {
    *  the stream's end copies it to the row only if it stayed connected. */
   noteStreamStart: (id: string) => void;
   dropLiveSession: (id: string) => void;
-  clearChat: () => void;
+  clearChat: (id: string) => void;
 }
 
 /** Per-session debounce timers — A's pending save must not be cancelled
@@ -691,13 +691,12 @@ export const useSessionStore = create<SessionState>()(persist((set, get) => ({
     });
   },
 
-  clearChat: () => {
-    const id = get().currentSessionId;
-    if (!id) return;
+  clearChat: (id: string) => {
     set((state) => {
       const live = state.liveSessions[id];
       if (!live) return state;
       return {
+        sessions: state.sessions.map((s) => (s.id === id ? { ...s, chatCount: 0 } : s)),
         liveSessions: { ...state.liveSessions, [id]: { ...live, chatHistory: [] } },
       };
     });

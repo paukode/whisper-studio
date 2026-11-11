@@ -5,11 +5,10 @@ engine + job model + persistence. These handlers register on the shared
 ``cron_scheduler.router`` via decorator side-effects; cron_scheduler imports
 this module for those effects.
 
-The scheduler singleton (``_scheduler``) and the in-progress run state
-(``_in_progress`` / ``_IN_PROGRESS_LOCK``) are read through the ``_cs`` module
-alias, not imported by value: ``_scheduler`` is (re)assigned in
-``init_scheduler`` and the in-progress set is mutated by the run loop, so a
-by-value import would freeze a stale reference.
+The scheduler singleton (``_scheduler``) is read through the ``_cs`` module
+alias, not imported by value: it is (re)assigned in ``init_scheduler``, so a
+by-value import would freeze a stale reference. The in-progress run state is
+read through ``_cs.is_running``, its owner's accessor.
 """
 
 import json
@@ -187,9 +186,7 @@ async def stop_cron_job(job_id: str):
     """
     # Live registry FIRST: a job deleted while its run is in flight must
     # still be stoppable (the file no longer lists it, the run doesn't care).
-    with _cs._IN_PROGRESS_LOCK:
-        running = job_id in _cs._in_progress
-    if running:
+    if _cs.is_running(job_id):
         from server import cron_events
 
         requested = cron_events.request_stop(job_id)

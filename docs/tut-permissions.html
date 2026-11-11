@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Permissions &amp; approvals - Whisper Studio Docs</title>
-  <meta name="description" content="How the Permissions control, the six modes, approval cards, per-category modes, and per-tool rules decide if a tool call runs, asks, or is refused, and the guards that stay on in all modes.">
+  <meta name="description" content="How the Permissions control, the six modes, and approval cards decide if a tool call runs, asks, or is refused, and the guards that stay on in all modes.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -17,11 +17,11 @@
     <h1>Permissions &amp; approvals</h1>
     <p class="subtitle">One control sets which actions the assistant can do without a question. The
       range is from a read-only planner to a mode with no questions in the workspace. Below the
-      control are approval cards, per-tool rules, and guards that stay on in all modes.</p>
+      control are approval cards and guards that stay on in all modes.</p>
 
     <p>When the model asks for a tool, the call does not run immediately. The app first gives the
       call one of three results: <b>allow</b> (run now), <b>ask</b> (stop and show a card), or
-      <b>deny</b> (refuse). Your <b>permission mode</b> and your per-tool rules set the result.
+      <b>deny</b> (refuse). Your <b>permission mode</b> sets the result.
       <b>Click a box</b> in the diagram to see where a call goes.</p>
 
     <figure class="diagram-figure">
@@ -43,14 +43,14 @@
     <h2 id="the-mode-dial">The main control: the Permissions control</h2>
     <p>The <b>Permissions</b> control is below the composer, next to the "How it thinks" control. It
       shows the current mode. Click it to open the panel <b>What runs without asking</b>. Select a
-      mode in the panel. The <b>Manage rules…</b> link opens <b>Settings &rsaquo; Keys and permissions &rsaquo; Permissions</b>.</p>
+      mode in the panel. The mode is the only permission setting.</p>
     <p>You can change the mode at any time during a conversation. The server stores the mode in
       <code class="path">permissions.json</code> in the data folder of the app. For the Mac app, this
       is <code class="path">~/.whisper/data/permissions.json</code>. For a source install, it is
       <code class="path">data/permissions.json</code> in the checkout. The next tool call uses the new
       mode.</p>
-    <p>The <code>/plan</code> command turns plan mode on or off. The mode and the rules apply to the
-      user only. A project settings file cannot change them. All the rules on this page also apply to
+    <p>The <code>/plan</code> command turns plan mode on or off. The mode applies to the user only. A
+      project settings file cannot change it. All the behavior on this page also applies to
       subagents and scheduled jobs, because they use the same gate.</p>
 
     <h2 id="modes">The six modes</h2>
@@ -64,14 +64,10 @@
         <tr><td><b>Auto</b> (<code>auto</code>)</td><td>Reads run. A classifier approves each write and command, or asks you. The config keys <code>auto_mode_allow</code>, <code>auto_mode_soft_deny</code>, and <code>auto_mode_environment</code> hold its lists. The assistant can change them with <code>config_set</code>, which follows the permission mode.</td></tr>
         <tr><td><b>Plan</b> (<code>plan</code>)</td><td>Read-only. The app blocks file edits and commands. The assistant gives the changes as a plan.</td></tr>
         <tr><td><b>Accept edits</b> (<code>acceptEdits</code>)</td><td>File writes and new files run without a question. Deletes and commands ask. Use it for a long edit task.</td></tr>
-        <tr><td><b>Bypass</b> (<code>bypassPermissions</code>)</td><td>No questions, in the workspace and outside it. Only a destructive GitHub action and a tool of an MCP server that you marked for approval ask. A category mode that you set also stays in effect.</td></tr>
+        <tr><td><b>Bypass</b> (<code>bypassPermissions</code>)</td><td>No questions, in the workspace and outside it. Only a destructive GitHub action and a tool of an MCP server that you marked for approval ask.</td></tr>
         <tr><td><b>"Don't ask"</b> (<code>dontAsk</code>)</td><td>The app refuses writes and does not show a card. Only read-only tools run.</td></tr>
       </tbody>
     </table></div>
-    <p>The same six modes are in <b>Settings &rsaquo; Keys and permissions &rsaquo; Permissions</b>, below <b>Permission Mode</b>.
-      Each option shows the mode name and a short help text, for example "Asks first: Reads are
-      allowed. Every file write and command asks first." Select a mode and click <b>Save
-      Mode</b>.</p>
     <h3 id="mode-and-questions">How the mode changes the questions the assistant asks</h3>
     <p>The assistant knows the current mode. In Bypass, it acts and then tells you what it did. It
       does not ask before it runs a command, edits a file, or makes a commit. It does not ask you to
@@ -138,47 +134,39 @@
       <code>ws_write_file</code>, <code>ws_edit_file</code>, and <code>ws_delete_file</code> still
       refuse a credential store outside the workspace.</p>
 
-    <h2 id="category-modes">Per-category modes</h2>
-    <p>The global mode applies to all actions. To set a different mode for one <em>type</em> of
-      action, use the <b>Per-Category Defaults</b> section in <b>Settings &rsaquo; Keys and permissions &rsaquo; Permissions</b>.
-      Each row is one approval category. A mode in a row replaces the global mode for that category.
-      A row with <b>Use global setting</b> uses the global mode.</p>
+    <h2 id="categories">Approval categories</h2>
+    <p>The mode applies to all actions. Each approval card also has a <em>category</em>. The
+      <b>Yes, all</b> and <b>Block</b> buttons on a card apply to all the actions of its category
+      for the rest of the session (see <a href="#approval-cards">Approval cards</a>).</p>
     <div class="table-wrap"><table>
-      <thead><tr><th>Row</th><th>Actions</th></tr></thead>
+      <thead><tr><th>Category</th><th>Actions</th></tr></thead>
       <tbody>
         <tr><td>File writes</td><td>Writes and new files in the connected workspace, and new Word, Excel, PowerPoint, or PDF files there.</td></tr>
         <tr><td>File deletes</td><td>File deletes.</td></tr>
         <tr><td>Shell commands</td><td>Commands, Python runs, the terminal, the AWS CLI, and the git tools that write: commit, push, pull, checkout, merge, branch, and stash.</td></tr>
         <tr><td>Saving files outside the workspace</td><td>The direct save flow, for example "save this to my Documents". It has its own category. Thus a "Yes, all" for workspace writes does not approve it.</td></tr>
-        <tr><td>Folder access</td><td>A folder outside the connected workspace that the app opens as the workspace, or that a workflow uses. The app asks one time for each folder. The approval applies to all the contents of the folder. A read of a file or a folder does not ask, except for credential stores.</td></tr>
-        <tr><td>Worktrees</td><td>No tool that you or the assistant can call uses this row now.</td></tr>
-        <tr><td>Live preview</td><td>The start, control, and stop of a dev-server preview. A named config from <code class="path">.whisper/launch.json</code> with a command that you approved one time does not use this row. See <a href="#preview-named-configs">below</a>.</td></tr>
+        <tr><td>Folder access</td><td>A folder outside the connected workspace that the app opens as the workspace. The card follows the mode each time. The app does not keep a record of the folders that you approved. A read of a file or a folder does not ask, except for credential stores.</td></tr>
+        <tr><td>Live preview</td><td>The start, control, and stop of a dev-server preview. A named config from <code class="path">.whisper/launch.json</code> with a command that you approved one time does not ask. See <a href="#preview-named-configs">below</a>.</td></tr>
         <tr><td>Word/Excel/PowerPoint scripts</td><td>The <code>office_script</code> tool, which runs Python code on your documents.</td></tr>
-        <tr><td>GitHub, GitHub (destructive)</td><td>Usual GitHub changes, and the changes that you cannot revert. The destructive row is fixed and shows "Always asks (cannot be overridden)".</td></tr>
-        <tr><td>Workflow runs</td><td>The start of a new ultracode workflow script. See below.</td></tr>
+        <tr><td>GitHub, GitHub (destructive)</td><td>Usual GitHub changes, and the changes that you cannot revert. A destructive change always asks.</td></tr>
         <tr><td><code>mcp</code></td><td>Calls to MCP tools that ask for approval, as set in the settings of each MCP server.</td></tr>
-        <tr><td><code>mcp-elicit</code></td><td>Your answer to a request for input from an MCP server. You answer it in <b>Settings &rsaquo; MCP servers</b>. The chat gate does not use this row.</td></tr>
+        <tr><td><code>mcp-elicit</code></td><td>Your answer to a request for input from an MCP server. You answer it in <b>Settings &rsaquo; MCP servers</b>. It has no chat card.</td></tr>
       </tbody>
     </table></div>
-    <p>The backend sends this list, so it agrees with the actions that exist. Click <b>Save Category
-      Settings</b> to apply the changes.</p>
-    <p>A category mode can be less strict or more strict than the global mode. For example, set
-      Accept edits for writes and Asks first for commands. Or set Asks first for deletes, so that each
-      delete asks also when the global mode is Bypass. The app applies the category mode before the
-      Bypass check. Thus a stricter category mode stays in effect.</p>
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
       <div class="callout__body"><p>Do not expect a mode to approve a <code>github-destructive</code>
         action. This category <em>always</em> asks for your approval. It includes repository and
-        branch deletes, PR merges, archives, renames, and API deletes. No mode, category mode, session
-        approval, or rule can approve these actions. In "Don't ask" mode, the app refuses these
+        branch deletes, PR merges, archives, renames, and API deletes. No mode or session approval
+        can approve these actions. In "Don't ask" mode, the app refuses these
         actions.</p></div>
     </div>
 
-    <h3 id="workflow-category">The workflow category</h3>
-    <p>The <code>workflow</code> category controls the start of a <em>new</em>
-      <a href="arch-ultracode.html">ultracode workflow</a> script. By default, a new script stops at
-      its phase-preview approval card. With <code>auto</code>, a new script starts without the card
+    <h3 id="workflow-runs">Workflow runs</h3>
+    <p>The mode controls the start of a <em>new</em>
+      <a href="arch-ultracode.html">ultracode workflow</a> script. In Asks first, Plan, and Accept
+      edits, a new script stops at its phase-preview approval card. With <code>auto</code>, a new
+      script starts without the card
       if its budget is 600,000 output tokens or less. A larger budget asks. With
       <code>bypassPermissions</code>, the card does not show. With <code>dontAsk</code>, the app
       refuses the start.</p>
@@ -193,8 +181,7 @@
       shows, the card gives the exact command. The card also tells you that after approval, the
       command starts without a question.</p>
     <p>After you click Yes, the command starts without a card in all modes. This includes Asks first,
-      Auto (without a classifier call), Plan, Accept edits, Bypass, and "Don't ask". It also ignores the
-      <b>Live preview</b> category row. All later previews of that config start immediately, in this
+      Auto (without a classifier call), Plan, Accept edits, Bypass, and "Don't ask". All later previews of that config start immediately, in this
       chat and in later chats.</p>
     <p>The approval applies to the command, not to the file. A <code class="path">launch.json</code>
       file can come with a repository that you clone or pull. An edit without a card can also write
@@ -216,10 +203,8 @@
       <li>A <code>cwd</code> outside the connected workspace makes a named start obey the mode.</li>
       <li>A name that is not in <code class="path">launch.json</code> fails with an error.</li>
     </ul>
-    <p>Outside Bypass, your own choices have priority over this rule. A custom rule for
-      <code>preview_start</code> with deny or ask stays in effect. <b>Block preview</b> on an approval
-      card refuses named starts for the rest of the session. Bypass allows all actions, as for other
-      actions.</p>
+    <p>Outside Bypass, <b>Block preview</b> on an approval card refuses named starts for the rest
+      of the session. Bypass allows all actions, as for other actions.</p>
     <p>The hard floors apply in all modes, to the command of the config. If an entry deletes files
       outside the workspace, it always shows a card. An example is an <code>rm</code> on a path in
       your home folder, directly or in <code>sh -c</code>. An entry that only deletes a build folder in
@@ -256,9 +241,13 @@
     </ol>
     <p>An action with a hard floor always asks. Its card does not show "Yes, all" and "Block". It
       shows "This action always asks." instead.</p>
+    <p>You can also send a message instead of an answer. The card then closes, and the call does
+      not run. The same turn continues with your message, and the assistant gets the result that you
+      did not answer the card. A question card closes in the same way and shows "Not answered". <b>Clear</b>
+      and <code>/clear</code> close all cards that wait.</p>
     <p>A session approval or refusal comes after the Bypass check. Thus after "Yes, all write", the
       app does not ask for writes again, also in Asks first mode.</p>
-    <p>The category on the buttons is the same category as in the per-category modes. Direct saves to
+    <p>The category on the buttons is one of the <a href="#categories">approval categories</a>. Direct saves to
       your own folders, for example "save this as a Word doc", use their own <code>save</code>
       category. Thus "Yes, all write" does not approve files in Documents or Downloads. And "Yes, all
       save" does not approve workspace writes. See <a href="tut-save-files.html">Saving files and
@@ -273,38 +262,6 @@
         permissions</a> for the pause and the resume.</p></div>
     </div>
 
-    <h2 id="per-tool-rules">Per-tool rules</h2>
-    <p>Modes apply to many actions. For a fixed decision for one tool or one command, write a
-      <b>per-tool rule</b> in <b>Settings &rsaquo; Keys and permissions &rsaquo; Permissions</b>. The app examines the rules before
-      the default of the mode. Thus a rule has priority over the mode, with one exception (see below).
-      Each rule names a tool, matches its input, and sets an action:</p>
-    <div class="table-wrap"><table>
-      <thead><tr><th>Field</th><th>Meaning</th></tr></thead>
-      <tbody>
-        <tr><td><code>tool</code></td><td>The name of the tool, or <code>*</code> for all tools.</td></tr>
-        <tr><td><code>pattern</code> or <code>prefix</code></td><td>A glob (<code>pattern</code>) or the literal start (<code>prefix</code>) of the key field of the tool. The key field is the path for file tools, the command for the shell, and the branch for git.</td></tr>
-        <tr><td><code>action</code></td><td><code>allow</code>, <code>ask</code>, or <code>deny</code>.</td></tr>
-        <tr><td><code>justification</code></td><td>An optional note with the reason for the rule. The rule list shows it. It does not change the match.</td></tr>
-      </tbody>
-    </table></div>
-    <p>Example: allow all <code>git</code> commands without a question, but confirm each delete:</p>
-    <div class="code-block"><pre><code>{ "tool": "ws_run_command", "prefix": "git ", "action": "allow" }
-{ "tool": "ws_delete_file", "pattern": "*",     "action": "ask"   }
-{ "tool": "ws_delete_file", "pattern": "*.log", "action": "deny"  }</code></pre></div>
-    <p>The app examines the rules from the top to the bottom. The first match applies, so the
-      sequence is important.</p>
-    <p>The rule editor has these fields: <b>Tool Name</b>, <b>Match Type</b> (Pattern or Prefix), the
-      <b>Pattern</b> or the <b>Prefix</b>, <b>Action</b> (Allow, Ask, or Deny), <b>Justification
-      (optional)</b>, and <b>Test input (JSON)</b>. <b>Save Rule</b> stores the rule. <b>Delete</b> on
-      a rule in the list removes it.</p>
-
-    <h3 id="rule-dry-run">Do a test of a rule</h3>
-    <p>You can do a test of a rule before you save it. Use the <b>Test this rule</b> button in the rule
-      editor. Give a tool name and an input, for example <code>ws_run_command</code> with
-      <code>git push origin main</code>. The test uses the same match logic as the live gate. It shows
-      the matched rule, its position, and the decision. The test can use your saved rules or a draft
-      rule that you did not save.</p>
-
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
       <div class="callout__body"><p>The app examines a call in this sequence:</p>
@@ -313,17 +270,14 @@
             for approval. Outside Bypass, also a delete outside the workspace, a write outside the
             sandbox, and a command in your visible terminal.</li>
           <li>The app folders: a write there runs. A delete there runs only in Bypass.</li>
-          <li>The category mode, if you set one. It replaces the global mode.</li>
           <li><code>bypassPermissions</code>: all actions run, in the workspace and outside it.</li>
           <li>A trusted skill script.</li>
           <li>Your session choice ("Yes, all" or "Block").</li>
-          <li>Your custom rules.</li>
           <li>A preview that starts by name from <code class="path">launch.json</code> with a
             command that you approved one time.</li>
           <li>The default of the mode.</li>
         </ol>
-        <p>Thus <code>bypassPermissions</code> has priority over a <code>deny</code> rule. A stricter
-        category mode has priority over Bypass. The hard floors have priority over all items. A delete
+        <p>Thus the hard floors have priority over all items. A delete
         in the workspace, for example <code>rm -rf dist</code>, is a usual command. It obeys the mode.
         Bypass runs it, and "Yes, all cli" approves it.</p></div>
     </div>
@@ -332,7 +286,7 @@
     <p>The app folder contains the files of the app. For the Mac app, this is
       <code class="path">~/.whisper</code>. It contains your rules, <code>WHISPER.md</code>, the
       scratch folder of each session, memory, and the <code class="path">data/</code> folder. A new file, a write, or an edit there shows no card in
-      any mode. No category mode changes this. For a source install, the same rule applies to the
+      any mode. For a source install, the same rule applies to the
       app folders in the checkout, for example <code class="path">data/</code> and
       <code class="path">rules/</code>, not to the full checkout.</p>
     <p>Plan mode has one difference. Memory updates run there without a card, but
@@ -354,7 +308,7 @@
       <div class="card">
         <h3>Commands run in the sandbox, except in Bypass</h3>
         <p>Each shell command and each Python run is in the macOS kernel sandbox
-          (<code>sandbox-exec</code>). The sandbox applies the file and network policy at the OS level.
+          (<code>sandbox-exec</code>). The sandbox applies the file policy at the OS level.
           An approval lets a command <em>run</em>. It does not remove the sandbox. If the sandbox is
           not available, the app does not run the command.</p>
         <p>In Bypass, commands run with no sandbox, the same as in Claude Code. The subagents and
@@ -402,14 +356,12 @@
       <li>A command that the assistant types into your <b>visible terminal</b>. That terminal runs
         in its current folder, and the OS does not limit its writes.</li>
     </ul>
-    <p>A rule, a "Yes, all", or a trusted skill cannot remove these cards. Outside Bypass, an
+    <p>A "Yes, all" or a trusted skill cannot remove these cards. Outside Bypass, an
       unattended agent cannot run a delete. In the workspace, the mode decides: the other modes
       handle <code>rm -rf dist</code> as a usual command.</p>
     <p>In Bypass, these three types of command run without a card. A subagent or a workflow script
       of the session also runs a delete without a card. The validator still refuses a delete of a
-      protected folder. A category mode that you set for <code>cli</code> can only make Bypass
-      stricter: if it is not Bypass, these commands ask again. A category mode of Bypass does not
-      remove these cards when the session is in a different mode.</p>
+      protected folder.</p>
     <p>For a relative path in a delete, the app uses the folder of a <code>cd</code> earlier in the
       same command. If the command does not name that folder, the delete always shows a card. Examples
       are <code>cd "$DIR"</code>, <code>cd -</code>, <code>pushd</code>, and <code>popd</code>.</p>
@@ -440,18 +392,11 @@
       file tools (<code>ws_write_file</code>, <code>ws_edit_file</code>, and
       <code>ws_delete_file</code>) change files at all locations on your Mac. They do not change the
       scratch folder of a different session.</p>
-    <p>If Bypass, a "Yes, all", a rule, or Auto mode lets a command run without a card, the OS limits
+    <p>If Bypass, a "Yes, all", or Auto mode lets a command run without a card, the OS limits
       its writes to the workspace. Only a command that you approved on its card can write in other
       locations. A terminal command in the sandbox writes only in the workspace, its scratch folder,
       and the temporary folders. This also applies when it starts in a different folder. Without a connected
       workspace, it writes only in its scratch folder and the temporary folders.</p>
-    <p><b>Settings &rsaquo; Keys and permissions &rsaquo; Permissions</b> has two more sections. <b>Sandbox Network Policy</b> sets
-      the network access of commands in the sandbox. The tiers are Permissive (no limit, the default),
-      Curated (frequent package and documentation domains, and your own domains), and Restrictive
-      (only your own domains). <b>Folder Access</b> lists the folders outside your workspace that you
-      approved, with a <b>Revoke</b> button for each folder. The app adds a folder only from an
-      approval card. Thus this panel can only remove access.</p>
-
     <h2 id="which-mode">Which mode to use</h2>
     <dl class="spec">
       <dt><code class="path">default</code></dt><dd>Use it for most work. You see each change.</dd>
@@ -465,7 +410,7 @@
     <h2 id="how-it-fits">How this fits the pipeline</h2>
     <p>The permission checks occur in the tool loop, not before the turn. In each round, the model can
       ask for tools. The executor divides the calls into groups and examines each call against your
-      mode and your rules. For a call with the result <b>ask</b>, the server stops the turn and waits.
+      mode. For a call with the result <b>ask</b>, the server stops the turn and waits.
       Thus an approval can show during an answer, and the turn continues from the same point. See
       <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a> for the state machine.</p>
 

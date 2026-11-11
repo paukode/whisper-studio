@@ -68,6 +68,7 @@ function serverSummary(server: MCPServerInfo): string {
   const launch = server.url || `${server.command} ${server.args.join(' ')}`.trim();
   if (!server.enabled) return launch;
   if (server.status === 'error') return `${launch} · ${server.error ?? 'failed to start'}`;
+  if (server.status === 'connecting') return `${launch} · connecting…`;
   if (server.status === 'connected') {
     return `${launch} · ${server.tools.length} ${server.tools.length === 1 ? 'tool' : 'tools'}`;
   }
@@ -299,11 +300,6 @@ export const MCPSettings: React.FC = () => {
     [elicitationContent],
   );
 
-  const statusClass = (status: string) => {
-    if (status === 'connected') return 'connected';
-    if (status === 'error') return 'error';
-    return 'stopped';
-  };
 
   const isFormVisible = isAdding || editingServer !== null;
 
@@ -471,7 +467,7 @@ export const MCPSettings: React.FC = () => {
       <div className="settings-list" id="mcpList">
         {[...servers].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })).map((server) => (
           <div key={server.name} className="settings-item">
-            <span className={`mcp-status-dot ${statusClass(server.status)}`}></span>
+            <span className={`mcp-status-dot ${server.status}`}></span>
             <div className="settings-item-info">
               {renamingServer === server.name ? (
                 <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>

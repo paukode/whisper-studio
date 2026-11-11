@@ -190,7 +190,7 @@ def _gate(tool_name, output, root, *, mode, unattended=False):
 def gate_env(repo, monkeypatch):
     monkeypatch.setattr(
         "server.security.permissions.load_permissions",
-        lambda: {"mode": MODE_DEFAULT, "rules": [], "category_modes": {}},
+        lambda: {"mode": MODE_DEFAULT},
     )
     sent = []
 
@@ -308,23 +308,15 @@ def test_destructive_github_asks_in_every_card_mode(gate_env):
     assert sent == []
 
 
-def test_destructive_github_dont_ask_category_row_denies(gate_env, monkeypatch):
-    """A Don't ask row for the category is stricter than the floor's card, so it
-    holds; any other row leaves the card in place."""
+def test_destructive_github_is_denied_in_dont_ask_and_asks_otherwise(gate_env):
+    """Don't ask is stricter than the floor's card, so it denies; every other
+    mode, Bypass included, keeps the card."""
     from server.security.permissions import resolve_static_decision
 
     payload = {"command": "gh pr merge 2"}
-    for row, want in ((MODE_DONT_ASK, "deny"), (MODE_BYPASS, "ask"), (None, "ask")):
-        monkeypatch.setattr(
-            "server.security.permissions.load_permissions",
-            lambda row=row: {
-                "mode": MODE_DEFAULT,
-                "rules": [],
-                "category_modes": {"github-destructive": row} if row else {},
-            },
-        )
-        got = resolve_static_decision("github", payload, "github-destructive", {}, MODE_DEFAULT)
-        assert got == want, row
+    for mode, want in ((MODE_DONT_ASK, "deny"), (MODE_BYPASS, "ask"), (MODE_DEFAULT, "ask")):
+        got = resolve_static_decision("github", payload, "github-destructive", {}, mode)
+        assert got == want, mode
 
 
 # -- missing gh and missing sign-in ------------------------------------------------

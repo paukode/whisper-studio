@@ -7,7 +7,7 @@ WSDiagram.mount("subagent-flow-diagram", {
     server: { label: "Runtime" }
   },
   nodes: [
-    { id: "task", group: "browser", col: 0, row: 0.5, label: "Big task", sub: "one prompt", desc: "You describe work that has independent parts. Or you type /subagent for one focused helper, which runs in the background in its own message." },
+    { id: "task", group: "browser", col: 0, row: 0.5, label: "Big task", sub: "one prompt", desc: "You describe work that has independent parts. Or you type @agent- and a type, for example @agent-explore, to give the task to one agent of that type." },
     { id: "spawn", group: "agents", col: 1, row: 0.5, label: "spawn_agent / team_create", sub: "from chat", desc: "The assistant can run the parts at the same time. team_create starts a team of agents. spawn_agent starts one independent agent. Maximum 16 agents run at the same time in one session." },
     { id: "a1", group: "agents", col: 2, row: 0, label: "Agent A", sub: "explore", desc: "A read-only agent that searches and reads to get the facts, and then returns short findings." },
     { id: "a2", group: "agents", col: 2, row: 1, label: "Agent B", sub: "verify", desc: "Runs its own tool loop, examines the work, and ends with VERDICT: PASS, FAIL, or PARTIAL." },

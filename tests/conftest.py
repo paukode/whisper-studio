@@ -282,6 +282,17 @@ def _pinned_engine_archs_and_no_live_official_lane(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _preview_browser_present(monkeypatch):
+    """Every preview tool call first checks that Playwright and Chromium are
+    installed (server/preview/capability.py). In a unit test the check
+    passes, so no test depends on whether this machine has the browser; tests
+    of the refusal patch in a missing browser themselves."""
+    from server.preview import capability
+
+    monkeypatch.setattr(capability, "preview_capability_ok", lambda: True)
+
+
+@pytest.fixture(autouse=True)
 def _no_live_activity_labels(monkeypatch):
     """A chat turn with a tool round asks the auxiliary model for an activity
     caption (server/chat/engine/activity_labels.py). In a unit test that call

@@ -154,7 +154,7 @@ def test_unattended_ask_user_question_refuses_instead_of_pausing():
             _tool_use_round(
                 "q1",
                 "ask_user_question",
-                {"question": "Which color?", "options": ["Blue", "Other (please specify)"]},
+                {"question": "Which color?", "options": ["Blue", "Green"]},
             ),
             _text_round("Went with blue since you're unavailable."),
         ]
@@ -187,7 +187,7 @@ def test_attended_ask_user_question_still_pauses_as_today():
             _tool_use_round(
                 "q1",
                 "ask_user_question",
-                {"question": "Which color?", "options": ["Blue", "Other (please specify)"]},
+                {"question": "Which color?", "options": ["Blue", "Green"]},
             ),
             _text_round("unreachable — the turn should have paused first"),
         ]

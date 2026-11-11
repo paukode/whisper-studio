@@ -1,14 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRecordingStore } from '@/stores/recordingStore';
-import { useUIStore } from '@/stores/uiStore';
+import { useUIStore, type ModelBannerFlow } from '@/stores/uiStore';
+import { createStartGuard, StartCancelled } from '@/utils/startGuard';
+import { acquireNativeMic, isNativeMicAvailable, releaseNativeMic } from '@/services/nativeMicSource';
 
 /**
  * useChatInputMic — push-to-talk style microphone capture for the chat input.
  *
  * Independent of the meeting transcription pipeline (recordingController /
- * useRecordingStore). Opens its own WebSocket to /ws, captures mic audio via
- * the existing pcm-processor AudioWorklet, streams PCM16 chunks, and invokes
- * `onTranscript` for every transcript message the server emits.
+ * useRecordingStore). Opens its own WebSocket to /ws, captures mic audio,
+ * streams PCM16 chunks, and invokes `onTranscript` for every transcript
+ * message the server emits. Inside the Mac app the audio comes from the
+ * shell's own mic, the one the recorder uses (services/nativeMicSource), with
+ * Apple's voice processing off: the web view's mic turned other sound on the
+ * Mac down for a few seconds. A plain browser captures through the
+ * pcm-processor AudioWorklet.
  *
  * Each session of recording is short and self-contained: a fresh WS, a fresh
  * AudioContext, fully torn down on stop().
@@ -33,6 +39,9 @@ export interface UseChatInputMicResult {
   toggle: () => void;
 }
 
+/** Dictation's name on the shared native mic (the recorder has its own). */
+const MIC_OWNER = 'chat-input-mic';
+
 const SAMPLE_RATE = 16000;
 // Short chunk so trailing audio (and a spoken submit command) reaches the server
 // fast: dictation is interactive, not a long recording, so we trade a little
@@ -49,27 +58,19 @@ export function useChatInputMic(opts: UseChatInputMicOptions): UseChatInputMicRe
   const [error, setError] = useState<string | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
+  // The socket's run on the shared model banner: teardown ends it.
+  const bannerRef = useRef<ModelBannerFlow | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const workletRef = useRef<AudioWorkletNode | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
   const pcmBufferRef = useRef<Float32Array[]>([]);
   const pcmBufferLenRef = useRef<number>(0);
-  // Cancellation guard. `start()` is async (it awaits the socket open,
-  // acquireMic, and the worklet module), so a stop()/cancel can land while
-  // it is still connecting. Each start() captures the current token; stop()
-  // and unmount bump it. After every await, start() checks whether its token
-  // is still current — if not, it releases whatever it acquired and bails out
-  // WITHOUT activating a session that was already cancelled (which would leave
-  // isRecording=true on a dead socket + an unreleased mic device).
-  const startTokenRef = useRef(0);
-  // True only while start() is between calling acquireMic() and receiving the
-  // stream. acquireMic() registers our owner synchronously but only stores the
-  // MediaStream after getUserMedia resolves, so a teardown() in this window
-  // would drop the owner before the stream exists (releasing nothing, then
-  // orphaning the resolved stream). While this is set, teardown() defers the
-  // releaseMic() to the in-flight start(), which performs exactly one release
-  // once acquireMic() resolves — so the mic track is always stopped.
-  const acquireInFlightRef = useRef(false);
+  // `start()` is async (it awaits the socket open, acquireMic, and the
+  // worklet module), so a stop() can land while it is still connecting.
+  // stop() and unmount cancel the attempt; start() awaits through it and
+  // unwinds instead of activating a session on a socket stop() already
+  // closed (see utils/startGuard).
+  const [startGuard] = useState(createStartGuard);
   // Keep a stable reference to the latest callback so the worklet message
   // handler always sees the current function without re-binding.
   const onTranscriptRef = useRef(onTranscript);
@@ -112,6 +113,9 @@ export function useChatInputMic(opts: UseChatInputMicOptions): UseChatInputMicRe
     audioCtxRef.current = null;
     micStreamRef.current = null;
     const ws = wsRef.current;
+    // Out of the ref before it closes, so its own close event is not taken
+    // for the server ending the session (see the close handler in start()).
+    wsRef.current = null;
     if (ws) {
       try {
         if (ws.readyState === WebSocket.OPEN) {
@@ -119,40 +123,38 @@ export function useChatInputMic(opts: UseChatInputMicOptions): UseChatInputMicRe
         }
         ws.close();
       } catch { /* ignore */ }
-      wsRef.current = null;
     }
     pcmBufferRef.current = [];
     pcmBufferLenRef.current = 0;
-    // Defer the mic release while a start() is mid-acquireMic: our owner is
-    // registered but the stream is not yet stored, so releasing here would
-    // stop nothing and then leak the stream acquireMic is about to resolve.
-    // The in-flight start() releases it exactly once when it resumes.
-    if (!acquireInFlightRef.current) {
-      void useRecordingStore.getState().releaseMic('chat-input-mic');
-    }
+    // A Stop while the model loads: nothing on the closed socket would clear
+    // its banner any more.
+    bannerRef.current?.done();
+    bannerRef.current = null;
+    // Safe while either mic is still opening (each closes a mic that opens
+    // with no owner left), and a no-op for the one this start did not use.
+    void releaseNativeMic(MIC_OWNER);
+    void useRecordingStore.getState().releaseMic(MIC_OWNER);
   }, []);
 
   const stop = useCallback(() => {
-    // Bump the token so any in-flight start() sees the cancel and bails out
-    // instead of activating a session on a socket/stream we are tearing down.
-    startTokenRef.current += 1;
+    // Cancel an in-flight start() so it unwinds instead of activating a
+    // session on a socket/stream we are tearing down.
+    startGuard.cancel();
     if (pcmBufferLenRef.current > 0) flushPcm();
     teardown();
     setIsRecording(false);
     setIsConnecting(false);
-  }, [flushPcm, teardown]);
+  }, [startGuard, flushPcm, teardown]);
 
   const start = useCallback(async () => {
     if (isRecording || isConnecting) return;
     setError(null);
     setIsConnecting(true);
 
-    // Token for THIS start attempt. If a stop()/cancel (or unmount) bumps the
-    // token while we are awaiting below, `cancelled()` becomes true and we
-    // bail out. On bail-out we call teardown(), which releases the socket and
-    // (via releaseMic) the mic device, so nothing acquired so far is left open.
-    const myToken = ++startTokenRef.current;
-    const cancelled = () => startTokenRef.current !== myToken;
+    // Every await below goes through this attempt. Once stop() (or unmount)
+    // cancels it, the await throws StartCancelled: stop() has already torn
+    // down the socket and released the mic, so the start just returns.
+    const attempt = startGuard.begin();
 
     try {
       // 1. Open WebSocket.
@@ -169,6 +171,9 @@ export function useChatInputMic(opts: UseChatInputMicOptions): UseChatInputMicRe
       const wsUrl = `${protocol}//${window.location.host}/ws?${params.toString()}`;
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
+      // This socket's run on the shared model banner (see onmessage).
+      const banner = useUIStore.getState().openModelBanner('dictation');
+      bannerRef.current = banner;
       ws.onmessage = (event: MessageEvent) => {
         try {
           const msg = JSON.parse(event.data as string) as {
@@ -189,24 +194,17 @@ export function useChatInputMic(opts: UseChatInputMicOptions): UseChatInputMicRe
             // Local mode: dictation forces the Parakeet ASR engine, which on a
             // cold start must load (or first-run download) into memory. Without
             // surfacing this the mic just seems stuck. Drive the shared
-            // model-loading banner (same store the meeting recorder uses via
-            // recordingController) so the user sees the progress; 'ready'
-            // auto-hides after a brief beat.
-            const stage = (msg.stage ?? 'loading') as 'start' | 'downloading' | 'loading' | 'ready';
-            useUIStore.getState().setModelLoading({
+            // model-loading banner (the meeting recorder drives it the same
+            // way) so the user sees the progress; 'ready' hides itself after
+            // a brief beat.
+            banner.show({
               label: msg.label ?? 'Model',
               progress: typeof msg.progress === 'number' ? msg.progress : 0,
-              stage,
+              stage: (msg.stage ?? 'loading') as 'start' | 'downloading' | 'loading' | 'ready',
             });
-            if (stage === 'ready') {
-              setTimeout(() => {
-                const cur = useUIStore.getState().modelLoading;
-                if (cur && cur.stage === 'ready') useUIStore.getState().setModelLoading(null);
-              }, 700);
-            }
           } else if (msg.type === 'model_unloaded') {
-            // Engine freed on switch — clear any stale banner.
-            useUIStore.getState().setModelLoading(null);
+            // Engine freed on switch: clear the stale banner if it is ours.
+            banner.clear();
           }
         } catch { /* ignore */ }
       };
@@ -215,68 +213,79 @@ export function useChatInputMic(opts: UseChatInputMicOptions): UseChatInputMicRe
       };
 
       // Wait for socket to open before sending audio
-      await new Promise<void>((resolve, reject) => {
-        ws.onopen = () => resolve();
-        ws.addEventListener('error', () => reject(new Error('WebSocket failed to open')), { once: true });
-        ws.addEventListener('close', () => reject(new Error('WebSocket closed')), { once: true });
-      });
+      await attempt.hold(
+        new Promise<void>((resolve, reject) => {
+          ws.onopen = () => resolve();
+          ws.addEventListener('error', () => reject(new Error('WebSocket failed to open')), { once: true });
+          ws.addEventListener('close', () => reject(new Error('WebSocket closed')), { once: true });
+        }),
+      );
+      // Open: from here a close of this socket is the server ending the
+      // session (teardown() takes it out of wsRef before closing it). It ends
+      // dictation through the Stop button's path, so the hook never shows a
+      // recording on a dead socket while unsent audio piles up.
+      ws.onclose = () => {
+        if (wsRef.current === ws) stop();
+      };
 
-      // Cancelled while the socket was opening — bail before touching the mic.
-      if (cancelled()) { teardown(); return; }
-
-      // 2. Mic + AudioWorklet — shared refcounted acquisition. If the
-      // meeting recorder is already running, this returns the same
-      // MediaStream + AudioContext rather than spawning a competing
-      // getUserMedia call (which the OS often resolves with a silent
-      // stream when the device is already in use).
-      acquireInFlightRef.current = true;
-      const { stream, context: ctx } = await useRecordingStore.getState().acquireMic('chat-input-mic');
-      acquireInFlightRef.current = false;
-      micStreamRef.current = stream;
-      audioCtxRef.current = ctx;
-
-      // Cancelled while acquiring the mic. Our owner is still held (teardown()
-      // deferred the release while acquireInFlightRef was set), so teardown()
-      // now performs the single releaseMic() that stops the just-acquired
-      // getUserMedia track — the device is never left open.
-      if (cancelled()) { teardown(); return; }
-
-      // BASE_URL resolves correctly in both dev (Vite serves /public
-      // at '/') and prod ('/static/dist/'). services/recordingController.ts
-      // loads the worklet the same way.
-      await ctx.audioWorklet.addModule(`${import.meta.env.BASE_URL}pcm-processor.js`);
-
-      // Cancelled while loading the worklet module — release the mic + socket.
-      if (cancelled()) { teardown(); return; }
-
-      const node = new AudioWorkletNode(ctx, 'pcm-processor');
-      workletRef.current = node;
-
-      node.port.onmessage = (e: MessageEvent<Float32Array>) => {
-        pcmBufferRef.current.push(e.data);
-        pcmBufferLenRef.current += e.data.length;
+      const takeSamples = (samples: Float32Array) => {
+        pcmBufferRef.current.push(samples);
+        pcmBufferLenRef.current += samples.length;
         if (pcmBufferLenRef.current >= CHUNK_SAMPLES) flushPcm();
       };
 
-      ctx.createMediaStreamSource(stream).connect(node);
-      node.connect(ctx.destination);
+      if (isNativeMicAvailable()) {
+        // 2. The shell's mic, shared with the recorder: already 16 kHz mono.
+        await attempt.hold(
+          acquireNativeMic(MIC_OWNER, {
+            onAudio: (samples) => takeSamples(samples),
+            onError: (message) => {
+              setError(message);
+              stop();
+            },
+          }),
+          () => void releaseNativeMic(MIC_OWNER),
+        );
+      } else {
+        // 2. Mic + AudioWorklet: shared refcounted acquisition. If the
+        // meeting recorder is already running, this returns the same
+        // MediaStream + AudioContext rather than spawning a competing
+        // getUserMedia call (which the OS often resolves with a silent
+        // stream when the device is already in use).
+        const { stream, context: ctx } = await attempt.hold(
+          useRecordingStore.getState().acquireMic(MIC_OWNER),
+        );
+        micStreamRef.current = stream;
+        audioCtxRef.current = ctx;
+
+        // BASE_URL resolves correctly in both dev (Vite serves /public
+        // at '/') and prod ('/static/dist/'). services/recordingController.ts
+        // loads the worklet the same way.
+        await attempt.hold(ctx.audioWorklet.addModule(`${import.meta.env.BASE_URL}pcm-processor.js`));
+
+        const node = new AudioWorkletNode(ctx, 'pcm-processor');
+        workletRef.current = node;
+
+        node.port.onmessage = (e: MessageEvent<Float32Array>) => takeSamples(e.data);
+
+        ctx.createMediaStreamSource(stream).connect(node);
+        node.connect(ctx.destination);
+      }
 
       setIsConnecting(false);
       setIsRecording(true);
     } catch (err) {
-      // Ensure the deferral flag never sticks if acquireMic() itself threw.
-      acquireInFlightRef.current = false;
-      // A cancel can surface here too (e.g. stop() closed the socket mid-open,
-      // rejecting the open promise). That is not a real error, so tear down
-      // quietly without surfacing an error or clobbering a later start's state.
-      if (cancelled()) { teardown(); return; }
+      // Cancelled (stop() may also have closed the socket mid-open, rejecting
+      // the open promise): not a real error, and stop() already tore down
+      // this start's socket and mic. A later start's state is left alone.
+      if (err instanceof StartCancelled) return;
       const e = err instanceof Error ? err : new Error(String(err));
       setError(e.message);
       teardown();
       setIsConnecting(false);
       setIsRecording(false);
     }
-  }, [isRecording, isConnecting, flushPcm, teardown, sessionId]);
+  }, [isRecording, isConnecting, startGuard, flushPcm, teardown, stop, sessionId]);
 
   const toggle = useCallback(() => {
     if (isRecording || isConnecting) stop();
@@ -286,12 +295,12 @@ export function useChatInputMic(opts: UseChatInputMicOptions): UseChatInputMicRe
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      // Treat unmount as a cancel so an in-flight start() bails on resume
-      // (and releases its mic) instead of activating on a dead component.
-      startTokenRef.current += 1;
+      // Treat unmount as a cancel so an in-flight start() unwinds on resume
+      // instead of activating on a dead component.
+      startGuard.cancel();
       teardown();
     };
-  }, [teardown]);
+  }, [startGuard, teardown]);
 
   return { isRecording, isConnecting, error, start, stop, toggle };
 }

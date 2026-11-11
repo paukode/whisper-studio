@@ -227,6 +227,8 @@ const TurnSegmentView: React.FC<TurnSegmentProps> = ({ rows, indices, taskCheckp
                   // stashed this pause under (see sseStream.ts): resuming
                   // must answer that exact id, not a hardcoded placeholder.
                   toolUseId={tool.toolId}
+                  // The outcome its row records once the card closed.
+                  closedAs={tool.result || undefined}
                 />
               );
             }
@@ -246,9 +248,8 @@ const TurnSegmentView: React.FC<TurnSegmentProps> = ({ rows, indices, taskCheckp
 
       {/* Standalone agent rows: any report NOT anchored to a team_create or
        *  spawn_agent tool-use row above renders directly here. That covers
-       *  background /subagent messages (no toolUse at all), question-round
-       *  commits where the team trace landed on an earlier message, and
-       *  stopped turns that carry only the partial report. */}
+       *  question-round commits where the team trace landed on an earlier
+       *  message, and stopped turns that carry only the partial report. */}
       {teamReports &&
         Object.values(teamReports)
           .filter((r) => findMatchingTeamReports(
@@ -275,7 +276,7 @@ const TurnSegmentView: React.FC<TurnSegmentProps> = ({ rows, indices, taskCheckp
         <UserQuestionCard
           question={tail.userQuestion.question}
           options={tail.userQuestion.options}
-          answered={tail.userQuestion.answered}
+          answered={tail.userQuestion.answered || tail.userQuestion.skipped}
           message={tail}
         />
       ) : null}

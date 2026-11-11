@@ -69,7 +69,7 @@
 
     <h2 id="approval-legend">Approval at a glance</h2>
     <p>Three badges appear in the tables. Read the <a href="arch-approval.html">Approval &amp;
-      permissions</a> page for the full pause-and-resume flow and per-tool rules.</p>
+      permissions</a> page for the full pause-and-resume flow and the permission modes.</p>
     <div class="cols-2">
       <div class="card">
         <h3><span class="badge badge--muted">read</span> Runs freely</h3>
@@ -491,7 +491,7 @@
       <tbody>
         <tr><td><code>config_get</code></td><td>Read one or more Whisper Studio config values (empty = list all, with secrets masked).</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>config_set</code></td><td>Write config values to <code class="path">config.user.json</code>. Only known keys are accepted (for example <code>bedrock_region</code> or <code>default_chat_model</code>). Unknown keys are ignored and reported back under "ignored". Every write follows the permission mode (category <code>config</code>), and an unattended run cannot change config.</td><td><span class="badge">approval</span></td></tr>
-        <tr><td><code>ask_user_question</code> <span class="badge">★ Core</span></td><td>Ask you a multiple-choice question and pause the turn for the answer.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>ask_user_question</code> <span class="badge">★ Core</span></td><td>Ask you a question and pause the turn for the answer. The card has two or more choices, or no choices when you only type an answer. The card always has a text field for your own answer. The app refuses a call with one choice or with an "Other" choice, and the model asks again.</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>notify_user</code> <span class="badge">★ Core</span></td><td>Send a proactive, formatted message card (task done, a blocker, a finding).</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>create_artifact</code></td><td>Render a self-contained artifact as an inline card in chat (live preview plus download).</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>read_artifact</code></td><td>Read back the current HTML of an artifact made earlier in this session, the latest one or one named by title. A small artifact comes back whole; a large one returns an outline plus its first lines, and <code>start_line</code>/<code>end_line</code> read any region. The assistant is told to read before changing, rather than rebuilding from memory.</td><td><span class="badge badge--muted">read</span></td></tr>
@@ -507,8 +507,9 @@
 
     <h2 id="preview">Live preview &amp; browser</h2>
     <p>A dev-server-plus-headless-browser session for building and checking web UIs. The 14 preview
-      tools are in the catalogue only while the <code>preview_tools</code> feature flag is on (its
-      default) and the Playwright and Chromium install is present; otherwise they are absent. The read-only
+      tools are always in the catalogue: <code>setup.sh</code> installs Playwright and Chromium, and
+      the Mac app includes them. If the browser is missing, each preview tool returns the repair step
+      (run <code>setup.sh</code> again, or install the app again). The read-only
       tools (logs, snapshots, inspection) run freely; anything that starts a server or drives the page
       follows the permission mode, except that a named <code class="path">.whisper/launch.json</code>
       config whose command you approved once starts without asking (see <code>preview_start</code>
@@ -549,7 +550,7 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Tool</th><th>What it does</th><th>Approval</th></tr></thead>
       <tbody>
-        <tr><td><code>workflow_run</code> <span class="badge">★ Core</span></td><td>Launch a deterministic multi-agent workflow from a JS orchestration script (or a saved workflow by name). A new script follows the <code>workflow</code> category mode (card, launch, or refusal); a trusted saved workflow launches directly. Runs detached from the turn.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>workflow_run</code> <span class="badge">★ Core</span></td><td>Launch a deterministic multi-agent workflow from a JS orchestration script (or a saved workflow by name). A new script follows the permission mode (card, launch, or refusal). A trusted saved workflow launches directly. Runs detached from the turn.</td><td><span class="badge">approval</span></td></tr>
         <tr><td><code>workflow_status</code> <span class="badge">★ Core</span></td><td>Get a run's status, phase/agent journal tail, and spend. Omit the run id to list this session's runs.</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>workflow_wait</code> <span class="badge">★ Core</span></td><td>Wait until workflow runs end, then return their status, spend, result, and the agents that stopped at a limit. Mode <code>all</code> (the default) or <code>any</code>. One call waits for 600 seconds by default and 1800 seconds at most. The time in a wait does not count against an agent's time limit. In a cron or headless run, the wait stops at the run's time limit. When you send a message during the wait, the wait stops and returns <code>interrupted: "user_message"</code>.</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>workflow_save</code> <span class="badge">★ Core</span></td><td>Save a named, reusable workflow script. Saving itself asks nothing: a script you already approved this session is saved trusted, and any other is saved untrusted, so the first run by name shows the preview card and approving it trusts the workflow durably.</td><td><span class="badge badge--muted">no prompt</span></td></tr>

@@ -4,13 +4,10 @@
  * Pure helpers: they translate the server's team_progress / team_results
  * SSE side-effects into a teamReports map. The map-level fold
  * (foldTeamProgressIntoMap) runs against the turn-local live report in the
- * chat store while the assistant message does not exist yet; the
- * message-level helpers serve the background /subagent stream, which
- * pre-creates its message and targets it by timestamp. No React here.
+ * chat store while the assistant message does not exist yet. No React here.
  */
-import type { StoreGetter } from '@/stores/chatStore';
+import { agentStatusOf } from '@/utils/agentOutcome';
 import type {
-  ChatMessage,
   TeamAgentReport,
   TeamProgressEvent,
   TeamReportData,
@@ -24,24 +21,14 @@ function _agentKey(ev: TeamProgressEvent): string | null {
   return (ev.agent_name ?? ev.agent_id) || null;
 }
 
-/** The settled status a team_results agent reports (completed, failed or
- *  error, stopped, turn_limit); null for anything else. */
+/** The settled status a team_results agent reports; null for anything else. */
 function _resultStatus(status: string | undefined): TeamAgentReport['status'] | null {
-  if (status === 'completed') return 'completed';
-  if (status === 'failed' || status === 'error') return 'failed';
-  if (status === 'stopped') return 'stopped';
-  if (status === 'turn_limit') return 'turn_limit';
-  return null;
+  const s = agentStatusOf(status);
+  return s === 'completed' || s === 'stopped' || s === 'failed' ? s : null;
 }
 
 function _phaseToStatus(phase: TeamProgressEvent['phase']): TeamAgentReport['status'] {
-  if (phase === 'completed') return 'completed';
-  if (phase === 'turn_limit') return 'turn_limit';
-  if (phase === 'failed') return 'failed';
-  if (phase === 'stopped') return 'stopped';
-  if (phase === 'started' || phase === 'turn_start' || phase === 'text'
-      || phase === 'tool_call' || phase === 'tool_result') return 'running';
-  return 'pending';
+  return agentStatusOf(phase) ?? 'pending';
 }
 
 /** Merge the final team_results side-effect payload into the rolling
@@ -230,15 +217,6 @@ export function foldTeamProgressIntoMap(
   return teamReports;
 }
 
-/** Fold a single team_progress event into ONE message's teamReports map.
- *  Pure: returns an updated ChatMessage, or null if the event should be
- *  ignored for this message. Used by applyTeamProgressToMessage (the
- *  background /subagent stream, which pre-creates its assistant message). */
-function foldTeamProgressEvent(message: ChatMessage, ev: TeamProgressEvent): ChatMessage | null {
-  const folded = foldTeamProgressIntoMap(message.teamReports, ev);
-  return folded ? { ...message, teamReports: folded } : null;
-}
-
 /** Mirror of the backend `_spawn_label` (server/agent_tools/spawn.py): first
  *  line of the task, capped at 60 chars with an ellipsis. Used to match a
  *  spawn_agent tool to its one-member team report while the tool is still
@@ -291,28 +269,4 @@ export function findMatchingTeamReports(
     add(Object.values(teamReports).find((r) => r.team_name === name && !seen.has(r.team_id)));
   }
   return matched;
-}
-
-/** Apply a team_progress event to a SPECIFIC assistant message identified by
- *  timestamp. Used by the background /subagent stream, whose progress card
- *  must keep updating even after the user sends more messages (so it's no
- *  longer the last message). */
-export function applyTeamProgressToMessage(
-  storeGetter: StoreGetter,
-  targetTimestamp: string,
-  ev: TeamProgressEvent,
-): void {
-  const st = storeGetter();
-  const msgs = st.messages;
-  // Match the ASSISTANT message specifically: the /subagent handler adds a
-  // user + assistant message that can share a millisecond timestamp, and a
-  // bare timestamp match would otherwise land on the user message and bail.
-  const idx = msgs.findIndex((m) => m.timestamp === targetTimestamp && m.role === 'assistant');
-  if (idx < 0) return;
-  const target = msgs[idx];
-  const updated = foldTeamProgressEvent(target, ev);
-  if (!updated) return;
-  const next = [...msgs];
-  next[idx] = updated;
-  st.setMessages(next);
 }

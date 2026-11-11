@@ -49,11 +49,7 @@ def test_relative_paths_resolve_against_the_workspace(tmp_path, monkeypatch):
     assert not targets_app_storage({"path": "src/app.py"})
 
 
-def test_writes_under_app_storage_allow_in_every_mode(monkeypatch):
-    monkeypatch.setattr(
-        "server.security.permissions.load_permissions",
-        lambda: {"category_modes": {"write": "ask"}},
-    )
+def test_writes_under_app_storage_allow_in_every_mode():
     scratch = os.path.join(paths.data_root(), "scratch", "sess", "probe.py")
     for mode in (MODE_DEFAULT, MODE_ACCEPT_EDITS, MODE_DONT_ASK, MODE_BYPASS):
         assert (

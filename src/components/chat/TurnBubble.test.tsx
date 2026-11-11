@@ -14,6 +14,13 @@ import { useUIStore } from '@/stores/uiStore';
 import { stubExecCommand } from '@/test/clipboardCopy';
 import type { SessionTask } from '@/stores/taskStore';
 import type { ChatMessage, Delivery, ToolUseEvent } from '@/types/chat';
+import { resendUserMessage } from '@/hooks/chatStream/resend';
+
+// Patched where pausedAnswer reads it: a card's answer resumes through sendChatTurn.
+const sendChatTurn = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => true));
+vi.mock('@/hooks/useChatStream', () => ({ sendChatTurn }));
+vi.mock('@/hooks/chatStream/resend', () => ({ resendUserMessage: vi.fn() }));
+const resumedWith = () => sendChatTurn.mock.calls.map((c) => c[1]);
 
 const REPORT: Delivery = { kind: 'file', target: '/Users/me/Downloads/report.html', label: 'report.html', detail: '12.4 KB' };
 const RESAVED: Delivery = { ...REPORT, detail: '13.0 KB' };
@@ -134,19 +141,12 @@ describe('TurnBubble', () => {
   });
 
   it('regenerates from the user message the turn answers', () => {
-    const regenerate = vi.fn();
-    window.addEventListener('whisper-regenerate', regenerate);
-    try {
-      render(<TurnBubble rows={turn} indices={indices} />);
-      fireEvent.click(screen.getByTitle('Regenerate'));
-    } finally {
-      window.removeEventListener('whisper-regenerate', regenerate);
-    }
-    expect(regenerate).toHaveBeenCalledTimes(1);
-    const detail = (regenerate.mock.calls[0][0] as CustomEvent).detail;
+    render(<TurnBubble rows={turn} indices={indices} />);
+    fireEvent.click(screen.getByTitle('Regenerate'));
     // The question's own index: the history is cut at it and the send adds
     // it again.
-    expect(detail).toMatchObject({ index: 0, content: question.content });
+    expect(resendUserMessage).toHaveBeenCalledTimes(1);
+    expect(resendUserMessage).toHaveBeenCalledWith(0);
   });
 
   it('draws the live tail inside the same bubble, with the committed chips, and no timestamp or actions yet', () => {
@@ -202,16 +202,12 @@ describe('TurnBubble', () => {
       turnSettings: { model: 'test-model', effort_level: 'normal', verbosity: 'medium', brief_mode: false },
     };
     getActiveChatStore().getState().setMessages([question, opening, asked]);
-    const submits: unknown[] = [];
-    const onSubmit = (e: Event) => submits.push((e as CustomEvent).detail);
-    window.addEventListener('whisper-submit-answer', onSubmit);
-    try {
-      render(<TurnBubble rows={[opening, asked]} indices={[1, 2]} />);
-      fireEvent.click(screen.getByRole('button', { name: 'pg' }));
-    } finally {
-      window.removeEventListener('whisper-submit-answer', onSubmit);
-    }
-    expect(submits).toEqual([{ answers: [{ tool_use_id: 'tu_db', content: 'pg' }] }]);
+    sendChatTurn.mockClear();
+    render(<TurnBubble rows={[opening, asked]} indices={[1, 2]} />);
+    fireEvent.click(screen.getByRole('button', { name: 'pg' }));
+    expect(resumedWith()).toEqual([
+      expect.objectContaining({ approvedToolResult: [{ tool_use_id: 'tu_db', content: 'pg' }] }),
+    ]);
     const stored = getActiveChatStore().getState().messages[2];
     expect(stored.userQuestions?.[0].answered).toBe(true);
     // The row kept everything else it carried, the turn's settings included.
@@ -315,20 +311,17 @@ describe('TurnBubble', () => {
       turnSettings: { model: 'test-model', effort_level: 'normal', verbosity: 'medium', brief_mode: false },
     };
     getActiveChatStore().getState().setMessages([question, opening, paused]);
-    const submits: unknown[] = [];
-    const onSubmit = (e: Event) => submits.push((e as CustomEvent).detail);
-    window.addEventListener('whisper-submit-answer', onSubmit);
+    sendChatTurn.mockClear();
     try {
       render(<TurnBubble rows={[opening, paused]} indices={[1, 2]} />);
       fireEvent.click(screen.getByText('/Users/me/Projects/site'));
-      await waitFor(() => expect(submits).toHaveLength(1));
+      await waitFor(() => expect(sendChatTurn).toHaveBeenCalledTimes(1));
     } finally {
-      window.removeEventListener('whisper-submit-answer', onSubmit);
       globalThis.fetch = originalFetch;
     }
-    expect(submits[0]).toEqual({
-      answers: [{ tool_use_id: 'tu_ws', content: expect.stringContaining('/Users/me/Projects/site') }],
-    });
+    expect(resumedWith()[0]).toEqual(expect.objectContaining({
+      approvedToolResult: [{ tool_use_id: 'tu_ws', content: expect.stringContaining('/Users/me/Projects/site') }],
+    }));
     // The card changed nothing on the rows: the store still holds the same
     // objects, the turn's settings included.
     const stored = getActiveChatStore().getState().messages;

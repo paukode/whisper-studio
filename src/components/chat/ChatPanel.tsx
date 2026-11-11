@@ -23,6 +23,7 @@ import { useTaskStore } from '@/stores/taskStore';
 import { fetchSessionTasks } from '@/api/tasks';
 import { permissionModeLabel } from '@/utils/permissionModes';
 import { useFollowBottom } from '@/hooks/useFollowBottom';
+import { clearConversation } from '@/hooks/chatStream/clearConversation';
 import type { Delivery } from '@/types/chat';
 
 /**
@@ -80,7 +81,6 @@ const PendingNotes: React.FC = () => {
  */
 export const ChatPanel: React.FC = () => {
   const currentSessionId = useSessionStore((s) => s.currentSessionId);
-  const clearChat = useSessionStore((s) => s.clearChat);
   const branchSession = useSessionStore((s) => s.branchSession);
   const messages = useActiveChatStore((s) => s.messages);
   const isStreaming = useActiveChatStore((s) => s.isStreaming);
@@ -229,9 +229,8 @@ export const ChatPanel: React.FC = () => {
   );
 
   const handleClear = useCallback(() => {
-    getActiveChatStore().getState().clearMessages();
-    clearChat();
-  }, [clearChat]);
+    if (currentSessionId) void clearConversation(currentSessionId);
+  }, [currentSessionId]);
 
   // Fork the current conversation into a new session. Mirrors the Sidebar
   // right-click "Branch" action (branchSession copies persisted state via the

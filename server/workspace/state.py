@@ -284,6 +284,16 @@ def get_workspace_path() -> str | None:
     return path
 
 
+def inside_workspace(path: str, workspace: str | None) -> bool:
+    """Whether ``path`` (realpath'd) is ``workspace`` or a folder below it.
+
+    No workspace means nothing is inside it."""
+    if not workspace:
+        return False
+    root = os.path.realpath(workspace)
+    return path == root or path.startswith(root.rstrip(os.sep) + os.sep)
+
+
 def load_recent_workspaces() -> list[str]:
     return _read_path_list(RECENT_WORKSPACES_PATH)
 

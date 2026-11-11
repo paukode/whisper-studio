@@ -12,9 +12,10 @@
  * keep receiving cron events, and keep saving themselves. The registry
  * is soft-capped: beyond MAX_LIVE_RUNTIMES, idle hydrated sessions are
  * evicted LRU (never the current one, never one that is busy (streaming,
- * running an approved action, mid-approval, or running a /subagent),
- * recording, or has an unflushed save).
+ * running an approved action, or mid-approval), recording, or has an
+ * unflushed save).
  */
+import { SocketEventSource } from '@/api/streamSocket';
 import { create, useStore } from 'zustand';
 import type { StoreApi } from 'zustand/vanilla';
 import { createChatStore, type ChatState } from './chatStore';
@@ -22,7 +23,6 @@ import { createTranscriptionStore, type TranscriptionState } from './transcripti
 import { useSessionStore } from './sessionStore';
 import { useRecordingStore } from './recordingStore';
 import { useCronUnreadStore } from './cronUnreadStore';
-import { hasRunningSubagent, useSubagentStore } from './subagentStore';
 import type {
   ChatMessage,
   CronEventPayload,
@@ -36,9 +36,10 @@ import type { AgentProgressEvent } from './agentFeedStore';
  *  Never saved, never evicted, never event-sourced. */
 export const DRAFT_SESSION = '__draft__';
 
-/** How many session runtimes stay in memory (the user-facing "3 active
- *  sessions"). The cap is soft: busy sessions are never evicted, so the
- *  registry may transiently exceed it until one goes idle. */
+/** How many idle session runtimes stay in memory. It does not limit how
+ *  many sessions run (MAX_ACTIVE_SESSIONS in useChatStream.ts does): the cap
+ *  is soft, busy sessions are never evicted, so the registry may exceed it
+ *  until they go idle. */
 export const MAX_LIVE_RUNTIMES = 3;
 
 export interface RuntimeEntry {
@@ -160,9 +161,8 @@ export function holdForApprovedAction(sessionId: string): () => void {
 }
 
 /** A session's chat is BUSY while a turn streams in it, while an approved
- *  action it started is still executing (also after Stop), while an approval
- *  card waits on the user, or while a /subagent it started is still running.
- *  One predicate for both the parallel ceiling and eviction, so a session
+ *  action it started is still executing (also after Stop), or while an
+ *  approval card waits on the user. One predicate for both the parallel ceiling and eviction, so a session
  *  that still has an answer to deliver is never treated as idle. */
 function isChatBusy(sid: string, chat: ChatState): boolean {
   return (
@@ -170,7 +170,6 @@ function isChatBusy(sid: string, chat: ChatState): boolean {
     || runningApprovedActions.has(sid)
     || chat.currentApproval !== null
     || chat.approvalQueue.length > 0
-    || hasRunningSubagent(useSubagentStore.getState(), sid)
   );
 }
 
@@ -302,7 +301,7 @@ function toastMemoryEvent(sid: string, ev: MemoryEventPayload): void {
  *  turn released its socket. A session frame carries its `session_id` and is
  *  routed to that session's runtime here, and dropped when the session has no
  *  live runtime (its rows are durable and replay on the next hydrate). */
-let sharedEvents: EventSource | null = null;
+let sharedEvents: SocketEventSource | null = null;
 
 /** One frame off the multiplexed channel. `session_id` says which session it
  *  belongs to (empty for an app-wide frame); exactly one payload key is set. */
@@ -329,7 +328,7 @@ interface SessionEventFrame {
  *  startup; recycling and a new session runtime reopen one that died. */
 export function openEventChannel(): void {
   if (sharedEvents || typeof EventSource === 'undefined') return; // vitest/jsdom
-  const es = new EventSource('/api/sessions/events');
+  const es = new SocketEventSource('/api/sessions/events');
   // Every (re)connect reloads the MCP list and the header's task list: a
   // change made while the channel was down, or before it first opened, has
   // no event left to deliver, and a task that started before this window
@@ -515,13 +514,12 @@ export function openEventChannel(): void {
       entry.chat.getState().addMessage(msg);
     }
   };
-  // Browser auto-reconnects EventSource on transient errors; missed events are
-  // durable in chat_history and replay on the next hydrate. On a hard CLOSED
-  // (server gone, or the socket was killed) drop our reference so the stream is
-  // recreated on the next recycle instead of lingering as a dead connection
-  // that still holds one of the browser's ~6 per-host slots.
+  // The stream reconnects on transient errors, as EventSource does; missed
+  // events are durable in chat_history and replay on the next hydrate. On a
+  // hard CLOSED (the server refused it) drop our reference so the stream is
+  // recreated on the next recycle.
   es.onerror = () => {
-    if (es.readyState === EventSource.CLOSED && sharedEvents === es) {
+    if (es.readyState === SocketEventSource.CLOSED && sharedEvents === es) {
       sharedEvents = null;
     }
   };
@@ -534,17 +532,15 @@ function closeSharedEventStream(): void {
   sharedEvents = null;
 }
 
-/** Close and reopen stale cron streams. After a laptop wake, tab refocus, or
- *  network restore, EventSources can be left half-open (Chrome:
- *  ERR_NETWORK_IO_SUSPENDED) — still holding one of the browser's ~6 per-host
- *  connection slots without delivering events. Enough leaked slots starve new
- *  /api/chat requests, which looks like "sessions stopped working." `force`
+/** Close and reopen stale event streams. After a laptop wake, tab refocus, or
+ *  network restore, a stream can be left half-open, delivering no events.
+ *  `force`
  *  recycles every stream (used on `online`, which means we were definitely
  *  offline); otherwise only non-OPEN streams are recycled so a routine tab
  *  refocus doesn't churn healthy connections. */
 function recycleEventStreams(force: boolean): void {
   const es = sharedEvents;
-  if (!force && es && es.readyState === EventSource.OPEN) return;
+  if (!force && es && es.readyState === SocketEventSource.OPEN) return;
   closeSharedEventStream();
   openEventChannel();
 }

@@ -13,6 +13,7 @@ from server.infrastructure.errors import (
     WhisperAPIError,
     classify_bedrock_error,
 )
+from server.infrastructure.own_thread import run_on_own_thread
 
 log = logging.getLogger("whisper-studio")
 
@@ -28,18 +29,14 @@ def _backoff_ms(attempt: int, base: int = BASE_DELAY_MS, cap: int = MAX_DELAY_MS
     return min(base * (2**attempt), cap)
 
 
-async def invoke_with_retry(
-    *,
-    call_fn,
-    loop: asyncio.AbstractEventLoop,
-    executor,
-) -> dict:
+async def invoke_with_retry(*, call_fn) -> dict:
     """Execute a Bedrock API call with retry on transient errors.
+
+    Each attempt runs on a thread of its own (server/infrastructure/own_thread.py),
+    never on a shared pool where tool calls could hold it up.
 
     Args:
         call_fn: Callable that performs the actual Bedrock call. Should raise on error.
-        loop: asyncio event loop for run_in_executor
-        executor: ThreadPoolExecutor for blocking calls
 
     Returns:
         The response from call_fn on success.
@@ -52,7 +49,7 @@ async def invoke_with_retry(
 
     for attempt in range(THROTTLE_MAX_RETRIES):
         try:
-            return await loop.run_in_executor(executor, call_fn)
+            return await run_on_own_thread(call_fn, name="bedrock-call")
         except Exception as raw_error:
             classified = classify_bedrock_error(raw_error)
 

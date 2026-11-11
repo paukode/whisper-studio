@@ -14,6 +14,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 
 from server.infrastructure.paths import storage_root
+from server.infrastructure.run_lease import finish_if_running
 
 log = logging.getLogger("whisper-studio")
 
@@ -107,17 +108,33 @@ def finish_run(
     duration_ms: int | None = None,
     next_run: str | None = None,
     max_per_job: int = 200,
-) -> None:
-    """Close a run lease with its outcome, then prune old runs for that job."""
+) -> bool:
+    """Close a run lease with its outcome, then prune old runs for that job.
+
+    Only a lease that is still 'running' is closed (first writer wins, see
+    server/infrastructure/run_lease.py): a later writer for the same run, such
+    as the backstop in server.cron_scheduler.mark_done, changes nothing.
+    Returns True when this call closed the lease.
+    """
     with _get_conn() as conn:
-        conn.execute(
-            "UPDATE cron_runs SET status=?, text=?, duration_ms=?, "
-            "next_run=?, finished_at=? WHERE run_id=?",
-            (status, text, duration_ms, next_run, _utc_now_iso(), run_id),
+        claimed = finish_if_running(
+            conn,
+            "cron_runs",
+            "run_id",
+            run_id,
+            {
+                "status": status,
+                "text": text,
+                "duration_ms": duration_ms,
+                "next_run": next_run,
+                "finished_at": _utc_now_iso(),
+            },
         )
-        row = conn.execute("SELECT job_id FROM cron_runs WHERE run_id=?", (run_id,)).fetchone()
-        if row:
-            _prune_job(conn, row["job_id"], max_per_job)
+        if claimed:
+            row = conn.execute("SELECT job_id FROM cron_runs WHERE run_id=?", (run_id,)).fetchone()
+            if row:
+                _prune_job(conn, row["job_id"], max_per_job)
+    return claimed
 
 
 def _prune_job(conn, job_id: str, max_per_job: int) -> None:

@@ -290,7 +290,7 @@ def test_an_agent_that_keeps_calling_what_it_may_not_run_answers_early(monkeypat
     assert "tools" not in fake.requests[-1]
     assert list(workspace.iterdir()) == []
     # Reported as a stop, so a worktree agent's partial work is kept, not applied.
-    assert result.status == "completed"
+    assert result.status == "stopped"
     assert result.stopped_early is True
     assert result.stop_reason == "refused_calls"
 
@@ -421,7 +421,7 @@ def test_the_journal_keeps_a_refused_call_stop(tmp_path):
     journal = journal_mod.AgentJournal.open(
         "probe-journal", session_id="s1", task="t", agent_type="explore", model="m"
     )
-    journal.finish(status="completed", stop_reason="refused_calls", report="r", turns_used=4)
+    journal.finish(stop_reason="refused_calls", report="r", turns_used=4)
     assert journal_mod.load("probe-journal", "s1")["meta"]["stop_reason"] == "refused_calls"
 
 

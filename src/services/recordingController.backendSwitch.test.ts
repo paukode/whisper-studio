@@ -187,7 +187,7 @@ describe('recordingController — live engine switch gating', () => {
     await recordingController.start('load-cancel-session');
     await sleep(10);
     const ws = wsInstances[0];
-    useUIStore.getState().setModelLoading(null);
+    useUIStore.setState({ modelLoading: null });
 
     // The server streams a memory-load ramp (start → loading → ready).
     ws._receiveMessage({ type: 'model_loading', stage: 'start', progress: 0, label: 'Whisper' });
@@ -208,6 +208,32 @@ describe('recordingController — live engine switch gating', () => {
     // 'ready' still lands (load finished) and re-arms future banners.
     ws._receiveMessage({ type: 'model_loading', stage: 'ready', progress: 1, label: 'Whisper' });
     expect(useUIStore.getState().modelLoading?.stage).toBe('ready');
+  });
+
+  it('the socket’s model events never take down a download banner it did not show', async () => {
+    await recordingController.start('banner-owner-session');
+    await sleep(10);
+    const ws = wsInstances[0];
+    useUIStore.setState({ modelLoading: null });
+
+    // The socket's load finishes; its ready beat is pending when a download
+    // (the live-switch gate) takes the banner.
+    ws._receiveMessage({ type: 'model_loading', stage: 'ready', progress: 1, label: 'Whisper' });
+    const cancelDownload = vi.fn();
+    useUIStore.getState().openModelBanner('speech-models').show({
+      label: 'Parakeet',
+      progress: 0.2,
+      stage: 'downloading',
+      onCancel: cancelDownload,
+    });
+
+    ws._receiveMessage({ type: 'model_unloaded' });
+    await sleep(800);
+
+    const banner = useUIStore.getState().modelLoading;
+    expect(banner?.producer).toBe('speech-models');
+    banner?.onCancel?.();
+    expect(cancelDownload).toHaveBeenCalledTimes(1);
   });
 
   it('is a no-op when the engine did not actually change', async () => {

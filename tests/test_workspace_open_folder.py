@@ -1,12 +1,15 @@
 """ws_open_folder: resolves names (typed or spoken), offers candidates instead of
-guessing, switches workspaces only when asked, and never creates a folder the
-user did not ask for."""
+guessing, switches workspaces only when asked, never creates a folder the user
+did not ask for, and opens a folder outside the workspace only through the
+folder_access card, every time."""
 
+import asyncio
 import json
 import os
 
 import pytest
 
+from server.approval.executors import _do_folder_access
 from server.workspace import executors as E
 
 
@@ -14,13 +17,11 @@ from server.workspace import executors as E
 def ws(tmp_path, monkeypatch):
     """Workspace state pinned to tmp, folder lookup roots pinned to tmp/home."""
     import server.workspace.state as S
-    from server.security import folder_grants as fg
     from server.workspace import folder_lookup as FL
 
     monkeypatch.setattr(S, "WORKSPACE_CONFIG_PATH", str(tmp_path / "workspace.json"))
     monkeypatch.setattr(S, "RECENT_WORKSPACES_PATH", str(tmp_path / "recent.json"))
     monkeypatch.setattr(E, "get_workspace_path", S.get_workspace_path)
-    monkeypatch.setattr(fg, "GRANTS_PATH", str(tmp_path / "grants.json"))
     home = tmp_path / "home"
     (home / "Documents" / "ml-ops").mkdir(parents=True)
     (home / "Documents" / "ml-reports").mkdir()
@@ -29,14 +30,23 @@ def ws(tmp_path, monkeypatch):
     return S, home
 
 
-def _grant_all(monkeypatch):
-    monkeypatch.setattr("server.security.folder_grants.needs_grant", lambda *a, **k: False)
+def _card(out: str) -> dict:
+    assert out.startswith("[WS_APPROVAL]"), out
+    return json.loads(out[len("[WS_APPROVAL]") :])
+
+
+def _approved(tool_input: dict) -> dict:
+    """ws_open_folder, with a person clicking Yes on the folder_access card."""
+    payload = _card(E.execute_ws_open_folder(tool_input))
+    assert payload["action"] == "folder_access"
+    outcome = asyncio.run(_do_folder_access(payload))
+    assert outcome.ok, outcome.error
+    return json.loads(outcome.output)
 
 
 def test_spoken_name_resolves_and_opens(ws, monkeypatch):
     S, home = ws
-    _grant_all(monkeypatch)
-    out = json.loads(E.execute_ws_open_folder({"path": "m l dash o p s folder in my documents"}))
+    out = _approved({"path": "m l dash o p s folder in my documents"})
     assert out["opened"] is True
     assert out["path"] == os.path.realpath(str(home / "Documents" / "ml-ops"))
     assert S.get_workspace_path() == out["path"]
@@ -44,7 +54,6 @@ def test_spoken_name_resolves_and_opens(ws, monkeypatch):
 
 def test_close_matches_are_returned_for_confirmation(ws, monkeypatch):
     S, home = ws
-    _grant_all(monkeypatch)
     out = json.loads(E.execute_ws_open_folder({"path": "ml"}))
     assert "candidates" in out
     assert {os.path.basename(c) for c in out["candidates"]} == {"ml-ops", "ml-reports"}
@@ -55,7 +64,6 @@ def test_close_matches_are_returned_for_confirmation(ws, monkeypatch):
 
 def test_bare_unknown_name_is_not_created_and_real_names_are_offered(ws, monkeypatch):
     S, home = ws
-    _grant_all(monkeypatch)
     out = json.loads(E.execute_ws_open_folder({"path": "zzz-nothing-like-it"}))
     assert "No folder matching" in out["error"]
     # What actually exists there, so the model asks with real names.
@@ -67,7 +75,6 @@ def test_bare_unknown_name_is_not_created_and_real_names_are_offered(ws, monkeyp
 
 def test_a_misheard_word_still_offers_the_related_folders(ws, monkeypatch):
     S, home = ws
-    _grant_all(monkeypatch)
     (home / "Documents" / "orders-etl").mkdir()
     out = json.loads(E.execute_ws_open_folder({"path": "flight-etl folder in my documents"}))
     assert [os.path.basename(c) for c in out["candidates"]] == ["orders-etl"]
@@ -82,25 +89,56 @@ def test_explicit_new_path_is_not_created_without_create_flag(ws, monkeypatch):
     out = json.loads(E.execute_ws_open_folder({"path": str(target)}))
     assert "No folder matching" in out["error"] and "available" in out
     assert not target.exists()
-    # With create=true the ungranted new folder asks first (folder_access).
-    out = E.execute_ws_open_folder({"path": str(target), "create": "true"})
-    assert out.startswith("[WS_APPROVAL]")
-    payload = json.loads(out[len("[WS_APPROVAL]") :])
+    # With create=true the new folder outside the workspace asks first.
+    payload = _card(E.execute_ws_open_folder({"path": str(target), "create": "true"}))
     assert payload["action"] == "folder_access" and payload["create"] is True
     assert payload["path"] == os.path.realpath(str(target))
 
 
 def test_switching_requires_the_user_to_have_asked(ws, monkeypatch):
     S, home = ws
-    _grant_all(monkeypatch)
-    first = json.loads(E.execute_ws_open_folder({"path": "notes"}))
+    first = _approved({"path": "notes"})
     assert first["opened"] and S.get_workspace_path().endswith("notes")
     blocked = json.loads(E.execute_ws_open_folder({"path": "ml-ops"}))
     assert "already connected" in blocked["error"] and "switch=true" in blocked["error"]
     assert blocked["resolved_path"].endswith("ml-ops")
     assert S.get_workspace_path().endswith("notes")
-    switched = json.loads(E.execute_ws_open_folder({"path": "ml-ops", "switch": "true"}))
+    switched = _approved({"path": "ml-ops", "switch": "true"})
     assert switched["opened"] and S.get_workspace_path().endswith("ml-ops")
+
+
+def test_an_approved_folder_is_not_remembered(ws, monkeypatch):
+    """Nothing is remembered: after a switch away, opening the same folder
+    shows the card again. Reopening the connected folder needs no card."""
+    S, home = ws
+    _approved({"path": "notes"})
+    again = json.loads(E.execute_ws_open_folder({"path": "notes"}))
+    assert again["opened"] is True
+    _approved({"path": "ml-ops", "switch": "true"})
+    payload = _card(E.execute_ws_open_folder({"path": "notes", "switch": "true"}))
+    assert payload["path"] == os.path.realpath(str(home / "Documents" / "notes"))
+
+
+def test_the_card_never_opens_a_credential_store_or_a_folder_holding_one(ws, monkeypatch):
+    """A prompt-injected "open my home folder" is refused like "open ~/.ssh":
+    a workspace exposes everything below it."""
+    S, home = ws
+    monkeypatch.setenv("HOME", str(home))
+    (home / ".ssh").mkdir()
+    for target in (home, home / ".ssh"):
+        outcome = asyncio.run(_do_folder_access({"path": str(target), "create": True}))
+        assert not outcome.ok and "protected" in outcome.error
+    assert S.get_workspace_path() is None
+    assert not (home / ".ssh" / "new").exists()
+
+
+def test_an_unattended_agent_cannot_open_a_folder(ws):
+    S, home = ws
+    outcome = asyncio.run(
+        _do_folder_access({"path": str(home / "Documents" / "notes"), "__agent__": True})
+    )
+    assert not outcome.ok
+    assert S.get_workspace_path() is None
 
 
 def test_open_folder_now_switches_like_a_ui_connect(ws, monkeypatch, tmp_path):

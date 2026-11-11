@@ -120,11 +120,17 @@
     </div>
 
     <h2 id="reference-files">Refer to exact files</h2>
-    <p>You do not have to tell the assistant where the code is. Write <code>@file:path/to/file</code>
-      in your message. The app adds the file content to the prompt, and the assistant reads the real
-      code.</p>
-    <div class="code-block"><pre><code>Refactor the resize logic in @file:src/hooks/useTerminal.ts to
-share a helper with @file:src/components/workspace/WorkspacePanel.tsx</code></pre></div>
+    <p>You do not have to tell the assistant where the code is. Type <code>@</code> and a part of
+      the name of a file or a folder. Then select it in the menu.</p>
+    <p>The app adds a chip with the path, and adds no text to your message. When you send the
+      message, the app uploads the file, and the assistant reads the real code. A folder chip adds
+      the list of the entries in the folder.</p>
+    <p>For example, attach <code>useTerminal.ts</code> and <code>WorkspacePanel.tsx</code> with
+      <code>@</code>, and then write:</p>
+    <div class="code-block"><pre><code>Refactor the resize logic in useTerminal.ts to share a helper
+with WorkspacePanel.tsx</code></pre></div>
+    <p>In the file tree, "Add File to Chat" on a file and "Add Folder to Chat" on a folder add the
+      same chip.</p>
     <p>This method gives the answer the current content of the file. If you do not know the path,
       ask the assistant to find the file. The assistant then uses <code>ws_grep</code> (ripgrep) and
       <code>ws_glob</code>.</p>
@@ -234,8 +240,7 @@ share a helper with @file:src/components/workspace/WorkspacePanel.tsx</code></pr
       </tbody>
     </table></div>
     <p>A good sequence is this: start in Plan mode to see the change. Then use Asks first to approve
-      each edit. Use Accept edits only when you trust the task. Per-tool rules in Settings can change
-      the mode for specified commands. For the full model, see <a href="tut-permissions.html">Permissions
+      each edit. Use Accept edits only when you trust the task. For the full model, see <a href="tut-permissions.html">Permissions
       &amp; approvals</a>.</p>
 
     <h2 id="approvals">The approval card</h2>

@@ -29,6 +29,22 @@ const CONVERSATION_ROWS = 40;
 
 const isConversation = (m: ChatMessage) => m.role === 'user' || m.role === 'assistant';
 
+/** The question cards on an assistant row (one card or a group), as the
+ *  history ships them: what was asked and, once answered, the answer. */
+function questionsPayload(m: ChatMessage): { userQuestions: Array<Record<string, unknown>> } | undefined {
+  if (m.role !== 'assistant') return undefined;
+  const questions = m.userQuestions?.length ? m.userQuestions : m.userQuestion ? [m.userQuestion] : [];
+  if (questions.length === 0) return undefined;
+  return {
+    userQuestions: questions.map((q) => ({
+      question: q.question,
+      options: q.options,
+      answered: q.answered === true,
+      ...(q.answer !== undefined ? { answer: q.answer } : {}),
+    })),
+  };
+}
+
 /** History rows shipped to /api/chat (the last 40 user and assistant rows,
  *  plus the backend rows among them). Per-message attachment ids ride along
  *  so the backend can re-inject each file's content at its original position
@@ -70,6 +86,10 @@ export function buildHistoryPayload(
     ...(m.agentAnswer ? { agentAnswer: m.agentAnswer } : {}),
     ...(m.sessionMessage ? { sessionMessage: m.sessionMessage } : {}),
     ...(m.taskReport ? { taskReport: m.taskReport } : {}),
+    // Question cards with their answers: the server writes them into the
+    // row's text (sessions.py _question_cards_prompt_view), so the model
+    // knows what it asked and what the user said.
+    ...(questionsPayload(m) ?? {}),
     // What the reply's chips verified: the server checks a recap of earlier
     // work against it, and keeps it out of the model's prompt.
     ...(m.role === 'assistant' && m.deliveries?.length ? { deliveries: m.deliveries } : {}),

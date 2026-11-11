@@ -12,7 +12,7 @@ import pytest
 # Import before any configuration fixture, not under a patched load_config.
 import server.openai_bedrock.runtime  # noqa: F401
 from server.chat import compaction, compaction_log, infra
-from server.infrastructure import config, oneshot
+from server.infrastructure import config, oneshot, own_thread
 
 
 @pytest.fixture(autouse=True)
@@ -330,12 +330,12 @@ def test_cancellation_closes_bracket_and_keeps_input(monkeypatch):
         pending = loop.create_future()
         calls = []
 
-        def submit(*args):
-            calls.append(args)
+        def submit(fn, *, name):
+            calls.append(name)
             loop.call_soon(task.cancel)
             return pending
 
-        monkeypatch.setattr(loop, "run_in_executor", submit)
+        monkeypatch.setattr(own_thread, "run_on_own_thread", submit)
         task = asyncio.create_task(
             compaction.compact_messages_with_claude(
                 messages, "unused", model_key="claude", trigger="context-overflow"

