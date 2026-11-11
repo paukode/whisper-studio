@@ -283,7 +283,11 @@
         and the real end of the turn is the continuation described above.</li>
       <li><b>An <code>ask_user_question</code></b> collapses one or more question calls into a single
         tabbed card; the card <em>is</em> the response, and your answer re-enters the endpoint as a
-        continuation, exactly like an approval.</li>
+        continuation, exactly like an approval. Before a card shows, the router checks its
+        choices (<code>server/ask_user.py</code> <code>question_options_refusal</code>). A card
+        has no choices or two and more. It has no "Other" choice, because it has its own text
+        field. A call that breaks the rule gets a <code>[Refused]</code> result and no card, and
+        the model asks again.</li>
       <li><b>A new message while a card waits</b> closes the card. The card does not stay on
         screen. The request names the closed cards in <code>skipped_cards</code>. The paused turn
         continues with them closed and with your message after them. Thus the model gets a record
