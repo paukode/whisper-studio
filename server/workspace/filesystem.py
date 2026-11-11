@@ -44,12 +44,16 @@ def _ws_list_dir(root: str, rel_path: str = "") -> list[dict]:
     return entries
 
 
-def _ws_search_files(root: str, query: str, max_results: int = 100) -> list[dict]:
+def _ws_search_files(
+    root: str, query: str, max_results: int = 100, folders: bool = False
+) -> list[dict]:
     """Search for files matching a query string (case-insensitive) across the workspace.
 
     Walks the tree with os.walk, skipping dot folders and the build and
-    dependency folders in _WS_IGNORED_DIRS, and returns only files whose path
-    contains the query. Stops after max_results matches.
+    dependency folders in _WS_IGNORED_DIRS, and returns the files whose path
+    contains the query. With ``folders`` (the composer's @ menu), the folders
+    whose path contains it come too, each ahead of its own files and marked
+    ``"folder": True``. Stops after max_results matches.
     """
     query_lower = query.lower()
     results = []
@@ -60,6 +64,10 @@ def _ws_search_files(root: str, query: str, max_results: int = 100) -> list[dict
         rel_dir = os.path.relpath(dirpath, root)
         if rel_dir == ".":
             rel_dir = ""
+        if folders and rel_dir and query_lower in rel_dir.lower():
+            results.append({"path": rel_dir, "folder": True})
+            if len(results) >= max_results:
+                return results
         for fname in sorted(filenames):
             if fname.startswith(".") or fname == "Thumbs.db":
                 continue
@@ -70,3 +78,20 @@ def _ws_search_files(root: str, query: str, max_results: int = 100) -> list[dict
                 if len(results) >= max_results:
                     return results
     return results
+
+
+# A folder attached from the @ menu lists this many entries at most.
+_FOLDER_LISTING_MAX = 2000
+
+
+def _ws_folder_listing(root: str, rel_path: str) -> str:
+    """The text a folder attached from the composer's @ menu carries: its
+    immediate entries, one a line, a folder with a trailing slash (what
+    _ws_list_dir returns, so nothing is hidden)."""
+    entries = _ws_list_dir(root, rel_path)
+    lines = [e["name"] + ("/" if e["type"] == "directory" else "") for e in entries]
+    shown = lines[:_FOLDER_LISTING_MAX]
+    head = f"[Folder {rel_path}/ in the workspace: {len(lines)} entries]"
+    if len(lines) > len(shown):
+        head += f" (the first {len(shown)} are listed)"
+    return "\n".join([head, *shown])

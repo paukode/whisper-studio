@@ -202,6 +202,9 @@ class AgentConfig:
             background job that finishes in a few rounds must not get the
             budget of the agents people spawn. Custom and ephemeral types are
             never internal.
+        description: One line on what the type is for, shown in the
+            composer's @ menu (@agent-<type>). A custom type takes it from
+            the ``description`` of its file's frontmatter.
 
     isolation is a run_agent parameter, not per-type state.
     """
@@ -215,6 +218,7 @@ class AgentConfig:
     system_prompt: str | None = None
     model: str | None = None
     internal: bool = False
+    description: str = ""
 
 
 AGENT_TYPES: dict[str, AgentConfig] = {
@@ -223,11 +227,13 @@ AGENT_TYPES: dict[str, AgentConfig] = {
     "general": AgentConfig(
         agent_type="general",
         max_tokens=16384,
+        description="Full tool access, for implementation tasks",
     ),
     "explore": AgentConfig(
         agent_type="explore",
         max_tokens=8192,
         read_only=True,
+        description="Read-only, for code search and analysis",
         system_prompt=(
             "You are a fast exploration agent. Your job is to quickly search and read "
             "code to answer questions. Use ws_read_file, ws_grep, ws_glob, ws_list_directory, "
@@ -240,6 +246,7 @@ AGENT_TYPES: dict[str, AgentConfig] = {
         agent_type="plan",
         max_tokens=16384,
         read_only=True,
+        description="Read-only, writes a step-by-step implementation plan",
         system_prompt=(
             "You are a planning agent. Analyze the codebase, understand the architecture, "
             "and produce a step-by-step implementation plan. Read files to understand the "
@@ -252,6 +259,7 @@ AGENT_TYPES: dict[str, AgentConfig] = {
     "verify": AgentConfig(
         agent_type="verify",
         max_tokens=8192,
+        description="Runs tests and checks, and gives a PASS, FAIL or PARTIAL verdict",
         system_prompt=(
             "You are a verification agent. Check that the implementation is correct by "
             "reading code, running tests, and validating behavior. "
@@ -304,6 +312,7 @@ AGENT_TYPES: dict[str, AgentConfig] = {
         agent_type="coordinator",
         max_tokens=16384,
         allowed_tools=COORDINATOR_TOOLS,
+        description="Starts other agents for each part of a task and combines their results",
         system_prompt=(
             "You are a coordinator agent. You orchestrate other agents to complete "
             "complex tasks. You do NOT touch files directly, instead spawn specialized "
@@ -342,6 +351,18 @@ def _resolve_base_config(agent_type: str) -> AgentConfig:
     if agent_type in AGENT_TYPES:
         return AGENT_TYPES[agent_type]
     raise UnknownAgentType(f"unknown agent type {agent_type!r}")
+
+
+def spawnable_agent_types(workspace_path: str | None = None) -> list[dict]:
+    """The agent types a person can name with @agent-<type>: the built-in
+    presets that are not internal, then the custom types under
+    .whisper/agents/. A custom type with a preset's name replaces it, as
+    _resolve_base_config resolves the name."""
+    from server.agents.custom_config import load_custom_agent_types
+
+    types = {name: cfg for name, cfg in AGENT_TYPES.items() if not cfg.internal}
+    types.update(load_custom_agent_types(workspace_path))
+    return [{"name": name, "description": cfg.description} for name, cfg in types.items()]
 
 
 class UnknownAgentType(ValueError):

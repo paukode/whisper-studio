@@ -109,6 +109,7 @@ def build_agent_config(
     model: str | None = None,
     system_prompt: str | None = None,
     default_read_only: bool = False,
+    description: str | None = None,
 ) -> AgentConfig:
     """Build an AgentConfig from custom/ephemeral fields.
 
@@ -171,6 +172,7 @@ def build_agent_config(
         allowed_tools=allowed,
         system_prompt=prompt,
         model=(str(model).strip() or None) if model else None,
+        description=str(description or "").strip(),
     )
 
 
@@ -217,6 +219,7 @@ def _parse_agent_md(path: str) -> AgentConfig | None:
         model=fm.get("model"),
         system_prompt=body,
         default_read_only=False,
+        description=fm.get("description"),
     )
 
 
