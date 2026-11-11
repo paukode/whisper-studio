@@ -57,10 +57,15 @@ Run these checks sequentially:
 
 ## Step 2: Ask for repo
 
-Call `ask_user_question`:
+If step 1 found a repo, call `ask_user_question`:
+- question: "Set up GitHub Actions for {detected repo}? To use another repository, type it (format: owner/repo)."
+- options: ["Yes, use {detected repo}", "Cancel"]
+
+If step 1 found none, call `ask_user_question`:
 - question: "Which GitHub repository should I set up? (format: owner/repo)"
-- options: [the detected repo from step 1], or [] when step 1 found none (the card's
-  text field takes any other repo)
+- options: [] (the card's text field takes the repo)
+
+If the answer is Cancel: `notify_user` "Setup cancelled." and stop.
 
 Wait for the answer. Use it as `REPO`.
 

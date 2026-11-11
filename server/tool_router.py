@@ -149,8 +149,13 @@ async def route_tool(
 
     # --- Ask user question ---
     if tool_name == "ask_user_question":
+        from server.ask_user import question_options_refusal
+
         question_text = tool_input.get("question", "")
         options = tool_input.get("options", [])
+        refusal = question_options_refusal(options)
+        if refusal:
+            return refusal, side_effects
         side_effects.append(
             {
                 "user_question": {

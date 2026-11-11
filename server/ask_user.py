@@ -3,14 +3,46 @@ Tool descriptors for ask_user_question, sleep and create_artifact.
 
 ask_user_question pauses the stream and presents a question with
 multiple-choice options; the frontend renders a question widget and the
-user's selection is sent as the next chat message. The handling of all three
+user's selection is sent as the next chat message. Its choices follow one
+rule, enforced by question_options_refusal: none (a typed answer only) or at
+least two real ones, and never an "Other" choice. The handling of all three
 flows through SSE side effects from server/tool_router.py and the chat
 stream: there's no HTTP endpoint to mount.
 """
 
 import logging
+import re
 
 log = logging.getLogger("whisper-studio")
+
+# The conventional "Other" / "Other (please specify)" choice, matched as the
+# card matches it (isOtherChoice in src/components/chat/UserQuestionCard.tsx):
+# a real choice that only starts with the word ("Other Inc.") is not one.
+_OTHER_CHOICE = re.compile(r"^other\b\s*($|\(|:|…|\.\.\.)", re.IGNORECASE)
+
+
+def question_options_refusal(options) -> str | None:
+    """Why a question card's choices are refused, or None when they are fine.
+
+    A card has no choices (the user types the answer) or two or more, as many
+    as the user asked for, and never an "Other" choice: the card always has a
+    text field for an answer of the user's own, so an "Other" choice would
+    only take the place of a real one. The refusal goes back to the model as
+    the tool's result, so it can ask again."""
+    if not isinstance(options, list):
+        return None  # the schema check refuses a non-list
+    if len(options) == 1:
+        return (
+            "[Refused] One choice is no choice. Give two or more real choices, or none "
+            "when the user only needs to type an answer (put a suggestion in the question)."
+        )
+    for option in options:
+        if isinstance(option, str) and _OTHER_CHOICE.match(option.strip()):
+            return (
+                f"[Refused] Remove the choice {option.strip()!r}: the card always has a text "
+                "field where the user can write an answer of their own. Give only real choices."
+            )
+    return None
 
 
 # ── Tool definitions ──────────────────────────────────────────────────────────
@@ -28,8 +60,10 @@ ASK_USER_TOOL = {
         "approved a plan or told you to go on. "
         "When real decisions remain, batch them into one numbered list at the end of a stage, "
         "and keep working on everything that does not depend on them. "
-        "Give exactly the options the user asked for, each one a real answer. The card always "
-        "shows a text field for an answer of the user's own, so do not add an 'Other' option."
+        "Offer two or more real choices, as many as the user asked for, or no choices when "
+        "the user only needs to type an answer. Never add an 'Other' choice: the card always "
+        "has a text field where the user can write an answer of their own. A call with one "
+        "choice or with an 'Other' choice is refused."
     ),
     "input_schema": {
         "type": "object",
@@ -42,8 +76,8 @@ ASK_USER_TOOL = {
                 "type": "array",
                 "items": {"type": "string"},
                 "description": (
-                    "The choices, each one a real answer. Do not add 'Other': the card has its "
-                    "own text field."
+                    "Two or more real answers, or an empty list for a typed answer only. "
+                    "No 'Other' choice: the card has its own text field."
                 ),
             },
         },

@@ -206,7 +206,8 @@ def execute_ws_open_folder(tool_input: dict) -> str:
                     "candidates": candidates,
                     "hint": (
                         "Ask the user which one they meant (ask_user_question, options = these "
-                        "exact names), then call ws_open_folder again with that path. Never "
+                        "exact names; for a single name, ask whether they meant it, with the "
+                        "options Yes and No), then call ws_open_folder again with that path. Never "
                         "offer names that are not in this list. Pass create=true only if the "
                         "user asks for a new folder."
                     ),
@@ -219,8 +220,8 @@ def execute_ws_open_folder(tool_input: dict) -> str:
                     "available": browse_names(raw, recents=recents),
                     "hint": (
                         "The name was probably misheard or mistyped. Ask the user which of the "
-                        "available folders they meant (ask_user_question with those exact "
-                        "names, or the closest few), or for the full path. Never invent folder "
+                        "available folders they meant (ask_user_question with two or more of "
+                        "those exact names, the closest ones), or for the full path. Never invent folder "
                         "names, and never create a folder unless the user asked for a new one "
                         "(then pass create=true with the full path)."
                     ),
