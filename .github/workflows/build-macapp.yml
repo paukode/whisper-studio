@@ -167,3 +167,27 @@ jobs:
           else
             gh release create "${GITHUB_REF_NAME}" dist-app/*.dmg --generate-notes
           fi
+
+      # Only the newest release stays public: each older one becomes a draft.
+      # A draft keeps its notes and its DMG for people with write access to
+      # the repository, and publishing it again brings it back. Only versions
+      # below this tag change, so rebuilding an older release in place never
+      # hides a newer one. The app's update check reads only the latest
+      # release (server/update_check.py), and a draft is never the latest.
+      - name: Hide the older releases
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          current="${GITHUB_REF_NAME#v}"
+          gh release list --limit 1000 --json tagName,isDraft \
+            --jq '.[] | select(.isDraft | not) | .tagName' |
+          while read -r tag; do
+            version="${tag#v}"
+            [ "$version" = "$current" ] && continue
+            lower=$(printf '%s\n%s\n' "$version" "$current" | sort -V | head -1)
+            if [ "$lower" = "$version" ]; then
+              gh release edit "$tag" --draft=true < /dev/null
+              echo "Now a draft: $tag"
+            fi
+          done
