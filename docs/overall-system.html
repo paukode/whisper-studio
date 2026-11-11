@@ -192,8 +192,11 @@
     <ul>
       <li>The <b>companion</b> subsystem: an optional sidecar that can be toggled off entirely.</li>
       <li><b>Background tasks</b>: used to run long commands without holding an HTTP connection.</li>
-      <li>The <b>skill autocomplete</b> and <b>@-mention</b> paths in the chat input: small lookups
-        (the <code>@file:</code> completion queries the backend file search).</li>
+      <li>The <b><code>/</code> and <code>@</code> menus</b> of the chat input: small lookups. The
+        <code>@</code> menu searches the workspace with
+        <code>GET /api/workspace/search-files?folders=true</code>, and
+        <code class="path">server/chat/mentions.py</code> resolves the mentions when the turn
+        starts.</li>
     </ul>
     <p>These are real parts of the system but aren't on the critical path for "how does a chat turn
       complete and stay safe?", which is what this page is for. Every box above is also a link into a

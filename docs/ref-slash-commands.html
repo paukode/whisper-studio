@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Slash commands - Whisper Studio Docs</title>
-  <meta name="description" content="Every / command available in the Whisper Studio chat input: switch models, set thinking depth, toggle plan mode, spawn subagents, reference files, and more.">
+  <meta name="description" content="Every / command and @ mention in the Whisper Studio chat input: switch models, set thinking depth, toggle plan mode, run skills and MCP prompts, mention files, agents, and sessions, and more.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -19,11 +19,17 @@
       the start of an empty composer to see the full list inline, with argument hints and live
       autocomplete.</p>
 
-    <p>Slash commands are shortcuts the composer intercepts <em>before</em> anything is sent to the
-      model. They tune the session (model, thinking depth, response length), run side tasks (a subagent), or drive the UI (open Settings, clear the view, rename the session).
-      Most take effect instantly and confirm with a small toast; a few open a dialog. They are handled
-      client-side in <code class="path">src/hooks/useSlashCommands.tsx</code>, with the list itself
-      defined in <code class="path">src/components/chat/chatInputConstants.ts</code>.</p>
+    <p>The composer reads a slash command <em>before</em> it sends text to the model. A command
+      changes the session (model, effort level, response length), starts a side task (a
+      workflow), or controls the UI (open Settings, clear the view, rename the session). Most
+      commands operate immediately and show a small toast. Some commands open a dialog. The client
+      runs the built-in commands in <code class="path">src/hooks/useSlashCommands.tsx</code>. Their
+      list is in <code class="path">src/components/chat/chatInputConstants.ts</code>.</p>
+    <p>The composer has two menus. <code>/</code> runs something: a built-in command, a skill, or a
+      prompt of an MCP server. <code>@</code> points at something that the model uses as context: a
+      file, a folder, an agent type, a session, or an MCP resource. The two menus are in
+      <code class="path">src/components/chat/composerMenus.ts</code>. Refer to
+      <a href="#skills-prompts">Skills and MCP prompts</a> and <a href="#mentions">Mentions</a>.</p>
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
@@ -46,12 +52,11 @@
         <tr><td><code>/goal &lt;text&gt;</code></td><td>Set a session goal, send it as the first message, and work toward it.</td></tr>
         <tr><td><code>/goal clear</code></td><td>End the active goal.</td></tr>
         <tr><td><code>/goal gate [add|remove|clear]</code></td><td>List or edit the shell commands that must pass before the goal counts as done.</td></tr>
-        <tr><td><code>/subagent &lt;task&gt;</code></td><td>Spawn a focused one-shot subagent in the background.</td></tr>
         <tr><td><code>/workflow &lt;saved-name&gt;</code></td><td>Launch a saved ultracode workflow run in this session.</td></tr>
-        <tr><td><code>/file:&lt;path&gt; [question]</code></td><td>Reference a workspace file inline so the model sees its contents.</td></tr>
-        <tr><td><code>/skills</code></td><td>Open the Skills panel in Settings (not listed in the menu or <code>/help</code>).</td></tr>
-        <tr><td><code>/skills:</code></td><td>Browse available skills in an inline picker.</td></tr>
-        <tr><td><code>/mcp:</code></td><td>List your MCP servers with each one's state and tool count in an inline picker.</td></tr>
+        <tr><td><code>/skill-name [text]</code></td><td>Run an enabled skill on the text. With no text, the skill runs on the current conversation.</td></tr>
+        <tr><td><code>/server:prompt [arguments]</code></td><td>Run a prompt of a connected MCP server, and send its text with your message.</td></tr>
+        <tr><td><code>/skills</code></td><td>Open the Skills settings.</td></tr>
+        <tr><td><code>/mcp</code></td><td>Open the "MCP servers" settings.</td></tr>
         <tr><td><code>/export</code></td><td>Download the visible conversation as a text file.</td></tr>
         <tr><td><code>/clear</code></td><td>Empty this session's chat (the next save persists it empty).</td></tr>
         <tr><td><code>/compact [note]</code></td><td>Summarize the conversation so far. The model then reads the summary in place of the earlier messages.</td></tr>
@@ -160,15 +165,8 @@
     <h2 id="side-tasks">Side tasks &amp; agents</h2>
     <p>These run work alongside the main conversation without derailing it.</p>
 
-    <h3 id="subagent">/subagent</h3>
-    <p><code>/subagent &lt;task&gt;</code> spawns a <b>focused one-shot subagent</b> that works in the
-      background with the full tool loop: web search and fetch, workspace access, code, and any enabled
-      MCP tools. It does not block the composer, so you can keep chatting while it runs. Its progress
-      shows as one row per agent in the chat, and <b>Open</b> on a row shows the full feed in the
-      dock's agent pane. To stop the run, press <kbd>Esc</kbd> or the composer's <b>Stop</b> in that
-      session, or use the agent pane or the header's Background tasks list. The final answer replaces
-      the intro message when the run finishes. It runs on the composer's current model and effort.
-      For coordinating several agents at once, see <a href="tut-subagents.html">Sub-agents &amp;
+    <p>To give a task to one agent, use an <code>@agent-&lt;type&gt;</code> mention. Refer to
+      <a href="#agents">Agent mentions</a> and <a href="tut-subagents.html">Sub-agents &amp;
       teams</a>.</p>
 
     <h3 id="workflow">/workflow</h3>
@@ -183,59 +181,116 @@
       <a href="arch-ultracode.html">The ultracode workflow runtime</a> for how workflows are authored,
       previewed, and resumed.</p>
 
-    <h2 id="files-tools">Files &amp; tools</h2>
-    <p>Colon-style commands open an inline picker as you type after the colon, so you can search rather
-      than remember exact names.</p>
+    <h2 id="skills-prompts">Skills and MCP prompts</h2>
+    <p>The <code>/</code> menu has the heading "Commands". It shows the built-in commands first.
+      Then it shows the enabled skills and the prompts of the connected MCP servers. When you type
+      a command and a space, the menu shows the options of the command under the heading
+      "Options".</p>
 
-    <h3 id="file">/file: and @file</h3>
-    <p><code>/file:&lt;path&gt;</code> references a workspace file so the model sees its contents inline.
-      There are two behaviors depending on whether you add a question:</p>
+    <h3 id="skill">/skill-name</h3>
+    <p>Each enabled <a href="tut-skills.html">skill</a> is in the menu as
+      <code>/skill-name</code>. Type your text after the name, for example
+      <code>/meeting_notes tidy these</code>. The skill runs on that text. With no text, the skill
+      runs on the current conversation. The chat bubble shows <code>/skill-name</code> and your
+      text. The server adds a line that asks the model to call the skill.</p>
+    <p>A skill with the same name as a built-in command cannot run from <code>/</code>. The
+      built-in command runs.</p>
+
+    <h3 id="mcp-prompt">/server:prompt</h3>
+    <p>A connected MCP server can give prompts. Each prompt is in the menu as
+      <code>/server:prompt</code>. The row of the prompt shows its arguments, and an optional
+      argument is in brackets. Type the arguments after the name:</p>
+    <ul>
+      <li>The words after the name go into the arguments of the prompt, in order.</li>
+      <li>The last argument gets all the remaining text of the line.</li>
+      <li>Quotation marks keep words together as one argument.</li>
+      <li>If the prompt must have an argument and you do not give it, a toast shows
+        <code>/server:prompt needs: &lt;names&gt;.</code> The text stays in the composer.</li>
+    </ul>
+    <p>The app sends the text of the prompt as an attachment of your message. The name of the
+      attachment is <code>/server:prompt (MCP prompt)</code>. Thus, the model also receives the
+      prompt in the next turns. If the prompt has more than one message, the text keeps the "User:" and
+      "Assistant:" labels.</p>
+    <p>In the names of the server and the prompt, the app changes some characters to
+      <code>_</code>. It changes each character that is not a letter, a digit, <code>_</code>,
+      <code>.</code>, or <code>-</code>. The same names are in the <code>@server:uri</code>
+      mentions.</p>
+
+    <h3 id="skills-mcp">/skills and /mcp</h3>
+    <p><code>/skills</code> opens the <b>Skills</b> settings. There you enable, disable, import, and
+      edit your <a href="tut-skills.html">skills</a>. <code>/mcp</code> opens the <b>MCP servers</b>
+      settings, where you add, enable, and disable your
+      <a href="tut-mcp-plugins.html">MCP servers</a>. The menu and <code>/help</code> show the two
+      commands.</p>
+
+    <h2 id="mentions">Mentions</h2>
+    <p>Type <code>@</code> at any position in the message to open the mention menu. The menu has the
+      heading "Mentions". A mention points at something that the model uses as context:</p>
     <dl class="spec">
-      <dt><code class="path">/file:path</code></dt><dd>With no trailing question, the file is attached to
-        the composer as a chip (uploaded in the background) and you keep composing.</dd>
-      <dt><code class="path">/file:path a question</code></dt><dd>With a question, your message and a
-        working indicator appear immediately while the file is fetched, converted, and uploaded in the
-        background, then the turn sends.</dd>
-    </dl>
-    <p>The same file reference is also available as an <code>@file:</code> mention from anywhere in the
-      message. Typing <code>@</code> opens a picker with five fixed entries plus your own skills and
-      sessions:</p>
-    <dl class="spec">
-      <dt><code>@file:</code></dt><dd>Reference a workspace file, searchable by path as you type.</dd>
-      <dt><code>@skills:</code></dt><dd>Browse skills. A bare <code>@&lt;skill-name&gt;</code> works too
-        and asks the model to call that skill for the message (no model is forced to call a tool);
-        with no text of your own, the skill runs on the conversation so far.</dd>
-      <dt><code>@mcp:</code></dt><dd>Browse your MCP servers (state and tool count).</dd>
+      <dt>Files and folders</dt><dd>The files and folders of the connected workspace. The menu
+        searches for them when you type after <code>@</code>. With no text after <code>@</code>, the
+        first row is "Type to search files and folders". Refer to
+        <a href="#files">Workspace files and folders</a>.</dd>
+      <dt><code>@agent-&lt;type&gt;</code></dt><dd>Gives the task to an agent of that type. Refer to
+        <a href="#agents">Agent mentions</a>.</dd>
+      <dt><code>@&lt;session&gt;</code></dt><dd>Adds the recent conversation of a different session
+        as context. The menu finds the session by its title, and writes the title as a slug.</dd>
+      <dt><code>@server:uri</code></dt><dd>Adds a resource of a connected MCP server, for example
+        <code>@github:issue://12</code>. Refer to <a href="#resources">MCP resources</a>.</dd>
       <dt><code>@index</code></dt><dd>Force a search of your indexed folders for this message (see
         <a href="tut-index-search.html#ask-with-grounding">Index &amp; semantic search</a>).</dd>
       <dt><code>@docs</code></dt><dd>Answer from this manual: the matching passages are retrieved and
         the answer is written from them, with the pages it used cited. The first use builds the
         manual's index, which takes a moment.</dd>
-      <dt><code>@&lt;session-title&gt;</code></dt><dd>Pull another chat session in as context for the
-        turn, matched on its title.</dd>
     </dl>
     <p>The <code>@index</code> and <code>@docs</code> markers are stripped before the model sees the
       text. Attached documents are extracted to text (large ones are capped) and images become vision
       blocks; see <a href="arch-extraction.html">Attachment extraction</a> for the type-aware pipeline.
       Supported inputs include images, PDF, Office docs, audio, video, code, and text.</p>
 
-    <h3 id="skills-mcp">/skills, /skills: and /mcp:</h3>
-    <p><code>/skills:</code> browses the available <a href="tut-skills.html">skills</a> and
-      <code>/mcp:</code> lists your <a href="tut-mcp-plugins.html">MCP servers</a> with each one's state
-      and tool count, updated live when a server is added or changes. Both open a searchable submenu as
-      you type after
-      the colon, which is the discoverable way to see exactly what is wired up in the current session.
-      <code>/skills</code> without the colon is a different command: it opens the <b>Skills</b> panel in
-      Settings, where you enable, disable, import, and edit them. It is not listed in the menu or in
-      <code>/help</code>, and <kbd>Enter</kbd> picks <code>/skills:</code> from the menu, so type
-      <code>/skills</code> and press <kbd>Cmd</kbd> <kbd>Enter</kbd>.</p>
+    <h3 id="files">Workspace files and folders</h3>
+    <p>The file and folder search operates only with a connected workspace. When you select a
+      file or a folder in the menu, the app adds no text to the message. It adds a chip that holds
+      only the path. The app uploads the file when you send the message:</p>
+    <ul>
+      <li>The message shows immediately.</li>
+      <li>The status line shows "Uploading &lt;name&gt;…", or "Uploading N files…" for more than one
+        file.</li>
+      <li><b>Stop</b> cancels the uploads.</li>
+      <li><b>Regenerate</b> uploads the files again.</li>
+    </ul>
+    <p>A folder chip shows <code>name/</code>. The chip contains the listing of the folder. The
+      listing gives the entries that are directly in the folder, one entry on each line. The name of
+      each subfolder ends with <code>/</code>. The listing gives maximum 2000 entries. If the folder
+      has more entries, the listing tells you.</p>
+    <p>In the workspace tree, "Add File to Chat" on a file and "Add Folder to Chat" on a folder
+      add the same path chip.</p>
+
+    <h3 id="agents">Agent mentions</h3>
+    <p><code>@agent-&lt;type&gt;</code> gives the task to an agent of that type. The types are
+      <code>general</code>, <code>explore</code>, <code>plan</code>, <code>verify</code>, and
+      <code>coordinator</code>, and your custom types. A custom type is a
+      <code>.whisper/agents/*.md</code> file in your user folder
+      (<code class="path">~/.whisper/agents/</code>) or in the project. For each type, the menu shows
+      the <code>description</code> from the frontmatter of the file. Refer to
+      <a href="tut-subagents.html#custom-types">Custom agent types</a>.</p>
+    <p>The mention stays in the text. The server adds a line that asks the model to call
+      <code>spawn_agent</code> with that <code>agent_type</code>. The model writes the task of the
+      agent from your message. The turn waits for the result of the agent.</p>
+
+    <h3 id="resources">MCP resources</h3>
+    <p><code>@server:uri</code> adds a resource of a connected MCP server, for example
+      <code>@github:issue://12</code>. The app reads the resource when the turn starts. The text of
+      the resource goes into the message before your text, to maximum 150,000 characters. If the
+      server is not connected, or the app cannot read the resource, the mention stays as you typed
+      it. The app does not read a name with a colon after it as a session.</p>
 
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16v-4M12 8h.01"/><circle cx="12" cy="12" r="9"/></svg></span>
-      <div class="callout__body"><p><b>The colon matters.</b> <code>/file:</code>, <code>/skills:</code>,
-        and <code>/mcp:</code> are submenu commands: the argument comes right after the colon, and the
-        picker dismisses once a space begins the message body. See
-        <a href="ref-tools.html">Agent tools</a> for the full catalogue those tools come from.</p></div>
+      <div class="callout__body"><p><b>/ runs, @ points.</b> Use <code>/</code> to run a command, a
+        skill, or an MCP prompt. Use <code>@</code> to point at context: a file, a folder, an agent
+        type, a session, or an MCP resource. See <a href="ref-tools.html">Agent tools</a> for the full
+        list of the tools that the model calls.</p></div>
     </div>
 
     <h2 id="conversation">Conversation &amp; session</h2>
@@ -333,11 +388,12 @@
     </div>
 
     <h3 id="help">/help</h3>
-    <p><code>/help</code> opens a dialog listing every command grouped by category (General, AI &amp;
-      Model, Workspace, Settings, Debug). The AI &amp; Model group is where <code>/workflow</code>,
-      <code>/ci</code>, and <code>/goal</code> appear, each with its icon and one-line description. It is
-      generated from the same command list as the slash menu, so it always matches your build. The only
-      command it leaves out is <code>/skills</code> (without the colon).</p>
+    <p><code>/help</code> opens a dialog with the built-in commands in groups (General, AI &amp;
+      Model, Workspace, Settings, Debug). The AI &amp; Model group shows <code>/workflow</code>,
+      <code>/ci</code>, and <code>/goal</code>, each with its icon and a description of one line. The
+      Settings group shows <code>/skills</code> and <code>/mcp</code>. The app makes the dialog from
+      the same list as the slash menu. Thus, the dialog always matches your build. The dialog does not
+      show the skills and the MCP prompts.</p>
 
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg></span>

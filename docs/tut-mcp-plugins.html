@@ -91,9 +91,9 @@
       <li>
         <h4>Let the backend connect</h4>
         <p>The backend finds the change in less than 1 s. It starts the command as a stdio process,
-          or it opens an HTTP connection to the url. Then it gets the tools and resources of the
-          server. You do not restart the app. "Settings", the <code>/mcp:</code> menu, and
-          <code>@mcp:</code> show the same list.</p>
+          or it opens an HTTP connection to the url. Then it gets the tools, resources, and
+          prompts of the server. You do not restart the app. To open the "MCP servers" settings
+          from the chat box, type <code>/mcp</code>.</p>
       </li>
       <li>
         <h4>Examine the server state</h4>
@@ -104,9 +104,11 @@
       <li>
         <h4>Use its tools in the chat</h4>
         <p>The tools of the server show with the built-in tools, and the model can call them. To
-          name a server in the chat box, type <code>@mcp:</code> and its name. The
-          <code>/mcp:</code> and <code>@mcp:</code> menus show the state of each server and its
-          number of tools.</p>
+          run a prompt of the server, type <code>/</code> and select <code>/server:prompt</code>.
+          Then type the arguments of the prompt. To add a resource of the server to your message,
+          type <code>@</code> and select <code>@server:uri</code>. Refer to
+          <a href="ref-slash-commands.html#mcp-prompt">MCP prompts</a> and
+          <a href="ref-slash-commands.html#resources">MCP resources</a>.</p>
       </li>
     </ol>
     <p>Each server has an <b>enabled</b> flag in "MCP servers". The app keeps the flag after a
@@ -176,6 +178,9 @@
     </table></div>
     <p>You do not call these tools. Ask a question that uses the data, for example "what tables
       does the connected database expose?". The model then calls the two tools.</p>
+    <p>You can also add a resource to a message. Type <code>@</code> and select the resource, for
+      example <code>@github:issue://12</code>. The app reads the resource when the turn starts. The
+      text of the resource goes into the message before your text.</p>
 
     <h2 id="plugins">Write a plugin</h2>
     <p>Plugins are in the plugins folder: <code class="path">~/.whisper/plugins/</code> for the Mac

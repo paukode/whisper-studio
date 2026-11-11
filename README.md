@@ -232,12 +232,17 @@ server uses only that copy. It does not use a llama.cpp build from Homebrew.
 
 ## Usage
 
-Type `/` in the chat input for slash commands, `@file:path` to pull a file
-into the prompt, `@docs` to ground an answer in the documentation, and the
-microphone icon to dictate (say "okay send", "send now", "fire away", or
-"send the message" to submit hands-free; a bare "send" never fires). You can
-send another message while the assistant is working, and it is folded into
-the running turn. When a workspace is connected, the assistant can read and
+Type `/` in the chat input to run a command, a skill, or an MCP prompt. Type
+`@` to add context: a workspace file or folder, a different session, or an
+MCP resource. Type `@agent-` and a type to give the task to an agent. Use
+`@docs` to get an answer from the documentation.
+
+To dictate, click the microphone icon. To send by voice, say "okay send",
+"send now", "fire away", or "send the message". The word "send" alone does
+not send the message.
+
+You can send another message while the assistant is working, and it is
+folded into the running turn. When a workspace is connected, the assistant can read and
 edit files, run sandboxed commands, use Git, search the web, remember things
 across sessions, schedule jobs, and spawn sub-agents, all gated by the
 current permission mode.

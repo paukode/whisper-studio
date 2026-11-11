@@ -32,8 +32,8 @@
         <tr><td><kbd>Enter</kbd></td><td>Send the message.</td></tr>
         <tr><td><kbd>Shift</kbd> <kbd>Enter</kbd></td><td>Insert a newline without sending.</td></tr>
         <tr><td><kbd>Cmd</kbd> <kbd>Enter</kbd></td><td>Force-send now, even while the slash-command autocomplete is open. An explicit "send this" that is never captured as a menu selection.</td></tr>
-        <tr><td><kbd>/</kbd> <span class="badge badge--muted">at the start</span></td><td>Open the slash-command menu. It fires only when the slash is the first character of the message, so a slash inside a sentence stays a slash. Keep typing to filter, and after the command plus a space the menu offers that command's own options (models, effort levels, themes). See <a href="ref-slash-commands.html">Slash commands</a>.</td></tr>
-        <tr><td><kbd>@</kbd></td><td>Open the mention menu, anywhere in the message: files, skills, MCP servers, <code>@index</code>, <code>@docs</code>, and your other sessions.</td></tr>
+        <tr><td><kbd>/</kbd> <span class="badge badge--muted">at the start</span></td><td>Open the "Commands" menu: the built-in commands, the enabled skills, and the prompts of the connected MCP servers. The menu opens only when <code>/</code> is the first character of the message. Thus, a slash in a sentence stays a slash. Type more letters to filter the menu. After a command and a space, the menu shows the options of the command (models, effort levels, themes) under "Options". See <a href="ref-slash-commands.html">Slash commands</a>.</td></tr>
+        <tr><td><kbd>@</kbd></td><td>Open the "Mentions" menu at any position in the message. The menu shows workspace files and folders, agent types, your other sessions, MCP resources, <code>@index</code>, and <code>@docs</code>. See <a href="ref-slash-commands.html#mentions">Mentions</a>.</td></tr>
       </tbody>
     </table></div>
 
@@ -46,17 +46,15 @@
     </div>
 
     <h2 id="kill-switch">The ESC kill switch</h2>
-    <p>The single most useful key while an agent is working is <kbd>Esc</kbd>. When a turn is streaming,
-      or a <code>/subagent</code> run you started in this session is still running, pressing
-      <kbd>Esc</kbd> (this is the same action as the <b>Stop</b> button) instantly kills the active
-      stream and those <code>/subagent</code> runs for the session you are viewing. It also stops the
-      shell commands and background shell tasks that the current turn started. Detached agents and
-      workflow runs keep running: stop them from the header's Background tasks list or from the run
-      card.</p>
+    <p>The most useful key during a turn is <kbd>Esc</kbd>. When a turn streams, <kbd>Esc</kbd>
+      immediately stops the stream of the session that you see. It is the same action as the
+      <b>Stop</b> button. It also stops the agents, the shell commands, and the background shell
+      tasks that the current turn started. Detached agents and workflow runs continue. To stop
+      them, use the Background tasks list of the header or the run card.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Keys</th><th>Action</th></tr></thead>
       <tbody>
-        <tr><td><kbd>Esc</kbd> <span class="badge badge--muted">while streaming</span></td><td>Kill the current stream, this session's <code>/subagent</code> runs, and the shell work the turn started (same as pressing Stop).</td></tr>
+        <tr><td><kbd>Esc</kbd> <span class="badge badge--muted">while streaming</span></td><td>Stop the current stream, and the agents and the shell work that the turn started (the same as <b>Stop</b>).</td></tr>
       </tbody>
     </table></div>
     <p>The kill switch is armed only while something is actually running, so <kbd>Esc</kbd> keeps its

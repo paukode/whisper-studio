@@ -63,9 +63,9 @@
         <tr><td><code>transcript</code></td><td>The live transcript of the session's recording, when there is one.</td></tr>
         <tr><td><code>selected_search_indexes</code></td><td>The indexed workspaces this session searches. Absent means all indexed folders; an empty list means none.</td></tr>
         <tr><td><code>local_context_window</code></td><td>The composer's context size for an on-device model. Cloud models ignore it.</td></tr>
-        <tr><td><code>force_skill</code></td><td>A skill the composer asked for by name, when set.</td></tr>
+        <tr><td><code>force_skill</code></td><td>The skill of a <code>/skill-name</code> message, when set.</td></tr>
         <tr><td><code>session_id</code></td><td>Which conversation this turn belongs to.</td></tr>
-        <tr><td><code>attachment_ids</code></td><td>Any files dropped into the composer, resolved server-side into the prompt.</td></tr>
+        <tr><td><code>attachment_ids</code></td><td>The attachments of the message. They are files from the paperclip or a drop, and the workspace files and folders from the <code>@</code> menu (uploaded at send). A <code>/server:prompt</code> message also attaches the text of the MCP prompt. The server resolves them into the prompt.</td></tr>
         <tr><td><code>session_approvals</code> / <code>session_denials</code></td><td>The categories you have already pre-approved or blocked for this session, for example <code>{"write": "allow"}</code>. The client re-sends them on every turn; the server never stores them.</td></tr>
         <tr><td><code>approved_tool_result</code></td><td>Present only on an approval continuation. Its presence is what makes the server resume a paused turn instead of starting a fresh one.</td></tr>
         <tr><td><code>skipped_cards</code></td><td>The <code>tool_use_id</code>s of the cards that this message closed: you sent it instead of an answer. The server then resumes the paused turn. Each approval or folder call gets a "not run" result, and each question gets a "not answered" result. Your message joins the same user turn (<code class="path">server/chat/resume.py</code>).</td></tr>
@@ -144,9 +144,14 @@
         rules, the user's instructions and rules from <code class="path">~/.whisper</code>, selected
         <a href="arch-memory.html">memories</a>, and per-session memory, split into cache-aligned
         static and dynamic parts when prompt caching is on.</li>
-      <li><b>Resolve <code>@file</code> mentions and attachments</b> inline into the user message, and
-        add <a href="arch-index.html">index grounding</a> if the turn passes the grounding intent gate
-        with indexes selected (an <code>@index</code> mention forces it).</li>
+      <li><b>Resolve the <code>@</code> mentions and the attachments</b> into the user message.
+        <code class="path">server/chat/mentions.py</code> puts the text of each
+        <code>@server:uri</code> resource and the recent conversation of each
+        <code>@&lt;session&gt;</code> into the message. It also finds the
+        <code>@agent-&lt;type&gt;</code> mentions, and <code>agent_hint</code> adds a line that asks
+        for <code>spawn_agent</code>. Then add <a href="arch-index.html">index grounding</a> if the
+        turn passes the grounding intent gate with indexes selected (an <code>@index</code> mention
+        forces it).</li>
       <li><b>Run the session hooks.</b> <code>SessionStart</code> and <code>UserPromptSubmit</code>
         <a href="arch-hooks.html">hooks</a> run, and the context they return is appended to your
         message.</li>

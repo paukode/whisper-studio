@@ -157,9 +157,11 @@ under Blockers even if it was not labelled that way. Keep it terse.</code></pre>
         triggers.</p></li>
       <li><h4>Ask for the result</h4><p>Write a request that matches the description, for example
         "clean up these standup notes". Claude selects the skill. You do not type its name.</p></li>
-      <li><h4>Optional: call the skill by name</h4><p>Ask Claude to use the skill by its name.
-        Claude then calls <code>skill_invoke</code> with the <code>name</code> of the skill and your
-        <code>input</code>.</p></li>
+      <li><h4>Optional: call the skill by name</h4><p>Type <code>/</code> and the name of the
+        skill, and then your text. For example, type <code>/standup_notes</code> and paste the
+        notes after it. With no text, the skill runs on the current conversation. You can also ask Claude to use the skill
+        by its name. Claude then calls <code>skill_invoke</code> with the <code>name</code> of the
+        skill and your <code>input</code>.</p></li>
     </ol>
 
     <div class="callout callout--tip">

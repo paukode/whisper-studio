@@ -595,12 +595,13 @@
         </tr>
         <tr>
           <td>skill</td>
-          <td>A Markdown-defined capability the assistant loads when relevant, bundled as files in
-            <code class="path">skills/</code>: catch-up, meeting notes, presentation builder and
-            translate text. Web search, Python execution, transcript summarization and document
-            analysis are native tools, not skills; see
-            <a href="ref-tools.html#builtin-tools">Built-in core tools</a>. Invoke or list your own
-            skills with <code>skill_invoke</code> and <code>skill_list</code>. See
+          <td>A capability that a Markdown file defines. The assistant loads a skill when the
+            request matches it. The bundled skills are files in <code class="path">skills/</code>:
+            catch-up, meeting notes, presentation builder, and translate text. Web search, Python
+            execution, transcript summarization, and document analysis are native tools, not skills
+            (see <a href="ref-tools.html#builtin-tools">Built-in core tools</a>). Use
+            <code>skill_invoke</code> and <code>skill_list</code> to run or list your own skills, or
+            run one from the composer with <code>/skill-name</code>. See
             <a href="tut-skills.html">Skills</a>.</td>
         </tr>
         <tr>
@@ -654,9 +655,10 @@
         </tr>
         <tr>
           <td>sub-agent</td>
-          <td>An independent agent spawned to handle a focused subtask, coordinated through the event
-            bus and optionally organized into a team of parallel agents. Spawn one with
-            <code>spawn_agent</code> or the <code>/subagent</code> command. See
+          <td>An independent agent that does one focused subtask. The event bus coordinates the
+            agents, and a team can contain agents that run at the same time. The model starts one
+            with <code>spawn_agent</code>. An <code>@agent-&lt;type&gt;</code> mention asks the model
+            to start one of that type. See
             <a href="arch-agents.html">Sub-agents &amp; the event bus</a>.</td>
         </tr>
       </tbody>

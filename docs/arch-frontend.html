@@ -170,8 +170,8 @@
         <tr><td><code>workspaceStore</code></td><td>singleton</td><td>File tree, editor tabs, and dirty state for the connected repo.</td></tr>
         <tr><td><code>uiStore</code>, <code>layoutStore</code>, <code>dockStore</code></td><td>singleton</td><td>Panel visibility, persisted split fractions, and the right-side dock panels.</td></tr>
         <tr><td><code>settingsStore</code></td><td>singleton</td><td>Config, model list, selected model, effort level, verbosity, data retention, and the skill catalogue (<code>loadSkills</code>).</td></tr>
-        <tr><td><code>mcpStore</code></td><td>singleton</td><td>The one MCP server list, with live status, tool counts and pending elicitations. Settings &gt; Tools and automation &gt; MCP servers, the composer's <code>/mcp:</code> and <code>@mcp:</code> menus and the import panel all read it; the backend's <code>mcp_changed</code> events refetch it.</td></tr>
-        <tr><td><code>taskStore</code>, <code>recordingStore</code>, <code>cronUnreadStore</code>, <code>subagentStore</code></td><td>singleton</td><td>The live task list, the shared mic, cron badges, and running subagents.</td></tr>
+        <tr><td><code>mcpStore</code></td><td>singleton</td><td>The one MCP server list, with live status, tool counts and pending elicitations. Settings &gt; Tools and automation &gt; MCP servers, the composer's <code>/</code> menu (MCP prompts) and <code>@</code> menu (MCP resources), and the import panel all read it. The backend's <code>mcp_changed</code> events fetch it again.</td></tr>
+        <tr><td><code>taskStore</code>, <code>recordingStore</code>, <code>cronUnreadStore</code></td><td>singleton</td><td>The live task list, the shared mic, and cron badges.</td></tr>
         <tr><td><code>composerAttachmentsStore</code></td><td>singleton</td><td>The composer's attachment chips, kept per session.</td></tr>
         <tr><td><code>agentFeedStore</code></td><td>singleton</td><td>The agent pane's records: the journal read once, the live tail merged by <code>seq</code>, and the status readout.</td></tr>
         <tr><td><code>indexSearchStore</code></td><td>singleton</td><td>Per-session selection of which indexed workspaces a turn should search (<code>selected_search_indexes</code>), persisted to <code>localStorage</code> so a session's choice survives a reload.</td></tr>
@@ -221,6 +221,44 @@
       in that time, the app removes the message, keeps your text in the composer, and tells you that it
       sent nothing. For the server side, see
       <a href="arch-chat-turn.html#mid-turn">Sending while it works</a>.</p>
+
+    <h3 id="composer-menus">The composer menus</h3>
+    <p>The composer has two menus. <code>/</code> runs something, and <code>@</code> points at
+      something to use as context. <code class="path">src/components/chat/composerMenus.ts</code>
+      builds the two menus as pure data. <code class="path">src/hooks/useChatAutocomplete.ts</code>
+      shows the popup with the heading "Commands", "Options", or "Mentions".</p>
+    <ul>
+      <li><b>The <code>/</code> menu</b> lists the built-in commands from
+        <code class="path">chatInputConstants.ts</code>. Then it lists the enabled skills of
+        <code>settingsStore</code> as <code>/skill-name</code>, and the prompts of the connected
+        MCP servers of <code>mcpStore</code> as <code>/server:prompt</code>. A skill with the name of
+        a built-in command is not in the list.</li>
+      <li><b>The <code>@</code> menu</b> lists the agent types of <code>GET /api/agents/types</code>,
+        the sessions, the MCP resources of <code>mcpStore</code>, <code>@index</code>, and
+        <code>@docs</code>. The workspace files and folders come from
+        <code>GET /api/workspace/search-files?folders=true</code>. A file or a folder inserts no
+        text. It adds a chip that holds only the path.</li>
+    </ul>
+    <p>On send, <code class="path">src/components/chat/ChatInput.tsx</code> calls
+      <code>parseSlashSend</code>. A <code>/skill-name</code> message goes to <code>/api/chat</code>
+      with <code>force_skill</code>, and the bubble shows the command and the text. A
+      <code>/server:prompt</code> message first calls <code>POST /api/mcp/prompt</code> with the
+      body <code>{"command": "server:prompt", "arguments": "..."}</code>. <code>render_prompt</code>
+      in <code class="path">server/mcp_catalog.py</code> runs the prompt, and the route returns the
+      id and the filename of an attachment. If the call fails, a toast shows the reason, and the
+      text stays in the composer.</p>
+    <p>A message with path chips goes through <code>sendWithWorkspaceRefs</code> in
+      <code class="path">src/hooks/chatStream/workspaceFileTurn.ts</code>. It shows the message,
+      puts the turn in the <code>starting</code> phase with an "Uploading" status, and uploads the
+      files through <code>/api/upload</code>. A folder chip calls
+      <code>POST /api/workspace/attach-folder</code> with <code>{"path": rel}</code>
+      (<code class="path">server/workspace/routes/browse.py</code>), which stores the listing as an
+      attachment. The model call starts when all the uploads are complete. Stop cancels the
+      uploads, and a resend uploads the files again.</p>
+    <p><code>GET /api/mcp/servers</code> lists the <code>prompts</code> and the
+      <code>resources</code> of each server, from <code class="path">server/mcp_catalog.py</code>.
+      <code class="path">server/chat/mentions.py</code> resolves the <code>@</code> text when the
+      turn starts. Refer to <a href="arch-chat-turn.html">Anatomy of a chat turn</a>.</p>
 
     <h3 id="routing-events">Routing SSE events</h3>
     <p><code class="path">src/hooks/chatStream/sseStream.ts</code> holds
@@ -499,6 +537,9 @@
       <dt><code class="path">src/components/layout/AppStatusBar.tsx</code></dt><dd>Persistent bottom status strip: model, effort or Thinking level, permission mode, git, background-task pill.</dd>
       <dt><code class="path">src/stores/sessionRuntimes.ts</code></dt><dd>The per-session runtime registry: stores, LRU eviction, and the app's one event channel, which routes <code>task_event</code>/<code>ci_progress</code>/<code>ci_result</code> and the other out-of-band frames.</dd>
       <dt><code class="path">src/hooks/useChatStream.ts</code></dt><dd>The send path: bind the owning session, POST, commit atomically.</dd>
+      <dt><code class="path">src/components/chat/composerMenus.ts</code></dt><dd>The <code>/</code> and <code>@</code> menus as pure data, and <code>parseSlashSend</code>.</dd>
+      <dt><code class="path">src/hooks/useChatAutocomplete.ts</code></dt><dd>The menu popup of the composer.</dd>
+      <dt><code class="path">src/hooks/chatStream/workspaceFileTurn.ts</code></dt><dd><code>sendWithWorkspaceRefs</code>: upload the path chips, then send.</dd>
       <dt><code class="path">src/hooks/chatStream/sseStream.ts</code></dt><dd>The SSE parser.</dd>
       <dt><code class="path">src/hooks/chatStream/approvalLeg.ts</code></dt><dd>An approval card's buttons: run the approved action, then resume the turn.</dd>
       <dt><code class="path">src/hooks/chatStream/approvalContinuation.ts</code></dt><dd>The approval-continuation pump.</dd>

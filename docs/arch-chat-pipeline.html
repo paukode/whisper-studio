@@ -106,7 +106,12 @@
         execution</b>: a blocked write still has its schema, and the executor explains why it will
         not run. Rewriting the tools array instead would invalidate the prompt cache on every flip.
         See <a href="arch-tools.html#progressive-disclosure">progressive tool disclosure</a>.</li>
-      <li><b>Resolve <code>@file</code> mentions</b> inline into the user message.</li>
+      <li><b>Resolve the <code>@</code> mentions</b>
+        (<code class="path">server/chat/mentions.py</code>). The text of each
+        <code>@server:uri</code> MCP resource and the recent conversation of each
+        <code>@&lt;session&gt;</code> go into the user message. An <code>@agent-&lt;type&gt;</code>
+        mention stays in the text, and <code>agent_hint</code> adds a line that asks the model to
+        call <code>spawn_agent</code>.</li>
       <li><b>Expand attachments.</b> Documents are capped (around 150K characters) and images become
         vision blocks. See <a href="arch-extraction.html">attachment extraction</a>.</li>
       <li><b>Index grounding.</b> If the turn passes the grounding intent gate (contentless

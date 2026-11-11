@@ -278,10 +278,10 @@
       <code>plan</code> agent cannot mutate your project. An agent runs read-only whatever its type
       when it is started from a plan-mode turn or by a read-only agent (a resume through
       <code>send_message</code> included), and a detached one keeps it. That holds for the app's
-      own memory agents too, since <code>send_message</code> can resume one by id. While the app
-      is in plan mode (a workflow approved from its card, <code>/subagent</code>) every other agent
-      starts read-only, and the memory agents keep their tools for their own post-turn runs. A
-      read-only agent
+      own memory agents too, since <code>send_message</code> can resume one by id. When the app
+      is in plan mode, every other agent starts read-only (for example, the agents of a workflow
+      approved from its card). The memory agents keep their tools for their own runs after the
+      turn. A read-only agent
       runs an MCP tool only when it is marked read-only: by the server's <code>readOnlyHint</code>
       annotation, or in <code>mcp_servers.json</code> (<code>"read_only": true</code> for a whole
       server, <code>"read_only_tools"</code> for some of its tools, <code>"read_only": false</code> to
@@ -300,8 +300,9 @@
         (<code class="path">~/.whisper/agents/</code> in the Mac app, the checkout's own
         <code>.whisper/agents/</code> in a source install), with project winning name collisions,
         and they resolve before the built-in <code>AGENT_TYPES</code>, so a custom type can shadow a
-        built-in name. The frontmatter keys that are read are <code>name</code>, <code>tools</code>,
-        <code>read_only</code> and <code>model</code>; the markdown body is the system prompt. The
+        built-in name. The app reads the frontmatter keys <code>name</code>,
+        <code>description</code>, <code>tools</code>, <code>read_only</code>, and
+        <code>model</code>. The markdown body is the system prompt. The
         <code>model</code> key is stored but has no effect: the agent runs on the session model
         unless the <code>spawn_agent</code> call passes <code>model</code>. The round and time limits
         come from Settings.</li>
@@ -316,6 +317,18 @@
     <p>Every custom or ephemeral config passes through the exact same <code>WRITE_TOOLS</code> plus
       registry-backstop filtering as the built-in presets, so a file- or model-authored type cannot
       grant itself write tools its <code>read_only</code> flag forbids.</p>
+    <p>The composer shows each type as an <code>@agent-&lt;type&gt;</code> mention.
+      <code>spawnable_agent_types</code> in <code class="path">server/agents/config.py</code> makes
+      the list: the built-in presets that are not internal (<code>general</code>,
+      <code>explore</code>, <code>plan</code>, <code>verify</code>, <code>coordinator</code>), and
+      then the custom types of the user and of the connected workspace. A custom type with the name of a preset
+      replaces the preset. <code>GET /api/agents/types</code> returns the list with the
+      <code>description</code> of each type.</p>
+    <p>When the turn starts, <code class="path">server/chat/mentions.py</code> finds each mention of
+      a known type and keeps the mention in the text. Then <code>agent_hint</code> adds a line that
+      asks the model to call <code>spawn_agent</code> with that <code>agent_type</code>. No provider
+      gets a forced <code>tool_choice</code>, and the model writes the task of the agent from the
+      message of the user.</p>
 
     <h2 id="teams">Teams</h2>
     <p><code>team_create</code> (in <code class="path">server/agent_tools/</code>) spawns several agents
