@@ -341,6 +341,22 @@ export async function fetchWorkspaceFile(path: string, signal?: AbortSignal): Pr
   return new File([blob], name, { type: blob.type || 'application/octet-stream' });
 }
 
+/** Attach a workspace folder: the server stores the folder's listing as a
+ *  document attachment and returns it, like an uploaded file. */
+export async function attachWorkspaceFolder(
+  path: string,
+  signal?: AbortSignal,
+): Promise<{ id: string; filename: string }> {
+  const response = await fetch('/api/workspace/attach-folder', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+    signal,
+  });
+  if (!response.ok) throw new Error(await readErrorBody(response));
+  return (await response.json()) as { id: string; filename: string };
+}
+
 /** Upload a workspace file as a chat attachment (no composer chip). Rejects
  *  with the server's reason, for example a size limit. The server reads a
  *  document into text before it answers, so a large PDF holds the request

@@ -71,6 +71,22 @@ export const MCPServersResponseSchema = z.object({
     tool_overrides: z.record(z.string(), z.string()),
     enabled_tools: z.array(z.string()),
     disabled_tools: z.array(z.string()),
+    prompts: z.array(z.object({
+      name: z.string(),
+      command: z.string(),
+      description: z.string(),
+      arguments: z.array(z.object({
+        name: z.string(),
+        description: z.string(),
+        required: z.boolean(),
+      })),
+    })),
+    resources: z.array(z.object({
+      uri: z.string(),
+      mention: z.string(),
+      name: z.string(),
+      description: z.string(),
+    })),
   })),
   revision: z.number(),
   config_error: z.string().nullable(),

@@ -1,14 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../useChatStream', () => ({ sendChatTurn: vi.fn().mockResolvedValue(true) }));
-vi.mock('./workspaceFileTurn', () => ({ askAboutWorkspaceFile: vi.fn() }));
+vi.mock('./workspaceFileTurn', () => ({ sendWithWorkspaceRefs: vi.fn() }));
 
 import { getChatStore } from '@/stores/sessionRuntimes';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useUIStore } from '@/stores/uiStore';
 import type { ChatMessage } from '@/types/chat';
 import { sendChatTurn } from '../useChatStream';
-import { askAboutWorkspaceFile } from './workspaceFileTurn';
+import { sendWithWorkspaceRefs } from './workspaceFileTurn';
 import { resendUserMessage } from './resend';
 
 const SID = 'resend-sess';
@@ -22,7 +22,7 @@ function withQuestion(question: Partial<ChatMessage>): void {
 beforeEach(() => {
   useSessionStore.setState({ currentSessionId: SID });
   vi.mocked(sendChatTurn).mockClear();
-  vi.mocked(askAboutWorkspaceFile).mockClear();
+  vi.mocked(sendWithWorkspaceRefs).mockClear();
 });
 
 describe('resendUserMessage', () => {
@@ -44,12 +44,20 @@ describe('resendUserMessage', () => {
     expect(vi.mocked(sendChatTurn).mock.calls[0][0]).toBe('Summarize it in one line.');
   });
 
-  it('uploads the workspace file again when the /file upload never finished', () => {
-    withQuestion({ attachmentNames: ['big.pdf'], workspaceFile: 'docs/big.pdf' });
+  it('uploads the workspace files again when their upload never finished, keeping the uploaded ones', () => {
+    withQuestion({
+      attachmentIds: ['up1'],
+      attachmentNames: ['notes.txt', 'big.pdf', 'src/'],
+      workspaceRefs: [{ path: 'docs/big.pdf' }, { path: 'src', folder: true }],
+    });
     resendUserMessage(0);
 
     expect(chat().messages).toEqual([]);
-    expect(askAboutWorkspaceFile).toHaveBeenCalledWith(SID, 'docs/big.pdf', 'Summarize this file.');
+    expect(sendWithWorkspaceRefs).toHaveBeenCalledWith(SID, 'Summarize this file.', {
+      refs: [{ path: 'docs/big.pdf' }, { path: 'src', folder: true }],
+      attachmentIds: ['up1'],
+      attachmentNames: ['notes.txt'],
+    });
     expect(sendChatTurn).not.toHaveBeenCalled();
   });
 
@@ -59,7 +67,7 @@ describe('resendUserMessage', () => {
     resendUserMessage(0);
 
     expect(sendChatTurn).not.toHaveBeenCalled();
-    expect(askAboutWorkspaceFile).not.toHaveBeenCalled();
+    expect(sendWithWorkspaceRefs).not.toHaveBeenCalled();
     expect(chat().messages).toHaveLength(2);
     expect(addToast).toHaveBeenCalledWith(expect.objectContaining({ type: 'error', message: expect.stringContaining('big.pdf') }));
     addToast.mockRestore();

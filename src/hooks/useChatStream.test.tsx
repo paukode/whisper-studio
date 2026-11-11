@@ -16,7 +16,6 @@ import { useChatStream } from './useChatStream';
 import { killSessionStream } from './chatStream/streamControl';
 import { dropRuntime, getActiveChatStore, getChatStore, useRuntimeIndex } from '@/stores/sessionRuntimes';
 import { useSessionStore } from '@/stores/sessionStore';
-import { useSubagentStore } from '@/stores/subagentStore';
 import { useUIStore } from '@/stores/uiStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { registerStreamController } from './chatStream/streamControl';
@@ -47,7 +46,6 @@ describe('useChatStream', () => {
     // leak activity into this one.
     for (const id of useRuntimeIndex.getState().liveIds) dropRuntime(id);
     useSessionStore.setState({ currentSessionId: null, liveSessions: {}, sessions: [] });
-    useSubagentStore.setState({ stops: {}, owners: {} });
     vi.spyOn(globalThis, 'fetch').mockImplementation(async () => emptySSEResponse());
   });
 
@@ -735,32 +733,6 @@ describe('useChatStream', () => {
     const s = getChatStore(sid).getState();
     expect(s.isStreaming).toBe(false);
     expect(s.messages.filter((m) => m.role === 'assistant')).toHaveLength(0);
-  });
-
-  it('abort stops only the subagents the viewed session started', () => {
-    const stopA = vi.fn();
-    const stopB = vi.fn();
-    useSubagentStore.getState().register('team-a', 'sess-A', stopA);
-    useSubagentStore.getState().register('team-b', 'sess-B', stopB);
-
-    const { result } = renderHook(() => useChatStream());
-    act(() => {
-      useSessionStore.setState({ currentSessionId: 'sess-B' });
-      result.current.abort(); // no main stream running: subagents alone
-    });
-
-    // Session B's run is stopped and gone; session A's keeps working.
-    expect(stopB).toHaveBeenCalledTimes(1);
-    expect(useSubagentStore.getState().stops['team-b']).toBeUndefined();
-    expect(stopA).not.toHaveBeenCalled();
-    expect(useSubagentStore.getState().stops['team-a']).toBe(stopA);
-
-    act(() => {
-      useSessionStore.setState({ currentSessionId: 'sess-A' });
-      result.current.abort();
-    });
-    expect(stopA).toHaveBeenCalledTimes(1);
-    expect(useSubagentStore.getState().stops['team-a']).toBeUndefined();
   });
 
   // Stop scopes its kill to the start of the running TURN. An answered

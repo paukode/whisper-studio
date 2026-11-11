@@ -48,7 +48,7 @@ import { closeWaitingCards } from './chatStream/waitingCards';
 export interface SendOptions {
   forceSkill?: string;
   /** What the user's chat bubble shows, when it should differ from the
-   *  `question` sent to the model — e.g. a bare `@skill` mention whose
+   *  `question` sent to the model — e.g. a bare `/skill` command whose
    *  payload carries a synthetic anchor sentence the user never typed. */
   displayText?: string;
   hideUserMessage?: boolean;
@@ -81,7 +81,7 @@ export interface UseChatStreamReturn {
   abort: () => void;
 }
 
-/** What the user's bubble shows. For an @skill send the mention is
+/** What the user's bubble shows. For a /skill send the command is
  *  prepended and only the user's own text follows it — `displayText`
  *  (possibly empty) takes precedence over the payload `question`, which may
  *  carry a synthetic anchor sentence that must never be rendered. */
@@ -90,7 +90,7 @@ export function buildDisplayQuestion(
   opts?: Pick<SendOptions, 'forceSkill' | 'displayText'>,
 ): string {
   const shown = opts?.displayText ?? question;
-  return opts?.forceSkill ? `@${opts.forceSkill}${shown ? ' ' + shown : ''}` : shown;
+  return opts?.forceSkill ? `/${opts.forceSkill}${shown ? ' ' + shown : ''}` : shown;
 }
 
 /** The user-facing parallelism ceiling: how many sessions may be ACTIVE
@@ -683,8 +683,7 @@ export function useChatStream(): UseChatStreamReturn {
   }, []);
 
   // Stop button: instant kill of the session the user is LOOKING AT (state
-  // finalized synchronously) plus that session's own /subagent runs. Other
-  // sessions keep streaming and keep their runs.
+  // finalized synchronously). Other sessions keep streaming.
   const abort = useCallback(() => {
     killSessionStream(useSessionStore.getState().currentSessionId);
   }, []);

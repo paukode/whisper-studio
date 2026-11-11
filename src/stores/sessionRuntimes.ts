@@ -12,8 +12,8 @@
  * keep receiving cron events, and keep saving themselves. The registry
  * is soft-capped: beyond MAX_LIVE_RUNTIMES, idle hydrated sessions are
  * evicted LRU (never the current one, never one that is busy (streaming,
- * running an approved action, mid-approval, or running a /subagent),
- * recording, or has an unflushed save).
+ * running an approved action, or mid-approval), recording, or has an
+ * unflushed save).
  */
 import { SocketEventSource } from '@/api/streamSocket';
 import { create, useStore } from 'zustand';
@@ -23,7 +23,6 @@ import { createTranscriptionStore, type TranscriptionState } from './transcripti
 import { useSessionStore } from './sessionStore';
 import { useRecordingStore } from './recordingStore';
 import { useCronUnreadStore } from './cronUnreadStore';
-import { hasRunningSubagent, useSubagentStore } from './subagentStore';
 import type {
   ChatMessage,
   CronEventPayload,
@@ -162,9 +161,8 @@ export function holdForApprovedAction(sessionId: string): () => void {
 }
 
 /** A session's chat is BUSY while a turn streams in it, while an approved
- *  action it started is still executing (also after Stop), while an approval
- *  card waits on the user, or while a /subagent it started is still running.
- *  One predicate for both the parallel ceiling and eviction, so a session
+ *  action it started is still executing (also after Stop), or while an
+ *  approval card waits on the user. One predicate for both the parallel ceiling and eviction, so a session
  *  that still has an answer to deliver is never treated as idle. */
 function isChatBusy(sid: string, chat: ChatState): boolean {
   return (
@@ -172,7 +170,6 @@ function isChatBusy(sid: string, chat: ChatState): boolean {
     || runningApprovedActions.has(sid)
     || chat.currentApproval !== null
     || chat.approvalQueue.length > 0
-    || hasRunningSubagent(useSubagentStore.getState(), sid)
   );
 }
 

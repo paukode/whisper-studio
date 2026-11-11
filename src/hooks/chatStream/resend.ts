@@ -4,8 +4,8 @@
  * keeps the message's files the same way.
  *
  * The transcript is cut at the message, and the send adds it again. Files
- * travel by id when they were uploaded. A `/file` message whose upload never
- * finished uploads its workspace file again (./workspaceFileTurn). A message
+ * travel by id when they were uploaded. A message whose workspace files never
+ * finished uploading uploads them again (./workspaceFileTurn). A message
  * that names a file the app has no copy of is not sent without it: the user
  * is told instead, because the model would answer about some other file.
  * The cut also ends the turn a card waits on, so its cards go without
@@ -16,7 +16,7 @@ import { useSessionStore } from '@/stores/sessionStore';
 import { useUIStore } from '@/stores/uiStore';
 import { sendChatTurn } from '../useChatStream';
 import { dropWaitingCards } from './waitingCards';
-import { askAboutWorkspaceFile } from './workspaceFileTurn';
+import { sendWithWorkspaceRefs } from './workspaceFileTurn';
 
 export function resendUserMessage(index: number, content?: string): void {
   const sessionId = useSessionStore.getState().currentSessionId;
@@ -28,7 +28,7 @@ export function resendUserMessage(index: number, content?: string): void {
   const ids = message.attachmentIds ?? [];
 
   if (ids.length < names.length) {
-    if (!message.workspaceFile) {
+    if (!message.workspaceRefs?.length) {
       useUIStore.getState().addToast({
         type: 'error',
         message: `Not sent: ${names.join(', ')} did not finish uploading. Attach the file again.`,
@@ -37,7 +37,13 @@ export function resendUserMessage(index: number, content?: string): void {
     }
     if (sessionId) dropWaitingCards(sessionId);
     chat.deleteMessagesFrom(index);
-    askAboutWorkspaceFile(sessionId, message.workspaceFile, text);
+    // The workspace files come last on the message: the names before them
+    // belong to the files that were already uploaded.
+    sendWithWorkspaceRefs(sessionId, text, {
+      refs: message.workspaceRefs,
+      attachmentIds: ids,
+      attachmentNames: names.slice(0, ids.length),
+    });
     return;
   }
 

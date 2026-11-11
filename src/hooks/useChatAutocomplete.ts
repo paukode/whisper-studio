@@ -1,20 +1,17 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { get } from '@/api/client';
+import { optLabel, optValue, type SessionLike, type SlashCommand } from '@/components/chat/chatInputConstants';
 import {
-  AT_ROOT_ENTRIES,
+  atItems,
   autocompleteHeading,
-  matchColonSubmenu,
-  mcpServerDesc,
-  optLabel,
-  optValue,
-  slugifySessionTitle,
-  SUPPORTED_ATTACHMENT_SUMMARY,
+  pathItems,
+  slashItems,
   type ACItem,
-  type McpServerLike,
-  type SessionLike,
+  type AgentTypeLike,
+  type McpPromptLike,
+  type McpResourceLike,
   type SkillLike,
-  type SlashCommand,
-} from '@/components/chat/chatInputConstants';
+} from '@/components/chat/composerMenus';
 
 export interface UseChatAutocompleteOptions {
   text: string;
@@ -24,20 +21,26 @@ export interface UseChatAutocompleteOptions {
    *  filled from live config by the caller). */
   slashCommands: SlashCommand[];
   skills: SkillLike[];
-  mcpServers: McpServerLike[];
+  /** The prompts of the connected MCP servers (`/server:prompt`). */
+  mcpPrompts: McpPromptLike[];
+  /** The resources of the connected MCP servers (`@server:uri`). */
+  mcpResources: McpResourceLike[];
   /** Other chat sessions, mentionable as a bare `@<slug>` to pull that
    *  session's recent conversation in as context (resolved server-side). */
   sessions: SessionLike[];
-  /** Called when a file is chosen from the `/file:` submenu — attaches it to
-   *  the composer as a chip (background upload) instead of inserting text. */
-  onAttachWorkspaceFile?: (path: string) => void;
+  /** The agent types the user can name as `@agent-<type>`. */
+  agents: AgentTypeLike[];
+  /** Whether a workspace is connected, so `@` searches its files. */
+  workspace: boolean;
+  /** A file or folder picked from the `@` menu: attach it as a chip. */
+  onAttachWorkspacePath: (path: string, folder: boolean) => void;
 }
 
 export interface UseChatAutocompleteResult {
   acItems: ACItem[];
   acVisible: boolean;
   acIndex: number;
-  /** What the open menu lists ("Commands", "Files", "Mentions", ...), shown as
+  /** What the open menu lists ("Commands", "Mentions", "Options"), shown as
    *  the popup's heading. */
   acHeading: string;
   acRect: { left: number; bottom: number; width: number } | null;
@@ -47,25 +50,31 @@ export interface UseChatAutocompleteResult {
   computeAutocomplete: (val: string, cursorPos: number) => void;
 }
 
+/** A search runs this long after the last keystroke. */
+const SEARCH_DEBOUNCE_MS = 120;
+/** The most files and folders one `@` search lists. */
+const PATH_RESULTS = 50;
+
 /**
- * Slash-command and @-mention autocomplete state machine for the chat
- * composer: owns the popup state (items, visibility, selection index,
- * mode, submenu, screen rect) and the text-mutation handlers that insert a
- * chosen completion back into the textarea.
+ * The composer's `/` and `@` menus (src/components/chat/composerMenus.ts):
+ * owns the popup state (items, visibility, selection index, mode, the
+ * command whose options show, screen rect) and the text changes a pick makes.
  */
 export function useChatAutocomplete(opts: UseChatAutocompleteOptions): UseChatAutocompleteResult {
   const {
     text,
     setText,
     textareaRef,
-    slashCommands: SLASH_COMMANDS,
+    slashCommands,
     skills,
-    mcpServers,
+    mcpPrompts,
+    mcpResources,
     sessions,
-    onAttachWorkspaceFile,
+    agents,
+    workspace,
+    onAttachWorkspacePath,
   } = opts;
 
-  /* Autocomplete state */
   const [acItems, setAcItems] = useState<ACItem[]>([]);
   const [acVisible, setAcVisible] = useState(false);
   const [acIndex, setAcIndex] = useState(0);
@@ -73,7 +82,6 @@ export function useChatAutocomplete(opts: UseChatAutocompleteOptions): UseChatAu
   const [acSubCmd, setAcSubCmd] = useState<string | null>(null);
   const [acRect, setAcRect] = useState<{ left: number; bottom: number; width: number } | null>(null);
 
-  /* ── Autocomplete positioning ── */
   const updateAcRect = useCallback(() => {
     const el = textareaRef.current;
     if (!el) return;
@@ -81,8 +89,17 @@ export function useChatAutocomplete(opts: UseChatAutocompleteOptions): UseChatAu
     setAcRect({ left: rect.left, bottom: window.innerHeight - rect.top, width: rect.width });
   }, [textareaRef]);
 
-  /* ── Close autocomplete ── */
+  // Monotonic request id: each path search claims the next id, and a result
+  // whose id is no longer current is dropped, so a slow answer for an earlier
+  // query never overwrites a newer one. Closing the menu bumps it too.
+  const searchReqIdRef = useRef(0);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+  }, []);
+
   const closeAc = useCallback(() => {
+    searchReqIdRef.current++;
     setAcVisible(false);
     setAcItems([]);
     setAcIndex(0);
@@ -90,505 +107,124 @@ export function useChatAutocomplete(opts: UseChatAutocompleteOptions): UseChatAu
     setAcSubCmd(null);
   }, []);
 
-  /* ── Insert text from autocomplete selection ── */
-  const insertAcText = useCallback((insert: string) => {
-    const ta = textareaRef.current;
-    if (!ta) return;
-    const cursorPos = ta.selectionStart;
-    const val = text;
+  const show = useCallback((mode: 'slash' | 'at', subCmd: string | null, items: ACItem[]) => {
+    updateAcRect();
+    setAcMode(mode);
+    setAcSubCmd(subCmd);
+    setAcItems(items);
+    setAcIndex(0);
+    setAcVisible(items.length > 0);
+  }, [updateAcRect]);
 
-    if (acMode === 'slash') {
-      // Replace from the leading / to cursor
-      const before = val.slice(0, cursorPos);
-      const slashIdx = before.lastIndexOf('/');
-      const prefix = slashIdx >= 0 ? val.slice(0, slashIdx) : val.slice(0, cursorPos);
-      const after = val.slice(cursorPos);
-      const newText = prefix + '/' + insert + after;
-      setText(newText);
-      // Set cursor after inserted text
-      requestAnimationFrame(() => {
-        const pos = prefix.length + 1 + insert.length;
-        ta.setSelectionRange(pos, pos);
-        ta.focus();
-      });
-    } else if (acMode === 'at') {
-      const before = val.slice(0, cursorPos);
-      const atIdx = before.lastIndexOf('@');
-      const prefix = atIdx >= 0 ? val.slice(0, atIdx) : val.slice(0, cursorPos);
-      const after = val.slice(cursorPos);
-      const newText = prefix + insert + ' ' + after;
-      setText(newText);
-      requestAnimationFrame(() => {
-        const pos = prefix.length + insert.length + 1;
-        ta.setSelectionRange(pos, pos);
-        ta.focus();
-      });
-    }
-  }, [text, acMode, setText, textareaRef]);
-
-  /* ── Remove the in-progress slash token (e.g. ``/file:report``) ── */
-  // Used after a /file: result is attached as a composer chip, so no command
-  // text is left behind in the textarea.
-  const removeSlashToken = useCallback(() => {
-    const ta = textareaRef.current;
-    if (!ta) return;
-    const cursorPos = ta.selectionStart;
-    const val = text;
-    const before = val.slice(0, cursorPos);
-    const slashIdx = before.lastIndexOf('/');
-    if (slashIdx < 0) return;
-    const prefix = val.slice(0, slashIdx);
-    const after = val.slice(cursorPos);
-    setText(prefix + after);
-    requestAnimationFrame(() => {
-      ta.setSelectionRange(prefix.length, prefix.length);
-      ta.focus();
-    });
-  }, [text, setText, textareaRef]);
-
-  /* ── Load submenu items for slash commands ── */
-  const loadSubmenuItems = useCallback((type: string) => {
-    if (type === 'skills') {
-      const items: ACItem[] = skills.map((s) => ({
-        icon: 'zap',
-        name: s.name,
-        desc: s.description ?? 'Skill',
-        insert: 'skills:' + s.name,
-      }));
-      setAcItems(items.length > 0 ? items : [{ icon: 'zap', name: 'No skills', desc: 'No skills loaded', insert: 'skills:' }]);
-      setAcIndex(0);
-    } else if (type === 'mcp') {
-      const items: ACItem[] = mcpServers.map((s) => ({
-        icon: 'link',
-        name: s.name,
-        desc: mcpServerDesc(s),
-        insert: 'mcp:' + s.name,
-      }));
-      setAcItems(items.length > 0 ? items : [{ icon: 'link', name: 'No servers', desc: 'No MCP servers', insert: 'mcp:' }]);
-      setAcIndex(0);
-    } else if (type === 'file') {
-      setAcItems([{ icon: 'folder', name: 'Type to search...', desc: `Supported: ${SUPPORTED_ATTACHMENT_SUMMARY}`, insert: 'file:' }]);
-      setAcIndex(0);
-    }
-  }, [skills, mcpServers]);
-
-  /* ── Load submenu items for @ mentions ── */
-  const loadAtSubmenuItems = useCallback((type: string) => {
-    if (type === 'skills') {
-      const items: ACItem[] = skills.map((s) => ({
-        icon: 'zap',
-        name: s.name,
-        desc: s.description ?? 'Skill',
-        insert: '@skills:' + s.name,
-      }));
-      setAcItems(items.length > 0 ? items : [{ icon: 'zap', name: 'No skills', desc: 'No skills loaded', insert: '@skills:' }]);
-      setAcIndex(0);
-    } else if (type === 'mcp') {
-      const items: ACItem[] = mcpServers.map((s) => ({
-        icon: 'link',
-        name: s.name,
-        desc: mcpServerDesc(s),
-        insert: '@mcp:' + s.name,
-      }));
-      setAcItems(items.length > 0 ? items : [{ icon: 'link', name: 'No servers', desc: 'No MCP servers', insert: '@mcp:' }]);
-      setAcIndex(0);
-    } else if (type === 'file') {
-      setAcItems([{ icon: 'folder', name: 'Type to search...', desc: `Supported: ${SUPPORTED_ATTACHMENT_SUMMARY}`, insert: '@file:' }]);
-      setAcIndex(0);
-    }
-  }, [skills, mcpServers]);
-
-  /* ── Select an autocomplete item ── */
-  const selectAcItem = useCallback((item: ACItem) => {
-    // A real file result from the /file: submenu (icon 'file', as opposed to the
-    // 'folder' placeholder/no-result rows): attach it to the composer as a chip
-    // and strip the /file: token instead of inserting command text. The chip
-    // uploads in the background; the user then types a message and submits.
-    if (acMode === 'slash' && acSubCmd === 'file:' && item.icon === 'file') {
-      const path = item.insert.startsWith('file:') ? item.insert.slice('file:'.length) : item.name;
-      onAttachWorkspaceFile?.(path);
-      removeSlashToken();
-      closeAc();
-      return;
-    }
-
-    // Check if this is a slash command with options (sub-items)
-    if (acMode === 'slash' && !acSubCmd) {
-      const cmd = SLASH_COMMANDS.find((c) => '/' + c.cmd === item.insert || item.insert === c.cmd);
-      if (cmd?.options) {
-        // Show options as sub-items. Display the label but insert the value
-        // (they differ for /model: label "Sonnet 5.5" vs value "sonnet5.5").
-        const subItems: ACItem[] = cmd.options.map((opt) => ({
-          icon: cmd.icon,
-          name: optLabel(opt),
-          desc: `${cmd.cmd.trim()} ${optValue(opt)}`,
-          insert: cmd.cmd + optValue(opt),
-        }));
-        setAcSubCmd(cmd.cmd);
-        setAcItems(subItems);
-        setAcIndex(0);
-        // Update the text to show the command so far
-        const ta = textareaRef.current;
-        if (ta) {
-          const cursorPos = ta.selectionStart;
-          const before = text.slice(0, cursorPos);
-          const slashIdx = before.lastIndexOf('/');
-          const prefix = slashIdx >= 0 ? text.slice(0, slashIdx) : text.slice(0, cursorPos);
-          const after = text.slice(cursorPos);
-          const newText = prefix + '/' + cmd.cmd + after;
-          setText(newText);
-          requestAnimationFrame(() => {
-            const pos = prefix.length + 1 + cmd.cmd.length;
-            ta.setSelectionRange(pos, pos);
-            ta.focus();
-          });
-        }
-        return;
-      }
-      if (cmd?.submenu) {
-        // Show submenu items (skills, files, mcp)
-        const cmdName = cmd.cmd.replace(':', '');
-        setAcSubCmd(cmd.cmd);
-        loadSubmenuItems(cmdName);
-        // Update text
-        const ta = textareaRef.current;
-        if (ta) {
-          const cursorPos = ta.selectionStart;
-          const before = text.slice(0, cursorPos);
-          const slashIdx = before.lastIndexOf('/');
-          const prefix = slashIdx >= 0 ? text.slice(0, slashIdx) : text.slice(0, cursorPos);
-          const after = text.slice(cursorPos);
-          const newText = prefix + '/' + cmd.cmd + after;
-          setText(newText);
-          requestAnimationFrame(() => {
-            const pos = prefix.length + 1 + cmd.cmd.length;
-            ta.setSelectionRange(pos, pos);
-            ta.focus();
-          });
-        }
-        return;
-      }
-    }
-
-    // Check if this is an @ mention with submenu
-    if (acMode === 'at' && !acSubCmd) {
-      if (item.insert === '@file:' || item.insert === '@skills:' || item.insert === '@mcp:') {
-        const subType = item.insert.replace('@', '').replace(':', '');
-        setAcSubCmd(item.insert);
-        loadAtSubmenuItems(subType);
-        // Update text
-        const ta = textareaRef.current;
-        if (ta) {
-          const cursorPos = ta.selectionStart;
-          const before = text.slice(0, cursorPos);
-          const atIdx = before.lastIndexOf('@');
-          const prefix = atIdx >= 0 ? text.slice(0, atIdx) : text.slice(0, cursorPos);
-          const after = text.slice(cursorPos);
-          const newText = prefix + item.insert + after;
-          setText(newText);
-          requestAnimationFrame(() => {
-            const pos = prefix.length + item.insert.length;
-            ta.setSelectionRange(pos, pos);
-            ta.focus();
-          });
-        }
-        return;
-      }
-    }
-
-    insertAcText(item.insert);
-    closeAc();
-  }, [acMode, acSubCmd, text, setText, textareaRef, insertAcText, closeAc, loadSubmenuItems, loadAtSubmenuItems, SLASH_COMMANDS, onAttachWorkspaceFile, removeSlashToken]);
-
-
-  /* ── File search for @file: and /file: ── */
-  const fileSearchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Monotonic request id: each searchFiles() call claims the next id, and any
-  // async result whose id is no longer current is dropped. Without this a
-  // slow response for an earlier query could resolve AFTER a newer query and
-  // overwrite the newer results (out-of-order race). Bumped for every call —
-  // including the synchronous short-query branch — so starting a new search
-  // also invalidates any in-flight fetch.
-  const searchReqIdRef = useRef(0);
-  const searchFiles = useCallback(async (query: string, prefix: string) => {
+  /** Files and folders for an `@` query, ahead of the other mentions. */
+  const searchPaths = useCallback((query: string, others: ACItem[]) => {
     const reqId = ++searchReqIdRef.current;
-    if (query.length < 1) {
-      setAcItems([{ icon: 'folder', name: 'Type to search...', desc: `Supported: ${SUPPORTED_ATTACHMENT_SUMMARY}`, insert: prefix }]);
-      return;
-    }
-    try {
-      const data = await get<{ results: Array<{ path: string }> }>(`/api/workspace/search-files?q=${encodeURIComponent(query)}`);
-      // Stale: a newer search superseded this one while the fetch was in flight.
-      if (reqId !== searchReqIdRef.current) return;
-      const files = data.results ?? [];
-      if (files.length === 0) {
-        setAcItems([{ icon: 'folder', name: 'No results', desc: `No files matching "${query}"`, insert: prefix + query }]);
-      } else {
-        setAcItems(files.map((f) => ({
-          icon: 'file',
-          name: f.path,
-          desc: 'Workspace file',
-          insert: prefix + f.path,
-        })));
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(async () => {
+      try {
+        const data = await get<{ results: Array<{ path: string; folder?: boolean }> }>(
+          `/api/workspace/search-files?q=${encodeURIComponent(query)}&folders=true&limit=${PATH_RESULTS}`,
+        );
+        if (reqId !== searchReqIdRef.current) return;
+        const items = [...pathItems(data.results ?? []), ...others];
+        setAcItems(items);
+        setAcIndex(0);
+        setAcVisible(items.length > 0);
+      } catch {
+        // No search result: the other mentions stay listed.
       }
-      setAcIndex(0);
-    } catch {
-      if (reqId !== searchReqIdRef.current) return;
-      setAcItems([{ icon: 'folder', name: 'Search failed', desc: 'Could not search files', insert: prefix + query }]);
-    }
+    }, SEARCH_DEBOUNCE_MS);
   }, []);
 
-  // Clear a pending debounce timer on unmount so a late searchFiles() can't
-  // fire (and setState) after the composer has gone away.
-  useEffect(() => () => {
-    if (fileSearchTimeout.current) clearTimeout(fileSearchTimeout.current);
-  }, []);
+  const optionItems = useCallback((cmd: SlashCommand, query: string): ACItem[] => (cmd.options ?? [])
+    // Match either the shown label or the inserted value, so typing "son"
+    // (or "sonnet5") both surface "Sonnet 5.5".
+    .filter((o) => optLabel(o).toLowerCase().startsWith(query) || optValue(o).toLowerCase().startsWith(query))
+    .map((opt) => ({
+      icon: cmd.icon,
+      name: optLabel(opt),
+      desc: `${cmd.cmd.trim()} ${optValue(opt)}`,
+      insert: cmd.cmd + optValue(opt),
+      kind: 'option',
+    })), []);
 
-  /* ── Compute autocomplete on text change ── */
   const computeAutocomplete = useCallback((val: string, cursorPos: number) => {
     const before = val.slice(0, cursorPos);
 
-    // Check for /subcmd:query patterns (e.g. /file:main.ts, /skills:web,
-    // /mcp:tool). matchColonSubmenu only matches while a single-token argument
-    // is being typed — once a further space starts the message body it returns
-    // null, so the search popup dismisses instead of swallowing the question.
-    const colonSubMatch = matchColonSubmenu(before);
-    if (colonSubMatch) {
-      const subType = colonSubMatch.type;
-      const subQuery = colonSubMatch.query;
-      const cmd = SLASH_COMMANDS.find((c) => c.cmd === subType + ':');
-      if (cmd) {
-        updateAcRect();
-        setAcMode('slash');
-        setAcSubCmd(cmd.cmd);
-        if (subType === 'file') {
-          if (fileSearchTimeout.current) clearTimeout(fileSearchTimeout.current);
-          fileSearchTimeout.current = setTimeout(() => {
-            void searchFiles(subQuery, 'file:');
-          }, 200);
-          setAcVisible(true);
-          return;
-        } else if (subType === 'skills') {
-          const filtered = skills.filter((s) => !subQuery || s.name.toLowerCase().includes(subQuery.toLowerCase()));
-          setAcItems(filtered.length > 0 ? filtered.map((s) => ({
-            icon: 'zap',
-            name: s.name,
-            desc: s.description ?? 'Skill',
-            insert: 'skills:' + s.name,
-          })) : [{ icon: 'zap', name: 'No matches', desc: 'No skills found', insert: 'skills:' }]);
-          setAcIndex(0);
-          setAcVisible(true);
-          return;
-        } else if (subType === 'mcp') {
-          const filtered = mcpServers.filter((s) => !subQuery || s.name.toLowerCase().includes(subQuery.toLowerCase()));
-          setAcItems(filtered.length > 0 ? filtered.map((s) => ({
-            icon: 'link',
-            name: s.name,
-            desc: mcpServerDesc(s),
-            insert: 'mcp:' + s.name,
-          })) : [{ icon: 'link', name: 'No matches', desc: 'No MCP servers found', insert: 'mcp:' }]);
-          setAcIndex(0);
-          setAcVisible(true);
-          return;
-        }
-      }
-    }
-
-    // Check for slash command at start of input
-    const slashMatch = before.match(/^\/(\S*)$/);
-    if (slashMatch) {
-      const query = slashMatch[1].toLowerCase();
-      updateAcRect();
-      setAcMode('slash');
-      setAcSubCmd(null);
-
-      if (!query) {
-        // Show all commands
-        const items: ACItem[] = SLASH_COMMANDS.map((c) => ({
-          icon: c.icon,
-          name: '/' + c.cmd,
-          desc: c.desc,
-          insert: c.cmd,
-        }));
-        setAcItems(items);
-        setAcIndex(0);
-        setAcVisible(true);
-        return;
-      }
-
-      const filtered = SLASH_COMMANDS.filter((c) => c.cmd.toLowerCase().startsWith(query));
-      if (filtered.length > 0) {
-        const items: ACItem[] = filtered.map((c) => ({
-          icon: c.icon,
-          name: '/' + c.cmd,
-          desc: c.desc,
-          insert: c.cmd,
-        }));
-        setAcItems(items);
-        setAcIndex(0);
-        setAcVisible(true);
-        return;
-      }
-
-      closeAc();
+    // `/` and a command, skill or prompt name, at the start of the message.
+    const slash = before.match(/^\/(\S*)$/);
+    if (slash) {
+      searchReqIdRef.current++;
+      show('slash', null, slashItems(slash[1], { commands: slashCommands, skills, prompts: mcpPrompts }));
       return;
     }
 
-    // Check for slash command with options: /cmd optionQuery
-    const slashOptMatch = before.match(/^\/(\S+)\s+(\S*)$/);
-    if (slashOptMatch) {
-      const cmdName = slashOptMatch[1].toLowerCase();
-      const optQuery = slashOptMatch[2].toLowerCase();
-      const cmd = SLASH_COMMANDS.find((c) => c.cmd.trim().toLowerCase() === cmdName);
-
+    // The options of a command: `/effort hi`.
+    const option = before.match(/^\/(\S+)\s+(\S*)$/);
+    if (option) {
+      const cmd = slashCommands.find((c) => c.cmd.trim().toLowerCase() === option[1].toLowerCase());
       if (cmd?.options) {
-        updateAcRect();
-        setAcMode('slash');
-        setAcSubCmd(cmd.cmd);
-        // Match either the shown label or the inserted value so typing "son"
-        // (or "sonnet5") both surface "Sonnet 5.5".
-        const filtered = cmd.options.filter(
-          (o) =>
-            optLabel(o).toLowerCase().startsWith(optQuery) ||
-            optValue(o).toLowerCase().startsWith(optQuery),
-        );
-        if (filtered.length > 0) {
-          const items: ACItem[] = filtered.map((opt) => ({
-            icon: cmd.icon,
-            name: optLabel(opt),
-            desc: `${cmd.cmd.trim()} ${optValue(opt)}`,
-            insert: cmd.cmd + optValue(opt),
-          }));
-          setAcItems(items);
-          setAcIndex(0);
-          setAcVisible(true);
-          return;
-        }
-      }
-
-      if (cmd?.submenu) {
-        const subType = cmd.cmd.replace(':', '');
-        // A space after the filename means the user has finished picking the
-        // file and is now writing their message — dismiss the file search
-        // (matchColonSubmenu handles the still-typing-a-filename case above).
-        if (subType === 'file') {
-          closeAc();
-          return;
-        }
-        updateAcRect();
-        setAcMode('slash');
-        setAcSubCmd(cmd.cmd);
-        if (subType === 'skills') {
-          const filtered = skills.filter((s) => s.name.toLowerCase().startsWith(optQuery));
-          setAcItems(filtered.map((s) => ({
-            icon: 'zap',
-            name: s.name,
-            desc: s.description ?? 'Skill',
-            insert: 'skills:' + s.name,
-          })));
-          setAcIndex(0);
-          setAcVisible(true);
-          return;
-        } else if (subType === 'mcp') {
-          const filtered = mcpServers.filter((s) => s.name.toLowerCase().startsWith(optQuery));
-          setAcItems(filtered.map((s) => ({
-            icon: 'link',
-            name: s.name,
-            desc: mcpServerDesc(s),
-            insert: 'mcp:' + s.name,
-          })));
-          setAcIndex(0);
-          setAcVisible(true);
-          return;
-        }
-      }
-
-      closeAc();
-      return;
-    }
-
-    // Check for @ mention
-    const atMatch = before.match(/@(\S*)$/);
-    if (atMatch) {
-      const query = atMatch[1].toLowerCase();
-      updateAcRect();
-      setAcMode('at');
-
-      // Check for @file:query, @skills:query, @mcp:query
-      const subMatch = query.match(/^(file|skills|mcp):(.*)$/);
-      if (subMatch) {
-        const subType = subMatch[1];
-        const subQuery = subMatch[2].toLowerCase();
-        setAcSubCmd('@' + subType + ':');
-
-        if (subType === 'file') {
-          if (fileSearchTimeout.current) clearTimeout(fileSearchTimeout.current);
-          fileSearchTimeout.current = setTimeout(() => {
-            void searchFiles(subQuery, '@file:');
-          }, 200);
-          setAcVisible(true);
-          return;
-        } else if (subType === 'skills') {
-          const filtered = skills.filter((s) => s.name.toLowerCase().includes(subQuery));
-          setAcItems(filtered.length > 0 ? filtered.map((s) => ({
-            icon: 'zap',
-            name: s.name,
-            desc: s.description ?? 'Skill',
-            insert: '@skills:' + s.name,
-          })) : [{ icon: 'zap', name: 'No matches', desc: 'No skills found', insert: '@skills:' }]);
-          setAcIndex(0);
-          setAcVisible(true);
-          return;
-        } else if (subType === 'mcp') {
-          const filtered = mcpServers.filter((s) => s.name.toLowerCase().includes(subQuery));
-          setAcItems(filtered.length > 0 ? filtered.map((s) => ({
-            icon: 'link',
-            name: s.name,
-            desc: mcpServerDesc(s),
-            insert: '@mcp:' + s.name,
-          })) : [{ icon: 'link', name: 'No matches', desc: 'No MCP servers found', insert: '@mcp:' }]);
-          setAcIndex(0);
-          setAcVisible(true);
-          return;
-        }
-      }
-
-      // Root @ mention: show categories + matching skills + matching sessions
-      setAcSubCmd(null);
-      const rootItems = AT_ROOT_ENTRIES.filter((e) => !query || e.name.toLowerCase().includes(query));
-      const skillItems: ACItem[] = skills
-        .filter((s) => !query || s.name.toLowerCase().includes(query))
-        .map((s) => ({
-          icon: 'zap',
-          name: '@' + s.name,
-          desc: s.description ?? 'Skill',
-          insert: '@' + s.name,
-        }));
-      // Matched by slug OR title so typing either the readable title or the
-      // token that'll actually get inserted both filter correctly.
-      const sessionItems: ACItem[] = sessions
-        .filter((s) => {
-          if (!query) return true;
-          const q = query.toLowerCase();
-          return s.title.toLowerCase().includes(q) || slugifySessionTitle(s.title).includes(q);
-        })
-        .map((s) => ({
-          icon: 'message',
-          name: '@' + s.title,
-          desc: "Pull this session's recent conversation in as context",
-          insert: '@' + slugifySessionTitle(s.title),
-        }));
-      const allItems = [...rootItems, ...skillItems, ...sessionItems];
-      if (allItems.length > 0) {
-        setAcItems(allItems);
-        setAcIndex(0);
-        setAcVisible(true);
+        searchReqIdRef.current++;
+        show('slash', cmd.cmd, optionItems(cmd, option[2].toLowerCase()));
         return;
       }
+    }
+
+    // `@` at the start of the message or after a space ("a@b" is an address).
+    const at = before.match(/(?:^|\s)@(\S*)$/);
+    if (at) {
+      const others = atItems(at[1], { sessions, agents, resources: mcpResources, workspace });
+      show('at', null, others);
+      if (workspace && at[1]) searchPaths(at[1], others);
+      else searchReqIdRef.current++;
+      return;
     }
 
     closeAc();
-  }, [updateAcRect, closeAc, skills, mcpServers, sessions, searchFiles, SLASH_COMMANDS]);
+  }, [show, closeAc, searchPaths, optionItems, slashCommands, skills, mcpPrompts, sessions, agents, mcpResources, workspace]);
+
+  /** Replace the token being typed (`/name` or `@name`) with `insert`. */
+  const replaceToken = useCallback((insert: string) => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    const cursorPos = ta.selectionStart;
+    const before = text.slice(0, cursorPos);
+    const marker = acMode === 'slash' ? '/' : '@';
+    const start = before.lastIndexOf(marker);
+    const prefix = start >= 0 ? text.slice(0, start) : before;
+    const replacement = acMode === 'slash' ? '/' + insert : insert ? insert + ' ' : '';
+    setText(prefix + replacement + text.slice(cursorPos));
+    requestAnimationFrame(() => {
+      const pos = prefix.length + replacement.length;
+      ta.setSelectionRange(pos, pos);
+      ta.focus();
+    });
+  }, [text, acMode, setText, textareaRef]);
+
+  const selectAcItem = useCallback((item: ACItem) => {
+    if (item.kind === 'hint') return;
+
+    // A file or folder becomes a chip: the `@query` text goes away.
+    if ((item.kind === 'file' || item.kind === 'folder') && item.path) {
+      onAttachWorkspacePath(item.path, item.kind === 'folder');
+      replaceToken('');
+      closeAc();
+      return;
+    }
+
+    // A command with options shows them next.
+    if (item.kind === 'command') {
+      const cmd = slashCommands.find((c) => c.cmd === item.insert);
+      if (cmd?.options) {
+        replaceToken(cmd.cmd);
+        show('slash', cmd.cmd, optionItems(cmd, ''));
+        return;
+      }
+    }
+
+    replaceToken(item.insert);
+    closeAc();
+  }, [onAttachWorkspacePath, replaceToken, closeAc, show, optionItems, slashCommands]);
 
   // Derived from the menu state rather than stored, so the heading can never
   // disagree with the menu it names.

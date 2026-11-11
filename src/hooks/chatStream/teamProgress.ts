@@ -4,14 +4,10 @@
  * Pure helpers: they translate the server's team_progress / team_results
  * SSE side-effects into a teamReports map. The map-level fold
  * (foldTeamProgressIntoMap) runs against the turn-local live report in the
- * chat store while the assistant message does not exist yet; the
- * message-level helpers serve the background /subagent stream, which
- * pre-creates its message and targets it by timestamp. No React here.
+ * chat store while the assistant message does not exist yet. No React here.
  */
-import type { StoreGetter } from '@/stores/chatStore';
 import { agentStatusOf } from '@/utils/agentOutcome';
 import type {
-  ChatMessage,
   TeamAgentReport,
   TeamProgressEvent,
   TeamReportData,
@@ -221,15 +217,6 @@ export function foldTeamProgressIntoMap(
   return teamReports;
 }
 
-/** Fold a single team_progress event into ONE message's teamReports map.
- *  Pure: returns an updated ChatMessage, or null if the event should be
- *  ignored for this message. Used by applyTeamProgressToMessage (the
- *  background /subagent stream, which pre-creates its assistant message). */
-function foldTeamProgressEvent(message: ChatMessage, ev: TeamProgressEvent): ChatMessage | null {
-  const folded = foldTeamProgressIntoMap(message.teamReports, ev);
-  return folded ? { ...message, teamReports: folded } : null;
-}
-
 /** Mirror of the backend `_spawn_label` (server/agent_tools/spawn.py): first
  *  line of the task, capped at 60 chars with an ellipsis. Used to match a
  *  spawn_agent tool to its one-member team report while the tool is still
@@ -282,28 +269,4 @@ export function findMatchingTeamReports(
     add(Object.values(teamReports).find((r) => r.team_name === name && !seen.has(r.team_id)));
   }
   return matched;
-}
-
-/** Apply a team_progress event to a SPECIFIC assistant message identified by
- *  timestamp. Used by the background /subagent stream, whose progress card
- *  must keep updating even after the user sends more messages (so it's no
- *  longer the last message). */
-export function applyTeamProgressToMessage(
-  storeGetter: StoreGetter,
-  targetTimestamp: string,
-  ev: TeamProgressEvent,
-): void {
-  const st = storeGetter();
-  const msgs = st.messages;
-  // Match the ASSISTANT message specifically: the /subagent handler adds a
-  // user + assistant message that can share a millisecond timestamp, and a
-  // bare timestamp match would otherwise land on the user message and bail.
-  const idx = msgs.findIndex((m) => m.timestamp === targetTimestamp && m.role === 'assistant');
-  if (idx < 0) return;
-  const target = msgs[idx];
-  const updated = foldTeamProgressEvent(target, ev);
-  if (!updated) return;
-  const next = [...msgs];
-  next[idx] = updated;
-  st.setMessages(next);
 }

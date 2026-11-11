@@ -34,6 +34,8 @@ function server(name: string, over: Partial<MCPServerInfo> = {}): MCPServerInfo 
     tool_overrides: {},
     enabled_tools: [],
     disabled_tools: [],
+    prompts: [],
+    resources: [],
     ...over,
   };
 }

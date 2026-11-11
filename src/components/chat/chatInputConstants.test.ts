@@ -1,16 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { ICON } from './activityIcons';
 import {
-  AT_ROOT_ENTRIES,
   BASE_SLASH_COMMANDS,
-  matchColonSubmenu,
   matchSubmitTrigger,
   optLabel,
   optValue,
-  parseSkillMention,
   resolveDictationFinal,
-  SKILL_MENTION_PLACEHOLDER,
 } from './chatInputConstants';
+import { atItems } from './composerMenus';
 
 describe('optLabel / optValue', () => {
   it('treats a plain string option as both label and value', () => {
@@ -125,84 +122,10 @@ describe('resolveDictationFinal', () => {
   });
 });
 
-describe('matchColonSubmenu', () => {
-  it('matches the bare submenu prefix with an empty query', () => {
-    expect(matchColonSubmenu('/file:')).toEqual({ type: 'file', query: '' });
-  });
-
-  it('matches a filename query typed directly after the colon', () => {
-    expect(matchColonSubmenu('/file:report.pdf')).toEqual({ type: 'file', query: 'report.pdf' });
-  });
-
-  it('allows a single leading space before the query', () => {
-    expect(matchColonSubmenu('/file: report.pdf')).toEqual({ type: 'file', query: 'report.pdf' });
-  });
-
-  it('dismisses once a space starts the message body', () => {
-    // The whole point of the fix: a question after the filename must NOT keep
-    // the file-search popup open.
-    expect(matchColonSubmenu('/file: report.pdf what is this about?')).toBeNull();
-    expect(matchColonSubmenu('/file:report.pdf summarize it')).toBeNull();
-  });
-
-  it('also covers /skills: and /mcp: submenus', () => {
-    expect(matchColonSubmenu('/skills:web')).toEqual({ type: 'skills', query: 'web' });
-    expect(matchColonSubmenu('/mcp:')).toEqual({ type: 'mcp', query: '' });
-  });
-
-  it('returns null for non-submenu text', () => {
-    expect(matchColonSubmenu('/model haiku')).toBeNull();
-    expect(matchColonSubmenu('hello world')).toBeNull();
-    expect(matchColonSubmenu('not /file: at start')).toBeNull();
-  });
-});
-
-describe('parseSkillMention', () => {
-  const KNOWN = ['summarize', 'meeting_notes'];
-
-  it('substitutes the placeholder payload for a bare mention, with empty displayText', () => {
-    expect(parseSkillMention('@summarize', KNOWN)).toEqual({
-      forceSkill: 'summarize',
-      messageToSend: SKILL_MENTION_PLACEHOLDER,
-      displayText: '',
-    });
-  });
-
-  it('supports the autocomplete @skills: form', () => {
-    expect(parseSkillMention('@skills:meeting_notes', KNOWN)).toEqual({
-      forceSkill: 'meeting_notes',
-      messageToSend: SKILL_MENTION_PLACEHOLDER,
-      displayText: '',
-    });
-  });
-
-  it('keeps the user text as both payload and displayText when present', () => {
-    expect(parseSkillMention('@meeting_notes with action items', KNOWN)).toEqual({
-      forceSkill: 'meeting_notes',
-      messageToSend: 'with action items',
-      displayText: 'with action items',
-    });
-  });
-
-  it('passes a mention-less message through untouched', () => {
-    expect(parseSkillMention('just a normal question', KNOWN)).toEqual({
-      messageToSend: 'just a normal question',
-    });
-  });
-
-  it('leaves a bare @<name> mention untouched when the name is not a known skill', () => {
-    // A session mention like "@my_session_b also doing feature Y" must not
-    // get misread as a request for a nonexistent skill: it's resolved
-    // separately, server-side, from the raw text.
-    expect(parseSkillMention('@my_session_b also doing feature Y', KNOWN)).toEqual({
-      messageToSend: '@my_session_b also doing feature Y',
-    });
-  });
-});
-
 describe('command and mention menu icons', () => {
   const EMOJI = /\p{Extended_Pictographic}/u;
-  const rows = [...BASE_SLASH_COMMANDS, ...AT_ROOT_ENTRIES];
+  const mentions = atItems('', { sessions: [], agents: [], resources: [], workspace: true });
+  const rows = [...BASE_SLASH_COMMANDS, ...mentions];
 
   it('name an SVG icon, never an emoji', () => {
     for (const row of rows) {
@@ -213,6 +136,6 @@ describe('command and mention menu icons', () => {
 
   it('carry no emoji in their text', () => {
     for (const row of BASE_SLASH_COMMANDS) expect(EMOJI.test(row.cmd + row.desc), row.cmd).toBe(false);
-    for (const row of AT_ROOT_ENTRIES) expect(EMOJI.test(row.name + row.desc), row.name).toBe(false);
+    for (const row of mentions) expect(EMOJI.test(row.name + row.desc), row.name).toBe(false);
   });
 });

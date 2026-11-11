@@ -1,17 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { waitFor } from '@testing-library/react';
 
-vi.mock('@/api/workspace', () => ({ uploadWorkspaceFile: vi.fn() }));
-vi.mock('../useChatStream', () => ({ sendChatTurn: vi.fn().mockResolvedValue(true) }));
+vi.mock('@/api/workspace', () => ({ uploadWorkspaceFile: vi.fn(), attachWorkspaceFolder: vi.fn() }));
+vi.mock('../useChatStream', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../useChatStream')>()),
+  sendChatTurn: vi.fn().mockResolvedValue(true),
+}));
 
-import { uploadWorkspaceFile } from '@/api/workspace';
+import { attachWorkspaceFolder, uploadWorkspaceFile } from '@/api/workspace';
 import { getChatStore } from '@/stores/sessionRuntimes';
 import { useUIStore } from '@/stores/uiStore';
 import { sendChatTurn } from '../useChatStream';
-import { askAboutWorkspaceFile } from './workspaceFileTurn';
+import { sendWithWorkspaceRefs } from './workspaceFileTurn';
 
 const SID = 'file-turn-sess';
 const chat = () => getChatStore(SID).getState();
+const PDF = { path: 'docs/big.pdf' };
+const SRC = { path: 'src', folder: true };
 
 /** An upload the test finishes by hand. */
 function pendingUpload(): (att: { id: string; filename: string }) => void {
@@ -22,6 +27,7 @@ function pendingUpload(): (att: { id: string; filename: string }) => void {
 
 beforeEach(() => {
   vi.mocked(uploadWorkspaceFile).mockReset();
+  vi.mocked(attachWorkspaceFolder).mockReset();
   vi.mocked(sendChatTurn).mockClear();
   chat().setMessages([]);
 });
@@ -31,17 +37,17 @@ afterEach(() => {
   chat().setMessages([]);
 });
 
-describe('askAboutWorkspaceFile', () => {
-  it('shows the question at once and names the upload while it runs, not Thinking', () => {
+describe('sendWithWorkspaceRefs', () => {
+  it('shows the message at once and names the upload while it runs, not Thinking', () => {
     pendingUpload();
-    askAboutWorkspaceFile(SID, 'docs/big.pdf', 'Summarize this file.');
+    sendWithWorkspaceRefs(SID, 'Summarize this file.', { refs: [PDF] });
 
     expect(chat().messages).toEqual([
       expect.objectContaining({
         role: 'user',
         content: 'Summarize this file.',
         attachmentNames: ['big.pdf'],
-        workspaceFile: 'docs/big.pdf',
+        workspaceRefs: [PDF],
       }),
     ]);
     expect(chat().turnPhase).toBe('starting');
@@ -49,29 +55,51 @@ describe('askAboutWorkspaceFile', () => {
     expect(uploadWorkspaceFile).toHaveBeenCalledWith('docs/big.pdf', expect.any(AbortSignal));
   });
 
-  it('sends the question with the uploaded file to the session that asked', async () => {
+  it('sends files, a folder listing and the uploaded chips together, in order', async () => {
     const finish = pendingUpload();
-    askAboutWorkspaceFile(SID, 'docs/big.pdf', 'Summarize this file.');
+    vi.mocked(attachWorkspaceFolder).mockResolvedValue({ id: 'dir1', filename: 'src/' });
+    sendWithWorkspaceRefs(SID, 'Compare these.', {
+      refs: [PDF, SRC],
+      attachmentIds: ['up1'],
+      attachmentNames: ['notes.txt'],
+    });
+    expect(chat().streamStatus).toBe('Uploading 2 files…');
+    expect(chat().messages[0].attachmentNames).toEqual(['notes.txt', 'big.pdf', 'src/']);
     finish({ id: 'att1', filename: 'big.pdf' });
 
     await waitFor(() => expect(sendChatTurn).toHaveBeenCalled());
-    expect(sendChatTurn).toHaveBeenCalledWith('Summarize this file.', {
-      attachmentIds: ['att1'],
-      attachmentNames: ['big.pdf'],
+    expect(attachWorkspaceFolder).toHaveBeenCalledWith('src', expect.any(AbortSignal));
+    expect(sendChatTurn).toHaveBeenCalledWith('Compare these.', expect.objectContaining({
+      attachmentIds: ['up1', 'att1', 'dir1'],
+      attachmentNames: ['notes.txt', 'big.pdf', 'src/'],
       hideUserMessage: true,
       sessionId: SID,
-    });
-    expect(chat().messages[0].attachmentIds).toEqual(['att1']);
+    }));
+    expect(chat().messages[0].attachmentIds).toEqual(['up1', 'att1', 'dir1']);
   });
 
-  it('a Stop while the file uploads cancels the upload and sends nothing', async () => {
+  it('keeps a /skill run: the bubble shows the command, the send carries the skill', async () => {
     const finish = pendingUpload();
-    askAboutWorkspaceFile(SID, 'docs/big.pdf', 'Summarize this file.');
+    sendWithWorkspaceRefs(SID, 'Run the requested skill on the conversation context.', {
+      refs: [PDF],
+      forceSkill: 'meeting_notes',
+      displayText: '',
+    });
+    expect(chat().messages[0].content).toBe('/meeting_notes');
+    finish({ id: 'att1', filename: 'big.pdf' });
+
+    await waitFor(() => expect(sendChatTurn).toHaveBeenCalled());
+    expect(vi.mocked(sendChatTurn).mock.calls[0][1]).toMatchObject({ forceSkill: 'meeting_notes', displayText: '' });
+  });
+
+  it('a Stop while the files upload cancels the uploads and sends nothing', async () => {
+    const finish = pendingUpload();
+    sendWithWorkspaceRefs(SID, 'Summarize this file.', { refs: [PDF] });
     const signal = vi.mocked(uploadWorkspaceFile).mock.calls[0][1] as AbortSignal;
     expect(signal.aborted).toBe(false);
     // What the Stop button does to the session's state.
     chat().finishStream();
-    // The upload request holds a browser connection: it must not outlive the turn.
+    // The server converts the upload: it must not outlive the turn.
     expect(signal.aborted).toBe(true);
     finish({ id: 'att1', filename: 'big.pdf' });
 
@@ -85,7 +113,7 @@ describe('askAboutWorkspaceFile', () => {
     vi.mocked(uploadWorkspaceFile).mockImplementation((_path, signal) => new Promise((_resolve, reject) => {
       signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
     }));
-    askAboutWorkspaceFile(SID, 'docs/big.pdf', 'Summarize this file.');
+    sendWithWorkspaceRefs(SID, 'Summarize this file.', { refs: [PDF] });
     chat().finishStream();
 
     await new Promise((r) => setTimeout(r, 20));
@@ -94,17 +122,20 @@ describe('askAboutWorkspaceFile', () => {
     addToast.mockRestore();
   });
 
-  it('a failed upload ends the turn and says why', async () => {
+  it('a failed upload ends the turn, stops the other uploads and says why', async () => {
     const addToast = vi.spyOn(useUIStore.getState(), 'addToast');
     vi.mocked(uploadWorkspaceFile).mockRejectedValue(new Error('File big.pdf exceeds 50MB limit'));
-    askAboutWorkspaceFile(SID, 'docs/big.pdf', 'Summarize this file.');
+    vi.mocked(attachWorkspaceFolder).mockImplementation(() => new Promise(() => {}));
+    sendWithWorkspaceRefs(SID, 'Summarize this file.', { refs: [PDF, SRC] });
 
     await waitFor(() =>
       expect(addToast).toHaveBeenCalledWith({
         type: 'error',
-        message: 'Could not attach big.pdf: File big.pdf exceeds 50MB limit',
+        message: 'Could not attach big.pdf, src/: File big.pdf exceeds 50MB limit',
       }),
     );
+    const folderSignal = vi.mocked(attachWorkspaceFolder).mock.calls[0][1] as AbortSignal;
+    expect(folderSignal.aborted).toBe(true);
     expect(chat().turnPhase).toBe('idle');
     expect(sendChatTurn).not.toHaveBeenCalled();
     addToast.mockRestore();

@@ -21,6 +21,8 @@ function server(over: Partial<MCPServerInfo> = {}): Omit<MCPServerInfo, 'name'> 
     tool_overrides: {},
     enabled_tools: [],
     disabled_tools: [],
+    prompts: [],
+    resources: [],
     ...over,
   };
 }

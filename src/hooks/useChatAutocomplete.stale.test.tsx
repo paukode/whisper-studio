@@ -2,7 +2,7 @@
  * Regression test for the file-search stale-response race in
  * useChatAutocomplete.
  *
- * The `@file:`/`/file:` search is debounced (200ms) and fetches over the
+ * The `@` file and folder search is debounced and fetches over the
  * network. A slow response for an earlier query could resolve AFTER a newer
  * query and overwrite the newer, correct results. searchFiles now stamps each
  * call with a monotonic request id and drops any response whose id is no
@@ -34,8 +34,12 @@ function makeHook() {
       textareaRef: { current: null },
       slashCommands: [],
       skills: [],
-      mcpServers: [],
+      mcpPrompts: [],
+      mcpResources: [],
       sessions: [],
+      agents: [],
+      workspace: true,
+      onAttachWorkspacePath: () => {},
     }),
   );
 }
@@ -55,11 +59,11 @@ describe('useChatAutocomplete — file-search stale-response guard', () => {
     const { result } = makeHook();
 
     // Search #1 ("a") — fire its debounced fetch (reqId 1, still pending).
-    act(() => { result.current.computeAutocomplete('@file:a', 7); });
+    act(() => { result.current.computeAutocomplete('@a', 2); });
     act(() => { vi.advanceTimersByTime(200); });
 
     // Search #2 ("ab") — fire its debounced fetch (reqId 2, still pending).
-    act(() => { result.current.computeAutocomplete('@file:ab', 8); });
+    act(() => { result.current.computeAutocomplete('@ab', 3); });
     act(() => { vi.advanceTimersByTime(200); });
 
     expect(getMock).toHaveBeenCalledTimes(2);
@@ -84,7 +88,7 @@ describe('useChatAutocomplete — file-search stale-response guard', () => {
   it('applies the response when it is still the current request', async () => {
     const { result } = makeHook();
 
-    act(() => { result.current.computeAutocomplete('@file:main', 10); });
+    act(() => { result.current.computeAutocomplete('@main', 5); });
     act(() => { vi.advanceTimersByTime(200); });
     expect(getMock).toHaveBeenCalledTimes(1);
 

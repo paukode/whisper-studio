@@ -377,67 +377,25 @@ export const WorkspaceContextMenu: React.FC<WorkspaceContextMenuProps> = ({
   }, [path, fileName, onClose]);
 
   /** Add File to Chat — dispatch event for ChatInput to pick up. */
-  const handleAddFileToChat = useCallback(async () => {
+  // "Add to Chat": the same path chip as a file picked from the composer's
+  // @ menu. The file uploads when the message is sent.
+  const handleAddFileToChat = useCallback(() => {
     onClose();
-    try {
-      const data = await queryFile(path);
-      if ('binary' in data && data.binary) {
-        const info = data as { type: string };
-        const supportedBinaryTypes = ['image', 'pdf', 'word', 'spreadsheet', 'presentation'];
-        if (supportedBinaryTypes.includes(info.type)) {
-          // Fetch raw blob and send as File for upload (images, PDFs, Office docs, etc.)
-          const url = rawFileUrl(path);
-          const resp = await fetch(url);
-          const blob = await resp.blob();
-          const file = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
-          window.dispatchEvent(new CustomEvent('whisper-add-to-chat', { detail: { files: [file] } }));
-          useUIStore.getState().addToast({ type: 'success', message: `Added ${fileName} to chat`, duration: 2000 });
-        } else {
-          useUIStore.getState().addToast({ type: 'warning', message: 'Binary file cannot be added to chat', duration: 2000 });
-        }
-        return;
-      }
-      const content = 'content' in data ? (data.content as string) : '';
-      const file = new File([content], fileName, { type: 'text/plain' });
-      window.dispatchEvent(new CustomEvent('whisper-add-to-chat', { detail: { files: [file] } }));
-      useUIStore.getState().addToast({ type: 'success', message: `Added ${fileName} to chat`, duration: 2000 });
-    } catch (err) {
-      useUIStore.getState().addToast({ type: 'error', message: toError(err).message });
-    }
+    window.dispatchEvent(new CustomEvent('whisper-add-to-chat', { detail: { path, folder: false } }));
+    useUIStore.getState().addToast({ type: 'success', message: `Added ${fileName} to chat`, duration: 2000 });
   }, [path, fileName, onClose]);
 
   // ═══════════════════════════════════════════════
   // Folder-specific actions
   // ═══════════════════════════════════════════════
 
-  /** Add Folder to Chat — add all text files in directory to chat. */
-  const handleAddFolderToChat = useCallback(async () => {
+  /** Add Folder to Chat: the folder's listing, the same path chip as a folder
+   *  picked from the composer's @ menu. */
+  const handleAddFolderToChat = useCallback(() => {
     onClose();
-    try {
-      const entries = await listDir(path);
-      const textFiles = entries.filter((e) => e.type === 'file');
-      if (textFiles.length === 0) {
-        useUIStore.getState().addToast({ type: 'info', message: 'No files in folder', duration: 2000 });
-        return;
-      }
-      const limit = Math.min(textFiles.length, 20);
-      const fetches = textFiles.slice(0, limit).map(async (e) => {
-        try {
-          const data = await queryFile(e.path);
-          if ('binary' in data && data.binary) return null;
-          const content = 'content' in data ? (data.content as string) : '';
-          return new File([content], e.name, { type: 'text/plain' });
-        } catch { return null; }
-      });
-      const files = (await Promise.all(fetches)).filter(Boolean) as File[];
-      if (files.length > 0) {
-        window.dispatchEvent(new CustomEvent('whisper-add-to-chat', { detail: { files } }));
-        useUIStore.getState().addToast({ type: 'success', message: `Added ${files.length} file(s) to chat`, duration: 2000 });
-      }
-    } catch (err) {
-      useUIStore.getState().addToast({ type: 'error', message: toError(err).message });
-    }
-  }, [path, onClose]);
+    window.dispatchEvent(new CustomEvent('whisper-add-to-chat', { detail: { path, folder: true } }));
+    useUIStore.getState().addToast({ type: 'success', message: `Added ${fileName}/ to chat`, duration: 2000 });
+  }, [path, fileName, onClose]);
 
   /** Find in Folder — search dialog with grep API. */
   const handleFindInFolder = useCallback(async () => {

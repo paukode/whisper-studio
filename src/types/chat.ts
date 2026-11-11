@@ -95,6 +95,13 @@ export interface TurnModelSettings {
   brief_mode: boolean;
 }
 
+/** A workspace file or folder picked from the composer's @ menu. It uploads
+ *  when the message is sent (chatStream/workspaceFileTurn.ts). */
+export interface WorkspaceRef {
+  path: string;
+  folder?: boolean;
+}
+
 export interface ChatMessage {
   role:
     | 'user'
@@ -164,7 +171,7 @@ export interface ChatMessage {
    *  running carries status 'stopped'. */
   stopped?: true;
   /** An assistant row appended outside the chat stream, while a turn may be
-   *  streaming: a slash command's card or intro (/workflow, /ci, /subagent)
+   *  streaming: a slash command's card or intro (/workflow, /ci)
    *  and the CI card's Autofix rows. It draws as a bubble of its own and no
    *  later row joins it (turnEntries), so a running turn's rows and live
    *  reply never land in it. */
@@ -183,10 +190,10 @@ export interface ChatMessage {
    * each question with its answer (chatStream/history.ts), so it does not
    * ask again.
    */
-  /** On a `/file:path question` message: the workspace path it attached. A
-   *  resend whose upload never finished uploads this file again
+  /** The workspace files and folders this message attached from the @ menu.
+   *  A resend whose uploads never finished uploads them again
    *  (chatStream/resend.ts). */
-  workspaceFile?: string;
+  workspaceRefs?: WorkspaceRef[];
   userQuestion?: {
     question: string;
     options: string[];

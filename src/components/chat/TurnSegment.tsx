@@ -248,9 +248,8 @@ const TurnSegmentView: React.FC<TurnSegmentProps> = ({ rows, indices, taskCheckp
 
       {/* Standalone agent rows: any report NOT anchored to a team_create or
        *  spawn_agent tool-use row above renders directly here. That covers
-       *  background /subagent messages (no toolUse at all), question-round
-       *  commits where the team trace landed on an earlier message, and
-       *  stopped turns that carry only the partial report. */}
+       *  question-round commits where the team trace landed on an earlier
+       *  message, and stopped turns that carry only the partial report. */}
       {teamReports &&
         Object.values(teamReports)
           .filter((r) => findMatchingTeamReports(

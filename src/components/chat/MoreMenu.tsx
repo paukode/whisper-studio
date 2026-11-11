@@ -19,12 +19,12 @@ interface MoreMenuProps {
   selectedIndexes: string[];
   toggleIndex: (path: string) => void;
   wsConnected: boolean;
-  /** Prepend "@skill " to the composer and refocus it. */
+  /** Prepend "/skill-name " to the composer and refocus it. */
   onInsertSkill: (name: string) => void;
 }
 
 /** "meeting_notes" / "code-review" → "Meeting Notes" / "Code Review" for the
- *  skills list; the raw @handle is shown alongside for the mention. */
+ *  skills list; the /command that runs it is shown alongside. */
 function prettySkillName(name: string): string {
   return name
     .replace(/[_-]+/g, ' ')
@@ -156,7 +156,7 @@ export const MoreMenu: React.FC<MoreMenuProps> = ({
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '1px', flex: 1, minWidth: 0 }}>
                     <span className="toolbar-dropdown-item-name">
                       {prettySkillName(s.name)}
-                      <span className="skill-handle">@{s.name}</span>
+                      <span className="skill-handle">/{s.name}</span>
                     </span>
                     {s.description && <span className="toolbar-dropdown-item-desc">{s.description}</span>}
                   </div>

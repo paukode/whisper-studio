@@ -124,6 +124,13 @@ describe('MCPServersResponseSchema', () => {
     tool_overrides: {},
     enabled_tools: [],
     disabled_tools: [],
+    prompts: [{
+      name: 'review',
+      command: 'myServer:review',
+      description: 'Review a PR',
+      arguments: [{ name: 'number', description: '', required: true }],
+    }],
+    resources: [{ uri: 'issue://1', mention: 'myServer:issue://1', name: 'Issue 1', description: '' }],
   };
 
   it('parses the server list with its revision and pending elicitations', () => {
@@ -136,6 +143,8 @@ describe('MCPServersResponseSchema', () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.servers.myServer.tools).toEqual(['mcp__myServer__ping']);
+      expect(result.data.servers.myServer.prompts[0].command).toBe('myServer:review');
+      expect(result.data.servers.myServer.resources[0].mention).toBe('myServer:issue://1');
       expect(result.data.revision).toBe(4);
     }
   });

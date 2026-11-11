@@ -1,42 +1,65 @@
 /**
- * A question about one workspace file: `/file:path question`, and a resend of
- * such a message (./resend). ONE path for both, so a resend uploads the file
- * again instead of sending the question without it.
+ * A message with workspace files or folders from the @ menu (or the tree's
+ * Add to Chat), and a resend of such a message (./resend). ONE path for both,
+ * so a resend uploads the files again instead of sending the message without
+ * them.
  *
- * The user's message shows at once. The turn is `starting` while the file
- * uploads, and the status line names the upload, not "Thinking": the server
+ * The user's message shows at once. The turn is `starting` while the files
+ * upload, and the status line names the upload, not "Thinking": the server
  * reads a document into text on the way in, which takes minutes for a very
- * large PDF. The model call fires once the upload is done, unless the user
- * stopped the turn or started another one meanwhile. Then the upload request
- * is cancelled too: it holds one of the browser's 6 connections to the app,
- * and with three turns streaming, one held upload left no connection to load
- * a session with.
+ * large PDF. A folder carries its listing. The model call fires once every
+ * upload is done, unless the user stopped the turn or started another one
+ * meanwhile. Then the uploads are cancelled too, so a stopped upload never
+ * keeps converting on the server.
  */
-import { uploadWorkspaceFile } from '@/api/workspace';
+import { attachWorkspaceFolder, uploadWorkspaceFile } from '@/api/workspace';
 import { getChatStore } from '@/stores/sessionRuntimes';
+import { useSessionStore } from '@/stores/sessionStore';
 import { useUIStore } from '@/stores/uiStore';
-import type { ChatMessage } from '@/types/chat';
+import type { ChatMessage, WorkspaceRef } from '@/types/chat';
 import { toError } from '@/utils/toError';
-import { sendChatTurn } from '../useChatStream';
+import { buildDisplayQuestion, sendChatTurn } from '../useChatStream';
+import { closeWaitingCards } from './waitingCards';
 
-export function askAboutWorkspaceFile(sessionId: string | null, path: string, question: string): void {
-  const fileName = path.split('/').pop() || path;
+export interface WorkspaceRefSend {
+  refs: WorkspaceRef[];
+  /** Files already uploaded with the paperclip or drag-drop. */
+  attachmentIds?: string[];
+  attachmentNames?: string[];
+  forceSkill?: string;
+  displayText?: string;
+}
+
+const refName = (ref: WorkspaceRef): string => {
+  const name = ref.path.split('/').pop() || ref.path;
+  return ref.folder ? `${name}/` : name;
+};
+
+export function sendWithWorkspaceRefs(sessionId: string | null, question: string, send: WorkspaceRefSend): void {
+  const owner = sessionId ?? useSessionStore.getState().createSession();
+  const uploadedIds = send.attachmentIds ?? [];
+  const uploadedNames = send.attachmentNames ?? [];
+  const names = send.refs.map(refName);
   const ts = new Date().toISOString();
-  const chat = () => getChatStore(sessionId).getState();
+  const chat = () => getChatStore(owner).getState();
+  // The cards this message answers close now, before it shows: closed after
+  // the upload, a question card above it would no longer count as waiting.
+  closeWaitingCards(owner);
   chat().addMessage({
     role: 'user',
-    content: question,
+    content: buildDisplayQuestion(question, send),
     timestamp: ts,
-    attachmentNames: [fileName],
-    workspaceFile: path,
+    attachmentIds: uploadedIds,
+    attachmentNames: [...uploadedNames, ...names],
+    workspaceRefs: send.refs,
   });
   const leg = chat().startTurn('starting');
-  chat().setStreamStatus(`Uploading ${fileName}…`);
-  // Stopped (or replaced by another send) while the file uploads: the turn
-  // no longer waits for it, and the upload stops with it.
+  chat().setStreamStatus(names.length === 1 ? `Uploading ${names[0]}…` : `Uploading ${names.length} files…`);
+  // Stopped (or replaced by another send) while the files upload: the turn
+  // no longer waits for them, and the uploads stop with it.
   const stillStarting = () => chat().turnSeq === leg && chat().turnPhase === 'starting';
   const upload = new AbortController();
-  const stopUpload = getChatStore(sessionId).subscribe(() => {
+  const stopUpload = getChatStore(owner).subscribe(() => {
     if (!stillStarting()) upload.abort();
   });
 
@@ -50,30 +73,37 @@ export function askAboutWorkspaceFile(sessionId: string | null, path: string, qu
   };
 
   void (async () => {
-    let att: { id: string; filename: string };
+    let atts: Array<{ id: string; filename: string }>;
     try {
-      att = await uploadWorkspaceFile(path, upload.signal);
+      atts = await Promise.all(send.refs.map((ref) => (ref.folder
+        ? attachWorkspaceFolder(ref.path, upload.signal)
+        : uploadWorkspaceFile(ref.path, upload.signal))));
     } catch (e) {
       // Cancelled because the turn ended: nothing failed. The message keeps
-      // its path, so a resend uploads the file again.
+      // its paths, so a resend uploads the files again.
       if (upload.signal.aborted) return;
+      upload.abort();
       const why = toError(e).message;
       chat().finishStream(undefined, leg);
-      patchMessage({ content: `${question}\n\n_[Could not attach ${fileName}: ${why}]_` });
-      useUIStore.getState().addToast({ type: 'error', message: `Could not attach ${fileName}: ${why}` });
+      patchMessage({ content: `${buildDisplayQuestion(question, send)}\n\n_[Could not attach ${names.join(', ')}: ${why}]_` });
+      useUIStore.getState().addToast({ type: 'error', message: `Could not attach ${names.join(', ')}: ${why}` });
       return;
     } finally {
       stopUpload();
     }
-    // Record the real id on the message already shown, so a later resend
-    // sends the same file without another upload.
-    patchMessage({ attachmentIds: [att.id], attachmentNames: [att.filename] });
+    // Record the real ids on the message already shown, so a later resend
+    // sends the same files without another upload.
+    const attachmentIds = [...uploadedIds, ...atts.map((a) => a.id)];
+    const attachmentNames = [...uploadedNames, ...atts.map((a) => a.filename)];
+    patchMessage({ attachmentIds, attachmentNames });
     if (!stillStarting()) return;
     await sendChatTurn(question, {
-      attachmentIds: [att.id],
-      attachmentNames: [att.filename],
+      attachmentIds,
+      attachmentNames,
+      forceSkill: send.forceSkill,
+      displayText: send.displayText,
       hideUserMessage: true,
-      sessionId: sessionId ?? undefined,
+      sessionId: owner,
     });
   })();
 }

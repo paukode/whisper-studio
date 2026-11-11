@@ -26,6 +26,28 @@ export interface MCPServerInfo {
   tool_overrides: Record<string, string>;
   enabled_tools: string[];
   disabled_tools: string[];
+  /** The server's prompts, each run from the composer as `/<command>`. */
+  prompts: MCPPrompt[];
+  /** The server's resources, each mentioned as `@<mention>`. */
+  resources: MCPResource[];
+}
+
+/** One MCP prompt: `command` is `server:prompt`, spelled as the composer
+ *  types it (server/mcp_catalog.py). */
+export interface MCPPrompt {
+  name: string;
+  command: string;
+  description: string;
+  arguments: Array<{ name: string; description: string; required: boolean }>;
+}
+
+/** One MCP resource: `mention` is `server:uri`, spelled as the composer
+ *  types it after the `@`. */
+export interface MCPResource {
+  uri: string;
+  mention: string;
+  name: string;
+  description: string;
 }
 
 /** An MCP server asking the human for input mid tool-call. */
@@ -69,6 +91,16 @@ interface McpState {
   setEnabled: (name: string, enabled: boolean) => Promise<void>;
 }
 
+/** The prompts of the connected servers: the composer's `/` menu. */
+export function connectedPrompts(servers: MCPServerInfo[]): MCPPrompt[] {
+  return servers.filter((m) => m.status === 'connected').flatMap((m) => m.prompts ?? []);
+}
+
+/** The resources of the connected servers: the composer's `@` menu. */
+export function connectedResources(servers: MCPServerInfo[]): MCPResource[] {
+  return servers.filter((m) => m.status === 'connected').flatMap((m) => m.resources ?? []);
+}
+
 let inFlight: Promise<void> | null = null;
 let again = false;
 /** Per server, the number of the latest setEnabled call. A failed request
@@ -92,8 +124,8 @@ async function fetchOnce(): Promise<void> {
   }
 }
 
-/** The one MCP server list: Settings > MCP, the composer's `/mcp:` and
- *  `@mcp:` menus, and the import panel all read it. The backend pushes
+/** The one MCP server list: Settings > MCP, the composer's `/` menu (MCP
+ *  prompts) and `@` menu (MCP resources), and the import panel all read it. The backend pushes
  *  `mcp_changed` on the shared session-events stream whenever the list
  *  changes (sessionRuntimes.ts), so a server added from anywhere, including
  *  by the assistant mid-session, shows up everywhere without a restart. */
