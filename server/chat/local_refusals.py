@@ -1,27 +1,10 @@
-"""Local-mode refusals for the chat side paths that build their own model call.
+"""The reason a chat request that names an unknown model is refused.
 
-A chat turn refuses a cloud model in its own model resolution (routes.py,
-through ``model_mode.turn_model_refusal``). ``/subagent`` reaches a
-model without going through a chat turn, so it asks here first. A refusal is
-the existing error frame as a one-frame SSE reply: the client is already reading
-a stream, so an HTTP status alone would never reach the user.
+A chat turn refuses a cloud model in Local mode in its own model resolution
+(routes.py, through ``model_mode.turn_model_refusal``).
 """
 
 from __future__ import annotations
-
-from fastapi.responses import StreamingResponse
-
-from server.utils import ndjson_dumps
-
-
-def sse_error(message: str) -> StreamingResponse:
-    """A one-frame SSE reply carrying the existing error frame, then [DONE]."""
-
-    async def _frames():
-        yield f"data: {ndjson_dumps({'error': message})}\n\n"
-        yield "data: [DONE]\n\n"
-
-    return StreamingResponse(_frames(), media_type="text/event-stream")
 
 
 def unknown_model_message(model_key: str) -> str:
@@ -31,23 +14,3 @@ def unknown_model_message(model_key: str) -> str:
         f"{model_key} is not an available chat model (it may have been removed). "
         "Pick one from the model menu."
     )
-
-
-def subagent_refusal(model_key: str) -> StreamingResponse | None:
-    """In Local mode a /subagent task runs only on an installed on-device model:
-    a cloud key, or a key the catalog does not know, is refused with a reason
-    instead of reaching the cloud default. None when the task may run."""
-    from server.chat.infra import _get_chat_model_meta, _get_chat_models
-    from server.infrastructure.model_mode import current_mode, turn_model_refusal
-    from server.local.runtime import is_local_model
-
-    if current_mode() != "local":
-        return None
-    key = model_key if model_key in _get_chat_models() else ""
-    refusal = turn_model_refusal(
-        key,
-        on_device=is_local_model(key),
-        label=(_get_chat_model_meta().get(key) or {}).get("label", ""),
-        mode="local",
-    )
-    return sse_error(refusal) if refusal else None

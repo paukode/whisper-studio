@@ -277,21 +277,6 @@ def test_hybrid_mode_lets_a_cloud_model_through_the_gate(
 # ── side paths ───────────────────────────────────────────────────────────────
 
 
-def test_local_mode_subagent_refuses_a_cloud_model(user_layer, registry, monkeypatch, client):
-    user_layer["model_mode"] = "local"
-
-    async def _never(*_a, **_k):
-        raise AssertionError("agent started")
-
-    monkeypatch.setattr("server.agents.runtime.run_agent", _never)
-    cloud_key = cfg.load_config()["default_chat_model"]
-    body = {"task": "list files", "model": cloud_key, "session_id": "lm-sub"}
-    with client.stream("POST", "/api/subagent/stream", json=body) as r:
-        raw = b"".join(r.iter_raw()).decode()
-    frames = [json.loads(ln[6:]) for ln in raw.splitlines() if ln.startswith("data: {")]
-    assert frames and "Local mode" in frames[0]["error"]
-
-
 def test_a_transcript_reader_with_no_context_size_fails_the_turn_visibly(
     user_layer, registry, no_cloud, local_path, client, monkeypatch
 ):

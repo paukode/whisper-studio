@@ -359,8 +359,7 @@ class AgentJournal:
         j.event("started" if not resumed else "resumed", task=(task or "")[:2000], model=model)
         # The registry row is what the header's task list shows; announcing it
         # here, and its end in finish(), is what puts every agent there live,
-        # however it was started (a chat turn, /subagent, detached, resumed,
-        # a workflow).
+        # however it was started (a chat turn, detached, resumed, a workflow).
         try:
             from server.tasks import registry
             from server.tasks.events import emit_task_event

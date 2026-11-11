@@ -18,8 +18,7 @@ Who sets it:
   processing (``mode == bypassPermissions``, or the scope already on);
 - the chat route around its SessionStart and UserPromptSubmit hooks;
 - the completion gate around its Stop hooks and quality gates;
-- a workflow run, which keeps the value its launcher had;
-- the /subagent route, from the live mode.
+- a workflow run, which keeps the value its launcher had.
 
 It only turns on down a chain, never off, except where a run starts that is
 not part of the chain: a cron run starts from a context with it off.

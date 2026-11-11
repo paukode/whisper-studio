@@ -109,17 +109,17 @@ def execute_send_session_message(tool_input: dict, session_id: str) -> str:
 # A user typing "use @poland_news for context" is asking to PULL another
 # session's recent conversation into THIS turn, the opposite direction from
 # send_session_message's push. Resolved server-side, before the model ever
-# sees the raw text, the same one-shot inline pattern
-# server/chat/routes.py:_resolve_at_file_mentions already uses for @file: —
-# just keyed on a slugified session title instead of a workspace path.
+# sees the raw text, with the other @ mentions (server/chat/mentions.py),
+# keyed on a slugified session title.
 #
 # Only a bare @<slug> that matches a REAL, resolvable session is touched: an
 # @word matching no session (an email address, a stray "@" in prose) is left
 # completely alone, so this never corrupts ordinary text.
 
-# A mention must start the string or follow whitespace — "foo@bar" mid-word
-# is never a mention, matching how an email local part reads.
-_AT_SESSION_MARKER = re.compile(r"(?:^|(?<=\s))@([a-zA-Z_][\w-]*)")
+# A mention must start the string or follow whitespace: "foo@bar" mid-word
+# is never a mention, matching how an email local part reads. A name followed
+# by a colon is an MCP resource (@server:uri), never a session.
+_AT_SESSION_MARKER = re.compile(r"(?:^|(?<=\s))@([a-zA-Z_][\w-]*)(?![\w:-])")
 _AT_SESSION_CONTEXT_MAX_MESSAGES = 20
 _AT_SESSION_CONTEXT_MAX_CHARS = 20_000
 
@@ -158,8 +158,8 @@ def _render_session_excerpt(session_id: str, title: str) -> str:
 def resolve_at_session_mentions(question: str, current_session_id: str) -> str:
     """Inline every resolvable bare @<slug> mention's recent conversation.
 
-    Called unconditionally (no workspace needed, unlike @file:) from
-    server/chat/routes.py right alongside _resolve_at_file_mentions.
+    Called from server/chat/mentions.py for every message, with or without a
+    workspace.
     """
     if "@" not in question:
         return question

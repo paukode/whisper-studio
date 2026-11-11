@@ -197,7 +197,7 @@ class AnthropicAdapter:
             else:
                 body["tools"] = tools
             # No tool_choice: the model always decides which tool to call. A
-            # requested skill (@skills:) is asked for in the user message
+            # requested skill (/skill-name) is asked for in the user message
             # (server/chat/routes.py), since Opus 5.5, Sonnet 5.5, Fable 5.1
             # and Mythos 5.1 reject a forced tool_choice with a 400.
         return body

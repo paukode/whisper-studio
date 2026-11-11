@@ -330,7 +330,7 @@ def _event_line(ev: dict) -> str:
 
 
 def cancel_task(task_id: str) -> bool:
-    """Stop a running agent: a detached, resumed or /subagent run through its
+    """Stop a running agent: a detached or resumed run through its
     coroutine; an agent spawned inside a chat turn through the team that owns
     it (server/agent_tools/teams.py), the same cancel the chat's Stop sends."""
     aio_task = _running.get(task_id)

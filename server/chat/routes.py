@@ -5,7 +5,6 @@ Endpoints:
 - GET  /api/models: the configured chat models and the default
 - /api/local-model/*: load, cancel a load, status, download, unload
 - POST /api/generate-title: one-shot call to title a conversation
-- POST /api/subagent/stream: run a /subagent task
 - POST /api/chat: the main streaming chat endpoint
 
 ``/api/chat`` is turn ASSEMBLY only: request parsing, model resolution,
@@ -21,7 +20,6 @@ import functools
 import json
 import logging
 import os
-import re as _re
 import sqlite3
 import threading as _threading
 import time
@@ -38,7 +36,6 @@ from server.security.permissions import get_mode
 from server.utils import ndjson_dumps
 from server.whisper_md import get_whisper_md_context
 from server.workspace import (
-    _ws_validate_path,
     get_workspace_path,
     is_plan_mode,
 )
@@ -72,11 +69,7 @@ from .infra import (  # noqa: E402
     _get_default_model,
     _turn_catalog,
 )
-from .local_refusals import (  # noqa: E402
-    sse_error,
-    subagent_refusal,
-    unknown_model_message,
-)
+from .local_refusals import unknown_model_message  # noqa: E402
 
 log = logging.getLogger("whisper-studio")
 
@@ -200,8 +193,9 @@ async def _run_grounding(
     rest of turn setup. Returns ``retrieve_grounding``'s ``(block, meta)``.
 
     ``question`` is the user's message with @-triggers stripped but BEFORE
-    @file/@session mention inlining — the raw question is the retrieval
-    signal; an inlined file body would drown it. ``forced`` marks an @index
+    the @ mentions are resolved (server/chat/mentions.py): the raw question
+    is the retrieval signal, and an inlined resource or session would drown
+    it. ``forced`` marks an @index
     turn: automatic turns self-mute when nothing in the corpus is on-topic,
     forced turns keep the loose noise floor (the user asked for a search).
     """
@@ -306,69 +300,6 @@ async def reset_chat_session(session_id: str):
         "cleared_paused": cleared_paused,
         "cleared_cards": cleared_cards,
     }
-
-
-# @file mention inlining. The chat composer's autocomplete inserts the colon
-# form (`@file:<path>`) and the path may contain spaces (e.g.
-# "console output (10).log"); the space form (`@file <path>`) is also
-# supported for hand-typed mentions. We resolve the path against the real
-# workspace so the file content is delivered to the model directly instead of
-# the model having to locate and read it with tools.
-_AT_FILE_MARKER = _re.compile(r"@file\s*:\s*|@file\s+")  # colon OR space form
-_AT_FILE_INLINE_MAX = 150_000  # mirror MAX_ATTACHMENT_CHARS
-
-
-def _resolve_at_file_mentions(question: str, ws_path: str) -> str:
-    """Inline ``@file:<path>`` / ``@file <path>`` references into the prompt.
-
-    The path may contain spaces, so for each marker we take the longest
-    following whitespace-delimited prefix that resolves to a real file inside
-    the validated workspace — the filesystem is the ground truth for where the
-    name ends. Trailing text after the path is preserved. Mentions that don't
-    resolve are left verbatim (one debug log, no exception escapes). Every
-    candidate passes ``_ws_validate_path`` so traversal/UNC/system paths can't
-    be inlined.
-    """
-    out: list[str] = []
-    pos = 0
-    for m in _AT_FILE_MARKER.finditer(question):
-        if m.start() < pos:
-            # Marker fell inside a region already consumed by a prior match.
-            continue
-        after = question[m.end() :]
-        tokens = after.split(" ")
-        best_rel: str | None = None
-        best_consumed = 0
-        candidate = ""
-        for i, tok in enumerate(tokens):
-            candidate = tok if i == 0 else candidate + " " + tok
-            rel = candidate.strip()
-            if not rel:
-                continue
-            full = os.path.join(ws_path, rel)
-            if _ws_validate_path(full, ws_path) and os.path.isfile(full):
-                best_rel, best_consumed = rel, len(candidate)
-            if len(candidate) > 1024:  # guard against pathological scans
-                break
-        out.append(question[pos : m.start()])
-        if best_rel is None:
-            log.debug("@file mention did not resolve: %r", after[:80])
-            out.append(question[m.start() : m.end()])
-            pos = m.end()
-            continue
-        full = os.path.join(ws_path, best_rel)
-        try:
-            with open(full, errors="replace") as f:
-                content = f.read()
-            if len(content) > _AT_FILE_INLINE_MAX:
-                content = content[:_AT_FILE_INLINE_MAX] + "\n... (truncated)"
-            out.append(f"[File: {best_rel}]\n```\n{content}\n```")
-        except Exception as e:
-            log.debug("@file inline failed for %s: %s", best_rel, e)
-            out.append(question[m.start() : m.end()] + best_rel)
-        pos = m.end() + best_consumed
-    out.append(question[pos:])
-    return "".join(out)
 
 
 @router.get("/api/models")
@@ -913,199 +844,6 @@ async def generate_title_endpoint(request: Request):
     return {"title": title}
 
 
-@router.post("/api/subagent/stream")
-async def subagent_stream_endpoint(request: Request):
-    """Run a `/subagent` task through the full agent runtime (tool loop + all
-    enabled tools, including MCP browser tools) in the background, streaming
-    live progress as ``team_progress`` SSE frames that the frontend folds into
-    the agent row (its full feed opens in the dock's agent pane).
-    Non-blocking: the composer stays open while it runs.
-
-    Progress is published on a PRIVATE event channel so a concurrent /api/chat
-    turn (which drains the session channel) never absorbs these events.
-    """
-    import threading
-    import uuid as _uuid
-
-    from server.agents.event_bus import event_bus as _agent_event_bus
-    from server.agents.runtime import run_agent
-    from server.chat.infra import effort_for_model
-    from server.tasks.handoff import stop_owned_work
-    from server.tasks.owner import run_owned
-
-    body = await request.json()
-    task = (body.get("task") or "").strip()
-    model_key = body.get("model") or _get_default_model()
-    session_id = body.get("session_id") or "subagent"
-
-    if not task:
-
-        async def _err():
-            yield f"data: {ndjson_dumps({'error': 'task required'})}\n\n"
-            yield "data: [DONE]\n\n"
-
-        return StreamingResponse(_err(), media_type="text/event-stream")
-
-    if (refused := subagent_refusal(model_key)) is not None:
-        return refused
-    chat_models = _get_chat_models()
-    if model_key not in chat_models:
-        return sse_error(unknown_model_message(model_key))
-    model_id = chat_models[model_key]
-
-    # The frontend supplies a stable team_id up front so its Stop button can
-    # abort this exact stream; fall back to a generated id for direct callers.
-    team_id = body.get("team_id") or f"subagent-{_uuid.uuid4().hex[:10]}"
-    event_channel = f"subagent-events:{team_id}"
-    task_preview = task if len(task) <= 80 else task[:77] + "…"
-
-    def _frame(payload: dict) -> str:
-        return f"data: {ndjson_dumps(payload)}\n\n"
-
-    async def _stream():
-        queue = _agent_event_bus.subscribe(event_channel)
-        # Register in the unified task registry so UI-launched subagents show
-        # in the header's task list (no task_event emission: this stream
-        # already delivers its own completion frame). The run below takes this
-        # id as its agent id, so its journal and this row are one record.
-        from server.tasks import registry as _task_registry
-
-        registry_task_id = _task_registry.create_task(
-            "agent",
-            session_id=session_id,
-            title=task,
-            meta={"agent_type": "general", "source": "subagent_stream", "team_id": team_id},
-        )
-        # Synthetic team scaffold so the card renders with a title + one row
-        # before the agent emits its own per-phase events.
-        yield _frame(
-            {
-                "team_progress": {
-                    "phase": "team_started",
-                    "team_id": team_id,
-                    "team_name": "Subagent",
-                    "description": task_preview,
-                    "agents": [
-                        {"name": "Subagent", "task": task, "agent_type": "general", "role": "team"}
-                    ],
-                }
-            }
-        )
-
-        # The run owns the commands it starts (server/tasks/owner.py): a chat
-        # Stop in the session spares them, and stopping this run kills them.
-        work_owner = f"subagent:{team_id}"
-        # Started in Bypass, its commands run with no OS sandbox.
-        import contextvars
-
-        from server.security import bypass_sandbox
-
-        _agent_context = contextvars.copy_context()
-        bypass_sandbox.set_on(_agent_context, bypass_sandbox.is_bypass(get_mode()))
-        agent_task = asyncio.create_task(
-            run_owned(
-                work_owner,
-                run_agent(
-                    task,
-                    agent_type="general",
-                    session_id=session_id,
-                    model_id_override=model_id,
-                    team_id=team_id,
-                    agent_name="Subagent",
-                    event_channel=event_channel,
-                    # /subagent is a subagent like any other: it runs at the
-                    # composer's effort. It was the last entry point still
-                    # passing nothing, which on the Anthropic path means no
-                    # thinking block.
-                    effort_label=effort_for_model(model_key, body.get("effort_level")),
-                    agent_id=registry_task_id,
-                ),
-            ),
-            context=_agent_context,
-        )
-        # Register the live coroutine so POST /api/background-tasks/{id}/stop
-        # (kind=agent -> agents.cancel_task) can cancel this run too.
-        from server.tasks import agents as _task_agents
-
-        _task_agents._running[registry_task_id] = agent_task
-        agent_task.add_done_callback(
-            lambda _t, _tid=registry_task_id: _task_agents._running.pop(_tid, None)
-        )
-        try:
-            idle = 0
-            while not agent_task.done():
-                try:
-                    ev = await asyncio.wait_for(queue.get(), timeout=0.1)
-                    yield _frame({"team_progress": ev})
-                    idle = 0
-                except TimeoutError:
-                    # The agent runs a NON-streaming Bedrock call per turn, so a
-                    # single turn can be silent for 30-90s. Without traffic the
-                    # connection can be dropped as idle (which would cancel the
-                    # agent via the finally below), so send an SSE comment as a
-                    # keepalive roughly every 5s of quiet.
-                    idle += 1
-                    if idle >= 50:
-                        idle = 0
-                        yield ": keepalive\n\n"
-            # Drain any events queued after completion was observed.
-            while not queue.empty():
-                yield _frame({"team_progress": queue.get_nowait()})
-
-            result = agent_task.result()
-            output = result.output or ""
-            status = result.status
-            # No cost row here: the turn engine already recorded every one of
-            # the agent's rounds under this session as it ran.
-            yield _frame({"team_progress": {"phase": "team_completed", "team_id": team_id}})
-            yield _frame({"subagent_done": {"output": output, "status": status}})
-            _task_registry.finish_task(registry_task_id, status=status, result_text=output[-2000:])
-        except Exception as e:  # noqa: BLE001 - surface any failure to the UI
-            log.error("Subagent stream error: %s", e, exc_info=True)
-            yield _frame({"team_progress": {"phase": "team_completed", "team_id": team_id}})
-            yield _frame({"subagent_done": {"output": f"[Subagent Error] {e}", "status": "failed"}})
-            _task_registry.finish_task(
-                registry_task_id, status="failed", result_text=f"[Subagent Error] {e}"
-            )
-        finally:
-            _agent_event_bus.unsubscribe(event_channel, queue)
-            # If the client disconnected or hit Stop (the SSE fetch aborted),
-            # the generator is closing while the agent is still running —
-            # cancel it so the background work actually stops (and doesn't leak).
-            # A cancel from the background-tasks panel lands here too.
-            if not agent_task.done() or agent_task.cancelled():
-                agent_task.cancel()
-                _task_registry.finish_task(
-                    registry_task_id, status="stopped", result_text="[Stopped by user]"
-                )
-                # Cancelling the agent cannot stop a command running in a
-                # worker thread, so the run's own commands are killed too. On
-                # a thread: this finally may run inside a cancelled scope,
-                # where an await would not complete.
-                threading.Thread(
-                    target=stop_owned_work,
-                    args=(session_id, work_owner),
-                    name=f"stop-{team_id}",
-                    daemon=True,
-                ).start()
-            else:
-                # Disconnect can also land AFTER the agent finished but before
-                # the try block recorded the outcome (GeneratorExit at a yield
-                # skips it). finish_task only transitions 'running' rows, so
-                # this is a no-op when the outcome was already recorded and
-                # closes the would-be phantom row otherwise.
-                try:
-                    _result = agent_task.result()
-                    _status = _result.status
-                    _text = (_result.output or "")[-2000:]
-                except Exception:
-                    _status, _text = "failed", "[Subagent Error] stream aborted"
-                _task_registry.finish_task(registry_task_id, status=_status, result_text=_text)
-        yield "data: [DONE]\n\n"
-
-    return StreamingResponse(_stream(), media_type="text/event-stream")
-
-
 @router.post("/api/chat")
 async def chat_endpoint(request: Request):
     body = await request.json()
@@ -1484,7 +1222,7 @@ async def chat_endpoint(request: Request):
 
         # Progressive tool disclosure: re-derive this session's activations from
         # visible history (self-healing across restarts/pauses), activate a
-        # requested skill so an @skills: request can call its tool even when it
+        # requested skill so a /skill-name request can call its tool even when it
         # is deferred, then compute the deferred index for the static system block.
         from server.chat.tool_activation import activate, activate_from_history
         from server.chat.tool_index import build_deferred_index
@@ -1532,17 +1270,12 @@ async def chat_endpoint(request: Request):
         _visible_history = visible_chat_history(chat_history)
         messages = [rebuild_history_message(msg) for msg in _visible_history]
 
-        # Resolve @file:/@file mentions — inline the referenced file so the model
-        # has the content directly instead of hunting for it with tools.
-        if ws_path:
-            question = _resolve_at_file_mentions(question, ws_path)
+        # Resolve the @ mentions: MCP resources and other sessions go into the
+        # message, and the agent types it names are asked for below
+        # (server/chat/mentions.py).
+        from server.chat.mentions import agent_hint, resolve_mentions
 
-        # Resolve bare @<session> mentions — inline that session's recent
-        # conversation so the model has it directly, the same one-shot pattern as
-        # @file: above. No workspace needed, so this always runs.
-        from server.agent_tools.cross_session import resolve_at_session_mentions
-
-        question = resolve_at_session_mentions(question, session_id)
+        question, agent_mentions = await resolve_mentions(question, session_id, ws_path)
 
         # (@index/@docs extraction and the grounding kickoff happened at the
         # top of turn setup — see the grounding router block above.)
@@ -1708,7 +1441,7 @@ async def chat_endpoint(request: Request):
             if transcript.strip():
                 parts.append(f"[Transcript so far]\n{transcript}")
             parts.append(question)
-            # When the user explicitly requested a skill via @skills:NAME,
+            # When the user explicitly requested a skill via /skill-name,
             # this line is what gets it called: no provider is sent a
             # forced tool_choice (several models reject one), so the model
             # is asked plainly to call the tool and told what arguments to
@@ -1730,6 +1463,8 @@ async def chat_endpoint(request: Request):
                     f"Call the `{force_skill}` tool now using the appropriate "
                     f"text from this conversation."
                 )
+            if agent_mentions:
+                parts.append(agent_hint(agent_mentions))
             user_text = "\n\n".join(parts)
 
             if image_blocks:

@@ -169,7 +169,7 @@ async def run_agent(
     # started from a plan-mode turn or by a read-only agent (a resume through
     # send_message included; server.agents.tool_access.read_only_scope), the
     # app's own memory agents too: send_message resumes any agent by id. While
-    # the app is in plan mode (a workflow approved from its card, /subagent)
+    # the app is in plan mode (a workflow approved from its card)
     # every other agent starts read-only; the memory agents keep their tools
     # for their post-turn runs, which never start under the scope.
     from server.agents.tool_access import read_only_scope, started_read_only

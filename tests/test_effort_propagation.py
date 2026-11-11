@@ -427,16 +427,6 @@ def test_adapter_uses_the_metadata_the_effort_was_resolved_from(monkeypatch):
     assert body["output_config"] == {"effort": "xhigh"}
 
 
-def test_subagent_endpoint_resolves_an_effort():
-    """/subagent was the last agent entry point passing nothing at all."""
-    import inspect
-
-    from server.chat import routes
-
-    src = inspect.getsource(routes.subagent_stream_endpoint)
-    assert "effort_for_model(model_key" in src
-
-
 def test_cron_and_headless_no_longer_hardcode_no_effort():
     """Guard the specific regression: both files passed effort_label=None into
     their adapters, so every scheduled turn ran without adaptive thinking."""
