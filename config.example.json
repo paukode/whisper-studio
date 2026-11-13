@@ -6,9 +6,9 @@
   "speaker_voiceprints": false,
   "bedrock_region": "us-east-1",
   "chat_models": {
-    "fable5.1": {
-      "id": "global.anthropic.claude-fable-5-1",
-      "label": "Fable 5.1",
+    "fable5.2": {
+      "id": "global.anthropic.claude-fable-5-2",
+      "label": "Fable 5.2",
       "context_window": 1000000,
       "requires_data_retention": true
     },

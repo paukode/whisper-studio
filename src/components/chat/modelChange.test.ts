@@ -26,7 +26,7 @@ const gated = (key: string): ModelEntry => ({ key, name: key, requires_data_rete
 
 const MODELS: ModelEntry[] = [
   cloud('opus4.8'),
-  gated('fable5.1'),
+  gated('fable5.2'),
   local('local_gemma'),
   local('local_coder'),
 ];
@@ -107,7 +107,7 @@ describe('requestModelChange: leaving a local model for a retention-gated one', 
   });
 
   it('keeps the local model loaded when the consent screen is declined', async () => {
-    const pending = requestModelChange('fable5.1');
+    const pending = requestModelChange('fable5.2');
     await answerConsent(false);
     expect(await pending).toBe(false);
     expect(unloadLocalModelMock).not.toHaveBeenCalled();
@@ -116,7 +116,7 @@ describe('requestModelChange: leaving a local model for a retention-gated one', 
 
   it('keeps the local model loaded when enabling retention fails', async () => {
     putMock.mockRejectedValueOnce(new Error('No AWS credentials'));
-    const pending = requestModelChange('fable5.1');
+    const pending = requestModelChange('fable5.2');
     await answerConsent(true);
     expect(await pending).toBe(false);
     expect(unloadLocalModelMock).not.toHaveBeenCalled();
@@ -124,10 +124,10 @@ describe('requestModelChange: leaving a local model for a retention-gated one', 
   });
 
   it('frees the local model once the switch commits', async () => {
-    const pending = requestModelChange('fable5.1');
+    const pending = requestModelChange('fable5.2');
     await answerConsent(true);
     expect(await pending).toBe(true);
-    expect(useSettingsStore.getState().selectedModel).toBe('fable5.1');
+    expect(useSettingsStore.getState().selectedModel).toBe('fable5.2');
     expect(unloadLocalModelMock).toHaveBeenCalledTimes(1);
   });
 });

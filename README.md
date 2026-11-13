@@ -67,7 +67,7 @@ Deploy setup is in [`docs/README.md`](docs/README.md).
   (Parakeet streaming, Whisper batch) plus Canary translation, word-level timings,
   turns split where one speaker takes over, and opt-in voiceprints that
   recognise a named speaker in later recordings.
-- **Chat with Claude or GPT.** Fable 5.1, Opus 5.5, Sonnet 5.5, Haiku 4.5,
+- **Chat with Claude or GPT.** Fable 5.2, Opus 5.5, Sonnet 5.5, Haiku 4.5,
   GPT-6.1 Sol and GPT-6 Astra/Luna, with streaming tokens, tool use, attachments
   and slash commands. Or run fully on-device in local mode.
 - **Full workspace IDE.** File tree, Monaco editor, xterm.js terminal, Git

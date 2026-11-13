@@ -201,7 +201,7 @@ def test_anthropic_adapter_structured_call_lets_the_model_call_emit_result(anthr
     )
     body = fake.requests[-1]
     assert "thinking" not in body
-    # Never forced: Opus 5.5, Sonnet 5.5, Fable 5.1 and Mythos 5.1 reject that.
+    # Never forced: Opus 5.5, Sonnet 5.5, Fable 5.2 and Mythos 5.2 reject that.
     assert body["tool_choice"] == {"type": "auto"}
     assert body["tools"][0]["input_schema"] == schema
     assert turn.structured_output == {"verdict": "ok"}

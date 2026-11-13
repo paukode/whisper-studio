@@ -231,7 +231,7 @@ source ~/.zshrc</code></pre></div>
     <div class="table-wrap"><table>
       <thead><tr><th>Control</th><th>Values</th><th>What it does</th></tr></thead>
       <tbody>
-        <tr><td>Model</td><td>the models your mode exposes</td><td>The model that answers. Rows carry a <b>Local</b> badge for on-device models and a <b>Mythos</b> badge for models that need the data-retention consent flow (Fable 5.1). Starting default: <code>default_chat_model</code>.</td></tr>
+        <tr><td>Model</td><td>the models your mode exposes</td><td>The model that answers. Rows carry a <b>Local</b> badge for on-device models and a <b>Mythos</b> badge for models that need the data-retention consent flow (Fable 5.2). Starting default: <code>default_chat_model</code>.</td></tr>
         <tr><td>Thinking</td><td><code>none</code> / <code>low</code> / <code>medium</code> / <code>high</code> / <code>extra</code> (alias <code>xhigh</code>) / <code>max</code> / <code>ultracode</code></td><td>The reasoning budget for a turn (<code>effort_level</code>, shipped default <code>max</code>). Levels are per-model and the value is clamped to the nearest supported one when you switch. See the table below.</td></tr>
         <tr><td>Answers</td><td>Brief / Normal / Detailed</td><td>How long the answer runs. Mirrors <code>/verbosity</code>. Not shown for on-device models.</td></tr>
       </tbody>
@@ -242,7 +242,7 @@ source ~/.zshrc</code></pre></div>
     <div class="table-wrap"><table>
       <thead><tr><th>Models</th><th>Levels offered</th></tr></thead>
       <tbody>
-        <tr><td>Opus 5.5, Sonnet 5.5, Fable 5.1</td><td>low, medium, high, extra, max, ultracode</td></tr>
+        <tr><td>Opus 5.5, Sonnet 5.5, Fable 5.2</td><td>low, medium, high, extra, max, ultracode</td></tr>
         <tr><td>GPT-6 Astra / Luna, GPT-6.1 Sol</td><td>low, medium, high, max, ultracode</td></tr>
         <tr><td>Haiku 4.5</td><td>none offered (the panel says it has no thinking levels); Answers is still shown</td></tr>
         <tr><td>On-device models that can think</td><td>Off to Max, default Medium (their own level, kept apart from the cloud one); no Answers row</td></tr>

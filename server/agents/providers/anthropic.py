@@ -64,7 +64,7 @@ class AnthropicBedrockAdapter:
         if force_structured is not None:
             # Swap tools for a single schema-shaped emit_result tool. The model
             # decides whether to call it (tool_choice auto): Opus 5.5, Sonnet
-            # 5.5, Fable 5.1 and Mythos 5.1 reject a forced tool_choice with a
+            # 5.5, Fable 5.2 and Mythos 5.2 reject a forced tool_choice with a
             # 400. The caller's ask names the tool or a JSON answer (read from
             # the text below) and retries once when neither comes back.
             # Thinking stays unset, which every catalog model accepts: Fable,
@@ -92,6 +92,9 @@ class AnthropicBedrockAdapter:
                 body["output_config"] = {
                     "effort": api_effort_for(effort_label, meta, self.model_key)
                 }
+                from server.infrastructure.thinking_binding import drop_mismatched_thinking
+
+                drop_mismatched_thinking(body, self.model_id)
 
         # No cache_control here. The only caller is the structured-output
         # call, whose tools ([emit_result]) never match the agent loop's

@@ -178,13 +178,13 @@
           <td><b>Model</b> row</td>
           <td>the last model you picked in this browser, else <code>default_chat_model</code></td>
           <td>The model this session runs on: Haiku 4.5, Sonnet 5.5, Opus 5.5,
-            Fable 5.1, GPT-6 Astra / Luna, GPT-6.1 Sol, or an
+            Fable 5.2, GPT-6 Astra / Luna, GPT-6.1 Sol, or an
             on-device model you installed. The picker only shows models valid for the current model
             mode. The browser remembers your last pick; with no remembered pick, an installed on-device
             model is chosen first, then <code>default_chat_model</code>. The shipped default is
             <code>gpt6-luna</code> (set in <code class="path">config.example.json</code>, the SYSTEM
             layer every install reads, and the same key in code).
-            Fable 5.1 requires the data-retention consent flow before it can be selected.
+            Fable 5.2 requires the data-retention consent flow before it can be selected.
             Full catalog on <a href="arch-backends.html">Model backends</a>.</td>
         </tr>
         <tr>
@@ -194,7 +194,7 @@
             highest, are <code>low</code>, <code>medium</code>, <code>high</code>, <code>extra</code>
             (sent to Bedrock as <code>xhigh</code>), <code>max</code>, and <code>ultracode</code>.
             Higher effort trades latency and cost for deeper thinking. The levels a model exposes depend
-            on its tier: Opus 5.5, Sonnet 5.5 and Fable 5.1 expose the full ladder <code>low</code> to
+            on its tier: Opus 5.5, Sonnet 5.5 and Fable 5.2 expose the full ladder <code>low</code> to
             <code>max</code>; GPT-6 Astra / Luna and GPT-6.1 Sol run <code>low</code> to
             <code>max</code> and skip <code>extra</code>; Haiku has no thinking control.
             <code>ultracode</code> is appended for any model that can orchestrate a workflow, and is a
