@@ -1,6 +1,6 @@
 """The stream guard on a turn that narrates its work and ends with a recap.
 
-server/prompts/narration.py has the model say what it is about to do before
+server/prompts/reply_style.py has the model say what it is about to do before
 its tool calls and close with a recap whose table names each file by the link
 its write result gave. In the tool_round_then_answer sequence (a round that
 writes a file, then the answer), server/chat/claim_guard.py must show the
@@ -26,7 +26,7 @@ from tests.golden_harness import (
     tool_use_block,
 )
 
-REL = "server/prompts/narration.py"
+REL = "server/prompts/reply_style.py"
 NARRATION = f"Writing the rule into {REL} so it stays in the cached block."
 READ_ONLY = "I read server/goals/claims.py and src/utils/wsFileLinks.ts to check the shape."
 
@@ -65,7 +65,7 @@ def test_the_recap_row_gets_a_receipt_and_the_read_sentence_none(tmp_path):
     messages: list = [{"role": "user", "content": "add the narration rule to the chat prompt"}]
 
     # Round 1: the narration line, then the write call.
-    body = 'WORK_NARRATION = "..."\n'
+    body = 'REPLY_STYLE = "..."\n'
     call = {
         "type": "tool_use",
         "id": "w1",

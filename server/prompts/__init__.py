@@ -7,7 +7,7 @@ Layers:
   1. Identity (base persona, code-output rule, user rules): always included
   2. Mode (brief, the permission-mode line): conditional on session config
   3. Workspace (workspace and git instructions, project instructions,
-     learning guidance, rules capture, narration, visuals, deferred tool index)
+     learning guidance, rules capture, reply style, visuals, deferred tool index)
   4. Dynamic (plan mode, memory, session memory, git status): per request
   5. Tool guidance (task tracking and the live task list): per request
 
@@ -24,7 +24,7 @@ from enum import IntEnum
 from server.git.prompts import build_git_instructions_prompt, build_git_status_prompt
 from server.prompts.base import BASE
 from server.prompts.modes import BYPASS_MODE, GUARDED_MODE, PLAN_MODE
-from server.prompts.narration import WORK_NARRATION
+from server.prompts.reply_style import REPLY_STYLE
 from server.prompts.rules import rules_block as _user_rules_block
 from server.prompts.visuals import VISUAL_CHOICE
 from server.prompts.workspace import (
@@ -382,23 +382,23 @@ _registry.register(
     )
 )
 
-# How a chat turn shows its work: a line before each group of tool calls, what
-# a read found, and a recap with a table of the files written
-# (server/prompts/narration.py). Fixed text on the cached layer. It names brief
-# and plan mode itself instead of being switched off by them, so it adds no
-# rewrite of the static block when a mode flips.
+# How a chat turn replies: quiet while it works, one final reply with the
+# outcome first, formatted to read at a glance, and a short recap table of the
+# files written (server/prompts/reply_style.py). Fixed text on the cached
+# layer. It names plan mode itself instead of being switched off by it, so it
+# adds no rewrite of the static block when the mode flips.
 _registry.register(
     PromptSection(
-        name="work_narration",
+        name="reply_style",
         layer=PromptLayer.WORKSPACE,
         priority=36,
-        content=WORK_NARRATION,
+        content=REPLY_STYLE,
     )
 )
 
 # When a reply should carry a diagram or chart the user did not ask for, and
 # that visuals take the app theme on their own (server/prompts/visuals.py).
-# Fixed text on the cached layer, like the narration rule above.
+# Fixed text on the cached layer, like the reply style rule above.
 _registry.register(
     PromptSection(
         name="visual_choice",

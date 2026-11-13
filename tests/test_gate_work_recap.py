@@ -1,6 +1,6 @@
 """The recap the work narration rule asks for passes the completion gate.
 
-server/prompts/narration.py closes a chat turn with a recap: one sentence
+server/prompts/reply_style.py closes a chat turn with a recap: one sentence
 with the outcome, bullets with a bold lead word, a table of the files the
 turn wrote (each named by the link its write result gave), then what was left
 undone. The claim check (deliverables.check_claims) must let that recap
@@ -23,7 +23,7 @@ from server.goals.deliverables import check_claims
 from server.goals.evidence import Verdict, not_done
 from server.index.citations import created_file_link
 
-REL = "server/prompts/narration.py"
+REL = "server/prompts/reply_style.py"
 TABLE = "| File | What changed | Lines |\n|---|---|---|\n"
 READ_ONLY = "I read server/goals/claims.py and src/utils/wsFileLinks.ts to check the shape."
 
@@ -38,7 +38,7 @@ def _write_turn(ws, rel: str = REL) -> tuple[list, str]:
     the link that result hands the model."""
     full = ws / rel
     full.parent.mkdir(parents=True, exist_ok=True)
-    body = 'WORK_NARRATION = "..."\n'
+    body = 'REPLY_STYLE = "..."\n'
     full.write_text(body)
     link = created_file_link(rel, str(full))
     result = (
@@ -324,10 +324,10 @@ def test_a_change_column_over_a_plain_path_says_where_the_file_is(tmp_path, ask,
 def test_the_prescribed_header_is_a_change_column(tmp_path):
     # The rule names the header, so the reader finds the change column in
     # every recap the model writes to it, and a false row there is held.
-    from server.prompts.narration import WORK_NARRATION
+    from server.prompts.reply_style import REPLY_STYLE
 
     header = "| File | What changed | Lines |"
-    assert header in WORK_NARRATION
+    assert header in REPLY_STYLE
     stale = _stale(tmp_path, "src/old.ts")
     row = f"| {created_file_link('src/old.ts', stale)} | new pre-pass for paths | +18 -6 |"
     reply = f"Added the pre-pass.\n\n{header}\n|---|---|---|\n{row}\n"

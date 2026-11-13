@@ -40,7 +40,7 @@ BASE = (
     # to be spoken to.
     "You are Whisper Studio's assistant. You have tools, a possible voice transcript, "
     "and a possible code workspace. "
-    "Be concise: no fluff, no repeating the question. Like a text message from a smart friend. "
+    "Be concise: no fluff, no repeating the question. "
     # Output style rules (no emojis, no em dashes, etc.) come from the user's
     # own files under ~/.whisper (server/prompts/rules.py), injected as the
     # "user_rules" prompt section.

@@ -90,7 +90,7 @@ _TWO_PATHS_RE = re.compile(rf"\s(?:~|/)|{_EXT}\s", re.IGNORECASE)
 # lead-in line, and every path in a row is claimed unless the row negates,
 # offers or asks, or says its file is gone ("| old.md | deleted |" in a table
 # of changes). Where the header also names a change column ("| File | What
-# changed | Lines |", the recap server/prompts/narration.py asks for), a row
+# changed | Lines |", the recap server/prompts/reply_style.py asks for), a row
 # that names its file by the write result's own link says the file was
 # changed in this turn, whether its cell has a verb or not; a plain path
 # under such a column ("Modified" in a file listing, "Change" in a review of
