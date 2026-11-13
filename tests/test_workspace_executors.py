@@ -108,8 +108,6 @@ def _setup_edit(tmp_path, monkeypatch, contents: str):
     f.write_text(contents)
     monkeypatch.setattr(executors, "get_workspace_path", lambda: str(tmp_path))
     monkeypatch.setattr("server.file_state.check_write_allowed", lambda *a, **k: (True, ""))
-    monkeypatch.setattr("server.file_state.check_read_fresh", lambda *a, **k: (True, ""))
-    monkeypatch.setattr("server.file_state.lines_were_read", lambda *a, **k: (True, ""))
     return f
 
 

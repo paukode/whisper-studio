@@ -448,20 +448,6 @@ def _normalize_quotes(text: str) -> str:
     return text
 
 
-def _match_line_spans(text: str, needle: str, every: bool) -> list[tuple[int, int]]:
-    """The line span (1-based, inclusive) of the first match of ``needle`` in
-    ``text``, or of each match when ``every``."""
-    spans = []
-    at = text.find(needle)
-    while at != -1:
-        first = text.count("\n", 0, at) + 1
-        spans.append((first, first + needle.rstrip("\n").count("\n")))
-        if not every:
-            break
-        at = text.find(needle, at + len(needle))
-    return spans
-
-
 @register_executor("ws_edit_file", read_only=False, concurrent_safe=False)
 def _exec_ws_edit_file(tool_input, transcript, current_attachments):
     """Edit a file by exact string replacement with quote normalization."""
@@ -485,11 +471,8 @@ def _exec_ws_edit_file(tool_input, transcript, current_attachments):
     if not os.path.isfile(full):
         return f"File not found: {path}"
 
-    # Write gate, first half: the session read the file and it did not change.
-    allowed, reason = file_state.check_read_fresh(session_id, full)
-    if not allowed:
-        return f"Error: {reason}"
-
+    # No read gate here, unlike ws_write_file: the edit replaces text that
+    # must match the file on disk exactly (server/file_state.py).
     try:
         with open(full, errors="replace") as f:
             original = f.read()
@@ -520,16 +503,6 @@ def _exec_ws_edit_file(tool_input, transcript, current_attachments):
             "or set replace_all=true to replace all occurrences."
         )
 
-    # Write gate, second half: the text to replace sits in lines that were read.
-    haystack, needle = (
-        (normalized_original, normalized_old) if used_normalization else (original, old_string)
-    )
-    allowed, reason = file_state.lines_were_read(
-        session_id, full, _match_line_spans(haystack, needle, replace_all)
-    )
-    if not allowed:
-        return f"Error: {reason}"
-
     # Compute the new content
     if used_normalization:
         # When using normalization, we need to find and replace using
@@ -549,6 +522,9 @@ def _exec_ws_edit_file(tool_input, transcript, current_attachments):
         "content": new_content,
         "original": original,
         "session_id": session_id,
+        # An edit, not a whole-file write: what the session knows of the file
+        # after it is what it knew before (file_state.record_write).
+        "edit": True,
     }
     # Flag a fuzzy match so the approval banner can tell the user the edit
     # only matched after quote normalization, the model's old_string did not

@@ -93,13 +93,13 @@ async def _do_write(payload: dict) -> ApprovalOutcome:
 
     if after_write.handles(path):
         model_note = await asyncio.to_thread(after_write.after_write, ws, full) or None
-    # The session now knows the whole file, so its next edit of it needs no
-    # re-read. Recorded after the formatter, which the app ran itself: the
+    # After a write or a create the session knows the whole file, so its next
+    # write of it needs no re-read. Recorded after the formatter, which the app ran itself: the
     # note above shows the model what it changed.
     if payload.get("session_id"):
         from server import file_state
 
-        file_state.record_write(payload["session_id"], full)
+        file_state.record_write(payload["session_id"], full, whole=not payload.get("edit"))
     # The undo copy of this one write, keyed by its tool_use id, with the
     # file as the write and ruff left it (server/workspace/write_undo.py).
     # A write with no id (a direct call) or an unreadable old file keeps none.

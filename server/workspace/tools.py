@@ -372,6 +372,7 @@ def get_workspace_write_tools() -> list[dict]:
                 "More efficient than ws_write_file for small changes: it sends only the diff. "
                 "The old_string must match EXACTLY (including indentation). "
                 "The old_string must be unique in the file. "
+                "No ws_read_file is needed first when you already know the exact text. "
                 "Set replace_all=true to replace every occurrence. "
                 "Handles typographic quote normalization automatically."
             ),
