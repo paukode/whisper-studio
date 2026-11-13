@@ -1433,7 +1433,9 @@ async def chat_endpoint(request: Request):
                     log.warning("Index grounding failed: %s", e)
             if transcript.strip():
                 parts.append(f"[Transcript so far]\n{transcript}")
-            parts.append(question)
+            # Files sent with no text: the attachments are the whole message.
+            if question.strip() or not parts:
+                parts.append(question)
             # When the user explicitly requested a skill via /skill-name,
             # this line is what gets it called: no provider is sent a
             # forced tool_choice (several models reject one), so the model

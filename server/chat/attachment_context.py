@@ -164,7 +164,8 @@ def rebuild_history_message(msg: dict) -> dict:
     if role != "user" or not ids or not isinstance(content, str):
         return {"role": role, "content": content}
     texts, image_blocks = render_attachment_blocks(ids, msg.get("attachmentNames") or [])
-    user_text = "\n\n".join([*texts, content]) if texts else content
+    # Same layout as the live turn: text the user did not type adds no part.
+    user_text = "\n\n".join([*texts, content] if content.strip() else texts) if texts else content
     if image_blocks:
         return {
             "role": role,
