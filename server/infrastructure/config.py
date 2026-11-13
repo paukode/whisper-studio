@@ -836,14 +836,14 @@ def old_config_notices() -> list[tuple[str, str]]:
 # Keys the app no longer reads, with what replaced each: the per-type agent
 # budgets and the scheduled-run round cap gave way to the one round limit and
 # time limit every run takes; the transcription languages gave way to each
-# engine's own detection; brief replies are chosen per message. A saved one
+# engine's own detection; WHISPER.md and the rules set the reply style. A saved one
 # stays in config.user.json (startup never edits the user's file) and
 # old_config_notices names it.
 RETIRED_USER_KEYS = {
     "agent_limits": "the round limit and time limit in Settings replace it",
     "cron_max_rounds": "the round limit and time limit in Settings replace it",
     "whisper_language": "each transcription engine detects the language itself",
-    "brief_mode": "brief replies are chosen for each message in the chat",
+    "brief_mode": "WHISPER.md and the rules files set the reply style",
 }
 
 # Values the app no longer offers: {key: {old value: (what runs instead, why)}}.
