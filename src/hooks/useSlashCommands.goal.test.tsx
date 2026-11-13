@@ -15,7 +15,6 @@ import { getChatStore } from '@/stores/sessionRuntimes';
 function makeOpts(overrides: Partial<UseSlashCommandsOptions> = {}): UseSlashCommandsOptions {
   return {
     models: [],
-    setVerbosity: vi.fn(),
     setEffortLevel: vi.fn(),
     selectedModel: '',
     autoMemory: false,

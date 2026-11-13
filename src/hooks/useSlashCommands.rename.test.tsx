@@ -13,7 +13,6 @@ import { useSessionStore } from '@/stores/sessionStore';
 function makeOpts(addToast: ReturnType<typeof vi.fn>): UseSlashCommandsOptions {
   return {
     models: [],
-    setVerbosity: vi.fn(),
     setEffortLevel: vi.fn(),
     selectedModel: '',
     autoMemory: false,
