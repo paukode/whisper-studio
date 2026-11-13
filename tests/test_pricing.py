@@ -48,7 +48,7 @@ def test_no_fallback_for_unknown_or_legacy_key():
 def test_versioned_claude_keys_bill_at_own_rate():
     # Regression: versioned keys used to fall through to a $15/$75 "opus"
     # bucket. Each must bill at its own row; Opus 5.5 is $4/$20.
-    for key in ("opus5.5", "sonnet5.5", "fable5.1"):
+    for key in ("opus5.5", "sonnet5.5", "fable5.2"):
         rates = get_model_pricing(key)
         cost = estimate_cost(key, 2_160_997, 85_039)
         assert cost == pytest.approx(

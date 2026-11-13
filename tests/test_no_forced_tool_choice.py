@@ -1,6 +1,6 @@
 """No request the app builds forces a tool call.
 
-Opus 5.5, Sonnet 5.5, Fable 5.1 and Mythos 5.1 answer a forced tool_choice
+Opus 5.5, Sonnet 5.5, Fable 5.2 and Mythos 5.2 answer a forced tool_choice
 (``{"type": "tool"}`` or ``{"type": "any"}``) with a 400, so the model always
 decides which tool to call: a requested skill and the structured-output
 emit_result tool are asked for in the prompt instead. "auto" and a final

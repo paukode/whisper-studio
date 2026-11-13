@@ -81,7 +81,7 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Model</th><th>Input cap</th></tr></thead>
       <tbody>
-        <tr><td>Fable 5.1, Opus 5.5, Sonnet 5.5</td><td>1,000,000 tokens</td></tr>
+        <tr><td>Fable 5.2, Opus 5.5, Sonnet 5.5</td><td>1,000,000 tokens</td></tr>
         <tr><td>Haiku 4.5</td><td>200,000 tokens</td></tr>
         <tr><td>GPT-6 Astra, GPT-6.1 Sol</td><td>922,000 tokens</td></tr>
         <tr><td>GPT-6 Luna</td><td>278,528 tokens (the cap the mantle deployment enforces)</td></tr>
@@ -103,7 +103,7 @@
 
     <h2 id="anthropic-path">The Anthropic adapter</h2>
     <p>This adapter serves every cloud model that is not an OpenAI model: the Claude models in your
-      config, Fable 5.1, Opus 5.5, Sonnet 5.5, and Haiku 4.5. (The shipped default chat model is
+      config, Fable 5.2, Opus 5.5, Sonnet 5.5, and Haiku 4.5. (The shipped default chat model is
       GPT-6 Luna, and a fresh install starts in Local mode.) The engine loop from
       <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a> drives it, so the
       backend-specific parts are the Bedrock client, the request body (prompt-cache checkpoints,
@@ -455,7 +455,7 @@
 
     <h3 id="data-retention">Data-retention consent</h3>
     <p>One piece of model metadata needs its own path: <code>requires_data_retention</code>.
-      Mythos-class models such as Fable 5.1 only run when the AWS account's Bedrock data-retention mode
+      Mythos-class models such as Fable 5.2 only run when the AWS account's Bedrock data-retention mode
       is <code>provider_data_share</code>, so selecting one routes through a consent screen
       (<code class="path">src/components/chat/dataRetentionConsent.tsx</code>) before the model is used.
       The setting is account-wide and managed just-in-time around model selection rather than left on

@@ -80,7 +80,7 @@
     <p><code>/model &lt;name&gt;</code> switches the model for every subsequent turn in this session. The
       valid names are the keys of the models that <b>Settings &rsaquo; Model mode</b> shows: Cloud lists the
       cloud models only (<code>haiku</code>, <code>sonnet5.5</code>, <code>opus5.5</code>,
-      <code>fable5.1</code>, <code>gpt6.1-sol</code>, <code>gpt6-astra</code>, <code>gpt6-luna</code>),
+      <code>fable5.2</code>, <code>gpt6.1-sol</code>, <code>gpt6-astra</code>, <code>gpt6-luna</code>),
       Local lists your installed on-device models only, and Hybrid lists both. In Local mode with no
       on-device model installed, <code>/model</code> tells you where to get one. On success you
       get a toast confirming the version label ("Model set to Sonnet 5.5"), not the raw key. Pass an
@@ -98,7 +98,7 @@
       cloud model except Haiku. The palette offers <code>low</code>, <code>medium</code>,
       <code>high</code>, <code>extra</code>, <code>max</code>, and <code>ultracode</code>; the raw API
       name <code>xhigh</code> is accepted as an alias for <code>extra</code>. Which rungs a model actually has depends on its ladder:
-      <code>extra</code> exists on Opus 5.5, Sonnet 5.5 and Fable 5.1, while the GPT models go
+      <code>extra</code> exists on Opus 5.5, Sonnet 5.5 and Fable 5.2, while the GPT models go
       straight from <code>high</code> to <code>max</code>. <code>ultracode</code> is the
       top mode: it pairs the model's highest reasoning rung with dynamic-workflow orchestration (see
       <a href="arch-ultracode.html">The ultracode workflow runtime</a>), and it is offered only on

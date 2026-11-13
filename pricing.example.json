@@ -11,7 +11,7 @@
     "long_context": "Every Bedrock OpenAI card bills a call whose prompt is over 272K input tokens at its long-context rates, on ALL of that call's tokens: 2x input, cache read and cache write, 1.5x output (GPT-6 Astra $22 / $82.50 / $2.20 / $27.50; GPT-6.1 Sol $4.40 / $16.50 / $0.22 / $5.50; GPT-6 Luna $0.22 / $0.825 / $0.022 / $0.275). The context_window only sets when compaction starts, so single rounds do go over it; long_context.above is that break and each row is priced at its own tier.",
     "opus5.5": "Bedrock global rates from the AWS Price List (Claude Opus 5.5, us-east-1, 2026-09-23), matching Anthropic's list price: $4 / $20 / cache read $0.20 / 1-hour cache write $8 (the TTL the app sends; the 5-minute write is $5).",
     "sonnet5.5": "AWS Price List (AmazonBedrockFoundationModels, us-east-1, Claude Sonnet 5.5 (Amazon Bedrock Edition), global usagetypes, 2026-09-29): $2 / $10 / cache read $0.20 / 1-hour cache write $4 (the TTL the app sends; the 5-minute write is $2.50).",
-    "fable5.1": "AWS Price List (global): $10 / $50 / cache read $0.25 / 1-hour write $20.",
+    "fable5.2": "AWS Price List (AmazonBedrockFoundationModels, us-east-1, Claude Fable 5.2 (Amazon Bedrock Edition), global usagetypes, 2026-11-13): $8 / $40 / cache read $0.20 / 1-hour cache write $16 (the TTL the app sends; the 5-minute write is $10).",
     "cohere": "AWS Price List (AmazonBedrockFoundationModels, us-east-1): Cohere Embed 4 input $0.12 per 1M tokens, no output. The index calls it through its global profile (global.cohere.embed-v4:0) since 2026-09-28; the Price List carries no separate global Cohere rate, so that row repeats the in-region one, and the in-region row stays so earlier cost rows keep their price. Cohere Rerank 3.5 bills $0.002 per search unit, not per token, so its token rows carry no rate and show as $0 with the unpriced note.",
     "override": "To override or add rates, create pricing.json (gitignored, in the config folder: ~/.whisper for the Mac app, the repo root for a source install) holding only the keys you change. Entries there REPLACE these per model key; models you don't list keep the defaults below. There is no silent fallback: a model with no entry bills $0 and logs loudly. Changes apply on server restart.",
     "keys_prefixed_with_underscore": "ignored by the loader (annotations only)."
@@ -20,7 +20,7 @@
   "haiku":   { "input": 1.00, "output": 5.00,  "cache_read": 0.10, "cache_write": 2.00 },
   "sonnet5.5": { "input": 2.00, "output": 10.00, "cache_read": 0.20, "cache_write": 4.00 },
   "opus5.5": { "input": 4.00, "output": 20.00, "cache_read": 0.20, "cache_write": 8.00 },
-  "fable5.1": { "input": 10.00, "output": 50.00, "cache_read": 0.25, "cache_write": 20.00 },
+  "fable5.2": { "input": 8.00, "output": 40.00, "cache_read": 0.20, "cache_write": 16.00 },
 
   "gpt6.1-sol":   { "input": 2.20,  "output": 11.00, "cache_read": 0.11,  "cache_write": 2.75,   "cached_in_input": true,
                   "long_context": { "above": 272000, "input": 4.40, "output": 16.50, "cache_read": 0.22, "cache_write": 5.50 } },

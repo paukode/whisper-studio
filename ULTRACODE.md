@@ -13,7 +13,7 @@ reviewed properly.
 
 1. **Pick a model with Ultracode.** Open **How it thinks** in the composer and
    pick the model in the **Model** row. Every shipped cloud model except Haiku
-   has Ultracode: Opus 5.5, Sonnet 5.5, Fable 5.1, GPT-6.1 Sol, GPT-6 Astra and
+   has Ultracode: Opus 5.5, Sonnet 5.5, Fable 5.2, GPT-6.1 Sol, GPT-6 Astra and
    GPT-6 Luna. Haiku has no effort levels, and on-device models have Thinking
    levels only.
 
