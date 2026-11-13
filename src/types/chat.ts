@@ -91,8 +91,6 @@ export interface SessionMessagePayload {
 export interface TurnModelSettings {
   model: string;
   effort_level: string;
-  verbosity: string;
-  brief_mode: boolean;
 }
 
 /** A workspace file or folder picked from the composer's @ menu. It uploads

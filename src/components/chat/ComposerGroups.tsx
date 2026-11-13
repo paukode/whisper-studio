@@ -11,16 +11,11 @@ import { TokenCounter } from './TokenCounter';
 
 /**
  * The composer's controls. Collapsed, each is a capsule: "How it thinks"
- * (model, thinking, answers in short segments), then permissions, then the
+ * (model and thinking in short segments), then permissions, then the
  * workspace. A click opens the capsule's labeled panel above the composer,
  * where every setting is named and explained. The parent owns which panel is
  * open, so opening one closes the others and the More menu.
  */
-
-// Stored as the OpenAI models' native `verbosity` (low/medium/high); how each model
-// applies it is resolved at send time (useChatStream).
-const VERBOSITY_LEVELS = ['low', 'medium', 'high'] as const;
-const VERBOSITY_LABEL: Record<string, string> = { low: 'Brief', medium: 'Normal', high: 'Detailed' };
 
 const Icon = {
   model: (
@@ -32,11 +27,6 @@ const Icon = {
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M9 3a3 3 0 0 0-3 3 3 3 0 0 0-2 5 3 3 0 0 0 2 5 3 3 0 0 0 6 1V5a2 2 0 0 0-3-2z" />
       <path d="M15 3a3 3 0 0 1 3 3 3 3 0 0 1 2 5 3 3 0 0 1-2 5 3 3 0 0 1-6 1" />
-    </svg>
-  ),
-  answers: (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-      <line x1="4" y1="6" x2="20" y2="6" /><line x1="4" y1="12" x2="16" y2="12" /><line x1="4" y1="18" x2="12" y2="18" />
     </svg>
   ),
   folder: (
@@ -76,8 +66,6 @@ export const ThinkGroup: React.FC<ThinkGroupProps> = ({
   const setCloudLevel = useSettingsStore((s) => s.setEffortLevel);
   const localLevel = useSettingsStore((s) => s.localThinkingLevel);
   const setLocalLevel = useSettingsStore((s) => s.setLocalThinkingLevel);
-  const verbosity = useSettingsStore((s) => s.verbosity);
-  const setVerbosity = useSettingsStore((s) => s.setVerbosity);
   const ref = useRef<HTMLDivElement>(null);
   useDismiss(ref, onClose, { enabled: open });
 
@@ -89,7 +77,6 @@ export const ThinkGroup: React.FC<ThinkGroupProps> = ({
   const labelOf = local ? thinkingLabel : effortLabel;
   const note = (local ? THINKING_NOTES : EFFORT_NOTES)[level] ?? 'Adaptive reasoning depth.';
   const modelName = model?.name ?? (selectedModel || 'No model');
-  const answers = VERBOSITY_LABEL[verbosity] ?? 'Normal';
 
   return (
     <div className="cg-wrap" ref={ref}>
@@ -98,7 +85,7 @@ export const ThinkGroup: React.FC<ThinkGroupProps> = ({
         className={`cg-group${open ? ' open' : ''}`}
         id="thinkGroup"
         aria-expanded={open}
-        aria-label={`How it thinks: ${modelName}${levels.length ? `, thinking ${labelOf(level)}` : ''}${local ? '' : `, ${answers} answers`}`}
+        aria-label={`How it thinks: ${modelName}${levels.length ? `, thinking ${labelOf(level)}` : ''}`}
         onClick={onToggle}
       >
         <span className="cg-seg cg-model" title={`Model: ${modelName}`}>{Icon.model}<span className="cg-t">{modelName}</span></span>
@@ -106,12 +93,6 @@ export const ThinkGroup: React.FC<ThinkGroupProps> = ({
           <>
             <span className="cg-dv" aria-hidden="true" />
             <span className={`cg-seg cg-think effort-${level}`} title={`Thinking: ${labelOf(level)}`}>{Icon.think}<span className="cg-t">{labelOf(level)}</span></span>
-          </>
-        )}
-        {!local && (
-          <>
-            <span className="cg-dv" aria-hidden="true" />
-            <span className="cg-seg cg-ans" title={`Answers: ${answers}`}>{Icon.answers}<span className="cg-t">{answers}</span></span>
           </>
         )}
       </button>
@@ -153,26 +134,6 @@ export const ThinkGroup: React.FC<ThinkGroupProps> = ({
             <div className="cg-row">
               <div className="cg-row-label"><b>Thinking</b><small>how hard it works</small></div>
               <span className="cg-muted">This model has no thinking levels</span>
-            </div>
-          )}
-          {!local && (
-            <div className="cg-row">
-              <div className="cg-row-label"><b>Answers</b><small>reply length</small></div>
-              <div className="cg-segctl" role="radiogroup" aria-label="Answer length">
-                {VERBOSITY_LEVELS.map((lv) => (
-                  <button
-                    type="button"
-                    key={lv}
-                    role="radio"
-                    aria-checked={lv === verbosity}
-                    className={lv === verbosity ? 'on' : ''}
-                    data-testid={`verbosity-option-${lv}`}
-                    onClick={() => setVerbosity(lv)}
-                  >
-                    {VERBOSITY_LABEL[lv]}
-                  </button>
-                ))}
-              </div>
             </div>
           )}
           {local && (

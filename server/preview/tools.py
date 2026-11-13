@@ -214,16 +214,19 @@ APPROVAL_GATED_TOOLS: list[dict] = [
     },
     {
         "name": "preview_fill",
-        "description": "Fill an input/textarea on the preview session's current page, by CSS selector.",
+        "description": "Fill an input/textarea, or choose an option of a dropdown (select), on the preview session's current page, by CSS selector.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "session_name": _SESSION_NAME,
                 "selector": {
                     "type": "string",
-                    "description": "CSS selector for the input element.",
+                    "description": "CSS selector for the input or select element.",
                 },
-                "value": {"type": "string", "description": "Value to fill."},
+                "value": {
+                    "type": "string",
+                    "description": "Value to fill. For a select: the value or the label of the option.",
+                },
             },
             "required": ["session_name", "selector", "value"],
         },

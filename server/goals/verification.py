@@ -96,6 +96,11 @@ _FAIL_PATTERNS = (
 )
 
 
+# The result of a call that never ran: an earlier call of the same round waits
+# for approval (server/tool_executor.py writes this placeholder).
+_NOT_EXECUTED = "[Not executed]"
+
+
 @dataclass
 class VerifyRun:
     kind: str
@@ -174,19 +179,25 @@ def turn_evidence(messages: list) -> Evidence:
 
     Freshness is decided once the whole turn is known: a run counts only when
     it started after the LAST code edit of the turn, so a green suite followed
-    by another edit is stale evidence."""
+    by another edit is stale evidence. Order is the message and then the call
+    within it: the calls of one round run in the order the model wrote them
+    (an edit is never run alongside another call), so a test run written after
+    the edit in the same round is fresh. A call that was canceled because an
+    earlier one waits for approval ran nothing, and is not a run."""
     ev = Evidence()
     turn = turn_messages(messages)
-    pending: dict[str, tuple[str, str, int]] = {}  # tool_use_id -> (kind, command, pos)
-    verify_change_passes: list[int] = []  # positions of VERIFY PASS results
-    last_edit_pos = -1
+    # tool_use_id -> (kind, command, (message index, call index within it))
+    pending: dict[str, tuple[str, str, tuple[int, int]]] = {}
+    order: dict[int, tuple[int, int]] = {}  # id(run) -> where its call sits
+    verify_change_passes: list[tuple[int, int]] = []  # where VERIFY PASS calls sit
+    last_edit_pos = (-1, -1)
     for pos, m in enumerate(turn):
         if not isinstance(m, dict):
             continue
         content = m.get("content")
         if not isinstance(content, list):
             continue
-        for b in content:
+        for at, b in enumerate(content):
             if not isinstance(b, dict):
                 continue
             btype = b.get("type")
@@ -199,14 +210,14 @@ def turn_evidence(messages: list) -> Evidence:
                     if path and is_code_path(path) and not _in_scratch(path):
                         if path not in ev.edited_paths:
                             ev.edited_paths.append(path)
-                        last_edit_pos = pos
+                        last_edit_pos = (pos, at)
                 elif name in _COMMAND_TOOLS:
                     cmd = str(inp.get(_COMMAND_TOOLS[name]) or "")
                     kind = classify_verify_command(cmd)
                     if kind:
-                        pending[tid] = (kind, cmd, pos)
+                        pending[tid] = (kind, cmd, (pos, at))
                 elif name == "verify_change":
-                    pending[tid] = ("verify_change", "", pos)
+                    pending[tid] = ("verify_change", "", (pos, at))
             elif btype == "tool_result":
                 tid = str(b.get("tool_use_id") or "")
                 entry = pending.pop(tid, None)
@@ -214,21 +225,23 @@ def turn_evidence(messages: list) -> Evidence:
                     continue
                 kind, cmd, run_pos = entry
                 text = _result_text(b)
+                if text.startswith(_NOT_EXECUTED):
+                    continue
                 if kind == "verify_change":
                     if re.search(r"\bVERIFY PASS\b", text):
                         verify_change_passes.append(run_pos)
                     continue
-                ev.runs.append(
-                    VerifyRun(
-                        kind=kind,
-                        command=cmd,
-                        passed=not result_failed(text),
-                        fresh=False,
-                        pos=run_pos,
-                    )
+                run = VerifyRun(
+                    kind=kind,
+                    command=cmd,
+                    passed=not result_failed(text),
+                    fresh=False,
+                    pos=run_pos[0],
                 )
+                order[id(run)] = run_pos
+                ev.runs.append(run)
     for r in ev.runs:
-        r.fresh = r.pos > last_edit_pos
+        r.fresh = order[id(r)] > last_edit_pos
     ev.verify_change_pass = any(p > last_edit_pos for p in verify_change_passes)
     return ev
 

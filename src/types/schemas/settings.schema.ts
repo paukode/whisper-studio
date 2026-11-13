@@ -33,9 +33,6 @@ export const ModelsResponseSchema = z.object({
     effort_levels: z.array(z.string()).optional().default([]),
     default_effort: z.string().optional().default('medium'),
     supports_ultracode: z.boolean().optional().default(false),
-    // GPT-5.x verbosity control (text.verbosity); openai_bedrock models only.
-    supports_verbosity: z.boolean().optional().default(false),
-    default_verbosity: z.string().optional().default('medium'),
   })).optional().default([]),
   // '' when the active mode can run nothing (never a hardcoded cloud stand-in).
   default: z.string().optional().default(''),

@@ -34,13 +34,18 @@
       "context_window": 922000,
       "provider": "openai_bedrock"
     },
+    "gpt6.1-terra": {
+      "id": "openai.gpt-6.1-terra",
+      "label": "GPT-6.1 Terra",
+      "context_window": 922000,
+      "provider": "openai_bedrock"
+    },
     "gpt6-astra": {
       "id": "openai.gpt-6-astra",
       "label": "GPT-6 Astra",
       "context_window": 922000,
       "provider": "openai_bedrock",
-      "effort_tier": "openai6",
-      "verbosity": "medium"
+      "effort_tier": "openai6"
     },
     "gpt6-luna": {
       "id": "openai.gpt-6-luna",

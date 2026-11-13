@@ -345,10 +345,6 @@ async def models_endpoint():
                 "effort_levels": levels,
                 "default_effort": default_effort_for(m, k),
                 "supports_ultracode": "ultracode" in levels,
-                # OpenAI-on-Bedrock (GPT) exposes a verbosity control
-                # (text.verbosity); the UI shows a picker for these models only.
-                "supports_verbosity": m.get("provider") == "openai_bedrock",
-                "default_verbosity": m.get("verbosity", "medium"),
             }
         )
     return {
@@ -855,8 +851,6 @@ async def chat_endpoint(request: Request):
     model_key = body.get("model")
     force_skill = body.get("force_skill")
     session_id = body.get("session_id", "default")
-    # Brief mode
-    brief_mode = body.get("brief_mode", False)
     # Denial tracking per session (passed from frontend)
     session_denials = body.get("session_denials", {})
     # Session-scoped tool approvals (categories pre-approved by user)
@@ -1242,7 +1236,6 @@ async def chat_endpoint(request: Request):
             caching_on=_caching_on,
             ws_path=ws_path,
             session_id=session_id,
-            brief_mode=brief_mode,
             plan_mode=plan_mode,
             whisper_md_context=whisper_md_context,
             memory_context=memory_context,
@@ -1440,7 +1433,9 @@ async def chat_endpoint(request: Request):
                     log.warning("Index grounding failed: %s", e)
             if transcript.strip():
                 parts.append(f"[Transcript so far]\n{transcript}")
-            parts.append(question)
+            # Files sent with no text: the attachments are the whole message.
+            if question.strip() or not parts:
+                parts.append(question)
             # When the user explicitly requested a skill via /skill-name,
             # this line is what gets it called: no provider is sent a
             # forced tool_choice (several models reject one), so the model
@@ -1630,7 +1625,6 @@ async def chat_endpoint(request: Request):
                 system_prompt=system_prompt,
                 effort_label=effort_label,
                 session_id=session_id,
-                body=body,
             )
         else:
             from server.chat.engine.anthropic import AnthropicAdapter

@@ -11,7 +11,6 @@ import { useSettingsStore, type ModelEntry } from '@/stores/settingsStore';
 function makeOpts(models: ModelEntry[], addToast = vi.fn()): UseSlashCommandsOptions {
   return {
     models,
-    setVerbosity: vi.fn(),
     setEffortLevel: vi.fn(),
     selectedModel: models[0]?.key ?? '',
     autoMemory: false,

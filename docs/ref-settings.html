@@ -21,7 +21,7 @@
 
     <p>Settings are split over three surfaces. The gear icon opens the Settings panel, whose fields
       write config keys directly. A few controls live in the chat composer instead (model, thinking
-      level, answer length, permission mode) because they change per session rather than per install.
+      level, permission mode) because they change per session rather than per install.
       And every key, including the ones with no field anywhere, can be edited as JSON: the
       <b>config.user.json</b> link in Settings &gt; Models &gt; Chat (in the Local chat section, which
       shows even when no on-device model is installed) opens your user config file in an editor that
@@ -167,9 +167,9 @@
     </table></div>
 
     <h3 id="composer-controls">The composer controls</h3>
-    <p>Four settings are not in the Settings panel at all. They sit on the chat composer because you
-      change them per conversation. The <b>How it thinks</b> chip holds the Model, Thinking and
-      Answers rows (and a Context row for an on-device model); the <b>permission mode</b> chip (it shows the
+    <p>Three settings are not in the Settings panel at all. They sit on the chat composer because you
+      change them per conversation. The <b>How it thinks</b> chip holds the Model and Thinking
+      rows (and a Context row for an on-device model); the <b>permission mode</b> chip (it shows the
       current mode, for example Asks first) holds the permission mode.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Control</th><th>Where it starts from</th><th>What it does</th></tr></thead>
@@ -178,7 +178,7 @@
           <td><b>Model</b> row</td>
           <td>the last model you picked in this browser, else <code>default_chat_model</code></td>
           <td>The model this session runs on: Haiku 4.5, Sonnet 5.5, Opus 5.5,
-            Fable 5.2, GPT-6 Astra / Luna, GPT-6.1 Sol, or an
+            Fable 5.2, GPT-6 Astra / Luna, GPT-6.1 Sol / Terra, or an
             on-device model you installed. The picker only shows models valid for the current model
             mode. The browser remembers your last pick; with no remembered pick, an installed on-device
             model is chosen first, then <code>default_chat_model</code>. The shipped default is
@@ -195,7 +195,7 @@
             (sent to Bedrock as <code>xhigh</code>), <code>max</code>, and <code>ultracode</code>.
             Higher effort trades latency and cost for deeper thinking. The levels a model exposes depend
             on its tier: Opus 5.5, Sonnet 5.5 and Fable 5.2 expose the full ladder <code>low</code> to
-            <code>max</code>; GPT-6 Astra / Luna and GPT-6.1 Sol run <code>low</code> to
+            <code>max</code>; GPT-6 Astra / Luna and GPT-6.1 Sol / Terra run <code>low</code> to
             <code>max</code> and skip <code>extra</code>; Haiku has no thinking control.
             <code>ultracode</code> is appended for any model that can orchestrate a workflow, and is a
             session mode rather than a plain level: it sends the model's own top reasoning rung plus
@@ -203,14 +203,6 @@
             model supports when you switch models. An on-device model that can think gets its own
             levels, Off, Low, Medium, High and Max (default Medium), read from its chat template and kept
             apart from the cloud level.</td>
-        </tr>
-        <tr>
-          <td><b>Answers</b> row</td>
-          <td>this browser's last choice (default Normal)</td>
-          <td>Brief, Normal or Detailed, for cloud models. On a model with native verbosity (the GPT
-            models) the choice is sent as the provider's own <code>verbosity</code> value; on every
-            other model only the Brief end does anything, as a concise-reply instruction for that
-            message. No config key holds it.</td>
         </tr>
         <tr>
           <td><b>Permission mode</b> chip</td>

@@ -42,9 +42,6 @@ export interface ModelEntry {
   effort_levels?: string[];
   default_effort?: string;
   supports_ultracode?: boolean;
-  /** GPT-5.x verbosity control (text.verbosity). Only openai_bedrock models. */
-  supports_verbosity?: boolean;
-  default_verbosity?: string;
 }
 
 /** Shape returned by GET /api/models. */

@@ -113,11 +113,11 @@ export async function sendApprovalContinuation(
   const body: Record<string, unknown> = {
     question: '',
     session_id: sessionId,
-    // Carry the model AND the per-turn effort/response-length the paused turn
+    // Carry the model AND the per-turn effort the paused turn
     // ran on, so the continuation resumes on the SAME backend at the SAME
     // settings. Without the model the endpoint falls back to the default
     // cloud model, which would strand a paused local (Gemma) tool turn;
-    // without effort and verbosity the post-approval half of the turn
+    // without the effort the post-approval half of the turn
     // silently dropped to the config defaults. Read off the approval, not the
     // picker: the picker is window-wide, so a model chosen in another session
     // while this card waited must not take over this turn.

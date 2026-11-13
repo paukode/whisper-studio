@@ -31,8 +31,6 @@ import { captionIn, traceRuns, turnEntries } from '@/components/chat/turnEntries
 const SETTINGS: TurnModelSettings = {
   model: 'test-model',
   effort_level: 'normal',
-  verbosity: 'medium',
-  brief_mode: false,
 };
 
 /** Build an SSE Response from a list of frame objects, terminated by [DONE]. */
@@ -321,7 +319,7 @@ describe('sendApprovalContinuation', () => {
     payload: { command: 'git checkout -b docs/x' },
     sessionId: 'sess-resume',
     alwaysAsks: false,
-    turnSettings: { model: 'gpt5.6sol', effort_level: 'ultracode', verbosity: 'high', brief_mode: false },
+    turnSettings: { model: 'gpt5.6sol', effort_level: 'ultracode' },
   };
 
   afterEach(() => {
@@ -411,7 +409,6 @@ describe('sendApprovalContinuation', () => {
     useSettingsStore.setState({
       selectedModel: 'local_gemma',
       effortLevel: 'low',
-      verbosity: 'low',
     });
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')
@@ -422,7 +419,6 @@ describe('sendApprovalContinuation', () => {
     const body = JSON.parse(String(fetchSpy.mock.calls[0][1]!.body)) as Record<string, unknown>;
     expect(body.model).toBe('gpt5.6sol');
     expect(body.effort_level).toBe('ultracode');
-    expect(body.verbosity).toBe('high');
   });
 
   it('carries the conversation so a lost paused state still has context', async () => {
@@ -533,8 +529,6 @@ describe('readSSEStream approval_request', () => {
     const opened: TurnModelSettings = {
       model: 'cloud-sonnet',
       effort_level: 'high',
-      verbosity: 'medium',
-      brief_mode: false,
     };
     const res = sseResponse([
       {

@@ -47,7 +47,6 @@
         <tr><td><code>/model &lt;name&gt;</code></td><td>Switch the chat model for the rest of the session.</td></tr>
         <tr><td><code>/effort &lt;level&gt;</code></td><td>Set thinking depth for models that support it.</td></tr>
         <tr><td><code>/plan</code></td><td>Toggle plan mode (a read-only, research-first assistant).</td></tr>
-        <tr><td><code>/verbosity &lt;level&gt;</code></td><td>Set the response length (brief, normal, or detailed).</td></tr>
         <tr><td><code>/memory on|off|status</code></td><td>Toggle cross-session memory, or report its state.</td></tr>
         <tr><td><code>/goal &lt;text&gt;</code></td><td>Set a session goal, send it as the first message, and work toward it.</td></tr>
         <tr><td><code>/goal clear</code></td><td>End the active goal.</td></tr>
@@ -80,7 +79,7 @@
     <p><code>/model &lt;name&gt;</code> switches the model for every subsequent turn in this session. The
       valid names are the keys of the models that <b>Settings &rsaquo; Model mode</b> shows: Cloud lists the
       cloud models only (<code>haiku</code>, <code>sonnet5.5</code>, <code>opus5.5</code>,
-      <code>fable5.2</code>, <code>gpt6.1-sol</code>, <code>gpt6-astra</code>, <code>gpt6-luna</code>),
+      <code>fable5.2</code>, <code>gpt6.1-sol</code>, <code>gpt6.1-terra</code>, <code>gpt6-astra</code>, <code>gpt6-luna</code>),
       Local lists your installed on-device models only, and Hybrid lists both. In Local mode with no
       on-device model installed, <code>/model</code> tells you where to get one. On success you
       get a toast confirming the version label ("Model set to Sonnet 5.5"), not the raw key. Pass an
@@ -124,13 +123,6 @@
       <code>plan approved</code>: this leaves plan mode (Auto) and starts the implementation. It is the same permission mode described in
       <a href="tut-permissions.html">Permissions &amp; approvals</a>, so any write step still surfaces
       an approval card once you leave plan mode.</p>
-
-    <h3 id="verbosity">/verbosity</h3>
-    <p><code>/verbosity &lt;level&gt;</code> sets the <b>response length</b>, the same three-level control
-      that sits under the composer. Pass <code>brief</code> for short, direct answers,
-      <code>normal</code> for balanced detail, or <code>detailed</code> for thorough, expansive ones
-      (<code>low</code>, <code>medium</code>, and <code>high</code> work as aliases). A toast confirms
-      the level you set; call it with no argument to see the usage string.</p>
 
     <h3 id="memory">/memory</h3>
     <p><code>/memory on</code> and <code>/memory off</code> flip cross-session memory, and

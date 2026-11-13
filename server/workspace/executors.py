@@ -346,7 +346,7 @@ def _exec_ws_read_file(tool_input, transcript, current_attachments):
             )
         # Fall through, result is now within budget
 
-    file_state.record_read(session_id, full, offset, limit, len(numbered))
+    file_state.record_read(session_id, full, offset, limit, len(numbered), total_lines)
     return result
 
 
@@ -471,11 +471,8 @@ def _exec_ws_edit_file(tool_input, transcript, current_attachments):
     if not os.path.isfile(full):
         return f"File not found: {path}"
 
-    # Write gate: must have a full prior read
-    allowed, reason = file_state.check_write_allowed(session_id, full)
-    if not allowed:
-        return f"Error: {reason}"
-
+    # No read gate here, unlike ws_write_file: the edit replaces text that
+    # must match the file on disk exactly (server/file_state.py).
     try:
         with open(full, errors="replace") as f:
             original = f.read()
@@ -525,6 +522,9 @@ def _exec_ws_edit_file(tool_input, transcript, current_attachments):
         "content": new_content,
         "original": original,
         "session_id": session_id,
+        # An edit, not a whole-file write: what the session knows of the file
+        # after it is what it knew before (file_state.record_write).
+        "edit": True,
     }
     # Flag a fuzzy match so the approval banner can tell the user the edit
     # only matched after quote normalization, the model's old_string did not

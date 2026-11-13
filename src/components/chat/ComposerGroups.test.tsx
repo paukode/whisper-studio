@@ -16,7 +16,6 @@ function setCloudModel(effortLevel = 'max', tiers: string[] = CLOUD_TIERS) {
     models: [{ key: 'luna', name: 'GPT-6 Luna', effort_levels: tiers }] as never,
     selectedModel: 'luna',
     effortLevel,
-    verbosity: 'medium',
   });
 }
 
@@ -65,11 +64,10 @@ function renderWorkspace(props: Partial<React.ComponentProps<typeof WorkspaceGro
 describe('ThinkGroup capsule', () => {
   beforeEach(() => setCloudModel());
 
-  it('names the model, the thinking level and the answer length, each with its setting', () => {
+  it('names the model and the thinking level, each with its setting', () => {
     renderThink(false);
     expect(screen.getByTitle('Model: GPT-6 Luna')).toHaveTextContent('GPT-6 Luna');
     expect(screen.getByTitle('Thinking: Max')).toHaveTextContent('Max');
-    expect(screen.getByTitle('Answers: Normal')).toHaveTextContent('Normal');
     expect(screen.queryByTestId('think-panel')).toBeNull();
   });
 
@@ -79,7 +77,7 @@ describe('ThinkGroup capsule', () => {
     expect(screen.queryByTitle(/^Thinking:/)).toBeNull();
   });
 
-  it('shows Off, and no answer length, for an on-device model', () => {
+  it('shows Off for an on-device model', () => {
     useSettingsStore.setState({
       models: [{ key: 'gemma', name: 'Gemma 4', is_local: true, effort_levels: ['none', 'low', 'max'] }] as never,
       selectedModel: 'gemma',
@@ -87,7 +85,6 @@ describe('ThinkGroup capsule', () => {
     });
     renderThink(false);
     expect(screen.getByTitle('Thinking: Off')).toBeTruthy();
-    expect(screen.queryByTitle(/^Answers:/)).toBeNull();
   });
 });
 
@@ -97,7 +94,7 @@ describe('ThinkGroup panel', () => {
   it('labels every row with what it controls', () => {
     renderThink();
     const panel = screen.getByTestId('think-panel');
-    for (const text of ['Model', 'who answers', 'Thinking', 'how hard it works', 'Answers', 'reply length']) {
+    for (const text of ['Model', 'who answers', 'Thinking', 'how hard it works']) {
       expect(panel).toHaveTextContent(text);
     }
   });
@@ -115,13 +112,6 @@ describe('ThinkGroup panel', () => {
     for (const note of Object.values(EFFORT_NOTES)) expect(note).toMatch(/fast|slow|speed/i);
   });
 
-  it('sets the answer length', () => {
-    renderThink();
-    fireEvent.click(screen.getByTestId('verbosity-option-high'));
-    expect(useSettingsStore.getState().verbosity).toBe('high');
-    fireEvent.click(screen.getByTestId('verbosity-option-low'));
-    expect(useSettingsStore.getState().verbosity).toBe('low');
-  });
 });
 
 describe('ThinkGroup usage', () => {

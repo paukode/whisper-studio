@@ -329,7 +329,14 @@ async def fill_in_preview(payload: dict) -> tuple[bool, str]:
         if not selector:
             return False, "selector is required"
         await session.browser.ensure_started()
-        await session.browser.page.fill(selector, str(payload.get("value") or ""))
+        value = str(payload.get("value") or "")
+        target = session.browser.page.locator(selector)
+        # A dropdown takes no typed text: choose its option (by value or by
+        # label) instead of failing with "Element is not an <input>".
+        if await target.evaluate("e => e.tagName") == "SELECT":
+            await target.select_option(value)
+            return True, f"Selected {value!r} in {selector!r}"
+        await target.fill(value)
         return True, f"Filled {selector!r}"
     except ValueError as e:
         return False, str(e)

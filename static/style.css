@@ -2037,9 +2037,6 @@ input.segment-speaker {
 .cg-perm.tone-warn { color: var(--risk-warn); }
 .cg-perm.tone-danger { color: var(--danger); }
 
-@container composer (max-width: 700px) {
-    .cg-ans .cg-t { display: none; }
-}
 @container composer (max-width: 600px) {
     .cg-ws .cg-t { max-width: 70px; }
     .cg-think .cg-t { display: none; }

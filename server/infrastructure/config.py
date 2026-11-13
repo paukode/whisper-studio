@@ -410,10 +410,8 @@ def _normalize_chat_models(chat_models: dict) -> tuple[dict, dict]:
             "provider": provider,
             # OpenAI-on-Bedrock only: an optional per-model region override
             # (absent ⇒ the account-wide bedrock_region is used, same as the
-            # Anthropic path) and the GPT verbosity (text.verbosity).
-            # Ignored by other providers.
+            # Anthropic path). Ignored by other providers.
             "openai_region": _drop_retired_pin(val.get("openai_region"), model_id),
-            "verbosity": val.get("verbosity") or "medium",
             # On-device weights, for is_local entries only. Carrying these on
             # the SAME entry is what makes a new local model a one-place
             # config change: the picker metadata above and the loader info
@@ -838,14 +836,14 @@ def old_config_notices() -> list[tuple[str, str]]:
 # Keys the app no longer reads, with what replaced each: the per-type agent
 # budgets and the scheduled-run round cap gave way to the one round limit and
 # time limit every run takes; the transcription languages gave way to each
-# engine's own detection; brief replies are chosen per message. A saved one
+# engine's own detection; WHISPER.md and the rules set the reply style. A saved one
 # stays in config.user.json (startup never edits the user's file) and
 # old_config_notices names it.
 RETIRED_USER_KEYS = {
     "agent_limits": "the round limit and time limit in Settings replace it",
     "cron_max_rounds": "the round limit and time limit in Settings replace it",
     "whisper_language": "each transcription engine detects the language itself",
-    "brief_mode": "brief replies are chosen for each message in the chat",
+    "brief_mode": "WHISPER.md and the rules files set the reply style",
 }
 
 # Values the app no longer offers: {key: {old value: (what runs instead, why)}}.

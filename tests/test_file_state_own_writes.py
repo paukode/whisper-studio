@@ -5,7 +5,9 @@ read" right after its own successful edit of the same file, and to "Must
 read file before writing" right after it created the file: the approved
 write never told the read record. These pin that a session's own write,
 edit or create keeps the file writable, that a change from outside still
-asks for a re-read, and that a relative and an absolute path are one file.
+asks for a re-read before a whole-file write, and that a relative and an
+absolute path are one file. An edit has no read gate at all
+(tests/test_edit_needs_no_read.py).
 """
 
 from __future__ import annotations
@@ -70,8 +72,9 @@ def test_a_change_from_outside_still_asks_for_a_reread(ws):
     f.write_text("changed elsewhere\n")
     later = os.path.getmtime(f) + 5
     os.utime(f, (later, later))
-    assert _edit("a.txt", "changed", "x") == (
-        "Error: File modified since last read. Re-read before writing."
+    assert _call(executors._exec_ws_write_file, path="a.txt", content="x\n") == (
+        "Error: The file changed on disk since it was read. Read it again with ws_read_file, "
+        "then repeat this call."
     )
 
 
@@ -89,13 +92,11 @@ def test_a_read_after_a_write_returns_the_content_not_the_stub(ws):
     assert "uno" in _call(executors._exec_ws_read_file, path="a.txt")
 
 
-def test_another_session_still_has_to_read_first(ws):
+def test_another_session_still_has_to_read_before_a_whole_file_write(ws):
     (ws / "a.txt").write_text("one\n")
     _call(executors._exec_ws_read_file, path="a.txt")
     _approve(_edit("a.txt", "one", "uno"))
-    other = executors._exec_ws_edit_file(
-        {"path": "a.txt", "old_string": "uno", "new_string": "x", "__session_id__": "other"},
-        [],
-        [],
+    other = executors._exec_ws_write_file(
+        {"path": "a.txt", "content": "x\n", "__session_id__": "other"}, [], []
     )
-    assert other == "Error: Must read file before writing."
+    assert other.startswith("Error: Read the file first")

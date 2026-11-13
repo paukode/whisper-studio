@@ -224,8 +224,8 @@ def test_region_for_has_no_hardcoded_default(monkeypatch):
 
 
 def test_provider_inferred_from_openai_id():
-    # Minimal entry (id + label only) — provider, effort tier, and verbosity are
-    # all inferred, and no region is pinned so it follows bedrock_region.
+    # Minimal entry (id + label only) — provider and effort tier are
+    # inferred, and no region is pinned so it follows bedrock_region.
     from server.infrastructure.config import _normalize_chat_models
 
     _ids, meta = _normalize_chat_models({"gpt6": {"id": "openai.gpt-6-sol", "label": "GPT-6"}})
@@ -233,7 +233,6 @@ def test_provider_inferred_from_openai_id():
     # provider is what is_openai_model() keys off: inference alone makes it route.
     assert m["provider"] == "openai_bedrock"
     assert m["effort_tier"] == "openai6"
-    assert m["verbosity"] == "medium"
     assert m["openai_region"] is None
 
 

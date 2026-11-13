@@ -142,7 +142,7 @@ describe('eviction', () => {
         toolUseId: 'x', action: 'write', category: 'write', preview: 'text',
         summary: 's', payload: {}, sessionId: 'appr',
         alwaysAsks: false,
-        turnSettings: { model: 'm', effort_level: 'normal', verbosity: 'medium', brief_mode: false },
+        turnSettings: { model: 'm', effort_level: 'normal' },
       },
     });
 

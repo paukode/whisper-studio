@@ -136,14 +136,13 @@
       error. The app then sends the request again, and the replies can be slower.</p>
 
     <h2 id="switch-models">Change the model during a conversation</h2>
-    <p>The <b>How it thinks</b> control below the composer shows the model, the thinking level, and
-      the answer length. Click it to open its panel. The panel has these rows:</p>
+    <p>The <b>How it thinks</b> control below the composer shows the model and the thinking level.
+      Click it to open its panel. The panel has these rows:</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Row</th><th>What it sets</th></tr></thead>
       <tbody>
         <tr><td><b>Model</b></td><td>The model that answers. The next message uses the new model with the full history.</td></tr>
         <tr><td><b>Thinking</b></td><td>The thinking level of the model. A model without levels shows "This model has no thinking levels".</td></tr>
-        <tr><td><b>Answers</b></td><td>The answer length: Brief, Normal, or Detailed. This row is not available for an on-device model.</td></tr>
         <tr><td><b>Context</b></td><td>The context window of an on-device model. Only an on-device model shows this row.</td></tr>
       </tbody>
     </table></div>
@@ -153,7 +152,7 @@
       <tbody>
         <tr><td>Claude</td><td>Haiku 4.5, Sonnet 5.5, Opus 5.5</td><td>Haiku is the fastest model and has the lowest cost. Opus is the best model for difficult work with many steps. Sonnet is between the two.</td></tr>
         <tr><td>Fable</td><td>Fable 5.2</td><td>The same depth as Opus. The app shows the data-retention consent screen each time that you select it.</td></tr>
-        <tr><td>GPT (on Amazon Bedrock)</td><td>GPT-6 Astra, GPT-6 Luna, GPT-6.1 Sol</td><td>A second opinion, or a different style of answer. In Cloud mode and Hybrid mode, GPT-6 Luna is the default model.</td></tr>
+        <tr><td>GPT (on Amazon Bedrock)</td><td>GPT-6 Astra, GPT-6 Luna, GPT-6.1 Sol, GPT-6.1 Terra</td><td>A second opinion, or a different style of answer. In Cloud mode and Hybrid mode, GPT-6 Luna is the default model.</td></tr>
         <tr><td>On-device</td><td>The models that you installed</td><td>Work without a network and with no cost for each turn. A new install has no on-device model. Install one in <b>Settings &rarr; Chat and models &rarr; Models &rarr; Discover</b>.</td></tr>
       </tbody>
     </table></div>
@@ -190,7 +189,7 @@
       <thead><tr><th>Models</th><th>Levels</th></tr></thead>
       <tbody>
         <tr><td>Opus 5.5, Sonnet 5.5, Fable 5.2</td><td>Low, Medium, High, Extra, Max, Ultracode</td></tr>
-        <tr><td>GPT-6 Astra, GPT-6 Luna, GPT-6.1 Sol</td><td>Low, Medium, High, Max, Ultracode</td></tr>
+        <tr><td>GPT-6 Astra, GPT-6 Luna, GPT-6.1 Sol, GPT-6.1 Terra</td><td>Low, Medium, High, Max, Ultracode</td></tr>
         <tr><td>Haiku 4.5</td><td>No levels</td></tr>
         <tr><td>On-device model that can think</td><td>Off, Low, Medium, High, Max (see <a href="tut-model-modes.html#thinking">Thinking levels</a>)</td></tr>
       </tbody>
@@ -214,7 +213,6 @@
         <tr><td><code>/model &lt;key&gt;</code></td><td>Changes the chat model for the session, for example <code>/model haiku</code>.</td></tr>
         <tr><td><code>/effort &lt;level&gt;</code></td><td>Sets the thinking level. Each model has its own levels. A level that the model does not have changes to the nearest lower level.</td></tr>
         <tr><td><code>/plan</code></td><td>Turns plan mode on or off. In plan mode, the model only reads and gives a plan before it changes or runs something. See <a href="tut-permissions.html">Permissions &amp; approvals</a>.</td></tr>
-        <tr><td><code>/verbosity &lt;level&gt;</code></td><td>Sets the answer length: <code>brief</code>, <code>normal</code>, or <code>detailed</code>. It sets the same value as the <b>Answers</b> row.</td></tr>
         <tr><td><code>/goal &lt;text&gt;</code></td><td>Sets a goal and sends the goal text as your next message. If a turn runs, the app adds the text to that turn. The assistant continues until a completion gate accepts the goal. <code>/goal clear</code> ends the goal. <code>/goal gate add &lt;command&gt;</code> adds a shell command that must return exit code 0. See <a href="tut-goals.html">Goals &amp; autopilot</a>.</td></tr>
         <tr><td><code>/export</code></td><td>Downloads the conversation as a text file.</td></tr>
         <tr><td><code>/clear</code></td><td>Removes all the messages of this session from the screen and from the saved session. It also stops a reply that runs and closes the cards that wait. The session stays in the sidebar.</td></tr>

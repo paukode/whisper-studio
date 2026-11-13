@@ -224,8 +224,8 @@ source ~/.zshrc</code></pre></div>
     </div>
 
     <h3 id="session-controls">Controls that live in the composer, not in Settings</h3>
-    <p>Three dials sit in the <b>How it thinks</b> chip under the chat input rather than in the
-      Settings panel, because you change them mid-conversation. The model and the answer length are
+    <p>Two dials sit in the <b>How it thinks</b> chip under the chat input rather than in the
+      Settings panel, because you change them mid-conversation. The model is
       kept in the app's browser storage; the thinking level starts from <code>effort_level</code>
       and returns to it on reload.</p>
     <div class="table-wrap"><table>
@@ -233,7 +233,6 @@ source ~/.zshrc</code></pre></div>
       <tbody>
         <tr><td>Model</td><td>the models your mode exposes</td><td>The model that answers. Rows carry a <b>Local</b> badge for on-device models and a <b>Mythos</b> badge for models that need the data-retention consent flow (Fable 5.2). Starting default: <code>default_chat_model</code>.</td></tr>
         <tr><td>Thinking</td><td><code>none</code> / <code>low</code> / <code>medium</code> / <code>high</code> / <code>extra</code> (alias <code>xhigh</code>) / <code>max</code> / <code>ultracode</code></td><td>The reasoning budget for a turn (<code>effort_level</code>, shipped default <code>max</code>). Levels are per-model and the value is clamped to the nearest supported one when you switch. See the table below.</td></tr>
-        <tr><td>Answers</td><td>Brief / Normal / Detailed</td><td>How long the answer runs. Mirrors <code>/verbosity</code>. Not shown for on-device models.</td></tr>
       </tbody>
     </table></div>
     <p>Which thinking levels a cloud model offers comes from two independent properties: the reasoning ladder
@@ -243,11 +242,30 @@ source ~/.zshrc</code></pre></div>
       <thead><tr><th>Models</th><th>Levels offered</th></tr></thead>
       <tbody>
         <tr><td>Opus 5.5, Sonnet 5.5, Fable 5.2</td><td>low, medium, high, extra, max, ultracode</td></tr>
-        <tr><td>GPT-6 Astra / Luna, GPT-6.1 Sol</td><td>low, medium, high, max, ultracode</td></tr>
-        <tr><td>Haiku 4.5</td><td>none offered (the panel says it has no thinking levels); Answers is still shown</td></tr>
-        <tr><td>On-device models that can think</td><td>Off to Max, default Medium (their own level, kept apart from the cloud one); no Answers row</td></tr>
+        <tr><td>GPT-6 Astra / Luna, GPT-6.1 Sol / Terra</td><td>low, medium, high, max, ultracode</td></tr>
+        <tr><td>Haiku 4.5</td><td>none offered (the panel says it has no thinking levels)</td></tr>
+        <tr><td>On-device models that can think</td><td>Off to Max, default Medium (their own level, kept apart from the cloud one)</td></tr>
       </tbody>
     </table></div>
+
+    <h3 id="reply-style">Reply length and format</h3>
+    <p>The app has no control for the length of a reply. By default, a cloud model does these things:</p>
+    <ul>
+      <li>It writes no text between tool calls. The chat shows each tool call as an activity row.</li>
+      <li>It gives one final reply that starts with the result.</li>
+      <li>It uses short paragraphs, bullets, headings, tables, and bold text when they help the reader.</li>
+      <li>It adds a short table of the files that the turn changed.</li>
+    </ul>
+    <p>To change the default, write your own instruction. You can put the instruction in three places:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Place</th><th>Scope</th></tr></thead>
+      <tbody>
+        <tr><td>A message in the chat, for example "Answer in three lines."</td><td>That reply</td></tr>
+        <tr><td><code class="path">~/.whisper/WHISPER.md</code> or <code class="path">~/.whisper/rules/global/rules.md</code></td><td>All chats</td></tr>
+        <tr><td><code class="path">~/.whisper/rules/&lt;project&gt;/</code></td><td>The chats of one project</td></tr>
+      </tbody>
+    </table></div>
+    <p>An on-device model, a scheduled task, and an agent use their own prompts. This default does not apply to them.</p>
 
     <h3 id="other-settings">Other settings worth knowing</h3>
     <div class="table-wrap"><table>

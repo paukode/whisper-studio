@@ -307,7 +307,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
     [models],
   );
   const setEffortLevel = useSettingsStore((s) => s.setEffortLevel);
-  const setVerbosity = useSettingsStore((s) => s.setVerbosity);
   const setPermissionMode = useSettingsStore((s) => s.setPermissionMode);
   // Live permission mode for the Mode dropdown's current-state badge.
   // Falls back to 'default' to match the backend's initial value.
@@ -395,7 +394,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
   // Slash-command dispatcher (/effort, /model, /doctor, /help, …).
   const { handleSlashCommand } = useSlashCommands({
     models,
-    setVerbosity,
     setEffortLevel,
     selectedModel,
     autoMemory,
@@ -416,7 +414,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
   const submitMessage = useCallback(
     async (raw: string) => {
       const trimmed = raw.trim();
-      if (!trimmed) return;
+      // Attached files send with no text: the files are the message.
+      if (!trimmed && attachmentsRef.current.length === 0) return;
 
       // Close autocomplete on submit
       closeAc();
@@ -449,6 +448,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
       // clear the composer once delivery is CONFIRMED — on failure the
       // text stays put (nothing was sent) so it's obvious and easy to retry.
       if (getActiveChatStore().getState().isStreaming) {
+        // Files alone cannot join a running turn: they stay in the composer.
+        if (!trimmed) return;
         const delivered = await chatStream.sendMidTurn(trimmed);
         if (delivered) {
           inputTextRef.current = '';
@@ -533,6 +534,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
       const refs = settled.flatMap(a => (a.workspacePath ? [{ path: a.workspacePath, folder: a.folder }] : []));
       const currentAttachmentIds = uploaded.map(a => a.id);
       const currentAttachmentNames = uploaded.map(a => a.filename);
+      // No text and every upload failed to settle: there is nothing to send.
+      if (!trimmed && uploaded.length === 0 && refs.length === 0) return;
       inputTextRef.current = '';
       setText('');
       setAttachments([]);
@@ -915,7 +918,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
                 </svg>
               </button>
             ) : (
-              <button className="btn btn-send" type="submit" id="chatSendBtn" aria-label="Send message" disabled={!text.trim()}>
+              <button className="btn btn-send" type="submit" id="chatSendBtn" aria-label="Send message" disabled={!text.trim() && attachments.length === 0}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
                 </svg>

@@ -19,8 +19,6 @@ import type { TurnModelSettings } from '@/types/chat';
 const SETTINGS: TurnModelSettings = {
   model: 'test-model',
   effort_level: 'normal',
-  verbosity: 'medium',
-  brief_mode: false,
 };
 
 /** An SSE response whose frames the test sends one at a time. */

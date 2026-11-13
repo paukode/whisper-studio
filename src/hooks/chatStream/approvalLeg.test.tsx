@@ -50,7 +50,7 @@ function approval(): PendingApproval {
     explanation: null,
     sessionId: SID,
     alwaysAsks: false,
-    turnSettings: { model: 'm', effort_level: 'normal', verbosity: 'medium', brief_mode: false },
+    turnSettings: { model: 'm', effort_level: 'normal' },
   };
 }
 

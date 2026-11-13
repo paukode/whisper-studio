@@ -7,7 +7,7 @@ Layers:
   1. Identity (base persona, code-output rule, user rules): always included
   2. Mode (brief, the permission-mode line): conditional on session config
   3. Workspace (workspace and git instructions, project instructions,
-     learning guidance, rules capture, narration, visuals, deferred tool index)
+     learning guidance, rules capture, reply style, visuals, deferred tool index)
   4. Dynamic (plan mode, memory, session memory, git status): per request
   5. Tool guidance (task tracking and the live task list): per request
 
@@ -23,8 +23,8 @@ from enum import IntEnum
 
 from server.git.prompts import build_git_instructions_prompt, build_git_status_prompt
 from server.prompts.base import BASE
-from server.prompts.modes import BRIEF_PREFIX, BYPASS_MODE, GUARDED_MODE, PLAN_MODE
-from server.prompts.narration import WORK_NARRATION
+from server.prompts.modes import BYPASS_MODE, GUARDED_MODE, PLAN_MODE
+from server.prompts.reply_style import REPLY_STYLE
 from server.prompts.rules import rules_block as _user_rules_block
 from server.prompts.visuals import VISUAL_CHOICE
 from server.prompts.workspace import (
@@ -56,7 +56,6 @@ class PromptSection:
     content: str = ""
     builder: Callable[..., str] | None = None  # Dynamic content builder
     enabled: bool = True
-    prepend: bool = False  # If True, content goes before everything at this layer
 
     def resolve(self, **kwargs) -> str:
         """Resolve section content — static string or dynamic builder."""
@@ -272,16 +271,6 @@ _registry.register(
     )
 )
 
-_registry.register(
-    PromptSection(
-        name="brief_mode",
-        layer=PromptLayer.MODE,
-        priority=0,
-        content=BRIEF_PREFIX,
-        enabled=False,  # Enabled dynamically
-        prepend=True,
-    )
-)
 
 # The permission-mode line rides the cached MODE layer, unlike plan mode below:
 # the user changes the mode rarely, and a session in Bypass must see the Bypass
@@ -393,23 +382,23 @@ _registry.register(
     )
 )
 
-# How a chat turn shows its work: a line before each group of tool calls, what
-# a read found, and a recap with a table of the files written
-# (server/prompts/narration.py). Fixed text on the cached layer. It names brief
-# and plan mode itself instead of being switched off by them, so it adds no
-# rewrite of the static block when a mode flips.
+# How a chat turn replies: quiet while it works, one final reply with the
+# outcome first, formatted to read at a glance, and a short recap table of the
+# files written (server/prompts/reply_style.py). Fixed text on the cached
+# layer. It names plan mode itself instead of being switched off by it, so it
+# adds no rewrite of the static block when the mode flips.
 _registry.register(
     PromptSection(
-        name="work_narration",
+        name="reply_style",
         layer=PromptLayer.WORKSPACE,
         priority=36,
-        content=WORK_NARRATION,
+        content=REPLY_STYLE,
     )
 )
 
 # When a reply should carry a diagram or chart the user did not ask for, and
 # that visuals take the app theme on their own (server/prompts/visuals.py).
-# Fixed text on the cached layer, like the narration rule above.
+# Fixed text on the cached layer, like the reply style rule above.
 _registry.register(
     PromptSection(
         name="visual_choice",
@@ -496,7 +485,6 @@ def _resolve_sections(
     *,
     ws_path: str | None,
     session_id: str,
-    brief_mode: bool = False,
     plan_mode: bool = False,
     whisper_md_context: str = "",
     memory_context: str = "",
@@ -520,17 +508,11 @@ def _resolve_sections(
 
     Invariant: ``static + dynamic`` is byte-identical to the single-string
     prompt (build_system_prompt), so the cached static prefix never drifts from
-    the uncached string. ``prepend`` sections go before the other sections of
-    the static block, so only a static-layer section may use it; a dynamic one
-    raises ValueError.
+    the uncached string.
     """
     registry = get_registry()
 
     # Configure the per-request sections.
-    brief_section = registry.get("brief_mode")
-    if brief_section:
-        brief_section.enabled = brief_mode
-
     plan_section = registry.get("plan_mode")
     if plan_section:
         plan_section.enabled = plan_mode and bool(ws_path)
@@ -557,24 +539,18 @@ def _resolve_sections(
         "permission_mode": _static_permission_mode(session_id, permission_mode),
     }
 
-    static_prepend: list[str] = []
     static_main: list[str] = []
     dyn_main: list[str] = []
     for section in registry.get_sections():
         if not section.enabled:
             continue
         is_static = int(section.layer) <= int(PromptLayer.WORKSPACE)
-        if section.prepend and not is_static:
-            raise ValueError(f"Prompt section {section.name!r} is dynamic and cannot prepend.")
         text = section.resolve(**kwargs)
         if not text:
             continue
-        if section.prepend:
-            static_prepend.append(text)
-        else:
-            (static_main if is_static else dyn_main).append(text)
+        (static_main if is_static else dyn_main).append(text)
 
-    static_block = "".join(static_prepend) + "".join(static_main)
+    static_block = "".join(static_main)
     dynamic_block = "".join(dyn_main)
     if ultracode:
         from server.prompts.ultracode import build_ultracode_directive
@@ -588,7 +564,6 @@ def build_system_prompt(
     *,
     ws_path: str | None,
     session_id: str,
-    brief_mode: bool = False,
     plan_mode: bool = False,
     whisper_md_context: str = "",
     memory_context: str = "",
@@ -605,7 +580,6 @@ def build_system_prompt(
     static_block, dynamic_block = _resolve_sections(
         ws_path=ws_path,
         session_id=session_id,
-        brief_mode=brief_mode,
         plan_mode=plan_mode,
         whisper_md_context=whisper_md_context,
         memory_context=memory_context,
@@ -621,7 +595,6 @@ def build_system_prompt_split(
     *,
     ws_path: str | None,
     session_id: str,
-    brief_mode: bool = False,
     plan_mode: bool = False,
     whisper_md_context: str = "",
     memory_context: str = "",
@@ -637,7 +610,6 @@ def build_system_prompt_split(
     return _resolve_sections(
         ws_path=ws_path,
         session_id=session_id,
-        brief_mode=brief_mode,
         plan_mode=plan_mode,
         whisper_md_context=whisper_md_context,
         memory_context=memory_context,

@@ -60,11 +60,41 @@ def test_type_and_folder_glob_combine(monkeypatch, glob_filter, expected):
     assert "--type" not in args
 
 
-@pytest.mark.parametrize("glob_filter", ["*.test.ts", "src/**/*.tsx", "src/*.ts"])
-def test_type_with_a_file_glob_is_refused(monkeypatch, glob_filter):
+@pytest.mark.parametrize("glob_filter", ["*.test.ts", "src/**/*.{ts,tsx}", "src/*.ts"])
+def test_a_file_glob_of_the_type_is_kept_as_it_is(monkeypatch, glob_filter):
+    # The field failure: type "ts" with glob "server/**/*.ts" was refused as
+    # "already names files", and the model had to send the call again.
     monkeypatch.setattr(grep, "_resolve_type_globs", lambda t: ["*.ts"])
-    with pytest.raises(ValueError, match="already names files"):
-        grep._build_grep_args("x", glob_filter, "content", file_type="ts")
+    args = grep._build_grep_args("x", glob_filter, "content", file_type="ts")
+    assert _globs(args) == [glob_filter]
+    assert "--type" not in args
+
+
+def test_a_file_glob_of_another_type_is_refused(monkeypatch):
+    monkeypatch.setattr(grep, "_resolve_type_globs", lambda t: ["*.py", "*.pyi"])
+    with pytest.raises(ValueError, match="does not include"):
+        grep._build_grep_args("x", "src/**/*.tsx", "content", file_type="py")
+
+
+def test_a_name_glob_takes_the_extensions_of_the_type(monkeypatch):
+    monkeypatch.setattr(grep, "_resolve_type_globs", lambda t: ["*.py", "*.pyi"])
+    args = grep._build_grep_args("x", "tests/test_*", "content", file_type="py")
+    assert _globs(args) == ["tests/test_*.py", "tests/test_*.pyi"]
+
+
+def test_an_extension_given_as_the_type_is_searched_as_that_extension(monkeypatch):
+    # "tsx" is not a ripgrep type (its "ts" type holds *.tsx).
+    monkeypatch.setattr(grep, "_resolve_type_globs", lambda t: [])
+    alone = grep._build_grep_args("x", None, "content", file_type="tsx")
+    assert _globs(alone) == ["*.tsx"] and "--type" not in alone
+    with_folder = grep._build_grep_args("x", "src", "content", file_type="tsx")
+    assert _globs(with_folder) == ["src/**/*.tsx"]
+
+
+def test_a_known_type_alone_goes_to_ripgrep_as_a_type(monkeypatch):
+    monkeypatch.setattr(grep, "_resolve_type_globs", lambda t: ["*.py"])
+    args = grep._build_grep_args("x", None, "content", file_type="py")
+    assert args[args.index("--type") + 1] == "py" and not _globs(args)
 
 
 def test_type_with_only_an_exclusion_keeps_the_type(monkeypatch):
@@ -76,8 +106,8 @@ def test_type_with_only_an_exclusion_keeps_the_type(monkeypatch):
 def test_unknown_type_with_a_glob_is_an_error(monkeypatch):
     monkeypatch.setattr(grep, "get_workspace_path", lambda: "/ws")
     monkeypatch.setattr(grep, "_resolve_type_globs", lambda t: [])
-    out = grep.exec_ws_grep({"pattern": "x", "type": "nope", "glob": "src/**"}, "", [])
-    assert out.startswith("Error: unknown file type 'nope'")
+    out = grep.exec_ws_grep({"pattern": "x", "type": "no.pe", "glob": "src/**"}, "", [])
+    assert out.startswith("Error: unknown file type 'no.pe'")
 
 
 def test_rg_is_found_next_to_the_interpreter(monkeypatch, tmp_path):

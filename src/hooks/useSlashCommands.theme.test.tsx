@@ -19,7 +19,6 @@ import { useSlashCommands, type UseSlashCommandsOptions } from './useSlashComman
 function makeOpts(overrides: Partial<UseSlashCommandsOptions> = {}): UseSlashCommandsOptions {
   const opts = {
     models: [],
-    setVerbosity: vi.fn(),
     setEffortLevel: vi.fn(),
     selectedModel: '',
     autoMemory: false,

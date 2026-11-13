@@ -124,6 +124,24 @@ def test_rebuild_history_reinjects_at_original_position():
     assert out["content"] == "[File: spec.md]\nthe spec body\n\nsummarize the spec"
 
 
+def test_rebuild_history_of_a_file_sent_with_no_text():
+    # The files were the whole message: no empty part trails the file text.
+    aid = _stash_doc(filename="spec.md", text="the spec body")
+    with_text = rebuild_history_message({"role": "user", "content": "q", "attachmentIds": [aid]})
+    for blank in ("", "  \n"):
+        out = rebuild_history_message({"role": "user", "content": blank, "attachmentIds": [aid]})
+        assert out["content"] == "[File: spec.md]\nthe spec body"
+        assert with_text["content"] == out["content"] + "\n\nq"
+
+
+def test_rebuild_history_of_an_image_sent_with_no_text():
+    aid = _stash_image()
+    out = rebuild_history_message({"role": "user", "content": "", "attachmentIds": [aid]})
+    text = out["content"][-1]
+    assert text["type"] == "text"
+    assert text["text"] and text["text"] == text["text"].strip()
+
+
 def test_rebuild_history_with_image_produces_blocks():
     aid = _stash_image()
     out = rebuild_history_message(

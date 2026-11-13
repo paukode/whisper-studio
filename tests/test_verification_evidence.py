@@ -86,6 +86,55 @@ def test_turn_evidence_pass_before_the_last_edit_is_stale():
     assert ev.fresh_pass is False
 
 
+def _edit_then_test_in_one_round(test_result):
+    return [
+        {"role": "user", "content": "fix it"},
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "tool_use", "id": "e1", "name": "ws_edit_file", "input": {"path": "a.py"}},
+                {
+                    "type": "tool_use",
+                    "id": "c1",
+                    "name": "ws_run_command",
+                    "input": {"command": "python -m pytest -q"},
+                },
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "e1", "content": "Wrote a.py"},
+                {"type": "tool_result", "tool_use_id": "c1", "content": test_result},
+            ],
+        },
+    ]
+
+
+def test_a_test_run_written_after_the_edit_in_the_same_round_is_fresh(tmp_path):
+    # A live turn edited and ran the suite in one round, got a green run, and
+    # was sent back with "the only verification runs happened before your
+    # latest edit": both calls sat in one message and compared as equal.
+    messages = _edit_then_test_in_one_round("3 passed in 0.01s")
+    assert v.turn_evidence(messages).fresh_pass
+    assert v.verify_on_stop_feedback(messages, str(tmp_path)) is None
+
+
+def test_a_test_run_written_before_the_edit_in_the_same_round_is_stale():
+    messages = _edit_then_test_in_one_round("3 passed in 0.01s")
+    messages[1]["content"].reverse()
+    assert not v.turn_evidence(messages).fresh_pass
+
+
+def test_a_canceled_test_run_is_not_a_run():
+    # The edit waits for approval, so the test call after it never ran.
+    messages = _edit_then_test_in_one_round(
+        "[Not executed] A prior tool call in this turn is awaiting user approval."
+    )
+    ev = v.turn_evidence(messages)
+    assert not ev.runs and not ev.fresh_pass
+
+
 def test_turn_evidence_failed_run_and_verify_change_token():
     msgs = [
         {"role": "user", "content": "fix"},
