@@ -10,8 +10,10 @@ on turn N" meant reproducing the turn.
 
 Layout: data_root()/request_snapshots/<session_id>/<ts>-r<round>.json.gz
 Retention: files older than RETENTION_DAYS are pruned opportunistically on
-write (the tool-result-cache convention), and a per-session cap bounds
-pathological turn counts. Writes are best-effort and never fail the turn.
+write (the tool-result-cache convention), in the session that wrote and, at
+most once per SWEEP_INTERVAL_S, in every other session too: a session that
+ended never writes again, so its snapshots stayed on disk for good. A
+per-session cap bounds pathological turn counts. Writes are best-effort and never fail the turn.
 
 Read-back:
   GET /api/sessions/{session_id}/requests          -> newest-first listing
@@ -38,6 +40,9 @@ log = logging.getLogger("whisper-studio")
 router = APIRouter(tags=["request-snapshots"])
 
 RETENTION_DAYS = 7
+# How often a write also sweeps the expired snapshots of every other session.
+SWEEP_INTERVAL_S = 3600
+_last_sweep = 0.0
 MAX_PER_SESSION = 500
 # One snapshot's JSON is capped before compression; a 1M-token context can
 # serialize to tens of MB and the point is debuggability, not an archive.
@@ -80,6 +85,31 @@ def _prune(session_dir: str) -> None:
             os.unlink(p)
     except OSError:
         pass
+
+
+def _sweep_other_sessions() -> None:
+    """Drop the expired snapshots of every session, and a session folder left
+    empty, at most once per SWEEP_INTERVAL_S. Called on write; failures are
+    ignored."""
+    global _last_sweep
+    now = time.time()
+    if now - _last_sweep < SWEEP_INTERVAL_S:
+        return
+    _last_sweep = now
+    cutoff = now - RETENTION_DAYS * 86400
+    try:
+        sessions = [e.path for e in os.scandir(_root()) if e.is_dir(follow_symlinks=False)]
+    except OSError:
+        return
+    for session_dir in sessions:
+        try:
+            for entry in os.scandir(session_dir):
+                if entry.is_file(follow_symlinks=False) and entry.stat().st_mtime < cutoff:
+                    os.unlink(entry.path)
+            if not os.listdir(session_dir):
+                os.rmdir(session_dir)
+        except OSError:
+            pass
 
 
 def record_request_snapshot(
@@ -154,6 +184,7 @@ def record_request_snapshot(
             f.write(raw)
         os.replace(tmp, path)
         _prune(sdir)
+        _sweep_other_sessions()
     except Exception as e:  # noqa: BLE001 - never let a snapshot cost a turn
         log.warning("request snapshot failed for %s round %s: %s", session_id, round_num, e)
 

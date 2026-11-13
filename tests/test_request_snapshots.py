@@ -24,6 +24,7 @@ class _Adapter:
 @pytest.fixture
 def snap_root(tmp_path, monkeypatch):
     monkeypatch.setattr(snap, "data_root", lambda: str(tmp_path))
+    monkeypatch.setattr(snap, "_last_sweep", 0.0)
     return tmp_path
 
 
@@ -79,6 +80,33 @@ def test_retention_prunes_old_snapshots(snap_root):
     names = [p.name for p in sdir.iterdir()]
     assert old.name not in names
     assert any("-r1" in n for n in names)
+
+
+def test_a_write_also_drops_the_expired_snapshots_of_other_sessions(snap_root, monkeypatch):
+    # A session that ended never writes again, so only another session's
+    # write can drop its snapshots: months of them stayed on disk.
+    _record(session="ended", round_num=0)
+    _record(session="recent", round_num=0)
+    root = snap_root / "request_snapshots"
+    stale = time.time() - (snap.RETENTION_DAYS + 1) * 86400
+    for old in (root / "ended").iterdir():
+        os.utime(old, (stale, stale))
+    monkeypatch.setattr(snap, "_last_sweep", 0.0)
+    _record(session="live", round_num=0)
+    assert not (root / "ended").exists()
+    assert len(list((root / "recent").iterdir())) == 1
+    assert len(list((root / "live").iterdir())) == 1
+
+
+def test_the_sweep_of_other_sessions_runs_once_per_interval(snap_root):
+    _record(session="ended", round_num=0)
+    root = snap_root / "request_snapshots"
+    stale = time.time() - (snap.RETENTION_DAYS + 1) * 86400
+    for old in (root / "ended").iterdir():
+        os.utime(old, (stale, stale))
+    # The write above swept a moment ago, so this one does not sweep again.
+    _record(session="live", round_num=0)
+    assert (root / "ended").exists()
 
 
 def test_per_session_cap_keeps_newest(snap_root, monkeypatch):
