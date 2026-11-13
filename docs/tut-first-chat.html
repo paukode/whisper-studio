@@ -143,7 +143,6 @@
       <tbody>
         <tr><td><b>Model</b></td><td>The model that answers. The next message uses the new model with the full history.</td></tr>
         <tr><td><b>Thinking</b></td><td>The thinking level of the model. A model without levels shows "This model has no thinking levels".</td></tr>
-        <tr><td><b>Answers</b></td><td>The answer length: Brief, Normal, or Detailed. This row is not available for an on-device model.</td></tr>
         <tr><td><b>Context</b></td><td>The context window of an on-device model. Only an on-device model shows this row.</td></tr>
       </tbody>
     </table></div>
@@ -214,7 +213,6 @@
         <tr><td><code>/model &lt;key&gt;</code></td><td>Changes the chat model for the session, for example <code>/model haiku</code>.</td></tr>
         <tr><td><code>/effort &lt;level&gt;</code></td><td>Sets the thinking level. Each model has its own levels. A level that the model does not have changes to the nearest lower level.</td></tr>
         <tr><td><code>/plan</code></td><td>Turns plan mode on or off. In plan mode, the model only reads and gives a plan before it changes or runs something. See <a href="tut-permissions.html">Permissions &amp; approvals</a>.</td></tr>
-        <tr><td><code>/verbosity &lt;level&gt;</code></td><td>Sets the answer length: <code>brief</code>, <code>normal</code>, or <code>detailed</code>. It sets the same value as the <b>Answers</b> row.</td></tr>
         <tr><td><code>/goal &lt;text&gt;</code></td><td>Sets a goal and sends the goal text as your next message. If a turn runs, the app adds the text to that turn. The assistant continues until a completion gate accepts the goal. <code>/goal clear</code> ends the goal. <code>/goal gate add &lt;command&gt;</code> adds a shell command that must return exit code 0. See <a href="tut-goals.html">Goals &amp; autopilot</a>.</td></tr>
         <tr><td><code>/export</code></td><td>Downloads the conversation as a text file.</td></tr>
         <tr><td><code>/clear</code></td><td>Removes all the messages of this session from the screen and from the saved session. It also stops a reply that runs and closes the cards that wait. The session stays in the sidebar.</td></tr>

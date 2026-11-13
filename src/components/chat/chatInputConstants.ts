@@ -60,7 +60,6 @@ export const BASE_SLASH_COMMANDS: SlashCommand[] = [
   { cmd: 'settings ', icon: 'wrench', desc: 'Open settings', category: 'settings' },
   { cmd: 'skills ', icon: 'zap', desc: 'Manage skills in Settings', category: 'settings' },
   { cmd: 'theme ', icon: 'moon', desc: 'Switch theme', options: ['auto', 'light', 'dark'], category: 'settings' },
-  { cmd: 'verbosity ', icon: 'ruler', desc: 'Set response length', options: ['brief', 'normal', 'detailed'], category: 'ai' },
   { cmd: 'workflow ', icon: 'graph', desc: 'Run a saved workflow by name', category: 'ai' },
   { cmd: 'workspace ', icon: 'folder', desc: 'Connect workspace', category: 'workspace' },
 ];

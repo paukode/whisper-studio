@@ -30,7 +30,6 @@ import {
 
 export interface UseSlashCommandsOptions {
   models: ModelOption[];
-  setVerbosity: SettingsState['setVerbosity'];
   setEffortLevel: SettingsState['setEffortLevel'];
   selectedModel: string;
   autoMemory: boolean;
@@ -61,7 +60,6 @@ export interface UseSlashCommandsResult {
 export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommandsResult {
   const {
     models,
-    setVerbosity,
     setEffortLevel,
     selectedModel,
     autoMemory,
@@ -138,25 +136,6 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
           addToast({ type: 'info', message: hint, duration: 6000, persist: false });
         } else {
           addToast({ type: 'info', message: `Usage: /model ${validKeys.join('|')}`, duration: 3000, persist: false });
-        }
-        return true;
-      }
-      case 'verbosity': {
-        // Verbosity is the unified Response length control (stored as the
-        // OpenAI models' native verbosity low/medium/high; shown as Brief/Normal/Detailed).
-        // Accept either the visible labels or the raw stored levels.
-        const alias: Record<string, 'low' | 'medium' | 'high'> = {
-          brief: 'low', low: 'low',
-          normal: 'medium', medium: 'medium',
-          detailed: 'high', high: 'high',
-        };
-        const next = arg ? alias[arg] : undefined;
-        if (next) {
-          setVerbosity(next);
-          const label = next === 'low' ? 'Brief' : next === 'medium' ? 'Normal' : 'Detailed';
-          addToast({ type: 'success', message: `Response length: ${label}`, duration: 2000, persist: false });
-        } else {
-          addToast({ type: 'info', message: 'Usage: /verbosity brief|normal|detailed', duration: 3000, persist: false });
         }
         return true;
       }
@@ -535,7 +514,7 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
       default:
         return false;
     }
-  }, [setVerbosity, setEffortLevel, setTheme, openSettings, addToast, selectedModel, autoMemory, setAutoMemory, sessionId, handleNativeBrowse, handlePlanToggle, chatStream, SLASH_COMMANDS, models]);
+  }, [setEffortLevel, setTheme, openSettings, addToast, selectedModel, autoMemory, setAutoMemory, sessionId, handleNativeBrowse, handlePlanToggle, chatStream, SLASH_COMMANDS, models]);
 
   return { handleSlashCommand };
 }

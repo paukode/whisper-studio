@@ -233,7 +233,6 @@ source ~/.zshrc</code></pre></div>
       <tbody>
         <tr><td>Model</td><td>the models your mode exposes</td><td>The model that answers. Rows carry a <b>Local</b> badge for on-device models and a <b>Mythos</b> badge for models that need the data-retention consent flow (Fable 5.2). Starting default: <code>default_chat_model</code>.</td></tr>
         <tr><td>Thinking</td><td><code>none</code> / <code>low</code> / <code>medium</code> / <code>high</code> / <code>extra</code> (alias <code>xhigh</code>) / <code>max</code> / <code>ultracode</code></td><td>The reasoning budget for a turn (<code>effort_level</code>, shipped default <code>max</code>). Levels are per-model and the value is clamped to the nearest supported one when you switch. See the table below.</td></tr>
-        <tr><td>Answers</td><td>Brief / Normal / Detailed</td><td>How long the answer runs. Mirrors <code>/verbosity</code>. Not shown for on-device models.</td></tr>
       </tbody>
     </table></div>
     <p>Which thinking levels a cloud model offers comes from two independent properties: the reasoning ladder

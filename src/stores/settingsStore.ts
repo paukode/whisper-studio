@@ -57,9 +57,6 @@ function persistSelectedModel(model: string): void {
   }
 }
 
-/** Response-length value (stored as GPT-5.x's native verbosity low/medium/high;
- *  the toolbar shows Brief/Normal/Detailed). Persisted so the choice survives a
- *  refresh, like the model selection. */
 /** Hydrate the Memory toggle from its backend feature flag, so the toolbar
  *  shows the real state and what the active mode leaves out of it (Local mode
  *  recalls memories but records none). Re-read after a mode switch. Rejects
@@ -126,25 +123,6 @@ export function activeEffortLevel(s: {
   return model?.is_local ? s.localThinkingLevel : s.effortLevel;
 }
 
-const VERBOSITY_KEY = 'whisper.verbosity';
-
-function readVerbosity(): string | null {
-  try {
-    const v = localStorage.getItem(VERBOSITY_KEY);
-    return v === 'low' || v === 'medium' || v === 'high' ? v : null;
-  } catch {
-    return null;
-  }
-}
-
-function persistVerbosity(v: string): void {
-  try {
-    localStorage.setItem(VERBOSITY_KEY, v);
-  } catch {
-    /* private mode / quota — keep the in-memory value anyway */
-  }
-}
-
 export type { ModelEntry } from '@/types/settings';
 
 /** Shape returned by GET /api/skills */
@@ -189,8 +167,6 @@ export interface SettingsState {
   effortLevel: string;
   /** Thinking level for on-device models (none | low | medium | high | max). */
   localThinkingLevel: string;
-  /** GPT-5.x verbosity (text.verbosity); only used by openai_bedrock models. */
-  verbosity: string;
   autoMemory: boolean;
   /** What the active mode leaves out of auto memory (Local mode recalls but
    *  records nothing), from the flag's `local_mode_note`; null when nothing. */
@@ -210,7 +186,6 @@ export interface SettingsState {
   setLoadedLocalModel: (model: string | null) => void;
   setEffortLevel: (level: string) => void;
   setLocalThinkingLevel: (level: string) => void;
-  setVerbosity: (v: string) => void;
   /** Switch the permission mode: the server write first, then the store, so
    *  the UI never shows a mode the server does not enforce. Rejects on
    *  failure with the store unchanged. */
@@ -294,7 +269,6 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
   skills: [],
   effortLevel: DEFAULT_EFFORT,
   localThinkingLevel: readLocalThinkingLevel(),
-  verbosity: readVerbosity() ?? 'medium',
   // Global memory defaults ON (matches config.example.json feature_flags.auto_memory).
   autoMemory: true,
   autoMemoryNote: null,
@@ -460,10 +434,6 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
     set({ localThinkingLevel: level });
   },
 
-  setVerbosity: (v) => {
-    persistVerbosity(v);
-    set({ verbosity: v });
-  },
 
   setPermissionMode: async (mode) => {
     await putPermissionMode(mode);

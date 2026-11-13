@@ -233,7 +233,7 @@ describe('streaming/committed grouping parity', () => {
 
   // The same frames through the real parser: the live rows a stream leaves
   // in the store, and the rows a card commits, group alike, one per round.
-  const SETTINGS: TurnModelSettings = { model: 'test-model', effort_level: 'normal', verbosity: 'medium', brief_mode: false };
+  const SETTINGS: TurnModelSettings = { model: 'test-model', effort_level: 'normal' };
   const sseResponse = (frames: unknown[]) => {
     const enc = new TextEncoder();
     const body = [...frames.map((f) => `data: ${JSON.stringify(f)}\n\n`), 'data: [DONE]\n\n'].join('');

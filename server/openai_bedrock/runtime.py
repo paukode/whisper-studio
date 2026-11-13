@@ -205,15 +205,6 @@ def not_found_advice(model_key: str, region: str) -> str:
     )
 
 
-def verbosity_for(model_key: str, body: dict | None = None) -> str:
-    """GPT verbosity (text.verbosity). Per-request override wins, then the
-    model's config default, else 'medium'."""
-    if body and body.get("verbosity") in ("low", "medium", "high"):
-        return body["verbosity"]
-    v = _model_meta(model_key).get("verbosity")
-    return v if v in ("low", "medium", "high") else "medium"
-
-
 def reasoning_effort_for(model_key: str, effort_label: str | None) -> str:
     """Map the app's effort level to this model's reasoning.effort value."""
     return _EFFORT_MAP.get(effort_label or "", "medium")

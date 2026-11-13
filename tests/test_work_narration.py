@@ -40,15 +40,13 @@ def test_the_rule_is_in_the_static_block_of_a_cloud_chat_prompt():
 
 
 def test_plan_mode_leaves_the_static_block_as_it_was():
-    # The text names brief and plan mode instead of being switched off by
-    # them, so flipping plan mode never rewrites the cached prefix.
+    # The text names plan mode instead of being switched off by
+    # it, so flipping plan mode never rewrites the cached prefix.
     off, _ = build_system_prompt_split(ws_path="/tmp/ws", session_id="s")
     on, _ = build_system_prompt_split(ws_path="/tmp/ws", session_id="s", plan_mode=True)
     assert on == off
     assert WORK_NARRATION in on
-    brief, _ = build_system_prompt_split(ws_path="/tmp/ws", session_id="s", brief_mode=True)
-    assert WORK_NARRATION in brief
-    assert "In brief mode and in plan mode, skip the narration and the recap" in WORK_NARRATION
+    assert "In plan mode, skip the narration and the recap" in WORK_NARRATION
 
 
 def test_the_rule_is_one_heading_and_plain_text():

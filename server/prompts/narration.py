@@ -3,8 +3,8 @@ of tool calls, what it found after a read, and a recap at the end.
 
 Registered as the ``work_narration`` section of the cloud chat prompt
 (server/prompts/__init__.py). The text is fixed, with no builder, so the
-cached static block stays byte-stable for the whole session: brief mode and
-plan mode are named in the text instead of switching the section off, which
+cached static block stays byte-stable for the whole session: plan mode is
+named in the text instead of switching the section off, which
 would rewrite the cached prefix each time a mode flips. Headless runs,
 scheduled tasks, agents and the on-device prompt build their own system
 prompts and never read this one.
@@ -29,6 +29,5 @@ WORK_NARRATION = (
     "write result gave you, what changed, the added and removed line counts), then anything "
     "you left undone or could not verify. Name files you only read in plain text, not as "
     "links. Never claim a file was written unless you saw its write result this turn. In "
-    "brief mode and in plan mode, skip the narration and the recap and follow those modes' "
-    "own rules."
+    "plan mode, skip the narration and the recap and follow that mode's own rules."
 )

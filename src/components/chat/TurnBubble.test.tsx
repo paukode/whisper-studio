@@ -199,7 +199,7 @@ describe('TurnBubble', () => {
       content: 'Which database should the planner use?',
       timestamp: at(2),
       userQuestions: [{ question: 'Which DB?', options: ['sqlite', 'pg'], toolUseId: 'tu_db' }],
-      turnSettings: { model: 'test-model', effort_level: 'normal', verbosity: 'medium', brief_mode: false },
+      turnSettings: { model: 'test-model', effort_level: 'normal' },
     };
     getActiveChatStore().getState().setMessages([question, opening, asked]);
     sendChatTurn.mockClear();
@@ -308,7 +308,7 @@ describe('TurnBubble', () => {
         toolId: 'tu_ws', toolName: 'ws_workspace_prompt', status: 'complete',
         input: { suggested: '/Users/me/Projects/site', recent: [], tool_name: 'ws_edit_file' },
       }],
-      turnSettings: { model: 'test-model', effort_level: 'normal', verbosity: 'medium', brief_mode: false },
+      turnSettings: { model: 'test-model', effort_level: 'normal' },
     };
     getActiveChatStore().getState().setMessages([question, opening, paused]);
     sendChatTurn.mockClear();

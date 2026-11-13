@@ -1,6 +1,4 @@
-"""Mode-specific prompt modifiers — brief mode, plan mode."""
-
-BRIEF_PREFIX = "IMPORTANT: Be extremely concise. Give short, direct answers. No preamble, no elaboration unless asked.\n\n"
+"""Mode-specific prompt modifiers: plan mode and the permission modes."""
 
 PLAN_MODE = (
     "\n\nPLAN MODE ACTIVE: You are in read-only planning mode. "

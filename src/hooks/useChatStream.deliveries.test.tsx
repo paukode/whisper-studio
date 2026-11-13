@@ -206,7 +206,7 @@ describe('deliveries frames in an approval continuation', () => {
     payload: { command: 'git push origin main' },
     sessionId: 'sess-cont',
     alwaysAsks: true,
-    turnSettings: { model: 'test-model', effort_level: 'normal', verbosity: 'medium', brief_mode: false },
+    turnSettings: { model: 'test-model', effort_level: 'normal' },
   };
 
   it('stay on the continuation reply while the next approval waits', async () => {

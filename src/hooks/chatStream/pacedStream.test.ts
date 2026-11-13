@@ -13,8 +13,6 @@ import { dropRuntime, getChatStore, useRuntimeIndex } from '@/stores/sessionRunt
 const SETTINGS: TurnModelSettings = {
   model: 'test-model',
   effort_level: 'normal',
-  verbosity: 'medium',
-  brief_mode: false,
 };
 
 /** An SSE response the test feeds frame by frame. */

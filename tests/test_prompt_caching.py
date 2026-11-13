@@ -18,7 +18,6 @@ from server.prompts import PromptLayer, build_system_prompt, build_system_prompt
 
 _KW_GRID = list(
     itertools.product(
-        [False, True],  # brief_mode
         [False, True],  # plan_mode
         [None, "/tmp/ws"],  # ws_path
         [False, True],  # ultracode
@@ -29,12 +28,11 @@ _KW_GRID = list(
 )
 
 
-@pytest.mark.parametrize("brief,plan,ws,ultra,mem,whisper,sess", _KW_GRID)
-def test_split_is_byte_identical_to_string(brief, plan, ws, ultra, mem, whisper, sess):
+@pytest.mark.parametrize("plan,ws,ultra,mem,whisper,sess", _KW_GRID)
+def test_split_is_byte_identical_to_string(plan, ws, ultra, mem, whisper, sess):
     kw = dict(
         ws_path=ws,
         session_id="s",
-        brief_mode=brief,
         plan_mode=plan,
         whisper_md_context=whisper,
         memory_context=mem,
@@ -57,14 +55,6 @@ def test_static_holds_identity_and_dynamic_holds_memory():
     # The static block is non-trivial (identity etc.) so it can clear the
     # cumulative cache minimum once tools precede it.
     assert len(static) > 1000
-
-
-def test_no_dynamic_layer_section_uses_prepend():
-    """Byte-equality of the split relies on no dynamic-layer (>=40) section
-    using prepend (the split raises on one)."""
-    for section in get_registry().get_sections():
-        if int(section.layer) >= int(PromptLayer.DYNAMIC):
-            assert not section.prepend, f"dynamic section {section.name!r} uses prepend"
 
 
 # ── cache_control shaping ─────────────────────────────────────────────────────

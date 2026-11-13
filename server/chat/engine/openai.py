@@ -17,7 +17,7 @@ Owns everything GPT/mantle-specific:
     exceed customer model maximum (278528)`` raise ``PromptTooLongError`` so
     the engine's bounded, fail-closed compaction applies to GPT turns exactly
     as it does to Claude
-  - effort/verbosity mapping and the tool exclusions (EXCLUDED_TOOLS)
+  - effort mapping and the tool exclusions (EXCLUDED_TOOLS)
 
 Cache note: the Responses API has no explicit checkpoints; a stable
 ``prompt_cache_key`` per session plus deterministic input conversion gives
@@ -135,7 +135,6 @@ class OpenAIResponsesAdapter:
         system_prompt: str,
         effort_label: str | None,
         session_id: str = "",
-        body: dict | None = None,
     ):
         from server.openai_bedrock import runtime as oai
 
@@ -145,7 +144,6 @@ class OpenAIResponsesAdapter:
         self.session_id = session_id
         self.instructions = system_prompt + oai.GPT_INSTRUCTIONS_SUFFIX
         self.effort = oai.reasoning_effort_for(model_key, effort_label)
-        self.verbosity = oai.verbosity_for(model_key, body)
         self.region = oai.region_for(model_key)
         # The round in flight, for inflight_usage (None between rounds).
         self._inflight = None
@@ -155,7 +153,6 @@ class OpenAIResponsesAdapter:
         return {
             "instructions": self.instructions,
             "reasoning_effort": self.effort,
-            "verbosity": self.verbosity,
             "region": self.region,
         }
 
@@ -256,7 +253,6 @@ class OpenAIResponsesAdapter:
             "instructions": self.instructions,
             "input": input_items,
             "reasoning": {"effort": self.effort, "summary": "auto"},
-            "text": {"verbosity": self.verbosity},
             "stream": True,
             "store": False,
             "prompt_cache_key": session_key,

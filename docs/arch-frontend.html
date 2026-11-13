@@ -169,7 +169,7 @@
         <tr><td><code>sessionStore</code></td><td>singleton</td><td>The session list, <code>currentSessionId</code>, switching, titling, and saves.</td></tr>
         <tr><td><code>workspaceStore</code></td><td>singleton</td><td>File tree, editor tabs, and dirty state for the connected repo.</td></tr>
         <tr><td><code>uiStore</code>, <code>layoutStore</code>, <code>dockStore</code></td><td>singleton</td><td>Panel visibility, persisted split fractions, and the right-side dock panels.</td></tr>
-        <tr><td><code>settingsStore</code></td><td>singleton</td><td>Config, model list, selected model, effort level, verbosity, data retention, and the skill catalogue (<code>loadSkills</code>).</td></tr>
+        <tr><td><code>settingsStore</code></td><td>singleton</td><td>Config, model list, selected model, effort level, data retention, and the skill catalogue (<code>loadSkills</code>).</td></tr>
         <tr><td><code>mcpStore</code></td><td>singleton</td><td>The one MCP server list, with live status, tool counts and pending elicitations. Settings &gt; Tools and automation &gt; MCP servers, the composer's <code>/</code> menu (MCP prompts) and <code>@</code> menu (MCP resources), and the import panel all read it. The backend's <code>mcp_changed</code> events fetch it again.</td></tr>
         <tr><td><code>taskStore</code>, <code>recordingStore</code>, <code>cronUnreadStore</code></td><td>singleton</td><td>The live task list, the shared mic, and cron badges.</td></tr>
         <tr><td><code>composerAttachmentsStore</code></td><td>singleton</td><td>The composer's attachment chips, kept per session.</td></tr>
@@ -200,7 +200,7 @@
         aborted first.</p></li>
       <li><h4>Build the request body</h4><p>The user message is appended, history is capped to 40
         entries, and UI-only rows (<code>role='cron_event'</code>) are filtered out before the wire. The
-        body carries the question, transcript, model, effort level, verbosity, session id, attachment
+        body carries the question, transcript, model, effort level, session id, attachment
         ids, and the selected search indexes.</p></li>
       <li><h4>POST and consume</h4><p>A <code>streamFetch('/api/chat')</code> (over a WebSocket, see
         <a href="#transport">Long requests</a>) streams the response into

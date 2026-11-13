@@ -16,8 +16,6 @@ import type { ChatMessage, TurnModelSettings } from '@/types/chat';
 const SETTINGS: TurnModelSettings = {
   model: 'test-model',
   effort_level: 'normal',
-  verbosity: 'medium',
-  brief_mode: false,
 };
 
 function sseResponse(frames: unknown[]): Response {

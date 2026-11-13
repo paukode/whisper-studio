@@ -307,7 +307,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
     [models],
   );
   const setEffortLevel = useSettingsStore((s) => s.setEffortLevel);
-  const setVerbosity = useSettingsStore((s) => s.setVerbosity);
   const setPermissionMode = useSettingsStore((s) => s.setPermissionMode);
   // Live permission mode for the Mode dropdown's current-state badge.
   // Falls back to 'default' to match the backend's initial value.
@@ -395,7 +394,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
   // Slash-command dispatcher (/effort, /model, /doctor, /help, …).
   const { handleSlashCommand } = useSlashCommands({
     models,
-    setVerbosity,
     setEffortLevel,
     selectedModel,
     autoMemory,

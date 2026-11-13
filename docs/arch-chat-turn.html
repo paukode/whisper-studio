@@ -59,7 +59,7 @@
       <tbody>
         <tr><td><code>question</code></td><td>The text you typed (a continuation sends an empty string).</td></tr>
         <tr><td><code>history</code></td><td>Prior user/assistant turns, capped to the last 40 entries. UI-only rows are already filtered client-side.</td></tr>
-        <tr><td><code>model</code> / <code>effort_level</code> / <code>verbosity</code> / <code>brief_mode</code></td><td>The selected model and its response controls. An approval or answer continuation sends the values recorded with its card.</td></tr>
+        <tr><td><code>model</code> / <code>effort_level</code></td><td>The selected model and its thinking level. An approval or answer continuation sends the values recorded with its card.</td></tr>
         <tr><td><code>transcript</code></td><td>The live transcript of the session's recording, when there is one.</td></tr>
         <tr><td><code>selected_search_indexes</code></td><td>The indexed workspaces this session searches. Absent means all indexed folders; an empty list means none.</td></tr>
         <tr><td><code>local_context_window</code></td><td>The composer's context size for an on-device model. Cloud models ignore it.</td></tr>

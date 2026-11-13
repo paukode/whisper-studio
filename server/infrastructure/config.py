@@ -410,10 +410,8 @@ def _normalize_chat_models(chat_models: dict) -> tuple[dict, dict]:
             "provider": provider,
             # OpenAI-on-Bedrock only: an optional per-model region override
             # (absent ⇒ the account-wide bedrock_region is used, same as the
-            # Anthropic path) and the GPT verbosity (text.verbosity).
-            # Ignored by other providers.
+            # Anthropic path). Ignored by other providers.
             "openai_region": _drop_retired_pin(val.get("openai_region"), model_id),
-            "verbosity": val.get("verbosity") or "medium",
             # On-device weights, for is_local entries only. Carrying these on
             # the SAME entry is what makes a new local model a one-place
             # config change: the picker metadata above and the loader info

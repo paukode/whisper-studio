@@ -38,12 +38,8 @@ def test_the_rule_is_in_the_static_block_of_a_cloud_chat_prompt():
 def test_a_mode_flip_keeps_the_rule_and_plan_mode_keeps_the_static_block():
     off, _ = build_system_prompt_split(ws_path="/tmp/ws", session_id="s")
     plan, _ = build_system_prompt_split(ws_path="/tmp/ws", session_id="s", plan_mode=True)
-    brief, _ = build_system_prompt_split(ws_path="/tmp/ws", session_id="s", brief_mode=True)
     assert plan == off
     assert VISUAL_CHOICE in off
-    assert VISUAL_CHOICE in brief
-    # Brief mode is handled by the text, not by switching the section off.
-    assert "in brief mode" in VISUAL_CHOICE
 
 
 def test_the_rule_names_only_the_visual_tools_the_chat_always_has():
