@@ -80,11 +80,16 @@ def test_normalizer_carries_window_metadata():
 # is not on the 278,528 mantle cap: bedrock-mantle accepted a 348K-token prompt
 # (verified live 2026-09-09); its rejection carries no number, so the entry
 # pins OpenAI's published 922K max input. GPT-6.1 Sol likewise: mantle accepted
-# a 300,014-token prompt (verified live 2026-10-03). GPT-6 Sol and Luna publish
+# a 300,014-token prompt (verified live 2026-10-03), and the same for GPT-6.1
+# Terra (verified live 2026-11-13). GPT-6 Sol and Luna publish
 # the same 922K upstream but stay on the family default until a live probe shows
 # mantle accepting a longer prompt for them (GPT-5.6 also publishes 1M and is
 # capped at 278,528 on mantle).
-_DEPLOYMENT_CAPS = {"openai.gpt-6-astra": 922_000, "openai.gpt-6.1-sol": 922_000}
+_DEPLOYMENT_CAPS = {
+    "openai.gpt-6-astra": 922_000,
+    "openai.gpt-6.1-sol": 922_000,
+    "openai.gpt-6.1-terra": 922_000,
+}
 
 
 def test_a_chat_model_entry_without_an_id_object_raises():

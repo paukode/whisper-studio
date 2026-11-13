@@ -205,8 +205,9 @@ def test_claude_cache_write_is_the_rate_of_the_ttl_the_app_sends():
 
 
 # The cached read as a share of input, where a model's card prices it other
-# than 10%: GPT-6.1 Sol's card prices it at $0.11 on $2.20 input (2026-10-03).
-_CACHE_READ_SHARE = {"gpt6.1-sol": 0.05}
+# than 10%: GPT-6.1 Sol's card prices it at $0.11 on $2.20 input (2026-10-03),
+# and GPT-6.1 Terra's at $0.055 on $1.10 (2026-11-13).
+_CACHE_READ_SHARE = {"gpt6.1-sol": 0.05, "gpt6.1-terra": 0.05}
 
 
 def test_gpt_cache_rates_follow_the_bedrock_cards():

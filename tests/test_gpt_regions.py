@@ -48,7 +48,7 @@ def test_us_east_1_serves_every_shipped_gpt_model():
 def test_us_west_2_serves_some_shipped_gpt_models_and_not_others():
     # The probes (one call per model and region) found us-west-2 serving part
     # of the catalog, which is why the rule is per model: it serves GPT-6
-    # Astra but not GPT-6.1 Sol or GPT-6 Luna.
+    # Astra but not GPT-6.1 Sol, GPT-6.1 Terra or GPT-6 Luna.
     served_here = ["us-west-2" in _served(key) for key in _gpt_keys()]
     assert "us-west-2" in oai.GPT_REGIONS
     assert any(served_here) and not all(served_here)

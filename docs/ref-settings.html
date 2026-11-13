@@ -178,7 +178,7 @@
           <td><b>Model</b> row</td>
           <td>the last model you picked in this browser, else <code>default_chat_model</code></td>
           <td>The model this session runs on: Haiku 4.5, Sonnet 5.5, Opus 5.5,
-            Fable 5.2, GPT-6 Astra / Luna, GPT-6.1 Sol, or an
+            Fable 5.2, GPT-6 Astra / Luna, GPT-6.1 Sol / Terra, or an
             on-device model you installed. The picker only shows models valid for the current model
             mode. The browser remembers your last pick; with no remembered pick, an installed on-device
             model is chosen first, then <code>default_chat_model</code>. The shipped default is
@@ -195,7 +195,7 @@
             (sent to Bedrock as <code>xhigh</code>), <code>max</code>, and <code>ultracode</code>.
             Higher effort trades latency and cost for deeper thinking. The levels a model exposes depend
             on its tier: Opus 5.5, Sonnet 5.5 and Fable 5.2 expose the full ladder <code>low</code> to
-            <code>max</code>; GPT-6 Astra / Luna and GPT-6.1 Sol run <code>low</code> to
+            <code>max</code>; GPT-6 Astra / Luna and GPT-6.1 Sol / Terra run <code>low</code> to
             <code>max</code> and skip <code>extra</code>; Haiku has no thinking control.
             <code>ultracode</code> is appended for any model that can orchestrate a workflow, and is a
             session mode rather than a plain level: it sends the model's own top reasoning rung plus
