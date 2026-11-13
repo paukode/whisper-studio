@@ -9,7 +9,9 @@ Output modes:
   count              — per-file match counts
 """
 
+import fnmatch
 import os
+import re
 
 from server.executors import register_executor
 from server.search.engine import (
@@ -208,9 +210,7 @@ def _build_grep_args(
     # Users expect AND semantics, so we resolve type extensions into glob
     # patterns combined with the directory glob.
     if file_type and glob_filter:
-        type_globs = _resolve_type_globs(file_type)
-        if not type_globs:
-            raise ValueError(f"unknown file type {file_type!r} (see rg --type-list)")
+        type_globs = _type_globs(file_type)
         patterns = _parse_glob_patterns(glob_filter)
         # An exclusion ("!dir") already narrows a --type search (AND semantics).
         for g in (g for g in patterns if g.startswith("!")):
@@ -219,10 +219,14 @@ def _build_grep_args(
         if not includes:
             args.extend(["--type", file_type])
         for dg in includes:
-            for tg in type_globs:
-                args.extend(["--glob", _combine_dir_and_type_glob(dg, tg)])
+            for g in _combine_glob_and_type(dg, file_type, type_globs):
+                args.extend(["--glob", g])
     elif file_type:
-        args.extend(["--type", file_type])
+        if _rg_knows_type(file_type):
+            args.extend(["--type", file_type])
+        else:
+            for tg in _type_globs(file_type):
+                args.extend(["--glob", tg])
     elif glob_filter:
         for g in _parse_glob_patterns(glob_filter):
             args.extend(["--glob", g])
@@ -239,21 +243,63 @@ def _build_grep_args(
 _GLOB_META = set("*?[{")
 
 
-def _combine_dir_and_type_glob(dir_glob: str, type_glob: str) -> str:
-    """One --glob that means "files of this type under this folder". rg treats
-    --type and a positive --glob as OR (the glob wins), so the two are merged:
+_EXTENSION_NAME = re.compile(r"[A-Za-z0-9_+-]+")
+_GLOB_EXTENSION = re.compile(r"\.(?:\{([^{}]+)\}|([A-Za-z0-9_+-]+))$")
 
-      "server" or "server/" + "*.py"   -> "server/**/*.py" (the whole subtree)
-      "server/**" + "*.py"             -> "server/**/*.py"
 
-    A glob that already names files ("*.test.ts", "src/**/*.tsx") cannot take a
-    type as well; that raises so the caller reports it."""
-    if not any(c in _GLOB_META for c in dir_glob):
-        return f"{dir_glob.rstrip('/')}/**/{type_glob}"
-    if dir_glob.endswith("**"):
-        return f"{dir_glob}/{type_glob}"
+def _rg_knows_type(file_type: str) -> bool:
+    """Whether ripgrep has a file type of this name. A failure to ask counts
+    as yes, so the search runs and ripgrep itself reports the type."""
+    try:
+        return bool(_resolve_type_globs(file_type))
+    except Exception:
+        return True
+
+
+def _type_globs(file_type: str) -> list[str]:
+    """The globs of a file type: ripgrep's own, or, for a name ripgrep does
+    not know that reads as a file extension ("tsx", "svelte"), that extension.
+    Models pass an extension as the type often, and "tsx" is not a ripgrep
+    type (its "ts" type holds *.tsx)."""
+    globs = _resolve_type_globs(file_type)
+    if globs:
+        return globs
+    if _EXTENSION_NAME.fullmatch(file_type):
+        return [f"*.{file_type}"]
+    raise ValueError(f"unknown file type {file_type!r} (see rg --type-list)")
+
+
+def _combine_glob_and_type(glob: str, file_type: str, type_globs: list[str]) -> list[str]:
+    """The --glob values that mean "files this glob names AND of this type".
+    rg treats --type and a positive --glob as OR (the glob wins), so the two
+    are merged into globs:
+
+      "server" or "server/"            -> "server/**/*.py" (the whole subtree)
+      "server/**"                      -> "server/**/*.py"
+      "src/*" or "tests/test_*"        -> "src/*.py", "tests/test_*.py"
+      "*.test.ts", "src/**/*.{ts,tsx}" -> kept as it is, when the type holds
+                                          one of its extensions
+
+    A glob whose extension the type does not hold names no file of that type;
+    that raises so the caller reports it."""
+    if not any(c in _GLOB_META for c in glob):
+        return [f"{glob.rstrip('/')}/**/{tg}" for tg in type_globs]
+    if glob.endswith("**"):
+        return [f"{glob}/{tg}" for tg in type_globs]
+    named = _GLOB_EXTENSION.search(glob)
+    if named:
+        extensions = (named.group(1) or named.group(2)).split(",")
+        if any(fnmatch.fnmatch(f"x.{e.strip()}", tg) for e in extensions for tg in type_globs):
+            return [glob]
+        raise ValueError(
+            f"glob {glob!r} names files that type {file_type!r} does not include; "
+            "drop one of the two"
+        )
+    suffixes = [tg[1:] for tg in type_globs if tg.startswith("*.")]
+    if glob.endswith("*") and suffixes:
+        return [glob + suffix for suffix in suffixes]
     raise ValueError(
-        f"glob {dir_glob!r} already names files, so it cannot be combined with type; "
+        f"glob {glob!r} cannot be combined with type {file_type!r}; "
         "use a folder glob (for example 'src/**') or drop one of the two"
     )
 
