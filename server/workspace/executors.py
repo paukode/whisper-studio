@@ -346,7 +346,7 @@ def _exec_ws_read_file(tool_input, transcript, current_attachments):
             )
         # Fall through, result is now within budget
 
-    file_state.record_read(session_id, full, offset, limit, len(numbered))
+    file_state.record_read(session_id, full, offset, limit, len(numbered), total_lines)
     return result
 
 
@@ -448,6 +448,20 @@ def _normalize_quotes(text: str) -> str:
     return text
 
 
+def _match_line_spans(text: str, needle: str, every: bool) -> list[tuple[int, int]]:
+    """The line span (1-based, inclusive) of the first match of ``needle`` in
+    ``text``, or of each match when ``every``."""
+    spans = []
+    at = text.find(needle)
+    while at != -1:
+        first = text.count("\n", 0, at) + 1
+        spans.append((first, first + needle.rstrip("\n").count("\n")))
+        if not every:
+            break
+        at = text.find(needle, at + len(needle))
+    return spans
+
+
 @register_executor("ws_edit_file", read_only=False, concurrent_safe=False)
 def _exec_ws_edit_file(tool_input, transcript, current_attachments):
     """Edit a file by exact string replacement with quote normalization."""
@@ -471,8 +485,8 @@ def _exec_ws_edit_file(tool_input, transcript, current_attachments):
     if not os.path.isfile(full):
         return f"File not found: {path}"
 
-    # Write gate: must have a full prior read
-    allowed, reason = file_state.check_write_allowed(session_id, full)
+    # Write gate, first half: the session read the file and it did not change.
+    allowed, reason = file_state.check_read_fresh(session_id, full)
     if not allowed:
         return f"Error: {reason}"
 
@@ -505,6 +519,16 @@ def _exec_ws_edit_file(tool_input, transcript, current_attachments):
             "Provide more surrounding context to make the match unique, "
             "or set replace_all=true to replace all occurrences."
         )
+
+    # Write gate, second half: the text to replace sits in lines that were read.
+    haystack, needle = (
+        (normalized_original, normalized_old) if used_normalization else (original, old_string)
+    )
+    allowed, reason = file_state.lines_were_read(
+        session_id, full, _match_line_spans(haystack, needle, replace_all)
+    )
+    if not allowed:
+        return f"Error: {reason}"
 
     # Compute the new content
     if used_normalization:

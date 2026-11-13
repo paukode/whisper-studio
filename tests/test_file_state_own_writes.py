@@ -71,7 +71,8 @@ def test_a_change_from_outside_still_asks_for_a_reread(ws):
     later = os.path.getmtime(f) + 5
     os.utime(f, (later, later))
     assert _edit("a.txt", "changed", "x") == (
-        "Error: File modified since last read. Re-read before writing."
+        "Error: The file changed on disk since it was read. Read it again with ws_read_file, "
+        "then repeat this call."
     )
 
 
@@ -98,4 +99,4 @@ def test_another_session_still_has_to_read_first(ws):
         [],
         [],
     )
-    assert other == "Error: Must read file before writing."
+    assert other.startswith("Error: Read the file first")

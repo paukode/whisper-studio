@@ -38,6 +38,8 @@ def roots(tmp_path, monkeypatch):
         monkeypatch.setattr(target, "get_workspace_path", lambda: str(ws))
     monkeypatch.setattr("server.workspace.get_workspace_path", lambda: str(ws))
     monkeypatch.setattr("server.file_state.check_write_allowed", lambda *a, **k: (True, ""))
+    monkeypatch.setattr("server.file_state.check_read_fresh", lambda *a, **k: (True, ""))
+    monkeypatch.setattr("server.file_state.lines_were_read", lambda *a, **k: (True, ""))
     return str(ws), get_scratch_dir(SID)
 
 
