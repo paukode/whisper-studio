@@ -31,7 +31,9 @@ export interface StreamingMessageProps {
  *    tail of the turn's bubble
  *  - Live elapsed timer during thinking (100ms updates, "X.Ys")
  *  - Token meta display ("1.2s . 1,234 in . 5,678 out")
- *  - Thinking box closed unless the user opens it
+ *  - Thinking box closed unless the user opens it: a click on its row opens
+ *    and closes it at any moment of the turn, and the open box shows the
+ *    thinking text as it streams
  *  - Remove empty thinking block if no text arrives
  */
 export const StreamingMessage: React.FC<StreamingMessageProps> = ({ content, isStreaming, embedded, priorDeliveries }) => {
@@ -85,6 +87,15 @@ export const StreamingMessage: React.FC<StreamingMessageProps> = ({ content, isS
     };
   }, [thinkingStartTime, content, waitSpans]);
 
+  // The open thinking box follows the newest text, unless the user scrolled
+  // up inside it to read.
+  const thinkingBodyRef = useRef<HTMLDivElement | null>(null);
+  const thinkingPinnedRef = useRef(true);
+  useEffect(() => {
+    const el = thinkingBodyRef.current;
+    if (el && thinkingPinnedRef.current) el.scrollTop = el.scrollHeight;
+  }, [thinkingContent, thinkingOpen]);
+
   const formatMs = (ms: number) => (ms / 1000).toFixed(1) + 's';
   const formatTokens = (n: number) => n.toLocaleString();
 
@@ -110,7 +121,17 @@ export const StreamingMessage: React.FC<StreamingMessageProps> = ({ content, isS
             if (open !== thinkingOpen) getActiveChatStore().getState().setThinkingOpen(open);
           }}
         >
-          <summary className="thinking-summary">
+          {/* The click sets the state itself, so the row opens and closes the
+           *  same way in every web view and at every moment of the turn. */}
+          <summary
+            className="thinking-summary"
+            aria-expanded={thinkingOpen}
+            onClick={(e) => {
+              e.preventDefault();
+              thinkingPinnedRef.current = true;
+              getActiveChatStore().getState().setThinkingOpen(!thinkingOpen);
+            }}
+          >
             <span className="activity-slot">{(isLocalModel && !thinkingContent) ? ICON.sparkle : ICON.thought}</span>
             {/* A status outranks the thinking label: thinking tokens clear
              *  it, so one that is set now came after them (the goal check
@@ -137,7 +158,22 @@ export const StreamingMessage: React.FC<StreamingMessageProps> = ({ content, isS
             )}
             {!content && waited && <span className="thinking-waited">{waited}</span>}
           </summary>
-          {thinkingContent && <div className="thinking-body">{thinkingContent}</div>}
+          {thinkingContent ? (
+            <div
+              className="thinking-body"
+              ref={thinkingBodyRef}
+              onScroll={(e) => {
+                const el = e.currentTarget;
+                thinkingPinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+              }}
+            >
+              {thinkingContent}
+            </div>
+          ) : (
+            // Open before the model sent any thinking text: say so, so the
+            // click is seen to work.
+            thinkingOpen && !content && <div className="thinking-body thinking-body--empty">No thinking text yet.</div>
+          )}
         </details>
       )}
 

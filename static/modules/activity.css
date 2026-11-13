@@ -360,3 +360,4 @@ button.activity-pill:hover { border-color: var(--accent); }
     overflow: auto;
     white-space: pre-wrap;
 }
+.thinking-body--empty { font-style: italic; opacity: 0.8; }
