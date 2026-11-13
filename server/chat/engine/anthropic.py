@@ -152,6 +152,7 @@ class AnthropicAdapter:
 
     def _build_body(self, messages, tools, core_count, round_num, is_last_round) -> dict:
         from server.infrastructure.effort import api_effort_for
+        from server.infrastructure.thinking_binding import drop_mismatched_thinking
 
         body = {
             "anthropic_version": "bedrock-2023-05-31",
@@ -175,6 +176,9 @@ class AnthropicAdapter:
             body["output_config"] = {
                 "effort": api_effort_for(self.effort_label, self._meta, self.model_key)
             }
+            # Fable 5.2 refuses a replayed thinking block once earlier history
+            # changed, which in-turn compaction does (thinking_binding.py).
+            drop_mismatched_thinking(body, self.model_id)
         if not is_last_round:
             # Prompt caching: checkpoint on the LAST tool and the STATIC system
             # block; third moving checkpoint on the last message. Only when
@@ -198,8 +202,8 @@ class AnthropicAdapter:
                 body["tools"] = tools
             # No tool_choice: the model always decides which tool to call. A
             # requested skill (/skill-name) is asked for in the user message
-            # (server/chat/routes.py), since Opus 5.5, Sonnet 5.5, Fable 5.1
-            # and Mythos 5.1 reject a forced tool_choice with a 400.
+            # (server/chat/routes.py), since Opus 5.5, Sonnet 5.5, Fable 5.2
+            # and Mythos 5.2 reject a forced tool_choice with a 400.
         return body
 
     # ── One streamed round ────────────────────────────────────────────────────
