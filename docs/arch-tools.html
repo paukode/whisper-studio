@@ -282,6 +282,11 @@
       maximum of one visual that the user did not ask for in each answer.</p>
     <p>The text of the section does not change, and it is in the cached static block. Headless runs,
       scheduled tasks, agents, and the on-device prompt do not get it.</p>
+    <p>The section tells the model to set no colors and no fonts on diagram and chart cards. All
+      other visual work is the model's to design: an HTML page, a 3D scene, an animation, an image.
+      A saved file opens outside the app, where the theme tokens do not exist. Thus, the model
+      gives the file its own colors and fonts. The section also tells the model to open a visual
+      file and look at it before the model reports that the file is complete.</p>
     <p>Diagram and chart cards read the theme tokens of the app. They show the diagram or chart again
       when the user changes the palette or the mode. An HTML page from <code>create_artifact</code>
       runs in a sandboxed iframe on an opaque origin. Thus, the page cannot read the stylesheet of the

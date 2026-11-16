@@ -10,7 +10,11 @@ prompts and never read this one.
 The theme half needs no per-request text: diagram and chart cards style
 themselves from the app's live tokens (src/components/chat/VizCard.tsx), and
 the HTML page card adds the same tokens as --ws-* variables
-(src/utils/artifactTheme.ts), so the model only has to stay out of the way.
+(src/utils/artifactTheme.ts). That holds for cards in the chat only. A file
+the model saves is opened outside the app, where none of those tokens exist:
+a run that applied the card rule to a saved page shipped it grey, in the
+browser's default serif font. So the look of a saved file is the
+model's own to design, and the text says to open it and look at it.
 """
 
 VISUAL_CHOICE = (
@@ -24,7 +28,13 @@ VISUAL_CHOICE = (
     "table. A short, factual or conversational answer: text only. Add at most one visual "
     "the user did not ask for per reply, keep the text answer complete without it, and add "
     "none when the user asks for text only, or when the picture would only "
-    "repeat one sentence. Diagrams, charts and HTML pages take the user's active Whisper "
-    "theme and light or dark mode on their own: choose no colors or fonts for them unless "
-    "the user asks for a different look."
+    "repeat one sentence. Diagrams and charts made with create_visual and create_chart take "
+    "the user's active Whisper theme and light or dark mode on their own, so set no colors "
+    "or fonts on those. An HTML card in the chat gets that theme as --ws-* variables to "
+    "build on. Everything else you make to be looked at (an HTML page, a 3D scene, "
+    "an animation, an image, a slide) is yours to design. Choose its colors, type, "
+    "materials, light, camera and motion yourself, to fit the subject and what the user "
+    "asked for. A file you save is opened outside this app, so it carries its own complete "
+    "look and inherits nothing. Before you say a visual piece is done, open it, look at it "
+    "from the views that matter, and fix what does not look right."
 )

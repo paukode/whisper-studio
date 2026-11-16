@@ -2,8 +2,9 @@
 chat prompt only.
 
 server/prompts/visuals.py tells the model when a reply should carry a
-diagram or chart the user did not ask for, and that visuals take the app
-theme on their own. It rides the cached static block (fixed text, no
+diagram or chart the user did not ask for, that diagram and chart cards take
+the app theme on their own, and that the look of everything else is the
+model's to design. It rides the cached static block (fixed text, no
 builder), so it must sit there and nowhere in the per-request tail, and a
 mode flip must not change that block. Headless runs build their own system
 prompt and never get it.
@@ -48,6 +49,18 @@ def test_the_rule_names_only_the_visual_tools_the_chat_always_has():
     for tool in ("create_visual", "create_chart"):
         assert tool in VISUAL_CHOICE
         assert tool in CORE_TOOLS
+
+
+def test_only_diagram_and_chart_cards_are_told_to_set_no_colors():
+    # The theme sentence once covered "HTML pages" too, and a saved page came
+    # out grey in the browser's default font. The no-colors rule is tied to
+    # the two card tools; the rest is the model's to design, and to look at.
+    theme, rest = VISUAL_CHOICE.split("so set no colors or fonts on those.")
+    assert "create_visual and create_chart" in theme.rsplit(". ", 1)[-1]
+    assert "yours to design" in rest
+    assert "inherits nothing" in rest
+    assert "look at it" in rest
+    assert "choose no colors" not in VISUAL_CHOICE
 
 
 def test_the_rule_is_one_heading_and_plain_text():
