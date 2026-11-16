@@ -32,9 +32,11 @@ class _FakeBedrock:
         self.usage = usage if usage is not None else {"input_tokens": 321, "output_tokens": 12}
         self.delay = delay
         self.calls = 0
+        self.posted = ""
 
     def invoke_model(self, **kwargs):
         self.calls += 1
+        self.posted = kwargs.get("body") or ""
         if self.delay:
             time.sleep(self.delay)
         payload = {
@@ -171,9 +173,56 @@ def test_a_call_whose_payload_has_no_usage_is_estimated_from_its_payloads(cloud)
         cloud, model_id=_get_chat_models()["haiku"], body=body, source="index", session_id="s-est"
     )
     row = _only_row("s-est")
-    assert row["input_tokens"] == capture.estimate_tokens(len(body))
+    # The estimate reads what was posted, which can carry fields the wrapper
+    # added for this model (effort.quiet_call_fields).
+    assert json.loads(cloud.posted)["messages"] == json.loads(body)["messages"]
+    assert row["input_tokens"] == capture.estimate_tokens(len(cloud.posted))
     assert row["output_tokens"] == capture.estimate_tokens(len("ok"))
     assert (row["count_source"], row["estimated_fields"]) == ("estimated", "input,output")
+
+
+class _RecordingBedrock:
+    """Keeps the body of each invoke_model call."""
+
+    def __init__(self):
+        self.bodies = []
+
+    def invoke_model(self, **kwargs):
+        self.bodies.append(json.loads(kwargs["body"]))
+        payload = {"content": [{"type": "text", "text": "ok"}], "usage": {}}
+        return {"body": _Body(json.dumps(payload).encode()), "ResponseMetadata": {}}
+
+
+_SHORT_BODY = json.dumps({"max_tokens": 10, "messages": [{"role": "user", "content": "ping"}]})
+
+
+@pytest.mark.parametrize(
+    ("model_id", "sent_thinking"),
+    [
+        # Haiku 5.5 thinks by default, which a small max_tokens cuts off.
+        ("global.anthropic.claude-haiku-5-5", {"type": "disabled"}),
+        # Earlier Haiku never thinks; the others reject "disabled".
+        ("global.anthropic.claude-haiku-4-5-20251001-v1:0", None),
+        ("global.anthropic.claude-sonnet-5-5", None),
+        ("global.anthropic.claude-opus-5-5", None),
+    ],
+)
+def test_a_short_internal_call_turns_thinking_off_only_where_it_is_on_by_default(
+    model_id, sent_thinking
+):
+    client = _RecordingBedrock()
+    calls.invoke_claude(client, model_id=model_id, body=_SHORT_BODY, source="title")
+    assert client.bodies[0].get("thinking") == sent_thinking
+    assert client.bodies[0]["max_tokens"] == 10
+
+
+def test_a_call_that_sets_its_own_thinking_keeps_it():
+    client = _RecordingBedrock()
+    body = json.dumps({**json.loads(_SHORT_BODY), "thinking": {"type": "adaptive"}})
+    calls.invoke_claude(
+        client, model_id="global.anthropic.claude-haiku-5-5", body=body, source="title"
+    )
+    assert client.bodies[0]["thinking"] == {"type": "adaptive"}
 
 
 def test_an_unknown_source_is_refused_before_the_call(cloud):

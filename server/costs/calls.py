@@ -76,8 +76,20 @@ def invoke_claude(
     client, *, model_id: str, body: str, source: str, session_id: str = "", **kwargs
 ) -> dict:
     """``client.invoke_model`` with an Anthropic body, logged; returns the
-    parsed response payload."""
+    parsed response payload.
+
+    Every short internal call comes through here, so this is where a body
+    that says nothing about thinking gets the model's quiet-call fields
+    (effort.quiet_call_fields): without them Haiku 5.5 thinks first and a
+    small max_tokens cuts the reply off."""
     require_source(source)
+    from server.infrastructure.effort import quiet_call_fields
+
+    quiet = quiet_call_fields(model_id)
+    if quiet:
+        request = json.loads(body)
+        if "thinking" not in request:
+            body = json.dumps({**request, **quiet})
     response = client.invoke_model(modelId=model_id, body=body, **kwargs)
     payload = json.loads(response["body"].read())
     record_invoke(
