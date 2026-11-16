@@ -353,16 +353,18 @@ async def execute_tool_batch(
     validate_call_ids(tool_uses)
     states = [ToolState(tool_use=tu) for tu in tool_uses]
     state_by_id = {s.tool_id: s for s in states}
-    try:
-        for state in states:
-            if tool_scope is not None and state.tool_name not in tool_scope.permitted:
-                continue  # the scope refusal below needs no argument processing
+    # A call whose arguments fail the check never runs; the other calls of the
+    # round do. Refusing the whole round made the model send every call again:
+    # a run resent a large file because another call's argument had the wrong
+    # type.
+    invalid: dict[str, str] = {}
+    for state in states:
+        if tool_scope is not None and state.tool_name not in tool_scope.permitted:
+            continue  # the scope refusal below needs no argument processing
+        try:
             validate_tool_input(state.tool_name, state.tool_use.get("input"), tool_schemas)
-    except ToolInputError as exc:
-        for state in states:
-            state.status = "skipped"
-            state.output = f"[Refused] No tools in this round ran. {exc}"
-        return states
+        except ToolInputError as exc:
+            invalid[state.tool_id] = str(exc)
 
     # Shared abort flag, set when a command tool fails.
     command_error: str | None = None
@@ -382,6 +384,15 @@ async def execute_tool_batch(
             )
             log.info("agent tool scope refused %s", tool_name)
             tool_scope.refused()
+            return
+
+        if state.tool_id in invalid:
+            state.status = "skipped"
+            state.output = (
+                f"[Refused] This call did not run. {invalid[state.tool_id]} "
+                "Correct its arguments and send this call again; the other calls "
+                "of the round were not affected."
+            )
             return
 
         # Three copies: original history, observable hook input, dispatch input.
