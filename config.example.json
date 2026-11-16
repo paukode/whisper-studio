@@ -24,9 +24,10 @@
       "effort_tier": "full"
     },
     "haiku": {
-      "id": "global.anthropic.claude-haiku-4-5-20251001-v1:0",
-      "label": "Haiku 4.5",
-      "context_window": 200000
+      "id": "global.anthropic.claude-haiku-5-5",
+      "label": "Haiku 5.5",
+      "context_window": 1000000,
+      "supports_ultracode": false
     },
     "gpt6.1-sol": {
       "id": "openai.gpt-6.1-sol",

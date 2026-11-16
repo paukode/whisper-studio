@@ -91,6 +91,20 @@ def test_shipped_keys_are_unchanged_by_the_id_fallback():
     assert infer_effort_tier("haiku", "global.anthropic.claude-haiku-4-5") == "none"
 
 
+def test_haiku_gets_effort_from_5_5_on_and_the_id_decides():
+    # The shipped key is the versionless "haiku", so only the id can tell a
+    # Haiku that takes effort from one that rejects it.
+    assert infer_effort_tier("haiku", "global.anthropic.claude-haiku-5-5") == "full"
+    assert infer_effort_tier("fast", "us.anthropic.claude-haiku-5-5") == "full"
+    assert infer_effort_tier("haiku", "global.anthropic.claude-haiku-4-5-20251001-v1:0") == "none"
+    assert infer_effort_tier("haiku", "us.anthropic.claude-3-haiku-20240307-v1:0") == "none"
+    assert infer_effort_tier("haiku") == "none"
+    meta = {"id": "global.anthropic.claude-haiku-5-5", "supports_ultracode": False}
+    levels = effort_levels_for(meta, "haiku")
+    assert "extra" in levels
+    assert "ultracode" not in levels
+
+
 # ── #11: the downgrade event is declared on the wire contract ───────────────
 
 

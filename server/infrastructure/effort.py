@@ -5,7 +5,7 @@ each friendly label maps to the Bedrock ``output_config.effort`` value.
 
 Effort is the adaptive-reasoning depth knob. On Bedrock the request carries
 ``thinking: {"type": "adaptive"}`` plus ``output_config: {"effort": <api>}``.
-Models without effort support (Haiku) send neither — ``thinking`` is omitted.
+Models without effort support (Haiku up to 4.5) send neither — ``thinking`` is omitted.
 
 ``ultracode`` is a session MODE, not a raw effort value: it turns on
 dynamic-workflow orchestration (see ``build_system_prompt(ultracode=...)``) on
@@ -84,15 +84,43 @@ _SONNET_ID_VER_RE = re.compile(r"claude-sonnet-(\d+)(?:-(\d+))?", re.IGNORECASE)
 # The first Sonnet this app offers the xhigh rung on; the app keeps Sonnet 5
 # on the standard ladder.
 _SONNET_FULL_FROM = (5, 5)
+# Haiku ids carry the version too ("claude-haiku-5-5",
+# "claude-haiku-4-5-20251001-v1:0"). Haiku 5.5 is the first Haiku with
+# adaptive thinking and effort (low to max, probed live 2026-11-16); earlier
+# Haiku rejects output_config.effort.
+_HAIKU_ID_VER_RE = re.compile(r"claude-haiku-(\d+)-(\d+)", re.IGNORECASE)
+_HAIKU_EFFORT_FROM = (5, 5)
+
+
+def haiku_has_effort(model_id: str) -> bool:
+    """True for a Haiku id from 5.5 on: it thinks adaptively, takes effort,
+    has a 128K output ceiling, and thinks by default when a request says
+    nothing about thinking."""
+    m = _HAIKU_ID_VER_RE.search(model_id or "")
+    return bool(m) and (int(m.group(1)), int(m.group(2))) >= _HAIKU_EFFORT_FROM
+
+
+def quiet_call_fields(model_id: str) -> dict:
+    """Body fields that keep a short internal call (classifier, caption,
+    title, OCR) from thinking.
+
+    Haiku 5.5 thinks by default. On a call with a small max_tokens that
+    thinking is billed against the limit and comes back as the first content
+    block, so the reply is cut off or missing (measured 2026-11-16: a
+    100-token classifier call stopped at max_tokens, a 10-token one returned
+    no text). It accepts thinking "disabled", which restores the plain reply
+    earlier Haiku gave. Other models get nothing: the ones that think by
+    default reject "disabled"."""
+    return {"thinking": {"type": "disabled"}} if haiku_has_effort(model_id) else {}
 
 
 def infer_effort_tier(key: str, model_id: str = "") -> str:
     """Infer a model's raw reasoning ladder when the entry does not declare one.
 
-    full:     Opus 4.8 and up, Sonnet 5.5 and up, and Fable (low to max,
-              including the xhigh rung)
+    full:     Opus 4.8 and up, Sonnet 5.5 and up, Haiku 5.5 and up, and
+              Fable (low to max, including the xhigh rung)
     standard: Sonnet up to 5 and Opus 4.0 to 4.7 (low/medium/high/max)
-    none:     Haiku (no effort/thinking)
+    none:     Haiku up to 4.5 (no effort/thinking)
 
     Reads the config key first, then falls back to the Bedrock model id, so a
     renamed or dotless entry ("my-opus", "opus5") keeps the ladder of the
@@ -101,7 +129,8 @@ def infer_effort_tier(key: str, model_id: str = "") -> str:
     """
     k = key.lower()
     if "haiku" in k:
-        return "none"
+        # The key carries no version ("haiku"), so the id decides.
+        return "full" if haiku_has_effort(model_id) else "none"
     if "fable" in k:
         return "full"
     m = _OPUS_RE.match(k)
@@ -114,7 +143,7 @@ def infer_effort_tier(key: str, model_id: str = "") -> str:
     mid = (model_id or "").lower()
     if mid:
         if "haiku" in mid:
-            return "none"
+            return "full" if haiku_has_effort(mid) else "none"
         if "fable" in mid:
             return "full"
         m = _OPUS_ID_VER_RE.search(mid)

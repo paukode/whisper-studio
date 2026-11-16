@@ -26,7 +26,7 @@ from server.infrastructure.config import ANTHROPIC_1M_MARKERS
 # 312K-token prompt on global.anthropic.claude-sonnet-5 (invoke_model,
 # max_tokens=1), so the old "Bedrock caps Claude at 200K" assumption is dead;
 # per the platform-availability table, 1M context windows are GA on Bedrock
-# for the 1M-family models below. Haiku 4.5 remains a 200K model. The OpenAI
+# for the 1M-family models below (Haiku 5.5 is one; Haiku 4.5 was 200K). The OpenAI
 # deployments on bedrock-mantle reject above 278,528 prompt tokens (observed
 # live from the deployment's own error).
 FAMILY_DEFAULTS = {
@@ -53,10 +53,14 @@ def _wire_id(model_key: str, cfg: dict) -> str:
 
 
 def anthropic_output_ceiling(model_id: str) -> int:
-    """Bedrock rejects max_tokens above the model's output ceiling: Haiku caps
-    at 64K ("max_tokens: 128000 > 64000" invalid-request errors), every other
-    current Claude tier accepts 128K."""
-    return 64_000 if "haiku" in (model_id or "").lower() else 128_000
+    """Bedrock rejects max_tokens above the model's output ceiling: Haiku up
+    to 4.5 caps at 64K ("max_tokens: 128000 > 64000" invalid-request errors).
+    Haiku 5.5 and every other current Claude tier accept 128K (probed live
+    2026-11-16: Haiku 5.5 takes 128000 and rejects 128001)."""
+    from server.infrastructure.effort import haiku_has_effort
+
+    mid = (model_id or "").lower()
+    return 64_000 if "haiku" in mid and not haiku_has_effort(mid) else 128_000
 
 
 _CAP_RE = re.compile(

@@ -2,8 +2,8 @@
 
 Bedrock rejects requests whose max_tokens exceed the model's output ceiling
 (Haiku 4.5: "max_tokens: 128000 > 64000" invalid-request errors killed whole
-turns). The adapter must clamp: Haiku-family ids cap at 64K, everything else
-keeps the 128K default, and a configured chat_model_meta.max_output wins only
+turns). The adapter must clamp: Haiku ids up to 4.5 cap at 64K, Haiku 5.5 and
+everything else keep the 128K default, and a configured chat_model_meta.max_output wins only
 below the ceiling.
 """
 
@@ -33,6 +33,9 @@ def _adapter(monkeypatch, model_id: str, meta: dict):
         ("anthropic.claude-haiku-4-5-20251001-v1:0", {}, 64_000),
         ("anthropic.claude-haiku-4-5-20251001-v1:0", {"max_output": 128000}, 64_000),
         ("anthropic.claude-haiku-4-5-20251001-v1:0", {"max_output": 32000}, 32_000),
+        ("us.anthropic.claude-3-haiku-20240307-v1:0", {}, 64_000),
+        ("global.anthropic.claude-haiku-5-5", {}, 128_000),
+        ("global.anthropic.claude-haiku-5-5", {"max_output": 32000}, 32_000),
         ("anthropic.claude-opus-5-v1:0", {}, 128_000),
         ("anthropic.claude-fable-5-v1:0", {"max_output": 128000}, 128_000),
         ("anthropic.claude-sonnet-5-v1:0", {"max_output": "bogus"}, 128_000),
