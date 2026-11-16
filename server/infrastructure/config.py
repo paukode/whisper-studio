@@ -303,7 +303,7 @@ def _as_int(v) -> int | None:
 
 
 # Model-id markers of the 1M-context Claude family (Fable 5, Mythos, Opus 5
-# and 4.6/4.7/4.8, Sonnet 5 and 4.6). Anything unrecognized keeps the safe
+# and 4.6/4.7/4.8, Sonnet 5 and 4.6, Haiku 5). Anything unrecognized keeps the safe
 # 200K family default (server/chat/engine/windows.py reads this tuple).
 ANTHROPIC_1M_MARKERS = (
     "fable-5",
@@ -314,6 +314,7 @@ ANTHROPIC_1M_MARKERS = (
     "opus-4-8",
     "sonnet-5",
     "sonnet-4-6",
+    "haiku-5",
 )
 
 
@@ -326,7 +327,7 @@ def _lift_stale_context_window(value: int | None, model_id: str) -> int | None:
     claude-sonnet-5; 1M context is GA on Bedrock): the current 1M-family
     Claude models take the full window, so a configured 200000 on those ids
     reads as 1,000,000. Any OTHER explicit value is a deliberate per-model
-    choice and stands, as does 200000 on non-1M models (Haiku)."""
+    choice and stands, as does 200000 on non-1M models (Haiku 4.5)."""
     if value != 200_000:
         return value
     mid = (model_id or "").lower()
