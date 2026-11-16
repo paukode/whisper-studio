@@ -86,6 +86,22 @@ def test_a_place_the_user_named_still_wins(scratch, tmp_path):
     assert (kind, target) == ("absolute", os.path.realpath(tmp_path / "out" / "notes.txt"))
 
 
+def test_a_saved_file_with_no_named_place_stays_in_the_scratch_folder(scratch):
+    out = _call(executors._exec_save_file, {"filename": "report.txt", "content": "hello"})
+    payload = _approval(out)
+    assert payload["action"] == "save_to_path"
+    assert payload["path"] == os.path.join(scratch, "report.txt")
+
+    # A folder the user named still wins over the scratch folder.
+    named = _approval(
+        _call(
+            executors._exec_save_file,
+            {"filename": "report.txt", "content": "hello", "suggested_location": "Downloads"},
+        )
+    )
+    assert named["path"] == os.path.expanduser("~/Downloads/report.txt")
+
+
 def test_the_write_tools_do_not_raise_the_folder_picker(scratch):
     with open(os.path.join(scratch, "a.txt"), "w") as f:
         f.write("old\n")

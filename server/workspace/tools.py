@@ -329,10 +329,11 @@ def get_workspace_write_tools() -> list[dict]:
                 "ask the user where: if they named a location ('in Downloads', 'on my "
                 "Desktop', a full path), resolve it yourself and pass destination_path (~ is "
                 "allowed, e.g. '~/Downloads/report.pdf'); if they named none, omit "
-                "destination_path and the file goes to their Documents folder. "
-                "The file is prepared immediately and the user confirms the exact path on an "
-                "approval card; your reply after approval must tell the user the full path it "
-                "was saved to. Use ws_create_file instead for files that belong in the "
+                "destination_path and the file is made in this session's scratch folder: link "
+                "it in your reply and offer to open it or to save it where the user wants. "
+                "For a place outside the scratch folder the user confirms the exact path on an "
+                "approval card; your reply must tell the user the full path the file was "
+                "saved to. Use ws_create_file instead for files that belong in the "
                 "connected workspace."
             ),
             "input_schema": {
@@ -354,7 +355,7 @@ def get_workspace_write_tools() -> list[dict]:
                     "suggested_location": {
                         "type": "string",
                         "enum": ["Documents", "Downloads"],
-                        "description": "Default folder when destination_path is omitted. Default 'Documents'.",
+                        "description": "Only when the user named this folder and no full path. Omit it when they named no place.",
                     },
                     "destination_path": {
                         "type": "string",

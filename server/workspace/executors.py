@@ -640,10 +640,14 @@ def _exec_save_file(tool_input, transcript, current_attachments):
     asks the user where to save.
 
     Destination comes from destination_path when the model resolved one
-    from the user's own words; otherwise it defaults to the user's
-    Documents or Downloads folder (suggested_location, default Documents).
-    Content is decoded and staged immediately; the approval card then just
-    moves the ready file into place.
+    from the user's own words, or from suggested_location (Documents or
+    Downloads) when they named only that folder. With neither, the file is
+    made in the session's own scratch folder (the user's rule: a file with no
+    named place stays in the scratch folder, and the reply offers to open it
+    or to save it where the user wants). Only a call with no session falls
+    back to Documents. Content is decoded and staged immediately; the
+    approval then just moves the ready file into place, and a save into the
+    scratch folder asks nothing (it is the app's own storage).
     """
     filename = os.path.basename((tool_input.get("filename") or "").strip())
     if not filename:
@@ -656,10 +660,11 @@ def _exec_save_file(tool_input, transcript, current_attachments):
             return f"Error: destination_path must be an absolute path (got {destination_path!r})."
         dest = os.path.realpath(raw_dest)
     else:
-        folder = tool_input.get("suggested_location") or "Documents"
-        if folder not in ("Documents", "Downloads"):
+        folder = tool_input.get("suggested_location")
+        if folder and folder not in ("Documents", "Downloads"):
             return f"Error: suggested_location must be Documents or Downloads (got {folder!r})."
-        dest = os.path.join(os.path.expanduser(f"~/{folder}"), filename)
+        scratch = None if folder else scratch_work_root(tool_input.get("__session_id__", ""))
+        dest = os.path.join(scratch or os.path.expanduser(f"~/{folder or 'Documents'}"), filename)
 
     content = tool_input.get("content", "")
     encoding = tool_input.get("content_encoding") or "utf-8"
