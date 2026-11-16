@@ -118,22 +118,32 @@ def _build_workspace_section(
     return workspace_prompt(ws_path, session_id, permission_mode)
 
 
-def _build_no_workspace_section(ws_path: str | None = None, **_) -> str:
+def _build_no_workspace_section(
+    ws_path: str | None = None, session_id: str = "default", **_
+) -> str:
     """Injected when NO workspace is connected.
 
-    The harness resolves the missing workspace itself: a write tool called
-    without one returns a [WS_WORKSPACE_PROMPT] payload, the user picks a folder,
-    and the turn resumes so the same call runs against it. That is not
-    inferable from any tool schema, so it stays in the prompt — but the
-    per-tool half of it now lives in the write tools' own descriptions.
+    A session always has a working folder (the user's rule): with no folder
+    connected it is the session's own scratch folder, where the file tools
+    and ws_run_command work (server.workspace.state.work_root). What no tool
+    schema can say is how the work leaves that folder: the reply links what
+    was made and offers to open it or to save it where the user wants.
     """
     if ws_path:
         return ""
+    from server.workspace.paths import get_scratch_dir
+
+    scratch_dir = get_scratch_dir(session_id)
     return (
-        "\n\nNO CODE WORKSPACE: No folder is connected yet, but the write tools still work — "
-        "call one with the relative path you intend and the user is shown a folder picker, "
-        "after which this turn resumes and you re-issue the same call. So do not ask where to "
-        "save, and do not guess a path with ws_open_folder (use that only when the user names a "
+        f"\n\nNO CODE WORKSPACE: No folder is connected, so '{scratch_dir}', this session's own "
+        "scratch folder, is your working folder. The file tools and ws_run_command work in it: "
+        "a relative path is inside it and a command starts in it. Build there, and do not ask "
+        "where to save before you start. When the user named a place, save the result there "
+        "(destination_path, or save_file). When they named none, leave the result in the "
+        "scratch folder, give its link in your reply, and offer to open it or to save it where "
+        "the user wants; for more than one file, put them in one folder with a name that says "
+        "what it holds, inside the place the user chooses. Delete the helpers you made along "
+        "the way. Do not guess a path with ws_open_folder (use that only when the user names a "
         "folder to open). For a conversation or a throwaway snippet, just answer; no write tool."
     )
 

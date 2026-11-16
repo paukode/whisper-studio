@@ -6,12 +6,12 @@ survives the flip (register always, refuse at execution):
 - get_global_workspace_tools(): ws_open_folder, so the model can connect a
   workspace mid-conversation.
 - get_workspace_write_tools(): the five file-write tools. With no workspace,
-  ws_write_file, ws_edit_file and ws_delete_file raise the
-  [WS_WORKSPACE_PROMPT] folder picker; ws_create_file and save_file save to
-  ~/Documents (or the path the user named) through the save approval.
+  the write tools and ws_create_file work in the session's own scratch
+  folder (server.workspace.state.work_root); save_file saves to ~/Documents
+  (or the path the user named) through the save approval.
 - get_workspace_tools(): read/list/grep/glob, the write tools and
-  ws_run_command; executors answer "No workspace connected." when there is
-  none.
+  ws_run_command, which runs in the scratch folder when no workspace is
+  connected; the search tools answer "No workspace connected."
 - get_worktree_tools(): executors refuse when the workspace is not a git repo.
 """
 
@@ -264,19 +264,18 @@ def get_workspace_tools() -> list[dict]:
 def get_workspace_write_tools() -> list[dict]:
     """The file-write tools, advertised with or without a connected workspace.
 
-    With no workspace, ws_write_file, ws_edit_file and ws_delete_file return a
-    [WS_WORKSPACE_PROMPT] payload: the user gets a folder picker, the chosen
-    folder is connected, and the turn resumes so the same call is re-issued
-    against it. ws_create_file and save_file save to ~/Documents (or a path
-    the user named) through the save approval instead.
+    With no workspace, ws_write_file, ws_edit_file, ws_delete_file and
+    ws_create_file work in the session's own scratch folder
+    (server.workspace.state.work_root). save_file saves to ~/Documents (or a
+    path the user named) through the save approval.
 
     ws_run_command is not here: it is advertised by get_workspace_tools and
-    refuses at execution without a workspace.
+    runs in the scratch folder without a workspace.
     """
     return [
         {
             "name": "ws_write_file",
-            "description": "[Workspace] Modify an existing file. Provide the full new content. Requires user approval before writing. If no workspace is connected, this asks the user to pick a folder first, then the write is re-issued against it.",
+            "description": "[Workspace] Modify an existing file. Provide the full new content. Requires user approval before writing. If no workspace is connected, a relative path is in this session's scratch folder.",
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -298,12 +297,12 @@ def get_workspace_write_tools() -> list[dict]:
                 "If a workspace is connected, `path` is workspace-relative; the scratch folder is "
                 "reachable by its absolute path, and any other absolute path is saved there once "
                 "the user confirms it on the approval card. If none is "
-                "connected, use it only for a file the user asked for (otherwise the "
-                "content belongs in your reply), and never ask where to save: pass "
-                "destination_path resolved from the user's own words ('in Downloads' -> "
-                "'~/Downloads/notes.txt'), or omit it to default to their Documents folder, "
-                "then tell the user the full path in your reply. The user confirms the exact "
-                "path on the approval card."
+                "connected, `path` is relative to this session's scratch folder, your working "
+                "folder. Make a result file only for a file the user asked for (otherwise the "
+                "content belongs in your reply); the helper files of the work go there too. "
+                "When the user named a place, pass destination_path "
+                "resolved from their own words ('in Downloads' -> '~/Downloads/notes.txt'); "
+                "the user confirms that exact path on the approval card."
             ),
             "input_schema": {
                 "type": "object",
@@ -315,7 +314,7 @@ def get_workspace_write_tools() -> list[dict]:
                     "content": {"type": "string", "description": "File content"},
                     "destination_path": {
                         "type": "string",
-                        "description": "Full destination path resolved from the user's words, e.g. '~/Downloads/notes.txt' (~ allowed), for a file that belongs outside the connected workspace. Omit it for workspace files and when the user named no location (without a workspace the file goes to their Documents folder).",
+                        "description": "Full destination path resolved from the user's words, e.g. '~/Downloads/notes.txt' (~ allowed), for a file that belongs outside the connected workspace. Omit it for workspace files and when the user named no location (without a workspace the file is made in the session's scratch folder).",
                     },
                 },
                 "required": ["path", "content"],
@@ -403,7 +402,7 @@ def get_workspace_write_tools() -> list[dict]:
             "name": "ws_delete_file",
             "description": (
                 "[Workspace] Delete a file. Requires user approval. "
-                "If no workspace is connected, this asks the user to pick a folder first."
+                "If no workspace is connected, a relative path is in this session's scratch folder."
             ),
             "input_schema": {
                 "type": "object",

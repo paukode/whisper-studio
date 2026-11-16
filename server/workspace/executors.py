@@ -54,6 +54,7 @@ from .state import (
     get_workspace_path,
     inside_workspace,
     resolve_write_destination,
+    scratch_work_root,
     workspace_lost_message,
 )
 
@@ -275,8 +276,8 @@ def _flag(value) -> bool:
 
 @register_executor("ws_read_file", read_only=True, concurrent_safe=True)
 def _exec_ws_read_file(tool_input, transcript, current_attachments):
-    ws = get_workspace_path()
     session_id = tool_input.pop("__session_id__", "")
+    ws = get_workspace_path() or scratch_work_root(session_id)
     path = tool_input.get("path", "")
     full, refusal = resolve_read_path(
         path, ws, session_id, secret_reads=secret_reads_policy.stamped(tool_input)
@@ -352,8 +353,8 @@ def _exec_ws_read_file(tool_input, transcript, current_attachments):
 
 @register_executor("ws_list_directory", read_only=True, concurrent_safe=True)
 def _exec_ws_list_dir(tool_input, transcript, current_attachments):
-    ws = get_workspace_path()
     session_id = tool_input.pop("__session_id__", "")
+    ws = get_workspace_path() or scratch_work_root(session_id)
     path = tool_input.get("path", "").strip() or "."
     full, refusal = resolve_read_path(
         path, ws, session_id, secret_reads=secret_reads_policy.stamped(tool_input)
@@ -392,7 +393,9 @@ def _exec_ws_list_dir(tool_input, transcript, current_attachments):
 
 @register_executor("ws_write_file", read_only=False, concurrent_safe=False)
 def _exec_ws_write_file(tool_input, transcript, current_attachments):
-    ws = get_workspace_path()
+    # With no folder connected the session's scratch folder is the working
+    # folder (scratch_work_root); the picker is left for a call with no session.
+    ws = get_workspace_path() or scratch_work_root(tool_input.get("__session_id__", ""))
     if not ws:
         return _workspace_prompt_payload("ws_write_file", tool_input)
     session_id = tool_input.pop("__session_id__", "")
@@ -451,7 +454,7 @@ def _normalize_quotes(text: str) -> str:
 @register_executor("ws_edit_file", read_only=False, concurrent_safe=False)
 def _exec_ws_edit_file(tool_input, transcript, current_attachments):
     """Edit a file by exact string replacement with quote normalization."""
-    ws = get_workspace_path()
+    ws = get_workspace_path() or scratch_work_root(tool_input.get("__session_id__", ""))
     if not ws:
         return _workspace_prompt_payload("ws_edit_file", tool_input)
     session_id = tool_input.pop("__session_id__", "")
@@ -675,7 +678,7 @@ def _exec_save_file(tool_input, transcript, current_attachments):
 
 @register_executor("ws_delete_file", read_only=False, concurrent_safe=False)
 def _exec_ws_delete_file(tool_input, transcript, current_attachments):
-    ws = get_workspace_path()
+    ws = get_workspace_path() or scratch_work_root(tool_input.get("__session_id__", ""))
     if not ws:
         return _workspace_prompt_payload("ws_delete_file", tool_input)
     session_id = tool_input.pop("__session_id__", "")
@@ -698,7 +701,9 @@ def _exec_ws_delete_file(tool_input, transcript, current_attachments):
 
 @register_executor("ws_run_command", read_only=False, concurrent_safe=False)
 def _exec_ws_run_command(tool_input, transcript, current_attachments):
-    ws = get_workspace_path()
+    # With no folder connected the command runs in the session's scratch
+    # folder, which is then also the only tree a confined run may write.
+    ws = get_workspace_path() or scratch_work_root(tool_input.get("__session_id__", ""))
     if not ws:
         return "No workspace connected."
     command = tool_input.get("command", "").strip()

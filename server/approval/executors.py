@@ -45,7 +45,7 @@ def _changeable(full: str, ws: str, payload: dict) -> bool:
 async def _do_write(payload: dict) -> ApprovalOutcome:
     from server import workspace
 
-    ws = workspace.get_workspace_path()
+    ws = workspace.get_workspace_path() or workspace.scratch_work_root(payload.get("session_id"))
     if not ws:
         return ApprovalOutcome(ok=False, error="No workspace connected")
     path = payload.get("path", "")
@@ -210,7 +210,7 @@ async def _do_folder_access(payload: dict) -> ApprovalOutcome:
 async def _do_delete(payload: dict) -> ApprovalOutcome:
     from server import workspace
 
-    ws = workspace.get_workspace_path()
+    ws = workspace.get_workspace_path() or workspace.scratch_work_root(payload.get("session_id"))
     if not ws:
         return ApprovalOutcome(ok=False, error="No workspace connected")
     path = payload.get("path", "")
@@ -318,7 +318,7 @@ async def _do_create_document(payload: dict) -> ApprovalOutcome:
 
     from server import workspace
 
-    ws = workspace.get_workspace_path()
+    ws = workspace.get_workspace_path() or workspace.scratch_work_root(payload.get("session_id"))
     if not ws:
         return ApprovalOutcome(ok=False, error="No workspace connected")
     path = payload.get("path", "")
@@ -655,7 +655,7 @@ async def _do_command(payload: dict) -> ApprovalOutcome:
     from server import workspace
     from server.workspace.executors import run_workspace_command
 
-    ws = workspace.get_workspace_path()
+    ws = workspace.get_workspace_path() or workspace.scratch_work_root(payload.get("session_id"))
     if not ws:
         return ApprovalOutcome(ok=False, error="No workspace connected")
     command = (payload.get("command") or "").strip()

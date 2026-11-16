@@ -284,6 +284,30 @@ def get_workspace_path() -> str | None:
     return path
 
 
+def scratch_work_root(session_id: str | None) -> str | None:
+    """The working folder of a session with no workspace connected: its own
+    scratch folder.
+
+    A session always has a working folder (the user's rule): with no folder
+    connected, a relative path resolves in the scratch folder and a command
+    starts there, so the work goes on with no folder picker and no "No
+    workspace connected". None for a call with no session to own a scratch
+    folder, and for a turn whose workspace the user let go of mid-turn: its
+    paths were meant for that folder, so they are not quietly redirected
+    (workspace_lost_message says why)."""
+    if workspace_lost_message():
+        return None
+    from .paths import own_scratch_dir
+
+    return own_scratch_dir(session_id)
+
+
+def work_root(session_id: str | None) -> str | None:
+    """The folder the file and command tools work in: the connected workspace,
+    else the session's own scratch folder (scratch_work_root)."""
+    return get_workspace_path() or scratch_work_root(session_id)
+
+
 def inside_workspace(path: str, workspace: str | None) -> bool:
     """Whether ``path`` (realpath'd) is ``workspace`` or a folder below it.
 
@@ -386,9 +410,12 @@ def resolve_write_destination(tool_name: str, tool_input: dict) -> tuple[str, st
       destination like destination_path: the save approval card shows the
       full path and the user decides there. It never raises the folder
       picker; the workspace was fine, and switching roots cannot fix a path.
-    - Neither: default to ~/Documents/<filename>, the approval card shows
-      the full path and is the single human gate; the model's reply tells
-      the user where the file went.
+    - No destination and no workspace: the session's own scratch folder is
+      the working folder (work_root), so `path` resolves there like a
+      workspace write. The model's reply links the file and offers to open
+      it or to save it where the user wants (the no_workspace prompt
+      section). Only a call with no session falls back to
+      ~/Documents/<filename> through the save approval card.
 
     Returns ("workspace", full_path) or ("absolute", destination_path) on
     success. On failure returns the string to return directly from the
@@ -404,7 +431,8 @@ def resolve_write_destination(tool_name: str, tool_input: dict) -> tuple[str, st
             return "Error: destination_path must be an absolute path (~ is allowed)."
         return "absolute", os.path.realpath(raw)
 
-    ws = get_workspace_path()
+    # The connected workspace, else the session's scratch folder (work_root).
+    ws = work_root(tool_input.get("__session_id__", ""))
     if ws:
         path = tool_input.get("path", "")
         if not path:

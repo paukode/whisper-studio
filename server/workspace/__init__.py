@@ -36,6 +36,8 @@ from .state import (  # noqa: E402,F401
     connect_workspace,
     get_workspace_path,
     is_plan_mode,
+    scratch_work_root,
+    work_root,
 )
 from .tools import (  # noqa: E402,F401
     get_global_workspace_tools,

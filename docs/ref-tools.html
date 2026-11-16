@@ -54,8 +54,9 @@
       design the plan and call <code>create_plan</code> instead. On a grounded turn, the injected
       grounding block tells the model to answer from the retrieved passages rather than re-crawl
       files. Workspace, worktree, git, GitHub, and document tools stay advertised with or without a
-      connected workspace, and each executor answers for itself with "no workspace connected", "not a
-      git repo", or a folder picker: register always, refuse at execution.</p>
+      connected workspace: register always, refuse at execution. With no workspace connected, the
+      file tools, the document tools and <code>ws_run_command</code> work in the scratch folder of
+      the session. The other tools answer "no workspace connected" or "not a git repo".</p>
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/><path d="M9 18h6M10 22h4"/></svg></span>
@@ -160,8 +161,9 @@
     <h2 id="documents">Documents</h2>
     <p>Four tools that produce real Office and PDF files (genuine OOXML via python-docx,
       python-pptx, and openpyxl; PDF via reportlab). They are always in the
-      catalogue, with or without a connected workspace. With no workspace connected (or an absolute
-      path), they follow the staged <a href="#direct-save">direct-save flow</a>; with a workspace
+      catalogue, with or without a connected workspace. With an absolute path that the user named, they follow the staged
+      <a href="#direct-save">direct-save flow</a>. With no workspace connected and no named path,
+      they make the file in the scratch folder of the session. With a workspace
       connected they instead go through the plain <code>create_document</code> approval, same trust
       tier as an ordinary workspace write, no staging. Every output uses the app's standard layout from
       <code class="path">server/documents/standards.py</code>, and the extension is appended if the
