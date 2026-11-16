@@ -156,7 +156,7 @@
       off too. Cron instead verifies its own runs with a separate <code>cron_verify</code> step; see
       <a href="arch-goals.html">The goal loop</a>.</p>
     <p>The completion gate calls the Stop hooks; it does not register one. That matters when you read the
-      transcript. The verification check of the gate and a failed goal quality gate emit the same
+      transcript. A failed goal quality gate emits the same
       <code>stop_hook_block</code> frame,
       which shows as <b>Continuing (Stop hook)</b>. Because of this, a turn can continue with no Stop
       hook configured. The claim check and the requested-file check send the model back with no frame.

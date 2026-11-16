@@ -984,6 +984,21 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
                         yield f"data: {ndjson_dumps({'text': chr(10) * 2})}\n\n"
                     continue
 
+                # A chat turn that changed code files ends by offering the
+                # code checks (Settings > Code tools, off by default). The
+                # app runs them itself if the user says yes; nothing here
+                # costs a round.
+                if ctx.policy.completion_gate:
+                    try:
+                        from server.code_tools.turn_checks import offer as _checks_offer
+
+                        _offer = _checks_offer(messages, ctx.ws_path)
+                    except Exception as e:  # noqa: BLE001 - an offer must never fail a turn
+                        log.warning("code checks offer failed (%s); skipping", e)
+                        _offer = None
+                    if _offer:
+                        yield f"data: {ndjson_dumps(_offer)}\n\n"
+
                 log.info(
                     "Stream ending: stop_reason=%s, tool_uses=%d, round=%d",
                     stop_reason,

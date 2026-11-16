@@ -283,8 +283,7 @@
             the goal loop auto-continues the turn, capped at 8 consecutive blocks
             (<code>goal_max_consecutive_blocks</code>). Gated by the <code>goal_loop</code> feature
             flag. See <a href="arch-goals.html">The goal loop &amp; completion gate</a>, and compare
-            <b>quality gate</b> and <b>verification gate</b>, the two deterministic checks that run
-            inside the same gate.</td>
+            <b>quality gate</b>, the deterministic check that runs inside the same gate.</td>
         </tr>
         <tr>
           <td>GraphRAG</td>
@@ -724,16 +723,6 @@
             where one <b>utterance</b> ends and keeping the transcript clean. Whisper Studio uses WebRTC
             VAD locally, with automatic gain in front of it so a quiet microphone still registers. See
             <a href="arch-transcription.html">Transcription &amp; diarization</a>.</td>
-        </tr>
-        <tr>
-          <td>verification gate</td>
-          <td>The check that stops "done, the tests should pass" from ending a turn. It is passive: it
-            never runs a suite itself, it reads the turn's own messages and asks which code files were
-            edited, which test, lint, typecheck or build commands ran afterwards, and whether they
-            passed. When code was edited with no fresh passing evidence, the completion gate asks for a
-            real verification or an honest blocker, at most twice per turn. Prose-only edits never
-            trigger it. Gated by the <code>verify_on_stop</code> feature flag. Compare <b>quality
-            gate</b>, which is a command you named rather than an inference.</td>
         </tr>
         <tr>
           <td>voiceprint</td>

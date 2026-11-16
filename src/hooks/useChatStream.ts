@@ -261,6 +261,8 @@ export async function sendChatTurn(question: string, opts?: SendOptions): Promis
   // turn must not linger into this one.
   if (!isContinuation) {
     store().clearAutoModeBreaker();
+    // The offer was about the turn before this one.
+    store().setCodeChecksOffer(null);
   }
 
   const leg = store().startTurn('streaming');

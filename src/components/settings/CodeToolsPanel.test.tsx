@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { CodeToolsStatusResponseSchema } from '@/types/schemas/codeTools.schema';
 
@@ -65,6 +65,20 @@ describe('CodeToolsPanel', () => {
     const [url, options] = api.get.mock.calls[0];
     expect(url).toBe('/api/code-tools/status');
     expect(options.schema).toBe(CodeToolsStatusResponseSchema);
+  });
+
+  it('the switch for checks on the assistant\'s code is off until the flag says on, and saves the flag', async () => {
+    api.get.mockImplementation((url: string) =>
+      Promise.resolve(url === '/api/feature-flags' ? { code_checks: { enabled: false } } : STATUS));
+    api.put.mockResolvedValue({});
+    renderPanel();
+    const row = await screen.findByTestId('code-checks-toggle');
+    const box = within(row).getByRole('checkbox') as HTMLInputElement;
+    await waitFor(() => expect(box.disabled).toBe(false));
+    expect(box.checked).toBe(false);
+    fireEvent.click(box);
+    await waitFor(() =>
+      expect(api.put).toHaveBeenCalledWith('/api/feature-flags/code_checks', { enabled: true }));
   });
 
   it('shows what each tool powers, its state, version and command', async () => {

@@ -225,13 +225,6 @@
         file the user requested and the turn never produced, reading what they typed rather than the
         transcript beside it, and counts a request sent mid-turn only against what came after it.
         While a background command of the turn runs, a file that the command writes is not missing.</p></li>
-      <li><h4>Verification evidence</h4><p><code class="path">server/goals/verification.py</code> is
-        passive and deterministic: it never runs a suite itself. It reads the turn's messages and
-        asks which code files were edited and whether a test, lint, typecheck, or build command ran
-        green <em>afterwards</em>. Stopping right after editing code with no fresh passing evidence
-        becomes a bounded nudge (at most <code>MAX_VERIFY_NUDGES</code>, 2, per turn) to run the
-        check or say plainly what blocks it. Prose-only edits (markdown, text, data files) never
-        trigger it.</p></li>
       <li><h4>Goal gates, then the goal evaluator</h4><p>With the <code>goal_loop</code> flag on and
         an active goal, any quality gates you named with <code>/goal gate add &lt;command&gt;</code>
         run first: a red gate is deterministic proof the goal is not met, its output tail becomes the
@@ -407,7 +400,7 @@
       <dt><code class="path">server/chat/tool_pool.py</code></dt><dd>Assembles the per-turn tool catalogue (mode filter + dedup); with the <code>progressive_tools</code> flag it splits the catalogue into a core prefix plus a deferred, session-activated index.</dd>
       <dt><code class="path">server/chat/caching.py</code></dt><dd>System-prompt resolution with cache-aligned splits, plus the moving <code>annotate_messages_cache</code> checkpoint on conversation history.</dd>
       <dt><code class="path">server/hooks/</code></dt><dd>The blocking hook engine: <code>run_hooks</code> (session start, prompt submit, and the tool events) and the <code>check_stop_hooks</code> end-of-turn gate.</dd>
-      <dt><code class="path">server/goals/gate.py</code></dt><dd><code>run_completion_gate</code>: Stop hooks, the deliverable, requested-file and verification checks, then the goal gates and the goal evaluator, any of which can refuse to end the turn.</dd>
+      <dt><code class="path">server/goals/gate.py</code></dt><dd><code>run_completion_gate</code>: Stop hooks, the deliverable and requested-file checks, then the goal gates and the goal evaluator, any of which can refuse to end the turn.</dd>
       <dt><code class="path">server/chat/engine/midturn_inbox.py</code></dt><dd>The per-session queue for a message sent while a turn is already running.</dd>
       <dt><code class="path">server/chat/loop_hints.py</code></dt><dd><code>inject_reminder</code>, the near-cap wind-down text, and the token-accurate context meter.</dd>
       <dt><code class="path">server/chat/loop_guard.py</code></dt><dd>Repeated-call, repeated-failure, and cycle detection, plus the per-turn tool caps.</dd>

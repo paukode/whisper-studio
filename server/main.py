@@ -27,6 +27,7 @@ from server.chat.compaction_log import router as compaction_log_router
 from server.chat.request_snapshots import router as request_snapshots_router
 from server.ci.routes import router as ci_router
 from server.code_tools.status import router as code_tools_router
+from server.code_tools.turn_checks import router as code_checks_router
 from server.costs.routes import router as cost_router
 from server.cron_scheduler import init_scheduler
 from server.cron_scheduler import router as cron_router
@@ -546,6 +547,7 @@ app.include_router(model_browser_router)
 app.include_router(index_router)
 app.include_router(plugins_router)
 app.include_router(code_tools_router)
+app.include_router(code_checks_router)
 app.include_router(lsp_proxy_router)
 app.include_router(terminal_router)
 app.include_router(buddy_router)

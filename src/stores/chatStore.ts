@@ -80,6 +80,16 @@ export interface AutoModeBreaker {
   sessionId: string;
 }
 
+/**
+ * The offer to run the code checks on the files the last turn changed
+ * (server/code_tools/turn_checks.py). Shown by CodeChecksBanner until the user
+ * answers or the next turn starts. `sessionId` is the owning session.
+ */
+export interface CodeChecksOffer {
+  files: string[];
+  sessionId: string;
+}
+
 export interface ChatState {
   messages: ChatMessage[];
   /** See TurnPhase. */
@@ -139,6 +149,9 @@ export interface ChatState {
   /** Auto-mode circuit breaker notification, or null while it hasn't
    *  tripped (the common case). See AutoModeBreaker above. */
   autoModeBreaker: AutoModeBreaker | null;
+
+  /** The code checks offer of the last turn, or null. */
+  codeChecksOffer: CodeChecksOffer | null;
 
   /** Thinking timer state */
   thinkingStartTime: number | null;
@@ -260,6 +273,9 @@ export interface ChatState {
   setAutoModeBreaker: (breaker: AutoModeBreaker) => void;
   clearAutoModeBreaker: () => void;
 
+  // Code checks offer
+  setCodeChecksOffer: (offer: CodeChecksOffer | null) => void;
+
   // Thinking/usage
   setThinkingStart: () => void;
   /** Turn phase streamed by the server: 'preparing' | 'searching' |
@@ -353,6 +369,7 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
   sessionApprovals: { ...DEFAULT_SESSION_APPROVALS },
   sessionDenials: {},
   autoModeBreaker: null,
+  codeChecksOffer: null,
   thinkingStartTime: null,
   thinkingElapsedMs: 0,
   waitSpans: [],
@@ -699,6 +716,12 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
 
   clearAutoModeBreaker: () => {
     set({ autoModeBreaker: null });
+  },
+
+  // ── Code checks offer ──
+
+  setCodeChecksOffer: (offer: CodeChecksOffer | null) => {
+    set({ codeChecksOffer: offer });
   },
 
   // ── Thinking/usage ──

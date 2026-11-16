@@ -370,7 +370,18 @@
       at 100 matches).</p>
 
     <h3 id="ruff-after-write">Formatters after every code write</h3>
-    <p>Every successful assistant write, create or edit of a Python or JS/TS file runs through one of two
+    <p>The <code>code_checks</code> flag controls all of this section. Its switch is "Check the
+      assistant's code" in Settings, Tools and automation, Code tools. The default is off. While the
+      flag is off, the app runs no linter and no formatter on the code of the assistant. The
+      <code>lsp_diagnostics</code> tool stays available to the assistant.</p>
+    <p>While the flag is on, a chat turn that changed Python or JS/TS files ends with a
+      <code>code_checks_offer</code> frame (<code class="path">server/code_tools/turn_checks.py</code>).
+      The chat shows a card that asks if the app must run ruff and ESLint on those files. If the user
+      selects "Run checks", the chat calls <code>POST /api/code-tools/check</code>. The app runs the
+      tools, not the model. If the tools find issues, the chat sends them to the assistant as the next
+      message of the user. If the tools find no issues, the chat shows a notice and sends nothing.
+      Agents, scheduled runs and headless runs get no card.</p>
+    <p>While the flag is on, every successful assistant write, create or edit of a Python or JS/TS file runs through one of two
       approval executors on every approval path (<code class="path">server/approval/executors.py</code>):
       <code>_do_write</code> for a workspace-relative path, and <code>_do_save_to_path</code> for a file
       saved to an absolute path (<code>save_file</code>, <code>ws_create_file</code> with a

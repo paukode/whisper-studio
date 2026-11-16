@@ -25,6 +25,8 @@ def test_flags_registry_holds_only_live_flags():
         "companion",
         # Live preview is always on: no flag, no Settings toggle.
         "preview_tools",
+        # The verify-on-stop nudge is gone: the Code tools switch offers the checks.
+        "verify_on_stop",
     }
     live = {
         "git_context",
@@ -45,9 +47,10 @@ def test_flags_registry_holds_only_live_flags():
         "skill_self_improvement",
         "session_search",
         "tool_loop_guard",
-        "verify_on_stop",
         # Read by is_enabled in server/chat/engine/activity_labels.py.
         "activity_labels",
+        # Read by turn_checks.enabled in server/code_tools/turn_checks.py.
+        "code_checks",
     }
     assert names & removed == set(), f"no-op flags back in the registry: {names & removed}"
     assert names == live, f"registry drift: extra={names - live} missing={live - names}"

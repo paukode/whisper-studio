@@ -336,17 +336,18 @@ register_flag(
     category="agent",
 )
 
+
 register_flag(
-    "verify_on_stop",
+    "code_checks",
     description=(
-        "When a turn edited code files but no test, lint, typecheck or build command ran "
-        "successfully afterwards, the completion gate asks for a real verification (or an "
-        "honest blocker) before the turn ends; at most two nudges per turn"
+        "Run the code tools on the assistant's code: ruff, Prettier and ESLint fix and "
+        "format a file after each write, and a chat turn that changed code files ends by "
+        "asking whether to run ruff and ESLint on them (the findings go back to the "
+        "assistant to fix). Off: the app runs no linter or formatter on the assistant's code"
     ),
-    default=True,
+    default=False,
     category="agent",
 )
-
 
 # ── API ──────────────────────────────────────────────────────────────
 

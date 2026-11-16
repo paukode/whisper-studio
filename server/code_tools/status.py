@@ -122,8 +122,8 @@ def _ruff(ws: str | None) -> ToolStatus:
         id="ruff",
         name="Ruff",
         powers=(
-            "Python checks for the assistant: lsp_diagnostics, and a check after every "
-            "Python file it writes"
+            "Python checks for the assistant: lsp_diagnostics and, while the checks on the "
+            "assistant's code are on, a check after every Python file it writes"
         ),
         ok=False,
         version=None,

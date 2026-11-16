@@ -1,7 +1,7 @@
 """The completion gate: one decision function the engine calls at end of turn.
 
-Order: (1) WS-I Stop hooks, (1.5 to 1.7) the deterministic deliverable,
-requested-file and verification checks, then, only while a goal is active,
+Order: (1) WS-I Stop hooks, (1.5, 1.6) the deterministic deliverable and
+requested-file checks, then, only while a goal is active,
 (2a) the goal's quality gates and (2b) the judge. The checks and the judge
 read one transcript: the history with the reply being gated at its end. A
 block means: do not end the turn, inject the feedback and loop again. The
@@ -272,36 +272,6 @@ async def _run_completion_gate(ctx: GateContext) -> GateDecision:
             log.info("completion gate: a requested file was not produced; continuing the turn")
             # A quiet nudge: the model makes the file, and the chat shows no card.
             return GateDecision(block=True, feedback=file_feedback, source="requested_file")
-
-    # ── Phase 1.7: verification evidence (every gated turn, goal or not) ────
-    # Code was edited this turn but no test/lint/typecheck/build command ran
-    # green afterwards: ask for the run (or an honest blocker) instead of
-    # letting "done, should work" end the turn. Deterministic, no model call,
-    # bounded to MAX_VERIFY_NUDGES per turn on top of the shared cap.
-    if _flag_on("verify_on_stop"):
-        from server.goals.verification import verify_on_stop_feedback
-
-        try:
-            verify_feedback = verify_on_stop_feedback(messages, ctx.workspace)
-        except Exception as e:  # noqa: BLE001 - the ledger must never abort a turn
-            log.warning("verify-on-stop check failed (%s); skipping", e)
-            verify_feedback = None
-        if verify_feedback:
-            if ctx.attempt >= cap:
-                return GateDecision(
-                    block=False,
-                    frame={
-                        "goal_cap_reached": {"attempt": ctx.attempt, "cap": cap, "source": "verify"}
-                    },
-                    source="cap",
-                )
-            log.info("completion gate: code edited without fresh verification; continuing")
-            return GateDecision(
-                block=True,
-                feedback=verify_feedback,
-                frame={"stop_hook_block": {"reason": verify_feedback, "attempt": ctx.attempt + 1}},
-                source="verify",
-            )
 
     # ── Phase 2: goal evaluator (only if the flag is on and a goal is active) ─
     if not _flag_on("goal_loop"):

@@ -112,8 +112,6 @@ def test_the_recap_row_gets_a_receipt_and_the_read_sentence_none(tmp_path):
 
 
 def test_a_chat_turn_sends_the_receipt_right_after_the_recap_row(monkeypatch, tmp_path):
-    # A document, so the turn's verification gate (code edited, no test run)
-    # stays out of the way.
     rel = "docs/work-narration.md"
     ws = tmp_path / "ws"
     full = ws / rel

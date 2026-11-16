@@ -22,8 +22,7 @@
 
     <p>The loop lives in <code class="path">server/goals/</code>: <code class="path">store.py</code> (the goal
       and its quality gates on the session), <code class="path">deliverables.py</code> (did the files it
-      claimed actually get written), <code class="path">verification.py</code> (did anything green run after
-      the last code edit), <code class="path">gates.py</code> (the must-pass shell commands),
+      claimed actually get written), <code class="path">gates.py</code> (the must-pass shell commands),
       <code class="path">tail.py</code> (the transcript the evaluator reads),
       <code class="path">evaluator.py</code> (the verdict), <code class="path">local_judge.py</code> (the
       verdict for an on-device session, on its own model), <code class="path">gate.py</code> (the gate that
@@ -45,7 +44,7 @@
       claims actually exist, did anything green run after the last code edit, do the goal's own gate
       commands pass, and is the stated goal met? If the answer is no, the turn is not over: the gate
       re-injects what's missing and the model keeps going. Only the goal half is opt-in (you set a goal);
-      on cloud chat the deliverable and verification checks run on every turn. A deterministic check that
+      on cloud chat the deliverable and requested-file checks run on every turn. A deterministic check that
       errors is skipped, a judge that cannot run says so instead of passing the goal, and one shared cap
       means a stubborn evaluator or an always-blocking hook cannot trap you.</p>
 
@@ -194,11 +193,6 @@
         the task registry shows the command with the status <code>running</code>, the check does not ask
         for the file. If the request names the file (<code>build.txt</code>), the command must name the
         same file. The result of the command returns to the chat when the command stops.</p></li>
-      <li><h4>Verification evidence (always)</h4><p>Behind the <code>verify_on_stop</code> flag. Purely
-        deterministic, no model call: if the turn edited code but no test, lint, typecheck or build ran
-        green <em>after the last edit</em>, the gate asks for the run, or for an honest statement of what
-        blocks it. A green suite followed by another edit is stale evidence and does not count. Bounded to
-        two nudges per turn on top of the shared cap.</p></li>
       <li><h4>The goal's quality gates (when a goal is active)</h4><p>Any commands added with
         <code>/goal gate add</code> run at this point, on a worker thread, in the workspace. A red gate is
         deterministic proof the goal is not met, so its exit code and output tail become the continuation
@@ -228,8 +222,8 @@
 
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
-      <div class="callout__body"><p>Four of these checks run with or without a goal. The Stop
-        hooks, the verification check and the quality gates show a block with the same
+      <div class="callout__body"><p>Three of these checks run with or without a goal: the Stop hooks, the
+        claim check and the requested-file check. The Stop hooks and the quality gates show a block with the same
         <code>stop_hook_block</code> frame, which the transcript labels <b>Continuing (Stop hook)</b>.
         The claim check and the requested-file check send the model back with no frame, so the chat
         shows no card for them. Because of this, a turn can continue with no Stop hook configured. The
@@ -375,7 +369,6 @@
       <dt><code class="path">server/goals/call_results.py</code></dt><dd>Whether each call finished and succeeded, background commands a later call shows finished, the calls as first read, and the agent reports a turn read.</dd>
       <dt><code class="path">server/chat/claim_guard.py</code></dt><dd>The stream guard: holds a claiming sentence (and the tool cards behind it) until it is verified, sends the <code>deliveries</code> receipts, carries a cut or a paused turn's text on in order, and notes at the turn's end what did not happen.</dd>
       <dt><code class="path">server/goals/requested_files.py</code></dt><dd>Which files the user asked for this turn, read from what they typed, whether only a file on disk answers each request, and whether what the turn did after each request produced one. A file that a background command of the turn still writes is not missing.</dd>
-      <dt><code class="path">server/goals/verification.py</code></dt><dd>The passive ledger: which tools edit code, which commands verify it, and whether the evidence is fresh.</dd>
       <dt><code class="path">server/goals/gates.py</code></dt><dd>Running a goal's quality-gate commands, the retry budget, and the failure text.</dd>
       <dt><code class="path">server/goals/evaluator.py</code></dt><dd>The judge's prompt, the verdict schema and strict parser, and the cloud judge (<code>evaluate</code>, keyword-only <code>main_model_key</code>).</dd>
       <dt><code class="path">server/goals/local_judge.py</code></dt><dd>The on-device judge: the session's own resident model, the tail sized to its window, <code>not_checked</code> on any failure.</dd>

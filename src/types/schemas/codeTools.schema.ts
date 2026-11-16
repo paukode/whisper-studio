@@ -25,5 +25,24 @@ export const CodeToolsStatusResponseSchema = z.object({
   tools: z.array(CodeToolStatusSchema),
 });
 
+/** One file's result from POST /api/code-tools/check. */
+export const CodeCheckResultSchema = z.object({
+  path: z.string(),
+  tool: z.string(),
+  /** Number of findings; null when the file could not be checked. */
+  issues: z.number().nullable(),
+  text: z.string(),
+});
+
+/** POST /api/code-tools/check (server/code_tools/turn_checks.py). */
+export const CodeChecksResponseSchema = z.object({
+  results: z.array(CodeCheckResultSchema),
+  issues: z.number(),
+  /** The message that carries the findings to the assistant; empty when clean. */
+  report: z.string(),
+  enabled: z.boolean(),
+});
+
+export type CodeChecksResponse = z.infer<typeof CodeChecksResponseSchema>;
 export type CodeToolStatus = z.infer<typeof CodeToolStatusSchema>;
 export type CodeToolsStatusResponse = z.infer<typeof CodeToolsStatusResponseSchema>;

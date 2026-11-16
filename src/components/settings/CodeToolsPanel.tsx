@@ -1,6 +1,8 @@
 import React from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { get } from '@/api/client';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { get, put } from '@/api/client';
+import { useSaveToast } from '@/hooks/useSaveToast';
+import { HelpTip } from '@/components/common/HelpTip';
 import { useUIStore } from '@/stores/uiStore';
 import {
   CodeToolsStatusResponseSchema,
@@ -66,12 +68,52 @@ export const CodeToolsPanel: React.FC = () => {
   });
   const data = statusQuery.data;
 
+  // The one switch for every linter and formatter run on the assistant's code
+  // (the code_checks flag, server/code_tools/turn_checks.py). Off by default.
+  const queryClient = useQueryClient();
+  const saveToast = useSaveToast();
+  const flagsQuery = useQuery({
+    queryKey: ['feature-flags'],
+    queryFn: () => get<Record<string, { enabled: boolean }>>('/api/feature-flags'),
+    staleTime: 5 * 60_000,
+  });
+  const checksOn = flagsQuery.data?.code_checks?.enabled ?? false;
+  const toggleChecks = async () => {
+    const next = !checksOn;
+    await saveToast(async () => {
+      await put('/api/feature-flags/code_checks', { enabled: next });
+      await queryClient.invalidateQueries({ queryKey: ['feature-flags'] });
+    }, { success: `Code checks ${next ? 'on' : 'off'}`, error: 'Failed to update code checks' });
+  };
+
   return (
     <div className="settings-form" style={{ maxWidth: 640 }}>
       <p className="settings-hint">
         The linters and language servers Whisper Studio runs: the checks on code the assistant
         writes, and the code editor&apos;s completion, hover and inline diagnostics.
       </p>
+      <div className="settings-list">
+        <div className="settings-item" data-testid="code-checks-toggle">
+          <div className="settings-item-info">
+            <div className="settings-item-name">
+              Check the assistant&apos;s code
+              <HelpTip text="On: ruff, Prettier and ESLint fix and format each file after the assistant writes it, and a turn that changed code ends by asking whether to run ruff and ESLint on the changed files. Issues go back to the assistant to fix. Off: Whisper Studio runs no linter or formatter on the assistant's code." />
+            </div>
+          </div>
+          <div className="settings-item-actions">
+            <label className="toggle-switch" title={checksOn ? 'On' : 'Off'}>
+              <input
+                type="checkbox"
+                checked={checksOn}
+                disabled={!flagsQuery.data}
+                onChange={() => void toggleChecks()}
+                aria-label="Check the assistant's code"
+              />
+              <span className="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+      </div>
       {data && !data.workspace && (
         <p className="settings-hint" role="note">
           Connect a workspace to check its own tools: ESLint, and whether ruff also fixes and

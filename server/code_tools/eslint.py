@@ -1,6 +1,7 @@
 """JS/TS checks for the assistant with the workspace's own ESLint.
 
-``check_file`` backs ``lsp_diagnostics`` for a JS/TS file. It runs
+``check`` backs ``lsp_diagnostics`` for a JS/TS file (``check_file``) and the
+code checks a turn can end with (server/code_tools/turn_checks.py). It runs
 ``<the app's node> <ws>/node_modules/eslint/bin/eslint.js --format json`` from
 the project directory, so the project's ESLint version, config and plugins
 apply. The json formatter ships with every ESLint (compact was removed from
@@ -28,17 +29,20 @@ MAX_LISTED = 40
 _NOT_A_FINDING = "This is the tool's status, not a finding about the file."
 
 
-def check_file(ws: str, full_path: str, rel: str) -> str:
+def check(ws: str, full_path: str, rel: str) -> tuple[int | None, str]:
+    """ESLint's findings for a JS/TS file: how many, and the text that lists
+    them. The count is None when the file was not linted (no ESLint, no node,
+    an ESLint that fails to start); the text then is the tool's status."""
     install = find_workspace_eslint(ws, os.path.dirname(full_path))
     if install is None:
-        return (
+        return None, (
             f"ESLint is not available for {rel}: the workspace has no ESLint "
             "(node_modules/eslint) between this file and the workspace root. Add eslint and "
             f"an eslint.config.js to the project to get JS/TS checks. {_NOT_A_FINDING}"
         )
     node = node_path()
     if node is None:
-        return (
+        return None, (
             "ESLint is not available: Node.js was not found (the app runs the workspace's "
             f"ESLint with its own node). {_NOT_A_FINDING}"
         )
@@ -49,7 +53,7 @@ def check_file(ws: str, full_path: str, rel: str) -> str:
             timeout=ESLINT_TIMEOUT_S,
         )
     except ToolUnavailable as e:
-        return f"ESLint could not run ({e}). {_NOT_A_FINDING}"
+        return None, f"ESLint could not run ({e}). {_NOT_A_FINDING}"
 
     results = None
     if run.returncode in (0, 1):
@@ -65,7 +69,7 @@ def check_file(ws: str, full_path: str, rel: str) -> str:
             reason = missing_eslint_config_reason(install, file_dir)
         else:
             reason = first_error_line(run.stderr) or first_error_line(run.stdout) or "no output"
-        return (
+        return None, (
             f"ESLint {install.version} could not lint {rel} (exit status {run.returncode}): "
             f"{reason}. {_NOT_A_FINDING}"
         )
@@ -78,7 +82,7 @@ def check_file(ws: str, full_path: str, rel: str) -> str:
         if isinstance(m, dict)
     ]
     if not messages:
-        return f"ESLint {install.version}: no issues in {rel}."
+        return 0, f"ESLint {install.version}: no issues in {rel}."
     lines = []
     for m in messages[:MAX_LISTED]:
         severity = "error" if m.get("severity") == 2 else "warning"
@@ -90,4 +94,9 @@ def check_file(ws: str, full_path: str, rel: str) -> str:
     if len(messages) > MAX_LISTED:
         lines.append(f"  ... and {len(messages) - MAX_LISTED} more")
     count = f"{len(messages)} issue" if len(messages) == 1 else f"{len(messages)} issues"
-    return f"ESLint {install.version}: {count} in {rel}:\n" + "\n".join(lines)
+    return len(messages), f"ESLint {install.version}: {count} in {rel}:\n" + "\n".join(lines)
+
+
+def check_file(ws: str, full_path: str, rel: str) -> str:
+    """lsp_diagnostics for a JS/TS file."""
+    return check(ws, full_path, rel)[1]

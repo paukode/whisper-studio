@@ -118,18 +118,28 @@ def _count(n: int) -> str:
     return f"{n} issue" if n == 1 else f"{n} issues"
 
 
-def check_file(ws: str, full_path: str, rel: str) -> str:
-    """lsp_diagnostics for a Python file."""
+def check(ws: str, full_path: str, rel: str) -> tuple[int | None, str]:
+    """ruff's findings for a Python file: how many, and the text that lists
+    them. The count is None when the file was not checked (excluded by the
+    project's config, or ruff could not run); the text then says why."""
     try:
         run = run_tool(_check_argv(full_path), cwd=ws, timeout=RUFF_TIMEOUT_S)
         if _excluded(run):
-            return f"ruff: {rel} is excluded by the project's ruff configuration, so it was not checked."
+            return None, (
+                f"ruff: {rel} is excluded by the project's ruff configuration, "
+                "so it was not checked."
+            )
         findings = parse_findings(run)
     except ToolUnavailable as e:
-        return f"Python diagnostics unavailable: ruff could not run ({e})."
+        return None, f"Python diagnostics unavailable: ruff could not run ({e})."
     if not findings:
-        return f"ruff: no issues in {rel}."
-    return f"ruff: {_count(len(findings))} in {rel}:\n{_render(findings, rel)}"
+        return 0, f"ruff: no issues in {rel}."
+    return len(findings), f"ruff: {_count(len(findings))} in {rel}:\n{_render(findings, rel)}"
+
+
+def check_file(ws: str, full_path: str, rel: str) -> str:
+    """lsp_diagnostics for a Python file."""
+    return check(ws, full_path, rel)[1]
 
 
 def _read(path: str) -> bytes | None:
