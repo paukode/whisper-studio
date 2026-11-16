@@ -130,7 +130,7 @@ class GateDecision:
     # True when a goal existed and the evaluator judged it achieved this turn.
     goal_achieved: bool = False
     # Which check decided: "stop_hook" | "deliverable" | "requested_file" |
-    # "verify" | "gate" | "evaluator" | "cap" | "".
+    # "gate" | "evaluator" | "cap" | "".
     source: str = ""
 
 

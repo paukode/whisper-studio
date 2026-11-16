@@ -77,11 +77,25 @@ def test_invalid_input_reaches_neither_hooks_nor_dispatch(calls, value):
     assert calls["dispatch"] == []
 
 
-def test_one_invalid_sibling_prevents_all_calls_in_the_argument_round(calls):
-    states = _batch([_call({"path": "valid"}, id="first"), _call({}, id="second")])
-    assert all(state.status == "skipped" for state in states)
-    assert calls["hooks"] == []
-    assert calls["dispatch"] == []
+def test_an_invalid_call_never_runs_and_its_valid_siblings_do(calls):
+    # The whole round was refused once, and the model had to send every call
+    # again, a large file write among them. The invalid call still reaches no
+    # hook and no tool; the calls around it run in their order.
+    states = _batch(
+        [
+            _call({"path": "before"}, id="first"),
+            _call({}, id="second"),
+            _call({"path": "after"}, id="third"),
+        ]
+    )
+    first, second, third = states
+    assert first.status == "completed" and third.status == "completed"
+    assert second.status == "skipped"
+    assert second.output.startswith("[Refused] This call did not run.")
+    assert "other calls" in second.output
+    assert [given["path"] for _, given in calls["dispatch"]] == ["before", "after"]
+    hooked = {payload["tool_input"].get("path") for _, payload in calls["hooks"]}
+    assert hooked == {"before", "after"}
 
 
 def test_unknown_tool_does_not_reach_hooks(calls):

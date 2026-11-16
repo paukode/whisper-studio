@@ -18,7 +18,7 @@ class TurnPolicy:
     # button is the brake). Runs nobody is watching pass the Settings time
     # limit: agents, scheduled runs and headless runs.
     deadline_seconds: float | None = None
-    # Completion gate (Stop hooks, the deliverable and verification checks, the
+    # Completion gate (Stop hooks, the deliverable and requested-file checks, the
     # goal's quality gates and its judge). Unattended consumers (agents, cron,
     # headless runs) build their own policy with it off.
     completion_gate: bool = True

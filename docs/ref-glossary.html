@@ -160,7 +160,7 @@
           <td>The parameter that resolves where a direct-saved file lands, taken from your own words
             rather than asked for: "put it in Downloads" becomes
             <code class="path">~/Downloads/&lt;filename&gt;</code> (a <code>~</code> path is allowed);
-            naming no location falls back to <code class="path">~/Documents/&lt;filename&gt;</code>.
+            if you name no location, the file stays in the scratch folder of the session, and the reply offers to save it where you want.
             Used by <code>save_file</code>, <code>ws_create_file</code> without a workspace, and the
             document tools. See the <b>staging area</b> entry and
             <a href="ref-tools.html#direct-save">The direct-save flow</a>.</td>
@@ -283,8 +283,7 @@
             the goal loop auto-continues the turn, capped at 8 consecutive blocks
             (<code>goal_max_consecutive_blocks</code>). Gated by the <code>goal_loop</code> feature
             flag. See <a href="arch-goals.html">The goal loop &amp; completion gate</a>, and compare
-            <b>quality gate</b> and <b>verification gate</b>, the two deterministic checks that run
-            inside the same gate.</td>
+            <b>quality gate</b>, the deterministic check that runs inside the same gate.</td>
         </tr>
         <tr>
           <td>GraphRAG</td>
@@ -724,16 +723,6 @@
             where one <b>utterance</b> ends and keeping the transcript clean. Whisper Studio uses WebRTC
             VAD locally, with automatic gain in front of it so a quiet microphone still registers. See
             <a href="arch-transcription.html">Transcription &amp; diarization</a>.</td>
-        </tr>
-        <tr>
-          <td>verification gate</td>
-          <td>The check that stops "done, the tests should pass" from ending a turn. It is passive: it
-            never runs a suite itself, it reads the turn's own messages and asks which code files were
-            edited, which test, lint, typecheck or build commands ran afterwards, and whether they
-            passed. When code was edited with no fresh passing evidence, the completion gate asks for a
-            real verification or an honest blocker, at most twice per turn. Prose-only edits never
-            trigger it. Gated by the <code>verify_on_stop</code> feature flag. Compare <b>quality
-            gate</b>, which is a command you named rather than an inference.</td>
         </tr>
         <tr>
           <td>voiceprint</td>

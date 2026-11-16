@@ -159,6 +159,11 @@ export const SSEEventDataSchema = z.object({
   auto_mode_breaker: z.object({
     reason: z.string().optional(),
   }).optional(),
+  // A chat turn that changed code files ended, and the Code tools switch is
+  // on: the chat asks whether to run the code checks on these files.
+  code_checks_offer: z.object({
+    files: z.array(z.string()),
+  }).optional(),
   // Completion-gate frames (WS-E goal loop).
   goal_eval: z.object({
     // 'not_checked': the judge could not run or could not be understood.

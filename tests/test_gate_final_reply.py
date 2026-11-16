@@ -2,8 +2,8 @@
 
 The runner hands the gate the history and, apart from it, the reply being
 gated (``GateContext.final_reply``): the reply is persisted only after the
-decision. The judge read it from there, but the deliverable, requested-file
-and verification checks read ``messages`` alone, so the "last assistant row"
+decision. The judge read it from there, but the deliverable and
+requested-file checks read ``messages`` alone, so the "last assistant row"
 they checked was the round before the reply, usually a tool round's preamble.
 A final reply saying "Saved to `/path/report.docx`" or "the artifact card
 above" was never checked. Every context here is built the way the runner
@@ -108,7 +108,7 @@ def test_a_reply_naming_the_file_a_script_wrote_answers_the_request(gate_flags, 
 
 
 def test_the_checks_and_the_judge_read_one_transcript(gate_flags, monkeypatch):
-    from server.goals import deliverables, evaluator, requested_files, verification
+    from server.goals import deliverables, evaluator, requested_files
 
     seen: dict[str, list] = {}
 
@@ -124,9 +124,8 @@ def test_the_checks_and_the_judge_read_one_transcript(gate_flags, monkeypatch):
 
     monkeypatch.setattr(deliverables, "check_claims", spy("claims"))
     monkeypatch.setattr(requested_files, "requested_file_feedback", spy("requested_file"))
-    monkeypatch.setattr(verification, "verify_on_stop_feedback", spy("verify"))
     monkeypatch.setattr(evaluator, "evaluate", judge)
-    gate_flags("deliverable_check", "requested_file_check", "verify_on_stop", "goal_loop")
+    gate_flags("deliverable_check", "requested_file_check", "goal_loop")
     sid = "gate-one-transcript"
     goal_store.set_goal(sid, "ship the report")
 
@@ -136,7 +135,7 @@ def test_the_checks_and_the_judge_read_one_transcript(gate_flags, monkeypatch):
     assert asyncio.run(gate.run_completion_gate(ctx)).goal_achieved
 
     gated = [*history, {"role": "assistant", "content": reply}]
-    assert seen == {"claims": gated, "requested_file": gated, "verify": gated, "judge": gated}
+    assert seen == {"claims": gated, "requested_file": gated, "judge": gated}
     # Checked on a copy: the runner's own list is left as it was.
     assert ctx.messages == _history("write the report as a docx")
 

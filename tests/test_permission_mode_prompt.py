@@ -9,7 +9,7 @@ import pytest
 
 from server.ask_user import ASK_USER_TOOL
 from server.prompts import PromptLayer, build_system_prompt, build_system_prompt_split, get_registry
-from server.prompts.base import ACT_BEFORE_ASKING, BASE, KEEP_WORKING
+from server.prompts.base import ACT_BEFORE_ASKING, ASK_BEFORE_LONG_WORK, BASE, KEEP_WORKING
 from server.prompts.modes import BYPASS_MODE, GUARDED_MODE
 from server.prompts.workspace import workspace_prompt
 from server.security.permissions import MODE_BYPASS, VALID_MODES
@@ -85,6 +85,20 @@ def test_identity_carries_keep_working_and_denial_rules():
     assert "reply go" in KEEP_WORKING
     assert "commit" in KEEP_WORKING
     assert "do not retry the same call" in ACT_BEFORE_ASKING
+
+
+def test_questions_before_long_work_are_allowed_after_the_keep_working_rules():
+    # The keep-working and denial rules alone read as "never ask": the rule
+    # that frees a question before long work comes after both, and names the
+    # tool the chat always has.
+    from server.chat.tool_partition import CORE_TOOLS
+
+    assert ASK_BEFORE_LONG_WORK in BASE
+    assert (
+        BASE.index(ASK_BEFORE_LONG_WORK) > BASE.index(ACT_BEFORE_ASKING) > BASE.index(KEEP_WORKING)
+    )
+    assert "ask_user_question" in ASK_BEFORE_LONG_WORK
+    assert "ask_user_question" in CORE_TOOLS
 
 
 def test_workspace_denial_line_does_not_order_a_question():

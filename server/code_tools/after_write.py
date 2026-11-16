@@ -1,7 +1,8 @@
 """Fix and format the assistant's code right after a write, and tell only the
 model what changed.
 
-``after_write`` runs the workspace's own tools on a file the app just wrote:
+Behind the ``code_checks`` switch (server/code_tools/turn_checks.py), off by
+default. ``after_write`` runs the workspace's own tools on a file the app just wrote:
 ruff for Python (server/code_tools/ruff.py), Prettier and ESLint for JS/TS
 inside the workspace (server/code_tools/js_format.py). It returns the note the
 model reads with the write's result: the tools' findings and, when they
@@ -27,7 +28,12 @@ def handles(path: str) -> bool:
 
 def after_write(ws: str | None, full_path: str) -> str:
     """The model's note for the file the app just wrote to ``full_path``. A
-    file outside the workspace ``ws`` is only checked by ruff, never fixed."""
+    file outside the workspace ``ws`` is only checked by ruff, never fixed.
+    Empty, and nothing runs, while the ``code_checks`` switch is off."""
+    from . import turn_checks
+
+    if not turn_checks.enabled():
+        return ""
     real = os.path.realpath(full_path)
     inside = bool(ws) and os.path.commonpath([real, os.path.realpath(ws)]) == os.path.realpath(ws)
     rel = os.path.relpath(real, os.path.realpath(ws)) if inside else os.path.basename(real)

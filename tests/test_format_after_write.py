@@ -31,6 +31,15 @@ from server.workspace import executors
 from tests.test_ask_user_pause_resume import _State
 
 SID = "format-after-write"
+
+
+@pytest.fixture(autouse=True)
+def code_checks_on(monkeypatch):
+    """Every test here is about the checks running: the Code tools switch is
+    on (it is off by default, tests/test_code_checks.py)."""
+    monkeypatch.setattr("server.code_tools.turn_checks.enabled", lambda: True)
+
+
 RUFF_PYPROJECT = '[tool.ruff]\nline-length = 100\n\n[tool.ruff.lint]\nselect = ["F"]\n'
 # Long enough that the formatter's change is shown as a diff, not the file.
 BODY = "".join(f"v{i} = {i}\n" for i in range(40))

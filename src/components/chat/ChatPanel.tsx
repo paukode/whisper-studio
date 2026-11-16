@@ -16,6 +16,7 @@ import { ChatInput } from './ChatInput';
 import { GoalBanner } from './GoalBanner';
 import { ApprovalBanner } from './ApprovalBanner';
 import { AutoModeBreakerBanner } from './AutoModeBreakerBanner';
+import { CodeChecksBanner } from './CodeChecksBanner';
 import { formatMessageTimestamp, formatSegmentTimestamp } from '@/utils/formatTimestamp';
 import { downloadFile } from '@/utils/downloadFile';
 import { toError } from '@/utils/toError';
@@ -396,6 +397,11 @@ export const ChatPanel: React.FC = () => {
         {/* Approval card, shown when a tool needs permission */}
         <ErrorBoundary label="ApprovalBanner">
           <ApprovalBanner />
+        </ErrorBoundary>
+
+        {/* Offer to run the code checks on the files the last turn changed */}
+        <ErrorBoundary label="CodeChecksBanner">
+          <CodeChecksBanner />
         </ErrorBoundary>
 
         {/* Auto-mode circuit breaker, shown after repeated confirmations */}

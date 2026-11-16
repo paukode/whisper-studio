@@ -167,6 +167,23 @@ def tool_outcome(tool_name: str, output) -> ToolOutcome:
     return ToolOutcome(prefixed or bool(exit_code), exit_code)
 
 
+# How much of a tool result the chat shows and the session row saves. The
+# whole text the model received is kept for the export when this cuts it
+# (server/infrastructure/tool_results.py).
+PREVIEW_CHARS = 2000
+
+
+def _preview(state: "ToolState", text: str, session_id: str) -> str:
+    """The preview of ``text`` for the chat; a cut text is kept whole for the
+    session's export."""
+    if len(text) <= PREVIEW_CHARS:
+        return text
+    from server.infrastructure import tool_results
+
+    tool_results.record(session_id, state.tool_id, text)
+    return text[:PREVIEW_CHARS] + "..."
+
+
 def _result_frame(
     state: "ToolState", output: str, preview: str, *, sent: str | None = None, **extra
 ) -> str:
@@ -353,16 +370,18 @@ async def execute_tool_batch(
     validate_call_ids(tool_uses)
     states = [ToolState(tool_use=tu) for tu in tool_uses]
     state_by_id = {s.tool_id: s for s in states}
-    try:
-        for state in states:
-            if tool_scope is not None and state.tool_name not in tool_scope.permitted:
-                continue  # the scope refusal below needs no argument processing
+    # A call whose arguments fail the check never runs; the other calls of the
+    # round do. Refusing the whole round made the model send every call again:
+    # a run resent a large file because another call's argument had the wrong
+    # type.
+    invalid: dict[str, str] = {}
+    for state in states:
+        if tool_scope is not None and state.tool_name not in tool_scope.permitted:
+            continue  # the scope refusal below needs no argument processing
+        try:
             validate_tool_input(state.tool_name, state.tool_use.get("input"), tool_schemas)
-    except ToolInputError as exc:
-        for state in states:
-            state.status = "skipped"
-            state.output = f"[Refused] No tools in this round ran. {exc}"
-        return states
+        except ToolInputError as exc:
+            invalid[state.tool_id] = str(exc)
 
     # Shared abort flag, set when a command tool fails.
     command_error: str | None = None
@@ -382,6 +401,15 @@ async def execute_tool_batch(
             )
             log.info("agent tool scope refused %s", tool_name)
             tool_scope.refused()
+            return
+
+        if state.tool_id in invalid:
+            state.status = "skipped"
+            state.output = (
+                f"[Refused] This call did not run. {invalid[state.tool_id]} "
+                "Correct its arguments and send this call again; the other calls "
+                "of the round were not affected."
+            )
             return
 
         # Three copies: original history, observable hook input, dispatch input.
@@ -918,7 +946,7 @@ async def _process_tool_results(
         # output, before the budget cut it, and the meta sees both texts.
         if not isinstance(tool_output, str):
             tool_output = str(tool_output)
-        preview = tool_output[:2000] + ("..." if len(tool_output) > 2000 else "")
+        preview = _preview(state, tool_output, cost_session_id or session_id)
         # A write's formatter note is the model's alone: after the budget and
         # the preview, so the row shows the write like any other.
         if model_note:
@@ -972,7 +1000,7 @@ async def _process_tool_results(
                 content = out
                 if not produces_model_prompt(state.tool_name):
                     content = budget_fn(state.tool_name, content)
-                preview = content[:2000] + ("..." if len(content) > 2000 else "")
+                preview = _preview(state, content, cost_session_id or session_id)
                 sse_events.append(_result_frame(state, out, preview, sent=content))
                 tool_results.append(
                     {

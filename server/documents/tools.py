@@ -86,8 +86,8 @@ OFFICE_SCRIPT_TOOL = {
         "If a workspace is connected, `path` is workspace-relative (same as "
         "ws_create_file). If none is connected, never ask the user where to save: "
         "pass destination_path resolved from the user's own words ('in Downloads' -> "
-        "'~/Downloads/report.docx', ~ allowed), or omit it to default to their "
-        "Documents folder — then tell the user the full path in your reply. "
+        "'~/Downloads/report.docx', ~ allowed), or omit it and the file is made in this session's scratch folder: link it in your "
+        "reply and offer to save it where the user wants. "
         f"{_ONLY_WHEN_ASKED} {_SAME_PATH_RULE}"
     ),
     "input_schema": {
@@ -111,7 +111,7 @@ OFFICE_SCRIPT_TOOL = {
             },
             "destination_path": {
                 "type": "string",
-                "description": "Only when no workspace is connected: full destination path resolved from the user's words, e.g. '~/Downloads/report.docx' (~ allowed). Omit when the user named no location — defaults to their Documents folder.",
+                "description": "Only when no workspace is connected: full destination path resolved from the user's words, e.g. '~/Downloads/report.docx' (~ allowed). Omit when the user named no location: the file is then made in this session's scratch folder.",
             },
         },
         "required": ["path", "code", "summary"],
@@ -172,9 +172,8 @@ CREATE_DOCX_TOOL = {
         "If a workspace is connected, `path` is workspace-relative (same as "
         "ws_create_file). If none is connected, never ask the user where to "
         "save: pass destination_path resolved from the user's own words "
-        "('in Downloads' -> '~/Downloads/report.docx', ~ allowed), or omit it "
-        "to default to their Documents folder — then tell the user the full "
-        "path in your reply. The document is built immediately and the user "
+        "('in Downloads' -> '~/Downloads/report.docx', ~ allowed), or omit it and the file is made in this session's scratch folder: link it in your "
+        "reply and offer to save it where the user wants. The document is built immediately and the user "
         "confirms the exact path on the approval card. "
         f"{_ONLY_WHEN_ASKED} {_SAME_PATH_RULE}"
     ),
@@ -191,7 +190,7 @@ CREATE_DOCX_TOOL = {
             },
             "destination_path": {
                 "type": "string",
-                "description": "Only when no workspace is connected: full destination path resolved from the user's words, e.g. '~/Downloads/report.docx' (~ allowed). Omit when the user named no location — defaults to their Documents folder.",
+                "description": "Only when no workspace is connected: full destination path resolved from the user's words, e.g. '~/Downloads/report.docx' (~ allowed). Omit when the user named no location: the file is then made in this session's scratch folder.",
             },
         },
         "required": ["path", "html_content"],
@@ -216,9 +215,8 @@ CREATE_PPTX_TOOL = {
         "If a workspace is connected, `path` is workspace-relative (same as "
         "ws_create_file). If none is connected, never ask the user where to "
         "save: pass destination_path resolved from the user's own words "
-        "('in Downloads' -> '~/Downloads/deck.pptx', ~ allowed), or omit it "
-        "to default to their Documents folder — then tell the user the full "
-        "path in your reply. The document is built immediately and the user "
+        "('in Downloads' -> '~/Downloads/deck.pptx', ~ allowed), or omit it and the file is made in this session's scratch folder: link it in your "
+        "reply and offer to save it where the user wants. The document is built immediately and the user "
         "confirms the exact path on the approval card. "
         f"{_ONLY_WHEN_ASKED} {_SAME_PATH_RULE}"
     ),
@@ -247,7 +245,7 @@ CREATE_PPTX_TOOL = {
             },
             "destination_path": {
                 "type": "string",
-                "description": "Only when no workspace is connected: full destination path resolved from the user's words, e.g. '~/Downloads/report.docx' (~ allowed). Omit when the user named no location — defaults to their Documents folder.",
+                "description": "Only when no workspace is connected: full destination path resolved from the user's words, e.g. '~/Downloads/report.docx' (~ allowed). Omit when the user named no location: the file is then made in this session's scratch folder.",
             },
         },
         "required": ["path", "slides"],
@@ -273,8 +271,8 @@ CREATE_XLSX_TOOL = {
         "workspace-relative (same as ws_create_file). If none is connected, never "
         "ask the user where to save: pass destination_path resolved from the "
         "user's own words ('in Downloads' -> '~/Downloads/data.xlsx', ~ allowed), "
-        "or omit it to default to their Documents folder — then tell the user the "
-        "full path in your reply. The document is built immediately and the user "
+        "or omit it and the file is made in this session's scratch folder: link it in your "
+        "reply and offer to save it where the user wants. The document is built immediately and the user "
         "confirms the exact path on the approval card. "
         f"{_ONLY_WHEN_ASKED} {_SAME_PATH_RULE}"
     ),
@@ -303,7 +301,7 @@ CREATE_XLSX_TOOL = {
             },
             "destination_path": {
                 "type": "string",
-                "description": "Only when no workspace is connected: full destination path resolved from the user's words, e.g. '~/Downloads/report.docx' (~ allowed). Omit when the user named no location — defaults to their Documents folder.",
+                "description": "Only when no workspace is connected: full destination path resolved from the user's words, e.g. '~/Downloads/report.docx' (~ allowed). Omit when the user named no location: the file is then made in this session's scratch folder.",
             },
         },
         "required": ["path", "sheets"],
@@ -326,8 +324,8 @@ CREATE_PDF_TOOL = {
         "workspace-relative (same as ws_create_file). If none is connected, never "
         "ask the user where to save: pass destination_path resolved from the "
         "user's own words ('in Downloads' -> '~/Downloads/report.pdf', ~ allowed), "
-        "or omit it to default to their Documents folder — then tell the user the "
-        "full path in your reply. The document is built immediately and the user "
+        "or omit it and the file is made in this session's scratch folder: link it in your "
+        "reply and offer to save it where the user wants. The document is built immediately and the user "
         "confirms the exact path on the approval card. "
         f"{_ONLY_WHEN_ASKED} {_SAME_PATH_RULE}"
     ),
@@ -349,7 +347,7 @@ CREATE_PDF_TOOL = {
             },
             "destination_path": {
                 "type": "string",
-                "description": "Only when no workspace is connected: full destination path resolved from the user's words, e.g. '~/Downloads/report.docx' (~ allowed). Omit when the user named no location — defaults to their Documents folder.",
+                "description": "Only when no workspace is connected: full destination path resolved from the user's words, e.g. '~/Downloads/report.docx' (~ allowed). Omit when the user named no location: the file is then made in this session's scratch folder.",
             },
         },
         "required": ["path", "paragraphs"],

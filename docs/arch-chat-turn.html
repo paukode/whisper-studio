@@ -196,8 +196,7 @@
       stops asking for tools <em>and</em> the completion gate lets it end. On <code>end_turn</code>
       the engine first runs <code>run_completion_gate</code>
       (<code class="path">server/goals/gate.py</code>). The Stop hooks always run first. Then the
-      deliverable and requested-file checks compare what the reply claims with what happened, and the
-      verification check asks for a test or build run after a code edit. Last, the goal gates and the
+      deliverable and requested-file checks compare what the reply claims with what happened. Last, the goal gates and the
       goal judge run when the <code>goal_loop</code> flag is on with an active goal (the
       <code>goal_evaluator</code> model, Haiku by default, for a cloud session; the session's own
       model on-device, where the whole gate runs only while a goal is active). If a

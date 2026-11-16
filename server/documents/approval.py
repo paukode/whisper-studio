@@ -41,7 +41,9 @@ def _resolve_destination(payload: dict) -> tuple[str, str]:
         return "", "No destination path in the approval payload"
 
     if payload.get("dest_kind") == "workspace":
-        ws = workspace.get_workspace_path()
+        ws = workspace.get_workspace_path() or workspace.scratch_work_root(
+            payload.get("session_id")
+        )
         if not ws:
             return "", "No workspace connected"
         full = os.path.join(ws, path)

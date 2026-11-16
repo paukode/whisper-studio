@@ -61,7 +61,9 @@ def test_a_created_file_is_all_additions(ws):
     assert outcome.stats["bytes"] == 6
 
 
-def test_the_stats_describe_the_file_after_ruff_reformatted_it(ws):
+def test_the_stats_describe_the_file_after_ruff_reformatted_it(ws, monkeypatch):
+    # ruff runs after a write only while the Code tools switch is on.
+    monkeypatch.setattr("server.code_tools.turn_checks.enabled", lambda: True)
     (ws / "pyproject.toml").write_text(RUFF_PYPROJECT)
     outcome = _write({"path": "pkg/a.py", "content": DIRTY})
     on_disk = (ws / "pkg" / "a.py").read_text()
@@ -129,7 +131,9 @@ def test_a_write_with_no_call_id_stores_nothing(ws):
     assert not os.path.exists(edits.edits_dir()) or os.listdir(edits.edits_dir()) == []
 
 
-def test_the_record_holds_the_file_as_ruff_left_it(ws):
+def test_the_record_holds_the_file_as_ruff_left_it(ws, monkeypatch):
+    # ruff runs after a write only while the Code tools switch is on.
+    monkeypatch.setattr("server.code_tools.turn_checks.enabled", lambda: True)
     (ws / "pyproject.toml").write_text(RUFF_PYPROJECT)
     _write({"path": "m.py", "content": DIRTY, "__tool_use_id__": "toolu_03"})
     record = edits.read_edit("toolu_03")

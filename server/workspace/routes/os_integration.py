@@ -17,8 +17,10 @@ from ..state import get_workspace_path, load_save_locations
 
 def allowed_roots(*, include_save_locations: bool) -> list[str]:
     """Real paths an absolute file path may live under: the connected
-    workspace, every indexed workspace, and (when asked) the folders the
-    one-shot save_file flow wrote to, which are never connected or indexed.
+    workspace, every indexed workspace, the sessions' scratch folders (a
+    session with no workspace builds there, and its reply links the result),
+    and (when asked) the folders the one-shot save_file flow wrote to, which
+    are never connected or indexed.
     A failing index store or save-locations file raises, so the caller
     answers with the real error instead of a 404."""
     from server.index import store as _index_store  # lazy: workspace<->index cycle
@@ -28,6 +30,9 @@ def allowed_roots(*, include_save_locations: bool) -> list[str]:
     if ws:
         roots.append(os.path.realpath(ws))
     roots += [os.path.realpath(r) for r in _index_store.list_indexed_workspaces()]
+    from ..paths import scratch_root
+
+    roots.append(os.path.realpath(scratch_root()))
     if include_save_locations:
         roots += [os.path.realpath(r) for r in load_save_locations()]
     return roots

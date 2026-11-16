@@ -54,8 +54,9 @@
       design the plan and call <code>create_plan</code> instead. On a grounded turn, the injected
       grounding block tells the model to answer from the retrieved passages rather than re-crawl
       files. Workspace, worktree, git, GitHub, and document tools stay advertised with or without a
-      connected workspace, and each executor answers for itself with "no workspace connected", "not a
-      git repo", or a folder picker: register always, refuse at execution.</p>
+      connected workspace: register always, refuse at execution. With no workspace connected, the
+      file tools, the document tools and <code>ws_run_command</code> work in the scratch folder of
+      the session. The other tools answer "no workspace connected" or "not a git repo".</p>
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/><path d="M9 18h6M10 22h4"/></svg></span>
@@ -117,7 +118,7 @@
         <tr><td><code>workspace_graph_query</code></td><td>Look up typed relationships about a specific entity (person, organization, project) in the indexed knowledge graph, with a confidence and source citation for each fact. Prefer it over semantic search for direct relationship questions. Needs the workspace indexed with typed relations. See <a href="arch-index.html">Index / GraphRAG</a>.</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>ws_edit_file</code> <span class="badge">★ Core</span></td><td>Edit an existing file by replacing a specific string.</td><td><span class="badge">approval</span></td></tr>
         <tr><td><code>ws_write_file</code> <span class="badge">★ Core</span></td><td>Overwrite or modify an existing file with full new content.</td><td><span class="badge">approval</span></td></tr>
-        <tr><td><code>ws_create_file</code> <span class="badge">★ Core</span></td><td>Create a new file. With a workspace connected the path is workspace-relative; without one it follows the direct-save flow below (a <code>destination_path</code> resolved from your words, defaulting to <code class="path">~/Documents/&lt;filename&gt;</code>).</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>ws_create_file</code> <span class="badge">★ Core</span></td><td>Create a new file. With a workspace connected the path is workspace-relative; without one it follows the direct-save flow below (a <code>destination_path</code> resolved from your words, or the scratch folder of the session when you name no location).</td><td><span class="badge">approval</span></td></tr>
         <tr><td><code>save_file</code></td><td>Save a file directly to your disk in one call, plain text or base64 binary, only when you ask for one (save, store, export or download it, or a named file, file type or place on disk); anything else you ask for is answered in the chat. Uses the direct-save flow below; <code>ws_create_file</code> remains the tool for files that belong in the connected workspace.</td><td><span class="badge">approval</span></td></tr>
         <tr><td><code>ws_delete_file</code></td><td>Delete a file.</td><td><span class="badge">approval</span></td></tr>
         <tr><td><code>ws_run_command</code> <span class="badge">★ Core</span></td><td>Run a shell command. It starts in the workspace folder, and a <code>cd</code> carries over to later calls. A command the read-only classifier accepts runs with no card under the read-only sandbox; any other command follows the permission mode. Always sandboxed.</td><td><span class="badge">approval</span></td></tr>
@@ -133,7 +134,7 @@
       <a href="#documents">document tools</a> never ask where to save. The destination is resolved
       from your own words: "put it in Downloads" becomes
       <code class="path">~/Downloads/&lt;filename&gt;</code> (a <code>~</code> path is allowed), and if
-      you named no location the file goes to <code class="path">~/Documents/&lt;filename&gt;</code>.
+      you named no location the file stays in the scratch folder of the session. The reply links the file, and the assistant offers to open it or to save it where you want.
       The content is built and <b>staged</b> inside the app sandbox
       (<code class="path">server/workspace/paths.py</code>, <code>stage_file_bytes</code>) before the
       approval card appears, so the card shows the exact final path; approving <b>moves</b> the staged
@@ -160,8 +161,9 @@
     <h2 id="documents">Documents</h2>
     <p>Four tools that produce real Office and PDF files (genuine OOXML via python-docx,
       python-pptx, and openpyxl; PDF via reportlab). They are always in the
-      catalogue, with or without a connected workspace. With no workspace connected (or an absolute
-      path), they follow the staged <a href="#direct-save">direct-save flow</a>; with a workspace
+      catalogue, with or without a connected workspace. With an absolute path that the user named, they follow the staged
+      <a href="#direct-save">direct-save flow</a>. With no workspace connected and no named path,
+      they make the file in the scratch folder of the session. With a workspace
       connected they instead go through the plain <code>create_document</code> approval, same trust
       tier as an ordinary workspace write, no staging. Every output uses the app's standard layout from
       <code class="path">server/documents/standards.py</code>, and the extension is appended if the

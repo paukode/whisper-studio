@@ -4,8 +4,11 @@ Single-call protocol — it NEVER asks the user where to save:
 
   - destination_path present (the model resolved it from the user's own
     words, '~' allowed) -> that exact path.
-  - Otherwise -> ~/Documents/<filename> (or ~/Downloads via
-    suggested_location).
+  - suggested_location (the user named only Documents or Downloads) ->
+    that folder.
+  - Neither -> the session's own scratch folder
+    (tests/test_no_workspace_scratch.py); a call with no session, as the
+    calls here, falls back to ~/Documents/<filename>.
 
 Either way the content is decoded and STAGED into the app sandbox
 immediately, and the returned [WS_APPROVAL] (action=save_to_path) payload
@@ -27,7 +30,7 @@ def _parse_approval(output: str) -> dict:
     return json.loads(output[len("[WS_APPROVAL]") :])
 
 
-def test_defaults_to_documents_and_stages_content():
+def test_a_call_with_no_session_defaults_to_documents_and_stages_content():
     out = _exec_save_file({"filename": "report.pdf", "content": "hello"}, [], [])
     payload = _parse_approval(out)
     assert payload["action"] == "save_to_path"

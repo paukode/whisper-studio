@@ -584,6 +584,9 @@ export interface SSEEventData {
   /** Auto-mode's classifier circuit breaker tripped for the rest of this
    *  turn (server.security.permissions.record_classifier_verdict). */
   auto_mode_breaker?: { reason?: string };
+  /** The turn changed these code files (absolute paths) and the Code tools
+   *  switch is on (server/code_tools/turn_checks.py). */
+  code_checks_offer?: { files: string[] };
   goal_eval?: { verdict?: GoalVerdict; feedback?: string; confidence?: number; attempt?: number; cap?: number };
   stop_hook_block?: { reason?: string; attempt?: number };
   /** Claims the server verified in the reply so far, one frame per verified

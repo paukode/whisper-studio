@@ -367,14 +367,17 @@ def test_the_running_turn_is_refused_with_the_reason_after_disconnect(ws_a):
     assert not (ws_a / "made.txt").exists()
 
 
-def test_a_turn_that_never_had_a_workspace_still_gets_the_folder_picker():
+def test_a_turn_that_never_had_a_workspace_works_in_its_scratch_folder():
+    # No folder picker and no pause: the session's scratch folder is the
+    # working folder (tests/test_no_workspace_scratch.py), so the tool gives
+    # its ordinary answer for a file that is not there.
     latch = latch_workspace()
     assert latch.path is None
     states, _results, sse, pending = asyncio.run(
         _run_batch(_uses([("ws_write_file", {"path": "a.txt", "content": "x"})]), latch)
     )
-    assert states[0].output.startswith("[WS_WORKSPACE_PROMPT]")
-    assert pending is True and any("ws_workspace_prompt" in e for e in sse)
+    assert states[0].output.startswith("File not found: a.txt")
+    assert pending is False and not any("ws_workspace_prompt" in e for e in sse)
 
 
 def test_reconnecting_the_same_folder_gives_the_turn_its_tools_back(ws_a):

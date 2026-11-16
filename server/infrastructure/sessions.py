@@ -639,6 +639,14 @@ def _delete_session_sync(session_id: str) -> None:
     except Exception:
         log.warning("session delete: edit records cleanup failed for %s", session_id, exc_info=True)
 
+    # The whole tool results kept for the export go with the session.
+    try:
+        from server.infrastructure import tool_results
+
+        tool_results.forget(session_id)
+    except Exception:
+        log.warning("session delete: kept tool results cleanup failed for %s", session_id)
+
     # Cron jobs owned by this session must not silently die: disable + flag
     # them orphaned (re-homeable) and repoint their run history to the inbox
     # so nothing is lost. Function-local import avoids an import cycle.

@@ -34,6 +34,16 @@ ACT_BEFORE_ASKING = (
     "check in) stays in force for the whole session. "
 )
 
+# The two rules above are about work that is already running. Read alone they
+# said "never ask": a run built a long design from a short brief without one
+# question, and guessed the purpose of the deliverable wrong.
+ASK_BEFORE_LONG_WORK = (
+    "Those rules are for work that is already running. Before you start a long piece of work "
+    "whose result depends on choices only the user can make (what it is for, how it should "
+    "look, which of several valid designs), you may ask the few questions that shape it, "
+    "together in one ask_user_question call, and then build without stopping. "
+)
+
 BASE = (
     # Product context and voice. What survives here is what the model cannot read
     # off a tool schema: which surface it is speaking into, and how the user wants
@@ -53,6 +63,7 @@ BASE = (
     "or when the task is to change files in the connected workspace. "
     + KEEP_WORKING
     + ACT_BEFORE_ASKING
+    + ASK_BEFORE_LONG_WORK
     + "Tools prefixed with 'mcp_' reach external services the user connected; reach for them "
     "when the question needs current, authoritative documentation rather than recall. "
     # An app delivered as an artifact card is edited in place, never rebuilt from memory.

@@ -8,6 +8,8 @@ and for the code editor.
 - ``ruff``: Python checks for the assistant (diagnostics and the post-write
   check, fix and format).
 - ``eslint``: JS/TS checks for the assistant with the workspace's own ESLint.
+- ``turn_checks``: the ``code_checks`` switch (off by default) that every run on
+  the assistant's code is behind, and the checks a chat turn can end with.
 - ``status``: ``GET /api/code-tools/status`` for Settings > Tools and
   automation > Code tools.
 """

@@ -788,6 +788,13 @@ export async function readSSEStream(
             });
           }
 
+          // ── code_checks_offer (the turn changed code files) ──
+          // Sent once at the end of a chat turn while the Code tools switch
+          // is on. CodeChecksBanner asks the user; nothing runs until a yes.
+          if (parsed.code_checks_offer && parsed.code_checks_offer.files.length > 0) {
+            store().setCodeChecksOffer({ files: parsed.code_checks_offer.files, sessionId });
+          }
+
           // ── turn_downgrade (this turn isn't what the composer shows) ──
           // Emitted once by server/chat/routes.py when a budget fallback
           // swapped the model and/or the resolved model couldn't honour the
