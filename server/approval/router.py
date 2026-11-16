@@ -57,6 +57,21 @@ async def approval_execute(req: ExecuteRequest):
     return await _execute(req.action or "", dict(req.payload or {}))
 
 
+def _keep_for_export(action: str, payload: dict, outcome) -> None:
+    from server.infrastructure import tool_results
+    from server.tool_executor import PREVIEW_CHARS
+
+    if outcome.ok:
+        text = outcome.output or f"[OK] {action}"
+    else:
+        error = f"Error: {outcome.error or 'unknown error'}"
+        text = f"{error}\n\n{outcome.output}" if outcome.output else error
+    if len(text) > PREVIEW_CHARS:
+        tool_results.record(
+            str(payload.get("session_id") or ""), str(payload.get("__tool_use_id__") or ""), text
+        )
+
+
 def _card_payload(card: cards.Card) -> dict:
     payload = dict(card.payload)
     # The provider's id of the call the card paused on. A write keeps the
@@ -97,6 +112,10 @@ async def _execute(action: str, payload: dict) -> dict:
         from server.git.router import invalidate_changes_cache
 
         invalidate_changes_cache()
+
+    # The chat row keeps a preview of this result (approvalLeg.ts); the whole
+    # text is kept for the session's export, as for a call that ran inline.
+    _keep_for_export(action, payload, outcome)
 
     ws_after = get_workspace_path()
     ws_folder_opened = ws_after if (outcome.ok and ws_after and ws_after != ws_before) else None

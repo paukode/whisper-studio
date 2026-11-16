@@ -448,6 +448,36 @@ def _export_slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-") or "session"
 
 
+def _with_whole_tool_results(session_id: str, chat_history: list) -> list:
+    """The history with each tool result in full. The saved row holds a
+    preview of a long result; the whole text the model received is kept apart
+    (server/infrastructure/tool_results.py) and put back here, so an export
+    is complete. A result with no kept text (a session older than the store)
+    stays the preview it was saved as."""
+    from server.infrastructure import tool_results
+
+    kept = tool_results.load(session_id)
+    if not kept:
+        return chat_history
+    whole = []
+    for msg in chat_history:
+        uses = msg.get("toolUse") if isinstance(msg, dict) else None
+        if isinstance(uses, list) and any(
+            isinstance(t, dict) and t.get("toolId") in kept for t in uses
+        ):
+            msg = {
+                **msg,
+                "toolUse": [
+                    {**t, "result": kept[t["toolId"]]}
+                    if isinstance(t, dict) and t.get("toolId") in kept
+                    else t
+                    for t in uses
+                ],
+            }
+        whole.append(msg)
+    return whole
+
+
 def _session_export_lines(session_id: str, row) -> tuple[str, list[str]]:
     """Build one session's export as (title, jsonl lines) — one export_meta
     line, then one per transcript segment, then one per chat_history message.
@@ -460,6 +490,7 @@ def _session_export_lines(session_id: str, row) -> tuple[str, list[str]]:
     chat_history = json.loads(row["chat_history"]) or []
     speaker_names = json.loads(row["speaker_names"]) or {}
     title = row["title"]
+    chat_history = _with_whole_tool_results(session_id, chat_history)
 
     lines = [
         ndjson_dumps(
