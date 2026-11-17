@@ -8,6 +8,7 @@ import {
   isSearchTool,
   isWholeResult,
   num,
+  progressSize,
   type CallDesc,
 } from '@/components/chat/activityLabel';
 
@@ -34,7 +35,7 @@ export function formatCount(n: number): string {
 }
 
 /** "12 KB" style size for a tool call whose arguments are still arriving. */
-function formatKb(chars: number): string {
+export function formatKb(chars: number): string {
   const kb = chars / 1024;
   return `${kb < 10 ? kb.toFixed(1) : Math.round(kb)} KB`;
 }
@@ -92,7 +93,7 @@ function commandOutcome(tool: ToolUseEvent): Chip | null {
 export function callOutcome(tool: ToolUseEvent, desc: CallDesc = describeCall(tool)): Chip | null {
   if (tool.status === 'stopped') return text('not run', 'muted');
   if (isRunning(tool)) {
-    const chars = num(tool.progressChars);
+    const chars = progressSize(tool);
     return text(chars ? `${formatKb(chars)} so far` : 'no output yet', 'muted');
   }
   if (desc.kind === 'card') return null;

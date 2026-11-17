@@ -126,8 +126,9 @@
         <a href="arch-summarization.html#map-reduce">Transcript summarization</a>.</li>
       <li><b>Compact before the first call.</b> When the history is already above the model's
         compaction trigger, it is compacted before any provider request (see
-        <a href="#compaction-persistence">Compaction</a>). A failed compaction stops the turn with an
-        error; nothing is sent.</li>
+        <a href="#compaction-persistence">Compaction</a>). A failed summary does not stop the turn:
+        the request goes out with the cleared history, or with the history as it was when there was
+        nothing to clear.</li>
       <li><b>Run the session hooks.</b> <code>SessionStart</code> and <code>UserPromptSubmit</code>
         <a href="arch-hooks.html">hooks</a> run, and any context they return is appended to your
         message as <code>[Hook context]</code>, so the model reads it this turn.</li>
@@ -301,7 +302,7 @@
         <tr><td><code>text</code></td><td>A streamed text chunk.</td></tr>
         <tr><td><code>thinking</code> / <code>thinking_start</code> / <code>thinking_stop</code></td><td>An adaptive thinking block and its boundaries (all providers; the local path routes its reasoning here too).</td></tr>
         <tr><td><code>skill</code> / <code>skill_input</code> / <code>skill_result</code></td><td>A tool call started, its parsed input, and a truncated preview of its output. The <code>skill</code> frame also gives <code>round</code>, the number of the model round that made the call. The first round of each request is 0. A request that continues a turn after an approval or an answer also starts at 0.</td></tr>
-        <tr><td><code>skill_progress</code></td><td>How many characters of a still-streaming tool call's arguments have arrived. A whole HTML app can take minutes to stream, so the running step shows the size so far next to its spinner.</td></tr>
+        <tr><td><code>skill_progress</code></td><td>How many characters of a still-streaming tool call's arguments have arrived. A whole HTML app can take minutes to stream, so the running step shows the size so far next to its spinner. The frame also carries the file name or the title in <code>input</code> when that argument is complete, and the headline of the reply then reads <code>Writing report.html…</code> in place of <code>Thinking…</code>.</td></tr>
         <tr><td><code>activity_label</code></td><td>A short caption that the auxiliary model returned for the tool calls of one round, with the IDs of these calls. Only a chat turn gets captions, and only a cloud model writes them. A chat that uses an on-device model gets no captions. The server sends the frames in round order, while the next round streams or before <code>[DONE]</code>. At the end of the turn, the server waits maximum 3 s for the captions that are not complete, and sends each caption when it is complete. This wait occurs before the server closes the mid-turn inbox. Thus, when the turn ends with an answer, the turn can also answer a message that you send during the wait. If the turn has a round left, it answers that message. If no round is left, the server tells you that the message is not answered. When a message waits in the inbox before the end of the answer, the server does not wait for the captions. The next round starts immediately, and the server sends the captions during that round. A turn that stops for an approval or a question does not wait. If the call is refused, fails, or does not return in 3 s, the server sends no frame (<code class="path">server/chat/engine/activity_labels.py</code>).</td></tr>
         <tr><td><code>usage</code></td><td>Token counters, cost estimate, and remaining context (<code>context_used</code>/<code>context_max</code>).</td></tr>
         <tr><td><code>midturn_read</code></td><td>The server added a message that you sent during the turn to the model input. The frame gives the <code>text</code> of the message. The client closes the answer before this point and shows the message below it.</td></tr>
@@ -338,24 +339,42 @@
 
     <h2 id="compaction-persistence">Compaction &amp; persistence</h2>
     <p>Compaction (<code class="path">server/chat/compaction.py</code>) runs before the first call
-      when the history is already large, after an output-limit continuation, and when the provider
+      when the history is already large, after each tool round, after an output-limit continuation, and when the provider
       rejects a prompt as too long. Thresholds are per model: 95 percent of its usable input budget
-      triggers compaction, and the result must fit under 98 percent. It has two steps. First a local
-      pre-pass shortens older <code>tool_result</code> blocks by age. It keeps the newest eight
+      triggers compaction, and the result must fit under 98 percent. The size is an estimate at 4
+      characters for each token. A picture counts at the tokens the model bills for its pixels
+      (<code class="path">server/chat/image_size.py</code>). On Claude, that is one token for each
+      28 x 28 pixel patch. On GPT, that is 1.2 tokens for each 32 x 32 pixel patch. The true prompt size of
+      the last round also starts compaction when it is at 95 percent of the budget. Compaction has
+      two steps. First a local pre-pass clears older <code>tool_result</code> blocks: it shortens
+      their text by age and replaces each picture a tool returned (a screenshot) with a marker.
+      Pictures that the user attached stay. The pre-pass keeps the newest eight
       messages as they are and changes all older ones, also the older tool rounds of the current
-      turn. If that alone fits, it is used.
+      turn. If that alone fits, it is used. There is one exception: when only the true prompt size
+      started compaction, the estimate is not reliable, and the summary step always runs.
       Otherwise one summary call condenses the older messages and keeps the recent ones. The cut
       between the two parts is at the start of a user turn. One long turn (one prompt and many tool
       rounds) has no such cut near the end, so the cut can also be inside that turn, on an assistant
       message, so that no tool call is separated from its result. Then the turn's prompt stays word
       for word, and the summary follows it. When the older part is too large for the summary model,
-      the summary reads the shortened version of that part. The summary
+      the summary reads the shortened version of that part. The summary is a handover note with
+      these sections: context, decisions, outcomes (with how each one was checked), assumptions,
+      pending work, and current work. The call has room for 8,192 output tokens. A note that stops
+      at that limit is used as far as it got, with a marker at its end. The summary
       model is the <code>auxiliary_models.compaction</code> entry, or the session's own model when
-      that entry is <code>main</code> or not set. Compaction <b>fails closed</b>: when the summary
-      fails, comes back empty, or does not make the history smaller, the history stays unchanged and
-      the turn stops with an error that says to check the compaction model or start a new
+      that entry is <code>main</code> or not set. A failed summary never replaces the history. When the
+      summary fails, is empty, or does not make the history smaller, the result depends on
+      why compaction started. Before a rejection, the turn continues with the cleared history, and
+      the next summary waits until the history is 10 percent larger. After the provider rejected
+      the prompt as too long, compaction <b>fails closed</b>: the history stays unchanged and the
+      turn stops with an error that says to check the compaction model or start a new
       conversation. A second prompt-too-long rejection in the same overflow also stops the turn.
-      Nothing is truncated quietly.</p>
+      The backend log and the compaction record of the session give the reason for each failure.</p>
+    <p>A request also has a limit on pictures from tools, because a picture is small in tokens but
+      large in bytes. When a history holds more than <code>MAX_TOOL_PICTURES</code> (60) such
+      pictures, <code>limit_tool_pictures</code> replaces the oldest with a marker and keeps the
+      newest <code>KEEP_TOOL_PICTURES</code> (30). Pictures that you attached stay. After a failed
+      summary, compaction does not touch the history again until the history is 10 percent larger.</p>
     <p>Automatic compaction changes only the request it runs for. The <code>/compact</code> command
       (<code class="path">server/chat/compact_route.py</code>) is different: it always writes one
       summary of the whole history, with the user's optional note in the prompt, and appends it to
@@ -403,9 +422,11 @@
       <dt><code class="path">server/goals/gate.py</code></dt><dd><code>run_completion_gate</code>: Stop hooks, the deliverable and requested-file checks, then the goal gates and the goal evaluator, any of which can refuse to end the turn.</dd>
       <dt><code class="path">server/chat/engine/midturn_inbox.py</code></dt><dd>The per-session queue for a message sent while a turn is already running.</dd>
       <dt><code class="path">server/chat/loop_hints.py</code></dt><dd><code>inject_reminder</code>, the near-cap wind-down text, and the token-accurate context meter.</dd>
+      <dt><code class="path">server/chat/ask_first.py</code></dt><dd>The reminder for a chat turn that starts to build and did not ask you a question. The engine adds it one time in a turn, to the tool results of the first call that makes a new file or card. The engine does not refuse the call.</dd>
+      <dt><code class="path">server/chat/ask_habit.py</code></dt><dd>The count of question cards that you skipped in a row, in <code>ask_habit.json</code> below the data root. At 3, the ask-first reminder stops. One answered card sets the count to 0.</dd>
       <dt><code class="path">server/chat/loop_guard.py</code></dt><dd>Repeated-call, repeated-failure, and cycle detection, plus the per-turn tool caps.</dd>
       <dt><code class="path">server/prompts/__init__.py</code></dt><dd><code>PromptLayer</code> and the static/dynamic split that keeps the cached prefix stable.</dd>
-      <dt><code class="path">server/chat/compaction.py</code></dt><dd>Fail-closed history compaction, with <code class="path">compaction_anchors.py</code> for the verbatim user messages and the anchor index.</dd>
+      <dt><code class="path">server/chat/compaction.py</code></dt><dd>History compaction: it clears old tool output, then writes one summary. It fails closed only after a rejected prompt. <code>compaction_anchors.py</code> supplies the verbatim user messages and the anchor index.</dd>
       <dt><code class="path">server/tool_router.py</code></dt><dd>Pure tool dispatch.</dd>
       <dt><code class="path">server/tool_executor.py</code></dt><dd>Batching, permissions, hooks, result shaping.</dd>
       <dt><code class="path">server/tool_approvals.py</code></dt><dd>The approval gate: inline runs, session rules, and the approval card.</dd>

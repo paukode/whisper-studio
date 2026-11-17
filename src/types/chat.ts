@@ -275,6 +275,10 @@ export interface ToolUseEvent {
   /** Characters of tool arguments received so far while the call is still
    *  streaming (a whole HTML app can take minutes); shown next to the spinner. */
   progressChars?: number;
+  /** True from the first size report until the whole arguments arrive: the
+   *  model still writes this call. The headline of the live reply names it
+   *  ("Writing report.html… 48 KB"). */
+  argsStreaming?: boolean;
   /** Populated only for preview_screenshot results — base64 JPEG the model
    *  also received as an image content block, so the human sees exactly
    *  what the model saw. */
@@ -599,7 +603,7 @@ export interface SSEEventData {
   ci_diagnosis?: { branch?: string; run_id?: number | null; url?: string | null; findings?: Array<Record<string, unknown>> };
   user_question?: Record<string, unknown>;
   program_artifact?: Record<string, unknown>;
-  skill_progress?: { name: string; chars: number; tool_use_id?: string };
+  skill_progress?: { name: string; chars: number; tool_use_id?: string; input?: Record<string, string> };
   viz_artifact?: Record<string, unknown>;
   plan_generated?: Record<string, unknown>;
   notify_user?: Record<string, unknown>;

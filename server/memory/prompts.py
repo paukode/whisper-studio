@@ -59,6 +59,10 @@ important information into memory files.
 What to save:
 - User preferences, role, expertise (type: user)
 - Corrections or guidance on how to work (type: feedback)
+- How the user wants to be asked before work starts (type: feedback, scope global, ONE \
+file that you update in place): which kinds of choices they want to make themselves and \
+which they leave to you. The signs are an answer such as "you decide", a question the user \
+left without an answer, and a correction after work that started with no question.
 - Project context, deadlines, goals not in code (type: project)
 - Pointers to external systems and resources (type: reference)
 
@@ -168,7 +172,9 @@ def build_learning_review_prompt(
         focus,
         "",
         "Memory: did the user reveal durable facts about themselves, their role, preferences, "
-        "or expectations about how you should work? Did they correct you? Save each such fact "
+        "or expectations about how you should work? Did they correct you? Did they show how "
+        "they want to be asked before work starts (a question they answered, left open or "
+        "handed back to you, or a correction of work you started unasked)? Save each such fact "
         "with memory_write (memory_list first to update an existing file instead of adding a "
         f"near-duplicate). {scope}",
     ]

@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { UserQuestionGroupCard } from './UserQuestionCard';
+import { SKIPPED_ANSWER, UserQuestionGroupCard } from './UserQuestionCard';
 import type { ChatMessage as ChatMessageType } from '@/types/chat';
 import { getActiveChatStore } from '@/stores/sessionRuntimes';
 
@@ -110,8 +110,13 @@ describe('UserQuestionGroupCard stepper', () => {
       { tool_use_id: 'tu_1', content: 'capacity-planner' },
       { tool_use_id: 'tu_2', content: 'React' },
     ]]);
-    expect(screen.getByRole('button', { name: 'Submitted' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'React' })).toBeDisabled();
+    // The closed card is a record: both questions in order, each with its answer.
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    const rows = screen.getAllByRole('listitem').map((li) => li.textContent);
+    expect(rows).toEqual([
+      '1. What should the folder be called?capacity-planner',
+      '2. Which frontend stack?React',
+    ]);
     // Both questions are marked answered in the store, so a reload keeps the card closed.
     const stored = getActiveChatStore().getState().messages[0];
     expect(stored.userQuestions?.map((q) => q.answered)).toEqual([true, true]);
@@ -158,5 +163,82 @@ describe('UserQuestionGroupCard stepper', () => {
     expect(submits).toHaveLength(1);
     expect(screen.getByRole('button', { name: 'sqlite' })).toBeEnabled();
     expect(getActiveChatStore().getState().messages[0].userQuestions?.[0].answered).toBe(false);
+  });
+});
+
+describe('UserQuestionGroupCard skip', () => {
+  const submits: Answer[][] = [];
+
+  beforeEach(() => {
+    submits.length = 0;
+    sendChatTurn.mockReset();
+    sendChatTurn.mockImplementation(async (_q: string, opts: { approvedToolResult: Answer[] }) => {
+      submits.push(opts.approvedToolResult);
+      return true;
+    });
+  });
+
+  it('Skip on a single question answers it at once with the skip answer', async () => {
+    const message = oneQuestion();
+    getActiveChatStore().getState().setMessages([message]);
+    render(<UserQuestionGroupCard message={message} />);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Skip' }));
+    });
+    expect(submits).toEqual([[{ tool_use_id: 'tu_solo', content: SKIPPED_ANSWER }]]);
+    // The closed card keeps the question and says it was skipped.
+    expect(screen.getByText('Which DB?')).toBeInTheDocument();
+    expect(screen.getByText('Skipped')).toBeInTheDocument();
+  });
+
+  it('Skip in a stepper moves to the next question, and a skipped question counts for Submit', async () => {
+    const message = twoQuestions();
+    getActiveChatStore().getState().setMessages([message]);
+    render(<UserQuestionGroupCard message={message} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Skip' }));
+    expect(submits).toHaveLength(0);
+    expect(screen.getByText('Which frontend stack?')).toBeInTheDocument();
+    expect(screen.getAllByRole('tab')[0]).toHaveClass('done');
+
+    fireEvent.click(screen.getByRole('button', { name: 'React' }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Submit 2 answers' }));
+    });
+    expect(submits).toEqual([[
+      { tool_use_id: 'tu_1', content: SKIPPED_ANSWER },
+      { tool_use_id: 'tu_2', content: 'React' },
+    ]]);
+    const rows = screen.getAllByRole('listitem').map((li) => li.textContent);
+    expect(rows).toEqual([
+      '1. What should the folder be called?SkippedThe assistant decides.',
+      '2. Which frontend stack?React',
+    ]);
+  });
+
+  it('a skipped question can still get a real answer before Submit', () => {
+    render(<UserQuestionGroupCard message={twoQuestions()} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Skip' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    expect(screen.getByRole('button', { name: 'Skip' })).toHaveClass('selected');
+    fireEvent.click(screen.getByRole('button', { name: 'capacity-planner' }));
+    expect(screen.getByRole('button', { name: 'Skip' })).not.toHaveClass('selected');
+    expect(screen.queryByText('Skipped: the assistant decides.')).not.toBeInTheDocument();
+  });
+
+  it('a restored card shows each question with its saved answer, in order', () => {
+    const message = twoQuestions();
+    message.userQuestions![0] = { ...message.userQuestions![0], answered: true, answer: SKIPPED_ANSWER };
+    message.userQuestions![1] = { ...message.userQuestions![1], answered: true, answer: 'Cloudscape' };
+    render(<UserQuestionGroupCard message={message} />);
+
+    const rows = screen.getAllByRole('listitem').map((li) => li.textContent);
+    expect(rows).toEqual([
+      '1. What should the folder be called?SkippedThe assistant decides.',
+      '2. Which frontend stack?Cloudscape',
+    ]);
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
 });

@@ -134,7 +134,7 @@
     <h2 id="screenshots">Screenshots the model can actually see</h2>
     <p>The preview tools do not return a screenshot as base64 text in JSON.
       <code class="path">server/preview/screenshot.py</code> makes a PNG image of the page and scales
-      it to a long edge of at most 1280px. Then it encodes the image again as a quality-70 JPEG. It
+      it to a long edge of at most 960px. Then it encodes the image again as a quality-70 JPEG. It
       returns a <code>[WS_PREVIEW_IMAGE]</code> sentinel with the payload and a caption. The sentinel
       is an <code>AppRequest</code> from <code>preview_image()</code>
       (<code class="path">server/approval/markers.py</code>). Text from outside the app with the same

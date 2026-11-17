@@ -632,6 +632,36 @@ describe('readSSEStream skill_progress', () => {
     expect(progress.map((s) => s.updates.progressChars)).toEqual([8192, 16384]);
     expect(progress.every((s) => s.name === 'create_artifact')).toBe(true);
   });
+
+  it('names the file on the live row while the model still writes it', async () => {
+    const sid = 'sess-progress-named';
+    const res = sseResponse([
+      { skill: 'ws_write_file', input: {}, tool_use_id: 'tu_w' },
+      { skill_progress: { name: 'ws_write_file', chars: 8192, tool_use_id: 'tu_w', input: { path: 'site/index.html' } } },
+    ]);
+
+    await readSSEStream(res, sid, new AbortController().signal, SETTINGS);
+
+    const row = getChatStore(sid).getState().currentStreamToolUse.find((t) => t.toolName === 'ws_write_file');
+    expect(row?.input).toEqual({ path: 'site/index.html' });
+    expect(row?.argsStreaming).toBe(true);
+    expect(row?.progressChars).toBe(8192);
+  });
+
+  it('ends the writing state when the whole arguments arrive', async () => {
+    const sid = 'sess-progress-done';
+    const res = sseResponse([
+      { skill: 'ws_write_file', input: {}, tool_use_id: 'tu_w' },
+      { skill_progress: { name: 'ws_write_file', chars: 8192, tool_use_id: 'tu_w', input: { path: 'site/index.html' } } },
+      { skill_input: 'ws_write_file', input: { path: 'site/index.html', content: 'x' }, tool_use_id: 'tu_w' },
+    ]);
+
+    await readSSEStream(res, sid, new AbortController().signal, SETTINGS);
+
+    const row = getChatStore(sid).getState().currentStreamToolUse.find((t) => t.toolName === 'ws_write_file');
+    expect(row?.argsStreaming).toBe(false);
+    expect(row?.input).toEqual({ path: 'site/index.html', content: 'x' });
+  });
 });
 
 /** Where the ask_user_question frames of a stream land. */

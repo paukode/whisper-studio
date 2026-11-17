@@ -231,8 +231,9 @@
       <code>context_window_for()</code> (the engine's window accounting in
       <code class="path">server/chat/engine/windows.py</code>, which subtracts the tokens reserved for
       the answer). When the real prompt crosses <code>COMPACT_NUDGE_FRACTION</code> (0.95) of the
-      window, <code>should_nudge_compaction()</code> fires once so proactive compaction triggers on
-      token truth rather than a character guess.</p>
+      window, <code>should_nudge_compaction()</code> returns true one time. After the prompt goes
+      back below that line, the next crossing starts compaction again. Thus proactive compaction
+      follows the true token count, not only the character estimate.</p>
 
     <h2 id="budgets">Budgets: stopping before you overspend</h2>
     <p>Budgets are a hard gate, checked <b>before each round</b> in the turn engine.

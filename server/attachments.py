@@ -56,11 +56,12 @@ CODE_EXTENSIONS = {".py", ".js", ".ts", ".css", ".yaml", ".yml"}
 # language comment or literal never masquerades as a heading in the outline.
 OUTLINE_EXTENSIONS = {".md", ".pdf", ".docx", ".pptx", ".html", ".epub"}
 
-# Image normalization for Claude/Bedrock. Claude internally downsamples images
-# whose long edge exceeds ~1568px, so we do that ourselves ONCE at high quality
-# rather than shipping an oversized image it re-compresses (which softens fine
-# text and hurts OCR). Only ever shrinks, never enlarges.
-IMAGE_MAX_DIM = 1568  # long-edge cap (Anthropic's recommended max)
+# Image normalization for the model. A picture is billed by its pixels (one
+# token per 28 x 28 patch on Claude, 1.2 per 32 x 32 patch on GPT), so the
+# long-edge cap sets its cost. The cap is 25% under the 1568px that was sent
+# before: about 42% fewer tokens for a picture at the cap. We resize ONCE at
+# high quality. Only ever shrinks, never enlarges.
+IMAGE_MAX_DIM = 1176  # long-edge cap
 IMAGE_JPEG_QUALITY = 90  # high quality so small text stays readable
 IMAGE_REENCODE_BYTES = 3_500_000  # above this, re-encode even if dimensions are ok
 IMAGE_HARD_BYTES = 4_500_000  # keep under Bedrock's ~5MB/image hard limit
@@ -212,7 +213,7 @@ async def upload_endpoint(request: Request, files: list[UploadFile] = File(...))
         aid = str(uuid.uuid4())
 
         if ctype in ALLOWED_IMAGE_TYPES:
-            # Cap the long edge at ~1568px and re-encode at high quality only
+            # Cap the long edge at IMAGE_MAX_DIM and re-encode at high quality only
             # when needed (see _prepare_image) so text stays OCR-able.
             try:
                 img_data, media_type = await asyncio.to_thread(_prepare_image, content, ctype)

@@ -166,10 +166,13 @@
       <code>_ui_only_rows()</code> uses to pick out backend-owned rows for the save-merge below, so an
       agent report that lands mid-save survives the round-trip exactly like a
       <code>cron_event</code> does.</p>
-    <p>Reactive compaction is the other force acting on <code>chat_history</code>. When a prompt grows
-      too long, the oldest message pairs are summarized or dropped and the turn retries. Every
-      compaction is logged per session in <code class="path">compactions/&lt;session_id&gt;.jsonl</code>
-      under the data root, a start record and an end record with the outcome, read back through
+    <p>Automatic compaction does not change the stored <code>chat_history</code>. It changes only the
+      history that a request sends: it clears old tool output and, if necessary, replaces the older
+      messages with one summary. Each compaction is logged for its session in
+      <code class="path">compactions/&lt;session_id&gt;.jsonl</code> under the data root. The log has
+      a start record and an end record. The end record gives the outcome (<code>pruned-only</code>,
+      <code>summary</code>, <code>unchanged</code>, <code>summary-failed</code> or <code>error</code>)
+      and, for a failure, the reason. You can read the log through
       <code>GET /api/sessions/{id}/compactions</code>. See
       <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a> for the compaction path.</p>
 

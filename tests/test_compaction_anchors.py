@@ -97,7 +97,9 @@ def test_current_summary_appends_users_and_pointer_without_session_cache(monkeyp
     for i in range(6):
         msgs.append({"role": "user", "content": f"user instruction number {i}"})
         msgs.append({"role": "assistant", "content": f"reply {i} " + "x" * 2000})
-    out, outcome = asyncio.run(compaction._compact_strategies(msgs, "model-id", "sess-9", "claude"))
+    out, outcome, _detail = asyncio.run(
+        compaction._compact_strategies(msgs, "model-id", "sess-9", "claude")
+    )
     assert outcome == "summary"
     summary = out[0]["content"]
     assert "Current summary" in summary

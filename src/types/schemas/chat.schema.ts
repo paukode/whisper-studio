@@ -110,11 +110,14 @@ export const SSEEventDataSchema = z.object({
     label: z.string(),
   }).optional(),
   /** Tool-call arguments still streaming (a large artifact): size so far.
-   *  A nested z.object drops undeclared keys, so the id is named here too. */
+   *  A nested z.object drops undeclared keys, so the id is named here too.
+   *  input: the arguments that name the result (path, filename, title) when
+   *  they arrived before the content. */
   skill_progress: z.object({
     name: z.string(),
     chars: z.number(),
     tool_use_id: z.string().optional(),
+    input: z.record(z.string(), z.string()).optional(),
   }).optional(),
 
   // Approvals — generic shape; `preview` selects the renderer.

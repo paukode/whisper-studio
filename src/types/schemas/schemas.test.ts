@@ -390,6 +390,13 @@ describe('SSEEventDataSchema', () => {
     if (result.success) {
       expect(result.data.skill_progress).toEqual({ name: 'create_artifact', chars: 4096, tool_use_id: 'tu_art' });
     }
+    const named = SSEEventDataSchema.safeParse({
+      skill_progress: { name: 'ws_write_file', chars: 4096, tool_use_id: 'tu_w', input: { path: 'a/b.html' } },
+    });
+    expect(named.success).toBe(true);
+    if (named.success) {
+      expect(named.data.skill_progress?.input).toEqual({ path: 'a/b.html' });
+    }
   });
 
   it('keeps every key of an activity_label frame, the calls of the round included', () => {

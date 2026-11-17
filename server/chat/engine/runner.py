@@ -593,6 +593,10 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
                         yield f"data: {ndjson_dumps(_f)}\n\n"
                     elif isinstance(ev, ToolCallProgress):
                         _p = {"name": ev.name, "chars": ev.chars, "tool_use_id": ev.id}
+                        # The file name or title, when it arrived before the
+                        # content: the UI says what is being written.
+                        if ev.named:
+                            _p["input"] = ev.named
                         yield f"data: {ndjson_dumps({'skill_progress': _p})}\n\n"
                     elif isinstance(ev, ToolCall):
                         _f = {"skill_input": ev.name, "input": ev.input, "tool_use_id": ev.id}
@@ -682,7 +686,9 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
                     model_key=ctx.model_key,
                     trigger="context-overflow",
                 )
-                if estimate_message_size(compacted) >= estimate_message_size(messages):
+                if estimate_message_size(compacted, ctx.model_key) >= estimate_message_size(
+                    messages, ctx.model_key
+                ):
                     raise CompactionError() from None
                 # Commit only a successful, strictly smaller replacement. Core
                 # compaction preserves the recent suffix, tool pairs and refs.
@@ -811,7 +817,10 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
                     {"role": "assistant", "content": strip_partial_tool_use(result_content)}
                 )
                 messages.append({"role": "user", "content": CONTINUE_AFTER_MAX_TOKENS})
-                if estimate_message_size(messages) > thresholds_for(ctx.model_key)[0]:
+                if (
+                    estimate_message_size(messages, ctx.model_key)
+                    > thresholds_for(ctx.model_key)[0]
+                ):
                     messages = await compact_messages_with_claude(
                         messages, ctx.model_id, session_id=session_id, model_key=ctx.model_key
                     )

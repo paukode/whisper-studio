@@ -46,8 +46,10 @@ describe('UserQuestionGroupCard: closed by a message the user sent instead', () 
     } as unknown as ChatMessageType;
     const { container } = render(<UserQuestionGroupCard message={message} />);
 
+    expect(screen.getByText('Which fruit?')).toBeTruthy();
     expect(screen.getByText('Not answered: you sent a new message instead.')).toBeTruthy();
-    expect((screen.getByText('Apple').closest('button') as HTMLButtonElement).disabled).toBe(true);
-    expect((container.querySelector('input') as HTMLInputElement).disabled).toBe(true);
+    // A closed card is a record: nothing on it takes an answer.
+    expect(container.querySelector('button')).toBeNull();
+    expect(container.querySelector('input')).toBeNull();
   });
 });

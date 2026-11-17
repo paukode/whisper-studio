@@ -87,15 +87,15 @@ def test_identity_carries_keep_working_and_denial_rules():
     assert "do not retry the same call" in ACT_BEFORE_ASKING
 
 
-def test_questions_before_long_work_are_allowed_after_the_keep_working_rules():
-    # The keep-working and denial rules alone read as "never ask": the rule
-    # that frees a question before long work comes after both, and names the
-    # tool the chat always has.
+def test_questions_before_long_work_come_before_the_keep_working_rules():
+    # The keep-working and denial rules alone read as "never ask", and a rule
+    # that only allowed a question after them was never used: the rule that
+    # shapes long work comes first, and names the tool the chat always has.
     from server.chat.tool_partition import CORE_TOOLS
 
     assert ASK_BEFORE_LONG_WORK in BASE
     assert (
-        BASE.index(ASK_BEFORE_LONG_WORK) > BASE.index(ACT_BEFORE_ASKING) > BASE.index(KEEP_WORKING)
+        BASE.index(ASK_BEFORE_LONG_WORK) < BASE.index(KEEP_WORKING) < BASE.index(ACT_BEFORE_ASKING)
     )
     assert "ask_user_question" in ASK_BEFORE_LONG_WORK
     assert "ask_user_question" in CORE_TOOLS

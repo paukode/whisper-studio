@@ -245,9 +245,21 @@
     <p>A tool call's <em>arguments</em> stream from the model like anything else, and a whole
       generated HTML app can take minutes to arrive. The adapters count the accumulated argument JSON
       and emit a <code>skill_progress</code> frame (<code>{name, chars}</code>) every
-      <code>TOOL_ARGS_PROGRESS_STEP</code> (4,096) characters, so the running step in the chat shows
+      <code>TOOL_ARGS_PROGRESS_STEP</code> (1,024) characters, so the running step in the chat shows
       how much has landed instead of an unchanging spinner. It is emitted by the provider adapter, not
       by the tool, so it works for any tool whose arguments are large.</p>
+    <p>The frame also carries the arguments that name the result (<code>path</code>,
+      <code>filename</code>, <code>title</code>) in <code>input</code>, when they are complete. The
+      headline of the live reply then reads <code>Writing report.html…</code> with the size, in
+      place of <code>Thinking…</code>. By default, the Claude API holds each argument until it is
+      complete, so the content of a file arrives in one piece and no size arrives before it. The
+      Claude adapter sets <code>eager_input_streaming</code> on each tool, and the API then sends
+      the arguments while the model writes them. With this setting the API does not validate the
+      input. The app does: a strict JSON parse, the schema of the tool, and a round that stops at
+      the output limit runs no tool.</p>
+    <p>The first size step can be many seconds away. Thus the Claude adapter sends one early frame
+      <code>TOOL_EARLY_REPORT_S</code> (2 seconds) after a tool call starts, with the name that
+      arrived. A call that is complete in less than 2 seconds sends no frame.</p>
 
     <h3 id="artifacts">Reading and editing an artifact in place</h3>
     <p>Once <code>create_artifact</code> has delivered a card, two more tools become available for

@@ -338,6 +338,12 @@ button.activity-pill:hover { border-color: var(--accent); }
     opacity: 0.7;
     font-variant-numeric: tabular-nums;
 }
+/* The size of the call the model writes, counted up next to its name. */
+.thinking-size {
+    font-size: var(--fs-caption);
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
 /* The waits the timer skips (an approval card, a question, a sleep). */
 .thinking-waited {
     margin-left: 8px;

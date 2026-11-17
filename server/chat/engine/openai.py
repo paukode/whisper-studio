@@ -46,6 +46,7 @@ from .events import (
     ToolCallProgress,
     ToolCallStart,
     Usage,
+    named_arguments,
 )
 
 log = logging.getLogger("whisper-studio")
@@ -417,7 +418,11 @@ class OpenAIResponsesAdapter:
                             fc["next_progress"] = (
                                 _n // TOOL_ARGS_PROGRESS_STEP + 1
                             ) * TOOL_ARGS_PROGRESS_STEP
-                            yield ToolCallProgress(name=fc["name"], chars=_n, id=fc["call_id"])
+                            if not fc.get("named"):
+                                fc["named"] = named_arguments(fc["args"])
+                            yield ToolCallProgress(
+                                name=fc["name"], chars=_n, id=fc["call_id"], named=fc["named"]
+                            )
                 elif et == "response.function_call_arguments.done":
                     fc = calls.finish(getattr(ev, "item_id", None), getattr(ev, "arguments", None))
                     inflight["args"] = {id(c): c["args"] for c in calls.calls.values()}

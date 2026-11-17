@@ -6,6 +6,8 @@ import { AgentCard, groupAgentTools, groupForActivity, isActivityEntry, isTasksE
 import { TaskCard } from '@/components/chat/TaskCard';
 import { ActivityRow } from '@/components/chat/ActivityRow';
 import { ICON } from '@/components/chat/activityIcons';
+import { writingCall } from '@/components/chat/activityLabel';
+import { formatKb } from '@/components/chat/activityChips';
 import { TeamAgentRows } from '@/components/chat/AgentRows';
 import { DeliveryChips } from '@/components/chat/DeliveryChips';
 import { findMatchingTeamReports } from '@/hooks/chatStream/teamProgress';
@@ -96,6 +98,11 @@ export const StreamingMessage: React.FC<StreamingMessageProps> = ({ content, isS
     if (el && thinkingPinnedRef.current) el.scrollTop = el.scrollHeight;
   }, [thinkingContent, thinkingOpen]);
 
+  // The call the model writes right now (a large file arrives as one call's
+  // arguments and can take minutes): the headline names it and its size,
+  // since "Thinking…" would say the wrong thing for the whole write.
+  const writing = content ? null : writingCall(streamToolUse);
+
   const formatMs = (ms: number) => (ms / 1000).toFixed(1) + 's';
   const formatTokens = (n: number) => n.toLocaleString();
 
@@ -132,7 +139,11 @@ export const StreamingMessage: React.FC<StreamingMessageProps> = ({ content, isS
               getActiveChatStore().getState().setThinkingOpen(!thinkingOpen);
             }}
           >
-            <span className="activity-slot">{(isLocalModel && !thinkingContent) ? ICON.sparkle : ICON.thought}</span>
+            <span className="activity-slot">
+              {writing && !streamStatus
+                ? <span className="activity-spinner" role="img" aria-label="Writing" />
+                : (isLocalModel && !thinkingContent) ? ICON.sparkle : ICON.thought}
+            </span>
             {/* A status outranks the thinking label: thinking tokens clear
              *  it, so one that is set now came after them (the goal check
              *  after a thinking-only round) and names the current phase. */}
@@ -149,10 +160,15 @@ export const StreamingMessage: React.FC<StreamingMessageProps> = ({ content, isS
                       // check) arrive as human-readable status frames; show
                       // them as-is.
                       ? streamStatus
-                      : thinkingContent
-                        ? 'Thinking\u2026'
-                        : (isLocalModel ? 'Generating\u2026' : 'Thinking\u2026')}
-            {!content && <span className="pulse-dot"></span>}
+                      : writing
+                        ? `${writing.text}\u2026`
+                        : thinkingContent
+                          ? 'Thinking\u2026'
+                          : (isLocalModel ? 'Generating\u2026' : 'Thinking\u2026')}
+            {/* The size counts up in place of the dot while a call is written. */}
+            {writing && !streamStatus && writing.chars !== null
+              ? <span className="thinking-size">{formatKb(writing.chars)}</span>
+              : !content && <span className="pulse-dot"></span>}
             {displayElapsed > 0 && (
               <span className="thinking-elapsed">{formatMs(displayElapsed)}</span>
             )}
