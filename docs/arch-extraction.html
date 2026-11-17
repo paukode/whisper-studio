@@ -142,11 +142,10 @@
         <code class="path">server/attachments.py</code> caps the image's long edge and re-encodes it once, at
         high quality, so fine text stays legible.</li>
     </ul>
-    <p>The sizing is tuned around how Claude handles images. Claude internally downsamples anything whose
-      long edge exceeds about 1568px, so Whisper Studio does that <em>once</em>, at high quality, rather than
-      shipping an oversized image the model re-compresses (which softens small text and hurts OCR):</p>
+    <p>A model bills a picture by its pixels, so the long-edge cap sets the cost of a picture. Whisper
+      Studio makes a large picture smaller <em>once</em>, at high quality, before it sends the picture:</p>
     <dl class="spec">
-      <dt><code class="path">IMAGE_MAX_DIM = 1568</code></dt><dd>Long-edge cap, Anthropic's recommended maximum. The image is only ever shrunk, never enlarged.</dd>
+      <dt><code class="path">IMAGE_MAX_DIM = 1176</code></dt><dd>Long-edge cap. A picture at the cap costs about 42 percent fewer tokens than at 1568px. The image is only ever shrunk, never enlarged.</dd>
       <dt><code class="path">IMAGE_JPEG_QUALITY = 90</code></dt><dd>High quality so small text stays readable when a JPEG re-encode is needed.</dd>
       <dt><code class="path">IMAGE_HARD_BYTES</code></dt><dd>Keeps each image under Bedrock's roughly 5 MB per-image limit; JPEG quality steps down if necessary.</dd>
     </dl>

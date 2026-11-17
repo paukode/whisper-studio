@@ -108,6 +108,8 @@ async def run_tool_round(
     from server.chat.compaction import (
         compact_messages_with_claude,
         estimate_message_size,
+        limit_tool_pictures,
+        summary_held,
         thresholds_for,
     )
     from server.chat.tool_pool import _is_tool_concurrent_safe
@@ -234,21 +236,47 @@ async def run_tool_round(
 
             inject_reminder(messages, f"[completion gate] {_claim_note}")
 
+        # The user's own chat turn started to build and asked nothing: one
+        # reminder goes with these results (server/chat/ask_first.py).
+        if ctx.midturn_inbox and not ctx.unattended and not ctx.plan_mode:
+            from server.chat import ask_habit
+            from server.chat.ask_first import reminder_for
+            from server.chat.loop_hints import inject_reminder
+
+            _ask_note = reminder_for(messages, tool_uses)
+            # Quiet once the user skipped question cards in a row (ask_habit.py).
+            if _ask_note and not ask_habit.quiet():
+                inject_reminder(messages, _ask_note)
+
+        # Too many pictures from tools in one request: the oldest go.
+        messages = limit_tool_pictures(messages)
+
         # Proactive compaction: char estimate, supplemented by TOKEN truth
         # (the per-round usage crossed COMPACT_NUDGE_FRACTION of the window).
         from server.chat.loop_hints import should_nudge_compaction
 
-        if estimate_message_size(messages) > thresholds_for(ctx.model_key)[
-            0
-        ] or should_nudge_compaction(scope_id):
+        # The token count is the truth. When it alone asks for compaction, the
+        # estimate missed something, so clearing by the estimate is not enough.
+        over_estimate = (
+            estimate_message_size(messages, ctx.model_key) > thresholds_for(ctx.model_key)[0]
+        )
+        over_tokens = should_nudge_compaction(scope_id)
+        _trigger = "pressure" if over_estimate else "token-pressure"
+        if (over_estimate or over_tokens) and not summary_held(
+            session_id, messages, ctx.model_key, _trigger
+        ):
             # An LLM summarization call sits between rounds here; without a
             # frame the wait reads as a mid-turn hang.
             yield f"data: {ndjson_dumps({'status': 'Compacting conversation context...'})}\n\n"
-            # CompactionError propagates to runner's terminal handler. Do not
-            # clear outcome.tool_results or replace history on failure: both
-            # the result frames and the complete tool pair must survive.
+            # A failed summary here does not end the turn: compaction returns
+            # the cleared history (or the history as it was) and the turn
+            # goes on. Only a real overflow is terminal (runner.py).
             compacted = await compact_messages_with_claude(
-                messages, ctx.model_id, session_id=session_id, model_key=ctx.model_key
+                messages,
+                ctx.model_id,
+                session_id=session_id,
+                model_key=ctx.model_key,
+                trigger=_trigger,
             )
             messages = compacted
             # Restore any attachment the summary swallowed. The REACTIVE

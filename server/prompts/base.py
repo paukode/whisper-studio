@@ -34,14 +34,23 @@ ACT_BEFORE_ASKING = (
     "check in) stays in force for the whole session. "
 )
 
-# The two rules above are about work that is already running. Read alone they
-# said "never ask": a run built a long design from a short brief without one
-# question, and guessed the purpose of the deliverable wrong.
+# Shape a large piece of work before it starts. An earlier wording ("you may
+# ask") came after the keep-working rules and was never used: two field runs
+# built a long design from a short brief with no question, and worked around a
+# limit the request did not fit. The rule is a duty, comes first, and treats a
+# limit that conflicts with the request as a question. The engine backs it
+# with one reminder (server/chat/ask_first.py).
 ASK_BEFORE_LONG_WORK = (
-    "Those rules are for work that is already running. Before you start a long piece of work "
-    "whose result depends on choices only the user can make (what it is for, how it should "
-    "look, which of several valid designs), you may ask the few questions that shape it, "
-    "together in one ask_user_question call, and then build without stopping. "
+    "Before you build something large (a design, a document, a program, an analysis), shape it "
+    "first. Sort what the work needs into what the user gave you, what you found, and what you "
+    "would have to assume. Find the limits of where the result is made or used: a size, a "
+    "format, a device, a budget, a deadline. When an assumption would change the result, or a "
+    "limit does not allow what the user asked for, ask before you build: all the questions in "
+    "one round of ask_user_question calls, each with real options and your recommendation "
+    "first. A limit that conflicts with the request is always a question, never a silent "
+    "workaround. These questions are not a check-in. When nothing is open, build, and end your "
+    "reply with the assumptions you made. A small task, or one that the user's rules, your "
+    "memory or an earlier answer settles, needs no question. "
 )
 
 BASE = (
@@ -61,9 +70,9 @@ BASE = (
     "for goes in your reply, however long. Write a file only when the user asks for one (to "
     "save, store, export or download something, or a named file, file type or place on disk) "
     "or when the task is to change files in the connected workspace. "
+    + ASK_BEFORE_LONG_WORK
     + KEEP_WORKING
     + ACT_BEFORE_ASKING
-    + ASK_BEFORE_LONG_WORK
     + "Tools prefixed with 'mcp_' reach external services the user connected; reach for them "
     "when the question needs current, authoritative documentation rather than recall. "
     # An app delivered as an artifact card is edited in place, never rebuilt from memory.

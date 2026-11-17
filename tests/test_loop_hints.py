@@ -67,7 +67,10 @@ def test_compaction_nudge_fires_once_at_threshold():
     assert loop_hints.should_nudge_compaction("s2") is False
     loop_hints.note_prompt_tokens("s2", threshold, 200_000)
     assert loop_hints.should_nudge_compaction("s2") is True
-    assert loop_hints.should_nudge_compaction("s2") is False  # one-shot
+    assert loop_hints.should_nudge_compaction("s2") is False  # once per crossing
+    loop_hints.note_prompt_tokens("s2", threshold - 1_000, 200_000)
+    loop_hints.note_prompt_tokens("s2", threshold, 200_000)
+    assert loop_hints.should_nudge_compaction("s2") is True  # crossed again
 
 
 def test_store_bounded():

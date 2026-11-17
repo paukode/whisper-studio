@@ -380,7 +380,7 @@ export async function readSSEStream(
               trace.input = parsed.input;
               store().updateStreamToolUse(
                 rowKey(trace),
-                { input: parsed.input as Record<string, unknown> },
+                { input: parsed.input as Record<string, unknown>, argsStreaming: false },
               );
             }
           }
@@ -395,8 +395,13 @@ export async function readSSEStream(
             const trace = sp.tool_use_id
               ? skillTraces.find((t) => t.id === sp.tool_use_id)
               : skillTraces.find((t) => t.name === sp.name && t.status === 'running');
+            // The naming arguments (a path, a title) fill the row's input
+            // until skill_input brings the whole of it.
+            if (trace && sp.input) trace.input = sp.input;
             store().updateStreamToolUse(trace ? rowKey(trace) : sp.name, {
               progressChars: sp.chars,
+              argsStreaming: true,
+              ...(sp.input ? { input: sp.input } : {}),
             });
           }
 

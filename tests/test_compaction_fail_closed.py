@@ -296,7 +296,7 @@ def test_full_text_tools_and_attachment_references_reach_one_summary(monkeypatch
     assert messages == original
     assert compaction.estimate_message_size(out) < compaction.estimate_message_size(messages)
     assert call.call_count == 1
-    assert call.call_args.kwargs["max_tokens"] == 1024
+    assert call.call_args.kwargs["max_tokens"] == compaction.SUMMARY_MAX_TOKENS
     assert call.call_args.kwargs["source"] == "compaction"
     assert call.call_args.kwargs["session_id"] == "test-session"
 

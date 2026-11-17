@@ -86,6 +86,29 @@ def test_a_failed_summary_appends_nothing(monkeypatch):
     append.assert_not_called()
 
 
+def test_a_conversation_too_short_to_compact_is_refused_in_plain_words(monkeypatch):
+    # A summary longer than a short history: not a fault of the model or the
+    # service, so the answer says what is true and no row is written.
+    monkeypatch.setattr(oneshot, "one_shot", lambda *a, **k: "y" * 50_000)
+    ends = []
+    monkeypatch.setattr("server.chat.compaction_log.record_end", lambda sid, **kw: ends.append(kw))
+    append = Mock()
+    monkeypatch.setattr(sessions, "append_message", append)
+    app = FastAPI()
+    app.include_router(router)
+    resp = TestClient(app).post(
+        "/api/sessions/s1/compact", json={"history": history(2), "model": "claude"}
+    )
+    assert resp.status_code == 409
+    assert "too short to compact" in resp.json()["detail"]
+    assert ends[-1]["detail"] == compaction.NOT_SMALLER
+    append.assert_not_called()
+
+
+def test_the_note_is_asked_to_be_shorter_than_the_history():
+    assert "shorter than the history" in compaction._SUMMARY_INSTRUCTIONS
+
+
 def test_the_model_reads_the_summary_and_only_what_follows_it():
     rows = [
         {"role": "user", "content": "old question"},

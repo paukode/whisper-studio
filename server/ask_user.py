@@ -45,6 +45,12 @@ def question_options_refusal(options) -> str | None:
     return None
 
 
+# How the answer of a question the user skipped on the card starts
+# (SKIPPED_ANSWER in src/components/chat/UserQuestionCard.tsx). The rest of
+# that answer tells the model to decide and to name its choice.
+SKIPPED_ANSWER_PREFIX = "The user skipped this question."
+
+
 # ── Tool definitions ──────────────────────────────────────────────────────────
 
 ASK_USER_TOOL = {
@@ -52,7 +58,8 @@ ASK_USER_TOOL = {
     "description": (
         "Ask the user a multiple-choice question. The turn pauses until they answer. "
         "Ask only when the choice changes what the user will see, costs money, or cannot be "
-        "undone, AND no rule, memory, earlier answer or approved plan already settles it. "
+        "undone, or the request cannot be met as it was asked, AND no rule, memory, "
+        "earlier answer or approved plan already settles it. "
         "Check the user's rules and memory first. "
         "Never use this to ask permission for a tool call: the approval gate asks the user "
         "itself when a call needs it, so make the call. "

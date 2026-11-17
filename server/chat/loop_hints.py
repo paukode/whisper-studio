@@ -62,12 +62,15 @@ def note_prompt_tokens(session_id: str, tokens: int, context_max: int) -> None:
         entry = _context.pop(session_id, None) or {"used": 0, "max": context_max, "nudged": False}
         entry["used"] = tokens
         entry["max"] = context_max
+        # Back under the line (a compaction worked): the next crossing nudges again.
+        if tokens < context_max * COMPACT_NUDGE_FRACTION:
+            entry["nudged"] = False
         _context[session_id] = entry
 
 
 def should_nudge_compaction(session_id: str) -> bool:
-    """True ONCE per session when the real prompt size crosses the nudge
-    fraction of the window: lets proactive compaction fire on token truth
+    """True once each time the real prompt size crosses the nudge fraction of
+    the window (again only after it went back under): lets proactive compaction fire on token truth
     even when the char estimate is still under the compaction trigger."""
     with _lock:
         entry = _context.get(session_id)

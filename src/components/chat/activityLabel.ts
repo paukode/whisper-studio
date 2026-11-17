@@ -638,6 +638,32 @@ function progressive(base: string): string {
   return base.endsWith('e') && !base.endsWith('ee') ? `${base.slice(0, -1)}ing` : `${base}ing`;
 }
 
+/** The size of a call's arguments received so far, once it is worth a
+ *  number: under 1 KB only the names arrived (Claude holds a file's content
+ *  back until it is whole), and "0.0 KB" would read as no progress. */
+export function progressSize(tool: ToolUseEvent): number | null {
+  const chars = num(tool.progressChars);
+  return chars !== null && chars >= 1024 ? chars : null;
+}
+
+/** The call the model still writes (its arguments stream in), named for the
+ *  live reply's headline: "Writing report.html", "Creating a file",
+ *  "Preparing office script". The newest such call; null when the model
+ *  writes none. `chars` is the size received so far, null when unknown. */
+export function writingCall(tools: readonly ToolUseEvent[]): { text: string; chars: number | null } | null {
+  for (let i = tools.length - 1; i >= 0; i--) {
+    const tool = tools[i];
+    if (!tool.argsStreaming || !isRunning(tool)) continue;
+    const chars = progressSize(tool);
+    const desc = describeCall(tool);
+    const text = desc.kind === 'file'
+      ? `${capitalize(progressive(desc.base))} ${desc.subject ?? 'a file'}`
+      : `Preparing ${tool.toolName.replace(/_/g, ' ')}`;
+    return { text, chars };
+  }
+  return null;
+}
+
 /** What a running group is running: a single call's subject (a command's
  *  head, a file's basename), else a count of the running calls ("3 reads",
  *  "2 calls"). */

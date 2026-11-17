@@ -286,7 +286,11 @@
         choices (<code>server/ask_user.py</code> <code>question_options_refusal</code>). A card
         has no choices or two and more. It has no "Other" choice, because it has its own text
         field. A call that breaks the rule gets a <code>[Refused]</code> result and no card, and
-        the model asks again.</li>
+        the model asks again. Each question has a Skip button. A skipped question sends a fixed
+        answer that starts with <code>SKIPPED_ANSWER_PREFIX</code> and tells the model to decide.
+        The app counts a card as skipped when you skip all its questions or send a new message
+        instead (<code>server/chat/ask_habit.py</code>). After 3 skipped cards in a row, the
+        ask-first reminder stops. One answered card starts it again.</li>
       <li><b>A new message while a card waits</b> closes the card. The card does not stay on
         screen. The request names the closed cards in <code>skipped_cards</code>. The paused turn
         continues with them closed and with your message after them. Thus the model gets a record

@@ -23,7 +23,7 @@ MAX_NOTE_CHARS = 2000
 @router.post("/api/sessions/{session_id}/compact")
 async def compact_session(session_id: str, request: Request):
     from server.chat.attachment_context import rebuild_history_message
-    from server.chat.compaction import CompactionError, compact_on_request
+    from server.chat.compaction import NOT_SMALLER, CompactionError, compact_on_request
     from server.infrastructure.sessions import append_message, visible_chat_history
 
     body = await request.json()
@@ -40,6 +40,10 @@ async def compact_session(session_id: str, request: Request):
     try:
         summary, before, after = await compact_on_request(messages, model_key, session_id, note)
     except CompactionError as exc:
+        if exc.reason == NOT_SMALLER:
+            raise HTTPException(
+                409, "This conversation is too short to compact: a summary would not be smaller."
+            ) from None
         raise HTTPException(502, str(exc)) from None
     row = {
         "role": "compact_summary",

@@ -61,7 +61,7 @@
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
       <div class="callout__body"><p><b>One loop, thin adapters.</b> Rounds, budgets, wind-down
-        reminders, fail-closed compaction, the final no-tools round, tool execution through the shared
+        reminders, compaction, the final no-tools round, tool execution through the shared
         safety gate, approval pauses, and cost accounting all live in the engine and behave identically
         for every provider. Adapters own only the wire protocol. Compaction summarizes through
         <code>one_shot</code> with the session's own model, so no provider depends on another. The same
@@ -94,9 +94,9 @@
       Claude tier (64K for Haiku 4.5 and earlier), matching the adapter's own <code>max_tokens</code> clamp. The GPT
       deployments enforce a separate prompt-only cap, so nothing is reserved there. Local models reserve
       their <code>max_output</code>, defaulting to 4096. The result is floored at a quarter of the window
-      so a misconfigured output reserve can never starve the prompt. Proactive compaction fires at 95
-      percent of that budget and the last-resort truncation at 98 percent, estimated at four characters
-      per token. When a deployment rejects a prompt anyway, the adapter recognizes the rejection as
+      so a misconfigured output reserve can never starve the prompt. Proactive compaction starts at 95
+      percent of that budget, and a compacted history must fit under 98 percent. The size is an
+      estimate at four characters for each token, and a picture counts by its pixels. When a deployment rejects a prompt anyway, the adapter recognizes the rejection as
       prompt-too-long (the OpenAI adapter reads the cap in its text) and the engine makes one
       compaction attempt.</p>
 
@@ -136,9 +136,10 @@
       <code>PromptTooLongError</code>, the <b>engine</b> runs <b>reactive compaction</b>
       (<code class="path">server/chat/engine/runner.py</code>, for every provider): it calls
       <code>compact_messages_with_claude(...)</code> once on the full history and retries the round
-      with the smaller result. Compaction fails closed: when it fails, does not shrink the history, or
-      the next request is still too long, the history stays unchanged and the turn stops with an error
-      that says to check the compaction model or start a new conversation. (The endpoint also compacts
+      with the smaller result. After a rejected prompt, compaction fails closed: when it fails, does
+      not shrink the history, or the next request is still too long, the history stays unchanged and
+      the turn stops with an error that says to check the compaction model or start a new
+      conversation. Before a rejection, a failed summary does not stop the turn. (The endpoint also compacts
       before the first call when history is already large. See
       <a href="arch-chat-pipeline.html#compaction-persistence">Chat &amp; tool orchestration</a>.)</p>
     <p>That wrapper only covers the <em>request</em>. A stream that has already returned HTTP 200 and

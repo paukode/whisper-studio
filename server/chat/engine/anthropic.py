@@ -36,6 +36,7 @@ from .events import (
     ToolCallProgress,
     ToolCallStart,
     Usage,
+    named_arguments,
 )
 
 log = logging.getLogger("whisper-studio")
@@ -43,6 +44,7 @@ log = logging.getLogger("whisper-studio")
 # One-shot per process: prompt caching is on but nothing ever reads from the
 # cache — the breakpoints are misplaced or the prefix churns.
 _CACHE_CANARY = {"fired": False}
+_NOTHING = object()  # no stream item was taken from the queue
 
 # Bedrock surfaces mid-stream failures as non-chunk events keyed by the
 # exception type (lowercase first letter). Map to the canonical name so
@@ -59,6 +61,24 @@ _STREAM_ERROR_KEYS = {
 # is doing (measured on Opus 5.5 at max effort, 2026-10-16). Once the first
 # event is in, a socket quiet for this long is a dead connection.
 _STREAM_STALL_TIMEOUT_S = 90.0
+# A tool call that is still being written this many seconds after it began
+# sends one early report of what has arrived (the path, when it came first),
+# so the UI can say which file is being written long before the first size
+# step. A small call ends sooner and stays frame-free.
+TOOL_EARLY_REPORT_S = 2.0
+
+
+def _streamed_tools(tools: list[dict]) -> list[dict]:
+    """The tools with their arguments streamed as the model writes them.
+
+    By default the API holds each argument back until it is whole: a file's
+    content arrives in one piece after minutes of silence, and nothing can
+    show how far the write is. ``eager_input_streaming`` sends the pieces as
+    they are written. The API then no longer validates the input, so this
+    adapter and the executor do: a strict JSON parse, the tool's schema
+    (server/tool_inputs.py), and a round cut off at the output limit runs no
+    tool (see the end of stream_round). Copies, never the shared pool."""
+    return [{**tool, "eager_input_streaming": True} for tool in tools]
 
 
 def tighten_read_timeout(stream) -> None:
@@ -180,6 +200,7 @@ class AnthropicAdapter:
             # changed, which in-turn compaction does (thinking_binding.py).
             drop_mismatched_thinking(body, self.model_id)
         if not is_last_round:
+            tools = _streamed_tools(tools) if tools else tools
             # Prompt caching: checkpoint on the LAST tool and the STATIC system
             # block; third moving checkpoint on the last message. Only when
             # tools are present (the static block alone is below the 4096-token
@@ -301,9 +322,33 @@ class AnthropicAdapter:
         argument_error = None
         message_stopped = False
 
+        # The tool call whose arguments arrive now and that sent no report yet.
+        quiet_tool: dict | None = None
+
         try:
             while True:
-                data = await q.get()
+                if quiet_tool is not None and not argument_error:
+                    # Due: the call is still being written. Sent between two
+                    # pieces, or in a silence when the API holds them back.
+                    wait = quiet_tool["report_at"] - loop.time()
+                    data = _NOTHING
+                    if wait > 0:
+                        try:
+                            data = await asyncio.wait_for(q.get(), wait)
+                        except TimeoutError:
+                            pass
+                    if data is _NOTHING:
+                        block, quiet_tool = quiet_tool, None
+                        block["named"] = named_arguments(block["input_json"])
+                        yield ToolCallProgress(
+                            name=block["name"],
+                            chars=len(block["input_json"]),
+                            id=block["id"],
+                            named=block["named"],
+                        )
+                        continue
+                else:
+                    data = await q.get()
                 if data is None:
                     break
                 if isinstance(data, Exception):
@@ -373,6 +418,8 @@ class AnthropicAdapter:
                             argument_error = str(exc)
                             continue
                         yield ToolCallStart(name=current_block["name"], id=current_block["id"])
+                        current_block["report_at"] = loop.time() + TOOL_EARLY_REPORT_S
+                        quiet_tool = current_block
                     elif current_block["type"] == "thinking":
                         yield ThinkingStart()
 
@@ -382,6 +429,8 @@ class AnthropicAdapter:
                         continue
                     if event_type == "content_block_stop":
                         current_block["closed"] = True
+                        if quiet_tool is current_block:
+                            quiet_tool = None
                         if current_block["type"] == "thinking":
                             yield ThinkingStop()
                         elif current_block["type"] == "tool_use":
@@ -442,8 +491,17 @@ class AnthropicAdapter:
                             current_block["next_progress"] = (
                                 _n // TOOL_ARGS_PROGRESS_STEP + 1
                             ) * TOOL_ARGS_PROGRESS_STEP
+                            if quiet_tool is current_block:
+                                quiet_tool = None
+                            if not current_block.get("named"):
+                                current_block["named"] = named_arguments(
+                                    current_block["input_json"]
+                                )
                             yield ToolCallProgress(
-                                name=current_block["name"], chars=_n, id=current_block["id"]
+                                name=current_block["name"],
+                                chars=_n,
+                                id=current_block["id"],
+                                named=current_block["named"],
                             )
         finally:
             stop_reading.set()

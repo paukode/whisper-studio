@@ -12,7 +12,7 @@ WSDiagram.mount("preview-diagram", {
     { id: "wait", group: "server", col: 2, row: 0.5, label: "Drain + keep alive", sub: "1 MB ring buffer", desc: "Two reader tasks continuously drain stdout/stderr into bounded 1 MB ring buffers so preview_logs can tail them. Spawn is bounded at 30s." },
     { id: "browser", group: "local", col: 3, row: 0.5, label: "Playwright browser", sub: "browser.py", desc: "On first navigation, an ephemeral Chromium context + page is launched lazily (60s cold-start bound). Console, page errors, and network are captured." },
     { id: "act", group: "tools", col: 4, row: 0, label: "navigate · click · fill", sub: "15s / 30s bounds", desc: "Approval-gated actions drive the page: goto (30s), click/fill/eval/resize (15s). A scheme guard blocks file://, data:, chrome://." },
-    { id: "shot", group: "local", col: 4, row: 1, label: "screenshot", sub: "PNG to JPEG", desc: "preview_screenshot downscales to a JPEG (max 1280px, q70) and returns a [WS_PREVIEW_IMAGE] sentinel that tool_executor turns into a real image block the model can see." },
+    { id: "shot", group: "local", col: 4, row: 1, label: "screenshot", sub: "PNG to JPEG", desc: "preview_screenshot downscales to a JPEG (max 960px, q70) and returns a [WS_PREVIEW_IMAGE] sentinel that tool_executor turns into a real image block the model can see." },
     { id: "dock", group: "browser", col: 5, row: 0.5, label: "Live preview dock", sub: "screencast WS", desc: "A view-only CDP screencast streams JPEG frames over /ws/preview/{name}/screencast to the SPA right dock, so you watch exactly what the model's browser does." }
   ],
   edges: [

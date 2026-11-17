@@ -3908,6 +3908,8 @@ input.segment-speaker {
 .uq-nav-btn:disabled { opacity: 0.4; cursor: default; }
 .uq-nav-btn.primary { border-color: var(--accent); background: var(--accent); color: var(--on-accent); }
 .uq-nav-btn.primary:hover:not(:disabled) { border-color: var(--accent-hover); background: var(--accent-hover); }
+.uq-skip { flex-shrink: 0; height: 34px; padding: 0 12px; }
+.uq-skip.selected { border-color: var(--accent); color: var(--accent); }
 .uq-submit-btn {
     padding: 7px 15px; border-radius: var(--radius-lg); font-size: var(--fs-body); cursor: pointer;
     border: 1px solid var(--accent); background: var(--accent); color: var(--on-accent);
@@ -3917,6 +3919,16 @@ input.segment-speaker {
     border-color: var(--border); cursor: default;
 }
 .uq-answered { font-size: var(--fs-caption); color: var(--text-muted); }
+.uq-summary { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.uq-summary-item { display: flex; flex-direction: column; gap: 5px; }
+.uq-summary-item + .uq-summary-item { padding-top: 10px; border-top: 1px solid var(--border); }
+.uq-summary-answer { display: flex; align-items: center; gap: 7px; font-size: var(--fs-body); color: var(--text-primary); }
+.uq-summary-answer.answered svg { flex-shrink: 0; color: var(--accent); }
+.uq-summary-answer.skipped, .uq-summary-answer.unanswered { color: var(--text-muted); }
+.uq-tag {
+    font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+    padding: 1px 6px; border: 1px solid var(--border); border-radius: 4px; color: var(--text-muted);
+}
 
 /* ── AskUserQuestion "Other" text input ──────────────────────────────────── */
 .user-question-other-row {

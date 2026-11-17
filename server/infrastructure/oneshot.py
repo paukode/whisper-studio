@@ -9,6 +9,14 @@ _LOCAL_KEY = "local_gemma"
 OFF = "none"
 
 
+class OneShotIncomplete(RuntimeError):
+    """The completion stopped at its output cap. ``text`` is what it wrote."""
+
+    def __init__(self, message: str, text: str = ""):
+        super().__init__(message)
+        self.text = text or ""
+
+
 def resolve_local_key(local_model_key: str | None) -> str:
     """Resolve the explicit local alias, following active/resident/downloaded keys.
 
@@ -133,6 +141,13 @@ def one_shot(
         client, model_id=model_id, body=body, source=source, session_id=session_id
     )
     # invoke_claude has already captured usage, including unsuccessful output.
+    if payload.get("stop_reason") == "max_tokens":
+        raise OneShotIncomplete(
+            "cloud one-shot completion was incomplete or refused",
+            "".join(
+                b.get("text", "") for b in payload.get("content", []) if b.get("type") == "text"
+            ),
+        )
     if payload.get("stop_reason") not in ("end_turn", "stop_sequence"):
         raise RuntimeError("cloud one-shot completion was incomplete or refused")
     if payload.get("amazon-bedrock-guardrailAction") == "INTERVENED":
@@ -165,6 +180,13 @@ def _local_one_shot(key: str, system: str, user: str, *, max_tokens: int) -> str
     )
     response.raise_for_status()
     choices = (response.json() or {}).get("choices") or []
+    if choices and choices[0].get("finish_reason") == "length":
+        raise OneShotIncomplete(
+            "local one-shot completion was incomplete or refused",
+            llama_server._strip_reasoning_markers(
+                (choices[0].get("message") or {}).get("content") or ""
+            ),
+        )
     if not choices or choices[0].get("finish_reason") != "stop":
         raise RuntimeError("local one-shot completion was incomplete or refused")
     message = choices[0].get("message") or {}
@@ -204,6 +226,11 @@ def _openai_one_shot(
     record_responses(
         resp, model_key=model_key, request=request, source=source, session_id=session_id
     )
+    if _field(_field(resp, "incomplete_details"), "reason") == "max_output_tokens":
+        raise OneShotIncomplete(
+            "openai one-shot completion was incomplete or refused",
+            _field(resp, "output_text", "") or "",
+        )
     if (
         _field(resp, "status") != "completed"
         or _field(resp, "incomplete_details")

@@ -155,7 +155,9 @@
     <p>After a turn (when the model is not asking for more tools), <code>maybe_extract_memory()</code>
       fires in the background. It runs with or without a workspace: with one the reviewer sees both
       tiers and routes each write by <code>scope</code>; without one, everything lands in global
-      memory. It is guarded six ways:</p>
+      memory. The review also saves how you want the assistant to ask you before work starts, in
+      one global feedback file. It reads this from your answers, from questions that you skipped,
+      and from your corrections of work that started with no question. It is guarded six ways:</p>
     <ul>
       <li><b>Local mode.</b> Local mode recalls saved memories but records no new ones, because the
         review runs on a cloud model. The Memory row in the More menu then shows <b>Recall only</b>.</li>

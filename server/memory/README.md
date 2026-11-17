@@ -111,7 +111,7 @@ Direct writes to MEMORY.md through the memory tools are blocked (case-insensitiv
 When `auto_memory` is enabled:
 
 - **Recall:** Before each response, both tiers are scanned and relevant files are injected into the prompt. With more than 5 files total, Haiku picks the most relevant (on-device models skip the cloud side-query and take the most recent instead).
-- **Extraction:** After every 3rd chat turn, a background agent reviews the conversation and saves new memories. Runs with or without a workspace; skips if the assistant already wrote memory that turn, or if a previous extraction for the session is still running.
+- **Extraction:** After every 3rd chat turn, a background agent reviews the conversation and saves new memories. It also keeps one global feedback file about how you want to be asked before work starts. Runs with or without a workspace; skips if the assistant already wrote memory that turn, or if a previous extraction for the session is still running.
 
 ### Direct commands (ask the assistant in chat)
 

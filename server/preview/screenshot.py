@@ -12,7 +12,8 @@ import io
 
 from server.approval.markers import preview_image
 
-_MAX_LONG_EDGE = 1280
+# 25% under the 1280px desktop viewport: about 42% fewer tokens a screenshot.
+_MAX_LONG_EDGE = 960
 _JPEG_QUALITY = 70
 
 

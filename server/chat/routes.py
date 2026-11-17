@@ -60,6 +60,7 @@ _DOCS_COLD_BUDGET_S = 160  # first @docs use builds the manual index (cold embed
 from .compaction import (  # noqa: E402
     compact_messages_with_claude,
     estimate_message_size,
+    limit_tool_pictures,
     sanitize_tool_pairs,
     thresholds_for,
 )
@@ -1351,6 +1352,10 @@ async def chat_endpoint(request: Request):
                     session_id,
                     len(answers),
                 )
+            # A question card answered, or skipped with its Skip buttons.
+            from server.chat import ask_habit
+
+            ask_habit.note_answers((paused or {}).get("messages") or messages, answers)
             messages = resume_messages(messages, answers, paused)
         else:
             parts = []
@@ -1493,6 +1498,14 @@ async def chat_endpoint(request: Request):
             if skipped_cards:
                 # The skipped approval cards cannot run later either.
                 approval_cards.close_answered(session_id, skipped_cards)
+                # A question card left for a new message counts as skipped.
+                from server.chat import ask_habit
+
+                ask_habit.note_cards(
+                    (superseded_pause or {}).get("messages") or messages,
+                    skipped_cards,
+                    answered=False,
+                )
                 messages = resume_with_message(messages, skipped_cards, superseded_pause)
 
         # On-device models bypass Bedrock entirely (isolated local runtime). Branch
@@ -1552,10 +1565,12 @@ async def chat_endpoint(request: Request):
 
         # Pre-flight proactive compaction (provider-aware summarizer), against
         # the ACTIVE model's own input budget (95% trigger). It makes an LLM
-        # summarization call, so tell the UI what the wait is. CompactionError
-        # must escape to staged_stream's TURN_SETUP_FAILED frame and slot/inbox
-        # cleanup. Never send a provider request or substitute history on failure.
-        if estimate_message_size(messages) > thresholds_for(model_key)[0]:
+        # summarization call, so tell the UI what the wait is. A failed summary
+        # does not stop the turn here: the request goes out with the cleared
+        # history, and a prompt the provider then rejects goes to the overflow
+        # rescue in runner.py, which fails closed.
+        messages = limit_tool_pictures(messages)
+        if estimate_message_size(messages, model_key) > thresholds_for(model_key)[0]:
             _status("Compacting conversation history...")
             messages = await compact_messages_with_claude(
                 messages, model_id, session_id=session_id, model_key=model_key

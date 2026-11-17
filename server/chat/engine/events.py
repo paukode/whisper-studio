@@ -12,6 +12,7 @@ round; any other RoundError is terminal for the turn.
 Pure data: no behavior lives here, and nothing here may import provider code.
 """
 
+import json
 from dataclasses import dataclass, field
 
 
@@ -62,7 +63,7 @@ class ToolCall:
 # Adapters report tool-argument streaming progress once per this many chars.
 # A whole single-file app arrives as one tool call's arguments and can take
 # minutes; below this size nothing is emitted (small calls stay frame-free).
-TOOL_ARGS_PROGRESS_STEP = 4096
+TOOL_ARGS_PROGRESS_STEP = 1024
 
 
 @dataclass(frozen=True)
@@ -71,6 +72,10 @@ class ToolCallProgress:
     Progress only, never the content; the UI shows a size next to the
     running tool so a long generation does not read as a hang.
 
+    ``named`` holds the arguments that name the result (a path, a file
+    name, a title) when they arrived whole before the first report, so the
+    UI can say which file is being written. See ``named_arguments``.
+
     ``id`` is the provider's tool_use id of the call whose arguments are
     streaming (see ToolCallStart); empty only when the provider has none
     yet."""
@@ -78,6 +83,50 @@ class ToolCallProgress:
     name: str
     chars: int
     id: str = ""
+    named: dict[str, str] = field(default_factory=dict)
+
+
+# The arguments that name what a call makes. The UI reads the same keys
+# (src/components/chat/activityLabel.ts::describeCall).
+NAME_ARGUMENTS = frozenset(
+    {"path", "file_path", "filepath", "output_path", "destination_path", "filename", "title"}
+)
+_NAME_MAX_CHARS = 300
+_JSON = json.JSONDecoder()
+_JSON_SPACE = " \t\r\n"
+
+
+def named_arguments(partial_json: str) -> dict[str, str]:
+    """The naming arguments that are already whole in tool arguments that
+    still stream. Reads the top level of the object only, pair by pair, and
+    stops at the first value that is not complete, so a key inside the
+    content (a slide's title, quoted text) is never taken for the call's own.
+    An adapter calls this at a progress report, until it finds a name."""
+    found: dict[str, str] = {}
+    start = partial_json.find("{")
+    if start < 0:
+        return found
+    i, n = start + 1, len(partial_json)
+
+    def skip(i: int, chars: str) -> int:
+        while i < n and partial_json[i] in chars:
+            i += 1
+        return i
+
+    while True:
+        i = skip(i, _JSON_SPACE + ",")
+        try:
+            key, i = _JSON.raw_decode(partial_json, i)
+            i = skip(i, _JSON_SPACE)
+            if i >= n or partial_json[i] != ":":
+                break
+            i = skip(i + 1, _JSON_SPACE)
+            value, i = _JSON.raw_decode(partial_json, i)
+        except ValueError:
+            break
+        if key in NAME_ARGUMENTS and isinstance(value, str) and value.strip():
+            found[key] = value[:_NAME_MAX_CHARS]
+    return found
 
 
 @dataclass(frozen=True)

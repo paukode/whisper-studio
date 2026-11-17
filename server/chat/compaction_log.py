@@ -9,8 +9,10 @@ Layout: data_root()/compactions/<session_id>.jsonl, one JSON object per line:
   {ts, event: "start", trigger, before_chars}
   {ts, event: "end", outcome, after_chars, detail?}
 
-Current outcomes: "pruned-only" (pure pruning freed enough), "summary",
-"unchanged", "error" (including cancellation), and "orphaned" (synthesized
+Current outcomes: "pruned-only" (clearing freed enough), "summary",
+"unchanged", "summary-failed" (the summary failed while the window had room:
+the turn went on with the cleared history, ``detail`` says why), "error"
+(including cancellation; ``detail`` says why), and "orphaned" (synthesized
 at boot for a crashed bracket). Historical "session-memory" and "truncation"
 records remain readable but are no longer produced. Diagnostics are
 best-effort; an error never authorizes a partial replacement of caller history.

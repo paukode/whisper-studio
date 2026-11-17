@@ -58,6 +58,12 @@ export function withBrowseOption(question: string, options: string[]): string[] 
   return [...withoutOther, 'Browse…'];
 }
 
+/** What a skipped question sends as its answer. The server reads the first
+ *  sentence (SKIPPED_ANSWER_PREFIX in server/ask_user.py) to count a card
+ *  the user skipped; the rest tells the assistant what to do. */
+export const SKIPPED_ANSWER =
+  'The user skipped this question. Decide it yourself: take your recommendation and name the choice as an assumption in your reply.';
+
 /** Interactive single-question card (rows saved with the singular userQuestion). */
 export const UserQuestionCard: React.FC<{
   question: string;
@@ -194,9 +200,9 @@ export const UserQuestionCard: React.FC<{
             </button>
           </div>
         )}
-        {showOtherInput && isAnswered && (
+        {isAnswered && (showOtherInput || (!selectedOption && message.userQuestion?.answer)) && (
           <span style={{ fontSize: '0.85em', color: 'var(--text-muted)' }}>
-            Answered: {selectedOption}
+            Answered: {selectedOption ?? message.userQuestion?.answer}
           </span>
         )}
       </div>
@@ -211,10 +217,13 @@ export const UserQuestionCard: React.FC<{
  * more questions become a stepper: a tab per question, one question on screen
  * at a time, Back and Next to move between them (a tab jumps straight to its
  * question), and a single Submit on the last step that unlocks once every
- * question has an answer. On submit, all answers batch into one continuation
+ * question has an answer. Every question has a Skip button: it answers the
+ * question with SKIPPED_ANSWER (the assistant decides) and, in a stepper,
+ * moves to the next question. On submit, all answers batch into one continuation
  * so Bedrock receives a tool_result for every tool_use it emitted, and each
  * question is marked answered in the store so a re-render or session restore
- * keeps the card disabled.
+ * keeps the card closed. A closed card shows every question in order with
+ * the answer it got, "Skipped", or that it was not answered.
  */
 type UserQuestion = NonNullable<ChatMessageType['userQuestions']>[number];
 
@@ -285,7 +294,8 @@ export const UserQuestionGroupCard: React.FC<{ message: ChatMessageType }> = ({ 
     const custom = customText[q.toolUseId] ?? '';
     // Confirm in text only for answers that aren't a visible option row
     // (a typed answer or a Browse… folder path).
-    const showAnsweredNote = answered !== undefined && !opts.includes(answered);
+    const wasSkipped = answered === SKIPPED_ANSWER;
+    const showAnsweredNote = answered !== undefined && !wasSkipped && !opts.includes(answered);
     return (
       <div key={q.toolUseId || qi} className="user-question-block">
         <div className="user-question-text">{q.question}</div>
@@ -357,7 +367,20 @@ export const UserQuestionGroupCard: React.FC<{ message: ChatMessageType }> = ({ 
               <line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" />
             </svg>
           </button>
+          <button
+            type="button"
+            className={`uq-nav-btn uq-skip${wasSkipped ? ' selected' : ''}`}
+            disabled={closed}
+            onClick={() => {
+              if (closed) return;
+              setAnswer(q.toolUseId, SKIPPED_ANSWER);
+              if (!single && qi < total - 1) setStep(qi + 1);
+            }}
+          >
+            Skip
+          </button>
         </div>
+        {wasSkipped && <span className="uq-answered">Skipped: the assistant decides.</span>}
         {showAnsweredNote && <span className="uq-answered">Answered: {answered}</span>}
         {q.skipped && <span className="uq-answered">Not answered: you sent a new message instead.</span>}
       </div>
@@ -373,7 +396,38 @@ export const UserQuestionGroupCard: React.FC<{ message: ChatMessageType }> = ({ 
         {single ? 'A quick question' : `${total} quick questions`}
       </div>
 
-      {single ? renderQuestion(questions[0], 0) : (
+      {closed ? (
+        /* A closed card is a record: every question in order, each with the
+         * answer the user gave, "Skipped", or that it got no answer. */
+        <ol className="uq-summary">
+          {questions.map((q, qi) => {
+            const given = answers[q.toolUseId] ?? q.answer;
+            const state = q.skipped ? 'unanswered' : given === SKIPPED_ANSWER ? 'skipped' : 'answered';
+            return (
+              <li key={q.toolUseId || qi} className="uq-summary-item">
+                <div className="user-question-text">{single ? q.question : `${qi + 1}. ${q.question}`}</div>
+                <div className={`uq-summary-answer ${state}`}>
+                  {state === 'unanswered' && 'Not answered: you sent a new message instead.'}
+                  {state === 'skipped' && (
+                    <>
+                      <span className="uq-tag">Skipped</span>
+                      <span>The assistant decides.</span>
+                    </>
+                  )}
+                  {state === 'answered' && (
+                    <>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <polyline points="20 6 9 17 4 12" />
+                      </svg>
+                      <span>{given || 'Answered'}</span>
+                    </>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+      ) : single ? renderQuestion(questions[0], 0) : (
         <>
           {/* One tab per question. A check marks the answered ones; a click
            *  jumps straight to that question, in either direction. */}
