@@ -52,8 +52,28 @@ esac
 echo "==> Submitting $(basename "$TARGET") to Apple (waits for the verdict)"
 RESULT="$WORK/result.json"
 # A rejected submission still exits 0 here; the status below decides.
-xcrun notarytool submit "$UPLOAD" "${AUTH[@]}" --wait --output-format json > "$RESULT" \
-    || { cat "$RESULT" >&2 || true; die "notarytool submit failed"; }
+# Apple's notary service answers a 5xx with "Please try again at a later
+# time." when it is overloaded, which fails an artifact that is in order.
+# Submit again a few times for that answer only: a refused login or a bad
+# request is final at once. NOTARY_RETRY_WAIT: seconds before the second
+# attempt (default 30); each later wait is one step longer.
+SUBMIT_ERR="$WORK/submit.err"
+submit() {
+    local attempt wait_s="${NOTARY_RETRY_WAIT:-30}"
+    for attempt in 1 2 3 4 5; do
+        if xcrun notarytool submit "$UPLOAD" "${AUTH[@]}" --wait --output-format json \
+            > "$RESULT" 2> "$SUBMIT_ERR"; then
+            return 0
+        fi
+        cat "$RESULT" "$SUBMIT_ERR" >&2 || true
+        grep -Eqi "HTTP status code: 5[0-9][0-9]|try again" "$RESULT" "$SUBMIT_ERR" || return 1
+        [[ "$attempt" -lt 5 ]] || break
+        echo "    Apple's notary service is busy (attempt $attempt of 5); retrying in $((attempt * wait_s)) s" >&2
+        sleep $((attempt * wait_s))
+    done
+    return 1
+}
+submit || die "notarytool submit failed"
 
 field() { /usr/bin/plutil -extract "$1" raw -o - "$RESULT" 2>/dev/null || true; }
 STATUS="$(field status)"

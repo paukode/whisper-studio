@@ -35,6 +35,8 @@ LLAMA_URL="https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_TAG}/
 # for a source checkout too.
 # shellcheck source=ffmpeg_pin.env
 . "$(dirname "${BASH_SOURCE[0]}")/ffmpeg_pin.env"
+# codesign_retry: signing that survives an unanswered timestamp request.
+. "$(dirname "${BASH_SOURCE[0]}")/sign_retry.sh"
 FFMPEG_ZIP_URL="${FFMPEG_BASE_URL}/ffmpeg.zip"
 FFPROBE_ZIP_URL="${FFMPEG_BASE_URL}/ffprobe.zip"
 
@@ -513,8 +515,7 @@ substep "signing Mach-O files under Resources/ (this can take a while)"
 SIGNED=0
 while IFS= read -r -d '' f; do
     if is_macho "$f"; then
-        codesign "${SIGN_ARGS[@]}" "$f" 2>/dev/null \
-            || codesign "${SIGN_ARGS[@]}" "$f"
+        codesign_retry "${SIGN_ARGS[@]}" "$f" || die "signing failed: $f"
         SIGNED=$((SIGNED + 1))
     fi
 done < <(find "$RES_DIR" -type f -print0)
@@ -528,17 +529,18 @@ substep "signed $SIGNED Mach-O files"
 substep "signing nested bundles"
 NESTED=0
 while IFS=$'\t' read -r _ bundle; do
-    codesign "${SIGN_ARGS[@]}" "$bundle"
+    codesign_retry "${SIGN_ARGS[@]}" "$bundle" || die "signing failed: $bundle"
     NESTED=$((NESTED + 1))
 done < <(find "$RES_DIR" -type d \( -name '*.app' -o -name '*.framework' -o -name '*.xpc' -o -name '*.appex' \) \
     | awk -F/ '{ print NF "\t" $0 }' | sort -rn)
 substep "signed $NESTED nested bundles"
 
 substep "signing main executable"
-codesign "${SIGN_ARGS[@]}" "$CONTENTS_DIR/MacOS/WhisperStudio"
+codesign_retry "${SIGN_ARGS[@]}" "$CONTENTS_DIR/MacOS/WhisperStudio" \
+    || die "signing the main executable failed"
 
 substep "signing app bundle"
-codesign "${SIGN_ARGS[@]}" "$APP_DIR"
+codesign_retry "${SIGN_ARGS[@]}" "$APP_DIR" || die "signing the app bundle failed"
 
 codesign --verify "$APP_DIR" || die "codesign verification failed"
 while IFS= read -r bundle; do
