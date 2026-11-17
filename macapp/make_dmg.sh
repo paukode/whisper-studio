@@ -10,6 +10,8 @@ REPO_ROOT="$(cd "$MACAPP_DIR/.." && pwd)"
 BUILD_DIR="$REPO_ROOT/build-app"
 DIST_DIR="$REPO_ROOT/dist-app"
 APP_DIR="$DIST_DIR/Whisper Studio.app"
+# codesign_retry: signing that survives an unanswered timestamp request.
+. "$MACAPP_DIR/sign_retry.sh"
 
 [[ -d "$APP_DIR" ]] || { echo "ERROR: $APP_DIR not found, run macapp/build_app.sh first" >&2; exit 1; }
 
@@ -59,7 +61,8 @@ rm -rf "$STAGING"
 
 if [[ "$SIGN_IDENTITY" != "-" ]]; then
     echo "==> Signing the DMG ($SIGN_IDENTITY)"
-    codesign --force --timestamp --sign "$SIGN_IDENTITY" "$DMG_PATH"
+    codesign_retry --force --timestamp --sign "$SIGN_IDENTITY" "$DMG_PATH" \
+        || { echo "ERROR: signing the DMG failed" >&2; exit 1; }
     codesign --verify --strict "$DMG_PATH"
 fi
 echo "==> Done: $DMG_PATH"
