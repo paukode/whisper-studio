@@ -52,23 +52,59 @@ esac
 echo "==> Submitting $(basename "$TARGET") to Apple (waits for the verdict)"
 RESULT="$WORK/result.json"
 # A rejected submission still exits 0 here; the status below decides.
-# Apple's notary service answers a 5xx with "Please try again at a later
-# time." when it is overloaded, which fails an artifact that is in order.
-# Submit again a few times for that answer only: a refused login or a bad
-# request is final at once. NOTARY_RETRY_WAIT: seconds before the second
-# attempt (default 30); each later wait is one step longer.
+# Two failures say nothing about the artifact, and only those are tried again:
+#   - Apple's notary service answers a 5xx with "Please try again at a later
+#     time." when it is overloaded: submit again.
+#   - The connection of this machine drops (NSURLErrorDomain). After the
+#     upload Apple holds the submission and continues its check, so ask for
+#     the verdict of the same submission; before the upload, submit again.
+# A refused login or a bad request is final at once. NOTARY_RETRY_WAIT:
+# seconds before the second attempt (default 30); each later wait is one
+# step longer.
 SUBMIT_ERR="$WORK/submit.err"
+RETRY_ANSWER="HTTP status code: 5[0-9][0-9]|try again|NSURLErrorDomain"
+
+# The id of the submission a failed call was about, read from the URL in
+# notarytool's error. Empty when the upload did not get that far.
+submission_id() {
+    grep -Eoh "submissions/[0-9a-fA-F-]{36}" "$RESULT" "$SUBMIT_ERR" 2>/dev/null \
+        | head -1 | cut -d/ -f2 || true
+}
+
+# Wait for Apple's verdict on a submission that is already uploaded.
+await_verdict() {
+    local id="$1" attempt wait_s="${NOTARY_RETRY_WAIT:-30}"
+    for attempt in 1 2 3 4 5; do
+        echo "    the connection dropped; asking for the verdict of $id (attempt $attempt of 5) in $((attempt * wait_s)) s" >&2
+        sleep $((attempt * wait_s))
+        if xcrun notarytool wait "$id" "${AUTH[@]}" --output-format json \
+            > "$RESULT" 2> "$SUBMIT_ERR"; then
+            return 0
+        fi
+        cat "$RESULT" "$SUBMIT_ERR" >&2 || true
+        grep -Eqi "$RETRY_ANSWER" "$RESULT" "$SUBMIT_ERR" || return 1
+    done
+    return 1
+}
+
 submit() {
-    local attempt wait_s="${NOTARY_RETRY_WAIT:-30}"
+    local attempt id wait_s="${NOTARY_RETRY_WAIT:-30}"
     for attempt in 1 2 3 4 5; do
         if xcrun notarytool submit "$UPLOAD" "${AUTH[@]}" --wait --output-format json \
             > "$RESULT" 2> "$SUBMIT_ERR"; then
             return 0
         fi
         cat "$RESULT" "$SUBMIT_ERR" >&2 || true
-        grep -Eqi "HTTP status code: 5[0-9][0-9]|try again" "$RESULT" "$SUBMIT_ERR" || return 1
+        grep -Eqi "$RETRY_ANSWER" "$RESULT" "$SUBMIT_ERR" || return 1
+        if grep -q "NSURLErrorDomain" "$RESULT" "$SUBMIT_ERR"; then
+            id="$(submission_id)"
+            if [[ -n "$id" ]]; then
+                await_verdict "$id"
+                return
+            fi
+        fi
         [[ "$attempt" -lt 5 ]] || break
-        echo "    Apple's notary service is busy (attempt $attempt of 5); retrying in $((attempt * wait_s)) s" >&2
+        echo "    the notary service did not answer (attempt $attempt of 5); retrying in $((attempt * wait_s)) s" >&2
         sleep $((attempt * wait_s))
     done
     return 1
