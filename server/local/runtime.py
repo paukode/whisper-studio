@@ -156,7 +156,19 @@ def ensure_downloaded(key: str) -> str:
     since llama-server needs them all present). MLX: the snapshot directory,
     the whole repo is fetched and a completion marker written last, so a
     half-downloaded snapshot never reads as installed.
+
+    Marked as a fetch in flight for the whole call, so the config/disk sync
+    keeps the entry while its file is still arriving (this path runs outside
+    the download manager: a chat that loads a missing model, the workspace
+    dialog).
     """
+    from server.model_browser.disk_sync import fetching
+
+    with fetching(key):
+        return _ensure_downloaded(key)
+
+
+def _ensure_downloaded(key: str) -> str:
     if is_mlx_model(key):
         return _ensure_mlx_downloaded(key)
     path = gguf_path(key)

@@ -36,6 +36,13 @@ def _entry_or_404(key: str) -> ModelEntry:
 
 @router.get("/catalog")
 async def get_catalog():
+    import asyncio
+
+    from server.model_browser import disk_sync
+
+    # Config and disk first: the rows below must list exactly the local
+    # models whose weights are on disk (or arriving).
+    await asyncio.to_thread(disk_sync.reconcile_quietly)
     manager.reap()
     all_entries = entries()
     sizes.prefetch(all_entries)  # background; fallbacks answer until it lands
@@ -65,7 +72,8 @@ async def get_catalog():
                 "tool_check": _tool_check(entry),
             }
         )
-    return {"models": models}
+    # Changes any reconcile made since the last catalog read, shown once.
+    return {"models": models, "sync_notices": disk_sync.take_notices()}
 
 
 @router.get("/status")
@@ -122,6 +130,26 @@ async def cancel_download(key: str):
 @router.delete("/{key}")
 async def delete_model(key: str):
     entry = _entry_or_404(key)
+    if entry.group == GROUP_LOCAL_CHAT:
+        # A local chat model's file and config entry go together.
+        import asyncio
+
+        from server.model_browser import service
+
+        try:
+            result = await asyncio.to_thread(service.remove_from_list, key)
+        except manager.Conflict as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
+        stopped = bool(result.get("stopped_llama_server"))
+        return {
+            **result,
+            "deleted": bool(result.get("weights_deleted")),
+            "message": (
+                "Stopped the local model server that was serving this model, then deleted it."
+                if stopped
+                else "Model deleted."
+            ),
+        }
     try:
         result = manager.delete(entry)
     except manager.Conflict as e:

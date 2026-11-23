@@ -442,6 +442,10 @@ async def lifespan(app):
     # everything lazily anyway, so a warmup failure only costs the first
     # user a wait — best-effort by design.
     spawn(asyncio.to_thread(_warm_transcription_models), name="model-warmup")
+    # Local chat models: config entries and weights on disk become one set.
+    from server.model_browser import disk_sync
+
+    spawn(asyncio.to_thread(disk_sync.reconcile_quietly), name="model-disk-sync")
     _start_parent_watchdog()
     # Unified background-task framework: capture the server loop for
     # thread-safe session-event emission, then reconcile leases left

@@ -54,11 +54,10 @@ def _seed_local_registry(monkeypatch):
 
 
 def test_registry_is_empty_without_config_entries(monkeypatch):
-    """The app ships no local models, and a recommended model's weights on
-    disk with no config entry (left by a release before 2026-08-06) do not
-    bring it back: only chat_models entries count."""
+    """The app ships no local models, and the registry reads only chat_models
+    entries. Weights on disk with no entry come back through the config/disk
+    sync (server/model_browser/disk_sync.py), which writes the entry."""
     monkeypatch.setattr(R, "_config_local_models", lambda: {})
-    monkeypatch.setattr(R, "_recommended_downloaded_on_disk", lambda entry: True)
     assert R.local_models() == {}
 
 

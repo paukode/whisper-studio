@@ -628,3 +628,14 @@ def delete(entry: ModelEntry) -> dict:
         tool_check.forget(entry.key)
     log.info("Model deleted: %s (%s).", entry.key, root)
     return {"deleted": True, "dequeued": dequeued, "stopped_llama_server": stopped}
+
+
+def forget(key: str) -> None:
+    """Drop every in-memory record of ``key`` (last error, progress mark, tool
+    check) once its config entry is gone, so a later install starts clean."""
+    with _lock:
+        _errors.pop(key, None)
+        _progress_max.pop(key, None)
+    from server.models_manager import tool_check
+
+    tool_check.forget(key)

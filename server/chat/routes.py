@@ -308,7 +308,11 @@ async def models_endpoint():
     from server.chat.infra import mode_chat_catalog
     from server.infrastructure.config import load_config
     from server.infrastructure.effort import default_effort_for, effort_levels_for
+    from server.model_browser import disk_sync
 
+    # The picker lists local models from the config; match it to the disk
+    # first, so a model whose file is gone is not offered.
+    await asyncio.to_thread(disk_sync.reconcile_quietly)
     # The same workspace-aware catalog a turn latches, so a model the connected
     # project hides (or defines) is hidden (or offered) here too. Only the
     # models runnable in the active mode are shown, in config order. The list
