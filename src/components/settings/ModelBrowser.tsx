@@ -11,10 +11,11 @@ import {
   type MemFit,
   type RecommendedModel,
 } from '@/api/modelBrowser';
-import { useSettingsStore } from '@/stores/settingsStore';
 import { useUIStore } from '@/stores/uiStore';
 import { humanSize } from '@/utils/humanSize';
 import { toError } from '@/utils/toError';
+import { DeleteLocalModelButton } from './DeleteLocalModelButton';
+import { refreshModelLists } from './refreshModelLists';
 
 /** Compact download count: 4685368 → "4.7M", 308619 → "309K". */
 const humanCount = (n: number | null | undefined): string => {
@@ -122,21 +123,6 @@ const ToolCapabilityNote: React.FC<{ minParamsB?: number | null }> = ({ minParam
   </p>
 );
 
-type QueryClient = ReturnType<typeof useQueryClient>;
-
-/** After any install, surface the new download row in the manager list above and
- *  refresh the composer picker so the model appears once installed. */
-async function refreshAfterInstall(queryClient: QueryClient): Promise<void> {
-  await queryClient.invalidateQueries({ queryKey: ['models-manager-catalog'] });
-  await queryClient.invalidateQueries({ queryKey: ['models-manager-status'] });
-  await queryClient.invalidateQueries({ queryKey: ['models-disabled'] });
-  // The browse lists carry install/download state per row now — refetch them
-  // so the row just clicked flips to "downloading" instead of staying clickable.
-  await queryClient.invalidateQueries({ queryKey: ['model-browse-search'] });
-  await queryClient.invalidateQueries({ queryKey: ['model-browse-recommended'] });
-  await useSettingsStore.getState().loadModels();
-}
-
 /** The success toast for an install, shared by search and recommended installs.
  *  Mentions index-LLM adoption when the first local install flipped it. */
 function installToast(res: InstallResult) {
@@ -187,8 +173,14 @@ const RepoRow: React.FC<{ result: BrowseResult }> = ({ result }) => {
   // picked yet, so a user's manual pick is never overridden by a refetch).
   const detail = detailQuery.data;
   const quants = detail?.quants ?? [];
+  // An installed quant is the default pick, so its row offers Delete at once
+  // (before the quant list is ever fetched); else the recommended quant.
   const effectiveSelected =
-    selected ?? detail?.recommended_filename ?? quants[0]?.filename ?? null;
+    selected ??
+    result.installed_filenames?.[0] ??
+    detail?.recommended_filename ??
+    quants[0]?.filename ??
+    null;
   const selectedQuant = isMlx ? quants[0] : quants.find((q) => q.filename === effectiveSelected);
   const selectedFit = selectedQuant?.fit;
   // Known from the search row alone, so the chip and note render before the
@@ -204,6 +196,11 @@ const RepoRow: React.FC<{ result: BrowseResult }> = ({ result }) => {
       : effectiveSelected && (result.downloading_filenames ?? []).includes(effectiveSelected)
         ? 'downloading'
         : null;
+  // The config key of the installed quant this row shows, for its Delete.
+  const installedKey =
+    selectionState === 'installed'
+      ? result.installed_keys?.[isMlx ? '' : (effectiveSelected ?? '')]
+      : undefined;
   const activate = () => setActivated(true);
 
   const onInstall = async () => {
@@ -216,7 +213,7 @@ const RepoRow: React.FC<{ result: BrowseResult }> = ({ result }) => {
         format: result.format ?? undefined,
       });
       addToast(installToast(res));
-      await refreshAfterInstall(queryClient);
+      await refreshModelLists(queryClient);
     } catch (e) {
       addToast({
         type: 'error',
@@ -304,28 +301,36 @@ const RepoRow: React.FC<{ result: BrowseResult }> = ({ result }) => {
               </select>
             </>
           )}
-          <button
-            className="btn btn-primary btn-sm"
-            type="button"
-            disabled={
-              installing ||
-              selectionState !== null ||
-              (!isMlx && (!hasQuants || !effectiveSelected))
-            }
-            onFocus={activate}
-            onMouseEnter={activate}
-            onClick={() => void onInstall()}
-          >
-            {selectionState === 'installed'
-              ? 'Installed'
-              : selectionState === 'downloading'
-                ? 'Downloading…'
-                : installing
-                  ? 'Adding…'
-                  : selectedFit === 'too_big'
-                    ? 'Download anyway'
-                    : 'Download'}
-          </button>
+          {selectionState === 'installed' && installedKey ? (
+            <DeleteLocalModelButton
+              modelKey={installedKey}
+              label={`${result.name}${isMlx ? '' : ` ${selectedQuant?.quant ?? ''}`}`.trim()}
+              bytes={selectedQuant?.size_bytes}
+            />
+          ) : (
+            <button
+              className="btn btn-primary btn-sm"
+              type="button"
+              disabled={
+                installing ||
+                selectionState !== null ||
+                (!isMlx && (!hasQuants || !effectiveSelected))
+              }
+              onFocus={activate}
+              onMouseEnter={activate}
+              onClick={() => void onInstall()}
+            >
+              {selectionState === 'installed'
+                ? 'Installed'
+                : selectionState === 'downloading'
+                  ? 'Downloading…'
+                  : installing
+                    ? 'Adding…'
+                    : selectedFit === 'too_big'
+                      ? 'Download anyway'
+                      : 'Download'}
+            </button>
+          )}
         </div>
       </div>
       <FitWarning
@@ -374,7 +379,7 @@ const RecommendedRow: React.FC<{ model: RecommendedModel }> = ({ model }) => {
     try {
       const res = await installRecommendedModel(model.key);
       addToast(installToast(res));
-      await refreshAfterInstall(queryClient);
+      await refreshModelLists(queryClient);
     } catch (e) {
       addToast({
         type: 'error',
@@ -422,9 +427,16 @@ const RecommendedRow: React.FC<{ model: RecommendedModel }> = ({ model }) => {
       </div>
       <div className="settings-item-actions" style={{ gap: 8 }}>
         {model.downloaded ? (
-          <span className="model-installed-badge" style={{ fontSize: 13, color: 'var(--accent-live)' }}>
-            Installed
-          </span>
+          <>
+            <span className="model-installed-badge" style={{ fontSize: 13, color: 'var(--accent-live)' }}>
+              Installed
+            </span>
+            <DeleteLocalModelButton
+              modelKey={model.key}
+              label={model.label}
+              bytes={model.size_bytes}
+            />
+          </>
         ) : (
           <button
             className="btn btn-primary btn-sm"

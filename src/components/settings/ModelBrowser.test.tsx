@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 // The browser talks to /api/models/browse/* through the shared api client; stub
@@ -563,14 +563,15 @@ describe('ModelBrowser (Discover)', () => {
     expect(api.post).not.toHaveBeenCalled();
   });
 
-  it('marks an installed GGUF quant on the row and per selected quant', async () => {
+  it('offers Delete for the installed GGUF quant, Download for the others', async () => {
     const installed = {
       count: 1,
       results: [
         {
           ...SEARCH.results[0],
           install_state: 'installed',
-          installed_filenames: ['Qwen3-0.6B-Q4_K_M.gguf'],
+          installed_filenames: ['Qwen3-0.6B-Q2_K.gguf'],
+          installed_keys: { 'Qwen3-0.6B-Q2_K.gguf': 'local_unsloth_qwen3_0_6b_gguf__q2_k' },
         },
       ],
     };
@@ -580,21 +581,76 @@ describe('ModelBrowser (Discover)', () => {
       if (url === '/api/models') return Promise.resolve({ models: [], default: '' });
       return Promise.resolve({});
     });
+    api.del.mockResolvedValue({ key: 'x', scope: 'local', weights_deleted: true });
     renderBrowser();
     await screen.findByText('Qwen3-0.6B-GGUF');
     expect(screen.getByText('installed')).toBeInTheDocument();
 
-    // The recommended (installed) quant pre-selects: button reads Installed
-    // and refuses; the OTHER quant of the same repo stays downloadable.
+    // The installed quant is the default pick, even over the recommended one,
+    // so Delete shows before the quant list is fetched.
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled();
+
+    // Another quant of the same repo stays downloadable.
     const select = screen.getByRole('combobox', {
       name: /choose a quant for Qwen3-0\.6B-GGUF/i,
     }) as HTMLSelectElement;
     fireEvent.focus(select);
-    await waitFor(() => expect(select.value).toBe('Qwen3-0.6B-Q4_K_M.gguf'));
-    expect(screen.getByRole('button', { name: 'Installed' })).toBeDisabled();
-
-    fireEvent.change(select, { target: { value: 'Qwen3-0.6B-Q2_K.gguf' } });
+    await waitFor(() => expect(select.value).toBe('Qwen3-0.6B-Q2_K.gguf'));
+    fireEvent.change(select, { target: { value: 'Qwen3-0.6B-Q4_K_M.gguf' } });
     expect(screen.getByRole('button', { name: 'Download' })).toBeEnabled();
+
+    // Back on the installed quant, Delete removes exactly that quant's entry.
+    fireEvent.change(select, { target: { value: 'Qwen3-0.6B-Q2_K.gguf' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Delete' }));
+    await waitFor(() =>
+      expect(api.del).toHaveBeenCalledWith(
+        '/api/models/browse/local_unsloth_qwen3_0_6b_gguf__q2_k/entry',
+      ),
+    );
+  });
+
+  it('an installed recommended model offers the same Delete as Models', async () => {
+    api.get.mockImplementation((url: string) => {
+      if (url === '/api/models/browse/recommended') {
+        return Promise.resolve({
+          count: 1,
+          recommended: [
+            {
+              key: 'local_gemma',
+              repo_id: 'google/gemma-4-12B-it-qat-q4_0-gguf',
+              author: 'google',
+              name: 'gemma-4-12B-it-qat-q4_0-gguf',
+              label: 'Gemma 4 12B (Local)',
+              filename: 'gemma-4-12b-it-qat-q4_0.gguf',
+              quant: 'Q4_0',
+              param_size: '12B',
+              ctx: 32768,
+              supports_tools: true,
+              downloaded: true,
+              downloading: false,
+              size_bytes: 6_975_879_296,
+            },
+          ],
+        });
+      }
+      if (url.startsWith('/api/models/browse/search'))
+        return Promise.resolve({ count: 0, results: [] });
+      if (url === '/api/models') return Promise.resolve({ models: [], default: '' });
+      return Promise.resolve({});
+    });
+    api.del.mockResolvedValue({ key: 'local_gemma', scope: 'local', weights_deleted: true });
+    renderBrowser();
+    await screen.findByText('Gemma 4 12B (Local)');
+
+    expect(screen.getByText('Installed')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Delete Gemma 4 12B (Local)?')).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+    await waitFor(() =>
+      expect(api.del).toHaveBeenCalledWith('/api/models/browse/local_gemma/entry'),
+    );
   });
 
   it('disables a recommended row while its download is in flight', async () => {

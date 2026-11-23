@@ -59,8 +59,18 @@ export interface ManagedModelStatus {
   tool_check?: ToolCheck | null;
 }
 
+/** A change the server's config/disk sync made to the local chat models: a
+ *  file found on disk and added, or an entry removed because its file is gone
+ *  (a failed or cancelled download, a file deleted outside the app). */
+export interface ModelSyncNotice {
+  kind: 'adopted' | 'removed';
+  key: string;
+  label: string;
+  reason?: string;
+}
+
 export const fetchModelsCatalog = () =>
-  get<{ models: ManagedModel[] }>('/api/models/catalog');
+  get<{ models: ManagedModel[]; sync_notices?: ModelSyncNotice[] }>('/api/models/catalog');
 
 export const fetchModelsStatus = () =>
   get<{ models: Record<string, ManagedModelStatus> }>('/api/models/status');
