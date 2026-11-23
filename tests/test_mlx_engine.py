@@ -48,7 +48,6 @@ GGUF_ENTRY = {
 
 def _seed_registry(monkeypatch, entries):
     monkeypatch.setattr(R, "_config_local_models", lambda: dict(entries))
-    monkeypatch.setattr(R, "_recommended_downloaded_on_disk", lambda entry: False)
 
 
 # ------------------------------------------------------------------ registry
@@ -592,7 +591,6 @@ def test_search_rows_carry_install_state(monkeypatch):
 def test_recommended_rows_carry_a_live_downloading_flag(monkeypatch):
     from server.local import registry as reg
 
-    monkeypatch.setattr(reg, "_recommended_downloaded_on_disk", lambda entry: False)
     monkeypatch.setattr(reg, "_config_local_models", lambda: {})
     some_key = next(iter(reg.RECOMMENDED_LOCAL_MODELS))
     _seed_install_states(monkeypatch, {some_key: "downloading"})
@@ -624,7 +622,6 @@ def test_engine_field_survives_the_real_config_normalizer(monkeypatch, tmp_path)
     assert meta["local_mlx"]["engine"] == "mlx"
 
     monkeypatch.setattr("server.infrastructure.config.unfiltered_chat_models", lambda: (ids, meta))
-    monkeypatch.setattr(R, "_recommended_downloaded_on_disk", lambda entry: False)
     models = R.local_models()
     assert "local_mlx" in models, "normalizer must carry engine or mlx entries vanish"
     assert models["local_mlx"]["engine"] == "mlx"

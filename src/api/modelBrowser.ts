@@ -46,6 +46,9 @@ export interface BrowseResult {
    *  where the repo itself is the unit), so the picker can mark per quant. */
   installed_filenames?: string[];
   downloading_filenames?: string[];
+  /** Installed quant filename -> its config key ("" for MLX), so the row can
+   *  delete exactly the quant it shows. */
+  installed_keys?: Record<string, string>;
 }
 
 /** Whether a quant can run alongside this machine's other resident models:
@@ -123,7 +126,8 @@ export interface RecommendedModel {
   param_size: string | null;
   ctx: number | null;
   supports_tools: boolean;
-  /** Already present on disk (from a prior install or release). */
+  /** Installed: in your models with its file on disk (the same state the
+   *  Models tab shows). */
   downloaded: boolean;
   /** Download currently running or queued for this model. */
   downloading?: boolean;

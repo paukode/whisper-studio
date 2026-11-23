@@ -12,7 +12,7 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 
-from server.model_browser import compat, gguf_kv, hf_client, install
+from server.model_browser import compat, disk_sync, gguf_kv, hf_client, install
 
 log = logging.getLogger("whisper-studio")
 
@@ -147,20 +147,17 @@ def _norm_fmt(fmt: str | None) -> str:
     return "mlx" if fmt == "mlx" else "gguf"
 
 
-def _downloading_keys() -> set[str]:
-    """Registry keys whose download is running or queued right now. Lets the
-    Recommended section disable its button mid-download instead of only after
-    the weights land."""
+def _local_states() -> dict[str, str]:
+    """Download-manager state per local chat key in the config, the SAME source
+    the Models tab renders, so Discover can never call a model installed that
+    Models does not list. A key with no config entry has no state."""
     from server.models_manager import catalog, manager
 
-    keys: set[str] = set()
-    for e in catalog.entries():
-        if e.group != catalog.GROUP_LOCAL_CHAT:
-            continue
-        state, _err = manager.state_of(e)
-        if state in ("downloading", "queued"):
-            keys.add(e.key)
-    return keys
+    return {
+        e.key: manager.state_of(e)[0]
+        for e in catalog.entries()
+        if e.group == catalog.GROUP_LOCAL_CHAT
+    }
 
 
 def repo_detail(repo_id: str, fmt: str = "gguf") -> dict:
@@ -339,7 +336,16 @@ def install_recommended(key: str) -> dict:
 def _finalize_install(key: str, entry: dict) -> dict:
     """Write the config entry, enqueue the download, and (on the user's first
     local install) adopt the on-device model for the index LLM. Shared by the
-    searched-install and recommended-install paths."""
+    searched-install and recommended-install paths.
+
+    Held under the disk-sync lock: between the config write and the download
+    start the entry has no file and no job, so a reconcile in that gap would
+    remove it."""
+    with disk_sync.LOCK:
+        return _finalize_install_locked(key, entry)
+
+
+def _finalize_install_locked(key: str, entry: dict) -> dict:
     install.write_entry(key, entry)
 
     # The registry now merges the entry in, so the catalog derives a download
@@ -387,8 +393,9 @@ def recommended() -> list[dict]:
     mem = _memory_fields()
     total_mem = mem["mem_total_bytes"]
     reserved = mem["mem_reserved_bytes"]
-    downloading_keys = _downloading_keys()
-    catalog = registry.recommended_models()
+    disk_sync.reconcile_quietly()
+    states = _local_states()
+    catalog = registry.RECOMMENDED_LOCAL_MODELS
 
     # One header per model: the weights on disk when downloaded, else a ranged
     # read on Hugging Face (cached after the first open, run side by side).
@@ -417,8 +424,8 @@ def recommended() -> list[dict]:
                 "param_size": compat.param_size_label(repo),
                 "ctx": meta.get("ctx"),
                 "supports_tools": bool(meta.get("supports_tools")),
-                "downloaded": bool(meta.get("downloaded")),
-                "downloading": key in downloading_keys,
+                "downloaded": states.get(key) == "installed",
+                "downloading": states.get(key) in ("downloading", "queued"),
                 "size_bytes": size_bytes,
                 "fit": compat.fit_verdict(size_bytes, total_mem, reserved, kv_bytes),
                 "needed_bytes": compat.needed_bytes(size_bytes, kv_bytes),
@@ -464,6 +471,11 @@ def remove_from_list(key: str) -> dict:
     hidden via the recoverable ``chat_models_disabled`` list instead.
     Any running/queued download is cancelled first so the delete isn't refused.
     """
+    with disk_sync.LOCK:
+        return _remove_from_list_locked(key)
+
+
+def _remove_from_list_locked(key: str) -> dict:
     stopped, weights_deleted = _delete_weights(key)
 
     if install.is_local_model(key):

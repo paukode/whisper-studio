@@ -400,11 +400,6 @@ def test_registry_sees_user_added_model(monkeypatch):
         },
     )
     cfg._invalidate_cache()
-    # No local model ships by default, so pin the on-disk check off — the user's
-    # addition must stand on its own without a downloaded recommendation.
-    monkeypatch.setattr(
-        "server.local.registry._recommended_downloaded_on_disk", lambda entry: False
-    )
     try:
         from server.local.registry import local_models
 

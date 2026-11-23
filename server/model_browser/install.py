@@ -285,7 +285,9 @@ def small_model_tool_notices() -> list[tuple[str, str]]:
 
 @config_mod.edits_user_config
 def remove_entry(key: str) -> bool:
-    """Drop ``key`` from the USER layer's ``chat_models``; return whether it was
+    """Drop ``key`` from the USER layer's ``chat_models``, and from the
+    ``chat_models_disabled`` hide-list, so a deleted local model leaves no
+    trace and a later install starts visible. Returns whether the entry was
     present. Leaves the file minimal (drops an emptied ``chat_models``)."""
     raw = config_mod._load_user_config()
     cm = raw.get("chat_models")
@@ -296,6 +298,9 @@ def remove_entry(key: str) -> bool:
         raw["chat_models"] = cm
     else:
         raw.pop("chat_models", None)
+    disabled = raw.get("chat_models_disabled")
+    if isinstance(disabled, list) and key in disabled:
+        raw["chat_models_disabled"] = [k for k in disabled if k != key]
     config_mod.save_config(raw)
     log.info("Model browser removed %s from the user config.", key)
     return True

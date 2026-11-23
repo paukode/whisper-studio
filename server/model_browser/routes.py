@@ -30,6 +30,10 @@ async def browse_search(
     widens to all of HF. Only engine-runnable architectures are returned."""
     import asyncio
 
+    from server.model_browser import disk_sync
+
+    # The rows' installed chips read the config; match it to the disk first.
+    await asyncio.to_thread(disk_sync.reconcile_quietly)
     results = await asyncio.to_thread(
         search.search,
         q,

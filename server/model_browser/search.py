@@ -91,7 +91,8 @@ def _runnable(fmt: str, hit: hf_client.SearchHit) -> bool:
 
 
 def _install_annotations(fmt: str) -> dict[str, dict]:
-    """``repo_id -> {"installed": [filenames], "downloading": [filenames]}`` for
+    """``repo_id -> {"installed": [filenames], "downloading": [filenames],
+    "keys": {filename: key}}`` for
     every registry model of this format, so search rows can say "you already
     have this" instead of letting the user queue the same multi-GB download
     twice. Download state comes from the models-manager queue (the SAME source
@@ -110,9 +111,10 @@ def _install_annotations(fmt: str) -> dict[str, dict]:
         if entry is None:
             continue
         state, _err = manager.state_of(entry)
-        slot = out.setdefault(m["repo_id"], {"installed": [], "downloading": []})
+        slot = out.setdefault(m["repo_id"], {"installed": [], "downloading": [], "keys": {}})
         if state == "installed":
             slot["installed"].append(m.get("filename") or "")
+            slot["keys"][m.get("filename") or ""] = key
         elif state in ("downloading", "queued"):
             slot["downloading"].append(m.get("filename") or "")
     return out
@@ -271,6 +273,9 @@ def search(
         installed = ann.get("installed") or []
         downloading = ann.get("downloading") or []
         row["installed_filenames"] = installed
+        # filename -> config key of each installed quant ("" for MLX), so the
+        # row can delete exactly the quant it shows.
+        row["installed_keys"] = ann.get("keys") or {}
         row["downloading_filenames"] = downloading
         row["install_state"] = "installed" if installed else "downloading" if downloading else None
 

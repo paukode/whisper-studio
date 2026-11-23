@@ -48,7 +48,6 @@ mid-download.
 from __future__ import annotations
 
 import logging
-import os
 
 log = logging.getLogger("whisper-studio")
 
@@ -155,27 +154,6 @@ def _config_local_models() -> dict[str, dict]:
                 entry[field] = m[field]
         out[key] = entry
     return out
-
-
-def _recommended_downloaded_on_disk(entry: dict) -> bool:
-    """Whether a recommended model's weights are already present. Checks the GGUF
-    path directly (models_root/dir/filename) rather than via runtime.is_downloaded,
-    which would recurse through local_models() (this function)."""
-    from server.infrastructure.paths import models_root
-
-    d, fn = entry.get("dir"), entry.get("filename")
-    if not d or not fn:
-        return False
-    return os.path.exists(os.path.join(models_root(), d, fn))
-
-
-def recommended_models() -> dict[str, dict]:
-    """The curated Discover catalog with a ``downloaded`` flag per entry. Not
-    filtered by anything, the Discover tab shows every recommendation."""
-    return {
-        key: {**entry, "downloaded": _recommended_downloaded_on_disk(entry)}
-        for key, entry in RECOMMENDED_LOCAL_MODELS.items()
-    }
 
 
 def local_models() -> dict[str, dict]:

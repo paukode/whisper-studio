@@ -8,15 +8,14 @@ import {
   startModelDownload,
 } from '@/api/models';
 import type { ManagedModel, ManagedModelGroup, ManagedModelStatus, ToolCheck } from '@/api/models';
-import { removeModelFromList } from '@/api/modelBrowser';
 import { useUIStore } from '@/stores/uiStore';
-import { useSettingsStore } from '@/stores/settingsStore';
 import { humanSize } from '@/utils/humanSize';
-import { ContextMenu, type MenuItem } from '@/components/common/ContextMenu';
 import { ChatModelVisibility } from './ChatModelVisibility';
 import { ConfigJsonLink } from './ConfigEditorDialog';
 import { ConfirmDialog } from './ConfirmDialog';
+import { DeleteLocalModelButton } from './DeleteLocalModelButton';
 import { ModelBrowser } from './ModelBrowser';
+import { refreshModelLists } from './refreshModelLists';
 
 const GROUPS: { id: ManagedModelGroup; label: string; hint: string }[] = [
   {
@@ -164,11 +163,6 @@ export const ModelsPanel: React.FC<{ section?: ModelSection }> = ({ section }) =
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const [confirmDelete, setConfirmDelete] = useState<ManagedModel | null>(null);
-  const [confirmRemove, setConfirmRemove] = useState<ManagedModel | null>(null);
-  // The row whose "…" overflow menu is open, with its anchor coordinates.
-  const [menuFor, setMenuFor] = useState<{ model: ManagedModel; x: number; y: number } | null>(
-    null,
-  );
   const addToast = useUIStore((s) => s.addToast);
 
   const catalogQuery = useQuery({
@@ -223,16 +217,29 @@ export const ModelsPanel: React.FC<{ section?: ModelSection }> = ({ section }) =
     statusQuery.dataUpdatedAt,
   ]);
 
-  const refresh = useCallback(async () => {
-    await queryClient.invalidateQueries({ queryKey: ['models-manager-catalog'] });
-    await queryClient.invalidateQueries({ queryKey: ['models-manager-status'] });
-    await queryClient.invalidateQueries({ queryKey: ['models-disabled'] });
-    // Refresh the composer's model list too. Delete and remove-from-list change
-    // which local models exist, and the composer reads the zustand settingsStore
-    // (not react-query), so without this a removed/deleted model lingers in the
-    // picker until an app reload. Matches ChatModelVisibility's toggle path.
-    await useSettingsStore.getState().loadModels();
-  }, [queryClient]);
+  const refresh = useCallback(() => refreshModelLists(queryClient), [queryClient]);
+
+  // The server keeps local chat models in config and on disk as one set. Say
+  // what its last sync changed: a model found on disk and added, or an entry
+  // removed (with why, e.g. the reason a download failed). The catalog hands
+  // each notice out once; the other lists refetch so every tab agrees.
+  const syncNotices = catalogQuery.data?.sync_notices;
+  useEffect(() => {
+    if (!syncNotices?.length) return;
+    for (const n of syncNotices) {
+      addToast(
+        n.kind === 'adopted'
+          ? { type: 'info', message: `${n.label} was found on disk and added to your models.` }
+          : {
+              type: 'error',
+              message: `${n.label} was removed from your models: ${n.reason ?? 'its file is not on disk.'}`,
+              duration: 10000,
+            },
+      );
+    }
+    void refreshModelLists(queryClient);
+    // refreshModelLists refetches the catalog too; that answer has no notices.
+  }, [syncNotices, addToast, queryClient]);
 
   const run = useCallback(
     async (key: string, action: () => Promise<unknown>, failLabel: string) => {
@@ -311,19 +318,6 @@ export const ModelsPanel: React.FC<{ section?: ModelSection }> = ({ section }) =
       },
       `Could not delete ${m.label}`,
     );
-  const onRemoveFromList = (m: ManagedModel) =>
-    void run(
-      m.key,
-      async () => {
-        // Offered only on local-chat rows, so the files are deleted.
-        await removeModelFromList(m.key);
-        addToast({
-          type: 'success',
-          message: `${m.label} removed. Download it again any time from Discover.`,
-        });
-      },
-      `Could not remove ${m.label}`,
-    );
 
   return (
     <div className="settings-panel models-panel">
@@ -370,7 +364,7 @@ export const ModelsPanel: React.FC<{ section?: ModelSection }> = ({ section }) =
               {group.id === 'local-chat' && (
                 <>
                   {' '}
-                  Add more in Discover, or edit <ConfigJsonLink />.
+                  Add more in Discover. Change a model&apos;s settings in <ConfigJsonLink />.
                 </>
               )}
             </p>
@@ -424,37 +418,14 @@ export const ModelsPanel: React.FC<{ section?: ModelSection }> = ({ section }) =
                           Cancel
                         </button>
                       ) : group.id === 'local-chat' ? (
-                        // Local chat rows carry a "…" overflow menu (Delete
-                        // downloaded files / Remove from list) plus a
-                        // Download/Retry when there's nothing installed yet.
-                        // Delete removes only the weights; Remove from list
-                        // takes the model out of the picker entirely.
-                        <>
-                          {!m.installed && (
-                            <button
-                              className="btn btn-primary btn-sm"
-                              type="button"
-                              disabled={isBusy}
-                              onClick={() => onDownload(m)}
-                            >
-                              {m.state === 'error' ? 'Retry' : 'Download'}
-                            </button>
-                          )}
-                          <button
-                            className="btn btn-sm model-row-more"
-                            type="button"
-                            disabled={isBusy}
-                            aria-label={`More actions for ${m.label}`}
-                            aria-haspopup="menu"
-                            title="More actions"
-                            onClick={(e) => {
-                              const r = e.currentTarget.getBoundingClientRect();
-                              setMenuFor({ model: m, x: r.right, y: r.bottom + 4 });
-                            }}
-                          >
-                            …
-                          </button>
-                        </>
+                        // One Delete: the file and the config entry go
+                        // together, the same action Discover offers.
+                        <DeleteLocalModelButton
+                          modelKey={m.key}
+                          label={m.label}
+                          bytes={m.bytes_on_disk}
+                          disabled={isBusy}
+                        />
                       ) : m.installed ? (
                         <button
                           className="btn btn-sm"
@@ -506,66 +477,13 @@ export const ModelsPanel: React.FC<{ section?: ModelSection }> = ({ section }) =
 
       {showVisibility && <ChatModelVisibility />}
 
-      {menuFor &&
-        (() => {
-          const m = menuFor.model;
-          const hasFiles = m.installed || m.bytes_on_disk > 0;
-          const items: MenuItem[] = [];
-          if (hasFiles) {
-            items.push({
-              label: 'Delete downloaded files',
-              danger: true,
-              onClick: () => setConfirmDelete(m),
-            });
-          }
-          items.push({
-            label: 'Remove from list',
-            danger: true,
-            onClick: () => setConfirmRemove(m),
-          });
-          return (
-            <ContextMenu
-              items={items}
-              position={{ x: menuFor.x, y: menuFor.y }}
-              onClose={() => setMenuFor(null)}
-              className="ws-context-menu--compact"
-            />
-          );
-        })()}
-
-      {confirmRemove && (
-        <ConfirmDialog
-          title={`Remove ${confirmRemove.label} from the list?`}
-          message={
-            <>
-              This deletes the model everywhere &mdash; the list, the chat model picker
-              {confirmRemove.installed || confirmRemove.bytes_on_disk > 0
-                ? `, and its ${humanSize(confirmRemove.bytes_on_disk)} of weights on disk`
-                : ''}
-              . You can download it again any time from the Discover tab.
-            </>
-          }
-          confirmLabel="Remove"
-          danger
-          onConfirm={() => {
-            const m = confirmRemove;
-            setConfirmRemove(null);
-            onRemoveFromList(m);
-          }}
-          onCancel={() => setConfirmRemove(null)}
-        />
-      )}
-
       {confirmDelete && (
         <ConfirmDialog
           title={`Delete ${confirmDelete.label}?`}
           message={
             <>
-              This removes {humanSize(confirmDelete.bytes_on_disk)} from disk
-              {confirmDelete.group === 'local-chat'
-                ? '. If this model is currently loaded, its local model server is stopped first. '
-                : '. '}
-              You can download it again at any time.
+              This removes {humanSize(confirmDelete.bytes_on_disk)} from disk. You can download it
+              again at any time.
             </>
           }
           confirmLabel="Delete"
