@@ -319,7 +319,7 @@ def _gpt(monkeypatch, rounds):
     monkeypatch.setattr(oai, "build_client", lambda region: SimpleNamespace(responses=responses))
     monkeypatch.setattr(oai, "region_for", lambda mk: "us-east-2")
     adapter = OpenAIResponsesAdapter(
-        model_key="gpt6.1-sol",
+        model_key="gpt6.2-sol",
         model_id="openai.gpt-5.6-sol",
         system_prompt="sys",
         effort_label="high",
@@ -488,9 +488,9 @@ def test_the_usage_frame_prices_a_long_context_round_at_the_long_rate(_quiet_tur
         if line.startswith("data: {")
     ]
     (frame,) = [f["usage"] for f in frames if "usage" in f]
-    long_cost = tracker.call_cost("gpt6.1-sol", 300_000, 100, 290_000)
+    long_cost = tracker.call_cost("gpt6.2-sol", 300_000, 100, 290_000)
     assert frame["estimated_cost_usd"] == pytest.approx(long_cost, abs=1e-6)
-    assert long_cost > tracker.estimate_cost("gpt6.1-sol", 300_000, 100, 290_000)
+    assert long_cost > tracker.estimate_cost("gpt6.2-sol", 300_000, 100, 290_000)
 
 
 # ── side-task invoke_model ───────────────────────────────────────────────────

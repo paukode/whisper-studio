@@ -137,7 +137,7 @@ def _old_db(tmp_path):
         ("s3", 905, "haiku", 10, 1, 0, 0, 0.0),
         ("dream", 0, "haiku", 10, 1, 0, 0, 0.0),
         ("voice-abc-1234", 0, "haiku", 10, 1, 0, 0, 0.0),
-        ("s4", 0, "gpt6-astra", 0, 25, 0, 0, 0.0),
+        ("s4", 0, "gpt6.2-astra", 0, 25, 0, 0, 0.0),
     ]
     conn.executemany(
         "INSERT INTO session_costs (session_id, turn_number, model, input_tokens, "

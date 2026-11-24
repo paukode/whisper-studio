@@ -29,9 +29,15 @@
       "context_window": 1000000,
       "supports_ultracode": false
     },
-    "gpt6.1-sol": {
-      "id": "openai.gpt-6.1-sol",
-      "label": "GPT-6.1 Sol",
+    "gpt6.2-astra": {
+      "id": "openai.gpt-6.2-astra",
+      "label": "GPT-6.2 Astra",
+      "context_window": 922000,
+      "provider": "openai_bedrock"
+    },
+    "gpt6.2-sol": {
+      "id": "openai.gpt-6.2-sol",
+      "label": "GPT-6.2 Sol",
       "context_window": 922000,
       "provider": "openai_bedrock"
     },
@@ -40,13 +46,6 @@
       "label": "GPT-6.1 Terra",
       "context_window": 922000,
       "provider": "openai_bedrock"
-    },
-    "gpt6-astra": {
-      "id": "openai.gpt-6-astra",
-      "label": "GPT-6 Astra",
-      "context_window": 922000,
-      "provider": "openai_bedrock",
-      "effort_tier": "openai6"
     },
     "gpt6-luna": {
       "id": "openai.gpt-6-luna",

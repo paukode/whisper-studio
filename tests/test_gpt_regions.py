@@ -41,22 +41,21 @@ def test_every_shipped_gpt_model_has_measured_regions_among_the_gpt_regions():
 def test_us_east_1_serves_every_shipped_gpt_model():
     # The app's rule: every model runs in us-east-1 (the shipped
     # bedrock_region), and a model is pinned elsewhere only when us-east-1
-    # does not serve it. GPT-6 Astra was the one exception until 2026-10-03.
+    # does not serve it.
     assert all("us-east-1" in _served(key) for key in _gpt_keys())
 
 
-def test_us_west_2_serves_some_shipped_gpt_models_and_not_others():
-    # The probes (one call per model and region) found us-west-2 serving part
-    # of the catalog, which is why the rule is per model: it serves GPT-6
-    # Astra but not GPT-6.1 Sol, GPT-6.1 Terra or GPT-6 Luna.
-    served_here = ["us-west-2" in _served(key) for key in _gpt_keys()]
-    assert "us-west-2" in oai.GPT_REGIONS
-    assert any(served_here) and not all(served_here)
+@pytest.mark.parametrize("region", ["us-east-2", "us-west-2"])
+def test_the_other_us_regions_serve_none_of_the_shipped_gpt_models(region):
+    # The probes (one call per model and region) found each shipped model in
+    # us-east-1 only.
+    assert not any(region in _served(key) for key in _gpt_keys())
 
 
-def test_us_east_2_serves_none_of_the_shipped_gpt_models():
-    # us-east-2 served only the GPT-5 models, which left the catalog.
-    assert not any("us-east-2" in _served(key) for key in _gpt_keys())
+def test_the_regions_note_names_every_gpt_region_and_only_those():
+    note = oai.gpt_regions_note()
+    assert oai._spoken(oai.GPT_REGIONS) in note
+    assert ("not every model in each" in note) == (len(oai.GPT_REGIONS) > 1)
 
 
 def test_every_shipped_gpt_model_resolves_to_a_region_bedrock_serves_it_in():
@@ -124,51 +123,39 @@ def test_a_pin_outside_a_models_regions_is_told_to_move(monkeypatch):
 
     def meta(key):
         entry = dict(real(key))
-        if key == "gpt6.1-sol":
+        if key == "gpt6.2-sol":
             entry["openai_region"] = "us-west-2"
         return entry
 
     monkeypatch.setattr(oai, "_model_meta", meta)
-    assert oai.region_for("gpt6.1-sol") == "us-west-2"
-    choices = oai._spoken(_served("gpt6.1-sol"), "or")
+    assert oai.region_for("gpt6.2-sol") == "us-west-2"
+    choices = oai._spoken(_served("gpt6.2-sol"), "or")
     assert (
-        oai.region_fix("gpt6.1-sol", "us-west-2")
-        == f"change openai_region on the gpt6.1-sol entry in chat_models to {choices}"
+        oai.region_fix("gpt6.2-sol", "us-west-2")
+        == f"change openai_region on the gpt6.2-sol entry in chat_models to {choices}"
     )
 
 
-def test_astra_follows_the_settings_region_like_every_model():
-    assert not (_meta("gpt6-astra").get("openai_region") or "")
-    assert oai.region_for("gpt6-astra") == load_config()["bedrock_region"]
+def test_every_shipped_gpt_model_follows_the_settings_region():
+    for key in _gpt_keys():
+        assert not (_meta(key).get("openai_region") or ""), key
+        assert oai.region_for(key) == load_config()["bedrock_region"], key
 
 
-def test_the_us_west_2_pin_astra_once_shipped_is_no_pin_when_read_back():
+def test_a_saved_region_pin_stands_when_read_back():
     from server.infrastructure.config import _normalize_chat_models
 
-    saved = {
-        "id": "openai.gpt-6-astra",
-        "provider": "openai_bedrock",
-        "openai_region": "us-west-2",
-        "supports_ultracode": True,
-    }
-    _ids, meta = _normalize_chat_models({"gpt6-astra": saved})
-    assert meta["gpt6-astra"]["openai_region"] is None
-    assert meta["gpt6-astra"]["supports_ultracode"] is True
-    # Any other pin is the user's choice and stands.
     _ids, meta = _normalize_chat_models(
-        {
-            "gpt6-astra": {**saved, "openai_region": "us-east-1"},
-            "gpt6.1-sol": {"id": "openai.gpt-6.1-sol", "openai_region": "us-west-2"},
-        }
+        {"gpt6.2-sol": {"id": "openai.gpt-6.2-sol", "openai_region": "us-west-2"}}
     )
-    assert meta["gpt6-astra"]["openai_region"] == "us-east-1"
-    assert meta["gpt6.1-sol"]["openai_region"] == "us-west-2"
+    assert meta["gpt6.2-sol"]["openai_region"] == "us-west-2"
 
 
-def test_gpt_6_1_sol_runs_in_us_east_1_on_the_gpt_6_ladder():
-    model_id = _meta("gpt6.1-sol")["id"]
-    assert model_id == "openai.gpt-6.1-sol"
+@pytest.mark.parametrize("key", ["gpt6.2-astra", "gpt6.2-sol"])
+def test_the_gpt_6_2_models_run_in_us_east_1_on_the_gpt_6_ladder(key):
+    model_id = _meta(key)["id"]
+    assert model_id == f"openai.gpt-{key.removeprefix('gpt')}"
     assert oai.gpt_serving_regions(model_id) == ("us-east-1",)
-    assert _meta("gpt6.1-sol")["effort_tier"] == "openai6"
-    assert oai.reasoning_effort_for("gpt6.1-sol", "max") == "max"
-    assert oai.reasoning_effort_for("gpt6.1-sol", "none") == "low"
+    assert _meta(key)["effort_tier"] == "openai6"
+    assert oai.reasoning_effort_for(key, "max") == "max"
+    assert oai.reasoning_effort_for(key, "none") == "low"

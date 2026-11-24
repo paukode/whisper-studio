@@ -37,13 +37,11 @@ EFFORT_ORDER = ["none", "low", "medium", "high", "extra", "max", "ultracode"]
 EFFORT_TIERS = {
     "full": ["low", "medium", "high", "extra", "max"],
     "standard": ["low", "medium", "high", "max"],
-    # OpenAI-on-Bedrock (GPT-6). GPT-6 Astra has no "none" rung:
-    # bedrock-mantle rejects reasoning.effort "none" for it with
-    # unsupported_value (verified live 2026-09-09; accepted values are
-    # low/medium/high/xhigh/max). Every GPT id gets this ladder, but only
-    # Astra's rejection is verified: OpenAI documents a "none" rung for GPT-6
-    # Sol and Luna. TODO: once a live mantle probe shows Sol and Luna accept
-    # "none", give them a ladder with it (and openai_bedrock.runtime's map).
+    # OpenAI-on-Bedrock (GPT-6). GPT-6.2 Astra and Sol have no "none" rung:
+    # bedrock-mantle rejects reasoning.effort "none" for them with
+    # unsupported_value (verified live 2026-11-24; accepted values are
+    # low/medium/high/xhigh/max). Every GPT id gets this ladder; "none" was
+    # never probed on GPT-6.1 Terra or GPT-6 Luna.
     "openai6": ["low", "medium", "high", "max"],
     "none": [],
 }

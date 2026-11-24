@@ -303,7 +303,7 @@ def test_get_run_shows_the_live_counters_of_a_real_run():
 
 @pytest.mark.parametrize(
     "session_model",
-    ["global.anthropic.claude-sonnet-5", "openai.gpt-6-1-sol"],
+    ["global.anthropic.claude-sonnet-5", "openai.gpt-6-2-sol"],
 )
 def test_a_blocking_spawn_runs_on_the_chat_model(monkeypatch, session_model):
     from server.agent_tools import spawn

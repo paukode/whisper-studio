@@ -57,7 +57,7 @@ def test_other_models_are_not_opted_into_the_check():
         "global.anthropic.claude-fable-5-1",
         "global.anthropic.claude-opus-5-5",
         "global.anthropic.claude-sonnet-5-5",
-        "openai.gpt-6.1-sol",
+        "openai.gpt-6.2-sol",
         "",
     ):
         body = {"thinking": {"type": "adaptive"}}
