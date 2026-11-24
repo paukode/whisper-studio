@@ -58,7 +58,7 @@ class FakeResponses:
         return FakeStream(nxt)
 
 
-def _adapter(monkeypatch, rounds, model_key="gpt6.1-sol"):
+def _adapter(monkeypatch, rounds, model_key="gpt6.2-sol"):
     import server.openai_bedrock.runtime as oai
 
     fr = FakeResponses(rounds)
@@ -67,7 +67,7 @@ def _adapter(monkeypatch, rounds, model_key="gpt6.1-sol"):
     monkeypatch.setattr(oai, "region_for", lambda mk: "us-east-2")
     a = OpenAIResponsesAdapter(
         model_key=model_key,
-        model_id="openai.gpt-6.1-sol",
+        model_id="openai.gpt-6.2-sol",
         system_prompt="sys",
         effort_label="high",
         session_id="t-sess",
@@ -348,7 +348,7 @@ def test_heartbeat_fires_during_idle_gap(monkeypatch):
     monkeypatch.setattr(oai, "build_client", lambda region: types.SimpleNamespace(responses=FR()))
     monkeypatch.setattr(oai, "region_for", lambda mk: "us-east-2")
     a = OpenAIResponsesAdapter(
-        model_key="gpt6.1-sol", model_id="openai.gpt-6.1-sol", system_prompt="s", effort_label=None
+        model_key="gpt6.2-sol", model_id="openai.gpt-6.2-sol", system_prompt="s", effort_label=None
     )
     evs = asyncio.run(
         _collect(a.stream_round([{"role": "user", "content": "hi"}], [], None, 0, False))
@@ -478,7 +478,7 @@ def _gpt_turn(monkeypatch, rounds, body=None):
         def __getattr__(self, name):
             raise AssertionError("GPT turn must not touch Bedrock Anthropic")
 
-    lines = run_chat_turn(monkeypatch, _NoBedrock(), {"model": "gpt6-astra", **(body or {})})
+    lines = run_chat_turn(monkeypatch, _NoBedrock(), {"model": "gpt6.2-astra", **(body or {})})
     return lines, fr
 
 

@@ -27,7 +27,7 @@ describe('chartSeries', () => {
     // gpt5.6-sol has 3 estimated calls; the on-device model (in Other) has 5.
     expect(estimated).toEqual({
       'gpt5.6-sol': true,
-      'gpt6-astra': false,
+      'gpt6.2-astra': false,
       'opus5.0': false,
       sonnet5: false,
       'haiku4.5': false,

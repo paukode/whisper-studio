@@ -84,7 +84,7 @@
       "partial": true,
       "cost_usd": 27.55,
       "by_key": {
-        "gpt6-astra": {
+        "gpt6.2-astra": {
           "cost_usd": 20.0,
           "prompt_tokens": 4000000,
           "output_tokens": 25000,
@@ -120,8 +120,8 @@
       "deleted": false
     },
     {
-      "key": "gpt6-astra",
-      "label": "GPT-6 Astra",
+      "key": "gpt6.2-astra",
+      "label": "GPT-6.2 Astra",
       "cost_usd": 20.0,
       "share": 0.261267,
       "prompt_tokens": 4000000,

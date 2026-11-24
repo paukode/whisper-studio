@@ -62,10 +62,10 @@ def test_gpt_cached_input_not_double_counted():
     # cached_in_input flag bills the cached portion once at cache_read, never
     # also at the input rate, and no caller has to remember to pass it (the
     # agent rollup, the agent budget bar and the workflow ledger never did).
-    rates = get_model_pricing("gpt6.1-sol")
+    rates = get_model_pricing("gpt6.2-sol")
     assert rates["cached_in_input"] is True
-    full = estimate_cost("gpt6.1-sol", 1_000_000, 0)
-    partial = estimate_cost("gpt6.1-sol", 1_000_000, 0, cache_read_tokens=400_000)
+    full = estimate_cost("gpt6.2-sol", 1_000_000, 0)
+    partial = estimate_cost("gpt6.2-sol", 1_000_000, 0, cache_read_tokens=400_000)
     assert partial == pytest.approx(0.6 * rates["input"] + 0.4 * rates["cache_read"])
     assert partial < full  # caching is a discount, not a surcharge
 
@@ -74,15 +74,15 @@ def test_gpt_cache_writes_are_billed_once_inside_input():
     # Mantle's cache_write_tokens, like cached_tokens, is part of
     # input_tokens: the written share is billed at cache_write instead of
     # input, never at both, and the prompt is input_tokens itself.
-    rates = get_model_pricing("gpt6-astra")
+    rates = get_model_pricing("gpt6.2-astra")
     inp, read, write = 1_000_000, 600_000, 380_000
-    cost = estimate_cost("gpt6-astra", inp, 0, read, write)
+    cost = estimate_cost("gpt6.2-astra", inp, 0, read, write)
     assert cost == pytest.approx(
         0.02 * rates["input"] + 0.6 * rates["cache_read"] + 0.38 * rates["cache_write"]
     )
-    assert cost > estimate_cost("gpt6-astra", inp, 0, read, 0)  # the write premium
-    assert tracker.prompt_tokens_for("gpt6-astra", inp, read, write) == inp
-    assert tracker.prompt_tokens_for("gpt6-astra", inp, read, 0) == inp
+    assert cost > estimate_cost("gpt6.2-astra", inp, 0, read, 0)  # the write premium
+    assert tracker.prompt_tokens_for("gpt6.2-astra", inp, read, write) == inp
+    assert tracker.prompt_tokens_for("gpt6.2-astra", inp, read, 0) == inp
 
 
 def test_the_agent_budget_bar_shows_the_engines_cost():
@@ -106,28 +106,28 @@ def test_the_agent_budget_bar_shows_the_engines_cost():
 
 
 def test_a_call_over_the_break_bills_all_its_tokens_at_the_long_context_rates():
-    rates = get_model_pricing("gpt6.1-sol")
+    rates = get_model_pricing("gpt6.2-sol")
     tier = rates["long_context"]
     above = tier["above"]
-    long_call = tracker.call_cost("gpt6.1-sol", above + 1, 1_000, above - 10_000)
+    long_call = tracker.call_cost("gpt6.2-sol", above + 1, 1_000, above - 10_000)
     assert long_call == pytest.approx(
         (10_001 * tier["input"] + 1_000 * tier["output"] + (above - 10_000) * tier["cache_read"])
         / 1e6
     )
-    at_break = tracker.call_cost("gpt6.1-sol", above, 1_000, above - 10_000)
+    at_break = tracker.call_cost("gpt6.2-sol", above, 1_000, above - 10_000)
     assert at_break == pytest.approx(
-        estimate_cost("gpt6.1-sol", above, 1_000, above - 10_000, long_context=False)
+        estimate_cost("gpt6.2-sol", above, 1_000, above - 10_000, long_context=False)
     )
-    assert tracker.is_long_context("gpt6.1-sol", above + 1)
-    assert not tracker.is_long_context("gpt6.1-sol", above)
+    assert tracker.is_long_context("gpt6.2-sol", above + 1)
+    assert not tracker.is_long_context("gpt6.2-sol", above)
 
 
 def test_a_running_total_prices_each_call_at_its_own_tier():
     # Two 200K rounds are both short; their summed counts are over the
     # break, and pricing the sum would bill both at the long rate.
-    one = tracker.call_cost("gpt6-astra", 200_000, 500, 190_000)
-    summed = tracker.call_cost("gpt6-astra", 400_000, 1_000, 380_000)
-    assert 2 * one == pytest.approx(estimate_cost("gpt6-astra", 400_000, 1_000, 380_000))
+    one = tracker.call_cost("gpt6.2-astra", 200_000, 500, 190_000)
+    summed = tracker.call_cost("gpt6.2-astra", 400_000, 1_000, 380_000)
+    assert 2 * one == pytest.approx(estimate_cost("gpt6.2-astra", 400_000, 1_000, 380_000))
     assert summed > 2 * one
 
 
@@ -205,9 +205,10 @@ def test_claude_cache_write_is_the_rate_of_the_ttl_the_app_sends():
 
 
 # The cached read as a share of input, where a model's card prices it other
-# than 10%: GPT-6.1 Sol's card prices it at $0.11 on $2.20 input (2026-10-03),
-# and GPT-6.1 Terra's at $0.055 on $1.10 (2026-11-13).
-_CACHE_READ_SHARE = {"gpt6.1-sol": 0.05, "gpt6.1-terra": 0.05}
+# than 10%: the Price List has GPT-6.2 Astra at $0.44 on $8.80 input and
+# GPT-6.2 Sol at $0.11 on $2.20 (2026-11-24), and GPT-6.1 Terra's card prices
+# it at $0.055 on $1.10 (2026-11-13).
+_CACHE_READ_SHARE = {"gpt6.2-astra": 0.05, "gpt6.2-sol": 0.05, "gpt6.1-terra": 0.05}
 
 
 def test_gpt_cache_rates_follow_the_bedrock_cards():

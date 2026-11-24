@@ -20,14 +20,14 @@ def test_an_override_replaces_only_its_own_key(tmp_path, monkeypatch):
     default_haiku = {"input": 1.0, "output": 5.0, "cache_read": 0.1, "cache_write": 2.0}
     example = _write(
         tmp_path / "pricing.example.json",
-        {"gpt6-astra": default_astra, "haiku": default_haiku},
+        {"gpt6.2-astra": default_astra, "haiku": default_haiku},
     )
     mine = {"input": 0, "output": 0, "cached_in_input": True}
-    override = _write(tmp_path / "pricing.json", {"gpt6-astra": mine})
+    override = _write(tmp_path / "pricing.json", {"gpt6.2-astra": mine})
     monkeypatch.setattr(tracker, "PRICING_EXAMPLE_PATH", example)
     monkeypatch.setattr(tracker, "PRICING_PATH", override)
     table = tracker._load_pricing()
-    assert table["gpt6-astra"] == _entry(mine)
+    assert table["gpt6.2-astra"] == _entry(mine)
     assert table["haiku"] == _entry(default_haiku)
 
 

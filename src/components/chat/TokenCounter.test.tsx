@@ -109,7 +109,7 @@ describe('TokenCounter', () => {
   });
 
   it("marks a GPT session's cost with the dated list-rate note, as the Costs tab row does", async () => {
-    // The real session behind the finding: 257 GPT-6 Astra rounds, 7 Opus 5.
+    // The real session behind the finding: 257 GPT Astra rounds, 7 Opus 5.
     primeActiveSession();
     api.get.mockResolvedValue({
       prompt_tokens: 47_978_890,

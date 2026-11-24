@@ -62,11 +62,11 @@ def _report(start, end, granularity="day", split="model"):
 
 def _seed_spread():
     _row(session="a", model="opus5.5", inp=100, out=50, read=4000, at="2026-08-30 09:00:00")
-    _row(session="a", model="gpt6-astra", inp=9000, out=300, read=8000, at="2026-09-01 10:00:00")
+    _row(session="a", model="gpt6.2-astra", inp=9000, out=300, read=8000, at="2026-09-01 10:00:00")
     _row(session="b", model="haiku", inp=700, out=20, source="title", at="2026-09-07 23:59:59")
     _row(session="b", model="sonnet5.5", inp=5, out=900, read=60_000, write=2000, at="2026-09-15")
     _row(
-        session="c", model="gpt6.1-sol", inp=1000, out=10, read=900, source="agent", at="2026-09-15"
+        session="c", model="gpt6.2-sol", inp=1000, out=10, read=900, source="agent", at="2026-09-15"
     )
 
 
@@ -147,7 +147,7 @@ def test_prompt_tokens_are_normalized_so_gpt_and_claude_add_up():
     # Claude: disjoint buckets (4 + 1000 read + 100 write). GPT: the cached
     # 800 are part of its 1000 input.
     _row(model="opus5.5", inp=4, read=1000, write=100)
-    _row(model="gpt6-astra", inp=1000, read=800)
+    _row(model="gpt6.2-astra", inp=1000, read=800)
     totals = _report("2026-09-10", "2026-09-10")["totals"]
     assert totals["prompt_tokens"] == 1104 + 1000
     assert totals["cache_read_tokens"] == 1800
@@ -164,11 +164,11 @@ def test_cache_savings_net_the_write_premium():
 
 
 def test_gpt_figures_carry_the_dated_list_rate_note():
-    _row(session="mix", model="gpt6-astra", inp=1000, out=10)
+    _row(session="mix", model="gpt6.2-astra", inp=1000, out=10)
     _row(session="mix", model="opus5.5", inp=1000, out=10)
     _row(session="claude-only", model="opus5.5", inp=1000, out=10)
     by_model = {r["key"]: r for r in _report("2026-09-10", "2026-09-10")["rows"]}
-    assert by_model["gpt6-astra"]["note"] == usage.GPT_NOTE
+    assert by_model["gpt6.2-astra"]["note"] == usage.GPT_NOTE
     assert "$0" in usage.GPT_NOTE and "2026-09-23" in usage.GPT_NOTE
     assert by_model["opus5.5"]["note"] == ""
     by_session = {r["key"]: r for r in _report("2026-09-10", "2026-09-10", split="session")["rows"]}
@@ -211,7 +211,7 @@ def test_session_rows_outlive_their_session():
 
 def test_source_rows_are_labelled_and_estimates_counted():
     _row(source="title", model="haiku", inp=100, out=5)
-    _row(source="chat", model="gpt6-astra", inp=250, out=40, estimated=("input", "output"))
+    _row(source="chat", model="gpt6.2-astra", inp=250, out=40, estimated=("input", "output"))
     rep = _report("2026-09-10", "2026-09-10", split="source")
     rows = {r["key"]: r for r in rep["rows"]}
     assert rows["title"]["label"] == "Titles"
@@ -248,14 +248,14 @@ def test_every_reader_prices_each_call_at_its_own_long_context_tier():
     at = now.strftime("%Y-%m-%d 00:00:01")
     long_call = dict(inp=287_513, out=152, read=286_454)
     short_call = dict(inp=250_001, out=54, read=249_935)
-    _row(session="lc", model="gpt6.1-sol", at=at, **long_call)
-    _row(session="lc", model="gpt6.1-sol", at=at, **short_call)
+    _row(session="lc", model="gpt6.2-sol", at=at, **long_call)
+    _row(session="lc", model="gpt6.2-sol", at=at, **short_call)
     each = [
-        tracker.call_cost("gpt6.1-sol", c["inp"], c["out"], c["read"])
+        tracker.call_cost("gpt6.2-sol", c["inp"], c["out"], c["read"])
         for c in (long_call, short_call)
     ]
-    assert tracker.is_long_context("gpt6.1-sol", long_call["inp"])
-    assert not tracker.is_long_context("gpt6.1-sol", short_call["inp"])
+    assert tracker.is_long_context("gpt6.2-sol", long_call["inp"])
+    assert not tracker.is_long_context("gpt6.2-sol", short_call["inp"])
     expected = sum(each)
     day = now.date()
     rep = usage.usage_report(day, day, "day", "model")
@@ -268,7 +268,7 @@ def test_every_reader_prices_each_call_at_its_own_long_context_tier():
     assert exported == [pytest.approx(c, abs=1e-6) for c in each]
     # Pricing the day's summed counts would bill the short call long too.
     summed = tracker.estimate_cost(
-        "gpt6.1-sol",
+        "gpt6.2-sol",
         long_call["inp"] + short_call["inp"],
         long_call["out"] + short_call["out"],
         long_call["read"] + short_call["read"],
@@ -296,13 +296,13 @@ def test_the_session_readout_keeps_its_shape():
 
 
 def test_the_session_readout_carries_the_gpt_note_and_estimates(client):
-    # 257 GPT-6 Astra rounds and 7 Opus 5 rounds: the composer shows the
+    # 257 GPT Astra rounds and 7 Opus 5 rounds: the composer shows the
     # session's figure with the dated GPT note, as the Costs tab row does.
     for _ in range(3):
-        _row(session="mixed", model="gpt6-astra", inp=180_000, out=1000, read=170_000)
+        _row(session="mixed", model="gpt6.2-astra", inp=180_000, out=1000, read=170_000)
     _row(session="mixed", model="opus5.5", inp=20, out=40, read=9000)
-    _row(session="mixed", model="gpt6-astra", inp=500, out=20, estimated=("input", "output"))
-    _row(session="gpt-only", model="gpt6.1-sol", inp=1000, out=10)
+    _row(session="mixed", model="gpt6.2-astra", inp=500, out=20, estimated=("input", "output"))
+    _row(session="gpt-only", model="gpt6.2-sol", inp=1000, out=10)
     _row(session="claude-only", model="opus5.5", inp=1000, out=10)
 
     mixed = client.get("/api/costs/session/mixed").json()
@@ -406,14 +406,14 @@ def test_usage_endpoint_matches_the_contract_shape(client):
 
 def test_cached_pct_is_a_percent_while_share_and_hit_rate_are_fractions():
     # The frontend contract fixture's numbers (src/test/fixtures/costs-usage.json):
-    # Opus 5 at 1,000,000 prompt tokens is 75.0 percent cached, GPT-6 Astra
+    # Opus 5 at 1,000,000 prompt tokens is 75.0 percent cached, GPT-6.2 Astra
     # at 4,000,000 (its cached tokens a subset of its input) 87.5 percent.
     _row(model="opus5.5", inp=250_000, read=750_000)
-    _row(model="gpt6-astra", inp=4_000_000, read=3_500_000)
+    _row(model="gpt6.2-astra", inp=4_000_000, read=3_500_000)
     rep = _report("2026-09-10", "2026-09-10")
     rows = {r["key"]: r for r in rep["rows"]}
     assert (rows["opus5.5"]["prompt_tokens"], rows["opus5.5"]["cached_pct"]) == (1_000_000, 75.0)
-    assert (rows["gpt6-astra"]["prompt_tokens"], rows["gpt6-astra"]["cached_pct"]) == (
+    assert (rows["gpt6.2-astra"]["prompt_tokens"], rows["gpt6.2-astra"]["cached_pct"]) == (
         4_000_000,
         87.5,
     )

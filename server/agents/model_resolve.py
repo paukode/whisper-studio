@@ -43,10 +43,10 @@ def resolve_model_override(
         # log, each silently downgraded to the default model. Resolve to the
         # newest configured key in that family and say so in the warning, so
         # the override still never fails silently. Keys with the same version
-        # ("gpt6-astra", "gpt6-sol", "gpt6-luna" are all version 6) go to the
+        # ("gpt6.2-astra" and "gpt6.2-sol" are both version 6.2) go to the
         # FIRST one listed: the catalog lists each family's flagship first, so
         # a tie never goes to whichever smaller sibling was added last. A newer
-        # version wins outright: "gpt6" means GPT-6.1 Sol ("gpt6.1-sol").
+        # version wins outright: "gpt6" means GPT-6.2 Astra, not GPT-6 Luna.
         family = [k for k in models if k.lower().startswith(key.lower())]
         if family:
             key = max(family, key=_version_sort_key)
@@ -85,7 +85,7 @@ def resolve_model_override(
 
 def _version_sort_key(key: str) -> tuple:
     """The version right after the family name, wherever the key puts it:
-    "sonnet5.0" -> (5, 0), "gpt5.6-sol" -> (5, 6), "gpt6-astra" -> (6,). A
+    "sonnet5.0" -> (5, 0), "gpt6.2-sol" -> (6, 2), "gpt6-luna" -> (6,). A
     key with no version ("haiku", "sonnet") sorts lowest."""
     import re
 

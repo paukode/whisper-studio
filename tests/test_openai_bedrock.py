@@ -56,7 +56,7 @@ def test_reasoning_effort_mapping():
         "bogus": "medium",
     }
     for label, effort in expected.items():
-        assert oai.reasoning_effort_for("gpt6-astra", label) == effort, label
+        assert oai.reasoning_effort_for("gpt6.2-astra", label) == effort, label
 
 
 def test_translate_tools_flat_function_shape():
@@ -262,7 +262,7 @@ def test_gpt6_defaults_to_the_ladder_without_none():
     from server.infrastructure.effort import clamp_effort, effort_levels_for
 
     _ids, meta = _normalize_chat_models(
-        {"astra": {"id": "openai.gpt-6-astra", "label": "GPT-6 Astra"}}
+        {"astra": {"id": "openai.gpt-6.2-astra", "label": "GPT-6.2 Astra"}}
     )
     m = meta["astra"]
     assert m["provider"] == "openai_bedrock"

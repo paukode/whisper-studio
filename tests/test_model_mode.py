@@ -46,11 +46,11 @@ def test_resolve_backend_rejects_unknown_capability():
 def test_visibility_cloud_hides_local_models():
     meta = {
         "opus5.5": {},
-        "gpt6.1-sol": {"provider": "openai_bedrock"},
+        "gpt6.2-sol": {"provider": "openai_bedrock"},
         "local_gemma": {"is_local": True},
     }
-    keys = ["opus5.5", "gpt6.1-sol", "local_gemma"]
-    assert mm.visible_chat_keys(keys, meta, "cloud") == ["opus5.5", "gpt6.1-sol"]
+    keys = ["opus5.5", "gpt6.2-sol", "local_gemma"]
+    assert mm.visible_chat_keys(keys, meta, "cloud") == ["opus5.5", "gpt6.2-sol"]
 
 
 def test_visibility_local_shows_only_local_models():
@@ -69,8 +69,8 @@ def test_visibility_local_with_no_on_device_model_offers_nothing():
     # Local mode promises nothing leaves this Mac, so a cloud-only catalog (every
     # fresh install, before a Discover download) offers no chat model at all
     # rather than falling back to the cloud models it promised not to use.
-    meta = {"opus5.5": {}, "gpt6.1-sol": {"provider": "openai_bedrock"}}
-    keys = ["opus5.5", "gpt6.1-sol"]
+    meta = {"opus5.5": {}, "gpt6.2-sol": {"provider": "openai_bedrock"}}
+    keys = ["opus5.5", "gpt6.2-sol"]
     assert mm.visible_chat_keys(keys, meta, "local") == []
 
 

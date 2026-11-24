@@ -182,8 +182,7 @@ def test_the_shipped_gpt_models_pass_the_region_check(aws_home, mode_layer):
 
 @pytest.mark.parametrize("region", ["eu-central-1", "us-west-2", "us-east-2"])
 def test_a_region_warns_for_exactly_the_gpt_models_it_leaves_unserved(aws_home, mode_layer, region):
-    # us-west-2 and us-east-2 serve some GPT models and not others (measured
-    # per model); an EU region serves none of them.
+    # Only us-east-1 serves the shipped GPT models (measured per model).
     from server.openai_bedrock.runtime import (
         _spoken,
         gpt_regions_note,
@@ -212,10 +211,10 @@ def test_a_region_warns_for_exactly_the_gpt_models_it_leaves_unserved(aws_home, 
 
 def test_a_pin_outside_the_served_regions_is_told_to_move(aws_home, mode_layer):
     layer, _downloaded = mode_layer
-    layer["chat_models"] = {"gpt6.1-sol": {"openai_region": "us-west-2"}}
+    layer["chat_models"] = {"gpt6.2-sol": {"openai_region": "us-west-2"}}
     row = doctor._gpt_region_check()
     assert row["status"] == "warn"
-    assert _named(row["detail"]) == {"gpt6.1-sol"}
+    assert _named(row["detail"]) == {"gpt6.2-sol"}
     assert (
         "resolves to us-west-2: change openai_region on its chat_models entry to" in (row["detail"])
     )

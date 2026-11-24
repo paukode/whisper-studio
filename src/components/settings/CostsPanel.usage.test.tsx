@@ -188,7 +188,7 @@ describe('CostsPanel: how it draws the report', () => {
     await waitFor(() => expect(container.querySelectorAll('.usage-legend li')).toHaveLength(6));
     expect([...container.querySelectorAll('.usage-legend li')].map((li) => li.textContent)).toEqual([
       'GPT-5.6 Sol',
-      'GPT-6 Astra',
+      'GPT-6.2 Astra',
       'Opus 5',
       'Sonnet 5',
       'Haiku 4.5',
@@ -282,25 +282,25 @@ describe('CostsPanel: how it draws the report', () => {
     const header = (name: string) => within(table(container)).getByRole('button', { name });
 
     expect(rowKeys(container)).toEqual([
-      'gpt5.6-sol', 'gpt6-astra', 'opus5.0', 'sonnet5', 'haiku4.5', 'mistral-large', LOCAL,
+      'gpt5.6-sol', 'gpt6.2-astra', 'opus5.0', 'sonnet5', 'haiku4.5', 'mistral-large', LOCAL,
     ]);
     expect(header('Cost').closest('th')).toHaveAttribute('aria-sort', 'descending');
 
     fireEvent.click(header('Cost'));
     expect(rowKeys(container)).toEqual([
-      LOCAL, 'mistral-large', 'haiku4.5', 'sonnet5', 'opus5.0', 'gpt6-astra', 'gpt5.6-sol',
+      LOCAL, 'mistral-large', 'haiku4.5', 'sonnet5', 'opus5.0', 'gpt6.2-astra', 'gpt5.6-sol',
     ]);
     expect(header('Cost').closest('th')).toHaveAttribute('aria-sort', 'ascending');
 
     fireEvent.click(header('Calls'));
     expect(rowKeys(container)).toEqual([
-      'gpt5.6-sol', 'gpt6-astra', 'opus5.0', 'haiku4.5', 'sonnet5', LOCAL, 'mistral-large',
+      'gpt5.6-sol', 'gpt6.2-astra', 'opus5.0', 'haiku4.5', 'sonnet5', LOCAL, 'mistral-large',
     ]);
     expect(header('Cost').closest('th')).toHaveAttribute('aria-sort', 'none');
 
     fireEvent.click(header('Model'));
     expect(rowKeys(container)).toEqual([
-      'gpt5.6-sol', 'gpt6-astra', 'haiku4.5', LOCAL, 'mistral-large', 'opus5.0', 'sonnet5',
+      'gpt5.6-sol', 'gpt6.2-astra', 'haiku4.5', LOCAL, 'mistral-large', 'opus5.0', 'sonnet5',
     ]);
   });
 

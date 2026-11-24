@@ -111,7 +111,7 @@ const SESSION_OF: Record<string, SplitKey> = {
   'gpt5.6-sol': LIVE,
   sonnet5: LIVE,
   [LOCAL_MODEL]: LIVE,
-  'gpt6-astra': GONE,
+  'gpt6.2-astra': GONE,
   'opus5.0': GONE,
   'haiku4.5': DREAM,
   'mistral-large': OLD,
@@ -126,7 +126,7 @@ const SOURCE_OF: Record<string, SplitKey> = {
   'opus5.0': CHAT,
   sonnet5: CHAT,
   [LOCAL_MODEL]: CHAT,
-  'gpt6-astra': AGENT,
+  'gpt6.2-astra': AGENT,
   'haiku4.5': AGENT,
   'mistral-large': CRON,
 };

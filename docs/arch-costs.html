@@ -105,9 +105,9 @@
         <tr><td><code>sonnet5.5</code></td><td>$2.00</td><td>$10.00</td><td>$0.20</td><td>$4.00</td></tr>
         <tr><td><code>opus5.5</code></td><td>$4.00</td><td>$20.00</td><td>$0.20</td><td>$8.00</td></tr>
         <tr><td><code>fable5.2</code></td><td>$8.00</td><td>$40.00</td><td>$0.20</td><td>$16.00</td></tr>
-        <tr><td><code>gpt6.1-sol</code></td><td>$2.20</td><td>$11.00</td><td>$0.11</td><td>$2.75</td></tr>
+        <tr><td><code>gpt6.2-astra</code></td><td>$8.80</td><td>$44.00</td><td>$0.44</td><td>$11.00</td></tr>
+        <tr><td><code>gpt6.2-sol</code></td><td>$2.20</td><td>$11.00</td><td>$0.11</td><td>$2.75</td></tr>
         <tr><td><code>gpt6.1-terra</code></td><td>$1.10</td><td>$5.50</td><td>$0.055</td><td>$1.375</td></tr>
-        <tr><td><code>gpt6-astra</code></td><td>$11.00</td><td>$55.00</td><td>$1.10</td><td>$13.75</td></tr>
         <tr><td><code>gpt6-luna</code></td><td>$0.11</td><td>$0.55</td><td>$0.011</td><td>$0.1375</td></tr>
         <tr><td><code>cohere.embed-v4:0</code></td><td>$0.12</td><td>n/a</td><td>n/a</td><td>n/a</td></tr>
         <tr><td><code>global.cohere.embed-v4:0</code></td><td>$0.12</td><td>n/a</td><td>n/a</td><td>n/a</td></tr>
@@ -117,8 +117,8 @@
       <code class="path">pricing.example.json</code> too, so recorded calls to it show as unpriced.</p>
     <p>Claude cache writes are priced at the TTL the app actually sends. Every Claude model in the
       catalog gets a 1-hour TTL (<code class="path">server/chat/caching.py</code>), which Bedrock
-      bills at 2x input. The GPT rows are the Bedrock model cards' In-Region rates (bedrock-mantle
-      serves In-Region only). GPT-6 and GPT-6.1 bill their 30-minute cache writes at 1.25x input,
+      bills at 2x input. The GPT rows are Bedrock's In-Region rates (bedrock-mantle
+      serves In-Region only). The GPT-6 models bill their 30-minute cache writes at 1.25x input,
       with or without a cache key: Cost Explorer bills almost all of their uncached prompt that
       way.</p>
 

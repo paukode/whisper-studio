@@ -43,9 +43,9 @@ GPT_INSTRUCTIONS_SUFFIX = (
 
 # App effort label -> OpenAI Responses reasoning effort for GPT-6 (accepted
 # values low/medium/high/xhigh/max). "extra" stays mapped: a parent agent's
-# "extra" reaches a GPT child unclamped. GPT-6 has no "none" rung (Astra
-# rejects it with unsupported_value, verified live 2026-09-09), so "none"
-# runs as "low". See effort.EFFORT_TIERS["openai6"].
+# "extra" reaches a GPT child unclamped. GPT-6 has no "none" rung (GPT-6.2
+# Astra and Sol reject it with unsupported_value, verified live 2026-11-24),
+# so "none" runs as "low". See effort.EFFORT_TIERS["openai6"].
 _EFFORT_MAP = {
     "none": "low",
     "low": "low",
@@ -80,17 +80,16 @@ def region_for(model_key: str) -> str:
 
 
 # Where bedrock-mantle serves each OpenAI model, measured with one call per
-# model and region on 2026-09-29 (us-east-1, us-east-2 and us-west-2; every EU
-# region answered 404 for all of them on 2026-09-28), and again for GPT-6 Astra
-# and GPT-6.1 Sol on 2026-10-03 (Astra answers in us-east-1 too since then),
-# and for GPT-6.1 Terra on 2026-11-13.
+# model and region (us-east-1, us-east-2 and us-west-2): GPT-6 Luna on
+# 2026-09-29, GPT-6.1 Terra on 2026-11-13, GPT-6.2 Astra and Sol on
+# 2026-11-24. Every EU region answered 404 for the GPT models on 2026-09-28.
 # Read only to explain a failure (a 404, /doctor): a call always goes to the
 # configured region and is never rerouted. A model missing here was never
 # measured, so nothing is claimed about where it runs.
 _SERVED_IN = {
-    "openai.gpt-6.1-sol": ("us-east-1",),
+    "openai.gpt-6.2-astra": ("us-east-1",),
+    "openai.gpt-6.2-sol": ("us-east-1",),
     "openai.gpt-6.1-terra": ("us-east-1",),
-    "openai.gpt-6-astra": ("us-east-1", "us-west-2"),
     "openai.gpt-6-luna": ("us-east-1",),
 }
 # Every region that serves at least one of them.
@@ -113,10 +112,8 @@ def gpt_serving_regions(model_id: str) -> tuple[str, ...] | None:
 
 def gpt_regions_note() -> str:
     """Where Bedrock serves GPT at all, as one sentence for an error or /doctor."""
-    return (
-        f"Bedrock serves the GPT models only in {_spoken(GPT_REGIONS)}, and not every "
-        "model in each."
-    )
+    each = ", and not every model in each" if len(GPT_REGIONS) > 1 else ""
+    return f"Bedrock serves the GPT models only in {_spoken(GPT_REGIONS)}{each}."
 
 
 def _fix(regions: tuple[str, ...], pinned: bool, entry: str) -> str:

@@ -454,7 +454,7 @@ def test_directive_states_live_limits_and_sizing(monkeypatch):
 
 @pytest.mark.parametrize(
     "session_model",
-    ["global.anthropic.claude-sonnet-5", "openai.gpt-6-1-sol"],
+    ["global.anthropic.claude-sonnet-5", "openai.gpt-6-2-sol"],
 )
 def test_workflow_agent_default_model_is_the_chat_model(monkeypatch, session_model):
     _out, seen = _adapter_call(monkeypatch, _agent_result(), default_model_id=session_model)
@@ -463,7 +463,7 @@ def test_workflow_agent_default_model_is_the_chat_model(monkeypatch, session_mod
 
 @pytest.mark.parametrize(
     "session_model",
-    ["global.anthropic.claude-sonnet-5", "openai.gpt-6-1-sol"],
+    ["global.anthropic.claude-sonnet-5", "openai.gpt-6-2-sol"],
 )
 def test_spawn_agent_default_model_is_the_chat_model(monkeypatch, session_model):
     from server.agent_tools import spawn
@@ -489,5 +489,5 @@ def test_workflow_run_launches_on_the_chat_model(monkeypatch):
     monkeypatch.setattr(tools, "parse_workflow", lambda s: {"name": "a", "phases": []})
     monkeypatch.setattr(manager, "start_run", lambda src, **k: seen.update(k) or "rid")
     monkeypatch.setattr(manager, "resolve_workflow_workspace", lambda *a, **k: (None, ""))
-    asyncio.run(tools.execute_workflow_run({"script": "x"}, "s1", "openai.gpt-6-1-sol", None))
-    assert seen["model_id"] == "openai.gpt-6-1-sol"
+    asyncio.run(tools.execute_workflow_run({"script": "x"}, "s1", "openai.gpt-6-2-sol", None))
+    assert seen["model_id"] == "openai.gpt-6-2-sol"
